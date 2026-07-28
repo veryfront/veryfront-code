@@ -19,23 +19,79 @@ import type {
 import { assertWorkflowRunUpdate, type WorkflowBackend, type WorkflowRunUpdate } from "../types.ts";
 import { agentLogger, safeJsonParse } from "#veryfront/utils";
 import { requeueRun } from "../shared/requeue-run.ts";
-import { INITIALIZATION_ERROR, INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import {
+  INITIALIZATION_ERROR,
+  INVALID_ARGUMENT,
+  RESOURCE_NOT_FOUND,
+  SERVICE_OVERLOADED,
+  WORKFLOW_RUN_CONFLICT,
+} from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
-import { getRedisModule, NodeRedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
+import {
+  arrayToObject,
+  getRedisModule,
+  NodeRedisAdapter,
+} from "#veryfront/platform/adapters/redis/index.ts";
 
 export type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
-export type { RedisBackendConfig } from "./types.ts";
+export type { RedisBackendConfig, RedisRetentionDrainResult } from "./types.ts";
 
-import type { RedisBackendConfig, RedisBackendInternalConfig } from "./types.ts";
+import type {
+  RedisBackendConfig,
+  RedisBackendInternalConfig,
+  RedisRetentionDrainResult,
+} from "./types.ts";
+import {
+  MAX_WORKFLOW_RUN_LIST_LIMIT,
+  resolveRunDateBounds,
+  resolveRunListPage,
+} from "../run-filter.ts";
 
 const logger = agentLogger.component("redis-backend");
-const REDIS_STORAGE_SCHEMA_VERSION = "schema-v1";
+const REDIS_STORAGE_SCHEMA_VERSION = "schema-v2";
 const REDIS_STORAGE_SCHEMA_NAMESPACE = `${REDIS_STORAGE_SCHEMA_VERSION}:`;
+const WORKFLOW_STATUSES: readonly WorkflowStatus[] = [
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+  "waiting",
+];
+const RETENTION_CLEANUP_BATCH_SIZE = 128;
+const MAX_INTERNAL_CURSOR_RESTARTS = 8;
+
+interface RunSnapshot {
+  run: WorkflowRun;
+  approvals: PendingApproval[];
+}
+
+interface RunSnapshotCursor {
+  score: string;
+  member: string;
+}
+
+interface CursorRunSnapshotPage {
+  snapshots: RunSnapshot[];
+  nextCursor: RunSnapshotCursor | null;
+  cursorReset: boolean;
+}
 
 function appendStorageSchemaVersion(base: string): string {
   return `${base.replace(/:+$/, "")}:${REDIS_STORAGE_SCHEMA_VERSION}`;
+}
+
+function assertValidRunTtl(runTtl: number | undefined, nowMs: number): void {
+  if (runTtl === undefined) return;
+  const expiresAt = nowMs + (runTtl * 1000);
+  if (runTtl < 0 || !Number.isSafeInteger(runTtl) || !Number.isSafeInteger(expiresAt)) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        "runTtl must be a non-negative safe integer whose absolute deadline is safely representable",
+    });
+  }
 }
 
 /**
@@ -52,6 +108,314 @@ const RELEASE_LOCK_SCRIPT =
  */
 const EXTEND_LOCK_SCRIPT =
   "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end";
+
+/** Read one run hash and its approval list at the same Redis linearization point. */
+const READ_RUN_SNAPSHOT_SCRIPT = `-- read-workflow-run-snapshot
+return {
+  redis.call('hgetall', KEYS[1]),
+  redis.call('lrange', KEYS[2], 0, -1)
+}`;
+
+/**
+ * Atomically create a run hash, publish every index membership, and record its
+ * retention horizon. Stale bookkeeping from an already-expired incarnation of
+ * the same id is removed before the new run becomes visible.
+ */
+const CREATE_RUN_SCRIPT = `-- create-workflow-run-if-absent
+if redis.call('exists', KEYS[1]) == 1 then return 0 end
+local runId = ARGV[1]
+local workflowId = ARGV[2]
+local status = ARGV[3]
+local ttl = tonumber(ARGV[4])
+local createdAtMs = tonumber(ARGV[5])
+local workflowPrefix = ARGV[6]
+local statusPrefix = ARGV[7]
+local workflowStatusPrefix = ARGV[8]
+local oldWorkflowId = redis.call('hget', KEYS[6], runId)
+local oldStatus = redis.call('hget', KEYS[7], runId)
+redis.call('zrem', KEYS[2], runId)
+if oldWorkflowId and oldWorkflowId ~= '' then
+  redis.call('zrem', workflowPrefix .. oldWorkflowId, runId)
+end
+if oldStatus and oldStatus ~= '' then
+  redis.call('zrem', statusPrefix .. oldStatus, runId)
+end
+if oldWorkflowId and oldWorkflowId ~= '' and oldStatus and oldStatus ~= '' then
+  redis.call('zrem', workflowStatusPrefix .. oldWorkflowId .. ':' .. oldStatus, runId)
+end
+redis.call('hdel', KEYS[6], runId)
+redis.call('hdel', KEYS[7], runId)
+redis.call('zrem', KEYS[8], runId)
+redis.call('del', KEYS[9], KEYS[10], KEYS[11], KEYS[12])
+local fieldCount = tonumber(ARGV[9])
+local fieldStart = 10
+for i = 0, fieldCount - 1 do
+  local offset = fieldStart + (i * 2)
+  redis.call('hset', KEYS[1], ARGV[offset], ARGV[offset + 1])
+end
+redis.call('zadd', KEYS[2], createdAtMs, runId)
+redis.call('zadd', KEYS[3], createdAtMs, runId)
+redis.call('zadd', KEYS[4], createdAtMs, runId)
+redis.call('zadd', KEYS[5], createdAtMs, runId)
+redis.call('hset', KEYS[6], runId, workflowId)
+redis.call('hset', KEYS[7], runId, status)
+if ttl and ttl > 0 then
+  redis.call('expire', KEYS[1], ttl)
+  local remaining = redis.call('pttl', KEYS[1])
+  local now = redis.call('time')
+  local nowMs = (tonumber(now[1]) * 1000) + math.floor(tonumber(now[2]) / 1000)
+  redis.call('zadd', KEYS[8], nowMs + remaining, runId)
+end
+return 1`;
+
+/** Delete a missing run's auxiliary keys and index memberships after rechecking atomically. */
+const CLEANUP_MISSING_RUN_SCRIPT = `-- cleanup-missing-workflow-run
+if redis.call('exists', KEYS[1]) == 1 then return 0 end
+local runId = ARGV[1]
+local workflowPrefix = ARGV[2]
+local statusPrefix = ARGV[3]
+local workflowStatusPrefix = ARGV[4]
+local workflowId = redis.call('hget', KEYS[7], runId)
+local status = redis.call('hget', KEYS[8], runId)
+redis.call('del', KEYS[2], KEYS[3], KEYS[4], KEYS[5])
+redis.call('zrem', KEYS[6], runId)
+if workflowId and workflowId ~= '' then
+  redis.call('zrem', workflowPrefix .. workflowId, runId)
+end
+if status and status ~= '' then
+  redis.call('zrem', statusPrefix .. status, runId)
+end
+if workflowId and workflowId ~= '' and status and status ~= '' then
+  redis.call('zrem', workflowStatusPrefix .. workflowId .. ':' .. status, runId)
+end
+redis.call('hdel', KEYS[7], runId)
+redis.call('hdel', KEYS[8], runId)
+redis.call('zrem', KEYS[9], runId)
+return 1`;
+
+/** Delete a run and every owned key/index entry in one atomic boundary. */
+const DELETE_RUN_SCRIPT = `-- delete-workflow-run
+local runId = ARGV[1]
+local workflowPrefix = ARGV[2]
+local statusPrefix = ARGV[3]
+local workflowStatusPrefix = ARGV[4]
+local workflowId = redis.call('hget', KEYS[1], 'workflowId')
+if not workflowId or workflowId == '' then workflowId = redis.call('hget', KEYS[7], runId) end
+local status = redis.call('hget', KEYS[1], 'status')
+if not status or status == '' then status = redis.call('hget', KEYS[8], runId) end
+redis.call('del', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5])
+redis.call('zrem', KEYS[6], runId)
+if workflowId and workflowId ~= '' then
+  redis.call('zrem', workflowPrefix .. workflowId, runId)
+end
+if status and status ~= '' then
+  redis.call('zrem', statusPrefix .. status, runId)
+end
+if workflowId and workflowId ~= '' and status and status ~= '' then
+  redis.call('zrem', workflowStatusPrefix .. workflowId .. ':' .. status, runId)
+end
+redis.call('hdel', KEYS[7], runId)
+redis.call('hdel', KEYS[8], runId)
+redis.call('zrem', KEYS[9], runId)
+return 1`;
+
+/**
+ * Lazily drain only retention-ledger entries whose deadline has passed. The
+ * caller supplies its current time so the write script remains deterministic;
+ * PTTL is rechecked before deletion, preventing a skewed clock from deleting a
+ * live run. This is bounded and never scans the Redis keyspace.
+ */
+const CLEANUP_EXPIRED_RUNS_SCRIPT = `-- cleanup-expired-workflow-runs
+local limit = tonumber(ARGV[9])
+local now = redis.call('time')
+local nowMs = (tonumber(now[1]) * 1000) + math.floor(tonumber(now[2]) / 1000)
+local runIds = redis.call('zrangebyscore', KEYS[1], '-inf', nowMs, 'LIMIT', 0, limit)
+for _, runId in ipairs(runIds) do
+  local runKey = ARGV[1] .. runId
+  local remaining = redis.call('pttl', runKey)
+  if remaining > 0 then
+    redis.call('zadd', KEYS[1], nowMs + remaining, runId)
+  elseif remaining == -1 then
+    redis.call('zrem', KEYS[1], runId)
+  else
+    local workflowId = redis.call('hget', KEYS[2], runId)
+    local status = redis.call('hget', KEYS[3], runId)
+    redis.call('del', runKey, ARGV[2] .. runId, ARGV[3] .. runId, ARGV[4] .. runId, ARGV[5] .. runId)
+    redis.call('zrem', KEYS[4], runId)
+    if workflowId and workflowId ~= '' then
+      redis.call('zrem', ARGV[6] .. workflowId, runId)
+    end
+    if status and status ~= '' then
+      redis.call('zrem', ARGV[7] .. status, runId)
+    end
+    if workflowId and workflowId ~= '' and status and status ~= '' then
+      redis.call('zrem', ARGV[8] .. workflowId .. ':' .. status, runId)
+    end
+    redis.call('hdel', KEYS[2], runId)
+    redis.call('hdel', KEYS[3], runId)
+    redis.call('zrem', KEYS[1], runId)
+  end
+end
+local hasMore = redis.call('zcount', KEYS[1], '-inf', nowMs) > 0
+return {#runIds, hasMore and 1 or 0}`;
+
+const RETENTION_CLEANUP_LUA = `
+local function removeRun(runId)
+  local workflowId = redis.call('hget', KEYS[2], runId)
+  local status = redis.call('hget', KEYS[3], runId)
+  redis.call('del', ARGV[1] .. runId, ARGV[2] .. runId, ARGV[3] .. runId, ARGV[4] .. runId, ARGV[5] .. runId)
+  redis.call('zrem', KEYS[4], runId)
+  if workflowId and workflowId ~= '' then
+    redis.call('zrem', ARGV[6] .. workflowId, runId)
+  end
+  if status and status ~= '' then
+    redis.call('zrem', ARGV[7] .. status, runId)
+  end
+  if workflowId and workflowId ~= '' and status and status ~= '' then
+    redis.call('zrem', ARGV[8] .. workflowId .. ':' .. status, runId)
+  end
+  redis.call('hdel', KEYS[2], runId)
+  redis.call('hdel', KEYS[3], runId)
+  redis.call('zrem', KEYS[1], runId)
+end
+
+local function cleanupRetention()
+  local cleanupLimit = tonumber(ARGV[9])
+  local now = redis.call('time')
+  local nowMs = (tonumber(now[1]) * 1000) + math.floor(tonumber(now[2]) / 1000)
+  local due = redis.call('zrangebyscore', KEYS[1], '-inf', nowMs, 'LIMIT', 0, cleanupLimit)
+  for _, runId in ipairs(due) do
+    local remaining = redis.call('pttl', ARGV[1] .. runId)
+    if remaining > 0 then
+      redis.call('zadd', KEYS[1], nowMs + remaining, runId)
+    elseif remaining == -1 then
+      redis.call('zrem', KEYS[1], runId)
+    else
+      removeRun(runId)
+    end
+  end
+  local hasMore = redis.call('zcount', KEYS[1], '-inf', nowMs) > 0
+  return #due, hasMore
+end`;
+
+/** Bounded exact run page plus run/approval snapshots in one Redis transaction. */
+const LIST_RUNS_SCRIPT = `-- list-workflow-runs-exact
+${RETENTION_CLEANUP_LUA}
+local processed, hasMore = cleanupRetention()
+if hasMore then return {0, processed, 'retention-backlog'} end
+local maxScore = ARGV[10]
+local minScore = ARGV[11]
+local offset = tonumber(ARGV[12])
+local limit = tonumber(ARGV[13])
+local selectedCount = tonumber(ARGV[14])
+local window = offset + limit
+local byId = {}
+for index = 1, selectedCount do
+  local values = redis.call(
+    'zrevrangebyscore',
+    KEYS[4 + index],
+    maxScore,
+    minScore,
+    'withscores',
+    'limit',
+    0,
+    window
+  )
+  for valueIndex = 1, #values, 2 do
+    byId[values[valueIndex]] = tonumber(values[valueIndex + 1])
+  end
+end
+local ordered = {}
+for runId, score in pairs(byId) do
+  table.insert(ordered, {runId, score})
+end
+table.sort(ordered, function(left, right)
+  if left[2] == right[2] then return left[1] > right[1] end
+  return left[2] > right[2]
+end)
+local snapshots = {}
+local last = math.min(#ordered, offset + limit)
+for index = offset + 1, last do
+  local runId = ordered[index][1]
+  local run = redis.call('hgetall', ARGV[1] .. runId)
+  if #run == 0 then
+    removeRun(runId)
+    return {0, processed, 'index-ghost'}
+  end
+  local approvals = redis.call('lrange', ARGV[3] .. runId, 0, -1)
+  table.insert(snapshots, {run, approvals})
+end
+return {1, processed, snapshots}`;
+
+/**
+ * Bounded single-index cursor page for internal polling. The cursor is the
+ * exact sorted-set (score, member) row from the prior page. If that row moved
+ * or disappeared, restart from the head; the caller de-duplicates the replay.
+ */
+const CURSOR_LIST_RUNS_SCRIPT = `-- cursor-page-workflow-runs-exact
+${RETENTION_CLEANUP_LUA}
+local processed, hasMore = cleanupRetention()
+if hasMore then return {0, processed, 'retention-backlog'} end
+local cursorScore = ARGV[10]
+local cursorMember = ARGV[11]
+local limit = tonumber(ARGV[12])
+local start = 0
+local reset = 0
+if cursorMember ~= '' then
+  local actualScore = redis.call('zscore', KEYS[5], cursorMember)
+  if actualScore and tonumber(actualScore) == tonumber(cursorScore) then
+    local rank = redis.call('zrevrank', KEYS[5], cursorMember)
+    if rank then
+      start = rank + 1
+    else
+      reset = 1
+    end
+  else
+    reset = 1
+  end
+end
+local values = redis.call('zrevrange', KEYS[5], start, start + limit - 1, 'withscores')
+local snapshots = {}
+for index = 1, #values, 2 do
+  local runId = values[index]
+  local run = redis.call('hgetall', ARGV[1] .. runId)
+  if #run == 0 then
+    removeRun(runId)
+    return {0, processed, 'index-ghost'}
+  end
+  local approvals = redis.call('lrange', ARGV[3] .. runId, 0, -1)
+  table.insert(snapshots, {run, approvals})
+end
+local nextScore = ''
+local nextMember = ''
+if #values > 0 then
+  nextMember = values[#values - 1]
+  nextScore = values[#values]
+end
+return {1, processed, snapshots, nextScore, nextMember, reset}`;
+
+/** Exact filtered count from disjoint ordered indexes, without run hydration. */
+const COUNT_RUNS_SCRIPT = `-- count-workflow-runs-exact
+${RETENTION_CLEANUP_LUA}
+local processed, hasMore = cleanupRetention()
+if hasMore then return {0, processed, 'retention-backlog'} end
+local maxScore = ARGV[10]
+local minScore = ARGV[11]
+local selectedCount = tonumber(ARGV[12])
+local count = 0
+for index = 1, selectedCount do
+  count = count + redis.call('zcount', KEYS[4 + index], minScore, maxScore)
+end
+return {1, processed, count}`;
+
+/** Append run-owned list state and cap it at the run hash's remaining lifetime. */
+const APPEND_RUN_STATE_SCRIPT = `-- append-retained-workflow-run-state
+if redis.call('exists', KEYS[1]) == 0 then return 0 end
+local remaining = redis.call('pttl', KEYS[1])
+if remaining == -2 or remaining == 0 then return 0 end
+redis.call('rpush', KEYS[2], ARGV[1])
+if remaining > 0 then redis.call('pexpire', KEYS[2], remaining) end
+return 1`;
 
 /**
  * Atomically claim a still-stalled running run. The caller supplies the exact
@@ -80,29 +444,6 @@ redis.call('hset', KEYS[1], 'workerId', ARGV[2], 'heartbeatAt', ARGV[4])
 if not started or started == '' then redis.call('hset', KEYS[1], 'startedAt', ARGV[4]) end
 return 1`;
 
-/**
- * Atomically move a run between status index sets and write its new status,
- * reading the previous status from the run hash inside the script. This closes
- * the read-then-write race where two concurrent updateRun() calls both read the
- * old status and then issue their own SREM/SADD, leaving the run in the wrong
- * status set (or in two at once).
- *
- * KEYS[1] = run hash key
- * ARGV[1] = runId
- * ARGV[2] = new status
- * ARGV[3] = status index key prefix (the status value is appended to it)
- *
- * The index keys are derived from ARGV (the old status is unknown to the
- * caller), so this assumes a single logical Redis, matching the lock scripts
- * above.
- */
-const MOVE_STATUS_SCRIPT = `local old = redis.call('hget', KEYS[1], 'status')
-if old == ARGV[2] then return 0 end
-redis.call('hset', KEYS[1], 'status', ARGV[2])
-if old and old ~= '' then redis.call('srem', ARGV[3] .. old, ARGV[1]) end
-redis.call('sadd', ARGV[3] .. ARGV[2], ARGV[1])
-return 1`;
-
 /** Atomically verify the current status, update fields, and move the status index. */
 const UPDATE_RUN_IF_STATUS_SCRIPT = `-- conditional-run-update
 local old = redis.call('hget', KEYS[1], 'status')
@@ -117,18 +458,28 @@ end
 if not allowed then return 0 end
 local nextStatus = ARGV[expectedCount + 2]
 local statusPrefix = ARGV[expectedCount + 3]
-local runId = ARGV[expectedCount + 4]
-local expectedWorkerId = ARGV[expectedCount + 5]
+local workflowStatusPrefix = ARGV[expectedCount + 4]
+local runId = ARGV[expectedCount + 5]
+local expectedWorkerId = ARGV[expectedCount + 6]
 if expectedWorkerId ~= '' and redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then
   return 0
 end
 if nextStatus ~= '' and old ~= nextStatus then
+  local workflowId = redis.call('hget', KEYS[1], 'workflowId')
+  local createdAtMs = tonumber(redis.call('hget', KEYS[1], 'createdAtMs'))
+  if not workflowId or workflowId == '' or not createdAtMs then return -1 end
   redis.call('hset', KEYS[1], 'status', nextStatus)
-  redis.call('srem', statusPrefix .. old, runId)
-  redis.call('sadd', statusPrefix .. nextStatus, runId)
+  redis.call('zrem', statusPrefix .. old, runId)
+  redis.call('zrem', workflowStatusPrefix .. workflowId .. ':' .. old, runId)
+  redis.call('zadd', statusPrefix .. nextStatus, createdAtMs, runId)
+  redis.call('zadd', workflowStatusPrefix .. workflowId .. ':' .. nextStatus, createdAtMs, runId)
+  redis.call('hset', KEYS[3], runId, nextStatus)
 end
-for i = expectedCount + 6, #ARGV, 2 do
+for i = expectedCount + 7, #ARGV, 2 do
   redis.call('hset', KEYS[1], ARGV[i], ARGV[i + 1])
+end
+if nextStatus ~= '' and nextStatus ~= 'running' then
+  redis.call('del', KEYS[2])
 end
 return 1`;
 
@@ -146,7 +497,10 @@ end
 if not allowed then return 0 end
 local expectedWorkerId = ARGV[expectedCount + 2]
 if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end
-redis.call('rpush', ARGV[expectedCount + 3], ARGV[expectedCount + 4])
+local remaining = redis.call('pttl', KEYS[1])
+if remaining == -2 or remaining == 0 then return 0 end
+redis.call('rpush', KEYS[2], ARGV[expectedCount + 3])
+if remaining > 0 then redis.call('pexpire', KEYS[2], remaining) end
 return 1`;
 
 /**
@@ -234,6 +588,7 @@ export class RedisBackend implements WorkflowBackend {
   private pendingMessageIds = new Map<string, string[]>();
 
   constructor(config: RedisBackendConfig = {}) {
+    assertValidRunTtl(config.runTtl, Date.now());
     const resolvedConfig: RedisBackendInternalConfig = {
       prefix: "vf:workflow:",
       streamKey: "vf:workflow:stream",
@@ -256,45 +611,151 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private runKey(runId: string): string {
-    return `${this.storagePrefix()}run:${runId}`;
+    return `${this.runKeyPrefix()}${runId}`;
+  }
+
+  private runKeyPrefix(): string {
+    return `${this.storagePrefix()}run:`;
   }
 
   private checkpointsKey(runId: string): string {
-    return `${this.storagePrefix()}checkpoints:${runId}`;
+    return `${this.checkpointsKeyPrefix()}${runId}`;
+  }
+
+  private checkpointsKeyPrefix(): string {
+    return `${this.storagePrefix()}checkpoints:`;
   }
 
   private approvalsKey(runId: string): string {
-    return `${this.storagePrefix()}approvals:${runId}`;
+    return `${this.approvalsKeyPrefix()}${runId}`;
+  }
+
+  private approvalsKeyPrefix(): string {
+    return `${this.storagePrefix()}approvals:`;
   }
 
   private statusIndexKey(status: WorkflowStatus): string {
-    return `${this.storagePrefix()}index:status:${status}`;
+    return `${this.statusIndexPrefix()}${status}`;
+  }
+
+  private statusIndexPrefix(): string {
+    return `${this.storagePrefix()}index:created:status:`;
   }
 
   private workflowIndexKey(workflowId: string): string {
-    return `${this.storagePrefix()}index:workflow:${workflowId}`;
+    return `${this.workflowIndexPrefix()}${workflowId}`;
   }
 
-  /**
-   * Set of every run id. Maintained on create/delete so unfiltered listRuns and
-   * countRuns can enumerate runs via SMEMBERS instead of a keyspace-wide
-   * KEYS scan (which blocks the Redis event loop).
-   */
+  private workflowIndexPrefix(): string {
+    return `${this.storagePrefix()}index:created:workflow:`;
+  }
+
+  private workflowStatusIndexKey(workflowId: string, status: WorkflowStatus): string {
+    return `${this.workflowStatusIndexPrefix()}${workflowId}:${status}`;
+  }
+
+  private workflowStatusIndexPrefix(): string {
+    return `${this.storagePrefix()}index:created:workflow-status:`;
+  }
+
+  /** Every run ordered by creation time, newest first at query time. */
   private allRunsIndexKey(): string {
-    return `${this.storagePrefix()}index:runs`;
+    return `${this.storagePrefix()}index:created`;
   }
 
-  /** Enumerate only runs explicitly indexed in the current storage schema. */
-  private enumerateAllRunIds(client: RedisAdapter): Promise<string[]> {
-    return client.smembers(this.allRunsIndexKey());
+  /** Per-run workflow id used for targeted cleanup after the run hash expires. */
+  private runWorkflowMetadataKey(): string {
+    return `${this.storagePrefix()}index:run-workflow`;
+  }
+
+  /** Per-run status used for targeted cleanup after the run hash expires. */
+  private runStatusMetadataKey(): string {
+    return `${this.storagePrefix()}index:run-status`;
+  }
+
+  /** Sorted set of run ids scored by their absolute Redis-server expiry time. */
+  private retentionIndexKey(): string {
+    return `${this.storagePrefix()}index:retention`;
+  }
+
+  private cleanupKeys(runId: string): string[] {
+    return [
+      this.runKey(runId),
+      this.checkpointsKey(runId),
+      this.approvalsKey(runId),
+      this.claimKey(runId),
+      this.lockKey(runId),
+      this.allRunsIndexKey(),
+      this.runWorkflowMetadataKey(),
+      this.runStatusMetadataKey(),
+      this.retentionIndexKey(),
+    ];
+  }
+
+  private cleanupArgs(runId: string): string[] {
+    return [
+      runId,
+      this.workflowIndexPrefix(),
+      this.statusIndexPrefix(),
+      this.workflowStatusIndexPrefix(),
+    ];
+  }
+
+  private async cleanupMissingRun(client: RedisAdapter, runId: string): Promise<boolean> {
+    const cleaned = await client.eval(
+      CLEANUP_MISSING_RUN_SCRIPT,
+      this.cleanupKeys(runId),
+      this.cleanupArgs(runId),
+    );
+    return Number(cleaned) === 1;
+  }
+
+  private async cleanupExpiredRuns(
+    client: RedisAdapter,
+  ): Promise<{ processed: number; hasMoreDue: boolean }> {
+    const result = await client.eval(
+      CLEANUP_EXPIRED_RUNS_SCRIPT,
+      [
+        this.retentionIndexKey(),
+        this.runWorkflowMetadataKey(),
+        this.runStatusMetadataKey(),
+        this.allRunsIndexKey(),
+      ],
+      [
+        this.runKeyPrefix(),
+        this.checkpointsKeyPrefix(),
+        this.approvalsKeyPrefix(),
+        this.claimKeyPrefix(),
+        this.lockKeyPrefix(),
+        this.workflowIndexPrefix(),
+        this.statusIndexPrefix(),
+        this.workflowStatusIndexPrefix(),
+        String(RETENTION_CLEANUP_BATCH_SIZE),
+      ],
+    );
+    if (!Array.isArray(result)) {
+      throw INVALID_ARGUMENT.create({ detail: "Invalid Redis retention cleanup response" });
+    }
+    return {
+      processed: Number(result[0]),
+      hasMoreDue: Number(result[1]) === 1,
+    };
   }
 
   private lockKey(runId: string): string {
-    return `${this.storagePrefix()}lock:${runId}`;
+    return `${this.lockKeyPrefix()}${runId}`;
+  }
+
+  private lockKeyPrefix(): string {
+    return `${this.storagePrefix()}lock:`;
   }
 
   private claimKey(runId: string): string {
-    return `${this.storagePrefix()}claim:${runId}`;
+    return `${this.claimKeyPrefix()}${runId}`;
+  }
+
+  private claimKeyPrefix(): string {
+    return `${this.storagePrefix()}claim:`;
   }
 
   private serializeRun(run: WorkflowRun): Record<string, string> {
@@ -314,6 +775,7 @@ export class RedisBackend implements WorkflowBackend {
       context: JSON.stringify(run.context),
       error: run.error ? JSON.stringify(run.error) : "",
       createdAt: run.createdAt.toISOString(),
+      createdAtMs: String(run.createdAt.getTime()),
       startedAt: run.startedAt?.toISOString() || "",
       heartbeatAt: run.heartbeatAt?.toISOString() || "",
       completedAt: run.completedAt?.toISOString() || "",
@@ -353,16 +815,35 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const result = await client.eval(
       APPEND_IF_STATUS_AND_WORKER_SCRIPT,
-      [this.runKey(ownershipRunId)],
+      [
+        this.runKey(ownershipRunId),
+        storageKey,
+      ],
       [
         String(expectedStatuses.length),
         ...expectedStatuses,
         expectedWorkerId,
-        storageKey,
         value,
       ],
     );
     return Number(result) === 1;
+  }
+
+  private async appendRunState(
+    runId: string,
+    storageKey: string,
+    value: string,
+  ): Promise<void> {
+    const client = await this.ensureClient();
+    const appended = await client.eval(
+      APPEND_RUN_STATE_SCRIPT,
+      [this.runKey(runId), storageKey],
+      [value],
+    );
+    if (Number(appended) !== 1) {
+      await this.cleanupMissingRun(client, runId);
+      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    }
   }
 
   private deserializeRun(data: Record<string, string>): WorkflowRun {
@@ -381,21 +862,12 @@ export class RedisBackend implements WorkflowBackend {
       });
     }
 
-    const validStatuses: WorkflowStatus[] = [
-      "pending",
-      "running",
-      "completed",
-      "failed",
-      "cancelled",
-      "waiting",
-    ];
-
     const status = data.status as WorkflowStatus;
-    if (data.status && !validStatuses.includes(status)) {
+    if (data.status && !WORKFLOW_STATUSES.includes(status)) {
       throw INVALID_ARGUMENT.create({
         detail:
           `Invalid workflow run data for run "${data.id}": unknown status "${data.status}". ` +
-          `Expected one of: ${validStatuses.join(", ")}`,
+          `Expected one of: ${WORKFLOW_STATUSES.join(", ")}`,
       });
     }
 
@@ -518,50 +990,71 @@ export class RedisBackend implements WorkflowBackend {
   async createRun(run: WorkflowRun): Promise<void> {
     const serializedRun = this.serializeRun(run);
     const client = await this.ensureClient();
+    const nowMs = Date.now();
+    assertValidRunTtl(this.config.runTtl, nowMs);
 
     if (this.config.debug) logger.debug(`[RedisBackend] Creating run: ${run.id}`);
 
-    await client.hset(this.runKey(run.id), serializedRun);
-    await client.sadd(this.statusIndexKey(run.status), run.id);
-    await client.sadd(this.workflowIndexKey(run.workflowId), run.id);
-    await client.sadd(this.allRunsIndexKey(), run.id);
-
-    if (this.config.runTtl) await client.expire(this.runKey(run.id), this.config.runTtl);
+    const fieldArgs = Object.entries(serializedRun).flatMap(([field, value]) => [field, value]);
+    const created = await client.eval(
+      CREATE_RUN_SCRIPT,
+      [
+        this.runKey(run.id),
+        this.allRunsIndexKey(),
+        this.workflowIndexKey(run.workflowId),
+        this.statusIndexKey(run.status),
+        this.workflowStatusIndexKey(run.workflowId, run.status),
+        this.runWorkflowMetadataKey(),
+        this.runStatusMetadataKey(),
+        this.retentionIndexKey(),
+        this.checkpointsKey(run.id),
+        this.approvalsKey(run.id),
+        this.claimKey(run.id),
+        this.lockKey(run.id),
+      ],
+      [
+        run.id,
+        run.workflowId,
+        run.status,
+        String(this.config.runTtl ?? 0),
+        String(run.createdAt.getTime()),
+        this.workflowIndexPrefix(),
+        this.statusIndexPrefix(),
+        this.workflowStatusIndexPrefix(),
+        String(Object.keys(serializedRun).length),
+        ...fieldArgs,
+      ],
+    );
+    if (Number(created) !== 1) {
+      throw WORKFLOW_RUN_CONFLICT.create({
+        detail: `Workflow run already exists: ${run.id}`,
+      });
+    }
   }
 
   async getRun(runId: string): Promise<WorkflowRun | null> {
     const client = await this.ensureClient();
-    const data = await client.hgetall(this.runKey(runId));
-    if (!data || Object.keys(data).length === 0) return null;
-
-    const run = this.deserializeRun(data);
-    run.pendingApprovals = await this.getPendingApprovals(runId);
-    return run;
+    const snapshot = await this.readRunSnapshot(client, runId);
+    if (!snapshot) return null;
+    snapshot.run.pendingApprovals = snapshot.approvals.filter(
+      (approval) => approval.status === "pending",
+    );
+    return snapshot.run;
   }
 
   async updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
     assertWorkflowRunUpdate(patch);
-    const client = await this.ensureClient();
-
     if (this.config.debug) logger.debug(`[RedisBackend] Updating run: ${runId}`);
 
-    const fields = this.serializeRunPatch(patch);
-    // status is written by MOVE_STATUS_SCRIPT below (atomically with its index
-    // move), so it is deliberately excluded from this plain hset.
-    if (Object.keys(fields).length > 0) await client.hset(this.runKey(runId), fields);
-
-    if (patch.status !== undefined) {
-      // Atomic status write + index move (see MOVE_STATUS_SCRIPT).
-      await client.eval(
-        MOVE_STATUS_SCRIPT,
-        [this.runKey(runId)],
-        [runId, patch.status, `${this.storagePrefix()}index:status:`],
-      );
-    }
-
-    // Terminal states should clear stale-claim markers.
-    if (patch.status && patch.status !== "running") {
-      await client.del(this.claimKey(runId));
+    const updated = await this.updateRunConditionally(
+      runId,
+      [...WORKFLOW_STATUSES],
+      patch,
+    );
+    if (!updated) {
+      const client = await this.ensureClient();
+      await this.cleanupMissingRun(client, runId);
+      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
     }
   }
 
@@ -599,121 +1092,255 @@ export class RedisBackend implements WorkflowBackend {
     const fieldArgs = Object.entries(fields).flatMap(([field, value]) => [field, value]);
     const result = await client.eval(
       UPDATE_RUN_IF_STATUS_SCRIPT,
-      [this.runKey(runId)],
+      [this.runKey(runId), this.claimKey(runId), this.runStatusMetadataKey()],
       [
         String(expectedStatuses.length),
         ...expectedStatuses,
         patch.status ?? "",
-        `${this.storagePrefix()}index:status:`,
+        this.statusIndexPrefix(),
+        this.workflowStatusIndexPrefix(),
         runId,
         expectedWorkerId ?? "",
         ...fieldArgs,
       ],
     );
-    const updated = Number(result) === 1;
-
-    if (updated && patch.status && patch.status !== "running") {
-      await client.del(this.claimKey(runId));
+    if (Number(result) === -1) {
+      throw SERVICE_OVERLOADED.create({
+        detail: `Workflow run index metadata is incomplete for run: ${runId}`,
+      });
     }
-    return updated;
+    return Number(result) === 1;
   }
 
   async deleteRun(runId: string): Promise<void> {
     const client = await this.ensureClient();
-
-    const run = await this.getRun(runId);
-    if (!run) return;
-
-    await client.del(
-      this.runKey(runId),
-      this.checkpointsKey(runId),
-      this.approvalsKey(runId),
-      this.claimKey(runId),
+    await client.eval(
+      DELETE_RUN_SCRIPT,
+      this.cleanupKeys(runId),
+      this.cleanupArgs(runId),
     );
-    await client.srem(this.statusIndexKey(run.status), runId);
-    await client.srem(this.workflowIndexKey(run.workflowId), runId);
-    await client.srem(this.allRunsIndexKey(), runId);
     this.pendingMessageIds.delete(runId);
   }
 
-  async listRuns(filter: RunFilter): Promise<WorkflowRun[]> {
-    const client = await this.ensureClient();
-
-    const statuses = filter.status
-      ? Array.isArray(filter.status) ? filter.status : [filter.status]
+  private selectRunIndexKeys(filter: RunFilter): string[] {
+    const selectedStatuses = filter.status
+      ? [...new Set(Array.isArray(filter.status) ? filter.status : [filter.status])]
       : null;
+    const includesEveryStatus = selectedStatuses?.length === WORKFLOW_STATUSES.length &&
+      WORKFLOW_STATUSES.every((status) => selectedStatuses.includes(status));
 
-    let runIds: string[] = [];
+    if (selectedStatuses?.length === 0) return [];
     if (filter.workflowId) {
-      runIds = await client.smembers(this.workflowIndexKey(filter.workflowId));
-    } else if (statuses) {
-      const all = await Promise.all(statuses.map((s) => client.smembers(this.statusIndexKey(s))));
-      runIds = [...new Set(all.flat())];
-    } else {
-      runIds = await this.enumerateAllRunIds(client);
+      if (!selectedStatuses || includesEveryStatus) {
+        return [this.workflowIndexKey(filter.workflowId)];
+      }
+      return selectedStatuses.map((status) =>
+        this.workflowStatusIndexKey(filter.workflowId!, status)
+      );
+    }
+    if (!selectedStatuses || includesEveryStatus) return [this.allRunsIndexKey()];
+    return selectedStatuses.map((status) => this.statusIndexKey(status));
+  }
+
+  private runScoreBounds(filter: RunFilter): { minScore: string; maxScore: string } {
+    const { createdAfterMs: after, createdBeforeMs: before } = resolveRunDateBounds(filter);
+    return {
+      minScore: after === undefined ? "-inf" : String(after),
+      maxScore: before === undefined ? "+inf" : String(before),
+    };
+  }
+
+  private retentionQueryKeys(indexKeys: string[]): string[] {
+    return [
+      this.retentionIndexKey(),
+      this.runWorkflowMetadataKey(),
+      this.runStatusMetadataKey(),
+      this.allRunsIndexKey(),
+      ...indexKeys,
+    ];
+  }
+
+  private retentionQueryArgs(): string[] {
+    return [
+      this.runKeyPrefix(),
+      this.checkpointsKeyPrefix(),
+      this.approvalsKeyPrefix(),
+      this.claimKeyPrefix(),
+      this.lockKeyPrefix(),
+      this.workflowIndexPrefix(),
+      this.statusIndexPrefix(),
+      this.workflowStatusIndexPrefix(),
+      String(RETENTION_CLEANUP_BATCH_SIZE),
+    ];
+  }
+
+  private throwRunQueryMaintenance(reason: unknown, processed: unknown): never {
+    const cause = reason === "index-ghost"
+      ? "an index ghost was repaired"
+      : "the retention maintenance backlog exceeds one bounded cleanup pass";
+    throw SERVICE_OVERLOADED.create({
+      detail: `Workflow Redis retention maintenance backlog prevents an exact query: ${cause}; ` +
+        `processed ${Number(processed)} entries. Run another bounded drain and retry.`,
+    });
+  }
+
+  private parseRunSnapshotRow(row: unknown): RunSnapshot {
+    if (!Array.isArray(row)) {
+      throw INVALID_ARGUMENT.create({ detail: "Invalid Redis workflow run row" });
+    }
+    const hashFields = Array.isArray(row[0])
+      ? row[0].filter((value): value is string => typeof value === "string")
+      : [];
+    const approvalRows = Array.isArray(row[1])
+      ? row[1].filter((value): value is string => typeof value === "string")
+      : [];
+    return {
+      run: this.deserializeRun(arrayToObject(hashFields)),
+      approvals: approvalRows.map((approval) => this.parseApproval(approval)),
+    };
+  }
+
+  private snapshotToRun({ run, approvals }: RunSnapshot): WorkflowRun {
+    return {
+      ...run,
+      pendingApprovals: approvals.filter((approval) => approval.status === "pending"),
+    };
+  }
+
+  private async queryRunSnapshots(filter: RunFilter): Promise<RunSnapshot[]> {
+    const { limit, offset } = resolveRunListPage(filter);
+    const indexKeys = this.selectRunIndexKeys(filter);
+    const { minScore, maxScore } = this.runScoreBounds(filter);
+    const client = await this.ensureClient();
+    const raw = await client.eval(
+      LIST_RUNS_SCRIPT,
+      this.retentionQueryKeys(indexKeys),
+      [
+        ...this.retentionQueryArgs(),
+        maxScore,
+        minScore,
+        String(offset),
+        String(limit),
+        String(indexKeys.length),
+      ],
+    );
+    if (!Array.isArray(raw) || Number(raw[0]) !== 1) {
+      if (Array.isArray(raw)) this.throwRunQueryMaintenance(raw[2], raw[1]);
+      throw INVALID_ARGUMENT.create({ detail: "Invalid Redis workflow run list response" });
+    }
+    const rows = Array.isArray(raw[2]) ? raw[2] : [];
+    return rows.map((row) => this.parseRunSnapshotRow(row));
+  }
+
+  private async queryRunSnapshotCursorPage(
+    filter: RunFilter,
+    cursor: RunSnapshotCursor | null,
+  ): Promise<CursorRunSnapshotPage> {
+    const indexKeys = this.selectRunIndexKeys(filter);
+    if (indexKeys.length !== 1) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Internal Redis workflow cursor queries require exactly one ordered index",
+      });
+    }
+    const client = await this.ensureClient();
+    const raw = await client.eval(
+      CURSOR_LIST_RUNS_SCRIPT,
+      this.retentionQueryKeys(indexKeys),
+      [
+        ...this.retentionQueryArgs(),
+        cursor?.score ?? "",
+        cursor?.member ?? "",
+        String(MAX_WORKFLOW_RUN_LIST_LIMIT),
+      ],
+    );
+    if (!Array.isArray(raw) || Number(raw[0]) !== 1) {
+      if (Array.isArray(raw)) this.throwRunQueryMaintenance(raw[2], raw[1]);
+      throw INVALID_ARGUMENT.create({ detail: "Invalid Redis workflow run cursor response" });
     }
 
-    const runs: WorkflowRun[] = [];
-    for (const runId of runIds) {
-      const run = await this.getRun(runId);
-      if (!run) continue;
-
-      if (statuses && !statuses.includes(run.status)) continue;
-      if (filter.createdAfter && run.createdAt < filter.createdAfter) continue;
-      if (filter.createdBefore && run.createdAt > filter.createdBefore) continue;
-
-      runs.push(run);
+    const rows = Array.isArray(raw[2]) ? raw[2] : [];
+    const nextScore = raw[3];
+    const nextMember = raw[4];
+    const resetValue = Number(raw[5]);
+    if (
+      typeof nextScore !== "string" ||
+      typeof nextMember !== "string" ||
+      (nextScore === "") !== (nextMember === "") ||
+      (resetValue !== 0 && resetValue !== 1)
+    ) {
+      throw INVALID_ARGUMENT.create({ detail: "Invalid Redis workflow run cursor response" });
     }
 
-    runs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    return {
+      snapshots: rows.map((row) => this.parseRunSnapshotRow(row)),
+      nextCursor: nextMember === "" ? null : { score: nextScore, member: nextMember },
+      cursorReset: resetValue === 1,
+    };
+  }
 
-    let result = runs;
-    if (filter.offset) result = result.slice(filter.offset);
-    if (filter.limit) result = result.slice(0, filter.limit);
+  private async scanRunSnapshots(filter: RunFilter): Promise<RunSnapshot[]> {
+    const snapshots: RunSnapshot[] = [];
+    const seenRunIds = new Set<string>();
+    let cursor: RunSnapshotCursor | null = null;
+    let cursorRestarts = 0;
 
-    return result;
+    while (true) {
+      const page = await this.queryRunSnapshotCursorPage(filter, cursor);
+      if (page.cursorReset && ++cursorRestarts > MAX_INTERNAL_CURSOR_RESTARTS) {
+        throw SERVICE_OVERLOADED.create({
+          detail:
+            "Workflow Redis ordered index changed too frequently to complete a bounded cursor scan; retry the operation",
+        });
+      }
+      for (const snapshot of page.snapshots) {
+        if (seenRunIds.has(snapshot.run.id)) continue;
+        seenRunIds.add(snapshot.run.id);
+        snapshots.push(snapshot);
+      }
+      if (page.snapshots.length < MAX_WORKFLOW_RUN_LIST_LIMIT) return snapshots;
+      if (!page.nextCursor) {
+        throw INVALID_ARGUMENT.create({ detail: "Invalid Redis workflow run cursor response" });
+      }
+      cursor = page.nextCursor;
+    }
+  }
+
+  async listRuns(filter: RunFilter): Promise<WorkflowRun[]> {
+    const snapshots = await this.queryRunSnapshots(filter);
+    return snapshots.map((snapshot) => this.snapshotToRun(snapshot));
   }
 
   async countRuns(filter: RunFilter): Promise<number> {
-    // Date filters need each run's createdAt, so fall back to materializing.
-    if (filter.createdAfter || filter.createdBefore) {
-      const runs = await this.listRuns({ ...filter, limit: undefined, offset: undefined });
-      return runs.length;
-    }
-
-    // Otherwise count membership of the index sets (ids only) rather than
-    // fetching and deserializing every run.
+    const indexKeys = this.selectRunIndexKeys(filter);
+    const { minScore, maxScore } = this.runScoreBounds(filter);
     const client = await this.ensureClient();
-    const statuses = filter.status
-      ? Array.isArray(filter.status) ? filter.status : [filter.status]
-      : null;
-
-    if (filter.workflowId && statuses) {
-      const wfIds = new Set(await client.smembers(this.workflowIndexKey(filter.workflowId)));
-      const statusIds = (await Promise.all(
-        statuses.map((s) => client.smembers(this.statusIndexKey(s))),
-      )).flat();
-      return new Set(statusIds.filter((id) => wfIds.has(id))).size;
+    const raw = await client.eval(
+      COUNT_RUNS_SCRIPT,
+      this.retentionQueryKeys(indexKeys),
+      [
+        ...this.retentionQueryArgs(),
+        maxScore,
+        minScore,
+        String(indexKeys.length),
+      ],
+    );
+    if (!Array.isArray(raw) || Number(raw[0]) !== 1) {
+      if (Array.isArray(raw)) this.throwRunQueryMaintenance(raw[2], raw[1]);
+      throw INVALID_ARGUMENT.create({ detail: "Invalid Redis workflow run count response" });
     }
+    return Number(raw[2]);
+  }
 
-    if (filter.workflowId) {
-      return (await client.smembers(this.workflowIndexKey(filter.workflowId))).length;
-    }
-
-    if (statuses) {
-      const all = await Promise.all(statuses.map((s) => client.smembers(this.statusIndexKey(s))));
-      return new Set(all.flat()).size;
-    }
-
-    return (await this.enumerateAllRunIds(client)).length;
+  /** Process one bounded batch from the run-retention ledger. */
+  async drainExpiredRuns(): Promise<RedisRetentionDrainResult> {
+    return await this.cleanupExpiredRuns(await this.ensureClient());
   }
 
   async saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
-    const client = await this.ensureClient();
-
     if (this.config.debug) logger.debug(`[RedisBackend] Saving checkpoint: ${checkpoint.id}`);
 
-    await client.rpush(
+    await this.appendRunState(
+      runId,
       this.checkpointsKey(runId),
       JSON.stringify({ ...checkpoint, timestamp: checkpoint.timestamp.toISOString() }),
     );
@@ -755,11 +1382,10 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async savePendingApproval(runId: string, approval: PendingApproval): Promise<void> {
-    const client = await this.ensureClient();
-
     if (this.config.debug) logger.debug(`[RedisBackend] Saving approval: ${approval.id}`);
 
-    await client.rpush(
+    await this.appendRunState(
+      runId,
       this.approvalsKey(runId),
       this.serializeApproval(approval),
     );
@@ -790,10 +1416,41 @@ export class RedisBackend implements WorkflowBackend {
     };
   }
 
+  private async readRunSnapshot(
+    client: RedisAdapter,
+    runId: string,
+  ): Promise<RunSnapshot | null> {
+    const raw = await client.eval(
+      READ_RUN_SNAPSHOT_SCRIPT,
+      [this.runKey(runId), this.approvalsKey(runId)],
+      [],
+    );
+    if (!Array.isArray(raw)) {
+      throw INVALID_ARGUMENT.create({ detail: "Invalid Redis workflow run snapshot response" });
+    }
+
+    const hashFields = Array.isArray(raw[0])
+      ? raw[0].filter((value): value is string => typeof value === "string")
+      : [];
+    if (hashFields.length === 0) {
+      await this.cleanupMissingRun(client, runId);
+      return null;
+    }
+    const approvalRows = Array.isArray(raw[1])
+      ? raw[1].filter((value): value is string => typeof value === "string")
+      : [];
+
+    return {
+      run: this.deserializeRun(arrayToObject(hashFields)),
+      approvals: approvalRows.map((row) => this.parseApproval(row)),
+    };
+  }
+
   async getPendingApprovals(runId: string): Promise<PendingApproval[]> {
     const client = await this.ensureClient();
-    const rawList = await client.lrange(this.approvalsKey(runId), 0, -1);
-    return rawList.map((raw) => this.parseApproval(raw)).filter((a) => a.status === "pending");
+    const snapshot = await this.readRunSnapshot(client, runId);
+    if (!snapshot) return [];
+    return snapshot.approvals.filter((approval) => approval.status === "pending");
   }
 
   async getPendingApproval(runId: string, approvalId: string): Promise<PendingApproval | null> {
@@ -856,25 +1513,11 @@ export class RedisBackend implements WorkflowBackend {
     approver?: string;
     status?: "pending" | "expired";
   }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
-    const client = await this.ensureClient();
     const result: Array<{ runId: string; approval: PendingApproval }> = [];
-
-    const approvalsPrefix = `${this.storagePrefix()}approvals:`;
-    const keys = await client.keys(`${approvalsPrefix}*`);
-
-    for (const key of keys) {
-      const runId = key.replace(approvalsPrefix, "");
-
-      if (filter?.workflowId) {
-        const run = await this.getRun(runId);
-        if (!run || run.workflowId !== filter.workflowId) continue;
-      }
-
-      const rawList = await client.lrange(key, 0, -1);
-
-      for (const raw of rawList) {
-        const approval = this.parseApproval(raw);
-
+    const snapshots = await this.scanRunSnapshots({ workflowId: filter?.workflowId });
+    for (const snapshot of snapshots) {
+      const runId = snapshot.run.id;
+      for (const approval of snapshot.approvals) {
         if (filter?.status === "pending" && approval.status !== "pending") continue;
         if (filter?.status === "expired") {
           const isExpired = approval.expiresAt && new Date() > approval.expiresAt;
@@ -1020,7 +1663,9 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async findStalledRuns(stalledThreshold: number): Promise<WorkflowRun[]> {
-    const runs = await this.listRuns({ status: "running" });
+    const runs = (await this.scanRunSnapshots({ status: "running" })).map((snapshot) =>
+      this.snapshotToRun(snapshot)
+    );
     const now = Date.now();
 
     return runs.filter((run) => {

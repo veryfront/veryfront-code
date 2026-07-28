@@ -100,7 +100,11 @@ export { hasWorkerSupport } from "./backends/types.ts";
 export { MemoryBackend } from "./backends/memory.ts";
 
 export { RedisBackend } from "./backends/redis.ts";
-export type { RedisAdapter, RedisBackendConfig } from "./backends/redis.ts";
+export type {
+  RedisAdapter,
+  RedisBackendConfig,
+  RedisRetentionDrainResult,
+} from "./backends/redis.ts";
 
 // =============================================================================
 // Client API

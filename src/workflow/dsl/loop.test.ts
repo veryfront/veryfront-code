@@ -30,11 +30,11 @@ describe("workflow/dsl/loop", () => {
       const node = loop("my-loop", {
         while: () => true,
         steps: [],
-        maxIterations: 50,
+        maxIterations: 100,
       });
 
       const config = expectLoopConfig(node);
-      assertEquals(config.maxIterations, 50);
+      assertEquals(config.maxIterations, 100);
     });
 
     it("should throw for empty id", () => {
@@ -75,6 +75,23 @@ describe("workflow/dsl/loop", () => {
         Error,
         "cannot exceed 100",
       );
+    });
+
+    it("should reject non-finite and non-integer maxIterations", () => {
+      for (
+        const maxIterations of [
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          1.5,
+          Number.MAX_SAFE_INTEGER + 1,
+        ]
+      ) {
+        assertThrows(
+          () => loop("test", { while: () => true, steps: [], maxIterations }),
+          Error,
+          "positive safe integer",
+        );
+      }
     });
 
     it("should allow checkpoint false", () => {

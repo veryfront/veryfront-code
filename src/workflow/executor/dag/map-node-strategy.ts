@@ -1,17 +1,11 @@
-import type {
-  MapNodeConfig,
-  NodeState,
-  WorkflowContext,
-  WorkflowDefinition,
-  WorkflowNode,
-  WorkflowNodeConfig,
-} from "../../types.ts";
+import type { MapNodeConfig, NodeState, WorkflowContext, WorkflowNode } from "../../types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { NodeExecutionResult } from "./types.ts";
 import { deriveNodeStatus } from "./utils.ts";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 import { applyRecordPatch, createRecordPatch, createSetContextPatch } from "./context-patch.ts";
+import { createMapChildNodes } from "./node-identity.ts";
 
 interface ExecuteMapNodeStrategyInput {
   node: WorkflowNode;
@@ -20,41 +14,6 @@ interface ExecuteMapNodeStrategyInput {
   nodeStates: Record<string, NodeState>;
   runtime: NodeStrategyRuntime;
   abortSignal?: AbortSignal;
-}
-
-function isWorkflowDefinition(processor: unknown): processor is WorkflowDefinition {
-  return typeof processor === "object" && processor !== null && "steps" in processor;
-}
-
-function createMapChildNodes(
-  node: WorkflowNode,
-  config: MapNodeConfig,
-  items: unknown[],
-): WorkflowNode[] {
-  return items.map((item, i) => {
-    const childId = `${node.id}_${i}`;
-
-    if (isWorkflowDefinition(config.processor)) {
-      return {
-        id: childId,
-        config: {
-          type: "subWorkflow",
-          workflow: config.processor,
-          input: item,
-          retry: config.retry,
-          checkpoint: false,
-        },
-      };
-    }
-
-    const processorConfig: WorkflowNodeConfig = { ...(config.processor as WorkflowNode).config };
-
-    if (processorConfig.type === "step") {
-      processorConfig.input = item as Record<string, unknown>;
-    }
-
-    return { id: childId, config: processorConfig };
-  });
 }
 
 export async function executeMapNodeStrategy(

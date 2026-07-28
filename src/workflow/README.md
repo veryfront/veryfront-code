@@ -278,17 +278,94 @@ must compare the run status and worker ID atomically with its write. `WorkflowWo
 backend that omits these owner-fencing operations because an older worker could otherwise overwrite
 a replacement worker's progress.
 
-### Redis schema cutovers
+### Redis run queries and retention maintenance
 
-`RedisBackend` preserves the configured key, stream, and consumer-group values as deployment base
-names and appends a versioned storage namespace (currently `schema-v1`) to run, index, checkpoint,
-approval, lock, claim, queue, and consumer-group state. Readers and workers inspect only their exact
-schema namespace. They do not read, migrate, or backfill unversioned rows or queue entries.
+The built-in Memory and Redis backends return runs in stable `(createdAt DESC, id DESC)` order. Run
+IDs at equal creation times use Redis's UTF-8 byte ordering. `listRuns()` defaults to 100 rows and
+accepts at most 1,000 rows per call. Its public `offset` range is 0 through 10,000, inclusive. Callers
+must use an explicit offset in that range to fetch later pages. Creation-time boundaries are
+inclusive. A run snapshot and its live pending approvals come from one backend snapshot; returned
+objects are detached from backend storage.
 
-Before releasing a storage-schema change, stop new workflow intake, let the old workers drain every
-pending or running workflow in the old namespace, and then stop those workers. Deploy all Redis
-workflow readers and writers together only after that drain completes. Old rows remain intentionally
-invisible to the new release and may be removed later according to the deployment's retention policy.
+Each Redis page is read by one atomic `EVAL`, but a multi-page traversal is not one global snapshot.
+Internal approval and stalled-run polling use bounded `(score, runId)` cursor pages and de-duplicate
+run IDs when a missing or changed cursor forces a restart. Runs inserted before the current cursor,
+and runs that move between status or workflow indexes during traversal, may appear in a later polling
+cycle.
+
+Redis list and count operations are exact. Each query first performs one bounded retention-cleanup
+pass of at most 128 due entries. If more cleanup is already due, or if the query repairs an index
+ghost, the operation fails with the retryable `service-overloaded` error (HTTP `503`) instead of
+returning a partial or stale answer. Run bounded maintenance on a schedule and alert whenever the
+backlog survives the allowed passes:
+
+```typescript
+const MAX_DRAIN_PASSES_PER_TICK = 8;
+
+for (let pass = 0; pass < MAX_DRAIN_PASSES_PER_TICK; pass++) {
+  const result = await backend.drainExpiredRuns();
+  // Export `result.processed` and `result.hasMoreDue` to your metrics backend here.
+  if (!result.hasMoreDue) break;
+}
+```
+
+Schedule the bounded loop more frequently than the configured retention horizon. Treat a persistent
+`hasMoreDue` value or query `503` as an operational backlog: continue draining and retry the query
+with backoff. Do not convert the error to an empty list or approximate count.
+
+### Redis schema-v2 cutovers
+
+`RedisBackend` preserves configured key, stream, and consumer-group values as deployment base names
+and appends the versioned `schema-v2` namespace. Readers and workers inspect only their exact schema
+namespace. They do not dual-read, migrate, or backfill unversioned or `schema-v1` rows and queue
+entries. A mixed v1/v2 deployment therefore splits run state and is unsupported.
+
+Run creation is create-only in both built-in backends. Reusing a live run ID rejects with the
+structured `workflow-run-conflict` error (HTTP status `409`) and leaves the original run and its
+indexes unchanged. Redis publishes the run hash, status/workflow/all-run indexes, retention metadata,
+and optional hash TTL in one Lua operation, so readers cannot observe a partially created run.
+
+When `runTtl` is configured, checkpoints and approvals inherit the run's remaining retention horizon
+instead of starting a new TTL when they are written. Redis keeps an ordered deadline index plus the
+workflow and status metadata needed for targeted cleanup without scanning the keyspace. Run reads,
+listings, counts, and deletes recheck missing hashes inside atomic cleanup scripts, so lazy expiry
+cannot leave countable ghosts or delete a concurrently recreated run. List and count operations use
+the ordered v2 indexes and never enumerate the entire run population with `SMEMBERS` or `KEYS`.
+
+Both built-in backends reject unconditional checkpoint or approval writes when the owning run does
+not exist. Owner-fenced checkpoint writes may use a synthetic storage run ID, but their lifetime and
+permission remain tied to the existing canonical ownership run.
+
+These atomic run-state scripts require one logical Redis keyspace. The built-in adapter supports a
+standalone Redis endpoint. Redis Sentinel and Redis Cluster are not currently supported: the built-in
+adapter does not expose Sentinel discovery, and the scripts derive status and workflow index keys from
+stored run data, so a hash-tagged prefix alone does not satisfy Redis Cluster's requirement that every
+accessed key be declared to `EVAL`. Use a standalone Redis endpoint or provide a different
+`WorkflowBackend` implementation.
+
+For the default configuration, v2 state is rooted at `vf:workflow:schema-v2:` and the queue and group
+are `vf:workflow:stream:schema-v2` and `vf:workflow:workers:schema-v2`. Custom `prefix`, `streamKey`,
+and `groupName` values retain the same suffix rules. Inspect only these known keys; do not use `KEYS`
+against a production Redis instance.
+
+Use this deployment protocol for the v1-to-v2 cutover:
+
+1. Stop new workflow intake while the v1 fleet remains healthy.
+2. Let v1 workers finish or explicitly cancel every `pending`, `running`, and `waiting` run. With the
+   default prefix, verify the three `vf:workflow:schema-v1:index:status:<status>` sets with `SCARD`.
+3. Verify `XPENDING vf:workflow:stream:schema-v1 vf:workflow:workers:schema-v1` reports zero pending
+   messages and `XINFO GROUPS vf:workflow:stream:schema-v1` reports zero lag for the v1 group. Stream
+   length need not be zero because acknowledged entries may remain in stream history.
+4. Stop every v1 worker and reader. Deploy all v2 readers and writers together, then reopen intake.
+5. Monitor query `503` rates, retention backlog, v2 queue lag, and pending counts. Keep v1 data and a
+   pre-cutover backup for the rollback window; remove them only under the normal retention policy.
+
+Rollback is another coordinated cutover. Stop intake, drain or cancel all active v2 runs, verify the
+three `vf:workflow:schema-v2:index:created:status:<status>` sorted indexes with `ZCARD`, and verify
+zero pending/lag for the v2 stream and group. Then stop every v2 process and deploy all v1 readers
+and writers together. Never run v1 and v2 workflow processes concurrently. If an emergency prevents
+a v2 drain, the only safe v1 rollback is restoring the pre-cutover Redis backup and accepting the
+documented loss of post-cutover v2 work; v1 cannot consume v2 state.
 
 ### Run Executors
 

@@ -70,6 +70,11 @@ export interface Lock {
 
 /** Public API contract for workflow backend. */
 export interface WorkflowBackend {
+  /**
+   * Persist a new immutable run snapshot. Implementations must create only
+   * when `run.id` is absent and reject conflicts without changing the existing
+   * run or any indexes.
+   */
   createRun(run: WorkflowRun): Promise<void>;
   getRun(runId: string): Promise<WorkflowRun | null>;
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void>;
@@ -90,6 +95,7 @@ export interface WorkflowBackend {
   listRuns(filter: RunFilter): Promise<WorkflowRun[]>;
   countRuns?(filter: RunFilter): Promise<number>;
 
+  /** Append a checkpoint to an existing run; reject when the run does not exist. */
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void>;
   /** Append a checkpoint only while the canonical run status and worker owner match. */
   saveCheckpointIfStatusAndWorker?(
@@ -104,6 +110,7 @@ export interface WorkflowBackend {
   deleteCheckpoint?(runId: string, checkpointId: string): Promise<void>;
   deleteCheckpoints?(runId: string, checkpointIds: string[]): Promise<void>;
 
+  /** Append an approval to an existing run; reject when the run does not exist. */
   savePendingApproval(runId: string, approval: PendingApproval): Promise<void>;
   /** Append an approval only while the run status and worker owner match. */
   savePendingApprovalIfStatusAndWorker?(

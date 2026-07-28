@@ -15,6 +15,7 @@ import type {
 } from "../types.ts";
 import { workflowRegistry } from "../registry.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { validateExecutionPolicy } from "./validation.ts";
 
 export type { Workflow } from "../types.ts";
 
@@ -46,6 +47,7 @@ export function workflow<TInput = unknown, TOutput = unknown>(
   if (!options.steps) {
     throw INVALID_ARGUMENT.create({ detail: `Workflow "${options.id}" must have 'steps'` });
   }
+  const policy = validateExecutionPolicy(`Workflow "${options.id}"`, options);
 
   const definition: WorkflowDefinition<TInput, TOutput> = {
     id: options.id,
@@ -53,8 +55,8 @@ export function workflow<TInput = unknown, TOutput = unknown>(
     version: options.version,
     inputSchema: options.inputSchema,
     outputSchema: options.outputSchema,
-    retry: options.retry,
-    timeout: options.timeout,
+    retry: policy.retry,
+    timeout: policy.timeout,
     introspect: options.introspect,
     steps: options.steps,
     onError: options.onError,

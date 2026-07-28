@@ -21,8 +21,9 @@ import {
   type WorkflowRunUpdate,
 } from "./types.ts";
 import { requeueRun } from "./shared/requeue-run.ts";
-import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND, WORKFLOW_RUN_CONFLICT } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
+import { compareRunIdsDescending, resolveRunDateBounds, resolveRunListPage } from "./run-filter.ts";
 
 const logger = baseLogger.component("memory-backend");
 
@@ -68,13 +69,21 @@ export class MemoryBackend implements WorkflowBackend {
     } catch (error) {
       return Promise.reject(error);
     }
-    this.runs.set(run.id, structuredClone({ ...run, sourceIntegrationPolicy }));
+    if (this.runs.has(run.id)) {
+      return Promise.reject(
+        WORKFLOW_RUN_CONFLICT.create({ detail: `Workflow run already exists: ${run.id}` }),
+      );
+    }
+    this.runs.set(
+      run.id,
+      structuredClone({ ...run, pendingApprovals: [], sourceIntegrationPolicy }),
+    );
     return Promise.resolve();
   }
 
   getRun(runId: string): Promise<WorkflowRun | null> {
     const run = this.runs.get(runId);
-    return Promise.resolve(run ? structuredClone(run) : null);
+    return Promise.resolve(run ? this.snapshotRun(run) : null);
   }
 
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
@@ -93,11 +102,12 @@ export class MemoryBackend implements WorkflowBackend {
 
     logger.debug(`Updating run: ${runId}`, patch);
 
+    const clonedPatch = structuredClone(patch);
     const updated: WorkflowRun = {
       ...run,
-      ...patch,
-      nodeStates: { ...run.nodeStates, ...patch.nodeStates },
-      context: { ...run.context, ...patch.context },
+      ...clonedPatch,
+      nodeStates: clonedPatch.nodeStates ?? run.nodeStates,
+      context: clonedPatch.context ?? run.context,
     };
 
     this.runs.set(runId, updated);
@@ -151,7 +161,9 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve();
   }
 
-  listRuns(filter: RunFilter): Promise<WorkflowRun[]> {
+  async listRuns(filter: RunFilter): Promise<WorkflowRun[]> {
+    const { limit, offset } = resolveRunListPage(filter);
+    const { createdAfterMs, createdBeforeMs } = resolveRunDateBounds(filter);
     let runs = Array.from(this.runs.values());
 
     if (filter.workflowId) {
@@ -163,27 +175,35 @@ export class MemoryBackend implements WorkflowBackend {
       runs = runs.filter((r) => statuses.includes(r.status));
     }
 
-    if (filter.createdAfter) {
-      const createdAfter = filter.createdAfter;
-      runs = runs.filter((r) => r.createdAt >= createdAfter);
+    if (createdAfterMs !== undefined) {
+      runs = runs.filter((run) => run.createdAt.getTime() >= createdAfterMs);
     }
 
-    if (filter.createdBefore) {
-      const createdBefore = filter.createdBefore;
-      runs = runs.filter((r) => r.createdAt <= createdBefore);
+    if (createdBeforeMs !== undefined) {
+      runs = runs.filter((run) => run.createdAt.getTime() <= createdBeforeMs);
     }
 
-    runs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    runs.sort((a, b) => {
+      const timeOrder = b.createdAt.getTime() - a.createdAt.getTime();
+      if (timeOrder !== 0) return timeOrder;
+      return compareRunIdsDescending(a.id, b.id);
+    });
 
-    const start = filter.offset ?? 0;
-    const end = filter.limit ? start + filter.limit : undefined;
-    runs = runs.slice(start, end);
+    runs = runs.slice(offset, offset + limit);
 
-    return Promise.resolve(runs.map((r) => structuredClone(r)));
+    return runs.map((run) => this.snapshotRun(run));
   }
 
-  countRuns(filter: RunFilter): Promise<number> {
+  private snapshotRun(run: WorkflowRun): WorkflowRun {
+    const pendingApprovals = (this.approvals.get(run.id) ?? []).filter(
+      (approval) => approval.status === "pending",
+    );
+    return structuredClone({ ...run, pendingApprovals });
+  }
+
+  async countRuns(filter: RunFilter): Promise<number> {
     // Count in place — no structuredClone per run (unlike listRuns).
+    const { createdAfterMs, createdBeforeMs } = resolveRunDateBounds(filter);
     const statuses = filter.status
       ? Array.isArray(filter.status) ? filter.status : [filter.status]
       : null;
@@ -192,12 +212,12 @@ export class MemoryBackend implements WorkflowBackend {
     for (const run of this.runs.values()) {
       if (filter.workflowId && run.workflowId !== filter.workflowId) continue;
       if (statuses && !statuses.includes(run.status)) continue;
-      if (filter.createdAfter && run.createdAt < filter.createdAfter) continue;
-      if (filter.createdBefore && run.createdAt > filter.createdBefore) continue;
+      if (createdAfterMs !== undefined && run.createdAt.getTime() < createdAfterMs) continue;
+      if (createdBeforeMs !== undefined && run.createdAt.getTime() > createdBeforeMs) continue;
       count++;
     }
 
-    return Promise.resolve(count);
+    return count;
   }
 
   // =========================================================================
@@ -205,6 +225,9 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
+    if (!this.runs.has(runId)) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
     logger.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
     const checkpoints = this.checkpoints.get(runId) ?? [];
     checkpoints.push(structuredClone(checkpoint));
@@ -273,6 +296,9 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   savePendingApproval(runId: string, approval: PendingApproval): Promise<void> {
+    if (!this.runs.has(runId)) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
     logger.debug("Saving approval", { approvalId: approval.id, runId });
     const approvals = this.approvals.get(runId) ?? [];
     approvals.push(structuredClone(approval));

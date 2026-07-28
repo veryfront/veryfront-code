@@ -109,7 +109,7 @@ export async function executeLoopNodeStrategy(
     runtime.abortSignal?.throwIfAborted();
 
     if (result.waiting) {
-      applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
+      applyRecordPatch(nodeStates, createRecordPatch({}, result.nodeStates));
 
       const state: NodeState = {
         nodeId: node.id,
@@ -145,7 +145,7 @@ export async function executeLoopNodeStrategy(
 
     previousResults.push(result.context);
     applyContextPatch(context, result.contextPatch);
-    applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
+    applyRecordPatch(nodeStates, createRecordPatch({}, result.nodeStates));
 
     if (config.delay && iteration < config.maxIterations - 1) {
       const delayMs = typeof config.delay === "number" ? config.delay : parseDuration(config.delay);

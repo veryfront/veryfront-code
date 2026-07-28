@@ -4,6 +4,7 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { registerWorkflowBackendSnapshotContract } from "./conformance.test-utils.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -42,6 +43,8 @@ describe("MemoryBackend", () => {
     backend = new MemoryBackend();
   });
 
+  registerWorkflowBackendSnapshotContract("Memory", () => backend);
+
   describe("Run Management", () => {
     it("should create and retrieve a run", async () => {
       await backend.createRun(createTestRun("run-1"));
@@ -51,6 +54,69 @@ describe("MemoryBackend", () => {
       assertEquals(retrieved.id, "run-1");
       assertEquals(retrieved.workflowId, "test-workflow");
       assertEquals(retrieved.status, "pending");
+    });
+
+    it("rejects repeated creates without overwriting the original run", async () => {
+      const original = createTestRun("run-duplicate", {
+        workflowId: "original-workflow",
+        status: "pending",
+        input: { owner: "original" },
+      });
+      const replacement = createTestRun("run-duplicate", {
+        workflowId: "replacement-workflow",
+        status: "running",
+        input: { owner: "replacement" },
+      });
+
+      await backend.createRun(original);
+      const conflicts = await Promise.allSettled([
+        backend.createRun(replacement),
+        backend.createRun(replacement),
+      ]);
+
+      assertEquals(conflicts.map((result) => result.status), ["rejected", "rejected"]);
+      for (const conflict of conflicts) {
+        if (conflict.status !== "rejected") throw new Error("Expected create conflict");
+        assertEquals(conflict.reason instanceof Error, true);
+        assertEquals(conflict.reason.message, "Workflow run already exists: run-duplicate");
+        assertEquals(conflict.reason.status, 409);
+        assertEquals(conflict.reason.slug, "workflow-run-conflict");
+      }
+
+      const stored = await backend.getRun(original.id);
+      assertEquals(stored?.workflowId, "original-workflow");
+      assertEquals(stored?.status, "pending");
+      assertEquals(stored?.input, { owner: "original" });
+      assertEquals((await backend.listRuns({})).map((run) => run.id), [original.id]);
+      assertEquals(await backend.countRuns({}), 1);
+    });
+
+    it("allows exactly one concurrent create for a new run id", async () => {
+      const first = createTestRun("run-concurrent-create", {
+        workflowId: "workflow-first",
+        input: { owner: "first" },
+      });
+      const second = createTestRun("run-concurrent-create", {
+        workflowId: "workflow-second",
+        status: "running",
+        input: { owner: "second" },
+      });
+
+      const results = await Promise.allSettled([
+        backend.createRun(first),
+        backend.createRun(second),
+      ]);
+
+      assertEquals(results.filter((result) => result.status === "fulfilled").length, 1);
+      assertEquals(results.filter((result) => result.status === "rejected").length, 1);
+      const stored = await backend.getRun(first.id);
+      assertExists(stored);
+      assertEquals((await backend.listRuns({})).map((run) => run.id), [first.id]);
+      assertEquals(await backend.countRuns({}), 1);
+      assertEquals(
+        await backend.countRuns({ workflowId: stored.workflowId, status: stored.status }),
+        1,
+      );
     });
 
     it("rejects a malformed source policy before persisting a run", async () => {
@@ -156,6 +222,7 @@ describe("MemoryBackend", () => {
 
   describe("Checkpointing", () => {
     it("should save and retrieve checkpoints", async () => {
+      await backend.createRun(createTestRun("run-1"));
       await backend.saveCheckpoint("run-1", createCheckpoint("cp-1", "step-1", new Date()));
 
       const latest = await backend.getLatestCheckpoint("run-1");
@@ -165,6 +232,7 @@ describe("MemoryBackend", () => {
     });
 
     it("should return latest checkpoint", async () => {
+      await backend.createRun(createTestRun("run-1"));
       await backend.saveCheckpoint(
         "run-1",
         createCheckpoint("cp-1", "step-1", new Date(Date.now() - 1000)),
@@ -176,6 +244,18 @@ describe("MemoryBackend", () => {
 
     it("should return null for no checkpoints", async () => {
       assertEquals(await backend.getLatestCheckpoint("no-checkpoints"), null);
+    });
+
+    it("rejects checkpoints for a missing run", async () => {
+      await assertRejects(
+        () =>
+          backend.saveCheckpoint(
+            "missing-run",
+            createCheckpoint("cp-missing", "step-missing", new Date()),
+          ),
+        Error,
+        "Run not found: missing-run",
+      );
     });
 
     it("should condition checkpoint appends on the canonical run owner", async () => {
@@ -222,6 +302,7 @@ describe("MemoryBackend", () => {
         requestedAt: new Date(),
       };
 
+      await backend.createRun(createTestRun("run-1"));
       await backend.savePendingApproval("run-1", approval);
 
       const approvals = await backend.getPendingApprovals("run-1");
@@ -240,6 +321,7 @@ describe("MemoryBackend", () => {
         requestedAt: new Date(),
       };
 
+      await backend.createRun(createTestRun("run-2"));
       await backend.savePendingApproval("run-2", approval);
 
       await backend.updateApproval("run-2", "approval-2", {
@@ -252,6 +334,21 @@ describe("MemoryBackend", () => {
       assertEquals(updatedApproval?.status, "approved");
       assertEquals(updatedApproval?.decidedBy, "admin@example.com");
       assertEquals(updatedApproval?.comment, "Looks good!");
+    });
+
+    it("rejects approvals for a missing run", async () => {
+      await assertRejects(
+        () =>
+          backend.savePendingApproval("missing-run", {
+            id: "approval-missing",
+            nodeId: "review",
+            status: "pending",
+            message: "Review needed",
+            requestedAt: new Date(),
+          }),
+        Error,
+        "Run not found: missing-run",
+      );
     });
 
     it("should condition approval appends on owner and patch notification metadata", async () => {

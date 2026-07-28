@@ -6,7 +6,11 @@ import type {
   WorkflowDefinition,
   WorkflowNode,
 } from "../types.ts";
-import { validateNodeId } from "./validation.ts";
+import {
+  validateExecutionPolicy,
+  validateNodeId,
+  validatePositiveSafeInteger,
+} from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Options accepted by map. */
@@ -32,15 +36,20 @@ export function map(id: string, options: MapOptions): WorkflowNode {
       detail: `Map node "${id}" must have a 'processor' configured`,
     });
   }
+  const concurrency = options.concurrency;
+  if (concurrency !== undefined) {
+    validatePositiveSafeInteger(concurrency, `Map node "${id}" concurrency`);
+  }
+  const policy = validateExecutionPolicy(`Map node "${id}"`, options);
 
   const config: MapNodeConfig = {
     type: "map",
     items: options.items,
     processor: options.processor,
-    concurrency: options.concurrency,
+    concurrency,
     checkpoint: options.checkpoint ?? true,
-    retry: options.retry,
-    timeout: options.timeout,
+    retry: policy.retry,
+    timeout: policy.timeout,
     skip: options.skip,
   };
 

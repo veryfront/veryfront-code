@@ -8,4 +8,4 @@ export { hasEventSupport, hasLockSupport, hasQueueSupport } from "./types.ts";
 export { MemoryBackend } from "./memory.ts";
 
 export { RedisBackend } from "./redis.ts";
-export type { RedisBackendConfig } from "./redis.ts";
+export type { RedisBackendConfig, RedisRetentionDrainResult } from "./redis.ts";

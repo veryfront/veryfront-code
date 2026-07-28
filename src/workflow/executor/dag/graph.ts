@@ -17,6 +17,12 @@ export function buildGraph(nodes: WorkflowNode[]): DAGGraph {
   const nodeMap = new Map<string, WorkflowNode>();
 
   for (const node of nodes) {
+    if (nodeMap.has(node.id)) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Workflow DAG contains duplicate node ID "${node.id}"`,
+      });
+    }
+
     adjList.set(node.id, []);
     inDegree.set(node.id, 0);
     nodeMap.set(node.id, node);

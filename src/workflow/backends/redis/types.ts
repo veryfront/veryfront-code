@@ -9,6 +9,14 @@
 import type { BackendConfig } from "../types.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 
+/** Result of one bounded Redis retention-maintenance pass. */
+export interface RedisRetentionDrainResult {
+  /** Retention ledger entries examined during this pass. */
+  processed: number;
+  /** Whether another already-due entry remains and another pass is required. */
+  hasMoreDue: boolean;
+}
+
 // Re-export platform types for convenience
 export type {
   NodeRedisClient,
@@ -20,7 +28,10 @@ export type {
  * Redis backend configuration
  */
 export interface RedisBackendConfig extends BackendConfig {
-  /** Redis connection URL or config */
+  /**
+   * Redis connection URL or config for one standalone Redis keyspace. Redis
+   * Sentinel and Redis Cluster are not supported by the built-in adapter.
+   */
   url?: string;
   /** Redis hostname */
   hostname?: string;
@@ -34,7 +45,13 @@ export interface RedisBackendConfig extends BackendConfig {
   groupName?: string;
   /** Consumer name (unique per worker) */
   consumerName?: string;
-  /** Default TTL for runs (in seconds) */
+  /**
+   * Run retention horizon in whole seconds. Positive values expire the run
+   * hash and cap checkpoints and approvals at the same absolute horizon; index
+   * metadata is removed by targeted lazy cleanup after the deadline. Omit or
+   * use `0` to retain runs until explicit deletion. Negative, fractional, and
+   * unrepresentable values are rejected during construction.
+   */
   runTtl?: number;
   /** Enable debug logging */
   debug?: boolean;

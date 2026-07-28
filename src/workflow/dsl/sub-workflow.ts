@@ -5,7 +5,7 @@ import type {
   WorkflowDefinition,
   WorkflowNode,
 } from "../types.ts";
-import { validateNodeId } from "./validation.ts";
+import { validateExecutionPolicy, validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Options accepted by sub workflow. */
@@ -24,13 +24,14 @@ export function subWorkflow(id: string, options: SubWorkflowOptions): WorkflowNo
       detail: `SubWorkflow node "${id}" must have a 'workflow' configured`,
     });
   }
+  const policy = validateExecutionPolicy(`SubWorkflow node "${id}"`, options);
 
   const config: SubWorkflowNodeConfig = {
     type: "subWorkflow",
     workflow: options.workflow,
     checkpoint: options.checkpoint,
-    retry: options.retry,
-    timeout: options.timeout,
+    retry: policy.retry,
+    timeout: policy.timeout,
     skip: options.skip,
     input: options.input,
     output: options.output,

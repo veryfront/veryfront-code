@@ -7,4 +7,4 @@
  */
 
 export { RedisBackend } from "./redis/index.ts";
-export type { RedisAdapter, RedisBackendConfig } from "./redis/index.ts";
+export type { RedisAdapter, RedisBackendConfig, RedisRetentionDrainResult } from "./redis/index.ts";

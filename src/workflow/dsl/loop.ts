@@ -1,5 +1,10 @@
 import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
-import { validateNodeId } from "./validation.ts";
+import {
+  validateDelay,
+  validateExecutionPolicy,
+  validateNodeId,
+  validatePositiveTimeout,
+} from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Default maximum number of loop iterations */
@@ -68,6 +73,12 @@ export function loop(id: string, options: LoopOptions): WorkflowNode {
 
   const maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
 
+  if (!Number.isSafeInteger(maxIterations)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Loop "${id}" maxIterations must be a positive safe integer, got: ${maxIterations}`,
+    });
+  }
+
   if (maxIterations < 1) {
     throw INVALID_ARGUMENT.create({ detail: `Loop "${id}" maxIterations must be at least 1` });
   }
@@ -78,6 +89,18 @@ export function loop(id: string, options: LoopOptions): WorkflowNode {
         `Loop "${id}" maxIterations cannot exceed ${MAX_ITERATIONS_LIMIT} (got ${maxIterations}). ` +
         `For higher limits, consider restructuring your workflow.`,
     });
+  }
+  const iterationTimeout = options.iterationTimeout;
+  const delay = options.delay;
+  const policy = validateExecutionPolicy(`Loop "${id}"`, options);
+  if (iterationTimeout !== undefined) {
+    validatePositiveTimeout(
+      iterationTimeout,
+      `Loop "${id}" iterationTimeout`,
+    );
+  }
+  if (delay !== undefined) {
+    validateDelay(delay, `Loop "${id}" delay`);
   }
 
   return {
@@ -90,11 +113,11 @@ export function loop(id: string, options: LoopOptions): WorkflowNode {
       onMaxIterations: options.onMaxIterations,
       onComplete: options.onComplete,
       checkpoint: options.checkpoint ?? true,
-      retry: options.retry,
-      timeout: options.timeout,
-      iterationTimeout: options.iterationTimeout,
+      retry: policy.retry,
+      timeout: policy.timeout,
+      iterationTimeout,
       skip: options.skip,
-      delay: options.delay,
+      delay,
     },
   };
 }

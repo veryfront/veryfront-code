@@ -3,6 +3,7 @@ import type { DAGInternalExecutionResult } from "./types.ts";
 
 export interface ChildGraphExecutionOptions {
   maxConcurrency?: number;
+  identityPrefix?: string;
 }
 
 export type ExecuteChildGraph = (

@@ -20,7 +20,7 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
-import { generateId, parseDuration } from "../types.ts";
+import { generateId, parseDurationWithLabel, parsePositiveDurationWithLabel } from "../types.ts";
 import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
@@ -67,15 +67,15 @@ export interface WorkflowExecutorConfig {
   maxConcurrency?: number;
   /** Enable debug logging */
   debug?: boolean;
-  /** Lock duration in milliseconds for distributed execution (default: 30000) */
+  /** Positive safe-integer lock duration in portable timer range (default: 30000). */
   lockDuration?: number;
-  /** Heartbeat and remote-cancellation poll interval in milliseconds (default: 10000) */
+  /** Positive safe-integer heartbeat interval in portable timer range (default: 10000). */
   heartbeatInterval?: number;
   /** Enable distributed locking (default: true if backend supports it) */
   enableLocking?: boolean;
-  /** Max time result()/waitForResult waits for a terminal state (default: 300000) */
+  /** Positive safe-integer result wait timeout in portable timer range (default: 300000). */
   resultWaitTimeout?: number;
-  /** Max milliseconds to wait for aborted execution to settle before detaching it (default: 1000) */
+  /** Non-negative safe-integer cleanup grace in portable timer range (default: 1000). */
   cancellationGracePeriod?: number;
   /** Callback when workflow starts */
   onStart?: (run: WorkflowRun) => void;
@@ -127,17 +127,51 @@ export class WorkflowExecutor {
   private static readonly HEARTBEAT_INTERVAL_MS = 10_000;
 
   constructor(config: WorkflowExecutorConfig) {
+    const {
+      maxConcurrency = 10,
+      debug = false,
+      lockDuration = WorkflowExecutor.DEFAULT_LOCK_DURATION,
+      heartbeatInterval = WorkflowExecutor.HEARTBEAT_INTERVAL_MS,
+      resultWaitTimeout,
+      cancellationGracePeriod,
+      stepExecutor,
+      ...rest
+    } = config;
+    const validatedLockDuration = parsePositiveDurationWithLabel(
+      lockDuration,
+      "WorkflowExecutor lockDuration",
+    );
+    const validatedHeartbeatInterval = parsePositiveDurationWithLabel(
+      heartbeatInterval,
+      "WorkflowExecutor heartbeatInterval",
+    );
+    const validatedResultWaitTimeout = resultWaitTimeout === undefined
+      ? undefined
+      : parsePositiveDurationWithLabel(
+        resultWaitTimeout,
+        "WorkflowExecutor resultWaitTimeout",
+      );
+    const validatedCancellationGracePeriod = cancellationGracePeriod === undefined
+      ? undefined
+      : parseDurationWithLabel(
+        cancellationGracePeriod,
+        "WorkflowExecutor cancellationGracePeriod",
+      );
+
     this.config = {
-      maxConcurrency: 10,
-      debug: false,
-      lockDuration: WorkflowExecutor.DEFAULT_LOCK_DURATION,
-      heartbeatInterval: WorkflowExecutor.HEARTBEAT_INTERVAL_MS,
-      ...config,
+      ...rest,
+      stepExecutor,
+      maxConcurrency,
+      debug,
+      lockDuration: validatedLockDuration,
+      heartbeatInterval: validatedHeartbeatInterval,
+      resultWaitTimeout: validatedResultWaitTimeout,
+      cancellationGracePeriod: validatedCancellationGracePeriod,
     };
 
     this.stepExecutor = new StepExecutor({
-      cancellationGracePeriod: this.config.cancellationGracePeriod,
-      ...this.config.stepExecutor,
+      cancellationGracePeriod: validatedCancellationGracePeriod,
+      ...stepExecutor,
       blobStorage: this.config.blobStorage,
     });
 
@@ -179,6 +213,9 @@ export class WorkflowExecutor {
    * Register a workflow definition
    */
   register<TInput, TOutput>(workflow: WorkflowDefinition<TInput, TOutput>): void {
+    if (workflow.timeout !== undefined) {
+      parsePositiveDurationWithLabel(workflow.timeout, `Workflow "${workflow.id}" timeout`);
+    }
     this.workflows.set(workflow.id, workflow);
   }
 
@@ -531,8 +568,8 @@ export class WorkflowExecutor {
       else executionController.signal.addEventListener("abort", rejectAbort, { once: true });
     });
 
-    if (timeout) {
-      const timeoutMs = parseDuration(timeout);
+    if (timeout !== undefined) {
+      const timeoutMs = parsePositiveDurationWithLabel(timeout, "Workflow timeout");
       const timeoutError = TIMEOUT_ERROR.create({
         detail: `Workflow timed out after ${timeoutMs}ms`,
       });

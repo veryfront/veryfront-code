@@ -1,7 +1,7 @@
 import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import type { RetryConfig, WorkflowNode } from "../../types.ts";
-import { parseDuration, validateRetryConfig } from "../../types.ts";
+import { parsePositiveDurationWithLabel, validateRetryConfig } from "../../types.ts";
 import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "#veryfront/utils";
 import { createSetContextPatch } from "./context-patch.ts";
@@ -23,12 +23,13 @@ export async function executeCompositeNodeWithPolicy(
 ): Promise<NodeExecutionResult> {
   const { node, parentSignal, execute } = input;
   const retry = node.config.retry;
-  if (retry) validateRetryConfig(retry);
+  if (retry !== undefined) validateRetryConfig(retry);
 
   const maxAttempts = retry?.maxAttempts ?? 1;
-  const timeout = node.config.timeout === undefined
-    ? undefined
-    : parseDuration(node.config.timeout);
+  const timeout = node.config.timeout === undefined ? undefined : parsePositiveDurationWithLabel(
+    node.config.timeout,
+    `Composite node "${node.id}" timeout`,
+  );
   const startedAt = new Date();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {

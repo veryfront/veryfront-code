@@ -7,7 +7,7 @@ import type {
   WorkflowContext,
   WorkflowNode,
 } from "../types.ts";
-import { validateNodeId } from "./validation.ts";
+import { validateExecutionPolicy, validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Options accepted by step. */
@@ -37,6 +37,7 @@ export function step(id: string, options: StepOptions): WorkflowNode {
       detail: `Step "${id}" cannot specify both 'agent' and 'tool'`,
     });
   }
+  const policy = validateExecutionPolicy(`Step "${id}"`, options);
 
   const config: StepNodeConfig = {
     type: "step",
@@ -44,8 +45,8 @@ export function step(id: string, options: StepOptions): WorkflowNode {
     tool: options.tool,
     input: options.input,
     checkpoint: options.checkpoint ?? hasAgent,
-    retry: options.retry,
-    timeout: options.timeout,
+    retry: policy.retry,
+    timeout: policy.timeout,
     skip: options.skip,
   };
 

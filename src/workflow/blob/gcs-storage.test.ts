@@ -147,12 +147,12 @@ Deno.test("GCSBlobStorage signs JWT with RS256 using Web Crypto", async () => {
     assertEquals(parts.length, 3, "JWT must have 3 parts");
 
     // Decode header
-    const headerJson = JSON.parse(atob(parts[0].replace(/-/g, "+").replace(/_/g, "/")));
+    const headerJson = JSON.parse(atob(parts[0]!.replace(/-/g, "+").replace(/_/g, "/")));
     assertEquals(headerJson.alg, "RS256");
     assertEquals(headerJson.typ, "JWT");
 
     // Decode claims
-    const claimsJson = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    const claimsJson = JSON.parse(atob(parts[1]!.replace(/-/g, "+").replace(/_/g, "/")));
     assertEquals(claimsJson.iss, "test@test-project.iam.gserviceaccount.com");
     assertEquals(claimsJson.aud, "https://oauth2.googleapis.com/token");
     assertEquals(typeof claimsJson.iat, "number");
@@ -160,11 +160,11 @@ Deno.test("GCSBlobStorage signs JWT with RS256 using Web Crypto", async () => {
 
     // Verify signature is NOT "PLACEHOLDER_SIGNATURE"
     assertEquals(parts[2] !== "PLACEHOLDER_SIGNATURE", true, "Signature must not be a placeholder");
-    assertEquals(parts[2].length > 20, true, "Signature must be a real RS256 signature");
+    assertEquals(parts[2]!.length > 20, true, "Signature must be a real RS256 signature");
 
     // Verify the signature with the public key
     const signatureBytes = Uint8Array.from(
-      atob(parts[2].replace(/-/g, "+").replace(/_/g, "/")),
+      atob(parts[2]!.replace(/-/g, "+").replace(/_/g, "/")),
       (c) => c.charCodeAt(0),
     );
     const signingInput = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);

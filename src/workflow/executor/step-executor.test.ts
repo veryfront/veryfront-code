@@ -3,7 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Step Executor Tests
  */
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { step } from "../dsl/step.ts";
 import type { RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
@@ -20,6 +20,7 @@ import {
 } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import type { CapturedTenantContext } from "../types.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils";
 
 /** A step whose tool throws `error`, counting how many times it is invoked. */
 function makeThrowingStepNode(
@@ -48,18 +49,23 @@ function makeContext(): WorkflowContext {
 }
 
 function makeStepNode(retry: RetryConfig): WorkflowNode {
-  // Cast through unknown because RetryConfig in tests may intentionally carry
-  // invalid values that the step DSL's narrower types would reject at compile time.
-  return step("test-step", {
-    tool: {
-      id: "noop",
-      description: "noop tool",
-      // deno-lint-ignore require-await
-      execute: async () => ({ ok: true }),
-      // deno-lint-ignore no-explicit-any
-    } as any,
-    retry,
-  });
+  // Construct the raw node boundary intentionally. The public DSL rejects an
+  // invalid retry policy at definition time; this helper verifies that the
+  // executor still fails closed for deserialized or manually constructed nodes.
+  return {
+    id: "test-step",
+    config: {
+      type: "step",
+      tool: {
+        id: "noop",
+        description: "noop tool",
+        // deno-lint-ignore require-await
+        execute: async () => ({ ok: true }),
+        // deno-lint-ignore no-explicit-any
+      } as any,
+      retry,
+    },
+  };
 }
 
 describe("workflow tenant registry scoping", () => {
@@ -95,6 +101,42 @@ describe("workflow tenant registry scoping", () => {
 });
 
 describe("StepExecutor retry validation", () => {
+  it("rejects a raw string retry before input, lifecycle, or tool callbacks", async () => {
+    const calls = { input: 0, start: 0, complete: 0, error: 0, tool: 0 };
+    const executor = new StepExecutor({
+      onStepStart: () => calls.start++,
+      onStepComplete: () => calls.complete++,
+      onStepError: () => calls.error++,
+    });
+    const node: WorkflowNode = {
+      id: "raw-string-retry",
+      config: {
+        type: "step",
+        retry: "three" as unknown as RetryConfig,
+        input: () => {
+          calls.input++;
+          return {};
+        },
+        tool: {
+          id: "must-not-run",
+          description: "must not run when retry admission fails",
+          execute: () => {
+            calls.tool++;
+            return { ok: true };
+          },
+          // deno-lint-ignore no-explicit-any
+        } as any,
+      },
+    };
+
+    await assertRejects(
+      () => executor.execute(node, makeContext()),
+      Error,
+      "plain record",
+    );
+    assertEquals(calls, { input: 0, start: 0, complete: 0, error: 0, tool: 0 });
+  });
+
   it("rejects negative maxAttempts before executing the step", async () => {
     const executor = new StepExecutor({});
     const node = makeStepNode({ maxAttempts: -1 } as RetryConfig);
@@ -147,6 +189,86 @@ describe("StepExecutor retry validation", () => {
 
     const result = await executor.execute(node, makeContext());
     assertEquals(result.success, true);
+  });
+});
+
+describe("StepExecutor timer validation", () => {
+  it("rejects invalid default timeouts at construction", () => {
+    for (
+      const defaultTimeout of [
+        0,
+        -1,
+        0.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        MAX_TIMER_DELAY_MS + 1,
+      ]
+    ) {
+      assertThrows(
+        () => new StepExecutor({ defaultTimeout }),
+        Error,
+        "defaultTimeout",
+      );
+    }
+  });
+
+  it("accepts zero cancellation grace but rejects invalid values", () => {
+    new StepExecutor({ cancellationGracePeriod: 0 });
+
+    for (
+      const cancellationGracePeriod of [
+        -1,
+        0.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        MAX_TIMER_DELAY_MS + 1,
+      ]
+    ) {
+      assertThrows(
+        () => new StepExecutor({ cancellationGracePeriod }),
+        Error,
+        "cancellationGracePeriod",
+      );
+    }
+  });
+
+  it("rejects raw zero and NaN step timeouts before any callbacks", async () => {
+    const calls = { input: 0, start: 0, complete: 0, error: 0, tool: 0 };
+    const executor = new StepExecutor({
+      onStepStart: () => calls.start++,
+      onStepComplete: () => calls.complete++,
+      onStepError: () => calls.error++,
+    });
+
+    for (const timeout of [0, Number.NaN]) {
+      const node: WorkflowNode = {
+        id: `invalid-timeout-${String(timeout)}`,
+        config: {
+          type: "step",
+          timeout,
+          input: () => {
+            calls.input++;
+            return {};
+          },
+          tool: {
+            id: "must-not-run",
+            description: "must not run when timeout admission fails",
+            // deno-lint-ignore require-await
+            execute: async () => {
+              calls.tool++;
+              return { ok: true };
+            },
+            // deno-lint-ignore no-explicit-any
+          } as any,
+        },
+      };
+
+      const result = await executor.execute(node, makeContext());
+      assertEquals(result.success, false);
+      assertEquals(result.error?.includes("timeout"), true);
+    }
+
+    assertEquals(calls, { input: 0, start: 0, complete: 0, error: 0, tool: 0 });
   });
 });
 

@@ -31,7 +31,11 @@ import type {
   WorkflowContext,
   WorkflowNode,
 } from "../types.ts";
-import { parseDuration, validateRetryConfig } from "../types.ts";
+import {
+  parseDurationWithLabel,
+  parsePositiveDurationWithLabel,
+  validateRetryConfig,
+} from "../types.ts";
 import type { BlobStorage } from "../blob/types.ts";
 
 /**
@@ -127,8 +131,9 @@ export interface ToolRegistry {
 export interface StepExecutorConfig {
   agentRegistry?: AgentRegistry;
   toolRegistry?: ToolRegistry;
+  /** Positive safe-integer timeout in portable JavaScript timer range (default: 300000). */
   defaultTimeout?: number;
-  /** Max milliseconds to wait for an aborted step to settle before detaching it (default: 1000) */
+  /** Non-negative safe-integer cleanup grace in portable timer range (default: 1000). */
   cancellationGracePeriod?: number;
   blobStorage?: BlobStorage;
   onStepStart?: (nodeId: string, input: unknown) => void;
@@ -148,7 +153,27 @@ export class StepExecutor {
   private nonCooperativeErrors = new WeakSet<Error>();
 
   constructor(config: StepExecutorConfig = {}) {
-    this.config = { defaultTimeout: DEFAULT_STEP_TIMEOUT_MS, ...config };
+    const {
+      defaultTimeout = DEFAULT_STEP_TIMEOUT_MS,
+      cancellationGracePeriod,
+      ...rest
+    } = config;
+    const validatedDefaultTimeout = parsePositiveDurationWithLabel(
+      defaultTimeout,
+      "StepExecutor defaultTimeout",
+    );
+    const validatedCancellationGracePeriod = cancellationGracePeriod === undefined
+      ? undefined
+      : parseDurationWithLabel(
+        cancellationGracePeriod,
+        "StepExecutor cancellationGracePeriod",
+      );
+
+    this.config = {
+      ...rest,
+      defaultTimeout: validatedDefaultTimeout,
+      cancellationGracePeriod: validatedCancellationGracePeriod,
+    };
   }
 
   async execute(
@@ -167,8 +192,21 @@ export class StepExecutor {
       });
     }
 
-    if (config.retry) {
+    if (config.retry !== undefined) {
       validateRetryConfig(config.retry);
+    }
+
+    let timeout: number;
+    try {
+      timeout = config.timeout === undefined
+        ? (this.config.defaultTimeout ?? DEFAULT_STEP_TIMEOUT_MS)
+        : parsePositiveDurationWithLabel(config.timeout, `Step "${node.id}" timeout`);
+    } catch (error) {
+      return {
+        success: false,
+        error: ensureError(error).message,
+        executionTime: Date.now() - startTime,
+      };
     }
 
     const retryConfig = { ...DEFAULT_RETRY, ...config.retry };
@@ -185,10 +223,6 @@ export class StepExecutor {
           const resolvedInput = await this.resolveInput(config.input, context);
           abortSignal?.throwIfAborted();
           this.config.onStepStart?.(node.id, resolvedInput);
-
-          const timeout = config.timeout
-            ? parseDuration(config.timeout)
-            : (this.config.defaultTimeout ?? DEFAULT_STEP_TIMEOUT_MS);
 
           return this.executeWithTimeout(
             (attemptSignal) => this.executeStep(config, resolvedInput, context, attemptSignal),

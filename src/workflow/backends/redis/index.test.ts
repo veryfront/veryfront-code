@@ -9,7 +9,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module ai/workflow/backends/redis/index.test
  */
 
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { RedisBackend } from "./index.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
@@ -21,6 +26,8 @@ import type {
   RunExecutionInfo,
   RunExecutor,
 } from "../../worker/executors/types.ts";
+import { registerWorkflowBackendSnapshotContract } from "../conformance.test-utils.ts";
+import { compareRunIdsDescending } from "../run-filter.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -29,9 +36,84 @@ class MockRedisAdapter implements RedisAdapter {
   hashes = new Map<string, Map<string, string>>();
   lists = new Map<string, string[]>();
   sets = new Map<string, Set<string>>();
+  sortedSets = new Map<string, Map<string, number>>();
   expiries = new Map<string, number>();
   streams = new Map<string, Array<{ id: string; data: Record<string, string> }>>();
   groups = new Map<string, Set<string>>();
+  keysCalls = 0;
+  smembersCalls = 0;
+  snapshotEvalCalls = 0;
+  cursorSnapshotEvalCalls = 0;
+  beforeMissingRunCleanup?: () => void | Promise<void>;
+  beforeRunSnapshotRead?: () => void | Promise<void>;
+  beforeCursorRunSnapshotRead?: (cursorMember: string) => void | Promise<void>;
+  afterConditionalRunUpdate?: () => void | Promise<void>;
+
+  private sortedSet(key: string): Map<string, number> {
+    let set = this.sortedSets.get(key);
+    if (!set) {
+      set = new Map();
+      this.sortedSets.set(key, set);
+    }
+    return set;
+  }
+
+  private removeIndexedRun(
+    runId: string,
+    keys: string[],
+    args: string[],
+  ): void {
+    const workflowId = this.hashes.get(keys[1]!)?.get(runId);
+    const status = this.hashes.get(keys[2]!)?.get(runId);
+    for (const prefix of args.slice(0, 5)) {
+      const ownedKey = prefix + runId;
+      this.store.delete(ownedKey);
+      this.hashes.delete(ownedKey);
+      this.lists.delete(ownedKey);
+      this.sets.delete(ownedKey);
+      this.sortedSets.delete(ownedKey);
+      this.expiries.delete(ownedKey);
+    }
+    this.sortedSets.get(keys[3]!)?.delete(runId);
+    if (workflowId) this.sortedSets.get(args[5]! + workflowId)?.delete(runId);
+    if (status) this.sortedSets.get(args[6]! + status)?.delete(runId);
+    if (workflowId && status) {
+      this.sortedSets.get(args[7]! + workflowId + ":" + status)?.delete(runId);
+    }
+    this.hashes.get(keys[1]!)?.delete(runId);
+    this.hashes.get(keys[2]!)?.delete(runId);
+    this.sortedSets.get(keys[0]!)?.delete(runId);
+  }
+
+  private cleanupRetention(keys: string[], args: string[]): [number, boolean] {
+    const limit = Number(args[8]);
+    const nowMs = Date.now();
+    const retention = this.sortedSets.get(keys[0]!);
+    const due = [...(retention?.entries() ?? [])]
+      .filter(([, expiresAt]) => expiresAt <= nowMs)
+      .sort((left, right) => left[1] - right[1] || -compareRunIdsDescending(left[0], right[0]))
+      .slice(0, limit);
+    for (const [runId] of due) {
+      const runKey = args[0]! + runId;
+      if (this.hashes.has(runKey) && !this.expiries.has(runKey)) {
+        retention?.delete(runId);
+      } else if (this.hashes.has(runKey)) {
+        retention?.set(runId, nowMs + 1_000);
+      } else {
+        this.removeIndexedRun(runId, keys, args);
+      }
+    }
+    const hasMore = [...(retention?.values() ?? [])].some((expiresAt) => expiresAt <= nowMs);
+    return [due.length, hasMore];
+  }
+
+  private orderedIndexRows(key: string, min: string, max: string): Array<[string, number]> {
+    const minimum = min === "-inf" ? Number.NEGATIVE_INFINITY : Number(min);
+    const maximum = max === "+inf" ? Number.POSITIVE_INFINITY : Number(max);
+    return [...(this.sortedSets.get(key)?.entries() ?? [])]
+      .filter(([, score]) => score >= minimum && score <= maximum)
+      .sort((left, right) => right[1] - left[1] || compareRunIdsDescending(left[0], right[0]));
+  }
 
   hset(key: string, fields: Record<string, string>): Promise<number> {
     let map = this.hashes.get(key);
@@ -93,6 +175,7 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   smembers(key: string): Promise<string[]> {
+    this.smembersCalls++;
     return Promise.resolve([...(this.sets.get(key) ?? [])]);
   }
 
@@ -134,8 +217,254 @@ class MockRedisAdapter implements RedisAdapter {
   // Emulates the two Redlock Lua scripts used by the backend. Both are
   // compare-against-token guards on KEYS[1] / ARGV[1]: release deletes the key
   // and extend (P)EXPIREs it, atomically with respect to the JS event loop.
-  eval(script: string, keys: string[], args: string[]): Promise<unknown> {
+  async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const key = keys[0]!;
+
+    if (script.includes("read-workflow-run-snapshot")) {
+      this.snapshotEvalCalls++;
+      const hook = this.beforeRunSnapshotRead;
+      this.beforeRunSnapshotRead = undefined;
+      await hook?.();
+      const hash = this.hashes.get(key);
+      return [
+        hash ? [...hash.entries()].flat() : [],
+        [...(this.lists.get(keys[1]!) ?? [])],
+      ];
+    }
+
+    if (script.includes("create-workflow-run-if-absent")) {
+      if (this.hashes.has(key)) return 0;
+
+      const runId = args[0]!;
+      const workflowId = args[1]!;
+      const status = args[2]!;
+      const ttl = Number(args[3]);
+      const createdAtMs = Number(args[4]);
+      const workflowPrefix = args[5]!;
+      const statusPrefix = args[6]!;
+      const workflowStatusPrefix = args[7]!;
+      const workflowMetadata = this.hashes.get(keys[5]!);
+      const statusMetadata = this.hashes.get(keys[6]!);
+      const oldWorkflowId = workflowMetadata?.get(runId);
+      const oldStatus = statusMetadata?.get(runId);
+      this.sortedSets.get(keys[1]!)?.delete(runId);
+      if (oldWorkflowId) this.sortedSets.get(workflowPrefix + oldWorkflowId)?.delete(runId);
+      if (oldStatus) this.sortedSets.get(statusPrefix + oldStatus)?.delete(runId);
+      if (oldWorkflowId && oldStatus) {
+        this.sortedSets.get(workflowStatusPrefix + oldWorkflowId + ":" + oldStatus)?.delete(runId);
+      }
+      workflowMetadata?.delete(runId);
+      statusMetadata?.delete(runId);
+      this.sortedSets.get(keys[7]!)?.delete(runId);
+      for (const staleKey of keys.slice(8)) {
+        this.store.delete(staleKey);
+        this.hashes.delete(staleKey);
+        this.lists.delete(staleKey);
+        this.sets.delete(staleKey);
+        this.sortedSets.delete(staleKey);
+        this.expiries.delete(staleKey);
+      }
+
+      const fieldCount = Number(args[8]);
+      const hash = new Map<string, string>();
+      for (let i = 0; i < fieldCount; i++) {
+        const offset = 9 + (i * 2);
+        hash.set(args[offset]!, args[offset + 1]!);
+      }
+      this.hashes.set(key, hash);
+      for (const indexKey of keys.slice(1, 5)) {
+        this.sortedSet(indexKey).set(runId, createdAtMs);
+      }
+      let nextWorkflowMetadata = this.hashes.get(keys[5]!);
+      if (!nextWorkflowMetadata) {
+        nextWorkflowMetadata = new Map();
+        this.hashes.set(keys[5]!, nextWorkflowMetadata);
+      }
+      nextWorkflowMetadata.set(runId, workflowId);
+      let nextStatusMetadata = this.hashes.get(keys[6]!);
+      if (!nextStatusMetadata) {
+        nextStatusMetadata = new Map();
+        this.hashes.set(keys[6]!, nextStatusMetadata);
+      }
+      nextStatusMetadata.set(runId, status);
+      if (ttl > 0) {
+        this.expiries.set(key, ttl);
+        this.sortedSet(keys[7]!).set(runId, Date.now() + (ttl * 1000));
+      }
+      return 1;
+    }
+
+    if (script.includes("cleanup-missing-workflow-run")) {
+      const hook = this.beforeMissingRunCleanup;
+      this.beforeMissingRunCleanup = undefined;
+      await hook?.();
+      if (this.hashes.has(key)) return 0;
+
+      const runId = args[0]!;
+      const workflowPrefix = args[1]!;
+      const statusPrefix = args[2]!;
+      const workflowStatusPrefix = args[3]!;
+      const workflowMetadata = this.hashes.get(keys[6]!);
+      const statusMetadata = this.hashes.get(keys[7]!);
+      const workflowId = workflowMetadata?.get(runId);
+      const status = statusMetadata?.get(runId);
+      for (const ownedKey of keys.slice(1, 5)) {
+        this.store.delete(ownedKey);
+        this.hashes.delete(ownedKey);
+        this.lists.delete(ownedKey);
+        this.sets.delete(ownedKey);
+        this.sortedSets.delete(ownedKey);
+        this.expiries.delete(ownedKey);
+      }
+      this.sortedSets.get(keys[5]!)?.delete(runId);
+      if (workflowId) this.sortedSets.get(workflowPrefix + workflowId)?.delete(runId);
+      if (status) this.sortedSets.get(statusPrefix + status)?.delete(runId);
+      if (workflowId && status) {
+        this.sortedSets.get(workflowStatusPrefix + workflowId + ":" + status)?.delete(runId);
+      }
+      workflowMetadata?.delete(runId);
+      statusMetadata?.delete(runId);
+      this.sortedSets.get(keys[8]!)?.delete(runId);
+      return 1;
+    }
+
+    if (script.includes("delete-workflow-run")) {
+      const runId = args[0]!;
+      const workflowPrefix = args[1]!;
+      const statusPrefix = args[2]!;
+      const workflowStatusPrefix = args[3]!;
+      const workflowMetadata = this.hashes.get(keys[6]!);
+      const statusMetadata = this.hashes.get(keys[7]!);
+      const workflowId = this.hashes.get(key)?.get("workflowId") ??
+        workflowMetadata?.get(runId);
+      const status = this.hashes.get(key)?.get("status") ?? statusMetadata?.get(runId);
+      for (const ownedKey of keys.slice(0, 5)) {
+        this.store.delete(ownedKey);
+        this.hashes.delete(ownedKey);
+        this.lists.delete(ownedKey);
+        this.sets.delete(ownedKey);
+        this.sortedSets.delete(ownedKey);
+        this.expiries.delete(ownedKey);
+      }
+      this.sortedSets.get(keys[5]!)?.delete(runId);
+      if (workflowId) this.sortedSets.get(workflowPrefix + workflowId)?.delete(runId);
+      if (status) this.sortedSets.get(statusPrefix + status)?.delete(runId);
+      if (workflowId && status) {
+        this.sortedSets.get(workflowStatusPrefix + workflowId + ":" + status)?.delete(runId);
+      }
+      workflowMetadata?.delete(runId);
+      statusMetadata?.delete(runId);
+      this.sortedSets.get(keys[8]!)?.delete(runId);
+      return 1;
+    }
+
+    if (script.includes("cleanup-expired-workflow-runs")) {
+      const [processed, hasMore] = this.cleanupRetention(keys, args);
+      return [processed, hasMore ? 1 : 0];
+    }
+
+    if (script.includes("cursor-page-workflow-runs-exact")) {
+      this.cursorSnapshotEvalCalls++;
+      const cursorScore = args[9]!;
+      const cursorMember = args[10]!;
+      const snapshotHook = this.beforeRunSnapshotRead;
+      this.beforeRunSnapshotRead = undefined;
+      await snapshotHook?.();
+      await this.beforeCursorRunSnapshotRead?.(cursorMember);
+      const [processed, hasMore] = this.cleanupRetention(keys, args);
+      if (hasMore) return [0, processed, "retention-backlog"];
+
+      const rows = this.orderedIndexRows(keys[4]!, "-inf", "+inf");
+      let start = 0;
+      let reset = 0;
+      if (cursorMember !== "") {
+        const cursorIndex = rows.findIndex(([member, score]) =>
+          member === cursorMember && score === Number(cursorScore)
+        );
+        if (cursorIndex === -1) {
+          reset = 1;
+        } else {
+          start = cursorIndex + 1;
+        }
+      }
+      const page = rows.slice(start, start + Number(args[11]));
+      const snapshots: unknown[] = [];
+      for (const [runId] of page) {
+        const hash = this.hashes.get(args[0]! + runId);
+        if (!hash) {
+          this.removeIndexedRun(runId, keys, args);
+          return [0, processed, "index-ghost"];
+        }
+        snapshots.push([
+          [...hash.entries()].flat(),
+          [...(this.lists.get(args[2]! + runId) ?? [])],
+        ]);
+      }
+      const next = page.at(-1);
+      return [1, processed, snapshots, next ? String(next[1]) : "", next?.[0] ?? "", reset];
+    }
+
+    if (script.includes("list-workflow-runs-exact")) {
+      const hook = this.beforeRunSnapshotRead;
+      this.beforeRunSnapshotRead = undefined;
+      await hook?.();
+      const [processed, hasMore] = this.cleanupRetention(keys, args);
+      if (hasMore) return [0, processed, "retention-backlog"];
+      const maxScore = args[9]!;
+      const minScore = args[10]!;
+      const offset = Number(args[11]);
+      const limit = Number(args[12]);
+      const selectedCount = Number(args[13]);
+      const byId = new Map<string, number>();
+      for (const indexKey of keys.slice(4, 4 + selectedCount)) {
+        for (const [runId, score] of this.orderedIndexRows(indexKey, minScore, maxScore)) {
+          byId.set(runId, score);
+        }
+      }
+      const ordered = [...byId.entries()].sort((left, right) =>
+        right[1] - left[1] || compareRunIdsDescending(left[0], right[0])
+      ).slice(offset, offset + limit);
+      const snapshots: unknown[] = [];
+      for (const [runId] of ordered) {
+        const hash = this.hashes.get(args[0]! + runId);
+        if (!hash) {
+          this.removeIndexedRun(runId, keys, args);
+          return [0, processed, "index-ghost"];
+        }
+        snapshots.push([
+          [...hash.entries()].flat(),
+          [...(this.lists.get(args[2]! + runId) ?? [])],
+        ]);
+      }
+      return [1, processed, snapshots];
+    }
+
+    if (script.includes("count-workflow-runs-exact")) {
+      const [processed, hasMore] = this.cleanupRetention(keys, args);
+      if (hasMore) return [0, processed, "retention-backlog"];
+      const maxScore = args[9]!;
+      const minScore = args[10]!;
+      const selectedCount = Number(args[11]);
+      let count = 0;
+      for (const indexKey of keys.slice(4, 4 + selectedCount)) {
+        count += this.orderedIndexRows(indexKey, minScore, maxScore).length;
+      }
+      return [1, processed, count];
+    }
+
+    if (script.includes("append-retained-workflow-run-state")) {
+      if (!this.hashes.has(key)) return 0;
+      const storageKey = keys[1]!;
+      let list = this.lists.get(storageKey);
+      if (!list) {
+        list = [];
+        this.lists.set(storageKey, list);
+      }
+      list.push(args[0]!);
+      const remaining = this.expiries.get(key);
+      if (remaining !== undefined) this.expiries.set(storageKey, remaining);
+      return 1;
+    }
 
     if (script.includes("conditional-stalled-run-claim")) {
       const claimKey = keys[1]!;
@@ -160,8 +489,8 @@ class MockRedisAdapter implements RedisAdapter {
       const expectedCount = Number(args[0]);
       const expectedStatuses = args.slice(1, expectedCount + 1);
       const expectedWorkerId = args[expectedCount + 1]!;
-      const storageKey = args[expectedCount + 2]!;
-      const value = args[expectedCount + 3]!;
+      const storageKey = keys[1]!;
+      const value = args[expectedCount + 2]!;
       const hash = this.hashes.get(key);
       if (
         !hash || !expectedStatuses.includes(hash.get("status") ?? "") ||
@@ -176,6 +505,8 @@ class MockRedisAdapter implements RedisAdapter {
         this.lists.set(storageKey, list);
       }
       list.push(value);
+      const remaining = this.expiries.get(key);
+      if (remaining !== undefined) this.expiries.set(storageKey, remaining);
       return Promise.resolve(1);
     }
 
@@ -226,8 +557,9 @@ class MockRedisAdapter implements RedisAdapter {
       const expectedStatuses = args.slice(1, expectedCount + 1);
       const nextStatus = args[expectedCount + 1]!;
       const statusPrefix = args[expectedCount + 2]!;
-      const runId = args[expectedCount + 3]!;
-      const expectedWorkerId = args[expectedCount + 4]!;
+      const workflowStatusPrefix = args[expectedCount + 3]!;
+      const runId = args[expectedCount + 4]!;
+      const expectedWorkerId = args[expectedCount + 5]!;
       const hash = this.hashes.get(key);
       const oldStatus = hash?.get("status");
       if (!hash || !oldStatus || !expectedStatuses.includes(oldStatus)) {
@@ -238,43 +570,35 @@ class MockRedisAdapter implements RedisAdapter {
       }
 
       if (nextStatus && oldStatus !== nextStatus) {
+        const workflowId = hash.get("workflowId");
+        const createdAtMs = Number(hash.get("createdAtMs"));
+        if (!workflowId || !Number.isFinite(createdAtMs)) return Promise.resolve(-1);
         hash.set("status", nextStatus);
-        this.sets.get(statusPrefix + oldStatus)?.delete(runId);
-        let nextSet = this.sets.get(statusPrefix + nextStatus);
-        if (!nextSet) {
-          nextSet = new Set();
-          this.sets.set(statusPrefix + nextStatus, nextSet);
+        this.sortedSets.get(statusPrefix + oldStatus)?.delete(runId);
+        this.sortedSets.get(workflowStatusPrefix + workflowId + ":" + oldStatus)?.delete(runId);
+        this.sortedSet(statusPrefix + nextStatus).set(runId, createdAtMs);
+        this.sortedSet(workflowStatusPrefix + workflowId + ":" + nextStatus).set(
+          runId,
+          createdAtMs,
+        );
+        let statusMetadata = this.hashes.get(keys[2]!);
+        if (!statusMetadata) {
+          statusMetadata = new Map();
+          this.hashes.set(keys[2]!, statusMetadata);
         }
-        nextSet.add(runId);
+        statusMetadata.set(runId, nextStatus);
       }
 
-      for (let i = expectedCount + 5; i < args.length; i += 2) {
+      for (let i = expectedCount + 6; i < args.length; i += 2) {
         hash.set(args[i]!, args[i + 1]!);
       }
-      return Promise.resolve(1);
-    }
-
-    // Atomic status-move script: reads old status from the run hash, then moves
-    // the run between status index sets and writes the new status.
-    // KEYS[1]=runKey, ARGV[1]=runId, ARGV[2]=newStatus, ARGV[3]=statusIndexPrefix
-    if (script.includes("hget") && script.includes("srem") && script.includes("sadd")) {
-      const runId = args[0]!;
-      const newStatus = args[1]!;
-      const statusPrefix = args[2]!;
-      const hash = this.hashes.get(key);
-      const old = hash?.get("status");
-
-      if (old === newStatus) return Promise.resolve(0);
-      if (hash) hash.set("status", newStatus);
-
-      if (old && old !== "") this.sets.get(statusPrefix + old)?.delete(runId);
-
-      let newSet = this.sets.get(statusPrefix + newStatus);
-      if (!newSet) {
-        newSet = new Set();
-        this.sets.set(statusPrefix + newStatus, newSet);
+      if (nextStatus && nextStatus !== "running") {
+        this.store.delete(keys[1]!);
+        this.expiries.delete(keys[1]!);
       }
-      newSet.add(runId);
+      const hook = this.afterConditionalRunUpdate;
+      this.afterConditionalRunUpdate = undefined;
+      await hook?.();
       return Promise.resolve(1);
     }
 
@@ -316,12 +640,17 @@ class MockRedisAdapter implements RedisAdapter {
     return Promise.resolve(list[i] ?? null);
   }
 
-  lrange(key: string, start: number, stop: number): Promise<string[]> {
+  async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    if (key.includes(":approvals:")) {
+      const hook = this.beforeRunSnapshotRead;
+      this.beforeRunSnapshotRead = undefined;
+      await hook?.();
+    }
     const list = this.lists.get(key);
-    if (!list) return Promise.resolve([]);
+    if (!list) return [];
 
     const end = stop < 0 ? list.length + stop + 1 : stop + 1;
-    return Promise.resolve(list.slice(start, end));
+    return list.slice(start, end);
   }
 
   lset(key: string, index: number, value: string): Promise<string> {
@@ -335,6 +664,7 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   keys(pattern: string): Promise<string[]> {
+    this.keysCalls++;
     const prefix = pattern.replace("*", "");
     const all: string[] = [];
 
@@ -463,10 +793,34 @@ describe("RedisBackend", () => {
     });
   });
 
+  registerWorkflowBackendSnapshotContract("Redis", () => backend);
+
   describe("constructor defaults", () => {
     it("should set default config values", () => {
       const b = new RedisBackend({ client: mockRedis as unknown as RedisAdapter });
       assertExists(b);
+    });
+
+    it("rejects run TTL values that Redis cannot publish atomically", () => {
+      for (
+        const runTtl of [
+          -1,
+          0.5,
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          Number.MAX_SAFE_INTEGER,
+        ]
+      ) {
+        assertThrows(
+          () =>
+            new RedisBackend({
+              client: mockRedis as unknown as RedisAdapter,
+              runTtl,
+            }),
+          Error,
+          "runTtl must be a non-negative safe integer",
+        );
+      }
     });
   });
 
@@ -474,8 +828,8 @@ describe("RedisBackend", () => {
     it("should create consumer group", async () => {
       await backend.initialize();
       assertEquals(
-        mockRedis.groups.get("test:stream:schema-v1"),
-        new Set(["test:group:schema-v1"]),
+        mockRedis.groups.get("test:stream:schema-v2"),
+        new Set(["test:group:schema-v2"]),
       );
     });
 
@@ -490,7 +844,7 @@ describe("RedisBackend", () => {
       await backend.createRun(createTestRun("run-versioned-namespace"));
 
       assertEquals(
-        mockRedis.hashes.has("test:schema-v1:run:run-versioned-namespace"),
+        mockRedis.hashes.has("test:schema-v2:run:run-versioned-namespace"),
         true,
       );
       assertEquals(mockRedis.hashes.has("test:run:run-versioned-namespace"), false);
@@ -504,6 +858,117 @@ describe("RedisBackend", () => {
       assertEquals(retrieved.id, "run-1");
       assertEquals(retrieved.workflowId, "wf-1");
       assertEquals(retrieved.status, "pending");
+    });
+
+    it("never combines a deleted run incarnation with recreated approvals", async () => {
+      const runId = "run-incarnation-snapshot";
+      await backend.createRun(createTestRun(runId, { workflowId: "old-workflow" }));
+      await backend.savePendingApproval(runId, {
+        id: "old-approval",
+        nodeId: "wait",
+        status: "pending",
+        message: "old",
+        payload: {},
+        requestedAt: new Date("2025-01-01T00:00:00.000Z"),
+      });
+
+      mockRedis.beforeRunSnapshotRead = async () => {
+        await backend.deleteRun(runId);
+        await backend.createRun(createTestRun(runId, { workflowId: "new-workflow" }));
+        await backend.savePendingApproval(runId, {
+          id: "new-approval",
+          nodeId: "wait",
+          status: "pending",
+          message: "new",
+          payload: {},
+          requestedAt: new Date("2025-01-02T00:00:00.000Z"),
+        });
+      };
+
+      const snapshot = await backend.getRun(runId);
+
+      assertEquals(snapshot?.workflowId, "new-workflow");
+      assertEquals(
+        snapshot?.pendingApprovals.map((approval) => approval.id),
+        ["new-approval"],
+      );
+    });
+
+    it("rejects repeated creates without overwriting the original run or indexes", async () => {
+      const original = createTestRun("run-duplicate", {
+        workflowId: "workflow-original",
+        status: "pending",
+        input: { owner: "original" },
+      });
+      const replacement = createTestRun("run-duplicate", {
+        workflowId: "workflow-replacement",
+        status: "running",
+        input: { owner: "replacement" },
+      });
+
+      await backend.createRun(original);
+      const conflicts = await Promise.allSettled([
+        backend.createRun(replacement),
+        backend.createRun(replacement),
+      ]);
+
+      assertEquals(conflicts.map((result) => result.status), ["rejected", "rejected"]);
+      for (const conflict of conflicts) {
+        if (conflict.status !== "rejected") throw new Error("Expected create conflict");
+        assertEquals(conflict.reason instanceof Error, true);
+        assertEquals(conflict.reason.message, "Workflow run already exists: run-duplicate");
+        assertEquals(conflict.reason.status, 409);
+        assertEquals(conflict.reason.slug, "workflow-run-conflict");
+      }
+
+      const stored = await backend.getRun(original.id);
+      assertEquals(stored?.workflowId, "workflow-original");
+      assertEquals(stored?.status, "pending");
+      assertEquals(stored?.input, { owner: "original" });
+      assertEquals(
+        (await backend.listRuns({ workflowId: "workflow-original", status: "pending" })).map(
+          (run) => run.id,
+        ),
+        [original.id],
+      );
+      assertEquals(await backend.listRuns({ workflowId: "workflow-replacement" }), []);
+      assertEquals(await backend.listRuns({ status: "running" }), []);
+      assertEquals(await backend.countRuns({}), 1);
+    });
+
+    it("allows exactly one concurrent create to publish a run and its indexes", async () => {
+      const first = createTestRun("run-concurrent-create", {
+        workflowId: "workflow-first",
+        status: "pending",
+        input: { owner: "first" },
+      });
+      const second = createTestRun("run-concurrent-create", {
+        workflowId: "workflow-second",
+        status: "running",
+        input: { owner: "second" },
+      });
+
+      const results = await Promise.allSettled([
+        backend.createRun(first),
+        backend.createRun(second),
+      ]);
+
+      assertEquals(results.filter((result) => result.status === "fulfilled").length, 1);
+      assertEquals(results.filter((result) => result.status === "rejected").length, 1);
+      const stored = await backend.getRun(first.id);
+      assertExists(stored);
+      assertEquals((await backend.listRuns({})).map((run) => run.id), [first.id]);
+      assertEquals(await backend.countRuns({}), 1);
+      assertEquals(
+        await backend.countRuns({ workflowId: stored.workflowId, status: stored.status }),
+        1,
+      );
+      const losingWorkflow = stored.workflowId === first.workflowId
+        ? second.workflowId
+        : first.workflowId;
+      const losingStatus = stored.status === first.status ? second.status : first.status;
+      assertEquals(await backend.countRuns({ workflowId: losingWorkflow }), 0);
+      assertEquals(await backend.countRuns({ status: losingStatus }), 0);
     });
 
     it("should persist the source integration policy snapshot", async () => {
@@ -653,11 +1118,11 @@ describe("RedisBackend", () => {
       );
 
       assertEquals(
-        mockRedis.sets.get("test:schema-v1:index:status:pending")?.has(runId),
+        mockRedis.sortedSets.get("test:schema-v2:index:created:status:pending")?.has(runId),
         false,
       );
       assertEquals(
-        mockRedis.sets.get("test:schema-v1:index:status:running")?.has(runId),
+        mockRedis.sortedSets.get("test:schema-v2:index:created:status:running")?.has(runId),
         true,
       );
       assertEquals(mockRedis.sets.has("test:index:status:running"), false);
@@ -698,6 +1163,36 @@ describe("RedisBackend", () => {
         true,
       );
       assertEquals((await backend.getRun("run-owner-cas"))?.status, "failed");
+    });
+
+    it("does not delete a stalled claim created by a replacement run incarnation", async () => {
+      const runId = "run-recreated-claim";
+      const claimKey = `test:schema-v2:claim:${runId}`;
+      await backend.createRun(createTestRun(runId, {
+        status: "running",
+        workerId: "old-worker",
+      }));
+      mockRedis.store.set(claimKey, "old-worker");
+
+      mockRedis.afterConditionalRunUpdate = async () => {
+        await backend.deleteRun(runId);
+        await backend.createRun(createTestRun(runId, {
+          status: "running",
+          workerId: "new-worker",
+        }));
+        mockRedis.store.set(claimKey, "new-worker");
+      };
+
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          runId,
+          ["running"],
+          "old-worker",
+          { status: "completed" },
+        ),
+        true,
+      );
+      assertEquals(mockRedis.store.get(claimKey), "new-worker");
     });
 
     it("rejects attempts to mutate immutable run identity and policy fields", async () => {
@@ -908,6 +1403,21 @@ describe("RedisBackend", () => {
       assertEquals(await backend.getLatestCheckpoint("no-such"), null);
     });
 
+    it("rejects checkpoints for a missing run", async () => {
+      await assertRejects(
+        () =>
+          backend.saveCheckpoint("missing-run", {
+            id: "cp-missing",
+            nodeId: "step-missing",
+            timestamp: new Date(),
+            context: { input: {} },
+            nodeStates: {},
+          }),
+        Error,
+        "Run not found: missing-run",
+      );
+    });
+
     it("should list all checkpoints", async () => {
       await backend.createRun(createTestRun("run-cp2"));
       await backend.saveCheckpoint("run-cp2", {
@@ -1002,6 +1512,14 @@ describe("RedisBackend", () => {
       assertEquals(await backend.getPendingApproval("run-ap3", "nope"), null);
     });
 
+    it("rejects approvals for a missing run", async () => {
+      await assertRejects(
+        () => backend.savePendingApproval("missing-run", makeApproval("ap-missing")),
+        Error,
+        "Run not found: missing-run",
+      );
+    });
+
     it("should condition approval appends on owner and patch notification metadata", async () => {
       await backend.createRun(createTestRun("run-ap-owned", {
         status: "waiting",
@@ -1075,7 +1593,7 @@ describe("RedisBackend", () => {
 
       // The approval left the pending set and recorded the decider verbatim.
       assertEquals(await backend.getPendingApprovals("run-ap-true"), []);
-      const stored = JSON.parse(mockRedis.lists.get("test:schema-v1:approvals:run-ap-true")![0]!);
+      const stored = JSON.parse(mockRedis.lists.get("test:schema-v2:approvals:run-ap-true")![0]!);
       assertEquals(stored.status, "approved");
       assertEquals(stored.decidedBy, "admin");
       assertEquals(stored.comment, "looks good");
@@ -1106,7 +1624,7 @@ describe("RedisBackend", () => {
       );
 
       const stored = JSON.parse(
-        mockRedis.lists.get("test:schema-v1:approvals:run-ap-decided")![0]!,
+        mockRedis.lists.get("test:schema-v2:approvals:run-ap-decided")![0]!,
       );
       assertEquals(stored.status, "approved");
       assertEquals(stored.decidedBy, "first");
@@ -1141,7 +1659,7 @@ describe("RedisBackend", () => {
       assertEquals(job.runId, "run-q1");
       assertEquals(job.workflowId, "wf-1");
       assertEquals(mockRedis.streams.has("test:stream"), false);
-      assertEquals(mockRedis.streams.has("test:stream:schema-v1"), true);
+      assertEquals(mockRedis.streams.has("test:stream:schema-v2"), true);
     });
 
     it("should return null when queue is empty", async () => {
@@ -1175,7 +1693,7 @@ describe("RedisBackend", () => {
     it("releaseLock should not delete a lock owned by another worker", async () => {
       // Worker A acquires the lock.
       assertExists(await backend.acquireLock("run-own", 5000));
-      const lockKey = "test:schema-v1:lock:run-own";
+      const lockKey = "test:schema-v2:lock:run-own";
 
       // Simulate lock expiry + worker B acquiring it: overwrite the stored
       // value with worker B's token.
@@ -1188,7 +1706,7 @@ describe("RedisBackend", () => {
     });
 
     it("stale token should not release or extend a lease reacquired by this backend", async () => {
-      const lockKey = "test:schema-v1:lock:run-reacquired";
+      const lockKey = "test:schema-v2:lock:run-reacquired";
       const staleToken = await backend.acquireLock("run-reacquired", 5000);
       assertExists(staleToken);
 
@@ -1209,7 +1727,7 @@ describe("RedisBackend", () => {
     it("extendLock should not extend a lock owned by another worker", async () => {
       // Worker A acquires the lock.
       assertExists(await backend.acquireLock("run-own2", 5000));
-      const lockKey = "test:schema-v1:lock:run-own2";
+      const lockKey = "test:schema-v2:lock:run-own2";
 
       // Simulate worker B taking over the lock.
       mockRedis.store.set(lockKey, "worker-B-token");
@@ -1252,7 +1770,7 @@ describe("RedisBackend", () => {
     });
 
     it("compare-and-delete deletes only on a matching token", async () => {
-      const key = "test:schema-v1:lock:cad";
+      const key = "test:schema-v2:lock:cad";
 
       // Mismatched token -> script must be a no-op and return 0.
       mockRedis.store.set(key, "owner-token");
@@ -1332,7 +1850,32 @@ describe("RedisBackend", () => {
       );
       const run = await backend.getRun("run-claim-refreshed");
       assertEquals(run?.workerId, undefined);
-      assertEquals(mockRedis.store.has("test:schema-v1:claim:run-claim-refreshed"), false);
+      assertEquals(mockRedis.store.has("test:schema-v2:claim:run-claim-refreshed"), false);
+    });
+
+    it("uses stable bounded cursor pages when earlier running rows are deleted", async () => {
+      for (let index = 0; index < 1_001; index++) {
+        await backend.createRun(createTestRun(`run-stalled-page-${index}`, {
+          status: "running",
+          startedAt: new Date(Date.now() - 120_000),
+          createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)),
+        }));
+      }
+      mockRedis.beforeCursorRunSnapshotRead = async () => {
+        if (mockRedis.cursorSnapshotEvalCalls === 2) {
+          await backend.deleteRun("run-stalled-page-1000");
+        }
+      };
+
+      const stalled = await backend.findStalledRuns(60_000);
+
+      // Pages are individually atomic, not one global snapshot: the deleted
+      // row was valid in page one, while the unchanged final row must not be
+      // skipped after ranks ahead of the cursor shift.
+      assertEquals(stalled.length, 1_001);
+      assertEquals(new Set(stalled.map((run) => run.id)).size, 1_001);
+      assertEquals(stalled.some((run) => run.id === "run-stalled-page-0"), true);
+      assertEquals(mockRedis.cursorSnapshotEvalCalls, 2);
     });
   });
 
@@ -1351,18 +1894,18 @@ describe("RedisBackend", () => {
 
   describe("deserialization errors", () => {
     it("should throw on missing id field", async () => {
-      mockRedis.hashes.set("test:schema-v1:run:bad1", new Map([["workflowId", "wf"]]));
+      mockRedis.hashes.set("test:schema-v2:run:bad1", new Map([["workflowId", "wf"]]));
       await assertRejects(() => backend.getRun("bad1"), Error, "missing 'id'");
     });
 
     it("should throw on missing workflowId field", async () => {
-      mockRedis.hashes.set("test:schema-v1:run:bad2", new Map([["id", "bad2"]]));
+      mockRedis.hashes.set("test:schema-v2:run:bad2", new Map([["id", "bad2"]]));
       await assertRejects(() => backend.getRun("bad2"), Error, "missing 'workflowId'");
     });
 
     it("should throw on a missing source integration policy snapshot", async () => {
       mockRedis.hashes.set(
-        "test:schema-v1:run:missing-source-policy",
+        "test:schema-v2:run:missing-source-policy",
         new Map([
           ["id", "missing-source-policy"],
           ["workflowId", "wf"],
@@ -1377,7 +1920,7 @@ describe("RedisBackend", () => {
 
     it("should throw on a corrupt source integration policy snapshot", async () => {
       mockRedis.hashes.set(
-        "test:schema-v1:run:corrupt-source-policy",
+        "test:schema-v2:run:corrupt-source-policy",
         new Map([
           ["id", "corrupt-source-policy"],
           ["workflowId", "wf"],
@@ -1403,7 +1946,7 @@ describe("RedisBackend", () => {
 
     it("should throw on invalid status", async () => {
       mockRedis.hashes.set(
-        "test:schema-v1:run:bad3",
+        "test:schema-v2:run:bad3",
         new Map([
           ["id", "bad3"],
           ["workflowId", "wf"],
@@ -1419,7 +1962,7 @@ describe("RedisBackend", () => {
 
     it("should throw on invalid JSON in fields", async () => {
       mockRedis.hashes.set(
-        "test:schema-v1:run:bad4",
+        "test:schema-v2:run:bad4",
         new Map([
           ["id", "bad4"],
           ["workflowId", "wf"],
@@ -1477,8 +2020,8 @@ describe("RedisBackend", () => {
       await backend.acknowledge("run-ackx");
 
       assertEquals(ackCalls.length, 1);
-      assertEquals(ackCalls[0]!.key, "test:stream:schema-v1");
-      assertEquals(ackCalls[0]!.group, "test:group:schema-v1");
+      assertEquals(ackCalls[0]!.key, "test:stream:schema-v2");
+      assertEquals(ackCalls[0]!.group, "test:group:schema-v2");
       assertEquals(ackCalls[0]!.ids.length, 1);
 
       // Second acknowledge is a no-op (already acked, nothing tracked).
@@ -1522,7 +2065,176 @@ describe("RedisBackend", () => {
       });
       await ttlBackend.createRun(createTestRun("run-ttl"));
 
-      assertEquals(mockRedis.expiries.has("ttl:schema-v1:run:run-ttl"), true);
+      assertEquals(mockRedis.expiries.has("ttl:schema-v2:run:run-ttl"), true);
+    });
+
+    it("applies the run retention horizon to checkpoints, approvals, and cleanup metadata", async () => {
+      const ttlBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "ttl:",
+        runTtl: 3600,
+      });
+      const run = createTestRun("run-retained", { workflowId: "workflow-retained" });
+
+      await ttlBackend.createRun(run);
+      await ttlBackend.saveCheckpoint(run.id, {
+        id: "checkpoint-retained",
+        nodeId: "step-retained",
+        timestamp: new Date("2025-01-01T01:00:00Z"),
+        context: { input: {} },
+        nodeStates: {},
+      });
+      await ttlBackend.savePendingApproval(run.id, {
+        id: "approval-retained",
+        nodeId: "step-retained",
+        status: "pending",
+        message: "Review",
+        requestedAt: new Date("2025-01-01T01:00:00Z"),
+      });
+
+      assertEquals(mockRedis.expiries.has("ttl:schema-v2:run:run-retained"), true);
+      assertEquals(mockRedis.expiries.has("ttl:schema-v2:checkpoints:run-retained"), true);
+      assertEquals(mockRedis.expiries.has("ttl:schema-v2:approvals:run-retained"), true);
+      assertEquals(
+        mockRedis.hashes.get("ttl:schema-v2:index:run-workflow")?.get(run.id),
+        run.workflowId,
+      );
+      assertEquals(
+        mockRedis.hashes.get("ttl:schema-v2:index:run-status")?.get(run.id),
+        run.status,
+      );
+      assertEquals(
+        mockRedis.sortedSets.get("ttl:schema-v2:index:retention")?.has(run.id),
+        true,
+      );
+    });
+
+    it("does not list, count, or retain index ghosts after the run hash expires", async () => {
+      const ttlBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "ttl:",
+        runTtl: 3600,
+      });
+      const run = createTestRun("run-expired-index", {
+        workflowId: "workflow-expired-index",
+        status: "running",
+      });
+      await ttlBackend.createRun(run);
+
+      mockRedis.hashes.delete("ttl:schema-v2:run:run-expired-index");
+      mockRedis.expiries.delete("ttl:schema-v2:run:run-expired-index");
+      mockRedis.sortedSets.get("ttl:schema-v2:index:retention")?.set(run.id, 0);
+
+      assertEquals(await ttlBackend.countRuns({}), 0);
+      assertEquals(await ttlBackend.countRuns({ workflowId: run.workflowId }), 0);
+      assertEquals(await ttlBackend.countRuns({ status: run.status }), 0);
+      assertEquals(await ttlBackend.listRuns({}), []);
+      assertEquals(
+        mockRedis.sortedSets.get("ttl:schema-v2:index:created")?.has(run.id) ?? false,
+        false,
+      );
+      assertEquals(
+        mockRedis.sortedSets.get(`ttl:schema-v2:index:created:workflow:${run.workflowId}`)?.has(
+          run.id,
+        ) ?? false,
+        false,
+      );
+      assertEquals(
+        mockRedis.sortedSets.get(`ttl:schema-v2:index:created:status:${run.status}`)?.has(run.id) ??
+          false,
+        false,
+      );
+    });
+
+    it("cleans expired run-owned keys from get and delete even when the hash is gone", async () => {
+      const ttlBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "ttl:",
+        runTtl: 3600,
+      });
+      const run = createTestRun("run-expired-owned", { workflowId: "workflow-expired-owned" });
+      await ttlBackend.createRun(run);
+      await ttlBackend.saveCheckpoint(run.id, {
+        id: "checkpoint-expired",
+        nodeId: "step-expired",
+        timestamp: new Date("2025-01-01T01:00:00Z"),
+        context: { input: {} },
+        nodeStates: {},
+      });
+      await ttlBackend.savePendingApproval(run.id, {
+        id: "approval-expired",
+        nodeId: "step-expired",
+        status: "pending",
+        message: "Review",
+        requestedAt: new Date("2025-01-01T01:00:00Z"),
+      });
+      mockRedis.hashes.delete("ttl:schema-v2:run:run-expired-owned");
+
+      assertEquals(await ttlBackend.getRun(run.id), null);
+      await ttlBackend.deleteRun(run.id);
+
+      assertEquals(mockRedis.lists.has("ttl:schema-v2:checkpoints:run-expired-owned"), false);
+      assertEquals(mockRedis.lists.has("ttl:schema-v2:approvals:run-expired-owned"), false);
+      assertEquals(
+        mockRedis.hashes.get("ttl:schema-v2:index:run-workflow")?.has(run.id) ?? false,
+        false,
+      );
+      assertEquals(
+        mockRedis.hashes.get("ttl:schema-v2:index:run-status")?.has(run.id) ?? false,
+        false,
+      );
+      assertEquals(
+        mockRedis.sortedSets.get("ttl:schema-v2:index:retention")?.has(run.id) ?? false,
+        false,
+      );
+    });
+
+    it("rejects an update after expiry instead of resurrecting a partial run", async () => {
+      const ttlBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "ttl:",
+        runTtl: 3600,
+      });
+      const run = createTestRun("run-expired-update");
+      await ttlBackend.createRun(run);
+      mockRedis.hashes.delete("ttl:schema-v2:run:run-expired-update");
+
+      await assertRejects(
+        () => ttlBackend.updateRun(run.id, { status: "completed", output: "stale" }),
+        Error,
+        `Run not found: ${run.id}`,
+      );
+      assertEquals(mockRedis.hashes.has("ttl:schema-v2:run:run-expired-update"), false);
+      assertEquals(await ttlBackend.countRuns({}), 0);
+    });
+
+    it("does not let stale missing-run cleanup delete a concurrently recreated run", async () => {
+      const ttlBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "ttl:",
+        runTtl: 3600,
+      });
+      const original = createTestRun("run-cleanup-race", {
+        workflowId: "workflow-old",
+        status: "pending",
+      });
+      const replacement = createTestRun("run-cleanup-race", {
+        workflowId: "workflow-new",
+        status: "running",
+        input: { owner: "replacement" },
+      });
+      await ttlBackend.createRun(original);
+      mockRedis.hashes.delete("ttl:schema-v2:run:run-cleanup-race");
+      mockRedis.beforeMissingRunCleanup = () => ttlBackend.createRun(replacement);
+
+      assertEquals(await ttlBackend.getRun(original.id), null);
+
+      const stored = await ttlBackend.getRun(original.id);
+      assertEquals(stored?.workflowId, replacement.workflowId);
+      assertEquals(stored?.status, replacement.status);
+      assertEquals(stored?.input, replacement.input);
+      assertEquals(await ttlBackend.countRuns({ workflowId: original.workflowId }), 0);
+      assertEquals(await ttlBackend.countRuns({ workflowId: replacement.workflowId }), 1);
     });
   });
 
@@ -1542,17 +2254,170 @@ describe("RedisBackend", () => {
       assertEquals(results.length, 1);
       assertEquals(results[0]!.approval.id, "ap-x");
     });
+
+    it("never attributes recreated approvals to the deleted incarnation's workflow", async () => {
+      const runId = "approval-list-incarnation";
+      await backend.createRun(createTestRun(runId, { workflowId: "old-workflow" }));
+      await backend.savePendingApproval(runId, {
+        id: "old-approval",
+        nodeId: "wait",
+        status: "pending",
+        message: "old",
+        payload: {},
+        requestedAt: new Date("2025-01-01T00:00:00.000Z"),
+      });
+      mockRedis.beforeRunSnapshotRead = async () => {
+        await backend.deleteRun(runId);
+        await backend.createRun(createTestRun(runId, { workflowId: "new-workflow" }));
+        await backend.savePendingApproval(runId, {
+          id: "new-approval",
+          nodeId: "wait",
+          status: "pending",
+          message: "new",
+          payload: {},
+          requestedAt: new Date("2025-01-02T00:00:00.000Z"),
+        });
+      };
+
+      assertEquals(
+        await backend.listPendingApprovals({ workflowId: "old-workflow" }),
+        [],
+      );
+    });
+
+    it("enumerates the run index without issuing a keyspace-wide KEYS command", async () => {
+      await backend.createRun(createTestRun("run-lpa-indexed"));
+      await backend.savePendingApproval("run-lpa-indexed", {
+        id: "approval-indexed",
+        nodeId: "node-indexed",
+        status: "pending",
+        message: "Review",
+        requestedAt: new Date("2025-01-01T01:00:00Z"),
+      });
+      mockRedis.keys = () => {
+        throw new Error("KEYS must not be used for workflow run discovery");
+      };
+
+      const results = await backend.listPendingApprovals({ status: "pending" });
+
+      assertEquals(results.map(({ runId }) => runId), ["run-lpa-indexed"]);
+      assertEquals(mockRedis.keysCalls, 0);
+    });
   });
 
   describe("run indexes", () => {
+    it("publishes each run to the schema-v2 ordered index family", async () => {
+      const run = createTestRun("ordered-index-run", {
+        workflowId: "ordered-workflow",
+        status: "waiting",
+        createdAt: new Date("2026-04-05T06:07:08.009Z"),
+      });
+
+      await backend.createRun(run);
+
+      const score = run.createdAt.getTime();
+      assertEquals(
+        mockRedis.sortedSets.get("test:schema-v2:index:created")?.get(run.id),
+        score,
+      );
+      assertEquals(
+        mockRedis.sortedSets.get("test:schema-v2:index:created:workflow:ordered-workflow")?.get(
+          run.id,
+        ),
+        score,
+      );
+      assertEquals(
+        mockRedis.sortedSets.get("test:schema-v2:index:created:status:waiting")?.get(run.id),
+        score,
+      );
+      assertEquals(
+        mockRedis.sortedSets.get(
+          "test:schema-v2:index:created:workflow-status:ordered-workflow:waiting",
+        )?.get(run.id),
+        score,
+      );
+      assertEquals(mockRedis.hashes.has("test:schema-v1:run:ordered-index-run"), false);
+    });
+
+    it("bounds list hydration and counts without SMEMBERS or run snapshots", async () => {
+      for (let index = 0; index < 20; index++) {
+        await backend.createRun(createTestRun(`bounded-query-${index}`, {
+          createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)),
+        }));
+      }
+      mockRedis.smembersCalls = 0;
+      mockRedis.snapshotEvalCalls = 0;
+
+      assertEquals((await backend.listRuns({ limit: 3 })).length, 3);
+      assertEquals(mockRedis.smembersCalls, 0);
+      assertEquals(mockRedis.snapshotEvalCalls, 0);
+
+      mockRedis.smembersCalls = 0;
+      mockRedis.snapshotEvalCalls = 0;
+      assertEquals(await backend.countRuns({ status: "pending" }), 20);
+      assertEquals(mockRedis.smembersCalls, 0);
+      assertEquals(mockRedis.snapshotEvalCalls, 0);
+    });
+
+    it("fails closed while bounded retention cleanup has more due work", async () => {
+      const ttlRedis = new MockRedisAdapter();
+      const ttlBackend = new RedisBackend({
+        client: ttlRedis,
+        prefix: "maintenance:",
+        runTtl: 1,
+      });
+      const runIds: string[] = [];
+      for (let index = 0; index < 257; index++) {
+        const runId = `expired-backlog-${String(index).padStart(3, "0")}`;
+        runIds.push(runId);
+        await ttlBackend.createRun(createTestRun(runId));
+      }
+      const retentionEntry = [...ttlRedis.sortedSets.entries()].find(([key]) =>
+        key.endsWith(":index:retention")
+      );
+      assertExists(retentionEntry);
+      const [retentionKey, retention] = retentionEntry;
+      const runKey = [...ttlRedis.hashes.keys()].find((key) => key.endsWith(`:run:${runIds[0]}`));
+      assertExists(runKey);
+      const runPrefix = runKey.slice(0, -runIds[0]!.length);
+      for (const runId of runIds) {
+        ttlRedis.hashes.delete(runPrefix + runId);
+        ttlRedis.expiries.delete(runPrefix + runId);
+        retention.set(runId, 0);
+      }
+
+      const maintenanceError = await assertRejects(
+        () => ttlBackend.countRuns({}),
+        Error,
+        "retention maintenance backlog",
+      );
+      assertEquals((maintenanceError as { status?: number }).status, 503);
+      assertEquals(ttlRedis.sortedSets.get(retentionKey)?.size, 129);
+
+      const listMaintenanceError = await assertRejects(
+        () => ttlBackend.listRuns({}),
+        Error,
+        "retention maintenance backlog",
+      );
+      assertEquals((listMaintenanceError as { status?: number }).status, 503);
+      assertEquals(ttlRedis.sortedSets.get(retentionKey)?.size, 1);
+
+      assertEquals(await ttlBackend.drainExpiredRuns(), {
+        processed: 1,
+        hasMoreDue: false,
+      });
+      assertEquals(await ttlBackend.countRuns({}), 0);
+      assertEquals(await ttlBackend.listRuns({}), []);
+    });
+
     it("does not discover or backfill rows missing from the versioned index", async () => {
       await backend.createRun(createTestRun("orphaned-run"));
-      mockRedis.sets.delete("test:schema-v1:index:runs");
+      mockRedis.sortedSets.delete("test:schema-v2:index:created");
 
       const runs = await backend.listRuns({});
 
       assertEquals(runs, []);
-      assertEquals(mockRedis.sets.has("test:schema-v1:index:runs"), false);
+      assertEquals(mockRedis.sortedSets.has("test:schema-v2:index:created"), false);
     });
 
     it("counts the intersection of workflow and status indexes", async () => {

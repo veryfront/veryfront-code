@@ -1,5 +1,5 @@
 import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
-import { validateNodeId } from "./validation.ts";
+import { validateDelay, validateExecutionPolicy, validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Options accepted by wait for approval. */
@@ -15,6 +15,7 @@ export interface WaitForApprovalOptions extends Omit<BaseNodeConfig, "checkpoint
 /** Create a wait-for-approval node. Pauses until human approves/rejects. */
 export function waitForApproval(id: string, options: WaitForApprovalOptions = {}): WorkflowNode {
   validateNodeId(id);
+  const policy = validateExecutionPolicy(`Approval wait "${id}"`, options);
 
   return {
     id,
@@ -24,9 +25,9 @@ export function waitForApproval(id: string, options: WaitForApprovalOptions = {}
       message: options.message ?? "Approval required",
       payload: options.payload,
       approvers: options.approvers === undefined ? undefined : [...options.approvers],
-      timeout: options.timeout,
+      timeout: policy.timeout,
       checkpoint: true,
-      retry: options.retry,
+      retry: policy.retry,
       skip: options.skip,
     },
   };
@@ -47,6 +48,7 @@ export function waitForEvent(id: string, options: WaitForEventOptions): Workflow
   if (!options.eventName) {
     throw INVALID_ARGUMENT.create({ detail: `waitForEvent "${id}" must specify an eventName` });
   }
+  const policy = validateExecutionPolicy(`Event wait "${id}"`, options);
 
   return {
     id,
@@ -54,9 +56,9 @@ export function waitForEvent(id: string, options: WaitForEventOptions): Workflow
       type: "wait",
       waitType: "event",
       eventName: options.eventName,
-      timeout: options.timeout,
+      timeout: policy.timeout,
       checkpoint: true,
-      retry: options.retry,
+      retry: policy.retry,
       skip: options.skip,
     },
   };
@@ -65,6 +67,7 @@ export function waitForEvent(id: string, options: WaitForEventOptions): Workflow
 /** Create a simple delay/sleep node. */
 export function delay(id: string, duration: string | number): WorkflowNode {
   validateNodeId(id);
+  validateDelay(duration, `Delay "${id}"`);
 
   return {
     id,

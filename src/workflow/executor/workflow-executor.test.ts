@@ -11,9 +11,10 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import { branch, dependsOn, step, waitForApproval, workflow } from "../dsl/index.ts";
 import { ApprovalManager } from "../runtime/approval-manager.ts";
-import type { WorkflowRun } from "../types.ts";
+import type { WorkflowDefinition, WorkflowRun } from "../types.ts";
 import { WorkflowExecutor } from "./workflow-executor.ts";
 import { FakeTime } from "#std/testing/time";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils";
 import {
   getActiveSourceIntegrationPolicy,
   runWithExactSourceIntegrationPolicy,
@@ -188,6 +189,73 @@ describe("workflow/executor/workflow-executor", () => {
         () => new WorkflowExecutor({ backend: new MemoryBackend(), maxConcurrency }),
         Error,
         "maxConcurrency must be a positive safe integer",
+      );
+    }
+  });
+
+  it("rejects invalid positive runtime timer options at construction", () => {
+    const invalidValues = [
+      0,
+      -1,
+      0.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      MAX_TIMER_DELAY_MS + 1,
+    ];
+
+    for (const option of ["lockDuration", "heartbeatInterval", "resultWaitTimeout"] as const) {
+      for (const value of invalidValues) {
+        assertThrows(
+          () =>
+            new WorkflowExecutor({
+              backend: new MemoryBackend(),
+              [option]: value,
+            }),
+          Error,
+          option,
+        );
+      }
+    }
+  });
+
+  it("accepts zero cancellation grace but rejects invalid values", () => {
+    new WorkflowExecutor({ backend: new MemoryBackend(), cancellationGracePeriod: 0 });
+
+    for (
+      const cancellationGracePeriod of [
+        -1,
+        0.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        MAX_TIMER_DELAY_MS + 1,
+      ]
+    ) {
+      assertThrows(
+        () =>
+          new WorkflowExecutor({
+            backend: new MemoryBackend(),
+            cancellationGracePeriod,
+          }),
+        Error,
+        "cancellationGracePeriod",
+      );
+    }
+  });
+
+  it("rejects raw zero and NaN workflow timeouts at registration", () => {
+    const executor = new WorkflowExecutor({ backend: new MemoryBackend() });
+
+    for (const timeout of [0, Number.NaN]) {
+      const definition: WorkflowDefinition = {
+        id: `invalid-timeout-${String(timeout)}`,
+        timeout,
+        steps: [{ id: "step", config: { type: "step", tool: "tool" } }],
+      };
+
+      assertThrows(
+        () => executor.register(definition),
+        Error,
+        "timeout",
       );
     }
   });
