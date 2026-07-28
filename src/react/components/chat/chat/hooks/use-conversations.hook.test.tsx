@@ -210,4 +210,37 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       restoreDom();
     }
   });
+
+  it("replaces a removed sole draft instead of reselecting its deleted id", async () => {
+    const restoreDom = installDom();
+    const store = memoryConversationStore([
+      conversation({
+        id: "draft",
+        title: "New Chat",
+        messages: [],
+        updatedAt: 2,
+      }),
+    ]);
+    try {
+      const view = mount(store);
+      await settle();
+      assertEquals(view.get().activeConversationId, "draft");
+
+      flushSync(() => view.get().remove("draft"));
+      await settle();
+
+      const replacementId = view.get().activeConversationId;
+      assert(replacementId);
+      assert(replacementId !== "draft");
+      assertEquals(view.get().conversations.map((item) => item.id), [replacementId]);
+      assertEquals(view.get().activeConversation?.id, replacementId);
+      assertEquals(await store.load("draft"), null);
+      assert(await store.load(replacementId));
+
+      flushSync(() => view.root.unmount());
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
 });

@@ -143,6 +143,10 @@ export function useAttachments(
   // them and let refresh fold them back in.
   const refreshInFlightRef = React.useRef(0);
   const pendingAddsRef = React.useRef<UploadedFile[]>([]);
+  const refreshStateRef = React.useRef<{
+    controller?: AbortController;
+    generation: number;
+  }>({ generation: 0 });
 
   const add = React.useCallback((file: UploadedFile) => {
     if (refreshInFlightRef.current > 0) pendingAddsRef.current.push(file);
@@ -205,12 +209,26 @@ export function useAttachments(
   // the surface shows everything (other sessions, chat uploads, this tab),
   // not just what this browser's localStorage happens to remember.
   const refresh = React.useCallback(async () => {
+    const generation = ++refreshStateRef.current.generation;
+    refreshStateRef.current.controller?.abort();
+    const controller = new AbortController();
+    refreshStateRef.current.controller = controller;
     refreshInFlightRef.current += 1;
+    setIsLoading(true);
     try {
-      const response = await fetch(endpoint, { headers: headersRef.current });
+      const response = await fetch(endpoint, {
+        headers: headersRef.current,
+        signal: controller.signal,
+      });
       if (!response.ok) return;
       const body = (await response.json()) as ListResponse;
       if (!Array.isArray(body.items)) return;
+      if (
+        controller.signal.aborted ||
+        refreshStateRef.current.generation !== generation
+      ) {
+        return;
+      }
       const serverItems = (body.items ?? [])
         .map(toUploadedFile)
         .filter((f): f is UploadedFile => f !== null);
@@ -225,16 +243,19 @@ export function useAttachments(
     } finally {
       refreshInFlightRef.current -= 1;
       if (refreshInFlightRef.current === 0) pendingAddsRef.current = [];
+      if (refreshStateRef.current.controller === controller) {
+        refreshStateRef.current.controller = undefined;
+        setIsLoading(false);
+      }
     }
   }, [endpoint, headersKey]);
 
   React.useEffect(() => {
-    let active = true;
-    void refresh().finally(() => {
-      if (active) setIsLoading(false);
-    });
+    void refresh();
     return () => {
-      active = false;
+      refreshStateRef.current.generation += 1;
+      refreshStateRef.current.controller?.abort();
+      refreshStateRef.current.controller = undefined;
     };
   }, [refresh]);
 

@@ -207,12 +207,18 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
   }, [flushSave]);
   React.useEffect(() => flushSave, [flushSave]);
 
-  const create = React.useCallback((agentId?: string): Conversation => {
+  const createConversation = React.useCallback((
+    agentId?: string,
+    excludedDraftId?: string,
+  ): Conversation => {
     // Reuse an existing untouched draft instead of piling up "New Chat" rows —
     // clicking "New chat" (or an auto-create) when a blank draft already exists
     // just re-opens it.
     const draft = summariesRef.current.find(
-      (s) => s.messageCount === 0 && s.title === DEFAULT_CONVERSATION_TITLE,
+      (s) =>
+        s.id !== excludedDraftId &&
+        s.messageCount === 0 &&
+        s.title === DEFAULT_CONVERSATION_TITLE,
     );
     if (draft) {
       const reused: Conversation = activeRef.current?.id === draft.id ? activeRef.current : {
@@ -234,6 +240,11 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
     select(conversation.id);
     return conversation;
   }, [store, select]);
+
+  const create = React.useCallback(
+    (agentId?: string): Conversation => createConversation(agentId),
+    [createConversation],
+  );
 
   // Refs for callbacks and derived props that are used inside async .then()
   // continuations in the initial-load effect. The effect is keyed on the store
@@ -378,9 +389,11 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
     setSummaries((prev) => prev.filter((s) => s.id !== id));
     if (id === activeId) {
       if (next) select(next);
-      else create();
+      // Do not let create() rediscover the just-deleted blank draft through
+      // summariesRef before React commits the filtered state.
+      else createConversation(undefined, id);
     }
-  }, [store, activeId, select, create, discardPendingSave]);
+  }, [store, activeId, select, createConversation, discardPendingSave]);
 
   // Memoized so `ConversationsProvider` can pass this straight through as a
   // context value: consumers re-render only when the state above changes, not
