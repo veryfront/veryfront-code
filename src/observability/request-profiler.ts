@@ -5,6 +5,8 @@ import {
   saturatingAdd,
   saturatingAddMeasure,
 } from "./metrics/numeric.ts";
+import { MAX_OBSERVABILITY_NAME_LENGTH, MAX_REQUEST_PROFILE_PHASES } from "./limits.ts";
+import { sanitizeTelemetryText } from "./telemetry-error.ts";
 
 export interface RequestProfileRecord {
   sequence: number;
@@ -33,6 +35,7 @@ interface RequestProfileSession {
   requestMode?: string;
   startedAt: number;
   phases: Map<string, number>;
+  finalized: boolean;
 }
 
 const storage = new AsyncLocalStorage<RequestProfileSession>();
@@ -51,10 +54,21 @@ function normalizeDuration(value: number): number {
 }
 
 function addPhaseDuration(session: RequestProfileSession, name: string, durationMs: number): void {
+  if (session.finalized || typeof name !== "string") return;
+  const normalizedName = sanitizeTelemetryText(name, MAX_OBSERVABILITY_NAME_LENGTH);
+  if (
+    !session.phases.has(normalizedName) &&
+    session.phases.size >= MAX_REQUEST_PROFILE_PHASES
+  ) {
+    return;
+  }
   session.phases.set(
-    name,
+    normalizedName,
     normalizeDuration(
-      saturatingAddMeasure(session.phases.get(name) ?? 0, normalizeDuration(durationMs)),
+      saturatingAddMeasure(
+        session.phases.get(normalizedName) ?? 0,
+        normalizeDuration(durationMs),
+      ),
     ),
   );
 }
@@ -120,6 +134,7 @@ export async function runWithRequestProfiling<T>(
     ...options,
     startedAt: performance.now(),
     phases: new Map(),
+    finalized: false,
   };
 
   return await storage.run(session, fn);
@@ -160,15 +175,26 @@ export function profileSyncPhase<T>(name: string, fn: () => T): T {
 
 export function updateRequestProfileContext(update: RequestProfileContextUpdate): void {
   const session = storage.getStore();
-  if (!session) return;
+  if (!session || session.finalized) return;
 
-  if (update.projectSlug !== undefined) session.projectSlug = update.projectSlug;
-  if (update.requestMode !== undefined) session.requestMode = update.requestMode;
+  if (typeof update.projectSlug === "string") {
+    session.projectSlug = sanitizeTelemetryText(
+      update.projectSlug,
+      MAX_OBSERVABILITY_NAME_LENGTH,
+    );
+  }
+  if (typeof update.requestMode === "string") {
+    session.requestMode = sanitizeTelemetryText(
+      update.requestMode,
+      MAX_OBSERVABILITY_NAME_LENGTH,
+    );
+  }
 }
 
 export function finalizeRequestProfiling(status?: number): RequestProfileRecord | null {
   const session = storage.getStore();
-  if (!session) return null;
+  if (!session || session.finalized) return null;
+  session.finalized = true;
   sequence = saturatingAdd(sequence);
 
   const record: RequestProfileRecord = {

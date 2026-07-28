@@ -6,6 +6,8 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_STRING_DISPLAY_LENGTH } from "#veryfront/utils/constants/index.ts";
+import { MAX_OBSERVABILITY_NAME_LENGTH } from "./limits.ts";
 import { interceptConsole, LogBuffer } from "./log-buffer.ts";
 
 describe("observability/log-buffer", () => {
@@ -56,6 +58,19 @@ describe("observability/log-buffer", () => {
       assertEquals(entry.message.includes("password"), false);
       assertEquals(entry.message.includes("secret"), false);
       assertEquals(entry.message.includes("[REDACTED]"), true);
+    });
+
+    it("bounds retained message and source strings", () => {
+      const buf = new LogBuffer();
+
+      const entry = buf.info(
+        "m".repeat(MAX_STRING_DISPLAY_LENGTH + 100),
+        "s".repeat(MAX_OBSERVABILITY_NAME_LENGTH + 100),
+      );
+
+      assertEquals(entry.message.length, MAX_STRING_DISPLAY_LENGTH);
+      assertEquals(entry.source.length, MAX_OBSERVABILITY_NAME_LENGTH);
+      assertEquals(buf.getAll()[0]?.message.length, MAX_STRING_DISPLAY_LENGTH);
     });
 
     it("does not expose retained entries to caller or subscriber mutation", () => {

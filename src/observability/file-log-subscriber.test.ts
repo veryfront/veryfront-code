@@ -3,6 +3,7 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_FILE_LOG_FILES } from "#veryfront/utils/config-resource-limits.ts";
 import { FileLogSubscriber, parseMaxSize, writeAll } from "./file-log-subscriber.ts";
+import { MAX_FILE_LOG_PENDING_WRITES, MAX_FILE_LOG_RETAINED_FAILURES } from "./limits.ts";
 import { LogBuffer } from "./log-buffer.ts";
 import type { FileLogConfig } from "./file-log-subscriber.ts";
 
@@ -462,6 +463,53 @@ describe("observability/file-log-subscriber", () => {
         console.error = originalError;
         await sub.close();
       }
+    });
+
+    it("bounds queued entries when the filesystem stops making progress", async () => {
+      const dir = await makeTempDir();
+      const sub = new FileLogSubscriber(makeConfig({ path: `${dir}/bounded.log` }));
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const internals = sub as unknown as {
+        pendingWrites: number;
+        writeEntry(entry: unknown): Promise<void>;
+      };
+      internals.writeEntry = () => gate;
+      const subscriber = sub.getSubscriber();
+      const entry = {
+        id: "queued",
+        level: "info" as const,
+        message: "queued",
+        timestamp: Date.now(),
+        source: "test",
+      };
+
+      for (let index = 0; index <= MAX_FILE_LOG_PENDING_WRITES; index++) {
+        subscriber({ ...entry, id: `queued-${index}` });
+      }
+
+      assertEquals(internals.pendingWrites, MAX_FILE_LOG_PENDING_WRITES);
+      release();
+      await assertRejects(() => sub.flush(), Error, "capacity");
+      await sub.close();
+    });
+
+    it("retains only a bounded sample of repeated file-log failures", () => {
+      const sub = new FileLogSubscriber(makeConfig({ path: "ignored.log" }));
+      const internals = sub as unknown as {
+        pendingFailures: unknown[];
+        omittedFailureCount: number;
+        recordFailure(error: unknown): void;
+      };
+
+      for (let index = 0; index < MAX_FILE_LOG_RETAINED_FAILURES + 10; index++) {
+        internals.recordFailure(new Error(`failure-${index}`));
+      }
+
+      assertEquals(internals.pendingFailures.length, MAX_FILE_LOG_RETAINED_FAILURES);
+      assertEquals(internals.omittedFailureCount, 10);
     });
 
     it("closes and clears the file even when flushing rejects", async () => {

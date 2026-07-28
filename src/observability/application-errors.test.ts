@@ -60,3 +60,38 @@ Deno.test("application error reporter ignores expected cancellation", () => {
   assertEquals(eventId, undefined);
   assertEquals(captured, false);
 });
+
+Deno.test("application error capture failures never replace application control flow", () => {
+  const hostile = new Proxy({}, {
+    getPrototypeOf() {
+      throw new Error("prototype unavailable");
+    },
+  });
+  setApplicationErrorReporter({
+    capture() {
+      throw new Error("reporter unavailable");
+    },
+    flush: () => Promise.resolve(true),
+  });
+
+  assertEquals(
+    captureApplicationError(hostile, { boundary: "renderer.request" }),
+    undefined,
+  );
+});
+
+Deno.test("application error flush is strictly bounded and fail-open", async () => {
+  setApplicationErrorReporter({
+    capture: () => undefined,
+    flush: () => new Promise<boolean>(() => {}),
+  });
+
+  assertEquals(await flushApplicationErrors(5), false);
+
+  setApplicationErrorReporter({
+    capture: () => undefined,
+    flush: () => Promise.reject(new Error("transport unavailable")),
+  });
+  assertEquals(await flushApplicationErrors(5), false);
+  assertEquals(await flushApplicationErrors(-1), false);
+});

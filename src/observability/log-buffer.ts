@@ -1,6 +1,7 @@
 import { createSubscriberSet } from "#veryfront/utils/subscriber-set.ts";
-import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
-import { sanitizeStructuredTelemetryData } from "./telemetry-error.ts";
+import { MAX_STRING_DISPLAY_LENGTH } from "#veryfront/utils/constants/index.ts";
+import { MAX_OBSERVABILITY_NAME_LENGTH } from "./limits.ts";
+import { sanitizeStructuredTelemetryData, sanitizeTelemetryText } from "./telemetry-error.ts";
 
 /** Public API contract for log level. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -53,13 +54,23 @@ export class LogBuffer {
   }
 
   append(entry: Omit<LogEntry, "id" | "timestamp">): LogEntry {
+    if (
+      entry.level !== "debug" && entry.level !== "info" &&
+      entry.level !== "warn" && entry.level !== "error"
+    ) {
+      throw new TypeError(`Invalid log level: ${String(entry.level)}`);
+    }
+    if (typeof entry.message !== "string" || typeof entry.source !== "string") {
+      throw new TypeError("Log message and source must be strings");
+    }
+
     const fullEntry: LogEntry = {
       ...entry,
       // Redact credential-like keys before the entry is buffered, surfaced to
       // subscribers, or written to disk by the file subscriber (#1989).
       data: entry.data ? sanitizeStructuredTelemetryData(entry.data) : entry.data,
-      message: sanitizeUrlCredentials(entry.message),
-      source: sanitizeUrlCredentials(entry.source),
+      message: sanitizeTelemetryText(entry.message, MAX_STRING_DISPLAY_LENGTH),
+      source: sanitizeTelemetryText(entry.source, MAX_OBSERVABILITY_NAME_LENGTH),
       id: this.generateId(),
       timestamp: Date.now(),
     };

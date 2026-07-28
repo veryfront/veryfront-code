@@ -1,5 +1,15 @@
 import { REDACTED, redactForSerialization } from "#veryfront/utils/logger/redact.ts";
-import { sanitizeErrorForTelemetry, sanitizeTelemetryAttributeValue } from "../telemetry-error.ts";
+import { MAX_SPAN_NAME_LENGTH } from "#veryfront/utils/constants/index.ts";
+import {
+  MAX_OBSERVABILITY_NAME_LENGTH,
+  MAX_TELEMETRY_ATTRIBUTE_COUNT,
+  MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH,
+} from "../limits.ts";
+import {
+  sanitizeErrorForTelemetry,
+  sanitizeTelemetryAttributeValue,
+  sanitizeTelemetryText,
+} from "../telemetry-error.ts";
 import { runSyncWithContextFallback } from "./context-callback.ts";
 
 /** Context for open telemetry span. */
@@ -166,8 +176,10 @@ function setSpanAttribute<TSpan extends OpenTelemetrySpan>(
   value: ServiceTracerAttributeInput,
 ): void {
   try {
+    if (typeof key !== "string" || !key) return;
+    const boundedKey = key.slice(0, MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH);
     span.setAttribute(
-      key,
+      boundedKey,
       sanitizeTelemetryAttributeValue(key, toAttributeValue(value)) ?? "",
     );
   } catch (_) {
@@ -187,8 +199,9 @@ function createTracerSpan<TContext, TSpan extends OpenTelemetrySpan>(
     },
     setAttributes: (attributes) => {
       try {
-        for (const [key, value] of Object.entries(attributes)) {
-          setSpanAttribute(span, key, value);
+        const keys = Object.keys(attributes).slice(0, MAX_TELEMETRY_ATTRIBUTE_COUNT);
+        for (const key of keys) {
+          setSpanAttribute(span, key, attributes[key]);
         }
       } catch (_) {
         /* expected: hostile attribute containers fail closed */
@@ -363,7 +376,12 @@ export function createOpenTelemetryServiceTracer<
 ): OpenTelemetryServiceTracer<TContext, TSpan, TSpanOptions> {
   function getOtelTracer(): OpenTelemetryTracer<TContext, TSpan, TSpanOptions> | undefined {
     try {
-      const candidate = options.trace.getTracer(options.serviceName);
+      const candidate = options.trace.getTracer(
+        sanitizeTelemetryText(
+          options.serviceName,
+          MAX_OBSERVABILITY_NAME_LENGTH,
+        ),
+      );
       if (
         !candidate || typeof candidate.startSpan !== "function" ||
         typeof candidate.startActiveSpan !== "function"
@@ -400,7 +418,11 @@ export function createOpenTelemetryServiceTracer<
     const tracer = getOtelTracer();
     if (tracer) {
       try {
-        const candidate = tracer.startSpan(name, startOptions, context);
+        const candidate = tracer.startSpan(
+          sanitizeTelemetryText(name, MAX_SPAN_NAME_LENGTH),
+          startOptions,
+          context,
+        );
         if (isUsableSpan<TSpan>(candidate)) return candidate;
       } catch (_) {
         /* expected: invalid providers fall back to an inert span */
@@ -487,10 +509,13 @@ export function createOpenTelemetryServiceTracer<
 
     let providerResult: unknown;
     try {
-      providerResult = activeTracer.startActiveSpan(name, (span) => {
-        selectSpan(span);
-        return invoke();
-      });
+      providerResult = activeTracer.startActiveSpan(
+        sanitizeTelemetryText(name, MAX_SPAN_NAME_LENGTH),
+        (span) => {
+          selectSpan(span);
+          return invoke();
+        },
+      );
     } catch (_) {
       if (!callbackInvoked) return invoke();
       if (!callbackSucceeded) throw callbackError;

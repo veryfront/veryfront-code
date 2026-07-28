@@ -26,6 +26,11 @@ Primary source areas:
 4. Log subscribers and buffers expose recent runtime output.
 5. Request profiling records route-level timing and resource use.
 
+Tracing, automatic instrumentation, and Sentry initialization use shared
+single-flight promises. Each lifecycle has a generation guard: shutdown or test
+reset invalidates pending work before it can publish stale provider or reporter
+state. Exporter creation and teardown remain owned by the active extension.
+
 ## Logging boundary
 
 Runtime and split-proxy loggers use the same bounded serialization boundary.
@@ -33,6 +38,18 @@ Credential-shaped keys and credentials embedded in URLs are redacted before
 output. Cycles, `BigInt` values, hostile accessors, custom serializers, and
 oversized strings cannot make structured logging fail or grow without bounds.
 Diagnostic sink failures do not become request or shutdown failures.
+
+Core-owned retention and provider handoff are bounded independently of exporter
+defaults: flattened telemetry keeps at most 128 attributes, structured
+snapshots have depth, container, and aggregate-node budgets, and retained
+diagnostic text is truncated. File logging queues at most 256 pending writes and
+retains a sample of 16 failures. Queue overflow is reported as data loss and is
+surfaced by the next explicit flush or close.
+
+Passive recording remains fail-open for application control flow. Explicit
+durability and shutdown operations are different: file-log `flush()` and
+`close()` reject on recorded I/O or durability failures, while application
+error flush returns `false` on rejection or its strict deadline.
 
 The split proxy snapshots child and request context before retaining it.
 Request, project, release, branch, environment, trace, and span identifiers are
@@ -47,6 +64,10 @@ Veryfront runtimes, the platform process owns `OTEL_*` and `VERYFRONT_OTEL`
 values so one project cannot route another project's spans or metrics to a
 tenant-controlled collector. Project code can still create framework spans and
 metrics; the shared process decides where they are exported.
+
+For both traces and metrics, a signal-specific OTLP endpoint takes precedence
+over `OTEL_EXPORTER_OTLP_ENDPOINT`. Explicit runtime-adapter environment access
+does not fall through to the host environment when the adapter fails.
 
 | Runtime mode                         | Telemetry config owner               | Supported behavior                                                                                                                             |
 | ------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -111,6 +132,8 @@ to estimate proxy-to-renderer network and response header overhead.
 - Add tests for metric names, trace attributes, log filtering, and error
   collection when changing instrumentation.
 - Keep sensitive values out of logs and trace attributes.
+- Preserve single-flight lifecycle and stale-generation regression coverage.
+- Test queue, cardinality, depth, and text budgets at their exact boundaries.
 
 ## Related guides
 

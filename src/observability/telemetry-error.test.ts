@@ -2,6 +2,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  MAX_STRING_DISPLAY_LENGTH,
+  MAX_TRACE_ATTRIBUTE_VALUE_SIZE,
+} from "#veryfront/utils/constants/index.ts";
+import {
+  MAX_STRUCTURED_TELEMETRY_CONTAINER_ENTRIES,
+  MAX_TELEMETRY_ATTRIBUTE_COUNT,
+} from "./limits.ts";
+import {
   sanitizeErrorForTelemetry,
   sanitizeStructuredTelemetryData,
   sanitizeTelemetryAttributes,
@@ -118,5 +126,53 @@ describe("observability/telemetry-error", () => {
     snapshotDate.setUTCFullYear(2030);
     assertEquals(date.getUTCFullYear(), 2025);
     assertExists(snapshot.scalarJson);
+  });
+
+  it("bounds flattened attribute count, keys, strings, and arrays", () => {
+    const attributes: Record<string, TelemetryAttributeValue> = {
+      first: "x".repeat(MAX_TRACE_ATTRIBUTE_VALUE_SIZE + 100),
+      array: Array.from({ length: 200 }, () => "value"),
+    };
+    for (let index = 0; index < MAX_TELEMETRY_ATTRIBUTE_COUNT + 20; index++) {
+      attributes[`attribute.${index}`] = index;
+    }
+
+    const snapshot = sanitizeTelemetryAttributes(attributes);
+    assertEquals(Object.keys(snapshot).length, MAX_TELEMETRY_ATTRIBUTE_COUNT);
+    assertEquals(
+      (snapshot.first as string).length,
+      MAX_TRACE_ATTRIBUTE_VALUE_SIZE,
+    );
+    assertEquals(snapshot.array, "[REDACTED]");
+  });
+
+  it("bounds structured telemetry returned by custom serializers", () => {
+    let calls = 0;
+    const wide = {
+      toJSON() {
+        calls++;
+        return Array.from(
+          { length: MAX_STRUCTURED_TELEMETRY_CONTAINER_ENTRIES + 1 },
+          (_, index) => index,
+        );
+      },
+    };
+
+    assertEquals(sanitizeStructuredTelemetryData(wide) as unknown, "[REDACTED]");
+    assertEquals(calls, 1);
+    assertEquals(
+      sanitizeStructuredTelemetryData("x".repeat(MAX_STRING_DISPLAY_LENGTH + 100)).length,
+      MAX_STRING_DISPLAY_LENGTH,
+    );
+  });
+
+  it("bounds error strings before handing them to a telemetry backend", () => {
+    const source = new Error("x".repeat(MAX_STRING_DISPLAY_LENGTH + 100));
+    source.stack = "s".repeat(MAX_STRING_DISPLAY_LENGTH + 100);
+
+    const snapshot = sanitizeErrorForTelemetry(source);
+
+    assertEquals(snapshot.message.length, MAX_STRING_DISPLAY_LENGTH);
+    assertEquals(snapshot.stack?.length, MAX_STRING_DISPLAY_LENGTH);
   });
 });

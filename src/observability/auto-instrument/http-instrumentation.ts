@@ -10,7 +10,7 @@ import {
   trace,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import type { ErrorAttributes, HttpAttributes } from "./types.ts";
-import { sanitizeErrorForTelemetry } from "../telemetry-error.ts";
+import { sanitizeErrorForTelemetry, sanitizeTelemetryAttributes } from "../telemetry-error.ts";
 import { runAsyncWithContextFallback } from "../tracing/context-callback.ts";
 
 const logger = serverLogger.component("auto-instrument");
@@ -88,7 +88,9 @@ export function instrumentHttpHandler(
   return async function instrumentedHttpHandler(request: Request): Promise<Response> {
     const startTime = performance.now();
     const url = new URL(request.url);
-    const httpAttrs = buildHttpAttributes(request, url);
+    const httpAttrs = sanitizeTelemetryAttributes(
+      buildHttpAttributes(request, url),
+    );
     const parentContext = extractParentContext(request.headers);
     const runHandler = async (span: Span | null): Promise<Response> => {
       try {
@@ -152,12 +154,13 @@ export function createInstrumentedFetch(
     } catch (_) {
       /* expected: relative URLs cannot be parsed, leave defaults */
     }
+    const sanitizedFetchAttrs = sanitizeTelemetryAttributes(fetchAttrs);
 
     return await runWithActiveSpanFallback(
       (callback) =>
         getHttpTracer().startActiveSpan(
           "http.client.fetch",
-          { kind: SpanKind.CLIENT, attributes: fetchAttrs },
+          { kind: SpanKind.CLIENT, attributes: sanitizedFetchAttrs },
           callback,
         ),
       async (span) => {
@@ -183,13 +186,25 @@ export function createInstrumentedFetch(
 
           const response = await baseFetch(input, effectiveInit);
           runTelemetryOperation(
-            () => recordResponseSuccess(span, response, performance.now() - startTime, fetchAttrs),
+            () =>
+              recordResponseSuccess(
+                span,
+                response,
+                performance.now() - startTime,
+                sanitizedFetchAttrs,
+              ),
             "Failed to record HTTP client response",
           );
           return response;
         } catch (error) {
           runTelemetryOperation(
-            () => recordResponseError(span, error, performance.now() - startTime, fetchAttrs),
+            () =>
+              recordResponseError(
+                span,
+                error,
+                performance.now() - startTime,
+                sanitizedFetchAttrs,
+              ),
             "Failed to record HTTP client error",
           );
           throw error;
@@ -225,15 +240,17 @@ function recordResponseSuccess(
   const contentLength = Number(response.headers.get("content-length") ?? 0);
   runTelemetryOperation(
     () =>
-      span.setAttributes({
-        "http.status_code": response.status,
-        "http.response.size": Number.isFinite(contentLength) && contentLength >= 0
-          ? contentLength
-          : 0,
-        "http.duration_ms": Math.max(0, Math.round(duration)),
-        "http.method": httpAttrs["http.method"],
-        "http.target": httpAttrs["http.target"],
-      }),
+      span.setAttributes(
+        sanitizeTelemetryAttributes({
+          "http.status_code": response.status,
+          "http.response.size": Number.isFinite(contentLength) && contentLength >= 0
+            ? contentLength
+            : 0,
+          "http.duration_ms": Math.max(0, Math.round(duration)),
+          "http.method": httpAttrs["http.method"],
+          "http.target": httpAttrs["http.target"],
+        }),
+      ),
     "Failed to record HTTP response attributes",
   );
 
@@ -264,12 +281,14 @@ function recordResponseError(
   );
   runTelemetryOperation(
     () =>
-      span.setAttributes({
-        ...buildErrorAttributes(error),
-        "http.duration_ms": Math.max(0, Math.round(duration)),
-        "http.method": httpAttrs["http.method"],
-        "http.target": httpAttrs["http.target"],
-      }),
+      span.setAttributes(
+        sanitizeTelemetryAttributes({
+          ...buildErrorAttributes(error),
+          "http.duration_ms": Math.max(0, Math.round(duration)),
+          "http.method": httpAttrs["http.method"],
+          "http.target": httpAttrs["http.target"],
+        }),
+      ),
     "Failed to record HTTP error attributes",
   );
   runTelemetryOperation(

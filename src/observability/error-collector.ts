@@ -6,9 +6,10 @@
  **************************/
 
 import { type ErrorCategory, INVALID_ARGUMENT } from "#veryfront/errors";
+import { MAX_STRING_DISPLAY_LENGTH } from "#veryfront/utils/constants/index.ts";
 import { createSubscriberSet } from "#veryfront/utils/subscriber-set.ts";
-import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
-import { sanitizeStructuredTelemetryData } from "./telemetry-error.ts";
+import { MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH, MAX_OBSERVABILITY_NAME_LENGTH } from "./limits.ts";
+import { sanitizeStructuredTelemetryData, sanitizeTelemetryText } from "./telemetry-error.ts";
 
 /** Public API contract for error type. */
 export type ErrorType = "compile" | "runtime" | "bundle" | "hmr" | "module";
@@ -123,16 +124,30 @@ export class ErrorCollector {
           }`,
       });
     }
+    if (typeof error.message !== "string") {
+      throw INVALID_ARGUMENT.create({
+        detail: "ErrorCollector.add() requires a string message",
+      });
+    }
 
     const fullError: DevError = {
       ...error,
       type,
       category: expectedCategory,
-      message: sanitizeUrlCredentials(error.message),
-      file: error.file ? sanitizeUrlCredentials(error.file) : error.file,
-      stack: error.stack ? sanitizeUrlCredentials(error.stack) : error.stack,
+      message: sanitizeTelemetryText(error.message, MAX_STRING_DISPLAY_LENGTH),
+      file: typeof error.file === "string"
+        ? sanitizeTelemetryText(
+          error.file,
+          MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH,
+        )
+        : undefined,
+      stack: typeof error.stack === "string"
+        ? sanitizeTelemetryText(error.stack, MAX_STRING_DISPLAY_LENGTH)
+        : undefined,
       context: error.context ? sanitizeStructuredTelemetryData(error.context) : error.context,
-      slug: error.slug ? sanitizeUrlCredentials(error.slug) : error.slug,
+      slug: typeof error.slug === "string"
+        ? sanitizeTelemetryText(error.slug, MAX_OBSERVABILITY_NAME_LENGTH)
+        : undefined,
       id: this.generateId(),
       timestamp: Date.now(),
     };

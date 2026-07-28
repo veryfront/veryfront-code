@@ -9,6 +9,7 @@ request profiling, and development-diagnostics contracts.
 | ------------------------------------ | ------------------------------------------------------------------------------- |
 | `veryfront/observability`            | Stable public tracing, metrics, instrumentation, profiling, and diagnostics API |
 | `veryfront/observability/otlp-setup` | Lower-level shim-based tracing helpers used by framework integrations           |
+| `veryfront/observability/sentry`     | Opt-in application-error reporting through the Sentry extension                 |
 
 ```ts
 import { initTracing, recordHttpRequest, withSpan } from "veryfront/observability";
@@ -43,9 +44,17 @@ The runtime adapter or host environment can provide:
 - `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
 - `OTEL_TRACES_EXPORTER`
 
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` takes precedence over the generic
+`OTEL_EXPORTER_OTLP_ENDPOINT`. Caller configuration is validated before
+initialization. When an explicit runtime adapter owns environment access and
+that access fails, caller configuration is preserved; core does not fall back
+to a different host environment.
+
 The core manager records configuration and binds to the active shim provider.
 Exporter-specific behavior, including sampling, is implemented by the provider
-extension.
+extension. Concurrent initialization callers share one readiness promise.
+Shutdown invalidates an in-flight initialization, so obsolete asynchronous work
+cannot reinstall tracing state.
 
 ### Functions
 
@@ -114,6 +123,9 @@ provider is installed.
 The runtime adapter or host environment can provide `VERYFRONT_OTEL`,
 `OTEL_METRICS_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
 `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, and `OTEL_METRICS_EXPORTER`.
+The metrics-specific endpoint takes precedence over the generic endpoint.
+Configuration values are type-checked; `collectInterval` must be a positive
+integer within the portable JavaScript timer range.
 
 The core metrics manager requires a metrics API installed by an observability
 extension. Without one, recorders update their in-process runtime state and
@@ -171,6 +183,10 @@ installation remains explicit.
 `instrumentBatch` defaults to a batch size of 10 and rejects non-positive or
 non-integer batch sizes.
 
+Initialization snapshots nested tracing and metrics configuration. Concurrent
+callers share one readiness promise, and test lifecycle resets cannot be
+overwritten by an obsolete initialization.
+
 ## Service tracer adapter
 
 `createOpenTelemetryServiceTracer(options)` adapts injected OpenTelemetry trace
@@ -183,6 +199,21 @@ and context APIs to the service tracer contract. The returned object provides:
 Async wrappers keep spans open until their returned promise settles while
 preserving the exact returned promise or thenable object. Telemetry recording
 failures do not replace completed application results or failures.
+
+## Application error reporting
+
+`veryfront/observability/sentry` is disabled unless
+`VERYFRONT_ERROR_REPORTER=sentry` and a non-empty `SENTRY_DSN` are present, or
+`initializeSentry(config)` is called explicitly. Initialization snapshots and
+validates configuration before loading the extension, and concurrent callers
+share one setup attempt.
+
+`captureApplicationError(error, context)` ignores expected request
+cancellation. Reporter failures, invalid reporter results, and hostile error or
+context values do not replace application control flow.
+`flushApplicationErrors(timeoutMs?)` has a strict deadline and returns `false`
+for timeout, rejection, exceptions, or an invalid timeout; it never waits for a
+non-cooperative reporter after the deadline.
 
 ## In-process metrics
 
@@ -208,6 +239,8 @@ The root entry point exports:
 Profiling uses async-local request state. The full internal profiler also uses
 `VERYFRONT_ENABLE_PERF_PROFILING`, `VERYFRONT_ENABLE_SERVER_TIMING`, and
 `VERYFRONT_DISABLE_SLOW_REQUEST_PROFILING`.
+Each request retains at most 128 distinct phase names and can produce only one
+final profile record.
 
 ## Development diagnostics
 
@@ -216,14 +249,16 @@ Profiling uses async-local request state. The full internal profiler also uses
 `ErrorCollector({ maxErrors? })` retains development errors by type and category.
 `maxErrors` must be a non-negative safe integer; zero keeps notifications active
 without retaining entries. Query methods return detached copies. Subscriber
-failures do not interrupt collection.
+failures do not interrupt collection. Retained messages and stacks are limited
+to 1,000 characters; file and slug metadata is also bounded.
 
 ### `LogBuffer`
 
 `LogBuffer({ maxSize? })` retains structured log entries. `maxSize` must be a
 non-negative safe integer. `query`, `tail`, `getAll`, and `toJSON` return
 detached copies. `interceptConsole(buffer, source?)` returns a function that
-restores the original console methods.
+restores the original console methods. Retained messages are limited to 1,000
+characters and source names to 255 characters.
 
 ### `FileLogSubscriber`
 
@@ -241,7 +276,11 @@ restores the original console methods.
 `FileLogSubscriber` serializes writes, rotates files by size, and exposes
 `flush()` and `close()`. Passive subscriber callbacks report and contain write
 failures; explicit `flush()` and `close()` reject when writes, durability sync,
-or file closure fails. It requires the Deno file API.
+or file closure fails. The pending-write queue retains at most 256 entries. A
+full queue drops the new entry, retains a bounded failure sample, and makes the
+next explicit flush or close reject rather than hiding data loss. At most 16
+individual failures are retained; additional failures are represented by one
+omission summary. The subscriber requires the Deno file API.
 
 ## Data safety and cardinality
 
@@ -250,6 +289,24 @@ Telemetry attributes with credential-like keys are replaced with
 parameters are also removed from traced URLs, recorded errors, buffered logs,
 and collected development errors. Structured log and error context is copied
 and key-redacted before retention.
+
+Core applies the following limits before retaining values or invoking a
+telemetry provider:
+
+| Surface                  | Limit                                        |
+| ------------------------ | -------------------------------------------- |
+| Attributes per operation | 128                                          |
+| Attribute key            | 255 characters                               |
+| Attribute string or item | 10,000 characters                            |
+| Attribute array          | 128 items; larger arrays become `[REDACTED]` |
+| Span or event name       | 1,000 characters                             |
+| Structured context depth | 16 levels                                    |
+| One structured container | 1,024 entries                                |
+| One structured snapshot  | 4,096 visited nodes                          |
+| Retained structured text | 1,000 characters                             |
+
+Oversized or hostile structured containers fail closed to `[REDACTED]`;
+ordinary accepted values are detached from caller mutation.
 
 Redaction is defense in depth, not permission to attach secrets. Free-form
 values that are not recognizable URLs may still contain sensitive data. Keep

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_STRING_DISPLAY_LENGTH } from "#veryfront/utils/constants/index.ts";
 import { ErrorCollector, parseCompileError } from "./error-collector.ts";
 
 describe("cli/mc./error-collector", () => {
@@ -174,6 +175,19 @@ describe("cli/mc./error-collector", () => {
       assertEquals(error.stack?.includes("secret"), false);
       assertEquals(error.context, { apiKey: "[REDACTED]", safe: "value" });
       assertEquals(context.apiKey, "secret");
+    });
+
+    it("bounds retained error messages and stacks", () => {
+      const ec = new ErrorCollector();
+
+      const error = ec.addRuntimeError(
+        "m".repeat(MAX_STRING_DISPLAY_LENGTH + 100),
+        "s".repeat(MAX_STRING_DISPLAY_LENGTH + 100),
+      );
+
+      assertEquals(error.message.length, MAX_STRING_DISPLAY_LENGTH);
+      assertEquals(error.stack?.length, MAX_STRING_DISPLAY_LENGTH);
+      assertEquals(ec.get(error.id)?.message.length, MAX_STRING_DISPLAY_LENGTH);
     });
 
     it("should not expose retained errors to caller or subscriber mutation", () => {

@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_REQUEST_PROFILE_PHASES } from "./limits.ts";
 import {
   buildServerTimingHeader,
   finalizeRequestProfiling,
@@ -117,6 +118,30 @@ describe("request profiler", () => {
     assertEquals(record.phases.overflow, Number.MAX_SAFE_INTEGER);
     assert(Number.isFinite(record.totalMs));
     assert(record.totalMs <= Number.MAX_SAFE_INTEGER);
+  });
+
+  it("bounds phase cardinality and finalizes each request session once", async () => {
+    const results = await runWithRequestProfiling(
+      {
+        category: "html",
+        method: "GET",
+        pathname: "/profiled",
+      },
+      async () => {
+        for (let index = 0; index < MAX_REQUEST_PROFILE_PHASES + 20; index++) {
+          markRequestProfilePhase(`phase-${index}`, 1);
+        }
+        return [
+          finalizeRequestProfiling(200),
+          finalizeRequestProfiling(500),
+        ] as const;
+      },
+    );
+
+    assertExists(results[0]);
+    assertEquals(Object.keys(results[0].phases).length, MAX_REQUEST_PROFILE_PHASES);
+    assertEquals(results[1], null);
+    assertEquals(snapshotRequestProfiles().records.length, 1);
   });
 
   it("profiles page-data requests when Server-Timing diagnostics are enabled", () => {

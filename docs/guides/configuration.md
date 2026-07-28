@@ -264,7 +264,9 @@ limit, and `initialDelay` cannot exceed `maxDelay`.
 File logging uses `observability.logging.file`. `maxFiles` counts the active
 file and rotated files together and accepts 1 through 100. `maxSize` is the
 positive byte threshold that triggers rotation; it does not allocate that
-amount of memory eagerly.
+amount of memory eagerly. Runtime file delivery queues at most 256 pending
+entries. If the filesystem cannot keep up, new entries are dropped with a
+diagnostic and the next explicit flush or close reports the data loss.
 
 ### AI discovery
 
@@ -389,8 +391,10 @@ Common groups:
   `VERYFRONT_EXPERIMENTAL_RSC`, and trusted-proxy topology settings.
 - **Observability**: `VERYFRONT_OTEL`, `OTEL_TRACES_ENABLED`,
   `OTEL_METRICS_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
-  `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`, and related `OTEL_*`
-  values.
+  `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`,
+  `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`,
+  `OTEL_SERVICE_NAME`, and related `OTEL_*` values. A signal-specific endpoint
+  overrides the generic endpoint for that signal.
 
 In shared/proxy runtimes, observability exporter routing is platform-owned.
 Project env overlays and project `veryfront.config.ts` files must not choose the

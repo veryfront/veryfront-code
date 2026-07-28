@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_SPAN_NAME_LENGTH } from "#veryfront/utils/constants/index.ts";
 import {
   BasicTracerProvider,
   InMemorySpanExporter,
@@ -92,6 +93,39 @@ describe("observability/tracing/otlp-setup", () => {
     await withSpan("genai.chat", async () => "ok", {}, { kind: SpanKind.CLIENT });
 
     assertEquals(capturedKind, SpanKind.CLIENT);
+  });
+
+  it("bounds direct helper span and event names before provider calls", async () => {
+    const { addSpanEvent, withSpan } = await import("./otlp-setup.ts");
+    const received: { span?: string; event?: string } = {};
+    const span = createTestSpan({
+      addEvent(name) {
+        received.event = name;
+        return span;
+      },
+    });
+    setGlobalTracerProvider({
+      getTracer: () => ({
+        startSpan(name) {
+          received.span = name;
+          return span;
+        },
+        startActiveSpan: (() => span) as never,
+      }),
+    });
+
+    await withSpan(
+      "s".repeat(MAX_SPAN_NAME_LENGTH + 100),
+      async (activeSpan) => {
+        addSpanEvent(
+          activeSpan,
+          "e".repeat(MAX_SPAN_NAME_LENGTH + 100),
+        );
+      },
+    );
+
+    assertEquals(received.span?.length, MAX_SPAN_NAME_LENGTH);
+    assertEquals(received.event?.length, MAX_SPAN_NAME_LENGTH);
   });
 
   it("withSpan preserves callback-owned ERROR status on real OpenTelemetry spans", async () => {

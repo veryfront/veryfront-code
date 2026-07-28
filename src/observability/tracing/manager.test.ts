@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
@@ -111,6 +111,17 @@ describe("observability/tracing/manager", () => {
       assertEquals(manager.isEnabled(), false);
     });
 
+    it("shares one readiness promise across concurrent initialization", async () => {
+      installGlobalTelemetryAPI({ tracerProvider: createProvider("A", []) });
+
+      const first = manager.initialize({ enabled: true, serviceName: "test" });
+      const second = manager.initialize({ enabled: true, serviceName: "ignored" });
+
+      assertStrictEquals(second, first);
+      await first;
+      assertEquals(manager.getState().initialized, true);
+    });
+
     it("should accept empty config", async () => {
       await manager.initialize({});
       assertEquals(manager.getState().initialized, true);
@@ -163,6 +174,23 @@ describe("observability/tracing/manager", () => {
   });
 
   describe("shutdown", () => {
+    it("prevents an in-flight initialization from restoring stale state", async () => {
+      installGlobalTelemetryAPI({ tracerProvider: createProvider("A", []) });
+
+      const initializing = manager.initialize({ enabled: true, serviceName: "test" });
+      manager.shutdown();
+      await initializing;
+
+      assertEquals(manager.getState(), {
+        initialized: false,
+        degraded: false,
+        tracer: null,
+        api: null,
+        propagator: null,
+      });
+      assertEquals(manager.getSpanOperations(), null);
+    });
+
     it("releases cached state and permits a fresh initialization", async () => {
       const calls: string[] = [];
       installGlobalTelemetryAPI({ tracerProvider: createProvider("A", calls) });
@@ -209,6 +237,8 @@ describe("observability/tracing/manager", () => {
 
       assertEquals(state1.initialized, state2.initialized);
       assertEquals(state1.degraded, state2.degraded);
+      state1.initialized = true;
+      assertEquals(manager.getState().initialized, false);
     });
   });
 });

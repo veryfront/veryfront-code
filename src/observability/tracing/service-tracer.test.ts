@@ -5,6 +5,8 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_SPAN_NAME_LENGTH } from "#veryfront/utils/constants/index.ts";
+import { MAX_TELEMETRY_ATTRIBUTE_COUNT, MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH } from "../limits.ts";
 import { createOpenTelemetryServiceTracer } from "./service-tracer.ts";
 
 type FakeContext = {
@@ -539,6 +541,42 @@ describe("observability/tracing/service-tracer", () => {
       number: 1,
       undefinedValue: "",
     });
+  });
+
+  it("bounds manual span names, attribute names, and attribute cardinality", () => {
+    const harness = createHarness();
+    const serviceTracer = createOpenTelemetryServiceTracer({
+      serviceName: "test-service",
+      context: harness.contextApi,
+      trace: harness.traceApi,
+      errorStatusCode: 2,
+    });
+    const attributes = Object.fromEntries(
+      Array.from(
+        { length: MAX_TELEMETRY_ATTRIBUTE_COUNT + 20 },
+        (_, index) => [`attribute-${index}`, index],
+      ),
+    );
+
+    const span = serviceTracer.tracer.startSpan(
+      "s".repeat(MAX_SPAN_NAME_LENGTH + 100),
+    );
+    span.setTag(
+      "k".repeat(MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH + 100),
+      "bounded",
+    );
+    span.setAttributes(attributes);
+
+    const providerSpan = harness.startedSpans[0];
+    assertEquals(providerSpan?.name.length, MAX_SPAN_NAME_LENGTH);
+    assertEquals(
+      Object.keys(providerSpan?.attributes ?? {}).length,
+      MAX_TELEMETRY_ATTRIBUTE_COUNT + 1,
+    );
+    assertEquals(
+      Object.keys(providerSpan?.attributes ?? {})[0]?.length,
+      MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH,
+    );
   });
 
   it("redacts sensitive object attributes and safely serializes cycles", () => {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __resetAutoInstrumentForTests,
@@ -65,9 +65,33 @@ describe("observability/auto-instrument/orchestrator", () => {
       });
       assertEquals(isAutoInstrumentEnabled(), true);
     });
+
+    it("shares one readiness promise across concurrent initialization", async () => {
+      const first = initAutoInstrumentation({
+        tracing: { enabled: true, exporter: "console" },
+      });
+      const second = initAutoInstrumentation({
+        tracing: { enabled: false },
+      });
+
+      assertStrictEquals(second, first);
+      await first;
+      assertEquals(isAutoInstrumentEnabled(), true);
+    });
   });
 
   describe("__resetAutoInstrumentForTests", () => {
+    it("prevents an in-flight initialization from restoring stale state", async () => {
+      const initializing = initAutoInstrumentation({
+        tracing: { enabled: true, exporter: "console" },
+      });
+      __resetAutoInstrumentForTests();
+
+      await initializing;
+
+      assertEquals(isAutoInstrumentEnabled(), false);
+    });
+
     it("should reset initialization state", async () => {
       await initAutoInstrumentation();
       assertEquals(isAutoInstrumentEnabled(), true);

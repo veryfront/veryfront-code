@@ -1,5 +1,10 @@
 import { serverLogger } from "#veryfront/utils";
-import { sanitizeErrorForTelemetry, sanitizeTelemetryAttributes } from "../telemetry-error.ts";
+import { MAX_SPAN_NAME_LENGTH } from "#veryfront/utils/constants/index.ts";
+import {
+  sanitizeErrorForTelemetry,
+  sanitizeTelemetryAttributes,
+  sanitizeTelemetryText,
+} from "../telemetry-error.ts";
 import type { Context, OpenTelemetryAPI, Span, SpanKind, SpanOptions, Tracer } from "./types.ts";
 
 const logger = serverLogger.component("tracing");
@@ -22,7 +27,7 @@ export class SpanOperations {
     try {
       const parent = this.resolveParent(options.parent);
       return this.tracer.startSpan(
-        name,
+        sanitizeTelemetryText(name, MAX_SPAN_NAME_LENGTH),
         {
           kind: this.mapSpanKind(options.kind),
           attributes: sanitizeTelemetryAttributes(options.attributes) ?? {},
@@ -87,7 +92,10 @@ export class SpanOperations {
     if (!span) return;
 
     try {
-      span.addEvent(name, sanitizeTelemetryAttributes(attributes));
+      span.addEvent(
+        sanitizeTelemetryText(name, MAX_SPAN_NAME_LENGTH),
+        sanitizeTelemetryAttributes(attributes),
+      );
     } catch (error) {
       reportTelemetryFailure("Failed to add span event", error);
     }

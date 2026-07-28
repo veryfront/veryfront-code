@@ -2,6 +2,7 @@ import { dirname } from "@std/path";
 import { MAX_FILE_LOG_FILES } from "#veryfront/utils/config-resource-limits.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
 import type { LogEntry, LogLevel, LogSubscriber } from "./log-buffer.ts";
+import { MAX_FILE_LOG_PENDING_WRITES, MAX_FILE_LOG_RETAINED_FAILURES } from "./limits.ts";
 import { sanitizeStructuredTelemetryData } from "./telemetry-error.ts";
 
 /** Configuration used by file log. */
@@ -126,6 +127,8 @@ export class FileLogSubscriber {
   private currentSize = 0;
   private writeQueue: Promise<void> = Promise.resolve();
   private pendingFailures: unknown[] = [];
+  private pendingWrites = 0;
+  private omittedFailureCount = 0;
   private closePromise: Promise<void> | null = null;
   private maxSizeBytes: number;
   private minLevel: number;
@@ -180,13 +183,39 @@ export class FileLogSubscriber {
   }
 
   private enqueue(entry: LogEntry): void {
-    this.writeQueue = this.writeQueue.then(() => this.writeEntry(entry)).catch((error) => {
-      this.pendingFailures.push(error);
+    if (this.pendingWrites >= MAX_FILE_LOG_PENDING_WRITES) {
+      const error = new RangeError(
+        `File log pending-write capacity of ${MAX_FILE_LOG_PENDING_WRITES} was reached`,
+      );
+      this.recordFailure(error);
       this.reportFailure(
-        `[FileLogSubscriber] Failed writing to ${this.config.path}. File logging will continue.`,
+        `[FileLogSubscriber] Dropped an entry for ${this.config.path} because the write queue reached capacity.`,
         describeFailure(error),
       );
-    });
+      return;
+    }
+
+    this.pendingWrites++;
+    this.writeQueue = this.writeQueue
+      .then(() => this.writeEntry(entry))
+      .catch((error) => {
+        this.recordFailure(error);
+        this.reportFailure(
+          `[FileLogSubscriber] Failed writing to ${this.config.path}. File logging will continue.`,
+          describeFailure(error),
+        );
+      })
+      .finally(() => {
+        this.pendingWrites--;
+      });
+  }
+
+  private recordFailure(error: unknown): void {
+    if (this.pendingFailures.length < MAX_FILE_LOG_RETAINED_FAILURES) {
+      this.pendingFailures.push(error);
+    } else {
+      this.omittedFailureCount++;
+    }
   }
 
   private async writeEntry(entry: LogEntry): Promise<void> {
@@ -340,6 +369,14 @@ export class FileLogSubscriber {
       failures.push(error);
     }
     failures.push(...this.pendingFailures.splice(0));
+    if (this.omittedFailureCount > 0) {
+      failures.push(
+        new Error(
+          `${this.omittedFailureCount} additional file-log failures were omitted`,
+        ),
+      );
+      this.omittedFailureCount = 0;
+    }
     if (this.file) {
       try {
         await this.file.sync();

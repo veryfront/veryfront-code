@@ -13,6 +13,7 @@
  **************************/
 
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
+import { MAX_SPAN_NAME_LENGTH } from "#veryfront/utils/constants/index.ts";
 import { __registerTraceContextGetter, serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import {
@@ -35,6 +36,7 @@ import {
   sanitizeErrorForTelemetry,
   sanitizeTelemetryAttributes,
   sanitizeTelemetryAttributeValue,
+  sanitizeTelemetryText,
 } from "../telemetry-error.ts";
 import { runAsyncWithContextFallback, runSyncWithContextFallback } from "./context-callback.ts";
 
@@ -230,7 +232,7 @@ function startSpanWithFallback(
 
   try {
     const candidate = getTracingRuntime().tracer.startSpan(
-      name,
+      sanitizeTelemetryText(name, MAX_SPAN_NAME_LENGTH),
       {
         kind: options?.kind ?? SpanKind.INTERNAL,
         attributes: sanitizeTelemetryAttributes(attributes),
@@ -362,7 +364,7 @@ export function startServerSpan(
     ctx = (parentContext ?? getActiveContextSafely()) as Context;
     spanPath = sanitizeUrlForSpan(path);
     const candidate = getTracingRuntime().tracer.startSpan(
-      `${method} ${spanPath}`,
+      sanitizeTelemetryText(`${method} ${spanPath}`, MAX_SPAN_NAME_LENGTH),
       { kind: SpanKind.SERVER },
       ctx,
     );
@@ -453,7 +455,11 @@ export function addSpanEvent(
 
   const otelSpan = span as Span;
   runTelemetryOperation(
-    () => otelSpan.addEvent(name, sanitizeTelemetryAttributes(attributes)),
+    () =>
+      otelSpan.addEvent(
+        sanitizeTelemetryText(name, MAX_SPAN_NAME_LENGTH),
+        sanitizeTelemetryAttributes(attributes),
+      ),
     "Failed to add span event",
   );
 }

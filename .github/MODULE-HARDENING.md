@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    42 |      72.4% | Current formal closure evidence remains valid       |
+| Closed                         |    43 |      74.1% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    14 |      24.1% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    13 |      22.4% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -61,6 +61,7 @@ stricter closure count.
 - `mdx`
 - `metrics`
 - `middleware`
+- `observability`
 - `platform`
 - `provider`
 - `prompt`
@@ -92,7 +93,6 @@ stricter closure count.
 - `data`
 - `modules`
 - `oauth`
-- `observability`
 - `proxy`
 - `react`
 - `rendering`
@@ -124,8 +124,8 @@ every affected unit.
 The current closed review chain covers `agent`, `cache`, `channels`, `chat`,
 `client`, `config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
-`internal-agents`, `mcp`, `middleware`, `platform`, `provider`, `prompt`, `registry`,
-`release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
+`internal-agents`, `mcp`, `middleware`, `observability`, `platform`, `provider`,
+`prompt`, `registry`, `release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
 `schemas`, `studio`, `task`, `tool`, `trigger`, `types`, `webhook`, `index.ts`, and
 `version.ts`.
 The chain also covers `testing` after its portable assertions, BDD adapters,
@@ -187,6 +187,10 @@ reference, and direct consumers were remediated and revalidated.
 teardown, logging, CORS, timeout, security, rate-limit, Redis lifecycle, public
 surface, compatibility documentation, and direct consumers were remediated and
 revalidated.
+`observability` is closed after its provider handoff, telemetry sanitization and
+resource budgets, tracing and reporter lifecycle, environment precedence,
+request profiling, file durability, public surfaces, operator documentation,
+extensions, and direct consumers were remediated and revalidated.
 `html` is closed after its document assembly, full-document adaptation,
 metadata, escaping, hydration and navigation runtime, release identity, module
 and CSS caching, import maps, internal reference, and direct consumers were
@@ -5127,5 +5131,108 @@ Intentional compatibility boundaries remain explicit:
 No known unresolved critical or high-confidence Tool production risk remains.
 `tool` is closed at 42 of 58 formal units; 16 units remain to be closed or
 revalidated.
+
+### Observability closure checkpoint
+
+The `observability` audit unit owns the public tracing, metrics,
+auto-instrumentation, request-profiling, in-process diagnostic, file-log, and
+application-error reporting contracts; the OpenTelemetry shim and service
+tracer; and the exact `veryfront/observability`,
+`veryfront/observability/otlp-setup`, and
+`veryfront/observability/sentry` package surfaces. Its direct dependencies are
+configuration, structured errors, extension loading, platform runtime
+adapters, shared logging/redaction, timers, and bounded utility contracts.
+Production consumers span server bootstrap and rendering, proxy/security
+instrumentation, build/data/module paths, agent execution, CLI diagnostics,
+and the first-party OpenTelemetry and Sentry extensions.
+
+The current findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** application-error capture
+  and flush allowed reporter exceptions, rejection, non-cooperative promises,
+  and hostile cancellation values to escape or outlive request and shutdown
+  boundaries. Reporter methods were called directly and expected-error
+  classification was not guarded. Diagnostic code could replace application
+  failures or hang teardown. Capture and classification are isolated, context
+  is snapshotted and bounded, and flush uses a validated strict deadline that
+  returns `false` on every reporter failure mode.
+- **Symptom -> Source -> Consequence -> Remedy:** concurrent Sentry, tracing,
+  and auto-instrument initialization could duplicate setup, observe caller
+  mutation after an `await`, or publish obsolete state after reset/shutdown.
+  Initialization flags were set around independent asynchronous attempts with
+  no lifecycle epoch. Configuration is now validated and detached before
+  yielding, callers share one readiness promise, and generation checks prevent
+  stale work from installing providers, propagators, reporters, or initialized
+  state. Tracing state access returns a snapshot rather than mutable ownership.
+- **Symptom -> Source -> Consequence -> Remedy:** flattened attributes,
+  structured diagnostic objects, errors, span/event names, and retained
+  messages had no cohesive core-owned resource budget. A provider, logger, or
+  retained buffer could receive attacker-sized values even when its own SDK
+  limits differed. One observability limits contract now caps attribute count,
+  keys, values, arrays, span names, structured depth/container/node budgets,
+  URLs, and retained diagnostic strings; all direct shim, service-tracer,
+  HTTP-instrumentation, log, error, and application-reporter paths use it before
+  provider handoff or retention.
+- **Symptom -> Source -> Consequence -> Remedy:** file-log delivery chained an
+  unlimited promise queue and retained every repeated failure. A stalled
+  filesystem could grow memory until process failure and the passive callback
+  offered no deterministic data-loss signal. Pending writes are capped at 256,
+  failure samples at 16, omitted failures are summarized, overflow drops only
+  the new entry with a diagnostic, and the next explicit flush/close rejects.
+  Partial writes, durability sync, close retry, and primary-plus-cleanup error
+  behavior remain intact.
+- **Symptom -> Source -> Consequence -> Remedy:** tracing and metrics config
+  accepted truthy malformed values, explicit adapter environment failures
+  could leak across environment ownership, and a generic OTLP endpoint
+  incorrectly overrode its signal-specific endpoint. Invalid caller config
+  could silently enable a broken runtime, shared-process policy could be
+  crossed, and exporter routing contradicted the stable OTLP precedence
+  contract. Runtime types, timer/sample bounds, and text sizes are now
+  validated; adapter failure preserves caller config without host fallback;
+  and traces/metrics endpoints take signal-specific precedence.
+- **Symptom -> Source -> Consequence -> Remedy:** request profiling admitted
+  unlimited distinct phase names and could finalize one async-local session
+  repeatedly. Dynamic instrumentation could retain unbounded maps and duplicate
+  records for one request. Phase names and context are bounded, at most 128
+  distinct phases are retained, post-finalization mutation is ignored, and
+  only the first finalization emits a record.
+- **Symptom -> Source -> Consequence -> Remedy:** the package surface had only
+  negative visibility checks. A source export or package-map drift could ship
+  without an owning failure. An exact runtime export inventory now verifies
+  every name, strict aliases, representative identity, and the three declared
+  public entrypoints.
+
+Reproducible checkpoint evidence:
+
+- all 47 top-level observability tests pass 823 nested steps with zero failures under
+  leak tracing, including provider misbehavior, lifecycle races, mutation,
+  environment failure, endpoint precedence, hostile serialization, resource
+  limits, queue overflow, partial I/O, durability, profiling, and exact-export
+  regressions;
+- direct observability coverage is 84.8 percent branches, 85.6 percent
+  functions, and 85.1 percent lines;
+- the OpenTelemetry and Sentry extension suites pass eight tests and 17 nested
+  steps, and the HTTP tracing integration passes its three W3C propagation and
+  URL-redaction steps;
+- focused typechecking, repository observability lint, formatting, and
+  `git diff --check` pass; the reference, architecture, and operator
+  configuration documentation records lifecycle, precedence, failure, and
+  resource-budget contracts; and
+- `deno task verify:quick` passes manifest freshness, formatting of 4,471
+  files, repository lint and policy ratchets, dependency/module boundaries with
+  zero cyclic edges, extension contracts, 112 public documentation files and
+  all 747 links, and every configured production/browser entrypoint typecheck.
+
+No unresolved critical or high-confidence observability risk remains. The
+following compatibility and environment residuals are explicit:
+
+| Severity | Boundary                                         | Current control                                                                                                                                                                                                                                                                            | Follow-up trigger                                                                                                                                |
+| -------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Moderate | Caller-selected retained-record and disk budgets | `LogBuffer.maxSize`, `ErrorCollector.maxErrors`, and file rotation size preserve their public explicit-configuration range. Defaults, entry sizes, file counts, and async queues are bounded, but a trusted caller can intentionally choose a very large retained count or file threshold. | Introduce published maximum record and byte budgets in a compatibility release; reject larger values rather than silently clamping existing API. |
+| Low      | Live exporter/backend behavior                   | Core provider handoff, first-party extension contracts, and in-memory integration are tested; credentials, collector availability, vendor quotas, and network delivery remain deployment-owned.                                                                                            | Add deployment smoke/health checks against each configured production backend without putting vendor fallback policy into core.                  |
+| Low      | Same-realm object inspection                     | Proxy traps and one explicit custom `toJSON` call are isolated, bounded, and fail closed; JavaScript cannot inspect an adversarial same-realm object without permitting some user code to run.                                                                                             | Require a data-only descriptor snapshot contract if structured telemetry ever crosses from untrusted code rather than trusted application code.  |
+
+The `observability` unit is closed at 43 of 58 formal units; 15 units remain
+open or awaiting top-level revalidation.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

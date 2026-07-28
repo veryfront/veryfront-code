@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_SPAN_NAME_LENGTH } from "#veryfront/utils/constants/index.ts";
 import { SpanOperations } from "./span-operations.ts";
 import type { OpenTelemetryAPI, Span, Tracer } from "./types.ts";
 
@@ -154,6 +155,22 @@ describe("observability/tracing/span-operations", () => {
       assertEquals(span !== null, true);
     });
 
+    it("bounds span names before invoking the provider", () => {
+      let receivedName = "";
+      tracer = {
+        startSpan: (name) => {
+          receivedName = name;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+      ops = new SpanOperations(api, tracer);
+
+      ops.startSpan("x".repeat(MAX_SPAN_NAME_LENGTH + 100));
+
+      assertEquals(receivedName.length, MAX_SPAN_NAME_LENGTH);
+    });
+
     it("should create a span with default options", () => {
       const span = ops.startSpan("test.operation");
       assertEquals(span !== null, true);
@@ -273,6 +290,14 @@ describe("observability/tracing/span-operations", () => {
   });
 
   describe("addEvent", () => {
+    it("bounds event names before invoking the provider", () => {
+      const mockSpan = createMockSpan();
+
+      ops.addEvent(mockSpan, "x".repeat(MAX_SPAN_NAME_LENGTH + 100));
+
+      assertEquals(mockSpan._events[0]?.name.length, MAX_SPAN_NAME_LENGTH);
+    });
+
     it("should add an event to a span", () => {
       const mockSpan = createMockSpan();
       ops.addEvent(mockSpan, "user.action", { "user.id": "123" });
