@@ -1,3 +1,4 @@
+import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { deleteEnv, getEnv, setEnv } from "veryfront/platform";
 import { refreshLoggerConfig } from "veryfront/utils";
 
@@ -8,16 +9,13 @@ export interface DevLogController {
 
 function startsVerbose(): boolean {
   const level = getEnv("LOG_LEVEL")?.toUpperCase();
-  if (level) return level === "DEBUG";
-
-  const debug = getEnv("VERYFRONT_DEBUG")?.toLowerCase();
-  return debug === "1" || debug === "true";
+  return level === "DEBUG" || isTruthyEnvValue(getEnv("VERYFRONT_DEBUG"));
 }
 
 export function createDevLogController(): DevLogController {
   let verbose = startsVerbose();
   const initialLevel = getEnv("LOG_LEVEL");
-  const normalLevel = verbose ? "INFO" : initialLevel;
+  const normalLevel = initialLevel?.toUpperCase() === "DEBUG" ? "INFO" : initialLevel;
 
   return {
     isVerbose: () => verbose,

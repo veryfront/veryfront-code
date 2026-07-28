@@ -48,4 +48,15 @@ describe("dev log controller", () => {
     assertEquals(getEnv("LOG_LEVEL"), "INFO");
     assertEquals(getEnv("VERYFRONT_DEBUG"), undefined);
   });
+
+  it("uses the runtime truthy debug semantics and preserves a normal log level", () => {
+    setEnv("LOG_LEVEL", "WARN");
+    setEnv("VERYFRONT_DEBUG", " Yes ");
+    const logs = createDevLogController();
+
+    assertEquals(logs.isVerbose(), true);
+    assertEquals(logs.toggle(), false);
+    assertEquals(getEnv("LOG_LEVEL"), "WARN");
+    assertEquals(getEnv("VERYFRONT_DEBUG"), undefined);
+  });
 });
