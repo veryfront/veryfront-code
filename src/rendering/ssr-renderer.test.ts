@@ -100,6 +100,28 @@ describe("rendering/ssr-renderer", () => {
     assertEquals(react19Result.html, "<div>react-19</div>");
   });
 
+  it("uses the client hydration identifier prefix for string rendering", async () => {
+    let identifierPrefix: string | undefined;
+    __injectReactDOMServerForTests({
+      renderToString: (_element, options) => {
+        identifierPrefix = options?.identifierPrefix;
+        return "<div>string</div>";
+      },
+      renderToStaticMarkup: () => "<div>static</div>",
+      renderToReadableStream: undefined,
+      renderToPipeableStream: undefined,
+    });
+
+    const renderer = new SSRRenderer("development");
+    const result = await renderer.renderToHTML(
+      React.createElement("div"),
+      { mode: "development", wantsStream: false },
+    );
+
+    assertEquals(result.html, "<div>string</div>");
+    assertEquals(identifierPrefix, "vf");
+  });
+
   it("reports an explicit project React version before the first render", () => {
     const renderer = new SSRRenderer(
       "production",

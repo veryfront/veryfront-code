@@ -179,7 +179,11 @@ export class SSRRenderer {
 
       const html = await withSpan(
         SpanNames.SSR_REACT_RENDER,
-        () => renderToStringAdapter(pageElement, { reactVersion }),
+        () =>
+          renderToStringAdapter(pageElement, {
+            identifierPrefix: "vf",
+            reactVersion,
+          }),
         {
           "ssr.method": "string",
           "ssr.react_version": reactVersion,

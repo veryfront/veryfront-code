@@ -18,6 +18,18 @@ function isDebugMode(): boolean {
   return Boolean((globalThis as VeryfrontGlobal).__VERYFRONT_DEBUG__ || isDebugEnvEnabled());
 }
 
+function notifyObserver<Args extends unknown[]>(
+  name: string,
+  observer: ((...args: Args) => void) | undefined,
+  ...args: Args
+): void {
+  try {
+    observer?.(...args);
+  } catch (error) {
+    logger.error(`SSR ${name} observer failed`, error);
+  }
+}
+
 export function __setSSRStreamTimeoutForTests(timeoutMs: number): void {
   ssrTimeoutMs = timeoutMs;
 }
@@ -71,7 +83,7 @@ async function renderToReadableStreamImpl(
         }
 
         logger.error("SSR_ERROR React streaming error", error);
-        options.onError?.(error as Error);
+        notifyObserver("onError", options.onError, error as Error);
       },
       progressiveChunkSize: options.progressiveChunkSize,
     });
@@ -105,7 +117,7 @@ async function renderToReadableStreamImpl(
     }
 
     logger.error("SSR_ERROR renderToReadableStream failed", { durationMs }, error);
-    options.onError?.(error as Error);
+    notifyObserver("onError", options.onError, error as Error);
 
     try {
       if (debug) logger.info("SSR trying string rendering fallback");
@@ -142,6 +154,8 @@ function renderToPipeableStreamImpl(
 
   const promise = new Promise<SSRResult>((resolve, reject) => {
     let abortFn: (() => void) | undefined;
+    let pipeFn: ((writable: NodeJS.WritableStream) => void) | undefined;
+    let shellReadyBeforeRendererReturned = false;
     let settled = false;
     let resolveAllReady: (() => void) | undefined;
     let rejectAllReady: ((error: unknown) => void) | undefined;
@@ -150,6 +164,20 @@ function renderToPipeableStreamImpl(
       rejectAllReady = reject;
     });
     allReady.catch(() => {});
+
+    const settleShellReady = () => {
+      if (settled) return;
+      if (!pipeFn || !abortFn) {
+        shellReadyBeforeRendererReturned = true;
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeoutId);
+      logger.debug("SSR pipeable stream shell ready");
+      resolve({ pipe: pipeFn, abort: abortFn, allReady });
+      notifyObserver("onShellReady", options.onShellReady);
+    };
 
     const timeoutId = setTimeout(() => {
       if (settled) return;
@@ -182,36 +210,30 @@ function renderToPipeableStreamImpl(
         nonce: options.nonce,
         onError: (error: unknown) => {
           logger.error("SSR_ERROR pipeable stream error", error);
-          options.onError?.(error as Error);
           rejectAllReady?.(error);
+          notifyObserver("onError", options.onError, error as Error);
         },
         onAllReady: () => {
           logger.debug("SSR pipeable stream all ready");
-          options.onAllReady?.();
           resolveAllReady?.();
+          notifyObserver("onAllReady", options.onAllReady);
         },
-        onShellReady: () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timeoutId);
-
-          logger.debug("SSR pipeable stream shell ready");
-          options.onShellReady?.();
-          resolve({ pipe, abort, allReady });
-        },
+        onShellReady: settleShellReady,
         onShellError: (error: unknown) => {
           if (settled) return;
           settled = true;
           clearTimeout(timeoutId);
 
           logger.error("SSR_ERROR pipeable stream shell error", error);
-          options.onShellError?.(error as Error);
           reject(error);
+          notifyObserver("onShellError", options.onShellError, error as Error);
         },
         progressiveChunkSize: options.progressiveChunkSize,
       });
 
+      pipeFn = pipe;
       abortFn = abort;
+      if (shellReadyBeforeRendererReturned) settleShellReady();
     } catch (error) {
       clearTimeout(timeoutId);
       reject(error);
@@ -222,7 +244,7 @@ function renderToPipeableStreamImpl(
     const durationMs = Math.round(performance.now() - start);
 
     if (!timedOut) logger.error("SSR_ERROR renderToPipeableStream failed", { durationMs }, error);
-    options.onError?.(error as Error);
+    notifyObserver("onError", options.onError, error as Error);
 
     if (timedOut) throw error;
 
