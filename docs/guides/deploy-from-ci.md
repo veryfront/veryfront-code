@@ -63,9 +63,10 @@ Both commands use the same `.vfignore` rules. Ignored files and unsupported
 extensions are not reconciled with Veryfront.
 
 If the project has a `.vfignore`, keep it as a regular file inside the project
-and commit it to Git. An untracked, Git-ignored, or symlinked `.vfignore` cannot
-provide clean production provenance, so Deploy will stop instead of treating
-the checkout as the reviewed commit.
+and commit it to Git so the managed source set is reproducible. Symlinked
+`.vfignore` files are rejected. Git cleanliness is recorded as provenance
+metadata; Deploy promotes the source digest recorded by Push rather than
+recomputing production bytes from the working tree.
 
 ## Preview the Push
 
@@ -90,11 +91,13 @@ veryfront deploy --branch main --env staging --yes
 
 Push records the checked-out commit and source digest in
 `.veryfront/push-receipt.json`. Deploy uses that last verified Push receipt,
-requires it to match the same project, branch, commit, and checkout, then
-verifies the release source digest before assigning it to the environment. If no
-receipt exists, Deploy bootstraps one with a quiet Push, but CI should keep the
-explicit Push step so review and production promotion remain separate. Do not
-split the two commands across CI jobs or clean the checkout between them.
+requires it to match the same project, branch, and Git commit, then verifies the
+release source digest before assigning it to the environment. Uncommitted edits
+made after Push are not promoted and do not invalidate that receipt; run Push
+again to update the preview before deploying those bytes. If no receipt exists,
+Deploy bootstraps one with a quiet Push, but CI should keep the explicit Push
+step so review and production promotion remain separate. Do not split the two
+commands across CI jobs or clean the checkout between them.
 
 Deploy creates an immutable release from the pushed source, then assigns that
 release to `staging`.
@@ -223,8 +226,8 @@ Deploy prints human-readable output by default. Add `--json` only when the CI
 system needs machine-readable audit evidence. JSON mode emits NDJSON records
 for each step and a final result.
 
-Write the audit file outside the Git checkout so it does not make the source
-dirty before Deploy verifies the Push receipt:
+Write the audit file outside the Git checkout so a later Push cannot include it
+in the managed source set:
 
 ```bash title="GitHub Actions deployment step"
 set -o pipefail
