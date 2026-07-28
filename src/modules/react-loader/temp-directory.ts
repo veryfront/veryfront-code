@@ -37,12 +37,16 @@ async function normalizeProjectKey(projectId: string): Promise<string> {
 export async function getGlobalTmpDir(): Promise<string> {
   const cacheBaseDir = getCacheBaseDir();
   const baseDir = isAbsolute(cacheBaseDir) ? cacheBaseDir : join(cwd(), cacheBaseDir);
+  const fs = createFileSystem();
 
   const cached = globalTmpDirs.get(baseDir);
-  if (cached) return cached;
+  if (cached) {
+    await fs.mkdir(cached, { recursive: true });
+    return cached;
+  }
 
   const tmpDir = join(baseDir, "veryfront-modules");
-  await createFileSystem().mkdir(tmpDir, { recursive: true });
+  await fs.mkdir(tmpDir, { recursive: true });
 
   globalTmpDirs.set(baseDir, tmpDir);
   return tmpDir;
@@ -52,12 +56,16 @@ export async function getProjectTmpDir(projectId: string): Promise<string> {
   const baseDir = await getGlobalTmpDir();
   const normalizedKey = await normalizeProjectKey(projectId);
   const cacheKey = `${baseDir}:${normalizedKey}`;
+  const fs = createFileSystem();
 
   const cached = projectTmpDirs.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    await fs.mkdir(cached, { recursive: true });
+    return cached;
+  }
 
   const projectTmpDir = join(baseDir, normalizedKey);
-  await createFileSystem().mkdir(projectTmpDir, { recursive: true });
+  await fs.mkdir(projectTmpDir, { recursive: true });
 
   projectTmpDirs.set(cacheKey, projectTmpDir);
   return projectTmpDir;

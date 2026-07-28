@@ -1,5 +1,6 @@
 import type * as React from "react";
 import { createError, toError } from "#veryfront/errors";
+import { assertReactComponentType } from "./react-component-type.ts";
 
 export function extractComponent(
   mod: unknown,
@@ -29,5 +30,5 @@ export function extractComponent(
     );
   }
 
-  return component as React.ComponentType<Record<string, unknown>>;
+  return assertReactComponentType(component, filePath);
 }

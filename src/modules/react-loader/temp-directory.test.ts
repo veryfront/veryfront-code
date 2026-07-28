@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getProjectTmpDir, resetGlobalTmpDir } from "./temp-directory.ts";
 
 describe("modules/react-loader/temp-directory", () => {
@@ -21,5 +22,17 @@ describe("modules/react-loader/temp-directory", () => {
       RangeError,
       "projectId",
     );
+  });
+
+  it("recreates a cached project directory after external cleanup", async () => {
+    resetGlobalTmpDir();
+    const projectId = `temp-recreate-${crypto.randomUUID()}`;
+    const projectDir = await getProjectTmpDir(projectId);
+    const fs = createFileSystem();
+
+    await fs.remove(projectDir, { recursive: true });
+
+    assertEquals(await getProjectTmpDir(projectId), projectDir);
+    assertEquals((await fs.stat(projectDir)).isDirectory, true);
   });
 });

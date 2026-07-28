@@ -27,4 +27,12 @@ describe("modules/react-loader/extract-component", () => {
       "No component exported from empty.tsx",
     );
   });
+
+  it("rejects a truthy export that is not a React component", () => {
+    assertThrows(
+      () => extractComponent({ default: { invalid: true } }, "invalid.tsx"),
+      TypeError,
+      "invalid.tsx did not export a React component",
+    );
+  });
 });
