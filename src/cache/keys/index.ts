@@ -36,14 +36,17 @@ export {
 // Utilities: parsing, filtering, normalization
 export {
   CACHE_KEY_ALLOWED_PATTERN,
+  CACHE_PATTERN_ALLOWED_PATTERN,
   createCacheKeyFilter,
   deleteAllKeysForProject,
   deleteAllKeysForProjectAsync,
+  digestCacheKey,
   filterQueryParams,
   getAllKeysForProject,
   getAllKeysForProjectAsync,
   getCacheKeyVersion,
   isValidCacheKey,
+  isValidCachePattern,
   normalizeFilePath,
   parseRenderCacheKey,
   sanitizeCacheKey,

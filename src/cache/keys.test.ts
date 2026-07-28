@@ -12,12 +12,13 @@ import {
   buildQueryAwareCacheKey,
   buildRenderCacheKey,
   buildRenderCachePrefix,
-  CACHE_KEY_ALLOWED_PATTERN,
+  CACHE_PATTERN_ALLOWED_PATTERN,
   CacheKeyPrefix,
   computeContentSourceId,
   DEFAULT_EXCLUDED_QUERY_PARAMS,
   filterQueryParams,
   isValidCacheKey,
+  isValidCachePattern,
   parseRenderCacheKey,
   sanitizeCacheKey,
   sanitizeQueryParamsForCacheKey,
@@ -526,22 +527,46 @@ describe("cache/keys", () => {
       assertEquals(sanitizeCacheKey(key), key);
     });
 
-    it("preserves the glob wildcard and separators used by del-pattern", () => {
+    it("treats `*` as a wildcard for patterns but not as a valid key character", () => {
       const pattern = "render:proj_123:production:rel-abc:*";
-      assertEquals(sanitizeCacheKey(pattern), pattern);
-      assertEquals(isValidCacheKey(pattern), true);
+      // `*` is only valid in a del-pattern, never in a concrete key.
+      assertEquals(isValidCachePattern(pattern), true);
+      assertEquals(isValidCacheKey(pattern), false);
+    });
+
+    it("leaves a clean del-pattern (prefix + wildcard) unchanged", () => {
+      const pattern = "render:proj_123:production:rel-abc:*";
+      assertEquals(isValidCachePattern(pattern), true);
+    });
+
+    it("flags a del-pattern whose literal segment has invalid characters", () => {
+      // A space in the literal prefix — escaping this would inject `*` wildcards
+      // into the glob, so the backend must refuse it rather than sanitize.
+      assertEquals(isValidCachePattern("render:proj bad:*"), false);
+    });
+
+    it("escapes a literal `*` in a key so the encoding stays collision-free", () => {
+      // `*` is the escape marker, so a literal `*` is itself escaped (`*2A`).
+      const sanitized = sanitizeCacheKey("render:proj:a*b");
+      assertMatch(sanitized, CACHE_PATTERN_ALLOWED_PATTERN);
+      assertEquals(sanitized, "render:proj:a*2Ab");
+    });
+
+    it("does not collide a literal `*HH`-looking key with an escaped character", () => {
+      // "a b" (space) and "a*20b" (literal star) must not map to the same key.
+      assertNotEquals(sanitizeCacheKey("a b"), sanitizeCacheKey("a*20b"));
     });
 
     it("escapes query-string characters that leak into a key", () => {
       // ? = & are the classic offenders from a raw request URL.
       const sanitized = sanitizeCacheKey("render:proj:/blog?ref=x&y=1");
-      assertMatch(sanitized, CACHE_KEY_ALLOWED_PATTERN);
+      assertMatch(sanitized, CACHE_PATTERN_ALLOWED_PATTERN);
       assertEquals(sanitized, "render:proj:/blog*3Fref*3Dx*26y*3D1");
     });
 
     it("escapes whitespace and non-ASCII characters", () => {
       const sanitized = sanitizeCacheKey("render:café page");
-      assertMatch(sanitized, CACHE_KEY_ALLOWED_PATTERN);
+      assertMatch(sanitized, CACHE_PATTERN_ALLOWED_PATTERN);
       // é is two UTF-8 bytes, space is one.
       assertEquals(sanitized, "render:caf*C3*A9*20page");
     });
@@ -558,7 +583,7 @@ describe("cache/keys", () => {
           'quote"key',
         ]
       ) {
-        assertMatch(sanitizeCacheKey(input), CACHE_KEY_ALLOWED_PATTERN);
+        assertMatch(sanitizeCacheKey(input), CACHE_PATTERN_ALLOWED_PATTERN);
       }
     });
 

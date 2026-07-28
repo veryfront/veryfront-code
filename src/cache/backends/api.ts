@@ -2,7 +2,12 @@ import { logger as baseLogger, sanitizeUrlForSpan } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { tryGetCacheKeyContext } from "../cache-key-builder.ts";
-import { isValidCacheKey, sanitizeCacheKey } from "../keys/index.ts";
+import {
+  digestCacheKey,
+  isValidCacheKey,
+  isValidCachePattern,
+  sanitizeCacheKey,
+} from "../keys/index.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import type { CacheBackend } from "../types.ts";
 import { getEnvValue } from "./helpers.ts";
@@ -100,10 +105,11 @@ export class ApiCacheBackend implements CacheBackend {
     // invalid characters`, and on the control-plane /execute path that 400
     // loops until the request is flagged stuck (issues #162 / #175). Sanitize
     // so the request succeeds, and warn so the upstream generation bug stays
-    // visible rather than being silently masked.
+    // visible rather than being silently masked. Log a hash, not the key: a
+    // leaked raw URL can carry credentials (`?access_token=...`).
     const sanitized = sanitizeCacheKey(prefixed);
     logger.warn("Cache key contained invalid characters; sanitized before request", {
-      sanitizedKey: sanitized.slice(0, 200),
+      keyHash: digestCacheKey(prefixed),
       originalLength: prefixed.length,
     });
     return sanitized;
@@ -280,8 +286,26 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   async delByPattern(pattern: string): Promise<number> {
+    const prefixed = this.keyPrefix ? `${this.keyPrefix}:${pattern}` : pattern;
+
+    // A pattern is a glob: `*` is a wildcard, not a literal. We must NOT escape
+    // invalid characters here — the `*HH` escape would inject wildcards into the
+    // glob and over-delete. Fail closed instead: refuse a malformed pattern
+    // (leaving the entries to expire on TTL) rather than risk deleting keys the
+    // caller never targeted.
+    if (!isValidCachePattern(prefixed)) {
+      logger.warn(
+        "Refusing del-pattern with invalid characters (would inject glob wildcards); skipping",
+        {
+          patternHash: digestCacheKey(prefixed),
+          originalLength: prefixed.length,
+        },
+      );
+      return 0;
+    }
+
     const result = await this.request<{ deleted: number }>("POST", "/del-pattern", {
-      pattern: this.prefixKey(pattern),
+      pattern: prefixed,
     }, { failOnError: true });
     return result?.deleted ?? 0;
   }

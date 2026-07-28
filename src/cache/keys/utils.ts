@@ -212,24 +212,46 @@ function encodeCacheKeySegment(value: string): string {
   }).join("");
 }
 
-// Characters the API cache backend accepts in a whole key/pattern. This is the
-// structural charset (segment separators `:` and `/`, the glob wildcard `*`,
-// plus `.` `-` `_` and alphanumerics) — a superset of the per-segment set used
-// by encodeCacheKeySegment, which additionally escapes `:` `/` `*`.
+// Characters the API cache backend accepts. Two related sets:
+//
+// - A concrete KEY (get/set/del) may contain segment separators `:` and `/`,
+//   plus `.` `-` `_` and alphanumerics. It deliberately EXCLUDES `*`: a key is
+//   never a glob, and `*` is reserved as the escape marker below — excluding it
+//   from the passthrough set is what makes sanitizeCacheKey injective (no two
+//   inputs collide onto one key).
+// - A del-pattern additionally allows `*` as the glob wildcard.
 const cacheKeyEscapeEncoder = new TextEncoder();
-const CACHE_KEY_ALLOWED_CHAR = /^[a-zA-Z0-9_:.*/-]$/;
-export const CACHE_KEY_ALLOWED_PATTERN = /^[a-zA-Z0-9_:.*/-]+$/;
+const CACHE_KEY_ALLOWED_CHAR = /^[a-zA-Z0-9_:./-]$/;
+export const CACHE_KEY_ALLOWED_PATTERN = /^[a-zA-Z0-9_:./-]+$/;
+export const CACHE_PATTERN_ALLOWED_PATTERN = /^[a-zA-Z0-9_:.*/-]+$/;
 
 /**
- * True when a key/pattern is already valid for the API cache backend
- * (non-empty and within the allowed character set).
+ * True when a concrete cache key is valid for the API cache backend (non-empty
+ * and within the key character set — no `*`).
  */
 export function isValidCacheKey(key: string): boolean {
   return key.length > 0 && CACHE_KEY_ALLOWED_PATTERN.test(key);
 }
 
 /**
- * Guarantee a cache key/pattern only contains characters the API cache backend
+ * True when a del-pattern is valid for the API cache backend (non-empty and
+ * within the key character set plus the `*` glob wildcard).
+ */
+export function isValidCachePattern(pattern: string): boolean {
+  return pattern.length > 0 && CACHE_PATTERN_ALLOWED_PATTERN.test(pattern);
+}
+
+/**
+ * Non-reversible digest of a key, for logs. Cache keys can inadvertently carry
+ * secrets (e.g. a raw request URL with an `?access_token=` that leaked into key
+ * generation), so we log this hash instead of the key itself.
+ */
+export function digestCacheKey(key: string): string {
+  return strongPathHash(key);
+}
+
+/**
+ * Guarantee a concrete cache key only contains characters the API cache backend
  * accepts, so a malformed key can never reach the backend and trigger an
  * `HTTP 400: Cache key contains invalid characters` (which, on the control-plane
  * `/execute` path, loops until the request is flagged stuck — see veryfront
@@ -237,12 +259,18 @@ export function isValidCacheKey(key: string): boolean {
  *
  * Keys already within the allowed set are returned unchanged — the common case,
  * so no existing well-formed key is rewritten and no cache entry is orphaned.
- * Any out-of-set character (e.g. `?`, `=`, `&`, `%`, whitespace, or non-ASCII
- * that leaked in from a raw request URL, query string, or an `undefined` token
- * during key generation) is escaped as `*HH` byte sequences — the same escape
- * convention encodeCacheKeySegment uses for query params. Escaping is
- * deterministic, so a `get` and the `set` that produced the value derive the
- * identical key.
+ * Any out-of-set character (e.g. `?`, `=`, `&`, `%`, whitespace, `*`, or
+ * non-ASCII that leaked in from a raw request URL, query string, or an
+ * `undefined` token during key generation) is escaped as `*HH` byte sequences —
+ * the same escape convention encodeCacheKeySegment uses for query params.
+ *
+ * Because `*` is never a passthrough character, every `*` in the output is an
+ * escape marker: the encoding is injective (no collisions) and deterministic,
+ * so a `get` and the `set` that produced the value derive the identical key.
+ *
+ * NOTE: intended for concrete keys, not del-patterns. The `*HH` output contains
+ * `*`, which a glob context would read as a wildcard, so a pattern must never be
+ * routed through here — see isValidCachePattern and ApiCacheBackend.delByPattern.
  */
 export function sanitizeCacheKey(key: string): string {
   if (CACHE_KEY_ALLOWED_PATTERN.test(key)) return key;
