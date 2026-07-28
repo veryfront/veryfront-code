@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { ModuleResolver } from "./module-resolver.ts";
@@ -84,6 +84,30 @@ describe("modules/module-resolver", () => {
       assertEquals(result?.type, "file");
       assertEquals(result?.path, "/project/src/utils.ts");
     });
+
+    it("treats prototype-shaped import-map keys as inert own data", async () => {
+      const resolver = createResolver({
+        importMap: JSON.parse('{"__proto__":"https://example.test/proto.js"}'),
+      });
+
+      const result = await resolver.resolve("__proto__");
+      assertEquals(result?.type, "external");
+      assertEquals(result?.path, "https://example.test/proto.js");
+    });
+
+    it("rejects accessor-backed import-map entries at construction", () => {
+      const importMap: Record<string, string> = {};
+      Object.defineProperty(importMap, "unsafe", {
+        enumerable: true,
+        get: () => "https://example.test/unsafe.js",
+      });
+
+      assertThrows(
+        () => createResolver({ importMap }),
+        TypeError,
+        "data property",
+      );
+    });
   });
 
   describe("resolve - relative paths", () => {
@@ -137,6 +161,30 @@ describe("modules/module-resolver", () => {
       const result = await resolver.resolve("./nonexistent");
       assertEquals(result, null);
     });
+
+    it("blocks relative paths that escape the project root", async () => {
+      const resolver = createResolver({
+        projectDir: "/project",
+        files: { "/outside.ts": "export const secret = true;" },
+      });
+
+      assertEquals(
+        await resolver.resolve("../../outside.ts", "/project/src/page.ts"),
+        null,
+      );
+    });
+
+    it("blocks referrers outside the project root", async () => {
+      const resolver = createResolver({
+        projectDir: "/project",
+        files: { "/outside/child.ts": "export const secret = true;" },
+      });
+
+      assertEquals(
+        await resolver.resolve("./child.ts", "/outside/page.ts"),
+        null,
+      );
+    });
   });
 
   describe("resolve - absolute paths", () => {
@@ -182,6 +230,27 @@ describe("modules/module-resolver", () => {
       assertEquals(result?.type, "npm");
       assertEquals(result?.path, "https://esm.sh/@org/package");
     });
+
+    it("preserves direct HTTP module URLs as external modules", async () => {
+      const resolver = createResolver();
+      const result = await resolver.resolve("https://modules.example.test/library.js");
+
+      assertEquals(result?.type, "external");
+      assertEquals(result?.path, "https://modules.example.test/library.js");
+    });
+
+    it("normalizes npm: specifiers without double-prefixing them", async () => {
+      const resolver = createResolver();
+      const result = await resolver.resolve("npm:lodash@4");
+
+      assertEquals(result?.type, "npm");
+      assertEquals(result?.path, "https://esm.sh/lodash@4");
+    });
+
+    it("rejects unsupported URL schemes instead of sending them to esm.sh", async () => {
+      const resolver = createResolver();
+      assertEquals(await resolver.resolve("file:///etc/passwd"), null);
+    });
   });
 
   describe("caching", () => {
@@ -193,6 +262,21 @@ describe("modules/module-resolver", () => {
       const result1 = await resolver.resolve("virtual:cached");
       const result2 = await resolver.resolve("virtual:cached");
       assertEquals(result1, result2);
+    });
+
+    it("does not expose mutable cached resolution state", async () => {
+      const resolver = createResolver({
+        virtualModules: new Map([["virtual:immutable", "code"]]),
+      });
+
+      const result = await resolver.resolve("virtual:immutable");
+      assertThrows(
+        () => {
+          if (result) result.path = "virtual:poisoned";
+        },
+        TypeError,
+      );
+      assertEquals((await resolver.resolve("virtual:immutable"))?.path, "virtual:immutable");
     });
 
     it("should clear entire cache", async () => {
@@ -266,7 +350,7 @@ describe("modules/module-resolver", () => {
       resolver.removeVirtualModule("virtual:removable");
 
       const result = await resolver.resolve("virtual:removable");
-      assertEquals(result?.type, "npm");
+      assertEquals(result, null);
     });
 
     it("should invalidate all referrer-specific entries when updating a virtual module", async () => {
@@ -283,5 +367,20 @@ describe("modules/module-resolver", () => {
       assertEquals(resultA?.content, "new");
       assertEquals(resultB?.content, "new");
     });
+  });
+
+  it("propagates operational stat failures instead of treating them as misses", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.stat = () => Promise.reject(new Error("permission denied"));
+    const resolver = new ModuleResolver({
+      projectDir: "/project",
+      adapter,
+    });
+
+    await assertRejects(
+      () => resolver.resolve("./secret.ts"),
+      Error,
+      "permission denied",
+    );
   });
 });

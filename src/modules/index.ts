@@ -36,6 +36,7 @@ export {
   loadComponentsUnified,
   normalizeModulePath,
   resetGlobalTmpDir,
+  resolveProjectRelativePath,
   resolveRelativePath,
 } from "./react-loader/index.ts";
 

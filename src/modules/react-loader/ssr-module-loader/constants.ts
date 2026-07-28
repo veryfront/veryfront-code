@@ -23,14 +23,33 @@ export { DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC, DISTRIBUTED_SSR_MODULE_TTL_PROD
 
 export const CIRCUIT_BREAKER_THRESHOLD = 25;
 export const CIRCUIT_BREAKER_RESET_MS = 5 * 1000;
+const MAX_CONFIGURED_TRANSFORM_LIMIT = 10_000;
+
+function requireTransformLimit(value: unknown, label: string): number {
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string" && /^\d+$/.test(value.trim())
+    ? Number(value.trim())
+    : Number.NaN;
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed < 0 ||
+    parsed > MAX_CONFIGURED_TRANSFORM_LIMIT
+  ) {
+    throw new RangeError(
+      `${label} must be an integer between 0 and ${MAX_CONFIGURED_TRANSFORM_LIMIT}`,
+    );
+  }
+  return parsed;
+}
 
 // Max concurrent ESM transforms (safety net, not throttle). Set to 0 to disable.
 let _maxConcurrentTransforms: number | undefined;
 export function getMaxConcurrentTransforms(): number {
   if (_maxConcurrentTransforms !== undefined) return _maxConcurrentTransforms;
-  _maxConcurrentTransforms = Number.parseInt(
-    String(getSsrMaxConcurrentTransformsEnv(50)),
-    10,
+  _maxConcurrentTransforms = requireTransformLimit(
+    getSsrMaxConcurrentTransformsEnv(50),
+    "SSR_MAX_CONCURRENT_TRANSFORMS",
   );
   return _maxConcurrentTransforms;
 }
@@ -46,7 +65,10 @@ export function getTransformPerProjectLimit(): number {
   if (_transformPerProjectLimit !== undefined) return _transformPerProjectLimit;
   const envLimit = getHostEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT");
   _transformPerProjectLimit = envLimit !== undefined
-    ? Number.parseInt(String(envLimit), 10)
+    ? requireTransformLimit(
+      envLimit,
+      "SSR_TRANSFORM_PER_PROJECT_LIMIT",
+    )
     : Math.ceil(getMaxConcurrentTransforms() / 3);
   return _transformPerProjectLimit;
 }

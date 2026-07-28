@@ -69,10 +69,22 @@ import {
   type DependencyHashCache,
 } from "#veryfront/cache/dependency-graph.ts";
 import { assertSSRImportMapIdentity } from "./import-map-identity.ts";
+import { toFileUrl } from "#veryfront/compat/path/index.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 const CACHE_FILE_MISSING_PREFIX = "Cache file missing:";
 const MAX_REJECTED_IN_PROGRESS_RETRIES = 1;
+
+function buildFileModuleUrl(
+  path: string,
+  parameters: Record<string, string>,
+): string {
+  const url = toFileUrl(path);
+  for (const [name, value] of Object.entries(parameters)) {
+    url.searchParams.set(name, value);
+  }
+  return url.href;
+}
 
 class InProgressTransformWaitTimeoutError extends Error {
   constructor(filePath: string) {
@@ -274,7 +286,12 @@ export class SSRModuleLoader {
     try {
       return (await withSpan(
         SpanNames.SSR_DYNAMIC_IMPORT,
-        () => import(`file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`),
+        () =>
+          import(
+            buildFileModuleUrl(cacheEntry.tempPath, {
+              v: cacheEntry.contentHash,
+            })
+          ),
         { "ssr.file": fileName },
       )) as Record<string, unknown>;
     } catch (importError) {
@@ -304,7 +321,10 @@ export class SSRModuleLoader {
             file: filePath.slice(-40),
           });
           return (await import(
-            `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}&retry=1`
+            buildFileModuleUrl(cacheEntry.tempPath, {
+              v: cacheEntry.contentHash,
+              retry: "1",
+            })
           )) as Record<string, unknown>;
         }
 
@@ -338,7 +358,10 @@ export class SSRModuleLoader {
                 retryTempPath,
               });
               return (await import(
-                `file://${retryTempPath}?v=${cacheEntry.contentHash}&retry=1`
+                buildFileModuleUrl(retryTempPath, {
+                  v: cacheEntry.contentHash,
+                  retry: "1",
+                })
               )) as Record<string, unknown>;
             }
           } catch (recoveryError) {

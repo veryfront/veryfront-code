@@ -8,6 +8,7 @@
  */
 
 import { replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
+import { toFileUrl } from "#veryfront/compat/path/index.ts";
 
 /**
  * Rewrite a cross-project import specifier to use a local temp path.
@@ -18,7 +19,7 @@ export async function rewriteCrossProjectImport(
   tempPath: string,
 ): Promise<string> {
   const jsSpecifier = toJsExtension(specifier);
-  const replacement = `file://${tempPath}`;
+  const replacement = toFileUrl(tempPath).href;
   const replacements = new Map<string, string>([
     [specifier, replacement],
     [jsSpecifier, replacement],
@@ -55,7 +56,7 @@ export async function rewriteLocalImports(
 
     for (const pattern of patterns) {
       if (!replacements.has(pattern)) {
-        replacements.set(pattern, `file://${tempPath}`);
+        replacements.set(pattern, toFileUrl(tempPath).href);
       }
     }
   }

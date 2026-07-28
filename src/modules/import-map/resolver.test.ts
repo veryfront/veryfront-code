@@ -23,6 +23,21 @@ describe("modules/import-map/resolver", () => {
       assertEquals(resolveImport("react", map, "/app/"), "https://esm.sh/react@18");
     });
 
+    it("uses the longest matching scope prefix", () => {
+      const map = {
+        imports: { lib: "/global/lib.js" },
+        scopes: {
+          "/app/": { lib: "/app/lib.js" },
+          "/app/admin/": { lib: "/admin/lib.js" },
+        },
+      };
+
+      assertEquals(
+        resolveImport("lib", map, "/app/admin/page.js"),
+        "/admin/lib.js",
+      );
+    });
+
     it("should fallback to global when scope does not match", () => {
       const map = {
         imports: { react: "https://esm.sh/react@17" },
@@ -46,9 +61,48 @@ describe("modules/import-map/resolver", () => {
       );
     });
 
+    it("resolves versioned scoped-package subpaths before URL queries", () => {
+      const map = {
+        imports: {
+          "@scope/package": "https://cdn.example.test/package?target=es2022",
+        },
+      };
+
+      assertEquals(
+        resolveImport(
+          "https://esm.sh/v135/@scope/package@1.2.3/subpath",
+          map,
+        ),
+        "https://cdn.example.test/package/subpath?target=es2022",
+      );
+    });
+
     it("should resolve prefix mappings with trailing slash", () => {
       const map = { imports: { "@lib/": "/src/lib/" } };
       assertEquals(resolveImport("@lib/utils.ts", map), "/src/lib/utils.ts");
+    });
+
+    it("prefers the longest prefix and applies scoped prefixes first", () => {
+      const map = {
+        imports: {
+          "pkg/": "/global/",
+          "pkg/deep/": "/global-deep/",
+        },
+        scopes: {
+          "/app/": {
+            "pkg/": "/scoped/",
+          },
+        },
+      };
+
+      assertEquals(
+        resolveImport("pkg/deep/value", map),
+        "/global-deep/value",
+      );
+      assertEquals(
+        resolveImport("pkg/deep/value", map, "/app/page.js"),
+        "/scoped/deep/value",
+      );
     });
 
     it("should try stripping .js extension for fallback", () => {
@@ -59,6 +113,15 @@ describe("modules/import-map/resolver", () => {
     it("should handle .mjs extension stripping", () => {
       const map = { imports: { mylib: "/local/mylib.ts" } };
       assertEquals(resolveImport("mylib.mjs", map), "/local/mylib.ts");
+    });
+
+    it("treats prototype-shaped specifiers as own data only", () => {
+      const imports = JSON.parse(
+        '{"__proto__":"/safe/proto.js","constructor":"/safe/constructor.js"}',
+      );
+
+      assertEquals(resolveImport("__proto__", { imports }), "/safe/proto.js");
+      assertEquals(resolveImport("toString", { imports }), "toString");
     });
   });
 });

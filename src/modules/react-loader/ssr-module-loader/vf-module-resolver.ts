@@ -13,6 +13,7 @@ import {
   fetchAndCacheModule,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import type { SSRImportMapIdentity } from "./import-map-identity.ts";
+import { toFileUrl } from "#veryfront/compat/path/index.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
@@ -117,7 +118,7 @@ export async function resolveVfModuleImports(
   const replacements = new Map<string, string>();
   for (const { specifier, path, cachedFilePath } of results) {
     if (cachedFilePath) {
-      replacements.set(specifier, `file://${cachedFilePath}`);
+      replacements.set(specifier, toFileUrl(cachedFilePath).href);
     } else {
       logger.warn("Failed to resolve _vf_modules import", {
         file: options.filePath.slice(-40),

@@ -1,10 +1,10 @@
-import { join } from "#veryfront/compat/path/index.ts";
+import { dirname, join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import type * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "#veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
 import { getProjectTmpDir } from "./temp-directory.ts";
-import { normalizeModulePath, resolveRelativePath } from "./path-resolver.ts";
+import { normalizeModulePath, resolveProjectRelativePath } from "./path-resolver.ts";
 import type { LoadComponentOptions } from "./types.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { createSSRImportMapIdentity, SSRModuleLoader } from "./ssr-module-loader/index.ts";
@@ -12,6 +12,31 @@ import { extractComponent } from "./extract-component.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { snapshotImportMap } from "#veryfront/transforms/pipeline/cache-identity.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
+
+const outputQueues = new Map<string, Promise<void>>();
+
+async function serializeModuleOutput<T>(
+  outputPath: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = outputQueues.get(outputPath) ?? Promise.resolve();
+  const result = previous.catch(() => {}).then(operation);
+  const settled = result.then(
+    () => {},
+    () => {},
+  );
+  outputQueues.set(outputPath, settled);
+
+  try {
+    return await result;
+  } finally {
+    if (outputQueues.get(outputPath) === settled) {
+      outputQueues.delete(outputPath);
+    }
+  }
+}
 
 export async function loadModuleFromSource(
   source: string,
@@ -28,6 +53,13 @@ export async function loadModuleFromSource(
   return await withSpan(
     "modules.react.loadComponentFromSource",
     async () => {
+      const relativeOutputPath = ssr ? undefined : resolveProjectRelativePath(filePath, projectDir);
+      if (!ssr && !relativeOutputPath) {
+        throw new TypeError(
+          "Component file path must identify a file beneath the project root",
+        );
+      }
+
       if (ssr) {
         const importMapIdentity = await createSSRImportMapIdentity(
           options?.importMap ?? await loadImportMap(projectDir, adapter),
@@ -73,15 +105,29 @@ export async function loadModuleFromSource(
       );
 
       const tmpDir = await getProjectTmpDir(projectId);
-      const relativeFilePath = resolveRelativePath(filePath, projectDir);
-      const componentFile = join(tmpDir, normalizeModulePath(relativeFilePath));
+      const componentFile = join(
+        tmpDir,
+        normalizeModulePath(relativeOutputPath!),
+      );
+      const transformedHash = await computeHash(transformedCode);
 
-      const componentDir = componentFile.substring(0, componentFile.lastIndexOf("/"));
-      const fs = createFileSystem();
-      await fs.mkdir(componentDir, { recursive: true });
-      await fs.writeTextFile(componentFile, transformedCode);
+      return await serializeModuleOutput(componentFile, async () => {
+        const fs = createFileSystem();
+        await fs.mkdir(dirname(componentFile), { recursive: true });
+        const written = await writeCacheFile(
+          fs,
+          componentFile,
+          transformedCode,
+          "REACT-COMPONENT-LOADER",
+        );
+        if (!written) {
+          throw new Error(`Failed to persist transformed module: ${filePath}`);
+        }
 
-      return await import(`file://${componentFile}?t=${Date.now()}`);
+        const moduleUrl = toFileUrl(componentFile);
+        moduleUrl.searchParams.set("v", transformedHash);
+        return await import(moduleUrl.href);
+      });
     },
     {
       "react.file": fileName,

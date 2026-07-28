@@ -16,7 +16,6 @@
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { isKeyForProject, registerMapCache } from "#veryfront/cache/keys.ts";
 import type { CacheStatsSource } from "#veryfront/cache/registry.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
@@ -27,12 +26,16 @@ import {
 } from "../constants.ts";
 import { Semaphore } from "../concurrency/semaphore.ts";
 import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
+import { isTmpDirCacheKeyForProject } from "../tmp-paths.ts";
 import type { FailureRecord, ModuleCacheEntry } from "../types.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
 /** Maximum entries for temp path tracking (small, just pointers) */
 const TEMP_PATH_CACHE_MAX_ENTRIES = 500;
+const FAILED_COMPONENT_CACHE_MAX_ENTRIES = 5_000;
+const MAX_PROJECT_TRANSFORM_WAITERS = 1_000;
+const MAX_TOTAL_PROJECT_TRANSFORM_WAITERS = 10_000;
 
 export const globalModuleCache = new LRUCache<string, ModuleCacheEntry>({
   maxEntries: TEMP_PATH_CACHE_MAX_ENTRIES,
@@ -48,7 +51,9 @@ export const globalTmpDirs = new LRUCache<string, string>({
   maxEntries: SSR_TMP_DIRS_MAX_ENTRIES,
 });
 
-export const failedComponents = new Map<string, FailureRecord>();
+export const failedComponents = new LRUCache<string, FailureRecord>({
+  maxEntries: FAILED_COMPONENT_CACHE_MAX_ENTRIES,
+});
 
 export interface ClearSSRModuleCacheForProjectOptions {
   /**
@@ -81,6 +86,7 @@ type ProjectTransformWaiter = {
 };
 
 const projectTransformWaiters = new Map<string, ProjectTransformWaiter[]>();
+let projectTransformWaiterCount = 0;
 
 /**
  * Projects that bypass per-project rate limiting.
@@ -130,7 +136,10 @@ function removeProjectTransformWaiter(
   if (!queue) return;
 
   const index = queue.indexOf(waiter);
-  if (index !== -1) queue.splice(index, 1);
+  if (index !== -1) {
+    queue.splice(index, 1);
+    projectTransformWaiterCount -= 1;
+  }
   if (queue.length === 0) projectTransformWaiters.delete(projectId);
 }
 
@@ -155,6 +164,7 @@ function wakeNextProjectTransformWaiter(projectId: string): void {
   if (current >= limit) return;
 
   const waiter = queue.shift();
+  if (waiter) projectTransformWaiterCount -= 1;
   if (queue.length === 0) projectTransformWaiters.delete(projectId);
   if (!waiter) return;
 
@@ -168,6 +178,7 @@ function rejectProjectTransformWaiters(projectId: string): void {
   if (!queue?.length) return;
 
   projectTransformWaiters.delete(projectId);
+  projectTransformWaiterCount -= queue.length;
   for (const waiter of queue) {
     clearTimeout(waiter.timeoutId);
     waiter.resolve(false);
@@ -191,6 +202,13 @@ export async function tryAcquireTransformSlot(
 ): Promise<boolean> {
   if (acquireTransformSlot(projectId, bypass)) return true;
   if (timeoutMs <= 0) return false;
+  const existingQueue = projectTransformWaiters.get(projectId);
+  if (
+    (existingQueue?.length ?? 0) >= MAX_PROJECT_TRANSFORM_WAITERS ||
+    projectTransformWaiterCount >= MAX_TOTAL_PROJECT_TRANSFORM_WAITERS
+  ) {
+    return false;
+  }
 
   return new Promise<boolean>((resolve) => {
     const waiter: ProjectTransformWaiter = {
@@ -200,6 +218,7 @@ export async function tryAcquireTransformSlot(
       }, timeoutMs),
     };
 
+    projectTransformWaiterCount += 1;
     const queue = projectTransformWaiters.get(projectId);
     if (queue) {
       queue.push(waiter);
@@ -292,7 +311,10 @@ registerMapCache(
 );
 registerMapCache("ssr-tmp-dirs", createCacheRegistryWrapper(globalTmpDirs));
 registerMapCache("ssr-in-progress", globalInProgress);
-registerMapCache("ssr-failed-components", failedComponents);
+registerMapCache(
+  "ssr-failed-components",
+  createCacheRegistryWrapper(failedComponents),
+);
 
 export function clearSSRModuleCache(): void {
   const moduleCount = globalModuleCache.size;
@@ -300,9 +322,13 @@ export function clearSSRModuleCache(): void {
   const transformSlotsCount = projectTransformCounts.size;
 
   globalModuleCache.clear();
+  globalCrossProjectCache.clear();
+  globalInProgress.clear();
+  globalTmpDirs.clear();
   failedComponents.clear();
   projectTransformCounts.clear();
   rejectAllProjectTransformWaiters();
+  projectTransformWaiterCount = 0;
   verifiedHttpBundlePaths.clear();
 
   // Reset the transform semaphore and cached limits so leaked permits
@@ -323,7 +349,6 @@ export function clearSSRModuleCacheForProject(
   options: ClearSSRModuleCacheForProjectOptions = {},
 ): void {
   let cleared = 0;
-  const encodedProjectId = hashCodeHex(projectId);
   const preserveActiveTransforms = options.preserveActiveTransforms === true;
 
   for (const key of globalModuleCache.keys()) {
@@ -350,14 +375,7 @@ export function clearSSRModuleCacheForProject(
   }
 
   for (const key of globalTmpDirs.keys()) {
-    const parts = key.split("|");
-    if (parts[2] === encodedProjectId || parts[1] === encodedProjectId) {
-      globalTmpDirs.delete(key);
-      continue;
-    }
-
-    // Legacy cache key format fallback (base:projectId)
-    if (key.includes(`:${projectId}`)) {
+    if (isTmpDirCacheKeyForProject(key, projectId)) {
       globalTmpDirs.delete(key);
     }
   }

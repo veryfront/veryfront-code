@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { normalizeModulePath, resolveRelativePath } from "./path-resolver.ts";
+import {
+  normalizeModulePath,
+  resolveProjectRelativePath,
+  resolveRelativePath,
+} from "./path-resolver.ts";
 
 describe("modules/react-loader/path-resolver", () => {
   describe("resolveRelativePath", () => {
@@ -34,6 +38,58 @@ describe("modules/react-loader/path-resolver", () => {
       assertEquals(
         resolveRelativePath("/completely/different/path.tsx", "/home/user/project"),
         "/completely/different/path.tsx",
+      );
+    });
+
+    it("does not confuse a project path with a longer sibling prefix", () => {
+      assertEquals(
+        resolveRelativePath(
+          "/home/user/project-other/src/app.tsx",
+          "/home/user/project",
+        ),
+        "/home/user/project-other/src/app.tsx",
+      );
+    });
+
+    it("uses the last matching project segment for remapped roots", () => {
+      assertEquals(
+        resolveRelativePath(
+          "/mount/project/archive/project/src/app.tsx",
+          "/workspace/project",
+        ),
+        "src/app.tsx",
+      );
+    });
+  });
+
+  describe("resolveProjectRelativePath", () => {
+    it("normalizes safe dot segments", () => {
+      assertEquals(
+        resolveProjectRelativePath(
+          "/home/user/project/src/../app.tsx",
+          "/home/user/project",
+        ),
+        "app.tsx",
+      );
+    });
+
+    it("rejects absolute paths outside the project", () => {
+      assertThrows(
+        () =>
+          resolveProjectRelativePath(
+            "/completely/different/path.tsx",
+            "/home/user/project",
+          ),
+        TypeError,
+        "outside the project",
+      );
+    });
+
+    it("rejects relative traversal", () => {
+      assertThrows(
+        () => resolveProjectRelativePath("../secret.ts", "/home/user/project"),
+        TypeError,
+        "escapes the project",
       );
     });
   });

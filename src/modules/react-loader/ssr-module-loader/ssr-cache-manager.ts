@@ -374,7 +374,12 @@ export class SSRCacheManager {
     const existingDir = globalTmpDirs.get(cacheKey);
     if (existingDir) return existingDir;
 
-    const tmpDir = buildTmpDirPath(baseCacheDir, projectId, sourceKey, RUNTIME_VERSION);
+    const tmpDir = await buildTmpDirPath(
+      baseCacheDir,
+      projectId,
+      sourceKey,
+      RUNTIME_VERSION,
+    );
 
     await this.fs.mkdir(tmpDir, { recursive: true });
     globalTmpDirs.set(cacheKey, tmpDir);

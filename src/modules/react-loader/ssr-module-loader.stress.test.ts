@@ -13,6 +13,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { clearSSRModuleCache, SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
 import { createFileSystem, makeTempDir } from "#veryfront/platform/compat/fs.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { scaleMs } from "#veryfront/testing";
@@ -41,31 +42,8 @@ async function writeComponentFiles(
   }
 }
 
-function createRealAdapter(_projectDir: string): RuntimeAdapter {
-  const fs = createFileSystem();
-
-  return {
-    name: "deno",
-    fs: {
-      readFile: (path: string) => fs.readTextFile(path),
-      writeFile: async () => {},
-      readDir: async function* () {},
-      stat: () => Promise.resolve(null),
-      exists: (path: string) => fs.exists(path),
-      mkdir: async () => {},
-      rm: async () => {},
-      realPath: (path: string) => Promise.resolve(path),
-    },
-    env: {
-      get: (key: string) => (key === "SSR_MAX_CONCURRENT_TRANSFORMS" ? "3" : undefined),
-      set: () => {},
-      delete: () => {},
-      toObject: () => ({}),
-      has: () => false,
-    },
-    serve: () => Promise.resolve({ stop: () => Promise.resolve() }),
-    exit: () => {},
-  };
+function createRealAdapter(): RuntimeAdapter {
+  return new DenoAdapter();
 }
 
 function generateComponent(name: string, deps: string[]): string {
@@ -125,7 +103,7 @@ describe("SSRModuleLoader Stress Tests", {
 
       await writeComponentFiles(projectDir, files);
 
-      const adapter = createRealAdapter(projectDir);
+      const adapter = createRealAdapter();
       const loader = new SSRModuleLoader({
         projectDir,
         projectId: "test-concurrent",
@@ -188,7 +166,7 @@ describe("SSRModuleLoader Stress Tests", {
 
       await writeComponentFiles(projectDir, files);
 
-      const adapter = createRealAdapter(projectDir);
+      const adapter = createRealAdapter();
       const loaders = Array.from(
         { length: 5 },
         () =>
@@ -247,7 +225,7 @@ describe("SSRModuleLoader Stress Tests", {
 
       await writeComponentFiles(projectDir, files);
 
-      const adapter = createRealAdapter(projectDir);
+      const adapter = createRealAdapter();
 
       const concurrentRequests = 20;
       const loaders = Array.from(

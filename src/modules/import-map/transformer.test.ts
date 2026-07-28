@@ -55,5 +55,71 @@ describe("modules/import-map/transformer", () => {
       const result = transformImportsWithMap(code, map, "/app/");
       assertEquals(result.includes("react@19"), true);
     });
+
+    it("applies exactly one mapping instead of cascading through the output", () => {
+      const code = `import value from "first";`;
+      const map = {
+        imports: {
+          first: "second",
+          second: "third",
+        },
+      };
+
+      assertEquals(
+        transformImportsWithMap(code, map, undefined, { resolveBare: true }),
+        `import value from "second";`,
+      );
+    });
+
+    it("does not rewrite import-looking text in strings, comments, or regex literals", () => {
+      const code = [
+        `const text = 'import value from "first"';`,
+        `// import value from "first";`,
+        `const pattern = /import value from "first"/;`,
+        `import value from "first";`,
+      ].join("\n");
+      const result = transformImportsWithMap(
+        code,
+        { imports: { first: "second" } },
+        undefined,
+        { resolveBare: true },
+      );
+
+      assertEquals(
+        result,
+        [
+          `const text = 'import value from "first"';`,
+          `// import value from "first";`,
+          `const pattern = /import value from "first"/;`,
+          `import value from "second";`,
+        ].join("\n"),
+      );
+    });
+
+    it("handles comments inside import declarations without deleting them", () => {
+      const code = `import /* retained */ value from "first";`;
+      assertEquals(
+        transformImportsWithMap(
+          code,
+          { imports: { first: "second" } },
+          undefined,
+          { resolveBare: true },
+        ),
+        `import /* retained */ value from "second";`,
+      );
+    });
+
+    it("escapes mapped specifiers as JavaScript string literals", () => {
+      const code = `const loaded = import("first");`;
+      assertEquals(
+        transformImportsWithMap(
+          code,
+          { imports: { first: 'second"line\nvalue' } },
+          undefined,
+          { resolveBare: true },
+        ),
+        `const loaded = import("second\\"line\\nvalue");`,
+      );
+    });
   });
 });

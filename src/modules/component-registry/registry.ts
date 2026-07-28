@@ -1,8 +1,37 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import { basename, join } from "#veryfront/compat/path/index.ts";
+import { basename, isAbsolute, join, normalize } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type * as React from "react";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+
+const MAX_COMPONENTS = 10_000;
+const MAX_COMPONENT_DIRECTORY_DEPTH = 64;
+
+function immutableComponentInfo(info: ComponentInfo): ComponentInfo {
+  const exports = info.exports ? Object.freeze({ ...info.exports }) : undefined;
+  return Object.freeze({
+    ...info,
+    ...(exports ? { exports } : {}),
+  });
+}
+
+function normalizeComponentDirectory(directory: string): string {
+  if (typeof directory !== "string" || directory.length === 0) {
+    throw new TypeError("Component directories must be non-empty strings");
+  }
+  const normalized = normalize(directory).replace(/\\/g, "/");
+  if (
+    isAbsolute(normalized) ||
+    normalized === ".." ||
+    normalized.startsWith("../")
+  ) {
+    throw new TypeError(
+      `Component directory must stay within the project root: ${directory}`,
+    );
+  }
+  return normalized;
+}
 
 export interface ComponentExports {
   default?: unknown;
@@ -32,62 +61,91 @@ export type ComponentLoader = {
 
 export class ComponentRegistry {
   private components = new Map<string, ComponentInfo>();
-  private componentDirs: string[];
+  private readonly componentDirs: readonly string[];
   private initializedPromise: Promise<void> | null = null;
-  private adapter: RuntimeAdapter;
-  private initialized = false;
+  private readonly adapter: RuntimeAdapter;
+  private readonly componentLoads = new Map<
+    string,
+    Promise<ComponentInfo | null>
+  >();
+  private generation = 0;
 
   constructor(private options: ComponentRegistryOptions) {
     this.adapter = options.adapter;
-    this.componentDirs = options.componentDirs ?? [
-      "components",
-      "islands",
-      "src/components",
-      "src/islands",
-    ];
-  }
-
-  discover(): Promise<void> {
-    return withSpan(
-      "modules.componentRegistry.discover",
-      async () => {
-        this.initialized = false;
-        this.initializedPromise = (async () => {
-          await this._discoverInternal();
-          this.initialized = true;
-        })();
-        await this.initializedPromise;
-      },
-      { "registry.projectDir": this.options.projectDir },
+    this.componentDirs = Object.freeze(
+      Array.from(
+        new Set(
+          (
+            options.componentDirs ?? [
+              "components",
+              "islands",
+              "src/components",
+              "src/islands",
+            ]
+          ).map(normalizeComponentDirectory),
+        ),
+      ),
     );
   }
 
-  private async _discoverInternal(): Promise<void> {
+  discover(): Promise<void> {
+    if (this.initializedPromise) return this.initializedPromise;
+
+    const generation = this.generation;
+    const discovery = withSpan(
+      "modules.componentRegistry.discover",
+      async () => {
+        const discovered = await this._discoverInternal();
+        if (this.generation === generation) {
+          this.components = discovered;
+        }
+      },
+      { "registry.projectDir": this.options.projectDir },
+    );
+    this.initializedPromise = discovery;
+    const clearDiscovery = (): void => {
+      if (this.initializedPromise === discovery) {
+        this.initializedPromise = null;
+      }
+    };
+    void discovery.then(clearDiscovery, clearDiscovery);
+    return discovery;
+  }
+
+  private async _discoverInternal(): Promise<Map<string, ComponentInfo>> {
     logger.debug(`Discovering components in: ${this.componentDirs.join(", ")}`);
+    const discovered = new Map<string, ComponentInfo>();
 
     for (const dir of this.componentDirs) {
       const fullPath = join(this.options.projectDir, dir);
 
       try {
-        await this.walkDirectory(fullPath);
+        await this.walkDirectory(fullPath, discovered, 0);
       } catch (error) {
-        // Silently skip missing directories - they're optional
-        const code = (error as NodeJS.ErrnoException | undefined)?.code;
-        const isNotFound = code === "ENOENT" ||
-          (error instanceof Error && error.name === "NotFound");
-        if (isNotFound) continue;
-
-        logger.warn(`Failed to discover components in ${fullPath}:`, error);
+        if (isNotFoundError(error)) continue;
+        throw error;
       }
     }
 
-    logger.debug(`Discovered ${this.components.size} components`);
+    logger.debug(`Discovered ${discovered.size} components`);
+    return discovered;
   }
 
-  private async walkDirectory(dir: string): Promise<void> {
-    const entries = this.adapter.fs.readDir(dir);
+  private async walkDirectory(
+    dir: string,
+    discovered: Map<string, ComponentInfo>,
+    depth: number,
+  ): Promise<void> {
+    if (depth > MAX_COMPONENT_DIRECTORY_DEPTH) {
+      throw new RangeError(
+        `Component directory depth exceeds ${MAX_COMPONENT_DIRECTORY_DEPTH}: ${dir}`,
+      );
+    }
 
-    for await (const entry of entries) {
+    const entries = await Array.fromAsync(this.adapter.fs.readDir(dir));
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+
+    for (const entry of entries) {
       if (
         entry.name === "node_modules" ||
         entry.name.includes(".test.") ||
@@ -99,7 +157,7 @@ export class ComponentRegistry {
       const fullPath = join(dir, entry.name);
 
       if (entry.isDirectory) {
-        await this.walkDirectory(fullPath);
+        await this.walkDirectory(fullPath, discovered, depth + 1);
         continue;
       }
 
@@ -109,11 +167,26 @@ export class ComponentRegistry {
       const componentName = basename(entry.name, ext);
       if (componentName === "index") continue;
 
-      this.components.set(componentName, {
-        name: componentName,
-        path: fullPath,
-        isLoaded: false,
-      });
+      const existing = discovered.get(componentName);
+      if (existing) {
+        throw new TypeError(
+          `Duplicate component name "${componentName}" resolves to both ${existing.path} and ${fullPath}`,
+        );
+      }
+      if (discovered.size >= MAX_COMPONENTS) {
+        throw new RangeError(
+          `Component registry exceeds the ${MAX_COMPONENTS} component limit`,
+        );
+      }
+
+      discovered.set(
+        componentName,
+        immutableComponentInfo({
+          name: componentName,
+          path: fullPath,
+          isLoaded: false,
+        }),
+      );
 
       logger.debug(`Discovered component: ${componentName} at ${fullPath}`);
     }
@@ -133,14 +206,34 @@ export class ComponentRegistry {
 
         if (component.isLoaded) return component;
 
+        const existingLoad = this.componentLoads.get(name);
+        if (existingLoad) return await existingLoad;
+
+        const load = (async (): Promise<ComponentInfo | null> => {
+          try {
+            const loaded = immutableComponentInfo({
+              ...component,
+              content: await this.adapter.fs.readFile(component.path),
+              isLoaded: true,
+            });
+            if (this.components.get(name) === component) {
+              this.components.set(name, loaded);
+            }
+            logger.debug(`Loaded component: ${name}`);
+            return loaded;
+          } catch (error) {
+            if (isNotFoundError(error)) return null;
+            logger.error(`Failed to load component ${name}:`, error);
+            throw error;
+          }
+        })();
+        this.componentLoads.set(name, load);
         try {
-          component.content = await this.adapter.fs.readFile(component.path);
-          component.isLoaded = true;
-          logger.debug(`Loaded component: ${name}`);
-          return component;
-        } catch (error) {
-          logger.error(`Failed to load component ${name}:`, error);
-          return null;
+          return await load;
+        } finally {
+          if (this.componentLoads.get(name) === load) {
+            this.componentLoads.delete(name);
+          }
         }
       },
       { "registry.componentName": name },
@@ -185,13 +278,16 @@ export class ComponentRegistry {
   }
 
   add(name: string, info: Partial<ComponentInfo>): void {
-    this.components.set(name, {
+    this.components.set(
       name,
-      path: info.path ?? `virtual:${name}`,
-      content: info.content,
-      isLoaded: true,
-      exports: info.exports,
-    });
+      immutableComponentInfo({
+        name,
+        path: info.path ?? `virtual:${name}`,
+        content: info.content,
+        isLoaded: true,
+        exports: info.exports,
+      }),
+    );
   }
 
   remove(name: string): void {
@@ -199,9 +295,10 @@ export class ComponentRegistry {
   }
 
   clear(): void {
+    this.generation += 1;
     this.components.clear();
-    this.initialized = false;
     this.initializedPromise = null;
+    this.componentLoads.clear();
   }
 
   getComponentNames(): string[] {
@@ -235,8 +332,8 @@ export class ComponentRegistry {
           lastModified: stat.mtime?.toISOString(),
           type: "component",
         });
-      } catch (_) {
-        /* expected: stat may fail for components without filesystem entries */
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
         components.push({ name, path: info.path, type: "component" });
       }
     }

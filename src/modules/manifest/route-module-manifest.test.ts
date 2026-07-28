@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests for the module dependency tracking system.
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { resetMetrics, state } from "#veryfront/observability/simple-metrics/index.ts";
 import {
@@ -17,6 +17,7 @@ import {
   getManifestStats,
   getRouteManifest,
   getRouteModulePaths,
+  type ModuleEntry,
   recordModuleLoad,
   recordSSRModules,
   startModuleCollection,
@@ -110,6 +111,62 @@ describe("Route Module Manifest", () => {
 
     assertEquals(state.routeManifestLruMisses, 1);
     assertEquals(state.routeManifestLruHits, 1);
+  });
+
+  it("uses injective project and route identities", () => {
+    clearAllManifests();
+
+    recordSSRModules(undefined, "", ["undefined-empty.js"]);
+    recordSSRModules("default", "index", ["literal-default.js"]);
+    recordSSRModules("a:b", "c", ["colon-project.js"]);
+    recordSSRModules("a", "b:c", ["colon-route.js"]);
+
+    assertEquals(getRouteModulePaths(undefined, ""), ["undefined-empty.js"]);
+    assertEquals(getRouteModulePaths("default", "index"), ["literal-default.js"]);
+    assertEquals(getRouteModulePaths("a:b", "c"), ["colon-project.js"]);
+    assertEquals(getRouteModulePaths("a", "b:c"), ["colon-route.js"]);
+  });
+
+  it("does not expose mutable manifest cache state", () => {
+    clearAllManifests();
+    recordSSRModules("immutable", "page", ["one.js", "two.js"]);
+
+    const manifest = getRouteManifest("immutable", "page");
+    assertExists(manifest);
+    assertThrows(
+      () => (manifest.modules as ModuleEntry[]).reverse(),
+      TypeError,
+    );
+
+    assertEquals(getRouteModulePaths("immutable", "page"), ["one.js", "two.js"]);
+  });
+
+  it("escapes preload href values and validates the requested limit", () => {
+    clearAllManifests();
+    recordSSRModules("escaped", "page", ['component"&<.js']);
+
+    assertEquals(
+      generateModulePreloadHintsFromManifest("escaped", "page", 1),
+      [
+        '<link rel="modulepreload" href="/_vf_modules/component&quot;&amp;&lt;.js">',
+      ],
+    );
+    assertThrows(
+      () => generateModulePreloadHintsFromManifest("escaped", "page", -1),
+      RangeError,
+      "maxHints",
+    );
+  });
+
+  it("reports route names rather than internal cache keys", () => {
+    clearAllManifests();
+    recordSSRModules("stats-project", "stats-route", ["page.js"]);
+
+    assertEquals(getManifestStats().routes, [{
+      route: "stats-route",
+      moduleCount: 1,
+      renderCount: 1,
+    }]);
   });
 
   clearAllManifests();
