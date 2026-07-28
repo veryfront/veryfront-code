@@ -33,6 +33,7 @@ import {
   getProjectTarget,
   normalizeControlPlane,
   type ProjectTarget,
+  PUSH_RECEIPT_RELATIVE_PATH,
   type PushReceipt,
   readPushReceipt,
   resolveGitSource,
@@ -930,7 +931,7 @@ async function ensureProjectLinkedForDeploy(
   const suggestedSlug = normalizeProjectSlug(projectReference);
   if (receipt) {
     throw new Error(
-      `The local push receipt is orphaned: ${projectDir}/.veryfront/push-receipt.json targets project "${receipt.projectSlug}", but deploy inferred "${suggestedSlug}" because there is no explicit config or local project link. Remove the receipt and run veryfront push again, or relink this project before deploying.`,
+      `The local push receipt is orphaned: ${PUSH_RECEIPT_RELATIVE_PATH} targets project "${receipt.projectSlug}", but deploy inferred "${suggestedSlug}" because there is no explicit config or local project link. Remove the receipt and run veryfront push again, or relink this project before deploying.`,
     );
   }
 

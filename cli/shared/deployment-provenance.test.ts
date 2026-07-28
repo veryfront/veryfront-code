@@ -214,11 +214,12 @@ describe("push receipt persistence", () => {
       await Deno.mkdir(`${projectDir}/.veryfront`);
       await Deno.writeTextFile(`${projectDir}/.veryfront/push-receipt.json`, "{not json");
 
-      await assertRejects(
+      const error = await assertRejects(
         () => readPushReceipt(projectDir),
         Error,
         ".veryfront/push-receipt.json",
       );
+      assertEquals(String(error).includes(projectDir), false);
       await assertRejects(
         () => readPushReceipt(projectDir),
         Error,

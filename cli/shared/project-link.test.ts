@@ -7,6 +7,7 @@ import {
   clearProjectLink,
   type ProjectLink,
   readProjectLink,
+  readProjectLinkForControlPlane,
   writeProjectLink,
 } from "./project-link.ts";
 
@@ -51,11 +52,12 @@ describe("project link persistence", () => {
     await withTempProject(async (projectDir) => {
       await writeRawProjectLink(projectDir, "{not json");
 
-      await assertRejects(
+      const error = await assertRejects(
         () => readProjectLink(projectDir),
         Error,
         ".veryfront/project.json",
       );
+      assertEquals(String(error).includes(projectDir), false);
       await assertRejects(
         () => readProjectLink(projectDir),
         Error,
@@ -83,6 +85,20 @@ describe("project link persistence", () => {
         Error,
         "remove it and relink",
       );
+    });
+  });
+
+  it("rejects another control plane without exposing the project directory", async () => {
+    await withTempProject(async (projectDir) => {
+      await writeProjectLink(projectDir, LINK);
+
+      const error = await assertRejects(
+        () => readProjectLinkForControlPlane(projectDir, "https://other.example.test"),
+        Error,
+        ".veryfront/project.json",
+      );
+
+      assertEquals(String(error).includes(projectDir), false);
     });
   });
 

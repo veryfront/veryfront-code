@@ -23,11 +23,9 @@ function projectLinkPathError(): Error {
   );
 }
 
-function invalidProjectLinkError(projectDir: string): Error {
+function invalidProjectLinkError(): Error {
   return new Error(
-    `Veryfront could not read ${
-      projectLinkPath(projectDir)
-    }; remove it and relink this project with veryfront push.`,
+    `Veryfront could not read ${PROJECT_LINK_RELATIVE_PATH}; remove it and relink this project with veryfront push.`,
   );
 }
 
@@ -98,9 +96,9 @@ export async function readProjectLink(projectDir: string): Promise<ProjectLink |
     const value: unknown = JSON.parse(await Deno.readTextFile(projectLinkPath(projectDir)));
     if (isProjectLink(value)) return value;
   } catch {
-    throw invalidProjectLinkError(projectDir);
+    throw invalidProjectLinkError();
   }
-  throw invalidProjectLinkError(projectDir);
+  throw invalidProjectLinkError();
 }
 
 export async function readProjectLinkForControlPlane(
@@ -112,9 +110,7 @@ export async function readProjectLinkForControlPlane(
   if (controlPlanesMatch(link.controlPlane, resolvedApiUrl)) return link;
 
   throw new Error(
-    `Veryfront project link ${
-      projectLinkPath(projectDir)
-    } targets control plane "${link.controlPlane}", but the resolved API URL is "${resolvedApiUrl}". Relink this project or select a matching API URL.`,
+    `Veryfront project link ${PROJECT_LINK_RELATIVE_PATH} targets control plane "${link.controlPlane}", but the resolved API URL is "${resolvedApiUrl}". Relink this project or select a matching API URL.`,
   );
 }
 

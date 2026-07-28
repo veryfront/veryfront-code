@@ -279,13 +279,15 @@ async function expectDeployReceiptError(
   operation: () => Promise<void>,
   jsonMode: boolean,
   output: string[],
+  forbiddenText: string,
 ): Promise<void> {
   if (!jsonMode) {
-    await assertRejects(
+    const error = await assertRejects(
       operation,
       Error,
       "orphaned",
     );
+    assertEquals(String(error).includes(forbiddenText), false);
     return;
   }
 
@@ -302,6 +304,7 @@ async function expectDeployReceiptError(
   const result = output.map((line) => JSON.parse(line)).at(-1);
   assertEquals(result.success, false);
   assertEquals(String(result.error).includes("orphaned"), true);
+  assertEquals(String(result.error).includes(forbiddenText), false);
 }
 
 it("deploys production from the existing verified push without mutating source", async () => {
@@ -412,6 +415,7 @@ it("fails inferred deploys with an orphaned receipt before creating remote or lo
                 }),
               jsonMode,
               output,
+              projectDir,
             ));
         } finally {
           console.log = originalLog;
