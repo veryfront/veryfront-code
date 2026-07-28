@@ -4,6 +4,7 @@ import {
   startNodeVeryfrontServer,
   startVeryfrontServer,
 } from "./service-server.ts";
+import { ServerStartupCleanupError } from "./startup-cleanup-error.ts";
 
 Deno.test("createVeryfrontServer dispatches to the first module response", async () => {
   const runtime = createVeryfrontServer({
@@ -248,6 +249,250 @@ Deno.test("startNodeVeryfrontServer reports the actual bound port after readines
     await handle.stop();
   }
 });
+
+Deno.test("startNodeVeryfrontServer rejects readiness when stopped before binding", async () => {
+  const process = (await import("node:process")).default;
+  const signal = "SIGUSR2" as const;
+  const initialSignalListeners = process.listenerCount(signal);
+  let shutdownCalls = 0;
+  let runtimeStopCalls = 0;
+  const handle = await startNodeVeryfrontServer({
+    runtime: {
+      fetch: () => new Response("unreachable"),
+      setShuttingDown: () => {
+        shutdownCalls++;
+      },
+      stop: () => {
+        runtimeStopCalls++;
+        return Promise.resolve();
+      },
+    },
+    port: 0,
+    bindAddress: "127.0.0.1",
+    signals: [signal],
+  });
+
+  try {
+    assertEquals(process.listenerCount(signal), initialSignalListeners + 1);
+
+    const firstStop = handle.stop();
+    const concurrentStop = handle.stop();
+    assertStrictEquals(firstStop, concurrentStop);
+    await firstStop;
+
+    let readyError: unknown;
+    try {
+      await handle.ready;
+    } catch (error) {
+      readyError = error;
+    }
+
+    assertInstanceOf(readyError, Error);
+    assertEquals(
+      readyError.message,
+      "Veryfront Node service server stopped before readiness",
+    );
+    assertEquals(handle.server.listening, false);
+    assertEquals(handle.server.listenerCount("error"), 0);
+    assertEquals(handle.server.listenerCount("close"), 0);
+    assertEquals(process.listenerCount(signal), initialSignalListeners);
+    assertEquals([shutdownCalls, runtimeStopCalls], [1, 1]);
+    assertStrictEquals(handle.stop(), firstStop);
+  } finally {
+    await handle.stop().catch(() => undefined);
+    assertEquals(process.listenerCount(signal), initialSignalListeners);
+  }
+});
+
+Deno.test("startNodeVeryfrontServer removes readiness listeners when listen throws", async () => {
+  const process = (await import("node:process")).default;
+  const signal = "SIGUSR2" as const;
+  const initialSignalListeners = process.listenerCount(signal);
+  let shutdownCalls = 0;
+  let runtimeStopCalls = 0;
+  const handle = await startNodeVeryfrontServer({
+    runtime: {
+      fetch: () => new Response("unreachable"),
+      setShuttingDown: () => {
+        shutdownCalls++;
+      },
+      stop: () => {
+        runtimeStopCalls++;
+        return Promise.resolve();
+      },
+    },
+    port: -1,
+    bindAddress: "127.0.0.1",
+    signals: [signal],
+  });
+
+  try {
+    assertEquals(handle.server.listenerCount("error"), 0);
+    assertEquals(handle.server.listenerCount("close"), 0);
+
+    let readyError: unknown;
+    try {
+      await handle.ready;
+    } catch (error) {
+      readyError = error;
+    }
+
+    assertInstanceOf(readyError, RangeError);
+    assertEquals(Reflect.get(readyError, "code"), "ERR_SOCKET_BAD_PORT");
+    assertEquals(handle.server.listenerCount("error"), 0);
+    assertEquals(handle.server.listenerCount("close"), 0);
+    assertEquals(process.listenerCount(signal), initialSignalListeners);
+    assertEquals([shutdownCalls, runtimeStopCalls], [1, 1]);
+
+    const stopped = handle.stop();
+    await stopped;
+    assertStrictEquals(handle.stop(), stopped);
+  } finally {
+    await handle.stop().catch(() => undefined);
+    assertEquals(process.listenerCount(signal), initialSignalListeners);
+  }
+});
+
+Deno.test("startNodeVeryfrontServer cleans up an occupied-port readiness failure", async () => {
+  const occupied = await startNodeVeryfrontServer({
+    runtime: createVeryfrontServer({ modules: [] }),
+    port: 0,
+    bindAddress: "127.0.0.1",
+    signals: [],
+  });
+  await occupied.ready;
+
+  const process = (await import("node:process")).default;
+  const signal = "SIGUSR2" as const;
+  const initialSignalListeners = process.listenerCount(signal);
+  let shutdownCalls = 0;
+  let runtimeStopCalls = 0;
+  let failed:
+    | Awaited<ReturnType<typeof startNodeVeryfrontServer>>
+    | undefined;
+
+  try {
+    failed = await startNodeVeryfrontServer({
+      runtime: {
+        fetch: () => new Response("unreachable"),
+        setShuttingDown: () => {
+          shutdownCalls++;
+        },
+        stop: () => {
+          runtimeStopCalls++;
+          return Promise.resolve();
+        },
+      },
+      port: occupied.port,
+      bindAddress: "127.0.0.1",
+      signals: [signal],
+    });
+
+    let emittedStartupError: unknown;
+    failed.server.once("error", (error) => {
+      emittedStartupError = error;
+    });
+
+    let received: unknown;
+    try {
+      await failed.ready;
+    } catch (error) {
+      received = error;
+    }
+
+    assertInstanceOf(received, Error);
+    assertStrictEquals(received, emittedStartupError);
+    assertEquals(process.listenerCount(signal), initialSignalListeners);
+    assertEquals([shutdownCalls, runtimeStopCalls], [1, 1]);
+    assertEquals(failed.server.listening, false);
+
+    const firstStop = failed.stop();
+    const concurrentStop = failed.stop();
+    assertStrictEquals(firstStop, concurrentStop);
+    await firstStop;
+    assertStrictEquals(failed.stop(), firstStop);
+    assertEquals([shutdownCalls, runtimeStopCalls], [1, 1]);
+  } finally {
+    await failed?.stop().catch(() => undefined);
+    await occupied.stop();
+    assertEquals(process.listenerCount(signal), initialSignalListeners);
+  }
+});
+
+Deno.test(
+  "startNodeVeryfrontServer exposes retryable cleanup when occupied-port cleanup fails",
+  async () => {
+    const occupied = await startNodeVeryfrontServer({
+      runtime: createVeryfrontServer({ modules: [] }),
+      port: 0,
+      bindAddress: "127.0.0.1",
+      signals: [],
+    });
+    await occupied.ready;
+
+    const process = (await import("node:process")).default;
+    const signal = "SIGUSR2" as const;
+    const initialSignalListeners = process.listenerCount(signal);
+    const transientCleanupError = new Error("runtime cleanup failed");
+    let shutdownCalls = 0;
+    let runtimeStopCalls = 0;
+    let failed:
+      | Awaited<ReturnType<typeof startNodeVeryfrontServer>>
+      | undefined;
+
+    try {
+      failed = await startNodeVeryfrontServer({
+        runtime: {
+          fetch: () => new Response("unreachable"),
+          setShuttingDown: () => {
+            shutdownCalls++;
+          },
+          stop: () => {
+            runtimeStopCalls++;
+            return runtimeStopCalls === 1
+              ? Promise.reject(transientCleanupError)
+              : Promise.resolve();
+          },
+        },
+        port: occupied.port,
+        bindAddress: "127.0.0.1",
+        signals: [signal],
+      });
+
+      let emittedStartupError: unknown;
+      failed.server.once("error", (error) => {
+        emittedStartupError = error;
+      });
+
+      let received: unknown;
+      try {
+        await failed.ready;
+      } catch (error) {
+        received = error;
+      }
+
+      assertInstanceOf(received, ServerStartupCleanupError);
+      assertStrictEquals(received.errors[0], emittedStartupError);
+      assertInstanceOf(received.errors[1], AggregateError);
+      assertEquals(received.errors[1].errors, [transientCleanupError]);
+      assertStrictEquals(received.retryCleanup, failed.stop);
+      assertEquals(process.listenerCount(signal), initialSignalListeners);
+      assertEquals([shutdownCalls, runtimeStopCalls], [1, 1]);
+      assertEquals(failed.server.listening, false);
+
+      const retry = received.retryCleanup();
+      const concurrentRetry = failed.stop();
+      assertStrictEquals(retry, concurrentRetry);
+      await retry;
+      assertStrictEquals(failed.stop(), retry);
+      assertEquals([shutdownCalls, runtimeStopCalls], [1, 2]);
+    } finally {
+      await failed?.stop().catch(() => undefined);
+      await occupied.stop();
+      assertEquals(process.listenerCount(signal), initialSignalListeners);
+    }
+  },
+);
 
 Deno.test("startNodeVeryfrontServer aggregates listener and runtime failures for retry", async () => {
   const transientListenerFailure = new Error("listener cleanup failed");

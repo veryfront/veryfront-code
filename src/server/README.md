@@ -112,6 +112,14 @@ or Bun host. `startNodeVeryfrontServer(options)` is the Node-specific form. Both
 return a service handle with `ready`, `stop()`, `port`, `url`, and `runtime`;
 the Node-specific handle also exposes its HTTP `server`.
 
+Await `ready` before using the service handle. If a Node listener cannot bind,
+the server automatically removes its signal listeners and stops the supplied
+runtime before `ready` rejects. The original listener error is preserved when
+cleanup succeeds. If cleanup is incomplete, the rejection exposes
+`retryCleanup`; calling it or `stop()` retries only the unfinished cleanup
+phases. Calling `stop()` before the Node listener binds also rejects `ready`
+instead of leaving readiness pending.
+
 ## Related documentation
 
 - [Server runtime architecture](../../docs/architecture/04-server-runtime.md)

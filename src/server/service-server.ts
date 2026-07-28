@@ -1,5 +1,6 @@
 import { serverLogger } from "#veryfront/utils";
 import { toNodeHandler } from "./node-handler.ts";
+import { ServerStartupCleanupError } from "./startup-cleanup-error.ts";
 
 /** Public API contract for veryfront service server fetch. */
 export type VeryfrontServiceServerFetch = (request: Request) => Response | Promise<Response>;
@@ -64,6 +65,7 @@ export type VeryfrontServiceServerRuntimeKind = "node" | "deno" | "bun";
 
 /** Public API contract for veryfront service server. */
 export type VeryfrontServiceServer = {
+  /** Resolves after the runtime-specific listener is ready. */
   ready: Promise<void>;
   stop: () => Promise<void>;
   port: number;
@@ -74,6 +76,11 @@ export type VeryfrontServiceServer = {
 /** Public API contract for node veryfront service server. */
 export type NodeVeryfrontServiceServer = {
   server: import("node:http").Server;
+  /**
+   * Resolves after the listener binds. A rejected bind or pre-bind stop
+   * automatically releases signal handlers and stops the supplied runtime
+   * before this promise rejects.
+   */
   ready: Promise<void>;
   stop: () => Promise<void>;
   port: number;
@@ -288,10 +295,20 @@ export function createVeryfrontServer(
   };
 }
 
+function isNodeServerNotRunningError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  try {
+    return Reflect.get(error, "code") === "ERR_SERVER_NOT_RUNNING";
+  } catch {
+    return false;
+  }
+}
+
 function closeNodeServer(server: import("node:http").Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.close((error) => {
-      if (error) {
+      const isAlreadyStopped = !server.listening && isNodeServerNotRunningError(error);
+      if (error && !isAlreadyStopped) {
         reject(error);
         return;
       }
@@ -715,6 +732,9 @@ export async function startNodeVeryfrontServer(
   let removeSignalHandlers: () => void = () => undefined;
   let listeningPort = options.port;
   let listeningUrl = `http://${bindAddress}:${listeningPort}`;
+  const stoppedBeforeReadyError = new Error(
+    "Veryfront Node service server stopped before readiness",
+  );
   const stop = createServiceServerStop(
     options.runtime,
     () => closeNodeServer(server),
@@ -722,21 +742,61 @@ export async function startNodeVeryfrontServer(
     "node",
   );
 
-  const ready = new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(options.port, bindAddress, () => {
-      server.off("error", reject);
-      const address = server.address();
-      if (address && typeof address !== "string") {
-        listeningPort = address.port;
-        listeningUrl = `http://${bindAddress}:${listeningPort}`;
+  const listenerReady = new Promise<void>((resolve, reject) => {
+    let settled = false;
+
+    function settle(
+      outcome:
+        | { readonly status: "ready" }
+        | { readonly status: "failed"; readonly error: unknown },
+    ): void {
+      if (settled) return;
+      settled = true;
+      server.off("error", onError);
+      server.off("close", onClose);
+      server.off("listening", onListening);
+
+      if (outcome.status === "ready") {
+        resolve();
+        return;
       }
-      logger.info?.("Veryfront service server listening", {
-        port: listeningPort,
-        bindAddress,
-      });
-      resolve();
-    });
+
+      reject(outcome.error);
+    }
+
+    function onError(error: Error): void {
+      settle({ status: "failed", error });
+    }
+
+    function onClose(): void {
+      settle({ status: "failed", error: stoppedBeforeReadyError });
+    }
+
+    function onListening(): void {
+      try {
+        const address = server.address();
+        if (address && typeof address !== "string") {
+          listeningPort = address.port;
+          listeningUrl = `http://${bindAddress}:${listeningPort}`;
+        }
+        logger.info?.("Veryfront service server listening", {
+          port: listeningPort,
+          bindAddress,
+        });
+        settle({ status: "ready" });
+      } catch (error) {
+        settle({ status: "failed", error });
+      }
+    }
+
+    server.once("error", onError);
+    server.once("close", onClose);
+    server.once("listening", onListening);
+    try {
+      server.listen(options.port, bindAddress);
+    } catch (error) {
+      settle({ status: "failed", error });
+    }
   });
 
   removeSignalHandlers = installSignalHandlers({
@@ -746,6 +806,20 @@ export async function startNodeVeryfrontServer(
     stop,
     hardShutdownTimeoutMs: options.hardShutdownTimeoutMs,
     runtime: "node",
+  });
+
+  const ready = listenerReady.catch(async (startupError) => {
+    try {
+      await stop();
+    } catch (cleanupError) {
+      throw new ServerStartupCleanupError(
+        "Veryfront Node service server readiness",
+        startupError,
+        cleanupError,
+        stop,
+      );
+    }
+    throw startupError;
   });
 
   return {
