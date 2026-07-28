@@ -81,6 +81,25 @@ function createPipeableSSRStream(
   };
 }
 
+function withDeadline<T>(promise: Promise<T>, timeoutMs = 100): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = setTimeout(
+      () => reject(new Error(`test deadline exceeded after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+}
+
 describe("react/compat/ssr-adapter/stream-renderer", () => {
   afterEach(() => {
     __injectReactDOMServerForTests(null);
@@ -213,5 +232,80 @@ describe("react/compat/ssr-adapter/stream-renderer", () => {
       "SSR timeout",
     );
     assertEquals(abortCalled, true);
+  });
+
+  it("handles a synchronous pipeable shell-ready callback", async () => {
+    __injectReactDOMServerForTests(
+      createMockServer({
+        renderToReadableStream: undefined,
+        renderToPipeableStream: (_element, options) => {
+          options?.onShellReady?.();
+          return createPipeableSSRStream((writable) => {
+            writable.end("<div>synchronous</div>");
+          });
+        },
+      }),
+    );
+
+    const result = await withDeadline(
+      renderToStreamAdapter(React.createElement("div")),
+    );
+
+    assertEquals(typeof result.pipe, "function");
+    assertEquals(await readPipe(result.pipe!), "<div>synchronous</div>");
+  });
+
+  it("settles readiness before invoking throwing observers", async () => {
+    __injectReactDOMServerForTests(
+      createMockServer({
+        renderToReadableStream: undefined,
+        renderToPipeableStream: (_element, options) => {
+          queueMicrotask(() => {
+            options?.onShellReady?.();
+            options?.onAllReady?.();
+          });
+          return createPipeableSSRStream((writable) => {
+            writable.end("<div>ready</div>");
+          });
+        },
+      }),
+    );
+
+    const result = await withDeadline(
+      renderToStreamAdapter(React.createElement("div"), {
+        onAllReady: () => {
+          throw new Error("all-ready observer failed");
+        },
+        onShellReady: () => {
+          throw new Error("shell-ready observer failed");
+        },
+      }),
+    );
+
+    await withDeadline(Promise.resolve(result.allReady));
+    assertEquals(await readPipe(result.pipe!), "<div>ready</div>");
+  });
+
+  it("continues failure handling when the shell-error observer throws", async () => {
+    __injectReactDOMServerForTests(
+      createMockServer({
+        renderToReadableStream: undefined,
+        renderToPipeableStream: (_element, options) => {
+          queueMicrotask(() => options?.onShellError?.(new Error("shell failed")));
+          return createPipeableSSRStream(() => {});
+        },
+        renderToString: () => "<div>fallback</div>",
+      }),
+    );
+
+    const result = await withDeadline(
+      renderToStreamAdapter(React.createElement("div"), {
+        onShellError: () => {
+          throw new Error("shell-error observer failed");
+        },
+      }),
+    );
+
+    assertEquals(result.html, "<div>fallback</div>");
   });
 });
