@@ -202,6 +202,67 @@ describe("buildPushUrls", () => {
 });
 
 describe("push JSON output", () => {
+  it("uses the canonical project slug for project-ID targets", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalLog = console.log;
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("TENANT_PROJECT_SLUG");
+      Deno.env.set("VERYFRONT_PROJECT_ID", "project-123");
+      Deno.env.delete("TENANT_PROJECT_ID");
+      _resetEnvironmentConfig();
+      setJsonMode(true);
+
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname === "/projects/project-123/files") {
+          return Response.json({ data: [], page_info: {} });
+        }
+        if (request.method === "GET" && url.pathname === "/projects/project-123") {
+          return Response.json({ id: "project-123", slug: "canonical-slug" });
+        }
+        throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+      }) as typeof fetch;
+
+      for (const dryRun of [true, false]) {
+        const projectDir = await Deno.makeTempDir();
+        const output: string[] = [];
+        console.log = (message?: unknown) => output.push(String(message));
+        try {
+          await pushCommand({ projectDir, dryRun });
+
+          const result = JSON.parse(output.at(-1)!);
+          assertEquals(result.data.projectSlug, "canonical-slug");
+          assertEquals(
+            result.data.previewUrl,
+            "https://canonical-slug.preview.veryfront.com",
+          );
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      }
+    } finally {
+      setJsonMode(false);
+      console.log = originalLog;
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("keeps an up-to-date dry run on the dry-run schema", async () => {
     const originalFetch = globalThis.fetch;
     const originalLog = console.log;
@@ -1109,6 +1170,56 @@ describe("push receipt source snapshot", () => {
       }
 
       assertEquals(requestedSlugs, ["my-project", "my-project", "my-project"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("fails closed when an explicit project ID is missing", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const requests: string[] = [];
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("TENANT_PROJECT_SLUG");
+      Deno.env.set("VERYFRONT_PROJECT_ID", "missing-project-id");
+      Deno.env.delete("TENANT_PROJECT_ID");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        requests.push(`${request.method} ${url.pathname}`);
+        return Response.json({ error: "not found" }, { status: 404 });
+      }) as typeof fetch;
+
+      for (const dryRun of [true, false]) {
+        await withGitProject(async ({ projectDir }) => {
+          await assertRejects(
+            () => pushCommand({ projectDir, dryRun, quiet: true }),
+            Error,
+            'Project "missing-project-id" was not found',
+          );
+        });
+      }
+
+      assertEquals(requests, [
+        "GET /projects/missing-project-id/files",
+        "GET /projects/missing-project-id/files",
+      ]);
     } finally {
       globalThis.fetch = originalFetch;
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
