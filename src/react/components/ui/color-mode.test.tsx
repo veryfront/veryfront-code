@@ -1,45 +1,82 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ColorModeProvider, ColorModeScript, useColorMode } from "./color-mode.tsx";
 
-function installDomGlobals(dom: JSDOM): () => void {
-  const window = dom.window;
-  const previous = {
-    window: globalThis.window,
-    document: globalThis.document,
-    navigator: globalThis.navigator,
-    localStorage: globalThis.localStorage,
-    matchMedia: globalThis.matchMedia,
-    self: globalThis.self,
-    Node: globalThis.Node,
-    Element: globalThis.Element,
-    HTMLElement: globalThis.HTMLElement,
-    MouseEvent: globalThis.MouseEvent,
-  };
+function createMutableMatchMedia(initialMatches: boolean): {
+  matchMedia: typeof globalThis.matchMedia;
+  setMatches(matches: boolean): void;
+} {
+  let matches = initialMatches;
+  const listeners = new Set<() => void>();
+  const media = {
+    get matches() {
+      return matches;
+    },
+    media: "(prefers-color-scheme: dark)",
+    addEventListener(_type: string, listener: () => void) {
+      listeners.add(listener);
+    },
+    removeEventListener(_type: string, listener: () => void) {
+      listeners.delete(listener);
+    },
+    addListener(listener: () => void) {
+      listeners.add(listener);
+    },
+    removeListener(listener: () => void) {
+      listeners.delete(listener);
+    },
+  } as unknown as MediaQueryList;
 
-  Object.assign(globalThis, {
+  return {
+    matchMedia: (() => media) as typeof globalThis.matchMedia,
+    setMatches(next) {
+      matches = next;
+      for (const listener of [...listeners]) listener();
+    },
+  };
+}
+
+function installDomGlobals(
+  dom: JSDOM,
+  matchMedia: typeof globalThis.matchMedia,
+): () => void {
+  const window = dom.window;
+  const replacements = {
     window,
     document: window.document,
     navigator: window.navigator,
     localStorage: window.localStorage,
-    matchMedia: () => ({
-      matches: true,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }),
+    matchMedia,
     self: window,
     Node: window.Node,
     Element: window.Element,
     HTMLElement: window.HTMLElement,
     MouseEvent: window.MouseEvent,
-  });
+  };
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  for (const key of Object.keys(replacements)) {
+    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+  }
+  for (const [key, value] of Object.entries(replacements)) {
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
+  assert(globalThis.localStorage === window.localStorage);
 
   return () => {
-    Object.assign(globalThis, previous);
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
     dom.window.close();
   };
 }
@@ -77,6 +114,7 @@ describe("react/components/ui/color-mode", () => {
     assertEquals(script.includes(`</script><script>alert(1)</script>`), false);
     assertStringIncludes(script, `\\u003c/script\\u003e`);
     assertStringIncludes(script, `localStorage.getItem("vf\\";\\u003c/script`);
+    assertStringIncludes(script, `m!=="light"&&m!=="dark"&&m!=="system"`);
   });
 
   it("updates the html color-scheme inline style when toggling color mode", async () => {
@@ -84,7 +122,8 @@ describe("react/components/ui/color-mode", () => {
       '<!doctype html><html style="color-scheme: dark;"><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDomGlobals(dom);
+    const media = createMutableMatchMedia(true);
+    const restore = installDomGlobals(dom, media.matchMedia);
     const storageKey = `vf-color-mode-test-${crypto.randomUUID()}`;
 
     try {
@@ -113,6 +152,110 @@ describe("react/components/ui/color-mode", () => {
       assertEquals(document.documentElement.style.colorScheme, "light");
 
       root.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("updates system mode when the operating-system preference changes", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const media = createMutableMatchMedia(false);
+    const restore = installDomGlobals(dom, media.matchMedia);
+    const storageKey = `vf-color-mode-system-${crypto.randomUUID()}`;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement);
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ColorModeProvider defaultMode="system" storageKey={storageKey}>
+            <ToggleFixture />
+          </ColorModeProvider>,
+        );
+      });
+
+      await waitFor(() => document.documentElement.classList.contains("light"));
+      assertEquals(document.querySelector("button")?.getAttribute("data-mode"), "light");
+
+      flushSync(() => media.setMatches(true));
+      await waitFor(() => document.documentElement.classList.contains("dark"));
+      assertEquals(document.querySelector("button")?.getAttribute("data-mode"), "dark");
+      assertEquals(document.documentElement.style.colorScheme, "dark");
+
+      flushSync(() => root.unmount());
+    } finally {
+      restore();
+    }
+  });
+
+  it("falls back to the default mode for an invalid persisted value", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const media = createMutableMatchMedia(true);
+    const storageKey = `vf-color-mode-invalid-${crypto.randomUUID()}`;
+    dom.window.localStorage.setItem(storageKey, "sepia");
+    const restore = installDomGlobals(dom, media.matchMedia);
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement);
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ColorModeProvider defaultMode="system" storageKey={storageKey}>
+            <ToggleFixture />
+          </ColorModeProvider>,
+        );
+      });
+
+      await waitFor(() => document.querySelector("button")?.getAttribute("data-mode") === "dark");
+      assertEquals(document.documentElement.style.colorScheme, "dark");
+
+      flushSync(() => root.unmount());
+    } finally {
+      restore();
+    }
+  });
+
+  it("hydrates the server mode before reconciling persisted state", async () => {
+    const storageKey = `vf-color-mode-hydration-${crypto.randomUUID()}`;
+    const serverMarkup = renderToString(
+      <ColorModeProvider defaultMode="system" storageKey={storageKey}>
+        <ToggleFixture />
+      </ColorModeProvider>,
+    );
+    assertStringIncludes(serverMarkup, 'data-mode="light"');
+
+    const dom = new JSDOM(
+      `<!doctype html><html><body><div id="root">${serverMarkup}</div></body></html>`,
+      { url: "https://example.com/" },
+    );
+    dom.window.localStorage.setItem(storageKey, "dark");
+    const media = createMutableMatchMedia(false);
+    const restore = installDomGlobals(dom, media.matchMedia);
+    const recoverableErrors: unknown[] = [];
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement);
+      const root = hydrateRoot(
+        rootElement,
+        <ColorModeProvider defaultMode="system" storageKey={storageKey}>
+          <ToggleFixture />
+        </ColorModeProvider>,
+        { onRecoverableError: (error) => recoverableErrors.push(error) },
+      );
+
+      await waitFor(() => document.querySelector("button")?.getAttribute("data-mode") === "dark");
+      assertEquals(recoverableErrors, []);
+
+      flushSync(() => root.unmount());
     } finally {
       restore();
     }
