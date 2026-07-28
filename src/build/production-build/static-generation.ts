@@ -4,7 +4,7 @@
  */
 
 import { serverLogger as logger } from "#veryfront/utils";
-import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { dirname, isAbsolute, join, relative, resolve } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontRenderer } from "#veryfront/rendering/orchestrator/ssr.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -60,6 +60,8 @@ export interface SSGOptions {
   /** React version for import map generation */
   reactVersion?: string;
   releaseAssetManifest?: ReleaseAssetManifest | null;
+  /** Build output trees that must not be scanned as Tailwind source input. */
+  ignoredSourceDirs?: string[];
 }
 
 function defaultTraceStep<T>(_: string, fn: () => Promise<T>): Promise<T> {
@@ -124,10 +126,22 @@ async function readOptionalFile(
 async function collectAppRouteStyleSources(
   adapter: RuntimeAdapter,
   dir: string,
+  ignoredDirs: string[] = [],
 ): Promise<Array<{ path: string; content?: string }>> {
   const files: Array<{ path: string; content?: string }> = [];
+  const ignored = ignoredDirs.map((path) => resolve(path));
+  const isIgnored = (path: string): boolean => {
+    const absolutePath = resolve(path);
+    return ignored.some((base) => {
+      const relativePath = relative(base, absolutePath);
+      return relativePath === "" ||
+        (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+    });
+  };
 
   async function walk(currentDir: string): Promise<void> {
+    if (isIgnored(currentDir)) return;
+
     let entries: AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
     try {
       entries = adapter.fs.readDir(currentDir);
@@ -137,8 +151,9 @@ async function collectAppRouteStyleSources(
 
     for await (const entry of entries) {
       if (entry.isDirectory) {
-        if (!APP_ROUTE_STYLE_SKIP_DIRS.has(entry.name)) {
-          await walk(join(currentDir, entry.name));
+        const childDir = join(currentDir, entry.name);
+        if (!APP_ROUTE_STYLE_SKIP_DIRS.has(entry.name) && !isIgnored(childDir)) {
+          await walk(childDir);
         }
         continue;
       }
@@ -164,7 +179,11 @@ async function prepareAppRouteStylesheet(
     options.adapter,
     join(options.projectDir, stylesheetPath),
   );
-  const sourceFiles = await collectAppRouteStyleSources(options.adapter, options.projectDir);
+  const sourceFiles = await collectAppRouteStyleSources(
+    options.adapter,
+    options.projectDir,
+    options.ignoredSourceDirs,
+  );
   const candidates = extractCandidatesFromFiles(sourceFiles, {
     projectDir: options.projectDir,
   });

@@ -12,6 +12,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 import type { StaticAssetEntry } from "../asset-generation.ts";
 import { getRouteOutputRelativePath } from "../output-paths.ts";
+import { hasControlCharacters } from "../../utils/string-validation.ts";
 
 const MAX_OUTPUT_PATH_LENGTH = 4_096;
 const RESERVED_OUTPUT_PREFIXES = new Set(["_veryfront", "_vf"]);
@@ -145,7 +146,7 @@ function assertRoutePath(routePath: string, owner: string): void {
     routePath.includes("\\") ||
     routePath.includes("?") ||
     routePath.includes("#") ||
-    /[\u0000-\u001f\u007f-\u009f]/.test(routePath) ||
+    hasControlCharacters(routePath) ||
     (routePath !== "/" &&
       routePath.split("/").some((segment, index) =>
         index > 0 && (segment === "" || segment === "." || segment === "..")

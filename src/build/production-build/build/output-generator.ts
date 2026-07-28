@@ -30,6 +30,7 @@ import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
 import { generateManifest, generateRedirects } from "../manifest.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { compressBuildOutputs } from "../compression.ts";
 
 export interface OutputGeneratorOptions {
   adapter: RuntimeAdapter;
@@ -177,12 +178,11 @@ export async function generateAllOutputs(options: OutputGeneratorOptions): Promi
     });
   }
 
-  await generateManifestAndServiceWorker(options);
-  await generateRedirectsFile(adapter, outputDir, dryRun);
-
-  // Public assets are copied last so any generated-output collision fails
-  // instead of silently replacing framework or route artifacts.
   const assetStats = await copyAssets(adapter, projectDir, outputDir, dryRun);
   stats.assets = assetStats.assets;
   stats.totalSize += assetStats.totalSize;
+
+  await generateManifestAndServiceWorker(options);
+  await generateRedirectsFile(adapter, outputDir, dryRun);
+  await compressBuildOutputs(outputDir, options.enableCompression, dryRun);
 }

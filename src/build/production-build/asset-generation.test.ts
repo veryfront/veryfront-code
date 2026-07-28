@@ -75,6 +75,21 @@ describe("build/production-build/asset-generation", () => {
         await Deno.remove(root, { recursive: true });
       }
     });
+
+    it("rejects paths reserved for generated build output", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-static-assets-" });
+      await Deno.mkdir(`${projectDir}/public`, { recursive: true });
+      await Deno.writeTextFile(`${projectDir}/public/sw.js`, "public");
+      try {
+        await assertRejects(
+          () => discoverStaticAssets(projectDir),
+          Error,
+          "reserved for generated build output: sw.js",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
   });
 
   describe("copyStaticAssets", () => {
@@ -124,15 +139,15 @@ describe("build/production-build/asset-generation", () => {
       const outputDir = `${root}/dist`;
       await Deno.mkdir(`${projectDir}/public`, { recursive: true });
       await Deno.mkdir(outputDir);
-      await Deno.writeTextFile(`${projectDir}/public/sw.js`, "public");
-      await Deno.writeTextFile(`${outputDir}/sw.js`, "generated");
+      await Deno.writeTextFile(`${projectDir}/public/index.html`, "public");
+      await Deno.writeTextFile(`${outputDir}/index.html`, "generated");
       try {
         await assertRejects(
           () => copyStaticAssets(unusedAdapter, projectDir, outputDir),
           Error,
           "would overwrite generated output",
         );
-        assertEquals(await Deno.readTextFile(`${outputDir}/sw.js`), "generated");
+        assertEquals(await Deno.readTextFile(`${outputDir}/index.html`), "generated");
       } finally {
         await Deno.remove(root, { recursive: true });
       }

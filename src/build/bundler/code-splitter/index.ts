@@ -32,6 +32,7 @@ import type { ChunkManifest, SplitOptions } from "./types.ts";
 import { CodeSplitter } from "./splitter.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
+import { hasControlCharacters } from "../../utils/string-validation.ts";
 
 const MAX_CHUNK_MANIFEST_BYTES = 5 * 1024 * 1024;
 const MAX_MANIFEST_RECORD_ENTRIES = 10_000;
@@ -62,7 +63,8 @@ function assertAssetPath(value: unknown, description: string): asserts value is 
     value.includes(":") ||
     value.includes("?") ||
     value.includes("#") ||
-    /[\u0000-\u001f\u007f-\u009f"'<>]/.test(value) ||
+    hasControlCharacters(value) ||
+    /["'<>]/.test(value) ||
     value.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
   ) {
     throw new TypeError(`${description} must be a safe relative asset path`);
@@ -77,7 +79,7 @@ function assertRoutePath(value: string): void {
     value.includes("\\") ||
     value.includes("?") ||
     value.includes("#") ||
-    /[\u0000-\u001f\u007f-\u009f]/.test(value) ||
+    hasControlCharacters(value) ||
     (value !== "/" &&
       value.split("/").some((segment, index) =>
         index > 0 && (segment === "" || segment === "." || segment === "..")
@@ -124,7 +126,7 @@ export function validateChunkManifest(value: unknown): ChunkManifest {
       typeof rawChunk.name !== "string" ||
       rawChunk.name.length === 0 ||
       rawChunk.name.length > 256 ||
-      /[\u0000-\u001f\u007f-\u009f]/.test(rawChunk.name)
+      hasControlCharacters(rawChunk.name)
     ) {
       throw new TypeError(`Chunk ${JSON.stringify(file)} has an invalid name`);
     }
@@ -242,7 +244,8 @@ function normalizeAssetBaseUrl(baseUrl: string): string {
   if (
     baseUrl.length > MAX_MANIFEST_PATH_LENGTH ||
     baseUrl.includes("\\") ||
-    /[\u0000-\u001f\u007f-\u009f"'<>]/.test(baseUrl)
+    hasControlCharacters(baseUrl) ||
+    /["'<>]/.test(baseUrl)
   ) {
     throw new TypeError("Preload base URL is invalid");
   }

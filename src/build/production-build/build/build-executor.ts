@@ -20,6 +20,7 @@ export interface BuildExecutorOptions {
   baseUrl: string;
   dryRun: boolean;
   releaseAssetManifest?: ReleaseAssetManifest | null;
+  ignoredSourceDirs?: string[];
 }
 
 export interface BuildResult {

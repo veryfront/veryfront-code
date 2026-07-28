@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "../../../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -10,6 +11,12 @@ import {
 } from "./build-orchestrator.ts";
 import type { BuildStats } from "#veryfront/server/build-types.ts";
 import type { CollectedRoutes } from "./route-collector.ts";
+import { getProjectReact } from "#veryfront/react";
+import { getReactDOMServer } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+
+// React's server scheduler owns one process-lifetime MessagePort. Initialize it
+// during module setup so the suite's sanitizers still detect build-owned leaks.
+await Promise.all([getProjectReact(), getReactDOMServer()]);
 
 describe("build/production-build/build/build-orchestrator", () => {
   describe("re-exports", () => {
@@ -68,6 +75,46 @@ describe("build/production-build/build/build-orchestrator", () => {
           "last known good build",
         );
       } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("publishes a complete build over the previous output only after success", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-build-publish-" });
+      const outputDir = `${projectDir}/dist`;
+      try {
+        await Deno.mkdir(`${projectDir}/pages`, { recursive: true });
+        await Deno.mkdir(outputDir);
+        await Deno.writeTextFile(`${projectDir}/pages/index.mdx`, "# Published");
+        await Deno.writeTextFile(`${outputDir}/previous.txt`, "old");
+
+        const stats = await buildProduction({
+          projectDir,
+          outputDir,
+          enableSplitting: false,
+          enableCompression: false,
+        });
+
+        assertEquals(stats.pages, 1);
+        assertEquals(
+          (await Deno.readTextFile(`${outputDir}/index.html`)).includes("Published"),
+          true,
+        );
+        await assertRejects(
+          () => Deno.stat(`${outputDir}/previous.txt`),
+          Deno.errors.NotFound,
+        );
+        assertEquals(
+          [...Deno.readDirSync(projectDir)].some((entry) =>
+            entry.name.includes(".veryfront-stage-") ||
+            entry.name.includes(".veryfront-backup-") ||
+            entry.name.includes(".veryfront-build.lock")
+          ),
+          false,
+        );
+      } finally {
+        const { stop } = await import("veryfront/extensions/bundler");
+        await stop();
         await Deno.remove(projectDir, { recursive: true });
       }
     });

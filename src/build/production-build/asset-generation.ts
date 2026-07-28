@@ -13,6 +13,8 @@ import { BUILD_FAILED } from "#veryfront/errors";
 
 const logger = serverLogger.component("build");
 const MAX_STATIC_ASSET_PATH_LENGTH = 4_096;
+const RESERVED_PUBLIC_ROOTS = new Set(["_veryfront", "_vf"]);
+const RESERVED_PUBLIC_FILES = new Set(["sw.js", "_redirects"]);
 
 export interface AssetStats {
   assets: number;
@@ -56,6 +58,15 @@ export async function discoverStaticAssets(projectDir: string): Promise<StaticAs
   for await (const entry of walk(publicDir, { followSymlinks: false, includeDirs: true })) {
     const relativePath = relative(publicDir, entry.path).replaceAll("\\", "/");
     if (!relativePath || relativePath === ".") continue;
+    const firstSegment = relativePath.split("/")[0]?.toLocaleLowerCase("en-US");
+    if (
+      (firstSegment && RESERVED_PUBLIC_ROOTS.has(firstSegment)) ||
+      RESERVED_PUBLIC_FILES.has(relativePath.toLocaleLowerCase("en-US"))
+    ) {
+      throw BUILD_FAILED.create({
+        detail: `Public asset path is reserved for generated build output: ${relativePath}`,
+      });
+    }
 
     if (
       relativePath.length > MAX_STATIC_ASSET_PATH_LENGTH ||

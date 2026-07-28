@@ -18,6 +18,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
 import { discoverStaticAssets } from "../asset-generation.ts";
 import { assertSafeBuildOutputDirectory, validateBuildOutputPlan } from "./output-plan.ts";
+import { type BuildPublication, createBuildPublication } from "./build-publication.ts";
 
 export function buildProduction(options: BuildOptions): Promise<BuildStats> {
   return withSpan(
@@ -48,8 +49,12 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
         {},
       );
 
+      let publication: BuildPublication | undefined;
+      let result: BuildStats | undefined;
+      let buildError: unknown;
+      let buildFailed = false;
       try {
-        const outputDir = normalizedOptions.outputDir ?? "";
+        const finalOutputDir = normalizedOptions.outputDir ?? "";
         const dryRun = normalizedOptions.dryRun ?? false;
         const enableSplitting = normalizedOptions.enableSplitting ?? true;
         const enablePrefetch = normalizedOptions.enablePrefetch ?? true;
@@ -66,7 +71,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
           () =>
             assertSafeBuildOutputDirectory(
               normalizedOptions.projectDir,
-              outputDir,
+              finalOutputDir,
               context.config,
             ),
           {},
@@ -96,6 +101,13 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
           appRoutes: routes.app,
           publicEntries,
         });
+
+        publication = await withSpan(
+          "build.preparePublication",
+          () => createBuildPublication(finalOutputDir, dryRun),
+          {},
+        );
+        const outputDir = publication.buildDir;
 
         await withSpan(
           "build.setupDirectories",
@@ -144,6 +156,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
               baseUrl: "",
               dryRun,
               releaseAssetManifest,
+              ignoredSourceDirs: [finalOutputDir, outputDir],
             }),
           {},
         );
@@ -177,12 +190,39 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
 
         assertBuildProducedOutput(context.stats, routes, ssg, dryRun);
 
-        logBuildCompletion(context.stats);
+        await withSpan(
+          "build.publish",
+          () => publication!.publish(),
+          {},
+        );
+        context.stats.duration = Date.now() - startTime;
 
-        return context.stats;
-      } finally {
-        await performCleanup(context.renderer);
+        result = context.stats;
+      } catch (error) {
+        buildFailed = true;
+        buildError = error;
       }
+
+      let publicationCleanupError: unknown;
+      try {
+        await publication?.cleanup();
+      } catch (error) {
+        publicationCleanupError = error;
+      }
+      await performCleanup(context.renderer);
+
+      if (buildFailed) {
+        if (publicationCleanupError !== undefined) {
+          logger.warn("Build publication cleanup failed after the build error", {
+            error: publicationCleanupError,
+          });
+        }
+        throw buildError;
+      }
+      if (publicationCleanupError !== undefined) throw publicationCleanupError;
+      if (!result) throw new Error("Build completed without producing a result");
+      logBuildCompletion(result);
+      return result;
     },
     { "build.projectDir": options.projectDir },
   );
