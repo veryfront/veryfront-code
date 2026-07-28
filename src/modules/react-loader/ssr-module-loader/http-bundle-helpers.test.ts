@@ -9,7 +9,9 @@ import {
   extractAllHttpBundlePathsRecursive,
   extractHttpBundlePaths,
   verifiedHttpBundlePaths,
+  visitImportedVfModules,
 } from "./http-bundle-helpers.ts";
+import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 
 describe("extractHttpBundlePaths", () => {
   it("extracts single HTTP bundle path", () => {
@@ -211,7 +213,10 @@ describe("verifiedHttpBundlePaths", () => {
 
 describe("recursive cache path extraction", () => {
   it("extracts HTTP bundles from nested vf modules", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-http-bundle-helper-" });
+    const tempDir = join(
+      getMdxEsmCacheDir(),
+      `vf-http-bundle-helper-${crypto.randomUUID()}`,
+    );
     const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
     const childPath = join(vfmodDir, "vfmod-child.mjs");
     const grandChildPath = join(vfmodDir, "vfmod-grandchild.mjs");
@@ -239,7 +244,10 @@ describe("recursive cache path extraction", () => {
   });
 
   it("extracts nested legacy file dependencies through vf modules", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-file-path-helper-" });
+    const tempDir = join(
+      getMdxEsmCacheDir(),
+      `vf-file-path-helper-${crypto.randomUUID()}`,
+    );
     const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
     const childPath = join(vfmodDir, "vfmod-child.mjs");
 
@@ -258,6 +266,38 @@ describe("recursive cache path extraction", () => {
       assertEquals(paths.includes("/app/.cache/markdown.tsx"), true);
     } finally {
       await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not read import-looking strings or modules outside the VF cache root", async () => {
+    const outsideDir = await makeTempDir({
+      prefix: "vf-http-bundle-outside-cache-",
+    });
+    const outsideModuleDir = join(outsideDir, "veryfront-mdx-esm");
+    const outsideModulePath = join(outsideModuleDir, "secret.mjs");
+
+    try {
+      await mkdir(outsideModuleDir, { recursive: true });
+      await writeTextFile(
+        outsideModulePath,
+        `export const secret = "must not be read";`,
+      );
+      let visits = 0;
+
+      await visitImportedVfModules(
+        [
+          `const text = 'import x from "file://${outsideModulePath}"';`,
+          `import outside from "file://${outsideModulePath}";`,
+          `void outside;`,
+        ].join("\n"),
+        () => {
+          visits++;
+        },
+      );
+
+      assertEquals(visits, 0);
+    } finally {
+      await remove(outsideDir, { recursive: true });
     }
   });
 });

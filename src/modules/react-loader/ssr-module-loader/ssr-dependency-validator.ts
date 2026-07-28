@@ -22,6 +22,43 @@ import {
 import type { ModuleCacheEntry } from "./types.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
+const MAX_MISSING_DEPENDENCIES = 100;
+const MAX_MISSING_FIELD_LENGTH = 4_096;
+const MISSING_DEPENDENCY_ERROR = Symbol("veryfront.ssr.missing-dependencies");
+
+interface MissingDependencyFailure {
+  readonly missing: readonly MissingImport[];
+  readonly omitted: number;
+}
+
+type MarkedMissingDependencyError = Error & {
+  readonly [MISSING_DEPENDENCY_ERROR]: MissingDependencyFailure;
+};
+
+function truncateMissingField(value: string): string {
+  if (value.length <= MAX_MISSING_FIELD_LENGTH) return value;
+  return `${value.slice(0, MAX_MISSING_FIELD_LENGTH - 1)}…`;
+}
+
+function normalizeMissingDependency(missing: MissingImport): MissingImport {
+  return Object.freeze({
+    specifier: truncateMissingField(missing.specifier),
+    fromFile: truncateMissingField(missing.fromFile),
+    reason: truncateMissingField(missing.reason),
+  });
+}
+
+function getMissingDependencyFailure(
+  error: unknown,
+): MissingDependencyFailure | null {
+  if (
+    !(error instanceof Error) ||
+    !Object.prototype.hasOwnProperty.call(error, MISSING_DEPENDENCY_ERROR)
+  ) {
+    return null;
+  }
+  return (error as MarkedMissingDependencyError)[MISSING_DEPENDENCY_ERROR];
+}
 
 /**
  * Manages dependency validation for SSR module loading:
@@ -30,8 +67,10 @@ const logger = rendererLogger.component("ssr-module-loader");
  * - Missing dependency collection and error reporting
  */
 export class SSRDependencyValidator {
-  /** Accumulated missing dependencies across the transform tree. */
-  missingDependencies: MissingImport[] = [];
+  private readonly collectedMissingDependencies: MissingImport[] = [];
+  private readonly missingDependencyKeys = new Set<string>();
+  private mergedFailures = new WeakSet<MissingDependencyFailure>();
+  private omittedMissingDependencies = 0;
 
   constructor(
     private transformWithDependencies: (
@@ -39,6 +78,7 @@ export class SSRDependencyValidator {
       source: string | undefined,
       depth: number,
       dependencyHashCache: DependencyHashCache,
+      ancestry: readonly string[],
     ) => Promise<ModuleCacheEntry>,
     private transformCrossProjectImport: (
       crossProjectImport: CrossProjectImport,
@@ -47,36 +87,108 @@ export class SSRDependencyValidator {
     private projectDir: string,
   ) {}
 
+  get missingDependencies(): readonly MissingImport[] {
+    return this.collectedMissingDependencies;
+  }
+
+  get missingDependencyCount(): number {
+    return this.collectedMissingDependencies.length +
+      this.omittedMissingDependencies;
+  }
+
+  get hasMissingDependencies(): boolean {
+    return this.missingDependencyCount > 0;
+  }
+
   /** Reset missing dependencies for a new load cycle. */
   reset(): void {
-    this.missingDependencies = [];
+    this.collectedMissingDependencies.length = 0;
+    this.missingDependencyKeys.clear();
+    this.mergedFailures = new WeakSet();
+    this.omittedMissingDependencies = 0;
+  }
+
+  addMissingDependency(missing: MissingImport): void {
+    const normalized = normalizeMissingDependency(missing);
+    const key = JSON.stringify([
+      normalized.specifier,
+      normalized.fromFile,
+      normalized.reason,
+    ]);
+    if (this.missingDependencyKeys.has(key)) return;
+    this.missingDependencyKeys.add(key);
+
+    if (
+      this.collectedMissingDependencies.length >= MAX_MISSING_DEPENDENCIES
+    ) {
+      this.omittedMissingDependencies++;
+      return;
+    }
+    this.collectedMissingDependencies.push(normalized);
+  }
+
+  addMissingDependencies(missing: readonly MissingImport[]): void {
+    for (const entry of missing) this.addMissingDependency(entry);
+  }
+
+  /**
+   * Merge a dependency failure produced by another singleflight leader.
+   * Returns false for unrelated transform errors, which must remain fatal.
+   */
+  mergeMissingDependencyError(error: unknown): boolean {
+    const failure = getMissingDependencyFailure(error);
+    if (!failure) return false;
+    if (this.mergedFailures.has(failure)) return true;
+
+    this.mergedFailures.add(failure);
+    this.addMissingDependencies(failure.missing);
+    this.omittedMissingDependencies += failure.omitted;
+    return true;
   }
 
   /**
    * Throw a structured error with all accumulated missing dependencies.
    */
   throwMissingDependencies(filePath: string): never {
-    const missingList = this.missingDependencies
+    const missingList = this.collectedMissingDependencies
       .map((m) => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
+      .concat(
+        this.omittedMissingDependencies > 0
+          ? [`  - … ${this.omittedMissingDependencies} additional dependencies omitted`]
+          : [],
+      )
       .join("\n");
 
     logger.error("Missing dependencies detected", {
       file: filePath.slice(-60),
-      missing: this.missingDependencies.length,
-      details: this.missingDependencies,
+      missing: this.missingDependencyCount,
+      details: this.collectedMissingDependencies,
+      omitted: this.omittedMissingDependencies,
     });
 
-    throw toError(
+    const error = toError(
       createError({
         type: "build",
         message: `Component has missing dependencies:\n${missingList}`,
         context: {
           file: filePath,
           phase: "dependency-resolution",
-          missing: this.missingDependencies,
+          missing: [...this.collectedMissingDependencies],
         },
       }),
     );
+    const failure = Object.freeze({
+      missing: Object.freeze([...this.collectedMissingDependencies]),
+      omitted: this.omittedMissingDependencies,
+    });
+    this.mergedFailures.add(failure);
+    Object.defineProperty(error, MISSING_DEPENDENCY_ERROR, {
+      configurable: false,
+      enumerable: false,
+      value: failure,
+      writable: false,
+    });
+    throw error;
   }
 
   /**
@@ -87,8 +199,14 @@ export class SSRDependencyValidator {
     code: string,
     filePath: string,
     depth: number = 0,
+    dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
+    ancestry: readonly string[] = [],
   ): Promise<void> {
-    if (depth > MAX_TRANSFORM_DEPTH) return;
+    if (depth > MAX_TRANSFORM_DEPTH) {
+      throw new Error(
+        `Max transform depth exceeded while validating dependencies for ${filePath}`,
+      );
+    }
 
     const parseResult = await parseLocalImports(
       code,
@@ -103,7 +221,7 @@ export class SSRDependencyValidator {
     }
 
     if (parseResult.missing.length > 0) {
-      this.missingDependencies.push(...parseResult.missing);
+      this.addMissingDependencies(parseResult.missing);
     }
 
     const localFs = createFileSystem();
@@ -112,7 +230,8 @@ export class SSRDependencyValidator {
       filePath,
       depth,
       localFs,
-      createDependencyHashCache(),
+      dependencyHashCache,
+      ancestry,
     );
 
     for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
@@ -122,7 +241,7 @@ export class SSRDependencyValidator {
           try {
             await this.transformCrossProjectImport(crossImport);
           } catch (error) {
-            this.missingDependencies.push({
+            this.addMissingDependency({
               specifier: crossImport.specifier,
               fromFile: filePath,
               reason: `Failed to fetch cross-project import: ${
@@ -145,36 +264,53 @@ export class SSRDependencyValidator {
     depth: number,
     localFs: ReturnType<typeof createFileSystem>,
     dependencyHashCache: DependencyHashCache,
+    ancestry: readonly string[] = [],
   ): Promise<Map<string, string>> {
     const importPathMap = new Map<string, string>();
 
     for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
       const batch = imports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      await Promise.all(
+      const failures = await Promise.all(
         batch.map(async (imp) => {
+          let depSource: string;
           try {
-            const depSource = await this.readLocalImportSource(imp.absolutePath, localFs);
-
-            const depEntry = await this.transformWithDependencies(
+            depSource = await this.readLocalImportSource(
               imp.absolutePath,
-              depSource,
-              depth + 1,
-              dependencyHashCache,
+              localFs,
             );
-
-            importPathMap.set(imp.specifier, depEntry.tempPath);
-            importPathMap.set(imp.absolutePath, depEntry.tempPath);
           } catch (error) {
-            this.missingDependencies.push({
+            this.addMissingDependency({
               specifier: imp.specifier,
               fromFile: fromFilePath,
               reason: `Failed to read file: ${
                 error instanceof Error ? error.message : String(error)
               }`,
             });
+            return null;
+          }
+
+          try {
+            const depEntry = await this.transformWithDependencies(
+              imp.absolutePath,
+              depSource,
+              depth + 1,
+              dependencyHashCache,
+              ancestry,
+            );
+
+            importPathMap.set(imp.specifier, depEntry.tempPath);
+            importPathMap.set(imp.absolutePath, depEntry.tempPath);
+            return null;
+          } catch (error) {
+            if (this.mergeMissingDependencyError(error)) return null;
+            return error instanceof Error ? error : new Error(String(error));
           }
         }),
       );
+      const fatalFailure = failures.find(
+        (failure): failure is Error => failure instanceof Error,
+      );
+      if (fatalFailure) throw fatalFailure;
     }
 
     return importPathMap;

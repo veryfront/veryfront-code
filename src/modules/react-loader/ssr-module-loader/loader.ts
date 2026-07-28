@@ -189,7 +189,6 @@ async function waitForInProgressTransform(
 export class SSRModuleLoader {
   private cache: SSRCacheManager;
   private circuitBreaker = new SSRCircuitBreaker();
-  private depValidator: SSRDependencyValidator;
   private readonly options: SSRModuleLoaderOptions;
 
   constructor(options: SSRModuleLoaderOptions) {
@@ -198,13 +197,30 @@ export class SSRModuleLoader {
     }
     this.options = Object.freeze({ ...options });
     this.cache = new SSRCacheManager(this.options);
-    this.depValidator = new SSRDependencyValidator(
-      (filePath, source, depth, dependencyHashCache) =>
-        this.transformWithDependencies(filePath, source, depth, dependencyHashCache),
+  }
+
+  private createDependencyValidator(): SSRDependencyValidator {
+    const validator: SSRDependencyValidator = new SSRDependencyValidator(
+      (
+        filePath,
+        source,
+        depth,
+        dependencyHashCache,
+        ancestry,
+      ): Promise<ModuleCacheEntry> =>
+        this.transformWithDependencies(
+          filePath,
+          source,
+          depth,
+          dependencyHashCache,
+          validator,
+          ancestry,
+        ),
       (crossImport) => this.transformCrossProjectImport(crossImport),
       this.options.adapter,
       this.options.projectDir,
     );
+    return validator;
   }
 
   private async withTransformCapacity<T>(
@@ -406,9 +422,12 @@ export class SSRModuleLoader {
     );
   }
 
-  private throwMissingDependencies(filePath: string): void {
-    if (this.depValidator.missingDependencies.length > 0) {
-      this.depValidator.throwMissingDependencies(filePath);
+  private throwMissingDependencies(
+    validator: SSRDependencyValidator,
+    filePath: string,
+  ): void {
+    if (validator.hasMissingDependencies) {
+      validator.throwMissingDependencies(filePath);
     }
   }
 
@@ -435,8 +454,7 @@ export class SSRModuleLoader {
       async () => {
         const circuitKey = this.cache.getCacheKey(filePath);
         this.circuitBreaker.check(circuitKey, filePath);
-
-        this.depValidator.reset();
+        const dependencyValidator = this.createDependencyValidator();
 
         try {
           const dependencyHashCache = createDependencyHashCache();
@@ -445,8 +463,10 @@ export class SSRModuleLoader {
             source,
             0,
             dependencyHashCache,
+            dependencyValidator,
+            [],
           );
-          this.throwMissingDependencies(filePath);
+          this.throwMissingDependencies(dependencyValidator, filePath);
 
           try {
             const mod = await this.importModuleFromCacheEntry(filePath, fileName, cacheEntry);
@@ -464,13 +484,16 @@ export class SSRModuleLoader {
             });
 
             const retryDependencyHashCache = createDependencyHashCache();
+            const retryDependencyValidator = this.createDependencyValidator();
             const retryCacheEntry = await this.transformWithDependencies(
               filePath,
               source,
               0,
               retryDependencyHashCache,
+              retryDependencyValidator,
+              [],
             );
-            this.throwMissingDependencies(filePath);
+            this.throwMissingDependencies(retryDependencyValidator, filePath);
 
             const mod = await this.importModuleFromCacheEntry(filePath, fileName, retryCacheEntry);
 
@@ -512,15 +535,25 @@ export class SSRModuleLoader {
 
   private transformWithDependencies(
     filePath: string,
-    source?: string,
-    depth: number = 0,
-    dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
+    source: string | undefined,
+    depth: number,
+    dependencyHashCache: DependencyHashCache,
+    dependencyValidator: SSRDependencyValidator,
+    ancestry: readonly string[],
   ): Promise<ModuleCacheEntry> {
     const fileName = filePath.split("/").pop() || filePath;
 
     return withSpan(
       SpanNames.SSR_TRANSFORM_DEPENDENCIES,
-      () => this.doTransformWithDependencies(filePath, source, depth, dependencyHashCache),
+      () =>
+        this.doTransformWithDependencies(
+          filePath,
+          source,
+          depth,
+          dependencyHashCache,
+          dependencyValidator,
+          ancestry,
+        ),
       {
         "ssr.file": fileName,
         "ssr.depth": depth,
@@ -530,10 +563,27 @@ export class SSRModuleLoader {
 
   private async doTransformWithDependencies(
     filePath: string,
-    source?: string,
-    depth: number = 0,
-    dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
+    source: string | undefined,
+    depth: number,
+    dependencyHashCache: DependencyHashCache,
+    dependencyValidator: SSRDependencyValidator,
+    ancestry: readonly string[],
   ): Promise<ModuleCacheEntry> {
+    const cycleStart = ancestry.indexOf(filePath);
+    if (cycleStart !== -1) {
+      const cycle = [...ancestry.slice(cycleStart), filePath];
+      throw toError(
+        createError({
+          type: "build",
+          message: `Circular SSR module dependency detected: ${cycle.join(" -> ")}`,
+          context: {
+            file: filePath,
+            phase: "dependency-resolution",
+          },
+        }),
+      );
+    }
+
     if (depth > MAX_TRANSFORM_DEPTH) {
       logger.warn("Max transform depth exceeded", {
         file: filePath.slice(-40),
@@ -549,6 +599,7 @@ export class SSRModuleLoader {
         }),
       );
     }
+    const childAncestry = Object.freeze([...ancestry, filePath]);
 
     let code = source ?? (await this.options.adapter.fs.readFile(filePath));
 
@@ -601,7 +652,14 @@ export class SSRModuleLoader {
         )
       ) {
         globalModuleCache.set(filePathCacheKey, cachedEntry);
-        await this.depValidator.ensureDependenciesExist(code, filePath, depth);
+        await dependencyValidator.ensureDependenciesExist(
+          code,
+          filePath,
+          depth,
+          dependencyHashCache,
+          childAncestry,
+        );
+        this.throwMissingDependencies(dependencyValidator, filePath);
         return cachedEntry;
       }
     }
@@ -636,7 +694,14 @@ export class SSRModuleLoader {
 
             logger.debug("Redis cache hit", { file: filePath.slice(-40) });
 
-            await this.depValidator.ensureDependenciesExist(code, filePath, depth);
+            await dependencyValidator.ensureDependenciesExist(
+              code,
+              filePath,
+              depth,
+              dependencyHashCache,
+              childAncestry,
+            );
+            this.throwMissingDependencies(dependencyValidator, filePath);
             return entry;
           }
           // writeCacheFile returned false — fall through to fresh transform
@@ -676,7 +741,14 @@ export class SSRModuleLoader {
           cachedPath: mdxCacheResult.path.slice(-60),
         });
 
-        await this.depValidator.ensureDependenciesExist(code, filePath, depth);
+        await dependencyValidator.ensureDependenciesExist(
+          code,
+          filePath,
+          depth,
+          dependencyHashCache,
+          childAncestry,
+        );
+        this.throwMissingDependencies(dependencyValidator, filePath);
         return entry;
       }
 
@@ -708,6 +780,9 @@ export class SSRModuleLoader {
           // Detach this caller without deleting the shared leader. The leader
           // owns a separate last-resort eviction timer, so healthy slow work is
           // not multiplied into competing retries.
+          throw error;
+        }
+        if (dependencyValidator.mergeMissingDependencyError(error)) {
           throw error;
         }
 
@@ -767,7 +842,7 @@ export class SSRModuleLoader {
       }
 
       if (parseResult.missing.length > 0) {
-        this.depValidator.missingDependencies.push(...parseResult.missing);
+        dependencyValidator.addMissingDependencies(parseResult.missing);
       }
 
       if (parseResult.imports.length > 0) {
@@ -783,7 +858,7 @@ export class SSRModuleLoader {
             missing: preflightMissing.map((m) => m.specifier),
             depth,
           });
-          this.depValidator.missingDependencies.push(...preflightMissing);
+          dependencyValidator.addMissingDependencies(preflightMissing);
           parseResult = { ...parseResult, imports: validImports };
         }
       }
@@ -795,12 +870,13 @@ export class SSRModuleLoader {
       const crossProjectPaths = new Map<string, string>();
       const localFs = createFileSystem();
 
-      const localImportPaths = await this.depValidator.processLocalImports(
+      const localImportPaths = await dependencyValidator.processLocalImports(
         parseResult.imports,
         filePath,
         depth,
         localFs,
         dependencyHashCache,
+        childAncestry,
       );
 
       for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
@@ -811,7 +887,7 @@ export class SSRModuleLoader {
               const tempPath = await this.transformCrossProjectImport(crossImport);
               crossProjectPaths.set(crossImport.specifier, tempPath);
             } catch (error) {
-              this.depValidator.missingDependencies.push({
+              dependencyValidator.addMissingDependency({
                 specifier: crossImport.specifier,
                 fromFile: filePath,
                 reason: `Failed to fetch cross-project import: ${
@@ -822,6 +898,11 @@ export class SSRModuleLoader {
           }),
         );
       }
+
+      // Missing local or remote dependencies make the transformed module
+      // unusable. Fail before transform, disk write, or cache publication so
+      // followers can never observe a broken entry.
+      this.throwMissingDependencies(dependencyValidator, filePath);
 
       // Hold project slots only around the actual transform and file write.
       const completedEntry = await this.withTransformCapacity(

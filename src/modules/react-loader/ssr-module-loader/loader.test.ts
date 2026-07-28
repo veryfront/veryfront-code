@@ -5,6 +5,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { join } from "#veryfront/compat/path";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
+import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
 import { clearSSRModuleCache, createSSRImportMapIdentity, SSRModuleLoader } from "./index.ts";
 import type { SSRImportMapIdentity } from "./import-map-identity.ts";
 import { __ssrModuleLoaderInternals } from "./loader.ts";
@@ -158,6 +159,44 @@ function createProxyProjectAdapter(files: Record<string, string>): RuntimeAdapte
     env: denoAdapter.env,
     server: denoAdapter.server,
     serve: denoAdapter.serve.bind(denoAdapter),
+  };
+}
+
+function createReadGateAdapter(
+  gatedPath: string,
+  onBlocked: () => void,
+  waitUntilReleased: Promise<void>,
+): RuntimeAdapter {
+  const base = new DenoAdapter();
+  let blocked = false;
+  const fs = new Proxy(base.fs, {
+    get(target, property, receiver) {
+      if (property === "readFile") {
+        return async (path: string): Promise<string> => {
+          if (path === gatedPath && !blocked) {
+            blocked = true;
+            onBlocked();
+            await waitUntilReleased;
+          }
+          return await target.readFile(path);
+        };
+      }
+
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+
+  return {
+    id: base.id,
+    name: base.name,
+    capabilities: base.capabilities,
+    fs,
+    env: base.env,
+    server: base.server,
+    shell: base.shell,
+    serve: base.serve,
+    shutdown: () => base.shutdown(),
   };
 }
 
@@ -866,6 +905,129 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
           `Expected missing dependency details in error, got: ${msg}`,
         );
       }
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("isolates dependency failures between concurrent loads on one loader", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({
+      prefix: "vf-ssr-loader-validator-isolation-",
+    });
+    const componentsDir = join(projectDir, "components");
+    const goodPath = join(componentsDir, "Good.tsx");
+    const childPath = join(componentsDir, "Child.tsx");
+    const missingPath = join(componentsDir, "Missing.tsx");
+    let releaseChildRead!: () => void;
+    const childReadRelease = new Promise<void>((resolve) => {
+      releaseChildRead = resolve;
+    });
+    let reportChildReadStarted!: () => void;
+    const childReadStarted = new Promise<void>((resolve) => {
+      reportChildReadStarted = resolve;
+    });
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      const childSource = "export default function Child() { return null; }";
+      const goodSource = [
+        `import Child from "./Child.tsx";`,
+        `export default function Good() { return Child; }`,
+      ].join("\n");
+      const missingSource = [
+        `import MissingDependency from "./does-not-exist.ts";`,
+        `export default function Missing() { return MissingDependency; }`,
+      ].join("\n");
+      await Promise.all([
+        writeTextFile(childPath, childSource),
+        writeTextFile(goodPath, goodSource),
+        writeTextFile(missingPath, missingSource),
+      ]);
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId: "project-validator-isolation",
+        contentSourceId: "local-main",
+        adapter: createReadGateAdapter(
+          childPath,
+          reportChildReadStarted,
+          childReadRelease,
+        ),
+        dev: true,
+      });
+
+      const goodLoad = loader.loadModule(goodPath, goodSource);
+      await childReadStarted;
+      await assertRejects(
+        () => loader.loadModule(missingPath, missingSource),
+        Error,
+        "./does-not-exist.ts",
+      );
+
+      releaseChildRead();
+      const good = await goodLoad;
+      assertEquals(good.name, "Good");
+    } finally {
+      releaseChildRead();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects circular local dependencies without waiting for singleflight timeout", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({
+      prefix: "vf-ssr-loader-cycle-",
+    });
+    const componentsDir = join(projectDir, "components");
+    const firstPath = join(componentsDir, "First.tsx");
+    const secondPath = join(componentsDir, "Second.tsx");
+    const firstSource = [
+      `import Second from "./Second.tsx";`,
+      `export default function First() { return Second; }`,
+    ].join("\n");
+    const secondSource = [
+      `import First from "./First.tsx";`,
+      `export default function Second() { return First; }`,
+    ].join("\n");
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await Promise.all([
+        writeTextFile(firstPath, firstSource),
+        writeTextFile(secondPath, secondSource),
+      ]);
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId: "project-cycle-test",
+        contentSourceId: "local-main",
+        adapter: denoAdapter,
+        dev: true,
+      });
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const loadWithDeadline = Promise.race([
+        loader.loadModule(firstPath, firstSource),
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error("Cycle detection timed out")),
+            2_000,
+          );
+        }),
+      ]);
+
+      try {
+        await assertRejects(
+          () => loadWithDeadline,
+          Error,
+          "Circular SSR module dependency detected",
+        );
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+      assertEquals(globalInProgress.size, 0);
     } finally {
       await remove(projectDir, { recursive: true });
     }

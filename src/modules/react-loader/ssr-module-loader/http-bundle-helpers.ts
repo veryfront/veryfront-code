@@ -7,30 +7,96 @@
  * @module module-system/react-loader/ssr-module-loader/http-bundle-helpers
  */
 
-import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
+import {
+  dirname,
+  fromFileUrl,
+  isAbsolute,
+  relative,
+  resolve,
+} from "#veryfront/compat/path/index.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
+import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 
 /** Max entries in the verified HTTP bundle paths LRU cache */
 const VERIFIED_BUNDLE_CACHE_MAX_ENTRIES = 2_000;
+const MAX_RECURSIVE_VF_MODULES = 500;
+const MAX_VF_MODULE_BYTES = 10 * 1024 * 1024;
+const MAX_VF_MODULE_PATH_LENGTH = 16 * 1024;
+
+function isPathWithin(candidatePath: string, basePath: string): boolean {
+  const relativePath = relative(basePath, candidatePath);
+  const escapesBase = relativePath === ".." ||
+    relativePath.startsWith("../") ||
+    relativePath.startsWith("..\\");
+  return !escapesBase && !isAbsolute(relativePath);
+}
 
 /**
  * Extract VF module paths (veryfront-mdx-esm/*.mjs) from code.
  * These are user project modules that may import HTTP bundles.
  */
-function extractVfModulePaths(code: string): string[] {
-  // Create regex per call to avoid shared lastIndex state across concurrent calls.
-  const vfModulePattern = /file:\/\/([^"'\s]+veryfront-mdx-esm\/[^"'\s]+\.mjs)/gi;
+async function extractVfModulePaths(
+  code: string,
+  cacheRoot: string,
+  canonicalCacheRoot: string,
+  importerPath?: string,
+): Promise<string[]> {
+  const imports = await parseImports(code);
   const paths: string[] = [];
   const seen = new Set<string>();
-  let match;
-  while ((match = vfModulePattern.exec(code)) !== null) {
-    const path = match[1] as string;
-    // Strip query params for path comparison
-    const cleanPath = path.replace(/\?.*$/, "");
-    if (!seen.has(cleanPath)) {
-      seen.add(cleanPath);
-      paths.push(cleanPath);
+
+  for (const imported of imports) {
+    const specifier = imported.n;
+    if (!specifier) continue;
+
+    let candidatePath: string;
+    try {
+      if (specifier.startsWith("file:")) {
+        const url = new URL(specifier);
+        if (url.protocol !== "file:") continue;
+        url.search = "";
+        url.hash = "";
+        candidatePath = fromFileUrl(url);
+      } else if (
+        importerPath &&
+        (specifier.startsWith("./") || specifier.startsWith("../"))
+      ) {
+        candidatePath = resolve(dirname(importerPath), specifier);
+      } else {
+        continue;
+      }
+    } catch {
+      continue;
     }
+
+    if (
+      candidatePath.length === 0 ||
+      candidatePath.length > MAX_VF_MODULE_PATH_LENGTH ||
+      !candidatePath.endsWith(".mjs")
+    ) {
+      continue;
+    }
+
+    const lexicalPath = resolve(candidatePath);
+    if (!isPathWithin(lexicalPath, cacheRoot)) continue;
+
+    let canonicalPath: string;
+    try {
+      canonicalPath = await realPath(lexicalPath);
+    } catch (error) {
+      if (isNotFoundError(error)) continue;
+      throw error;
+    }
+    if (
+      !isPathWithin(canonicalPath, canonicalCacheRoot) ||
+      seen.has(canonicalPath)
+    ) {
+      continue;
+    }
+    seen.add(canonicalPath);
+    paths.push(canonicalPath);
   }
   return paths;
 }
@@ -44,28 +110,56 @@ export async function visitImportedVfModules(
   visitor: (vfModuleCode: string, vfModulePath?: string) => void | Promise<void>,
 ): Promise<void> {
   const seenVfModules = new Set<string>();
-  const pendingVfModules = extractVfModulePaths(code);
+  const cacheRoot = resolve(getMdxEsmCacheDir());
+  let canonicalCacheRoot: string;
+  try {
+    canonicalCacheRoot = await realPath(cacheRoot);
+  } catch (error) {
+    if (isNotFoundError(error)) return;
+    throw error;
+  }
+  const pendingVfModules = await extractVfModulePaths(
+    code,
+    cacheRoot,
+    canonicalCacheRoot,
+  );
   const fs = createFileSystem();
 
   while (pendingVfModules.length > 0) {
     const vfModulePath = pendingVfModules.pop()!;
     if (seenVfModules.has(vfModulePath)) continue;
+    if (seenVfModules.size >= MAX_RECURSIVE_VF_MODULES) {
+      throw new RangeError(
+        `VF module dependency graph exceeds ${MAX_RECURSIVE_VF_MODULES} modules`,
+      );
+    }
     seenVfModules.add(vfModulePath);
 
-    if (!(await exists(vfModulePath))) continue;
-
     try {
+      const stat = await fs.stat(vfModulePath);
+      if (!stat.isFile) continue;
+      if (stat.size > MAX_VF_MODULE_BYTES) {
+        throw new RangeError(
+          `VF module exceeds ${MAX_VF_MODULE_BYTES} bytes: ${vfModulePath}`,
+        );
+      }
       const vfModuleCode = await fs.readTextFile(vfModulePath);
       await visitor(vfModuleCode, vfModulePath);
 
-      const nestedVfModules = extractVfModulePaths(vfModuleCode);
+      const nestedVfModules = await extractVfModulePaths(
+        vfModuleCode,
+        cacheRoot,
+        canonicalCacheRoot,
+        vfModulePath,
+      );
       for (const nestedPath of nestedVfModules) {
         if (!seenVfModules.has(nestedPath)) {
           pendingVfModules.push(nestedPath);
         }
       }
-    } catch (_) {
-      /* expected: VF module file may fail to read */
+    } catch (error) {
+      if (isNotFoundError(error)) continue;
+      throw error;
     }
   }
 }

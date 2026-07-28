@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformResolvedModuleSource } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/source-transform.ts";
@@ -134,5 +134,106 @@ describe("modules/react-loader/ssr-module-loader/vf-module-resolver", () => {
         ),
       ),
     );
+  });
+
+  it("fails closed when a vf module cannot be resolved", async () => {
+    await assertRejects(
+      () =>
+        resolveVfModuleImports(
+          `import missing from "/_vf_modules/components/Missing.js";`,
+          {
+            filePath: "/project/app/page.tsx",
+            projectId: "project-1",
+            contentSourceId: "preview-main",
+            adapter: {} as RuntimeAdapter,
+            projectDir: "/project",
+          },
+          {
+            fetchAndCacheModule: () => Promise.resolve(null),
+          },
+        ),
+      Error,
+      "Failed to resolve 1 _vf_modules import",
+    );
+  });
+
+  it("preserves resolver failure details instead of returning unresolved code", async () => {
+    await assertRejects(
+      () =>
+        resolveVfModuleImports(
+          `import missing from "/_vf_modules/components/Missing.js";`,
+          {
+            filePath: "/project/app/page.tsx",
+            projectId: "project-1",
+            contentSourceId: "preview-main",
+            adapter: {} as RuntimeAdapter,
+            projectDir: "/project",
+          },
+          {
+            fetchAndCacheModule: () => Promise.reject(new Error("registry unavailable")),
+          },
+        ),
+      Error,
+      "registry unavailable",
+    );
+  });
+
+  it("fetches one cache artifact for duplicate paths and rewrites every specifier", async () => {
+    let fetchCalls = 0;
+    const rewritten = await resolveVfModuleImports(
+      [
+        `import first from "/_vf_modules/components/Button.js?one";`,
+        `import second from "/_vf_modules/components/Button.js?two";`,
+        `export { first, second };`,
+      ].join("\n"),
+      {
+        filePath: "/project/app/page.tsx",
+        projectId: "project-1",
+        contentSourceId: "preview-main",
+        adapter: {} as RuntimeAdapter,
+        projectDir: "/project",
+      },
+      {
+        fetchAndCacheModule: () => {
+          fetchCalls++;
+          return Promise.resolve("/cache/Button.mjs");
+        },
+      },
+    );
+
+    assertEquals(fetchCalls, 1);
+    assertEquals(
+      rewritten.match(/file:\/\/\/cache\/Button\.mjs/g)?.length,
+      2,
+    );
+    assertEquals(rewritten.includes("/_vf_modules/"), false);
+  });
+
+  it("rejects encoded path traversal before invoking the module fetcher", async () => {
+    let fetchCalls = 0;
+
+    await assertRejects(
+      () =>
+        resolveVfModuleImports(
+          `import value from "/_vf_modules/%2e%2e/secrets.js";`,
+          {
+            filePath: "/project/app/page.tsx",
+            projectId: "project-1",
+            contentSourceId: "preview-main",
+            adapter: {} as RuntimeAdapter,
+            projectDir: "/project",
+          },
+          {
+            fetchAndCacheModule: () => {
+              fetchCalls++;
+              return Promise.resolve("/cache/unexpected.mjs");
+            },
+          },
+        ),
+      TypeError,
+      "Unsafe _vf_modules import path segment",
+    );
+
+    assertEquals(fetchCalls, 0);
   });
 });
