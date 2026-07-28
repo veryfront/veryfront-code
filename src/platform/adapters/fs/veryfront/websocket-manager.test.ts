@@ -695,18 +695,18 @@ describe("WebSocketManager", () => {
         const closeEntry = JSON.parse(warnCapture.getOutput()) as {
           message: string;
           projectSlug?: string;
+          projectId?: string;
           project_id?: string;
           context?: {
             delayMs?: number;
             consecutiveFailures?: number;
-            projectId?: string;
             url?: string;
           };
         };
         assertEquals(closeEntry.message, "WebSocket reconnect scheduled after close");
         assertEquals(closeEntry.projectSlug, "test-project");
+        assertEquals(closeEntry.projectId, "project-1");
         assertEquals(closeEntry.project_id, "project-1");
-        assertEquals(closeEntry.context?.projectId, "project-1");
         assertEquals(closeEntry.context?.url, "wss://api.example.com/ws/project-1/events");
         assertEquals(closeEntry.context?.delayMs, 5000);
         assertEquals(closeEntry.context?.consecutiveFailures, 1);
@@ -723,16 +723,16 @@ describe("WebSocketManager", () => {
         const recoveryEntry = JSON.parse(logCapture.getOutput()) as {
           message: string;
           projectSlug?: string;
+          projectId?: string;
           project_id?: string;
           context?: {
             consecutiveFailures?: number;
-            projectId?: string;
           };
         };
         assertEquals(recoveryEntry.message, "WebSocket reconnect recovered");
         assertEquals(recoveryEntry.projectSlug, "test-project");
+        assertEquals(recoveryEntry.projectId, "project-1");
         assertEquals(recoveryEntry.project_id, "project-1");
-        assertEquals(recoveryEntry.context?.projectId, "project-1");
         assertEquals(recoveryEntry.context?.consecutiveFailures, 1);
 
         warnCapture.reset();
