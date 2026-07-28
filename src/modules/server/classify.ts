@@ -10,11 +10,12 @@
 
 /** Prefix for dev-module URLs; exported for path stripping in module-server. */
 export const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
-const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
+const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]{1,128})\.js$/;
 // Cross-project import patterns: /_vf_modules/_cross/<slug>[@<version>]/@/<path>
 const CROSS_PROJECT_VERSIONED_PREFIX =
-  /^\/_vf_modules\/_cross\/([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/\@\/(.+)$/;
-const CROSS_PROJECT_LATEST_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)\/\@\/(.+)$/;
+  /^\/_vf_modules\/_cross\/([a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?)@([\d^~x][\d.x^~-]{0,127})\/\@\/(.+)$/;
+const CROSS_PROJECT_LATEST_PREFIX =
+  /^\/_vf_modules\/_cross\/([a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?)\/\@\/(.+)$/;
 
 /** URL does not start with any module prefix — not a module request. */
 export interface NotModuleKind {

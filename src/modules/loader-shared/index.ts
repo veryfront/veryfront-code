@@ -18,3 +18,11 @@ export {
   UNRESOLVED_VF_MODULES_PATTERN,
   VF_MODULE_IMPORT_PATTERN,
 } from "./patterns.ts";
+export {
+  assertCrossProjectReference,
+  buildCrossProjectRegistryUrl,
+  normalizeCrossProjectModulePath,
+  normalizeCrossProjectRegistryBaseUrl,
+  normalizeModulePath,
+  type NormalizeModulePathOptions,
+} from "./cross-project-request.ts";

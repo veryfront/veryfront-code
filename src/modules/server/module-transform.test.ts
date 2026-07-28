@@ -10,11 +10,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module modules/server/module-transform.test
  */
 
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { transformModuleToServable } from "./module-transform.ts";
+import { MAX_SERVABLE_MODULE_SOURCE_BYTES } from "./module-limits.ts";
 
 /** Minimal TypeScript source with a relative import for SSR-rewrite tests. */
 const SOURCE_WITH_IMPORT = `import { child } from "./child.js";
@@ -36,6 +37,22 @@ describe(
     });
 
     describe("SSR-vs-release decision", () => {
+      it("rejects oversized source before invoking the transform pipeline", async () => {
+        await assertRejects(
+          () =>
+            transformModuleToServable({
+              source: "x".repeat(MAX_SERVABLE_MODULE_SOURCE_BYTES + 1),
+              sourceFile: "/test-project/oversized.ts",
+              projectDir,
+              adapter,
+              transformOpts: { projectId: "test", dev: true, ssr: false },
+              isSSR: false,
+            }),
+          RangeError,
+          `${MAX_SERVABLE_MODULE_SOURCE_BYTES} UTF-8 bytes`,
+        );
+      });
+
       it("applies SSR import rewrites when isSSR=true", async () => {
         const code = await transformModuleToServable({
           source: SOURCE_WITH_IMPORT,

@@ -26,6 +26,24 @@ import {
   rewriteReleaseDependencyImportsForModule,
   type RewriteReleaseDependencyImportsOptions,
 } from "#veryfront/release-assets/module-consumption.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
+import {
+  MAX_SERVABLE_MODULE_OUTPUT_BYTES,
+  MAX_SERVABLE_MODULE_SOURCE_BYTES,
+} from "./module-limits.ts";
+
+function assertBoundedModuleCode(
+  value: unknown,
+  label: string,
+  maxBytes: number,
+): asserts value is string {
+  if (
+    typeof value !== "string" ||
+    utf8ByteLength(value, maxBytes) > maxBytes
+  ) {
+    throw new RangeError(`${label} exceeds ${maxBytes} UTF-8 bytes`);
+  }
+}
 
 /** Options for `transformModuleToServable`. */
 export interface TransformModuleToServableOptions {
@@ -90,11 +108,26 @@ export async function transformModuleToServable(
     profile = false,
   } = options;
 
+  assertBoundedModuleCode(
+    source,
+    "Module source",
+    MAX_SERVABLE_MODULE_SOURCE_BYTES,
+  );
   const doTransform = () => transformToESM(source, sourceFile, projectDir, adapter, transformOpts);
   let code = profile ? await profiledTransform(doTransform) : await doTransform();
+  assertBoundedModuleCode(
+    code,
+    "Transformed module",
+    MAX_SERVABLE_MODULE_OUTPUT_BYTES,
+  );
 
   if (options.postTransform) {
     code = await options.postTransform(code);
+    assertBoundedModuleCode(
+      code,
+      "Post-transformed module",
+      MAX_SERVABLE_MODULE_OUTPUT_BYTES,
+    );
   }
 
   if (isSSR) {
@@ -109,6 +142,11 @@ export async function transformModuleToServable(
     code = await rewriteReleaseDependencyImportsForModule(code, options.releaseRewriteOptions);
   }
 
+  assertBoundedModuleCode(
+    code,
+    "Servable module",
+    MAX_SERVABLE_MODULE_OUTPUT_BYTES,
+  );
   return code;
 }
 

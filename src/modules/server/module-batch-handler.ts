@@ -47,6 +47,10 @@ import {
   assertImportMapIdentity,
   type ImportMapIdentity,
 } from "#veryfront/modules/import-map/index.ts";
+import { normalizeModulePath } from "#veryfront/modules/loader-shared/cross-project-request.ts";
+import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
+import { HTTP_URI_TOO_LONG } from "#veryfront/utils/constants/http.ts";
+import { readBoundedModuleSource } from "./module-source-reader.ts";
 
 const logger = serverLogger.component("module-batch");
 
@@ -55,6 +59,7 @@ const logger = serverLogger.component("module-batch");
 const SLOW_REQUEST_THRESHOLD_MS = 500;
 /** Slow module transform threshold in milliseconds */
 const SLOW_TRANSFORM_THRESHOLD_MS = 100;
+const MAX_BATCH_PATHS_PARAM_CHARS = MAX_BATCH_SIZE * (MAX_PATH_LENGTH_CHARS + 1);
 
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as const;
 
@@ -69,6 +74,17 @@ const FRAMEWORK_EXTENSIONS = [
   ".jsx",
   ".js", // Regular sources for dev mode
 ] as const;
+
+function countBatchPathsForTrace(pathsParam: string | null): number {
+  if (!pathsParam) return 0;
+  let count = 1;
+  for (let index = 0; index < pathsParam.length; index++) {
+    if (pathsParam.charCodeAt(index) !== 0x2c) continue;
+    count++;
+    if (count > MAX_BATCH_SIZE) return count;
+  }
+  return count;
+}
 
 export interface BatchHandlerOptions {
   projectDir: string;
@@ -112,20 +128,47 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         });
       }
 
-      const paths = pathsParam
+      if (pathsParam.length > MAX_BATCH_PATHS_PARAM_CHARS) {
+        return new Response("Module batch path parameter is too long", {
+          status: HTTP_URI_TOO_LONG,
+          headers: { "Content-Type": "text/plain" },
+        });
+      }
+
+      const rawPaths = pathsParam
         .split(",")
         .map((p) => p.trim())
         .filter(Boolean);
 
-      if (paths.length === 0) {
+      if (rawPaths.length === 0) {
         return new Response("No valid paths provided", {
           status: HTTP_BAD_REQUEST,
           headers: { "Content-Type": "text/plain" },
         });
       }
 
-      if (paths.length > MAX_BATCH_SIZE) {
+      if (rawPaths.length > MAX_BATCH_SIZE) {
         return new Response(`Too many modules (max: ${MAX_BATCH_SIZE})`, {
+          status: HTTP_BAD_REQUEST,
+          headers: { "Content-Type": "text/plain" },
+        });
+      }
+
+      let paths: string[];
+      try {
+        paths = rawPaths.map((path) =>
+          normalizeModulePath(path, {
+            subject: "Batch module path",
+          })
+        );
+      } catch {
+        return new Response("Invalid module path", {
+          status: HTTP_BAD_REQUEST,
+          headers: { "Content-Type": "text/plain" },
+        });
+      }
+      if (new Set(paths).size !== paths.length) {
+        return new Response("Duplicate module paths are not allowed", {
           status: HTTP_BAD_REQUEST,
           headers: { "Content-Type": "text/plain" },
         });
@@ -251,7 +294,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
       });
     },
     {
-      "module.batch.moduleCount": pathsParam?.split(",").length ?? 0,
+      "module.batch.moduleCount": countBatchPathsForTrace(pathsParam),
       "module.batch.projectSlug": options.projectSlug || "unknown",
     },
   );
@@ -294,7 +337,11 @@ async function loadAndTransformModule(
     EXTENSIONS.map((ext) => join(projectDir, basePath + ext)),
   );
   if (sourcePath) {
-    const source = await secureFs.readFile(sourcePath);
+    const source = await readBoundedModuleSource(
+      secureFs,
+      sourcePath,
+      (path) => secureFs.readFile(path),
+    );
     return transformModule(source, sourcePath, modulePath, projectDir, adapter, secureFs, options);
   }
 
@@ -312,7 +359,11 @@ async function loadAndTransformModule(
       FRAMEWORK_EXTENSIONS.map((ext) => join(lookupDir, basePath + ext)),
     );
     if (frameworkPath) {
-      const source = await platformFs.readTextFile(frameworkPath);
+      const source = await readBoundedModuleSource(
+        platformFs,
+        frameworkPath,
+        (path) => platformFs.readTextFile(path),
+      );
       return transformModule(
         source,
         frameworkPath,
@@ -384,19 +435,19 @@ async function readBatchTargetSource(
 ): Promise<{ path: string; source: string } | null> {
   const basePath = stripSSRModuleJsExtension(modulePath);
 
-  for (const ext of EXTENSIONS) {
-    const fullPath = join(projectDir, basePath + ext);
-    try {
-      const stat = await secureFs.stat(fullPath);
-      if (!stat.isFile) continue;
-
-      return {
-        path: fullPath,
-        source: await secureFs.readFile(fullPath),
-      };
-    } catch (_) {
-      /* expected: file may not exist at this extension */
-    }
+  const projectPath = await findFirstExistingFile(
+    secureFs,
+    EXTENSIONS.map((ext) => join(projectDir, basePath + ext)),
+  );
+  if (projectPath) {
+    return {
+      path: projectPath,
+      source: await readBoundedModuleSource(
+        secureFs,
+        projectPath,
+        (path) => secureFs.readFile(path),
+      ),
+    };
   }
 
   if (!basePath.startsWith("lib/")) return null;
@@ -404,19 +455,19 @@ async function readBatchTargetSource(
   const frameworkLookupDirs = getFrameworkSourceLookupDirs();
   const platformFs = createFileSystem();
   for (const lookupDir of frameworkLookupDirs) {
-    for (const ext of FRAMEWORK_EXTENSIONS) {
-      const frameworkPath = join(lookupDir, basePath + ext);
-      try {
-        const stat = await platformFs.stat(frameworkPath);
-        if (!stat.isFile) continue;
-
-        return {
-          path: frameworkPath,
-          source: await platformFs.readTextFile(frameworkPath),
-        };
-      } catch (_) {
-        /* expected: framework file may not exist at this extension */
-      }
+    const frameworkPath = await findFirstExistingFile(
+      platformFs,
+      FRAMEWORK_EXTENSIONS.map((ext) => join(lookupDir, basePath + ext)),
+    );
+    if (frameworkPath) {
+      return {
+        path: frameworkPath,
+        source: await readBoundedModuleSource(
+          platformFs,
+          frameworkPath,
+          (path) => platformFs.readTextFile(path),
+        ),
+      };
     }
   }
 
@@ -479,7 +530,6 @@ function* generateBatchBundleChunks(
   failures: Array<{ path: string; error: string }>,
 ): IterableIterator<string> {
   yield "// Veryfront Module Batch Bundle";
-  yield "// Generated: " + new Date().toISOString();
   yield `// Modules: ${successes.length} loaded, ${failures.length} failed`;
   yield "";
   yield "const __vf_batch_modules = new Map();";
@@ -491,7 +541,7 @@ function* generateBatchBundleChunks(
     const { path, code } = item;
     const varName = `__mod_${i}`;
 
-    yield `// Module: ${path}`;
+    yield `// Module ${i + 1}`;
     yield `const ${varName} = await (async () => {`;
     yield "  const exports = {};";
     yield "  const module = { exports };";
@@ -500,13 +550,17 @@ function* generateBatchBundleChunks(
     yield "  // --- Module code end ---";
     yield "  return exports;";
     yield "})();";
-    yield `__vf_batch_modules.set("${path}", ${varName});`;
+    yield `__vf_batch_modules.set(${JSON.stringify(path)}, ${varName});`;
     yield "";
   }
 
-  for (const { path, error } of failures) {
-    yield `// Failed: ${path} - ${error}`;
-    yield `__vf_batch_modules.set("${path}", { __vf_error: "${error}" });`;
+  for (let i = 0; i < failures.length; i++) {
+    const failure = failures[i];
+    if (!failure) continue;
+    yield `// Failed module ${i + 1}`;
+    yield `__vf_batch_modules.set(${JSON.stringify(failure.path)}, { __vf_error: ${
+      JSON.stringify(failure.error)
+    } });`;
   }
 
   yield "";

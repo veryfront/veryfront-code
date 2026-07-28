@@ -266,10 +266,35 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status === 404 || response.status === 500, true);
   });
 
-  it("should return 404 for invalid cross-project import path", async () => {
+  it("returns 400 for a structurally invalid cross-project import path", async () => {
     const response = await serve(new Request("http://localhost:3000/_vf_modules/_cross//@/"));
 
-    assertEquals(response.status === 404 || response.status === 500, true);
+    assertEquals(response.status, 400);
+    assertEquals(await response.text(), "Invalid module path");
+  });
+
+  it("rejects encoded separators in cross-project module paths before fetching", async () => {
+    const response = await serve(
+      new Request(
+        "http://localhost:3000/_vf_modules/_cross/demo/@/components%2FSecret.ts",
+      ),
+    );
+
+    assertEquals(response.status, 400);
+    assertEquals(await response.text(), "Invalid cross-project import path");
+  });
+
+  it("rejects malformed and encoded-separator dev module paths", async () => {
+    for (
+      const requestUrl of [
+        "http://localhost:3000/_vf_modules/components%2FSecret.ts",
+        "http://localhost:3000/_vf_modules/components/%ZZ.ts",
+      ]
+    ) {
+      const response = await serve(new Request(requestUrl));
+      assertEquals(response.status, 400);
+      assertEquals(await response.text(), "Invalid module path");
+    }
   });
 
   it("should serve _dnt.shims.js with _veryfront/ prefix", async () => {
@@ -1234,6 +1259,26 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(response.status, 200);
       assertEquals(response.headers.get("content-type"), "application/javascript; charset=utf-8");
       assertStringIncludes(await response.text(), "SITE_NAME");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("decodes safe URL path segments before project lookup", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-encoded-module-path-" });
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/hello world.ts`,
+        `export const greeting = "hello";\n`,
+      );
+
+      const response = await serve(
+        new Request("http://localhost:3000/_vf_modules/hello%20world.js"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      assertStringIncludes(await response.text(), `greeting = "hello"`);
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }

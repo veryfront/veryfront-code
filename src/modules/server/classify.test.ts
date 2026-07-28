@@ -60,6 +60,13 @@ describe("classifyModuleRequest", () => {
       const result = classifyModuleRequest(url("/_vf_modules/_snippets/abc123.ts"));
       assertEquals(result.kind, "dev-module");
     });
+
+    it("does NOT accept trailing content after the snippet module", () => {
+      const result = classifyModuleRequest(
+        url("/_vf_modules/_snippets/abc123.js/extra"),
+      );
+      assertEquals(result.kind, "dev-module");
+    });
   });
 
   describe("cross-project-versioned", () => {

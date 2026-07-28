@@ -68,6 +68,32 @@ describe(
         assertEquals((await response.text()).includes("Too many modules"), true);
       });
 
+      it("rejects unsafe and duplicate module paths before filesystem lookup", async () => {
+        const adapter = createMockAdapter();
+        let statCalls = 0;
+        const originalStat = adapter.fs.stat.bind(adapter.fs);
+        adapter.fs.stat = (path) => {
+          statCalls++;
+          return originalStat(path);
+        };
+        const options = createOptions({ adapter });
+
+        const unsafe = await handleModuleBatch(
+          createBatchRequest("../secret.js"),
+          options,
+        );
+        assertEquals(unsafe.status, 400);
+        assertEquals(await unsafe.text(), "Invalid module path");
+
+        const duplicate = await handleModuleBatch(
+          createBatchRequest("page.js,page.js"),
+          options,
+        );
+        assertEquals(duplicate.status, 400);
+        assertEquals(await duplicate.text(), "Duplicate module paths are not allowed");
+        assertEquals(statCalls, 0);
+      });
+
       it("should return 404 when no modules could be loaded", async () => {
         const response = await handleModuleBatch(
           createBatchRequest("nonexistent.js"),
@@ -300,7 +326,40 @@ describe(
         assertEquals(response.status, 200);
         const code = await response.text();
         assertEquals(code.includes("exists.js"), true);
-        assertEquals(code.includes("Failed: missing.js"), true);
+        assertEquals(code.includes("missing.js"), true);
+        assertEquals(code.includes("__vf_error"), true);
+      });
+
+      it("JSON-encodes module paths and failure messages in generated output", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          '/test-project/quo"te.tsx',
+          "export const safe = true;",
+        );
+        const originalStat = adapter.fs.stat.bind(adapter.fs);
+        adapter.fs.stat = (path) => {
+          if (path.includes("/bad.")) {
+            return Promise.reject(new Error('"; globalThis.injected = true; //'));
+          }
+          return originalStat(path);
+        };
+
+        const response = await handleModuleBatch(
+          createBatchRequest('quo"te.js,bad.js'),
+          createOptions({ adapter }),
+        );
+
+        assertEquals(response.status, 200);
+        const code = await response.text();
+        assertStringIncludes(
+          code,
+          `__vf_batch_modules.set("quo\\"te.js", __mod_0);`,
+        );
+        assertStringIncludes(
+          code,
+          `__vf_error: "\\"; globalThis.injected = true; //"`,
+        );
+        assertEquals(code.includes("// Generated:"), false);
       });
 
       it("does not mark identity-free batch URLs immutable", async () => {

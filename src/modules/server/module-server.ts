@@ -8,9 +8,16 @@ import {
 } from "#veryfront/modules/import-map/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm-transform.ts";
-import { serverLogger, VERSION } from "#veryfront/utils";
+import {
+  HTTP_BAD_REQUEST,
+  HTTP_MODULE_FETCH_TIMEOUT_MS,
+  HTTP_NOT_FOUND,
+  HTTP_OK,
+  HTTP_SERVER_ERROR,
+  serverLogger,
+  VERSION,
+} from "#veryfront/utils";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
 import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "#veryfront/security";
 import { getErrorMessage } from "#veryfront/errors";
@@ -36,7 +43,10 @@ import {
   resolveFrameworkSourcePath,
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { getReactUrls, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
-import { readLimitedCrossProjectSource } from "./cross-project-source-limit.ts";
+import {
+  CrossProjectSourceTooLargeError,
+  readLimitedCrossProjectSource,
+} from "./cross-project-source-limit.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   getReleaseDependencyRewriteManifestState,
@@ -61,12 +71,25 @@ import {
 } from "./module-response-cache.ts";
 import { findFirstExistingFile } from "./fs-probe.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
+import {
+  buildCrossProjectRegistryUrl,
+  normalizeCrossProjectModulePath,
+  normalizeModulePath,
+} from "#veryfront/modules/loader-shared/cross-project-request.ts";
 import { classifyModuleRequest, DEV_MODULE_PREFIX } from "./classify.ts";
 import { transformModuleToServable } from "./module-transform.ts";
+import { readBoundedModuleSource } from "./module-source-reader.ts";
+import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 
 const logger = serverLogger.component("module-server");
 const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
 const textEncoder = new TextEncoder();
+
+function boundedModulePathDiagnostic(path: string): string {
+  return path.length <= MAX_PATH_LENGTH_CHARS
+    ? path
+    : `${path.slice(0, MAX_PATH_LENGTH_CHARS - 1)}…`;
+}
 
 /**
  * Embedded polyfills for compiled Deno binaries.
@@ -243,6 +266,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
     assertImportMapIdentity(importMapIdentity);
   }
   const url = new URL(req.url);
+  const diagnosticPath = boundedModulePathDiagnostic(url.pathname);
 
   return withSpan(
     "modules.serve",
@@ -302,7 +326,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
       const debugUserAgent = req.headers.get("user-agent") ?? "";
       logger.debug("Request", {
-        pathname: url.pathname,
+        pathname: diagnosticPath,
         userAgent: debugUserAgent.slice(0, 50),
       });
 
@@ -415,13 +439,24 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       if (kind.kind === "cross-project-versioned" || kind.kind === "cross-project-latest") {
         const crossProjectSlug = kind.slug;
         const crossVersion = kind.kind === "cross-project-versioned" ? kind.version : "latest";
-        const crossPath = kind.path;
-
-        if (!crossProjectSlug || !crossPath) {
-          return createModuleResponse(method, "Invalid cross-project import path", HTTP_NOT_FOUND, {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Cache-Control": "no-cache",
+        let crossPath: string;
+        try {
+          crossPath = normalizeCrossProjectModulePath(kind.path, {
+            percentEncoded: true,
           });
+        } catch (error) {
+          logger.warn("Rejected invalid cross-project module path", {
+            error: getErrorMessage(error),
+          });
+          return createModuleResponse(
+            method,
+            "Invalid cross-project import path",
+            HTTP_BAD_REQUEST,
+            {
+              "Content-Type": "text/plain; charset=utf-8",
+              "Cache-Control": "no-cache",
+            },
+          );
         }
 
         const projectRef = crossVersion === "latest"
@@ -505,6 +540,20 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         modulePath = modulePath.slice("_vf_modules/".length);
       }
       if (modulePath.startsWith("@/")) modulePath = modulePath.slice(2);
+      try {
+        modulePath = normalizeModulePath(modulePath, {
+          percentEncoded: true,
+          subject: "Module request path",
+        });
+      } catch (error) {
+        logger.warn("Rejected invalid module request path", {
+          error: getErrorMessage(error),
+        });
+        return createModuleResponse(method, "Invalid module path", HTTP_BAD_REQUEST, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+      }
 
       const filePathWithoutExt = modulePath.replace(/\.(?:mjs|js)$/i, "");
 
@@ -614,8 +663,16 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             });
           } else {
             source = isFrameworkFile
-              ? await platformFs.readTextFile(sourceFile)
-              : await secureFs.readFile(sourceFile);
+              ? await readBoundedModuleSource(
+                platformFs,
+                sourceFile,
+                (path) => platformFs.readTextFile(path),
+              )
+              : await readBoundedModuleSource(
+                secureFs,
+                sourceFile,
+                (path) => secureFs.readFile(path),
+              );
           }
 
           const userAgent = req.headers.get("user-agent") ?? "";
@@ -734,7 +791,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         return createModuleResponse(method, errorBody, HTTP_SERVER_ERROR, headers);
       }
     },
-    { "modules.path": url.pathname, "modules.projectSlug": options.projectSlug || "unknown" },
+    { "modules.path": diagnosticPath, "modules.projectSlug": options.projectSlug || "unknown" },
   );
 }
 
@@ -753,8 +810,16 @@ async function readSourceFileForVersion(
 
   const platformFs = createFileSystem();
   return findResult.isFrameworkFile
-    ? await platformFs.readTextFile(findResult.path)
-    : await secureFs.readFile(findResult.path);
+    ? await readBoundedModuleSource(
+      platformFs,
+      findResult.path,
+      (path) => platformFs.readTextFile(path),
+    )
+    : await readBoundedModuleSource(
+      secureFs,
+      findResult.path,
+      (path) => secureFs.readFile(path),
+    );
 }
 
 function createSSRTargetCacheBusterResolver(options: {
@@ -777,7 +842,13 @@ function createSSRTargetCacheBusterResolver(options: {
     if (!promise) {
       promise = (async () => {
         if (options.crossProjectRef) {
-          const source = await fetchCrossProjectSource(options.crossProjectRef, targetPath);
+          const normalizedTargetPath = normalizeCrossProjectModulePath(targetPath, {
+            percentEncoded: true,
+          });
+          const source = await fetchCrossProjectSource(
+            options.crossProjectRef,
+            normalizedTargetPath,
+          );
           return source === null ? undefined : await computeHash(`${targetPath}\0${source}`);
         }
 
@@ -1170,29 +1241,51 @@ async function fetchCrossProjectSource(
   projectRef: string,
   filePath: string,
 ): Promise<string | null> {
-  const apiBaseUrl = getApiBaseUrlEnv();
-  const registryBaseUrl = apiBaseUrl.replace(/\/api\/?$/, "");
-  const registryUrl = `${registryBaseUrl}/${projectRef}/@/${filePath}`;
+  const versionSeparator = projectRef.lastIndexOf("@");
+  const projectSlug = versionSeparator === -1 ? projectRef : projectRef.slice(0, versionSeparator);
+  const version = versionSeparator === -1 ? "latest" : projectRef.slice(versionSeparator + 1);
+  const registryUrl = buildCrossProjectRegistryUrl({
+    registryBaseUrl: getApiBaseUrlEnv(),
+    projectSlug,
+    version,
+    modulePath: filePath,
+    includeLatestVersion: versionSeparator !== -1,
+  });
 
-  const headers = new Headers();
+  const headers = new Headers({
+    Accept: "text/plain, application/javascript, */*",
+  });
   injectContext(headers);
 
-  const response = await fetch(registryUrl, { headers });
-  if (!response.ok) {
-    logger.warn("Cross-project fetch failed", {
-      registryUrl,
-      status: response.status,
-    });
-    return null;
-  }
-
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    HTTP_MODULE_FETCH_TIMEOUT_MS,
+  );
   try {
-    return await readLimitedCrossProjectSource(response, registryUrl);
-  } catch (error) {
-    logger.warn("Cross-project source too large", {
-      registryUrl,
-      error: error instanceof Error ? error.message : String(error),
+    const response = await fetch(registryUrl, {
+      headers,
+      signal: controller.signal,
     });
-    return null;
+    if (!response.ok) {
+      logger.warn("Cross-project fetch failed", {
+        registryUrl,
+        status: response.status,
+      });
+      return null;
+    }
+
+    try {
+      return await readLimitedCrossProjectSource(response, registryUrl);
+    } catch (error) {
+      if (!(error instanceof CrossProjectSourceTooLargeError)) throw error;
+      logger.warn("Cross-project source too large", {
+        registryUrl,
+        error: error.message,
+      });
+      return null;
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }

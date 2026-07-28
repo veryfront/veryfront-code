@@ -12,6 +12,12 @@ import { globalCrossProjectCache, globalCrossProjectInProgress } from "./cache/i
 import type { SSRModuleLoaderOptions } from "./types.ts";
 import { readLimitedCrossProjectSource } from "#veryfront/modules/server/cross-project-source-limit.ts";
 import { buildCrossProjectImportCacheKey } from "./cross-project-cache-key.ts";
+import {
+  assertCrossProjectReference,
+  buildCrossProjectRegistryUrl,
+  normalizeCrossProjectModulePath,
+  normalizeCrossProjectRegistryBaseUrl,
+} from "#veryfront/modules/loader-shared/cross-project-request.ts";
 
 export { buildCrossProjectImportCacheKey } from "./cross-project-cache-key.ts";
 
@@ -45,113 +51,12 @@ interface TransformCrossProjectImportFlowOptions {
   fetchTimeoutMs?: number;
 }
 
-const MAX_CROSS_PROJECT_PATH_LENGTH = 4_096;
 const MAX_CROSS_PROJECT_IN_PROGRESS = 500;
 
-function containsControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
-    if (code < 0x20 || code === 0x7f) return true;
-  }
-  return false;
-}
-
 function getRegistryBaseUrl(apiBaseUrl?: string): string {
-  const resolvedApiBaseUrl = apiBaseUrl?.trim() || getApiBaseUrlEnv().trim();
-  let url: URL;
-  try {
-    url = new URL(resolvedApiBaseUrl);
-  } catch {
-    throw new TypeError("Cross-project registry base URL must be an absolute URL");
-  }
-
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new TypeError("Cross-project registry base URL must use HTTP or HTTPS");
-  }
-  if (url.username || url.password) {
-    throw new TypeError("Cross-project registry base URL must not contain credentials");
-  }
-  if (url.search || url.hash) {
-    throw new TypeError("Cross-project registry base URL must not contain a query or fragment");
-  }
-
-  let pathname = url.pathname.replace(/\/+$/, "");
-  if (pathname.endsWith("/api")) pathname = pathname.slice(0, -4);
-  return `${url.origin}${pathname}`;
-}
-
-function normalizeCrossProjectPath(path: string): string {
-  if (
-    typeof path !== "string" ||
-    path.length === 0 ||
-    path.length > MAX_CROSS_PROJECT_PATH_LENGTH
-  ) {
-    throw new RangeError(
-      `Cross-project module path must contain 1 to ${MAX_CROSS_PROJECT_PATH_LENGTH} characters`,
-    );
-  }
-  if (
-    path.startsWith("/") ||
-    path.includes("\\") ||
-    path.includes("?") ||
-    path.includes("#") ||
-    containsControlCharacter(path)
-  ) {
-    throw new TypeError("Cross-project module path must be a plain project-relative path");
-  }
-
-  const segments = path.split("/");
-  if (segments.some((segment) => segment.length === 0)) {
-    throw new TypeError("Cross-project module path must not contain empty segments");
-  }
-
-  for (const segment of segments) {
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(segment);
-    } catch {
-      throw new TypeError("Cross-project module path contains malformed percent encoding");
-    }
-    if (
-      decoded === "." ||
-      decoded === ".." ||
-      decoded.includes("/") ||
-      decoded.includes("\\") ||
-      decoded.includes("?") ||
-      decoded.includes("#") ||
-      containsControlCharacter(decoded)
-    ) {
-      throw new TypeError("Cross-project module path contains an unsafe segment");
-    }
-  }
-
-  return segments.join("/");
-}
-
-function assertCrossProjectReference(
-  projectSlug: string,
-  version: string,
-): void {
-  if (!/^[a-z0-9-]{1,128}$/.test(projectSlug)) {
-    throw new TypeError("Cross-project project slug is invalid");
-  }
-  if (
-    version !== "latest" &&
-    !/^[\d^~x][\d.x^~-]{0,127}$/.test(version)
-  ) {
-    throw new TypeError("Cross-project project version is invalid");
-  }
-}
-
-function buildRegistryUrl(
-  registryBaseUrl: string,
-  projectSlug: string,
-  version: string,
-  path: string,
-): string {
-  const projectRef = `${encodeURIComponent(projectSlug)}@${encodeURIComponent(version)}`;
-  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
-  return `${registryBaseUrl}/${projectRef}/@/${encodedPath}`;
+  return normalizeCrossProjectRegistryBaseUrl(
+    apiBaseUrl?.trim() || getApiBaseUrlEnv().trim(),
+  );
 }
 
 async function getCachedTempPath(
@@ -189,7 +94,9 @@ export async function transformCrossProjectImportFlow(
 
   const { specifier, projectSlug, version } = crossProjectImport;
   assertCrossProjectReference(projectSlug, version);
-  const path = normalizeCrossProjectPath(crossProjectImport.path);
+  const path = normalizeCrossProjectModulePath(crossProjectImport.path, {
+    percentEncoded: true,
+  });
   const registryBaseUrl = getRegistryBaseUrl(options.apiBaseUrl);
   const cacheKey = buildCrossProjectImportCacheKey({
     specifier,
@@ -206,12 +113,13 @@ export async function transformCrossProjectImportFlow(
   }
 
   const projectRef = `${projectSlug}@${version}`;
-  const registryUrl = buildRegistryUrl(
+  const registryUrl = buildCrossProjectRegistryUrl({
     registryBaseUrl,
     projectSlug,
     version,
-    path,
-  );
+    modulePath: path,
+    includeLatestVersion: true,
+  });
 
   const existingOperation = globalCrossProjectInProgress.get(cacheKey);
   if (existingOperation) return await existingOperation;
