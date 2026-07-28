@@ -8,6 +8,7 @@ import {
   failedComponents,
   getTransformStats,
   globalCrossProjectCache,
+  globalCrossProjectInProgress,
   globalInProgress,
   globalModuleCache,
   globalTmpDirs,
@@ -18,11 +19,13 @@ import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
 import { getTransformPerProjectLimit } from "../constants.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { getTmpDirCacheKey } from "../tmp-paths.ts";
+import { buildCrossProjectImportCacheKey } from "../cross-project-cache-key.ts";
 
 describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
   function resetState(): void {
     clearSSRModuleCache();
     globalCrossProjectCache.clear();
+    globalCrossProjectInProgress.clear();
     globalInProgress.clear();
     globalTmpDirs.clear();
     verifiedHttpBundlePaths.clear();
@@ -201,10 +204,12 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
 
       globalModuleCache.set("key1", { tempPath: "/tmp/a", contentHash: "abc" });
       globalModuleCache.set("key2", { tempPath: "/tmp/b", contentHash: "def" });
+      globalCrossProjectInProgress.set("cross-project", Promise.resolve("/tmp/cross.mjs"));
 
       assertEquals(globalModuleCache.size, 2);
       clearSSRModuleCache();
       assertEquals(globalModuleCache.size, 0);
+      assertEquals(globalCrossProjectInProgress.size, 0);
     });
 
     it("should clear failed components", () => {
@@ -239,6 +244,44 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
   });
 
   describe("clearSSRModuleCacheForProject", () => {
+    it("clears only the exact project's cross-project cache and active load", () => {
+      resetState();
+
+      const targetKey = buildCrossProjectImportCacheKey({
+        specifier: "ui/@/Button.tsx",
+        projectId: "project-1",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      const similarlyNamedKey = buildCrossProjectImportCacheKey({
+        specifier: "ui/@/Button.tsx",
+        projectId: "project-10",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      globalCrossProjectCache.set(targetKey, {
+        tempPath: "/tmp/target.mjs",
+        contentHash: "target",
+      });
+      globalCrossProjectCache.set(similarlyNamedKey, {
+        tempPath: "/tmp/similar.mjs",
+        contentHash: "similar",
+      });
+      globalCrossProjectInProgress.set(
+        targetKey,
+        Promise.resolve("/tmp/target.mjs"),
+      );
+      globalCrossProjectInProgress.set(
+        similarlyNamedKey,
+        Promise.resolve("/tmp/similar.mjs"),
+      );
+
+      clearSSRModuleCacheForProject("project-1");
+
+      assertEquals(globalCrossProjectCache.has(targetKey), false);
+      assertEquals(globalCrossProjectCache.has(similarlyNamedKey), true);
+      assertEquals(globalCrossProjectInProgress.has(targetKey), false);
+      assertEquals(globalCrossProjectInProgress.has(similarlyNamedKey), true);
+    });
+
     it("should clear module cache entries for a specific project", () => {
       resetState();
 

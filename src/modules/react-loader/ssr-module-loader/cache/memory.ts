@@ -25,6 +25,7 @@ import {
   SSR_TMP_DIRS_MAX_ENTRIES,
 } from "../constants.ts";
 import { Semaphore } from "../concurrency/semaphore.ts";
+import { isCrossProjectCacheKeyForProject } from "../cross-project-cache-key.ts";
 import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
 import { isTmpDirCacheKeyForProject } from "../tmp-paths.ts";
 import type { FailureRecord, ModuleCacheEntry } from "../types.ts";
@@ -44,6 +45,8 @@ export const globalModuleCache = new LRUCache<string, ModuleCacheEntry>({
 export const globalCrossProjectCache = new LRUCache<string, ModuleCacheEntry>({
   maxEntries: TEMP_PATH_CACHE_MAX_ENTRIES,
 });
+
+export const globalCrossProjectInProgress = new Map<string, Promise<string>>();
 
 export const globalInProgress = new Map<string, Promise<ModuleCacheEntry>>();
 
@@ -309,6 +312,10 @@ registerMapCache(
   "ssr-cross-project-cache",
   createCacheRegistryWrapper(globalCrossProjectCache),
 );
+registerMapCache(
+  "ssr-cross-project-in-progress",
+  globalCrossProjectInProgress,
+);
 registerMapCache("ssr-tmp-dirs", createCacheRegistryWrapper(globalTmpDirs));
 registerMapCache("ssr-in-progress", globalInProgress);
 registerMapCache(
@@ -323,6 +330,7 @@ export function clearSSRModuleCache(): void {
 
   globalModuleCache.clear();
   globalCrossProjectCache.clear();
+  globalCrossProjectInProgress.clear();
   globalInProgress.clear();
   globalTmpDirs.clear();
   failedComponents.clear();
@@ -358,8 +366,15 @@ export function clearSSRModuleCacheForProject(
   }
 
   for (const key of globalCrossProjectCache.keys()) {
-    if (!key.includes(projectId) && !isKeyForProject(key, projectId)) continue;
+    if (!isCrossProjectCacheKeyForProject(key, projectId)) continue;
     globalCrossProjectCache.delete(key);
+  }
+
+  if (!preserveActiveTransforms) {
+    for (const key of globalCrossProjectInProgress.keys()) {
+      if (!isCrossProjectCacheKeyForProject(key, projectId)) continue;
+      globalCrossProjectInProgress.delete(key);
+    }
   }
 
   if (!preserveActiveTransforms) {

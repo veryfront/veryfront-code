@@ -4,11 +4,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { CrossProjectImport } from "#veryfront/transforms/esm/import-parser.ts";
-import { globalCrossProjectCache } from "./cache/index.ts";
+import { globalCrossProjectCache, globalCrossProjectInProgress } from "./cache/index.ts";
 import {
   buildCrossProjectImportCacheKey,
   transformCrossProjectImportFlow,
 } from "./cross-project-import-loader.ts";
+import { isCrossProjectCacheKeyForProject } from "./cross-project-cache-key.ts";
 import { createSSRImportMapIdentity } from "./import-map-identity.ts";
 
 function createMockCacheFs(overrides: Partial<FileSystem> = {}): FileSystem {
@@ -42,7 +43,67 @@ const crossProjectImport: CrossProjectImport = {
   path: "components/Button.tsx",
 };
 
+interface FlowHarnessOptions {
+  crossProjectImport?: CrossProjectImport;
+  apiBaseUrl?: string;
+  fs?: FileSystem;
+  fetchImpl?: typeof fetch;
+  fetchTimeoutMs?: number;
+  hash?: string;
+  tempPath?: string;
+  onTransform?: () => void;
+}
+
+function createFlowHarness(
+  harness: FlowHarnessOptions = {},
+): Parameters<typeof transformCrossProjectImportFlow>[0] {
+  return {
+    crossProjectImport: harness.crossProjectImport ?? crossProjectImport,
+    options: {
+      projectId: "project-a",
+      projectDir: "/project",
+      dev: true,
+      apiBaseUrl: harness.apiBaseUrl ?? "https://registry.example.com/api",
+      adapter: denoAdapter,
+    },
+    cache: {
+      hashContentAsync: () => Promise.resolve(harness.hash ?? "abcdef12"),
+      getTempPath: () => Promise.resolve(harness.tempPath ?? "/tmp/cross-project-harness.mjs"),
+      getFs: () => harness.fs ?? createMockCacheFs(),
+    },
+    withTransformCapacity: async (_syntheticFilePath, operation) => await operation(),
+    fetchImpl: harness.fetchImpl ??
+      (async () => new Response("export const remoteValue = 1;", { status: 200 })),
+    transformToESMImpl: async (source) => {
+      harness.onTransform?.();
+      return source;
+    },
+    loggerImpl: { debug: () => {}, error: () => {} },
+    fetchTimeoutMs: harness.fetchTimeoutMs,
+  };
+}
+
 describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", () => {
+  it("builds injective cache keys and identifies exact project ownership", () => {
+    const first = buildCrossProjectImportCacheKey({
+      specifier: "package:feature",
+      projectId: "tenant",
+      registryBaseUrl: "https://registry.example.com",
+    });
+    const second = buildCrossProjectImportCacheKey({
+      specifier: "package",
+      projectId: "feature:tenant",
+      registryBaseUrl: "https://registry.example.com",
+    });
+
+    assertEquals(first === second, false);
+    assertEquals(isCrossProjectCacheKeyForProject(first, "tenant"), true);
+    assertEquals(
+      isCrossProjectCacheKeyForProject(first, "feature:tenant"),
+      false,
+    );
+  });
+
   it("returns cached temp path without fetching", async () => {
     globalCrossProjectCache.clear();
     const cacheKey = buildCrossProjectImportCacheKey({
@@ -384,5 +445,242 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
       context?.error,
       "Failed to fetch https://registry.example.com/acme-ui@1.2.3/@/components/Button.tsx: 404 Not Found",
     );
+  });
+
+  it("rejects unsafe registry URLs and project paths before fetching", async () => {
+    globalCrossProjectCache.clear();
+    globalCrossProjectInProgress.clear();
+    let fetchCalls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      fetchCalls++;
+      return new Response("unexpected");
+    };
+
+    await assertRejects(
+      () =>
+        transformCrossProjectImportFlow(
+          createFlowHarness({
+            apiBaseUrl: "file:///tmp/registry/api",
+            fetchImpl,
+          }),
+        ),
+      TypeError,
+      "must use HTTP or HTTPS",
+    );
+    await assertRejects(
+      () =>
+        transformCrossProjectImportFlow(
+          createFlowHarness({
+            crossProjectImport: {
+              ...crossProjectImport,
+              path: "../secrets.ts",
+            },
+            fetchImpl,
+          }),
+        ),
+      TypeError,
+      "unsafe segment",
+    );
+    await assertRejects(
+      () =>
+        transformCrossProjectImportFlow(
+          createFlowHarness({
+            crossProjectImport: {
+              ...crossProjectImport,
+              path: "%2e%2e/secrets.ts",
+            },
+            fetchImpl,
+          }),
+        ),
+      TypeError,
+      "unsafe segment",
+    );
+
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("re-fetches a cached entry whose temp file disappeared", async () => {
+    globalCrossProjectCache.clear();
+    globalCrossProjectInProgress.clear();
+    const cacheKey = buildCrossProjectImportCacheKey({
+      specifier: crossProjectImport.specifier,
+      projectId: "project-a",
+      registryBaseUrl: "https://registry.example.com",
+    });
+    globalCrossProjectCache.set(cacheKey, {
+      tempPath: "/tmp/missing-cross-project.mjs",
+      contentHash: "deadbeef",
+    });
+    let fetchCalls = 0;
+    let statCalls = 0;
+
+    const result = await transformCrossProjectImportFlow(
+      createFlowHarness({
+        fs: createMockCacheFs({
+          stat: () => {
+            statCalls++;
+            if (statCalls === 1) {
+              return Promise.reject(
+                Object.assign(new Error("missing"), { code: "ENOENT" }),
+              );
+            }
+            return Promise.resolve({
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              size: 100,
+              mtime: null,
+            });
+          },
+        }),
+        fetchImpl: async () => {
+          fetchCalls++;
+          return new Response("export const refreshed = true;");
+        },
+        tempPath: "/tmp/refreshed-cross-project.mjs",
+      }),
+    );
+
+    assertEquals(result, "/tmp/refreshed-cross-project.mjs");
+    assertEquals(fetchCalls, 1);
+  });
+
+  it("propagates operational cache-stat failures without fetching", async () => {
+    globalCrossProjectCache.clear();
+    globalCrossProjectInProgress.clear();
+    const cacheKey = buildCrossProjectImportCacheKey({
+      specifier: crossProjectImport.specifier,
+      projectId: "project-a",
+      registryBaseUrl: "https://registry.example.com",
+    });
+    globalCrossProjectCache.set(cacheKey, {
+      tempPath: "/tmp/unreadable-cross-project.mjs",
+      contentHash: "deadbeef",
+    });
+    let fetchCalls = 0;
+
+    await assertRejects(
+      () =>
+        transformCrossProjectImportFlow(
+          createFlowHarness({
+            fs: createMockCacheFs({
+              stat: () =>
+                Promise.reject(
+                  Object.assign(new Error("permission denied"), {
+                    code: "EACCES",
+                  }),
+                ),
+            }),
+            fetchImpl: async () => {
+              fetchCalls++;
+              return new Response("unexpected");
+            },
+          }),
+        ),
+      Error,
+      "permission denied",
+    );
+
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("coalesces concurrent fetch and transform work for the same identity", async () => {
+    globalCrossProjectCache.clear();
+    globalCrossProjectInProgress.clear();
+    let fetchCalls = 0;
+    let transformCalls = 0;
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const flow = createFlowHarness({
+      fetchImpl: async () => {
+        fetchCalls++;
+        await fetchGate;
+        return new Response("export const shared = true;");
+      },
+      onTransform: () => {
+        transformCalls++;
+      },
+    });
+
+    const first = transformCrossProjectImportFlow(flow);
+    const second = transformCrossProjectImportFlow(flow);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(fetchCalls, 1);
+    assertEquals(globalCrossProjectInProgress.size, 1);
+
+    releaseFetch();
+    assertEquals(await Promise.all([first, second]), [
+      "/tmp/cross-project-harness.mjs",
+      "/tmp/cross-project-harness.mjs",
+    ]);
+    assertEquals(transformCalls, 1);
+    assertEquals(globalCrossProjectInProgress.size, 0);
+  });
+
+  it("does not retain completed cache entries for latest imports", async () => {
+    globalCrossProjectCache.clear();
+    globalCrossProjectInProgress.clear();
+    let fetchCalls = 0;
+    let transformCalls = 0;
+    const latestImport: CrossProjectImport = {
+      specifier: "acme-ui/@/components/Button.tsx",
+      projectSlug: "acme-ui",
+      version: "latest",
+      path: "components/Button.tsx",
+    };
+    const flow = createFlowHarness({
+      crossProjectImport: latestImport,
+      fetchImpl: async () => {
+        fetchCalls++;
+        return new Response(`export const revision = ${fetchCalls};`);
+      },
+      onTransform: () => {
+        transformCalls++;
+      },
+    });
+
+    await transformCrossProjectImportFlow(flow);
+    await transformCrossProjectImportFlow(flow);
+
+    assertEquals(fetchCalls, 2);
+    assertEquals(transformCalls, 2);
+    assertEquals(globalCrossProjectCache.size, 0);
+  });
+
+  it("keeps the fetch timeout active while the response body is streaming", async () => {
+    globalCrossProjectCache.clear();
+    globalCrossProjectInProgress.clear();
+    let observedAbort = false;
+
+    await assertRejects(() =>
+      transformCrossProjectImportFlow(
+        createFlowHarness({
+          fetchTimeoutMs: 5,
+          fetchImpl: async (_input, init) => {
+            const signal = init?.signal;
+            return new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  signal?.addEventListener(
+                    "abort",
+                    () => {
+                      observedAbort = true;
+                      controller.error(signal.reason);
+                    },
+                    { once: true },
+                  );
+                },
+              }),
+              { status: 200 },
+            );
+          },
+        }),
+      )
+    );
+
+    assertEquals(observedAbort, true);
+    assertEquals(globalCrossProjectInProgress.size, 0);
   });
 });
