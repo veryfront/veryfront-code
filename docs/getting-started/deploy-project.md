@@ -34,23 +34,37 @@ veryfront serve
 Open [http://localhost:3000](http://localhost:3000). Confirm the same pages and
 endpoints work.
 
-## Deploy to Veryfront Cloud
+## Preview on Veryfront Cloud
 
-Create or link the cloud project, push the current source, create a release, and
-deploy it:
+Create or link the cloud project and push the current source to its preview:
 
 ```bash
-npx veryfront deploy
+npx veryfront push
 ```
 
-`veryfront deploy` writes `veryfront.json` when it links a project, waits for
-browser assets, and prints the environment URL.
+`veryfront push` stores local project identity in ignored
+`.veryfront/project.json`, records the pushed source digest in
+`.veryfront/push-receipt.json`, and prints the preview URL. It does not write
+`veryfront.json`.
 
 For a preview deployment per branch:
 
 ```bash
-npx veryfront deploy --branch feature-x
+npx veryfront push --branch feature-x
 ```
+
+## Deploy to Veryfront Cloud
+
+After checking the preview, deploy the exact pushed source digest:
+
+```bash
+npx veryfront deploy --env production
+```
+
+Deploy reads the local Push receipt, verifies the release source digest, waits
+for browser assets, and prints the environment URL. Explicit project
+configuration wins over the local link: environment variables, then
+`veryfront.config.ts`, then legacy `veryfront.json`.
 
 ## Deploy somewhere else
 
