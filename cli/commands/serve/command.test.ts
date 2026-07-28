@@ -17,7 +17,17 @@ type RunWithStartupErrorReporting = <T>(
       context: { boundary: string },
     ) => string | undefined;
     flushApplicationErrors: (timeoutMs?: number) => Promise<boolean>;
+    onReportingError?: (
+      operation: "capture" | "flush",
+      error: unknown,
+    ) => void;
   },
+) => Promise<T>;
+
+type RunProductionStartupWithErrorReporting = <T>(
+  startup: () => Promise<T>,
+  reporter: Parameters<RunWithStartupErrorReporting>[1],
+  ensureBundlerContracts: () => Promise<void>,
 ) => Promise<T>;
 
 describe("commands/serve/command", () => {
@@ -187,5 +197,79 @@ describe("commands/serve/command", () => {
     );
 
     assertStrictEquals(thrown, startupError);
+  });
+
+  it("captures bundler contract failures before production startup", async () => {
+    const commandModule = await import("./command.ts") as {
+      runProductionStartupWithErrorReporting?: RunProductionStartupWithErrorReporting;
+    };
+    const runProductionStartupWithErrorReporting =
+      commandModule.runProductionStartupWithErrorReporting;
+    assertExists(runProductionStartupWithErrorReporting);
+
+    const bundlerError = new Error("bundler contracts failed");
+    const captures: Array<{ error: unknown; boundary: string }> = [];
+    let startupCalled = false;
+
+    const thrown = await assertRejects(() =>
+      runProductionStartupWithErrorReporting(
+        () => {
+          startupCalled = true;
+          return Promise.resolve();
+        },
+        {
+          captureApplicationError: (error, context) => {
+            captures.push({ error, boundary: context.boundary });
+            return "event-id";
+          },
+          flushApplicationErrors: () => Promise.resolve(true),
+        },
+        () => Promise.reject(bundlerError),
+      )
+    );
+
+    assertStrictEquals(thrown, bundlerError);
+    assertEquals(startupCalled, false);
+    assertEquals(captures, [{
+      error: bundlerError,
+      boundary: "process.startup",
+    }]);
+  });
+
+  it("reports reporter failures without replacing the startup failure", async () => {
+    const commandModule = await import("./command.ts") as {
+      runWithStartupErrorReporting?: RunWithStartupErrorReporting;
+    };
+    const runWithStartupErrorReporting = commandModule.runWithStartupErrorReporting;
+    assertExists(runWithStartupErrorReporting);
+
+    const startupError = new Error("startup failed");
+    const captureError = new Error("capture failed");
+    const flushError = new Error("flush failed");
+    const reporterFailures: Array<{
+      operation: "capture" | "flush";
+      error: unknown;
+    }> = [];
+
+    const thrown = await assertRejects(() =>
+      runWithStartupErrorReporting(
+        () => Promise.reject(startupError),
+        {
+          captureApplicationError: () => {
+            throw captureError;
+          },
+          flushApplicationErrors: () => Promise.reject(flushError),
+          onReportingError: (operation, error) => {
+            reporterFailures.push({ operation, error });
+          },
+        },
+      )
+    );
+
+    assertStrictEquals(thrown, startupError);
+    assertEquals(reporterFailures, [
+      { operation: "capture", error: captureError },
+      { operation: "flush", error: flushError },
+    ]);
   });
 });

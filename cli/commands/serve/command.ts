@@ -4,6 +4,7 @@ import { cliLogger } from "#cli/utils";
 import { exitProcess, registerTerminationSignals, showLogo } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { startCliProductionServer } from "#cli/shared/server-startup";
+import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 
 const STARTUP_ERROR_FLUSH_TIMEOUT_MS = 2_000;
 
@@ -50,6 +51,17 @@ export async function runWithStartupErrorReporting<T>(
   }
 }
 
+export async function runProductionStartupWithErrorReporting<T>(
+  startup: () => Promise<T>,
+  reporter: StartupErrorReporter,
+  ensureBundlerContracts: () => Promise<void> = ensureCliBundlerContracts,
+): Promise<T> {
+  return await runWithStartupErrorReporting(async () => {
+    await ensureBundlerContracts();
+    return await startup();
+  }, reporter);
+}
+
 async function runSplit(options: ServeOptions): Promise<void> {
   showLogo();
   const { runSplitMode } = await import("./split-mode.ts");
@@ -91,7 +103,7 @@ async function runProductionServer(options: ServeOptions): Promise<void> {
   } = await import("veryfront/observability/sentry");
   await initializeSentryFromEnv();
 
-  const { server, shutdownController } = await runWithStartupErrorReporting(
+  const { server, shutdownController } = await runProductionStartupWithErrorReporting(
     async () => {
       const { clearAllLocalCaches } = await import(
         "veryfront/transforms/mdx-cache"
@@ -132,11 +144,15 @@ async function runProductionServer(options: ServeOptions): Promise<void> {
     {
       captureApplicationError,
       flushApplicationErrors,
-      onReportingError: (operation, error) =>
+      onReportingError: (operation, error) => {
         cliLogger.warn(
-          `Error reporter failed to ${operation} production startup failure:`,
+          `Error reporter failed to ${operation} production startup failure.`,
+        );
+        cliLogger.debug(
+          `Error reporter ${operation} failure details:`,
           error,
-        ),
+        );
+      },
     },
   );
 
