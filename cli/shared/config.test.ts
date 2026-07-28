@@ -6,7 +6,13 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createApiClient, readConfigFile, resolveConfig, resolveConfigWithAuth } from "./config.ts";
+import {
+  createApiClient,
+  readConfigFile,
+  resolveConfig,
+  resolveConfigWithAuth,
+  resolveConfigWithAuthDetails,
+} from "./config.ts";
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { join } from "veryfront/platform/path";
@@ -22,6 +28,31 @@ function createMockEnv(overrides: Partial<EnvironmentConfig> = {}): EnvironmentC
     isProduction: true,
     ...overrides,
   } as EnvironmentConfig;
+}
+
+function projectIdOf(config: ResolvedConfig): string | undefined {
+  return (config as ResolvedConfig & { projectId?: string }).projectId;
+}
+
+async function writeRawProjectLink(
+  projectDir: string,
+  link: {
+    controlPlane?: string;
+    projectId?: string;
+    projectSlug?: string;
+  } = {},
+): Promise<void> {
+  await Deno.mkdir(join(projectDir, ".veryfront"), { recursive: true });
+  await Deno.writeTextFile(
+    join(projectDir, ".veryfront", "project.json"),
+    JSON.stringify({
+      version: 1,
+      controlPlane: "https://api.veryfront.com",
+      projectId: "linked-project-id",
+      projectSlug: "linked-project",
+      ...link,
+    }),
+  );
 }
 
 describe("resolveConfig", () => {
@@ -293,6 +324,160 @@ describe("resolveConfigWithAuth", () => {
       } else {
         Deno.env.set("TENANT_PROJECT_ID", previousTenantProjectId);
       }
+    }
+  });
+
+  it("prefers module config projectSlug over a local project link", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.config.js"),
+        'export default { projectSlug: "from-module" };\n',
+      );
+      await writeRawProjectLink(tempDir, {
+        controlPlane: "https://api.other.veryfront.com",
+        projectSlug: "from-link",
+      });
+
+      const details = await resolveConfigWithAuthDetails(
+        tempDir,
+        createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+      );
+
+      assertEquals(details.config.projectSlug, "from-module");
+      assertEquals(projectIdOf(details.config), undefined);
+      assertEquals(details.projectReferenceSource, {
+        kind: "module-config",
+        name: "veryfront.config.js",
+      });
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("prefers veryfront.json projectSlug over a local project link", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({ projectSlug: "from-json" }),
+      );
+      await writeRawProjectLink(tempDir, {
+        controlPlane: "https://api.other.veryfront.com",
+        projectSlug: "from-link",
+      });
+
+      const details = await resolveConfigWithAuthDetails(
+        tempDir,
+        createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+      );
+
+      assertEquals(details.config.projectSlug, "from-json");
+      assertEquals(projectIdOf(details.config), undefined);
+      assertEquals(details.projectReferenceSource, {
+        kind: "json-config",
+        name: "veryfront.json",
+      });
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("prefers tenant project context over a local project link", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const previousTenantProjectSlug = Deno.env.get("TENANT_PROJECT_SLUG");
+    try {
+      await writeRawProjectLink(tempDir, {
+        controlPlane: "https://api.other.veryfront.com",
+        projectSlug: "from-link",
+      });
+      Deno.env.set("TENANT_PROJECT_SLUG", "from-tenant");
+
+      const details = await resolveConfigWithAuthDetails(
+        tempDir,
+        createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+      );
+
+      assertEquals(details.config.projectSlug, "from-tenant");
+      assertEquals(projectIdOf(details.config), undefined);
+      assertEquals(details.projectReferenceSource, {
+        kind: "tenant-environment",
+        name: "TENANT_PROJECT_SLUG",
+      });
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+      if (previousTenantProjectSlug === undefined) {
+        Deno.env.delete("TENANT_PROJECT_SLUG");
+      } else {
+        Deno.env.set("TENANT_PROJECT_SLUG", previousTenantProjectSlug);
+      }
+    }
+  });
+
+  it("uses a matching local project link before inferred project names", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(join(tempDir, "package.json"), JSON.stringify({ name: "inferred" }));
+      await writeRawProjectLink(tempDir, {
+        controlPlane: "https://api.veryfront.com/",
+        projectId: "project-123",
+        projectSlug: "from-link",
+      });
+
+      const details = await resolveConfigWithAuthDetails(
+        tempDir,
+        createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+      );
+
+      assertEquals(details.config.projectSlug, "from-link");
+      assertEquals(projectIdOf(details.config), "project-123");
+      assertEquals(details.projectReferenceSource, {
+        kind: "local-link",
+        name: ".veryfront/project.json",
+      });
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("rejects a local project link for a different control plane", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(join(tempDir, "package.json"), JSON.stringify({ name: "inferred" }));
+      await writeRawProjectLink(tempDir, {
+        controlPlane: "https://api.other.veryfront.com",
+        projectSlug: "from-link",
+      });
+
+      await assertRejects(
+        () =>
+          resolveConfigWithAuthDetails(
+            tempDir,
+            createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+          ),
+        Error,
+        ".veryfront/project.json",
+      );
+      await assertRejects(
+        () =>
+          resolveConfigWithAuthDetails(
+            tempDir,
+            createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+          ),
+        Error,
+        "https://api.other.veryfront.com",
+      );
+      await assertRejects(
+        () =>
+          resolveConfigWithAuthDetails(
+            tempDir,
+            createMockEnv({ apiToken: "env-token", projectSlug: undefined }),
+          ),
+        Error,
+        "https://api.veryfront.com",
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
     }
   });
 

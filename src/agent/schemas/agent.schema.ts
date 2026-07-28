@@ -115,6 +115,14 @@ const sourceDocumentPartShape = (v: SchemaValidator) =>
     filename: v.string().optional(),
   });
 
+const attachmentMetadataFields = (v: SchemaValidator) => ({
+  filename: v.string().optional(),
+  uploadId: v.string().optional(),
+  upload_id: v.string().optional(),
+  uploadPath: v.string().optional(),
+  upload_path: v.string().optional(),
+});
+
 export const getMessagePartSchema = defineSchema((v) =>
   v.union([
     v.object({
@@ -136,11 +144,13 @@ export const getMessagePartSchema = defineSchema((v) =>
       type: v.literal("image"),
       url: v.string(),
       mediaType: v.string(),
+      ...attachmentMetadataFields(v),
     }),
     v.object({
       type: v.literal("file"),
       url: v.string(),
       mediaType: v.string(),
+      ...attachmentMetadataFields(v),
     }),
   ])
 );

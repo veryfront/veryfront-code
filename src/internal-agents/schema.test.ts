@@ -279,6 +279,40 @@ describe("internal-agents/schema", () => {
     assertEquals(parsed.context, [{ description: "Current file", value: "src/main.ts" }]);
   });
 
+  it("accepts upload metadata on AG-UI runtime attachments", () => {
+    const parsed = getRuntimeRunAgentInputSchema().parse({
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [{
+        id: "user_1",
+        role: "user",
+        content: "Review this screenshot",
+        attachments: [{
+          type: "file",
+          url: "https://uploads.example.com/screenshot.png",
+          mediaType: "image/png",
+          uploadId: "upload-image-1",
+          uploadPath: "_chat/user/upload-image-1-screenshot.png",
+          filename: "screenshot.png",
+        }],
+      }],
+    });
+
+    assertEquals(parsed.messages[0], {
+      id: "user_1",
+      role: "user",
+      content: "Review this screenshot",
+      attachments: [{
+        type: "file",
+        url: "https://uploads.example.com/screenshot.png",
+        mediaType: "image/png",
+        uploadId: "upload-image-1",
+        uploadPath: "_chat/user/upload-image-1-screenshot.png",
+        filename: "screenshot.png",
+      }],
+    });
+  });
+
   it("does not dual-read the runtime invocation transport as an internal request", () => {
     assertThrows(() =>
       getInternalAgentStreamRequestSchema().parse({
@@ -378,6 +412,50 @@ describe("internal-agents/schema", () => {
       tools: [],
       context: [{ type: "text", text: "Current file: src/main.ts" }],
     });
+  });
+
+  it("preserves upload metadata while normalizing compatibility attachment parts", () => {
+    const internalRequest = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      agentSource: { type: "branch", branch: "main" },
+      messages: [
+        {
+          id: "user_1",
+          role: "user",
+          parts: [
+            { type: "text", text: "Review this screenshot" },
+            {
+              type: "file",
+              url: "https://uploads.example.com/screenshot.png",
+              mediaType: "image/png",
+              upload_id: "upload-image-1",
+              upload_path: "_chat/user/upload-image-1-screenshot.png",
+              filename: "screenshot.png",
+            },
+          ],
+        },
+      ],
+      context: [],
+    });
+
+    assertEquals(
+      (toRuntimeRunAgentInput(internalRequest) as unknown as { messages: unknown }).messages,
+      [{
+        id: "user_1",
+        role: "user",
+        content: "Review this screenshot",
+        attachments: [{
+          type: "file",
+          url: "https://uploads.example.com/screenshot.png",
+          mediaType: "image/png",
+          uploadId: "upload-image-1",
+          uploadPath: "_chat/user/upload-image-1-screenshot.png",
+          filename: "screenshot.png",
+        }],
+      }],
+    );
   });
 
   it("rejects legacy endUserId on internal stream payloads", () => {

@@ -37,12 +37,12 @@ The CLI groups commands by category. Each command supports `--help` for its full
 
 | Command | Description |
 |---------|-------------|
-| `veryfront deploy` | Create a release and deploy to an environment |
+| `veryfront deploy` | Promote a branch to an environment |
 | `veryfront lock` | Manage remote import lockfile for reproducible builds |
 | `veryfront merge` | Merge a branch into main (or another branch) |
 | `veryfront pull` | Download project files from Veryfront remote |
-| `veryfront push` | Upload local source files to a Veryfront branch |
-| `veryfront up` | Deploy your app with one command (login, create, push, deploy) |
+| `veryfront push` | Push source to a cloud preview |
+| `veryfront up` | Create and publish the initial cloud preview |
 
 ### Project
 

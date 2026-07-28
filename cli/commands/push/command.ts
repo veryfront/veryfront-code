@@ -19,8 +19,8 @@ import {
   type ProjectReferenceSource,
   resolveConfigWithAuthDetails,
   type ResolvedConfig,
-  writeProjectSlug,
 } from "#cli/shared/config";
+import { writeProjectLink } from "../../shared/project-link.ts";
 import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { isVerbose, logInfo, logSuccess } from "#cli/utils";
 import { brand, createNoopSpinner, createSpinner, dim } from "#cli/ui";
@@ -194,7 +194,28 @@ function sourceChangedError(): Error {
 }
 
 function canPersistAlternativeSlug(source: ProjectReferenceSource): boolean {
-  return source.kind === "json-config" || source.kind === "inferred";
+  return source.kind === "inferred";
+}
+
+function shouldPersistProjectLink(source: ProjectReferenceSource): boolean {
+  return source.kind === "inferred" || source.kind === "local-link";
+}
+
+function projectApiReference(config: ResolvedConfig): string {
+  return config.projectId ?? config.projectSlug;
+}
+
+async function persistProjectLink(
+  projectDir: string,
+  config: ResolvedConfig,
+  project: { id: string; slug: string },
+): Promise<ResolvedConfig> {
+  await writeProjectLink(projectDir, {
+    controlPlane: config.apiUrl,
+    projectId: project.id,
+    projectSlug: project.slug,
+  });
+  return { ...config, projectId: project.id, projectSlug: project.slug };
 }
 
 function projectSlugConflictError(
@@ -218,6 +239,9 @@ function projectSlugConflictError(
     case "json-config":
     case "inferred":
       action = "Choose a different project slug";
+      break;
+    case "local-link":
+      action = "Relink this project";
       break;
   }
   return new Error(`${error.message} ${action}, then run veryfront push again.`);
@@ -548,7 +572,7 @@ export async function recordPushReceipt(
   ignoreChecker: IgnoreChecker,
   pushedSourceDigest = snapshot.sourceDigest,
 ): Promise<void> {
-  const project = await getProjectTarget(client, config.projectSlug);
+  const project = await getProjectTarget(client, projectApiReference(config));
   let currentSnapshot: PushSourceSnapshot;
   try {
     currentSnapshot = await capturePushSourceSnapshot(projectDir, ignoreChecker);
@@ -634,21 +658,27 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           }
           throw reserveError;
         }
-        if (
-          projectReferenceSource.kind === "inferred" ||
-          reserveResult.slug !== config.projectSlug
-        ) {
-          await writeProjectSlug(projectDir, reserveResult.slug);
+        let project = reserveResult.projectId
+          ? { id: reserveResult.projectId, slug: reserveResult.slug }
+          : null;
+        const reservedSlugChanged = reserveResult.slug !== config.projectSlug;
+        const configWithReservedSlug = { ...config, projectSlug: reserveResult.slug };
+        if (!project) {
+          project = await getProjectTarget(client, reserveResult.slug);
+        }
+        if (shouldPersistProjectLink(projectReferenceSource)) {
+          config = await persistProjectLink(projectDir, configWithReservedSlug, project);
           if (
-            reserveResult.slug !== config.projectSlug &&
+            reservedSlugChanged &&
             !quiet && !jsonOutput
           ) {
             logInfo(`Project slug: ${reserveResult.slug}`);
           }
+        } else {
+          config = configWithReservedSlug;
         }
-        config = { ...config, projectSlug: reserveResult.slug };
         try {
-          mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
+          mainFiles = await listAllFiles(client, projectApiReference(config), { type: "main" });
         } catch {
           mainFiles = [];
         }
@@ -666,7 +696,13 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         else await createProject();
       } else {
         try {
-          mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
+          mainFiles = await listAllFiles(client, projectApiReference(config), { type: "main" });
+          if (shouldPersistProjectLink(projectReferenceSource)) {
+            const project = await getProjectTarget(client, projectApiReference(config));
+            config = dryRun
+              ? { ...config, projectId: project.id, projectSlug: project.slug }
+              : await persistProjectLink(projectDir, config, project);
+          }
         } catch (error) {
           if (getErrorStatus(error) !== 404) throw error;
           if (dryRun) planProjectCreation();
@@ -688,7 +724,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const target = projectExists
         ? await resolvePushRemoteFiles(
           client,
-          config.projectSlug,
+          projectApiReference(config),
           branchName,
           mainFiles,
         )
@@ -759,10 +795,10 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       if (dryRun) {
         if (ops.length > 0) {
-          await uploadFiles(client, config.projectSlug, target.branchId, ops, true);
+          await uploadFiles(client, projectApiReference(config), target.branchId, ops, true);
         }
         if (toDelete.length > 0) {
-          await deleteFiles(client, config.projectSlug, target.branchId, toDelete, true);
+          await deleteFiles(client, projectApiReference(config), target.branchId, toDelete, true);
         }
 
         if (jsonOutput && !quiet) {
@@ -792,7 +828,11 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       if (!isMainBranch && !branchId) {
         try {
-          const preparedBranch = await ensureBranch(client, config.projectSlug, branchName);
+          const preparedBranch = await ensureBranch(
+            client,
+            projectApiReference(config),
+            branchName,
+          );
           branchId = preparedBranch.id;
         } catch (error) {
           spinner.stop();
@@ -806,7 +846,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       if (ops.length > 0) {
         spinner.update("Uploading files...");
-        uploadResult = await uploadFiles(client, config.projectSlug, branchId, ops, false);
+        uploadResult = await uploadFiles(client, projectApiReference(config), branchId, ops, false);
       }
 
       if (uploadResult.failed > 0) {
@@ -820,7 +860,13 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       if (toDelete.length > 0) {
         spinner.update("Deleting removed files...");
-        deleteResult = await deleteFiles(client, config.projectSlug, branchId, toDelete, false);
+        deleteResult = await deleteFiles(
+          client,
+          projectApiReference(config),
+          branchId,
+          toDelete,
+          false,
+        );
       }
 
       if (deleteResult.failed > 0) {

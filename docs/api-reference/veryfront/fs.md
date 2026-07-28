@@ -58,7 +58,7 @@ const configPath = resolve(cwd(), "veryfront.config.ts");
 | `dirname` | Return the parent directory path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L20) |
 | `exists` | Return false for a missing path and propagate every other filesystem error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L414) |
 | `extname` | Return the file extension for a path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L35) |
-| `isNotFoundError` | Return whether an error or its cause chain represents a missing path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L529) |
+| `isNotFoundError` | Return whether an error or its cause chain represents a path that cannot be resolved. ENOTDIR is included because a missing candidate beneath a file is just as absent as an ENOENT candidate during filesystem lookup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L533) |
 | `join` | Join and normalize path segments using their detected path flavor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L12) |
 | `lstat` | Read file metadata without following a terminal symbolic link. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L424) |
 | `mkdir` | Create a directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L464) |

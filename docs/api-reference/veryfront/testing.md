@@ -71,8 +71,8 @@ describe("math", () => {
 | `getArgs` | Get command-line arguments (cross-runtime: Deno.args or process.argv). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L10) |
 | `getEnv` | Read an environment variable from the active project scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L106) |
 | `getTestTimeScale` | Return test time scale. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/timing.ts#L4) |
-| `isAlreadyExistsError` | Error shape for is already exists. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L570) |
-| `isNotFoundError` | Return whether an error or its cause chain represents a missing path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L529) |
+| `isAlreadyExistsError` | Error shape for is already exists. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L575) |
+| `isNotFoundError` | Return whether an error or its cause chain represents a path that cannot be resolved. ENOTDIR is included because a missing candidate beneath a file is just as absent as an ENOENT candidate during filesystem lookup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L533) |
 | `it` | Define a BDD test case. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L637) |
 | `makeTempDir` | Atomically create a unique directory beneath the operating-system temp root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L486) |
 | `makeTempDirWithOptions` | Atomically create a uniquely named temporary directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L99) |

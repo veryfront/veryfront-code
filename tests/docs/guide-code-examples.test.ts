@@ -953,7 +953,7 @@ describe("Guide: deploy-project.md", () => {
         "veryfront build",
         "veryfront serve",
         "npx veryfront deploy",
-        "npx veryfront deploy --branch feature-x",
+        "npx veryfront push --branch feature-x",
         "veryfront open",
       ]
     ) {

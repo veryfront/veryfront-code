@@ -60,26 +60,38 @@ veryfront serve
 Open the same route you tested in development. For API routes, compare the dev
 and production responses with `curl`.
 
-## Deploy to Veryfront Cloud
+## Preview on Veryfront Cloud
 
-Create or link the cloud project, push the current source, create a release, and
-deploy it:
+Create or link the cloud project and push the current source to its preview:
 
 ```bash
-npx veryfront deploy
+npx veryfront push
 ```
 
-`veryfront deploy` writes `veryfront.json` when it links a project, waits for
-browser assets, and prints the environment URL.
+`veryfront push` stores local project identity in ignored
+`.veryfront/project.json`, records the pushed source digest in
+`.veryfront/push-receipt.json`, and prints the preview URL. It does not write
+`veryfront.json`.
 
 For an existing nonproduction environment named `staging`:
 
 ```bash
+npx veryfront push --branch feature-x
 npx veryfront deploy --branch feature-x --env staging
 ```
 
-Use `veryfront open` after deployment to open the project. Use
-`veryfront open --json` when automation needs the deployed URL.
+Deploy uses the last verified Push receipt and verifies the release was built
+from that exact source digest before assigning it to the environment. If no Push
+receipt exists, Deploy first runs a quiet Push so the first deployment still
+works as one command. Use `veryfront open` after deployment to open the project.
+Deploy prints the environment URL; use `veryfront open --json` when automation
+needs the same URL later.
+
+Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
+configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
+lower-level tenant or project-ID environment references, then the ignored local
+link. Keep `.veryfront/project.json` ignored unless you intentionally use
+committed configuration instead.
 
 ## Set production environment variables
 
@@ -121,7 +133,7 @@ After `veryfront build`:
 
 After `veryfront deploy`:
 
-- The CLI confirms the committed release and environment.
+- The CLI confirms the release, environment, and verified source digest.
 - The CLI reports whether every shared proxy acknowledged the active release. An
   unconfirmed data-plane update is a warning after commit, not a failed deploy;
   do not retry solely because of that warning.
