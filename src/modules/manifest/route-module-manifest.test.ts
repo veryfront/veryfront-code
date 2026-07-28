@@ -158,6 +158,43 @@ describe("Route Module Manifest", () => {
     );
   });
 
+  it("validates preload limits even when no manifest exists", () => {
+    clearAllManifests();
+
+    assertThrows(
+      () =>
+        generateModulePreloadHintsFromManifest(
+          "missing-project",
+          "missing-route",
+          -1,
+        ),
+      RangeError,
+      "maxHints",
+    );
+  });
+
+  it("retains a pending collection when finish validation fails", () => {
+    clearAllManifests();
+    const requestId = "retryable-finish";
+    startModuleCollection(requestId);
+    recordModuleLoad(requestId, "page.js");
+
+    assertThrows(
+      () =>
+        finishModuleCollection(
+          requestId,
+          "project",
+          "page",
+          ["x".repeat(16 * 1024 + 1)],
+        ),
+      RangeError,
+      "Critical module path",
+    );
+
+    finishModuleCollection(requestId, "project", "page", ["page.js"]);
+    assertEquals(getCriticalModulePaths("project", "page"), ["page.js"]);
+  });
+
   it("reports route names rather than internal cache keys", () => {
     clearAllManifests();
     recordSSRModules("stats-project", "stats-route", ["page.js"]);

@@ -46,7 +46,20 @@ export function setupWebSocketHandlers(
 
   function cleanup(): void {
     context.clients.delete(socket);
-    context.rateLimiter.cleanup(socket);
+    try {
+      context.rateLimiter.cleanup(socket);
+    } catch (error) {
+      logger.debug("Error cleaning up HMR rate-limit state", error);
+    }
+  }
+
+  function closeAndCleanup(code: number, reason: string): void {
+    cleanup();
+    try {
+      socket.close(code, reason);
+    } catch (error) {
+      logger.debug("Error closing HMR WebSocket client", error);
+    }
   }
 
   socket.onmessage = (event) => {
@@ -58,13 +71,16 @@ export function setupWebSocketHandlers(
           size: messageSize,
           max: context.maxMessageSize,
         });
-        socket.close(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
+        closeAndCleanup(
+          HMR_CLOSE_MESSAGE_TOO_LARGE,
+          "Message too large",
+        );
         return;
       }
 
       if (!context.rateLimiter.check(socket)) {
         logger.warn("HMR rate limit exceeded, closing connection");
-        socket.close(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
+        closeAndCleanup(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
         return;
       }
 
@@ -181,6 +197,6 @@ export async function closeAllConnections(
     } catch (error) {
       logger.debug("Error cleaning up WebSocket rate-limit state", error);
     }
+    clients.delete(client);
   }
-  clients.clear();
 }

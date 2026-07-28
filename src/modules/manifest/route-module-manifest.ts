@@ -116,8 +116,6 @@ export function finishModuleCollection(
   const collection = pendingCollections.get(normalizedRequestId);
   if (!collection) return;
 
-  pendingCollections.delete(normalizedRequestId);
-
   const key = buildKey(projectSlug, route);
   const existing = manifestStore.get(key);
 
@@ -126,6 +124,10 @@ export function finishModuleCollection(
     const boundedPath = assertBoundedIdentity(path, "Critical module path");
     if (collection.has(boundedPath)) criticalSet.add(boundedPath);
   }
+
+  // Retain the pending collection until every caller-controlled identity has
+  // been validated, so a correct retry can still finish after invalid input.
+  pendingCollections.delete(normalizedRequestId);
 
   const orderedPaths: string[] = [];
   const seenPaths = new Set<string>();
@@ -267,10 +269,11 @@ export function generateModulePreloadHintsFromManifest(
   route: string,
   maxHints = 50,
 ): string[] {
+  const boundedMaxHints = assertMaxHints(maxHints);
   const modules = getRouteModulePaths(projectSlug, route);
   if (modules.length === 0) return [];
 
-  return modules.slice(0, assertMaxHints(maxHints)).map((path) => {
+  return modules.slice(0, boundedMaxHints).map((path) => {
     const url = escapeHtml(`/_vf_modules/${path}`);
     return `<link rel="modulepreload" href="${url}">`;
   });

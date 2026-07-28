@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { HMR_CLOSE_MESSAGE_TOO_LARGE, HMR_CLOSE_NORMAL } from "#veryfront/utils";
+import {
+  HMR_CLOSE_MESSAGE_TOO_LARGE,
+  HMR_CLOSE_NORMAL,
+  HMR_CLOSE_RATE_LIMIT,
+} from "#veryfront/utils";
 import type { WebSocketContext } from "#veryfront/server/dev-server/hmr-types.ts";
 import { closeAllConnections, setupWebSocketHandlers } from "./websocket-handler.ts";
 
@@ -14,6 +18,7 @@ class MockWebSocket {
   readonly sent: unknown[] = [];
   readonly closed: Array<{ code?: number; reason?: string }> = [];
   emitCloseOnClose = false;
+  onCloseCall: (() => void) | undefined;
   private readonly listeners = new Map<string, Set<EventListener>>();
 
   send(data: unknown): void {
@@ -22,6 +27,7 @@ class MockWebSocket {
 
   close(code?: number, reason?: string): void {
     this.closed.push({ code, reason });
+    this.onCloseCall?.();
     if (this.emitCloseOnClose) this.emitClose();
   }
 
@@ -85,8 +91,9 @@ function createContext(maxMessageSize: number): {
 describe("modules/server/websocket-handler", () => {
   it("enforces the UTF-8 byte boundary before rate limiting", () => {
     const socket = new MockWebSocket();
-    const { context, checks } = createContext(4);
-    setupWebSocketHandlers(asWebSocket(socket), context);
+    const webSocket = asWebSocket(socket);
+    const { context, checks, cleanups } = createContext(4);
+    setupWebSocketHandlers(webSocket, context);
 
     socket.emitMessage("ééé");
 
@@ -94,12 +101,15 @@ describe("modules/server/websocket-handler", () => {
       { code: HMR_CLOSE_MESSAGE_TOO_LARGE, reason: "Message too large" },
     ]);
     assertEquals(checks.value, 0);
+    assertEquals(cleanups, [webSocket]);
+    assertEquals(context.clients.size, 0);
   });
 
   it("enforces the byte boundary for Blob payloads", () => {
     const socket = new MockWebSocket();
-    const { context, checks } = createContext(2);
-    setupWebSocketHandlers(asWebSocket(socket), context);
+    const webSocket = asWebSocket(socket);
+    const { context, checks, cleanups } = createContext(2);
+    setupWebSocketHandlers(webSocket, context);
 
     socket.emitMessage(new Blob(["abc"]));
 
@@ -107,6 +117,24 @@ describe("modules/server/websocket-handler", () => {
       { code: HMR_CLOSE_MESSAGE_TOO_LARGE, reason: "Message too large" },
     ]);
     assertEquals(checks.value, 0);
+    assertEquals(cleanups, [webSocket]);
+    assertEquals(context.clients.size, 0);
+  });
+
+  it("immediately releases rate-limited clients", () => {
+    const socket = new MockWebSocket();
+    const webSocket = asWebSocket(socket);
+    const { context, cleanups } = createContext(100);
+    context.rateLimiter.check = () => false;
+    setupWebSocketHandlers(webSocket, context);
+
+    socket.emitMessage('{"type":"ping"}');
+
+    assertEquals(socket.closed, [
+      { code: HMR_CLOSE_RATE_LIMIT, reason: "Rate limit exceeded" },
+    ]);
+    assertEquals(cleanups, [webSocket]);
+    assertEquals(context.clients.size, 0);
   });
 
   it("rejects invalid message-size configuration before retaining the socket", () => {
@@ -161,6 +189,26 @@ describe("modules/server/websocket-handler", () => {
 
     assertEquals(cleaned, [webSocket]);
     assertEquals(clients.size, 0);
+  });
+
+  it("does not discard clients admitted after the shutdown snapshot", async () => {
+    const closing = new MockWebSocket();
+    const late = new MockWebSocket();
+    closing.emitCloseOnClose = true;
+    const closingSocket = asWebSocket(closing);
+    const lateSocket = asWebSocket(late);
+    const clients = new Set([closingSocket]);
+    closing.onCloseCall = () => clients.add(lateSocket);
+
+    await closeAllConnections(
+      clients,
+      { cleanup() {} },
+      { timeoutMs: 1_000 },
+    );
+
+    assertEquals(clients.has(closingSocket), false);
+    assertEquals(clients.has(lateSocket), true);
+    assertEquals(late.closed, []);
   });
 
   it("validates the close timeout before mutating client state", async () => {
