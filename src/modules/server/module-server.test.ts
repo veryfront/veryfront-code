@@ -218,6 +218,45 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status === 404 || response.status === 500, true);
   });
 
+  it("redacts internal module failures outside development", async () => {
+    const { serveModule } = await import("./module-server.ts");
+    const projectDir = "/module-error-redaction";
+    const sourcePath = `${projectDir}/page.ts`;
+    const secret = "sensitive adapter failure";
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(sourcePath, "export const page = true;");
+    const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
+    adapter.fs.readFile = (path) => {
+      if (path === sourcePath) return Promise.reject(new Error(secret));
+      return originalReadFile(path);
+    };
+    const request = new Request("http://localhost:3000/_vf_modules/page.js");
+    const options = {
+      projectId: "module-error-redaction",
+      projectDir,
+      adapter,
+    };
+
+    const productionResponse = await serveModule(request, {
+      ...options,
+      dev: false,
+    });
+    assertEquals(productionResponse.status, 500);
+    const productionBody = await productionResponse.text();
+    assertEquals(
+      productionBody,
+      `// Transform Error\nthrow new Error("Module transformation failed");`,
+    );
+    assertEquals(productionBody.includes(secret), false);
+
+    const developmentResponse = await serveModule(request, {
+      ...options,
+      dev: true,
+    });
+    assertEquals(developmentResponse.status, 500);
+    assertStringIncludes(await developmentResponse.text(), secret);
+  });
+
   it("should serve _dnt.shims.js with _veryfront/ prefix", async () => {
     const response = await serve(
       new Request("http://localhost:3000/_vf_modules/_veryfront/_dnt.shims.js"),

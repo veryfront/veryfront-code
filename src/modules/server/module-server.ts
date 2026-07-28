@@ -460,9 +460,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         } catch (error) {
           const errorMsg = getErrorMessage(error);
           logger.error("Snippet transform error", { hash, error: errorMsg });
+          const clientError = getClientModuleError(dev, errorMsg);
           return createModuleResponse(
             method,
-            `// Transform Error\nthrow new Error(${JSON.stringify(errorMsg)});`,
+            `// Transform Error\nthrow new Error(${JSON.stringify(clientError)});`,
             HTTP_SERVER_ERROR,
             {
               "Content-Type": "application/javascript; charset=utf-8",
@@ -559,11 +560,18 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             "Cache-Control": "no-cache",
           });
         } catch (error) {
-          logger.error("Cross-project error", { projectRef, error: String(error) });
-          return createModuleResponse(method, `// Error: ${String(error)}`, HTTP_SERVER_ERROR, {
-            "Content-Type": "application/javascript; charset=utf-8",
-            "Cache-Control": "no-cache",
-          });
+          const errorMsg = getErrorMessage(error);
+          logger.error("Cross-project error", { projectRef, error: errorMsg });
+          const clientError = getClientModuleError(dev, errorMsg);
+          return createModuleResponse(
+            method,
+            `// Transform Error\nthrow new Error(${JSON.stringify(clientError)});`,
+            HTTP_SERVER_ERROR,
+            {
+              "Content-Type": "application/javascript; charset=utf-8",
+              "Cache-Control": "no-cache",
+            },
+          );
         }
       }
 
@@ -815,7 +823,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         logger.error("Module transform error", { modulePath, error: errorMsg });
 
         const headers = getModuleHeaders(modulePath);
-        const errorBody = createDevModuleErrorBody(modulePath, errorMsg);
+        const errorBody = createModuleErrorBody(
+          modulePath,
+          getClientModuleError(dev, errorMsg),
+        );
 
         return createModuleResponse(method, errorBody, HTTP_SERVER_ERROR, headers);
       }
@@ -1219,7 +1230,13 @@ export function getDevModuleContentType(modulePath: string): string {
   return detected ?? "application/javascript; charset=utf-8";
 }
 
-function createDevModuleErrorBody(modulePath: string, errorMessage: string): string {
+const PRODUCTION_MODULE_ERROR = "Module transformation failed";
+
+function getClientModuleError(dev: boolean, errorMessage: string): string {
+  return dev ? errorMessage : PRODUCTION_MODULE_ERROR;
+}
+
+function createModuleErrorBody(modulePath: string, errorMessage: string): string {
   const normalizedPath = modulePath.toLowerCase();
 
   if (normalizedPath.endsWith(".css")) {
