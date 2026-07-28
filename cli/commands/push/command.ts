@@ -618,6 +618,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       let projectExists = true;
       try {
         mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
+        if (!dryRun && projectReferenceSource.kind === "inferred") {
+          await writeProjectSlug(projectDir, config.projectSlug);
+        }
       } catch (error) {
         // Project doesn't exist yet - create it on first push
         if (getErrorStatus(error) === 404) {
@@ -646,9 +649,17 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               }
               throw reserveError;
             }
-            if (reserveResult.slug !== config.projectSlug) {
+            if (
+              projectReferenceSource.kind === "inferred" ||
+              reserveResult.slug !== config.projectSlug
+            ) {
               await writeProjectSlug(projectDir, reserveResult.slug);
-              if (!quiet && !jsonOutput) logInfo(`Project slug: ${reserveResult.slug}`);
+              if (
+                reserveResult.slug !== config.projectSlug &&
+                !quiet && !jsonOutput
+              ) {
+                logInfo(`Project slug: ${reserveResult.slug}`);
+              }
             }
             config = { ...config, projectSlug: reserveResult.slug };
             // Now try to get files again (should be empty for new project)

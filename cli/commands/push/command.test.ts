@@ -860,6 +860,126 @@ describe("push receipt source snapshot", () => {
     });
   });
 
+  it("persists an inferred existing-project slug before uploading files", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_API_BASE_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    await withGitProject(async ({ projectDir }) => {
+      try {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.delete("VERYFRONT_API_BASE_URL");
+        for (const key of envKeys.slice(3)) Deno.env.delete(key);
+        await Deno.writeTextFile(
+          `${projectDir}/package.json`,
+          `${JSON.stringify({ name: "my-project" }, null, 2)}\n`,
+        );
+        _resetEnvironmentConfig();
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({ data: [], page_info: {} });
+          }
+          if (
+            request.method === "PUT" &&
+            url.pathname.startsWith("/projects/my-project/files/")
+          ) {
+            return Response.json({ error: "upload failed" }, { status: 500 });
+          }
+
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await assertRejects(
+          () => pushCommand({ projectDir, quiet: true }),
+          Error,
+          "failed",
+        );
+
+        const config = JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`));
+        assertEquals(config.projectSlug, "my-project");
+      } finally {
+        globalThis.fetch = originalFetch;
+        envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+        _resetEnvironmentConfig();
+      }
+    });
+  });
+
+  it("persists an accepted inferred slug before uploading project files", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_API_BASE_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    await withGitProject(async ({ projectDir }) => {
+      try {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.delete("VERYFRONT_API_BASE_URL");
+        for (const key of envKeys.slice(3)) Deno.env.delete(key);
+        await Deno.writeTextFile(
+          `${projectDir}/package.json`,
+          `${JSON.stringify({ name: "my-project" }, null, 2)}\n`,
+        );
+        _resetEnvironmentConfig();
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          if (request.method === "POST" && url.pathname === "/projects") {
+            assertEquals((await request.json() as { slug: string }).slug, "my-project");
+            return Response.json({ id: "project-123" }, { status: 201 });
+          }
+          if (
+            request.method === "PUT" &&
+            url.pathname.startsWith("/projects/my-project/files/")
+          ) {
+            return Response.json({ error: "upload failed" }, { status: 500 });
+          }
+
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await assertRejects(
+          () => pushCommand({ projectDir, quiet: true }),
+          Error,
+          "failed",
+        );
+
+        const config = JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`));
+        assertEquals(config.projectSlug, "my-project");
+      } finally {
+        globalThis.fetch = originalFetch;
+        envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+        _resetEnvironmentConfig();
+      }
+    });
+  });
+
   it("does not reserve alternative projects for explicit slug sources", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
