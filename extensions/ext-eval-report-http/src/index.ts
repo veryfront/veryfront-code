@@ -271,7 +271,7 @@ const extEvalReportHttp: ExtensionFactory = (config?: unknown) => {
           ),
         );
         registeredIds.add(definition.id);
-        ctx.logger.info(`[ext-eval-report-http] EvalReportExporter "${definition.id}" registered`);
+        ctx.logger.debug(`[ext-eval-report-http] EvalReportExporter "${definition.id}" registered`);
       }
     },
     teardown() {

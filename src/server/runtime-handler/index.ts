@@ -325,11 +325,6 @@ export function createVeryfrontHandler(
   const configPromise = (async () => {
     const c = opts.config ? opts.config : await getConfig(projectDir, adapter);
     config = c;
-    if (c?.security?.csrf === undefined) {
-      logger.info(
-        "CSRF protection is not configured. Add `security: { csrf: true }` to veryfront.config.ts to enable.",
-      );
-    }
     return c;
   })();
 
@@ -415,6 +410,7 @@ export function createVeryfrontHandler(
         preparedRequest.trackingFacts.method,
         preparedRequest.trackingFacts.environment,
         preparedRequest.trackingFacts.releaseId,
+        opts.defaultEnvironment === "production",
       );
 
       startContentMetrics();

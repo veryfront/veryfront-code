@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   completeRequestTracking,
   completeRequestTrackingOnResponseEnd,
@@ -13,6 +13,13 @@ import {
 import { requestTracker } from "./request-tracker.ts";
 
 describe("server/runtime-handler/request-lifecycle", () => {
+  afterEach(() => {
+    for (const tracked of requestTracker.getInFlightRequests()) {
+      requestTracker.complete(tracked.requestId, 200);
+    }
+    requestTracker.shutdown();
+  });
+
   describe("startRequestLifecycle", () => {
     it("should return context with requestId", () => {
       const req = new Request("http://localhost/test");

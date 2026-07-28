@@ -6,6 +6,7 @@ import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts"
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
 import { createVeryfrontHandler } from "./index.ts";
 import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation.ts";
+import { requestTracker } from "./request-tracker.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -42,10 +43,27 @@ function createProxyModeHandler() {
   });
 }
 
+function captureConsoleOutput(): { lines: string[]; restore: () => void } {
+  const lines: string[] = [];
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  const capture = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+  console.log = capture;
+  console.warn = capture;
+  return {
+    lines,
+    restore: () => {
+      console.log = originalLog;
+      console.warn = originalWarn;
+    },
+  };
+}
+
 describe("server/runtime-handler/index", () => {
   afterEach(() => {
     injectIsolationDepsForTests(null);
     HMRHandler.shutdown();
+    requestTracker.shutdown();
   });
 
   it("returns 502 when x-project-slug is missing in proxy mode", async () => {
@@ -63,6 +81,35 @@ describe("server/runtime-handler/index", () => {
       error: "Missing project context",
       detail: "x-project-slug header is required in proxy mode",
     });
+  });
+
+  it("does not emit security guidance for the safe development defaults", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const adapter = new DenoAdapter();
+    const { lines, restore } = captureConsoleOutput();
+    const originalVeryfrontEnv = Deno.env.get("VERYFRONT_ENV");
+    Deno.env.set("VERYFRONT_ENV", "development");
+
+    try {
+      const handler = createVeryfrontHandler(projectDir, adapter, {
+        projectDir,
+        config: {} as any,
+      });
+      await handler.ready;
+      await handler(new Request("http://localhost/healthz"));
+    } finally {
+      restore();
+      if (originalVeryfrontEnv === undefined) Deno.env.delete("VERYFRONT_ENV");
+      else Deno.env.set("VERYFRONT_ENV", originalVeryfrontEnv);
+      HMRHandler.shutdown();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+
+    const securityGuidance = lines.filter((line) =>
+      line.includes("CSRF protection is not configured") ||
+      line.includes("Neither CORS nor CSRF protection is configured")
+    );
+    assertEquals(securityGuidance.length, 0);
   });
 
   it("returns 502 when x-token is missing in proxy mode", async () => {
