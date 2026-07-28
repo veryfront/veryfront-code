@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert";
@@ -92,10 +93,11 @@ describe("CLI doctor command", () => {
           reportDoctorResults([
             { name: "Runtime", status: "fail", message: "Unsupported" },
             { name: "Cache", status: "warn", message: "Not configured" },
-          ], {}),
+          ], { port: 3000 }),
         Error,
       );
 
+      assertInstanceOf(failure, Error);
       assertStringIncludes(failure.message, "1 warning");
       assertEquals(failure.message.includes("warning(s)"), false);
     } finally {
