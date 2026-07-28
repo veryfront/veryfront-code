@@ -250,7 +250,6 @@ export async function startCommand(options: StartOptions): Promise<void> {
       projectDir,
       signal: shutdownController.signal,
       requestInterceptor,
-      defaultProjectSlug: linkedProjectSlug,
       defaultProjectId,
       linkedProjectSlug,
     });

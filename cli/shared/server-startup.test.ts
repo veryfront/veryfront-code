@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { buildDiscoveryConfig } from "./server-startup.ts";
+import { buildDiscoveryConfig, buildProxyRuntimeProjectIdentity } from "./server-startup.ts";
 
 const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
@@ -32,7 +32,6 @@ describe("buildDiscoveryConfig", () => {
       projectDir: "/tmp/my-agent",
       signal: new AbortController().signal,
       requestInterceptor: (request: Request) => request,
-      defaultProjectSlug: undefined,
       defaultProjectId: "local-my-agent",
       linkedProjectSlug: undefined,
     });
@@ -50,11 +49,25 @@ describe("buildDiscoveryConfig", () => {
       projectDir: "/tmp/my-agent",
       signal: new AbortController().signal,
       requestInterceptor: (request: Request) => request,
-      defaultProjectSlug: "linked-project",
       defaultProjectId: "local-my-agent",
       linkedProjectSlug: "linked-project",
     });
 
     assertEquals(config.projectSlug, "linked-project");
+  });
+});
+
+describe("buildProxyRuntimeProjectIdentity", () => {
+  it("keeps the standalone slug paired with its local project id", () => {
+    assertEquals(
+      buildProxyRuntimeProjectIdentity({
+        defaultProjectId: "local-my-agent",
+        linkedProjectSlug: "linked-project",
+      }),
+      {
+        defaultProjectSlug: "local-my-agent",
+        defaultProjectId: "local-my-agent",
+      },
+    );
   });
 });
