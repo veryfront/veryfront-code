@@ -3,61 +3,59 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertInstanceOf,
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import {
+  RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  RELEASE_ASSET_UPLOAD_CONCURRENCY,
+} from "#veryfront/release-assets/constants.ts";
 import { parseReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
-import type { ReleaseAssetHttpDependencyVendor } from "#veryfront/release-assets/build-executor.ts";
+import {
+  buildCachedHttpDependencyAssets,
+  type ReleaseAssetHttpDependencyVendor,
+} from "#veryfront/release-assets/build-executor.ts";
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { generateLocalReleaseAssetManifest } from "./local-release-assets.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts";
+import { toFileUrl } from "#veryfront/compat/path/index.ts";
 
 function makeAdapter() {
-  const writes = new Map<string, string>();
-  const dirs: string[] = [];
+  const adapter = createMockAdapter();
   const removed: string[] = [];
+  const tempDir = "/tmp/vf-local-release-assets-test";
+  adapter.fs.makeTempDir = () => {
+    adapter.fs.directories.add(tempDir);
+    return Promise.resolve(tempDir);
+  };
+  const remove = adapter.fs.remove.bind(adapter.fs);
+  adapter.fs.remove = async (path, options) => {
+    removed.push(path);
+    await remove(path, options);
+  };
 
   return {
-    writes,
-    dirs,
+    writes: adapter.fs.files,
+    byteWrites: adapter.fs.byteFiles,
     removed,
-    adapter: {
-      id: "memory",
-      name: "memory",
-      capabilities: {},
-      env: { get: () => undefined },
-      server: {},
-      serve: () => {
-        throw new Error("not implemented");
-      },
-      fs: {
-        readFile: (path: string) => Promise.resolve(writes.get(path) ?? ""),
-        writeFile: (path: string, content: string) => {
-          writes.set(path, content);
-          return Promise.resolve();
-        },
-        exists: (path: string) => Promise.resolve(writes.has(path)),
-        readDir: async function* () {},
-        stat: () => Promise.resolve({ isFile: true, mtime: new Date() }),
-        mkdir: (path: string) => {
-          dirs.push(path);
-          return Promise.resolve();
-        },
-        remove: (path: string) => {
-          removed.push(path);
-          return Promise.resolve();
-        },
-        makeTempDir: () => Promise.resolve("/tmp/vf-local-release-assets-test"),
-        watch: () => {
-          throw new Error("not implemented");
-        },
-      },
-    },
+    adapter,
+    tempDir,
   };
+}
+
+function decodeAsset(
+  byteWrites: Map<string, Uint8Array>,
+  path: string,
+): string {
+  const bytes = byteWrites.get(path);
+  assertExists(bytes);
+  return new TextDecoder().decode(bytes);
 }
 
 const fakeVendorHttpImports: ReleaseAssetHttpDependencyVendor = (code) => {
@@ -106,11 +104,10 @@ describe("build/production-build/local-release-assets", () => {
 
   it("skips local dependency assets unless the dependency import-map flag is enabled", async () => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "");
-    const { adapter, writes } = makeAdapter();
+    const { adapter, byteWrites, writes } = makeAdapter();
 
     const manifest = await generateLocalReleaseAssetManifest({
-      // deno-lint-ignore no-explicit-any
-      adapter: adapter as any,
+      adapter,
       projectDir: "/project",
       outputDir: "/project/dist",
       dryRun: false,
@@ -119,15 +116,15 @@ describe("build/production-build/local-release-assets", () => {
 
     assertEquals(manifest, null);
     assertEquals(writes.size, 0);
+    assertEquals(byteWrites.size, 0);
   });
 
   it("writes a local release asset manifest and React dependency assets when enabled", async () => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
-    const { adapter, writes, removed } = makeAdapter();
+    const { adapter, byteWrites, writes, removed } = makeAdapter();
 
     const manifest = await generateLocalReleaseAssetManifest({
-      // deno-lint-ignore no-explicit-any
-      adapter: adapter as any,
+      adapter,
       projectDir: "/project",
       outputDir: "/project/dist",
       dryRun: false,
@@ -149,8 +146,7 @@ describe("build/production-build/local-release-assets", () => {
     assertEquals(parsed.dependencies.react.contentHash, manifest.dependencies.react.contentHash);
 
     const reactAssetPath = `/project/dist/_vf/assets/${manifest.dependencies.react.contentHash}.js`;
-    const reactAsset = writes.get(reactAssetPath);
-    assertExists(reactAsset);
+    const reactAsset = decodeAsset(byteWrites, reactAssetPath);
     assertEquals(reactAsset.includes("sourceUrl"), true);
     assertExists(manifest.dependencies["veryfront/head"]);
     assertExists(manifest.dependencies["veryfront/react/head"]);
@@ -158,8 +154,7 @@ describe("build/production-build/local-release-assets", () => {
     const headAssetPath = `/project/dist/_vf/assets/${
       manifest.dependencies["veryfront/head"].contentHash
     }.js`;
-    const headAsset = writes.get(headAssetPath);
-    assertExists(headAsset);
+    const headAsset = decodeAsset(byteWrites, headAssetPath);
     assertStringIncludes(
       headAsset,
       `/_vf/assets/${manifest.dependencies.react.contentHash}.js`,
@@ -170,11 +165,10 @@ describe("build/production-build/local-release-assets", () => {
 
   it("uses config.react.version for local release dependency assets", async () => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
-    const { adapter, writes } = makeAdapter();
+    const { adapter, byteWrites } = makeAdapter();
 
     const manifest = await generateLocalReleaseAssetManifest({
-      // deno-lint-ignore no-explicit-any
-      adapter: adapter as any,
+      adapter,
       projectDir: "/project",
       outputDir: "/project/dist",
       dryRun: false,
@@ -186,11 +180,199 @@ describe("build/production-build/local-release-assets", () => {
     assertExists(manifest);
     const reactDependency = manifest.dependencies.react;
     assertExists(reactDependency);
-    const reactAsset = writes.get(
+    const reactAsset = decodeAsset(
+      byteWrites,
       `/project/dist/_vf/assets/${reactDependency.contentHash}.js`,
     );
-    assertExists(reactAsset);
     assertStringIncludes(reactAsset, "react@18.3.1");
+  });
+
+  it("derives a validated source identity independent of the checkout path", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const first = makeAdapter();
+    const second = makeAdapter();
+    const common = {
+      outputDir: "/output",
+      dryRun: true,
+      config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+      vendorHttpImports: fakeVendorHttpImports,
+      frameworkTransform: fakeFrameworkTransform,
+    };
+
+    const firstManifest = await generateLocalReleaseAssetManifest({
+      ...common,
+      adapter: first.adapter,
+      projectDir: "/checkout/one",
+    });
+    const secondManifest = await generateLocalReleaseAssetManifest({
+      ...common,
+      adapter: second.adapter,
+      projectDir: "/different/checkout/two",
+    });
+
+    assertExists(firstManifest);
+    assertExists(secondManifest);
+    assertEquals(firstManifest.sourceContentHash, secondManifest.sourceContentHash);
+    assertEquals(Object.isFrozen(firstManifest), true);
+    assertEquals(first.writes.size + first.byteWrites.size, 0);
+    assertEquals(second.writes.size + second.byteWrites.size, 0);
+  });
+
+  it("validates the assembled manifest before returning or writing it", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const { adapter, byteWrites, writes } = makeAdapter();
+
+    await assertRejects(
+      () =>
+        generateLocalReleaseAssetManifest({
+          adapter,
+          projectDir: "/project",
+          outputDir: "/project/dist",
+          dryRun: false,
+          projectId: "",
+          config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+          vendorHttpImports: fakeVendorHttpImports,
+          frameworkTransform: fakeFrameworkTransform,
+        }),
+      Error,
+      "manifest failed internal validation",
+    );
+
+    assertEquals(writes.size + byteWrites.size, 0);
+  });
+
+  it("requires binary output support before creating build output", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const { adapter, byteWrites, writes } = makeAdapter();
+    adapter.fs.writeFileBytes = undefined;
+
+    await assertRejects(
+      () =>
+        generateLocalReleaseAssetManifest({
+          adapter,
+          projectDir: "/project",
+          outputDir: "/project/dist",
+          dryRun: false,
+          config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+          vendorHttpImports: fakeVendorHttpImports,
+          frameworkTransform: fakeFrameworkTransform,
+        }),
+      Error,
+      "does not support binary release asset output",
+    );
+
+    assertEquals(writes.size + byteWrites.size, 0);
+    assertEquals(adapter.fs.directories.has("/project/dist"), false);
+  });
+
+  it("preflights content-addressed outputs without overwriting existing bytes", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const { adapter, byteWrites, writes } = makeAdapter();
+    const options = {
+      adapter,
+      projectDir: "/project",
+      outputDir: "/project/dist",
+      config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+      vendorHttpImports: fakeVendorHttpImports,
+      frameworkTransform: fakeFrameworkTransform,
+    };
+    const planned = await generateLocalReleaseAssetManifest({
+      ...options,
+      dryRun: true,
+    });
+    assertExists(planned);
+    const plannedReact = planned.dependencies.react;
+    assertExists(plannedReact);
+    const existingPath = `/project/dist/_vf/assets/${plannedReact.contentHash}.js`;
+    byteWrites.set(existingPath, new Uint8Array([9]));
+
+    await assertRejects(
+      () =>
+        generateLocalReleaseAssetManifest({
+          ...options,
+          dryRun: false,
+        }),
+      Error,
+      "Local release asset output already exists",
+    );
+
+    assertEquals([...(byteWrites.get(existingPath) ?? [])], [9]);
+    assertEquals(writes.has("/project/dist/_veryfront/release-asset-manifest.json"), false);
+  });
+
+  it("treats dangling output symlinks as occupied destinations", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const root = await Deno.makeTempDir({ prefix: "vf-local-release-output-link-" });
+    const outputDir = `${root}/dist`;
+    const options = {
+      adapter: denoAdapter,
+      projectDir: `${root}/project`,
+      outputDir,
+      config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+      vendorHttpImports: fakeVendorHttpImports,
+      frameworkTransform: fakeFrameworkTransform,
+    };
+
+    try {
+      const planned = await generateLocalReleaseAssetManifest({
+        ...options,
+        dryRun: true,
+      });
+      assertExists(planned);
+      const react = planned.dependencies.react;
+      assertExists(react);
+      const assetPath = `${outputDir}/_vf/assets/${react.contentHash}.js`;
+      await Deno.mkdir(`${outputDir}/_vf/assets`, { recursive: true });
+      await Deno.mkdir(`${outputDir}/_veryfront`);
+      await Deno.symlink(`${root}/missing-target`, assetPath);
+
+      await assertRejects(
+        () =>
+          generateLocalReleaseAssetManifest({
+            ...options,
+            dryRun: false,
+          }),
+        Error,
+        "output already exists",
+      );
+      assertEquals((await Deno.lstat(assetPath)).isSymlink, true);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("rolls back every attempted output after a binary write fails", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const { adapter, byteWrites, writes } = makeAdapter();
+    const writeFileBytes = adapter.fs.writeFileBytes!.bind(adapter.fs);
+    let writeCount = 0;
+    adapter.fs.writeFileBytes = async (path, bytes) => {
+      writeCount++;
+      if (writeCount === 2) throw new Error("simulated asset storage failure");
+      await writeFileBytes(path, bytes);
+    };
+
+    await assertRejects(
+      () =>
+        generateLocalReleaseAssetManifest({
+          adapter,
+          projectDir: "/project",
+          outputDir: "/project/dist",
+          dryRun: false,
+          config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+          vendorHttpImports: fakeVendorHttpImports,
+          frameworkTransform: fakeFrameworkTransform,
+        }),
+      Error,
+      "simulated asset storage failure",
+    );
+
+    assertEquals(
+      [...byteWrites.keys()].some((path) => path.startsWith("/project/dist/")),
+      false,
+    );
+    assertEquals(writes.has("/project/dist/_veryfront/release-asset-manifest.json"), false);
+    assertEquals(adapter.fs.directories.has("/project/dist"), false);
   });
 
   it("includes existing cached HTTP dependency assets in the local manifest", async () => {
@@ -227,6 +409,205 @@ describe("build/production-build/local-release-assets", () => {
     }
   });
 
+  it("rejects file and symbolic-link cache roots", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-local-release-cache-root-" });
+    const filePath = `${root}/cache-file`;
+    const targetDir = `${root}/cache-target`;
+    const linkedDir = `${root}/cache-link`;
+
+    try {
+      await Deno.writeTextFile(filePath, "not a directory");
+      await Deno.mkdir(targetDir);
+      await Deno.symlink(targetDir, linkedDir, { type: "dir" });
+
+      await assertRejects(
+        () => buildCachedHttpDependencyAssets({ cacheDir: filePath }),
+        Error,
+        "not a safe directory",
+      );
+      await assertRejects(
+        () => buildCachedHttpDependencyAssets({ cacheDir: linkedDir }),
+        Error,
+        "not a safe directory",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("rejects symbolic links inside the cached dependency tree", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-local-release-cache-tree-" });
+    const cacheDir = `${root}/cache`;
+    const externalDir = `${root}/external`;
+
+    try {
+      await Deno.mkdir(cacheDir);
+      await Deno.mkdir(externalDir);
+      await Deno.writeTextFile(
+        `${externalDir}/http-linked.mjs`,
+        "/*! @vf-source: https://cdn.example/linked.js */\nexport default 1;\n",
+      );
+      await Deno.symlink(externalDir, `${cacheDir}/linked`, { type: "dir" });
+
+      await assertRejects(
+        () => buildCachedHttpDependencyAssets({ cacheDir }),
+        Error,
+        "contains a symbolic link",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("requires cached dependencies to carry valid HTTP provenance", async () => {
+    const cacheDir = await Deno.makeTempDir({ prefix: "vf-local-release-cache-source-" });
+
+    try {
+      await Deno.writeTextFile(
+        `${cacheDir}/http-unmarked.mjs`,
+        "export const localOnly = true;\n",
+      );
+      await assertRejects(
+        () => buildCachedHttpDependencyAssets({ cacheDir }),
+        Error,
+        "missing a valid HTTP source marker",
+      );
+    } finally {
+      await Deno.remove(cacheDir, { recursive: true });
+    }
+  });
+
+  it("rewrites canonical file URLs when cache paths contain URL-significant characters", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-local-release-cache-url-" });
+    const cacheDir = `${root}/bundle # cache`;
+    const childPath = `${cacheDir}/http-child.mjs`;
+    const parentPath = `${cacheDir}/http-parent.mjs`;
+    const childSource = "https://cdn.example/child.js";
+    const parentSource = "https://cdn.example/parent.js";
+
+    try {
+      await Deno.mkdir(cacheDir);
+      await Deno.writeTextFile(
+        childPath,
+        `/*! @vf-source: ${childSource} */\nexport default 1;\n`,
+      );
+      await Deno.writeTextFile(
+        parentPath,
+        `/*! @vf-source: ${parentSource} */\n` +
+          `import child from ${JSON.stringify(toFileUrl(childPath).href)};\n` +
+          "export default child;\n",
+      );
+
+      const built = await buildCachedHttpDependencyAssets({ cacheDir });
+      const parent = built.dependencies[parentSource];
+      assertExists(parent);
+      const parentAsset = built.assets.find((asset) => asset.contentHash === parent.contentHash);
+      assertExists(parentAsset);
+      const code = new TextDecoder().decode(parentAsset.bytes);
+      assertStringIncludes(code, "/_vf/assets/");
+      assertEquals(code.includes("file:"), false);
+      assertEquals(code.includes(root), false);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("rejects cached dependency bytes that are not valid UTF-8", async () => {
+    const cacheDir = await Deno.makeTempDir({ prefix: "vf-local-release-cache-utf8-" });
+
+    try {
+      await Deno.writeFile(
+        `${cacheDir}/http-invalid.mjs`,
+        new Uint8Array([0xff, 0xfe, 0xfd]),
+      );
+      await assertRejects(
+        () => buildCachedHttpDependencyAssets({ cacheDir }),
+        Error,
+        "not valid UTF-8",
+      );
+    } finally {
+      await Deno.remove(cacheDir, { recursive: true });
+    }
+  });
+
+  it("rejects conflicting dependency claims instead of applying source-order precedence", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-local-release-conflict-" });
+    const reactUrl = getReactImportMap("18.3.1").react;
+    const { adapter } = makeAdapter();
+
+    try {
+      await Deno.mkdir(`${projectDir}/.cache/veryfront-http-bundle`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/.cache/veryfront-http-bundle/http-conflict.mjs`,
+        `/*! @vf-source: ${reactUrl} */\nexport const stale = true;\n`,
+      );
+
+      await assertRejects(
+        () =>
+          generateLocalReleaseAssetManifest({
+            adapter,
+            projectDir,
+            outputDir: "/output",
+            dryRun: true,
+            config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+            vendorHttpImports: fakeVendorHttpImports,
+            frameworkTransform: fakeFrameworkTransform,
+          }),
+        Error,
+        "Conflicting release dependency",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("bounds concurrent asset writes", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-local-release-concurrency-" });
+    const { adapter } = makeAdapter();
+    const writeFileBytes = adapter.fs.writeFileBytes!.bind(adapter.fs);
+    let activeWrites = 0;
+    let maximumActiveWrites = 0;
+    adapter.fs.writeFileBytes = async (path, bytes) => {
+      activeWrites++;
+      maximumActiveWrites = Math.max(maximumActiveWrites, activeWrites);
+      try {
+        await Promise.resolve();
+        await writeFileBytes(path, bytes);
+      } finally {
+        activeWrites--;
+      }
+    };
+
+    try {
+      const cacheDir = `${projectDir}/.cache/veryfront-http-bundle`;
+      await Deno.mkdir(cacheDir, { recursive: true });
+      for (let index = 0; index < 24; index++) {
+        const sourceUrl = `https://cdn.example/dependency-${index}.js`;
+        await Deno.writeTextFile(
+          `${cacheDir}/http-${index}abc.mjs`,
+          `/*! @vf-source: ${sourceUrl} */\nexport const value = ${index};\n`,
+        );
+      }
+
+      await generateLocalReleaseAssetManifest({
+        adapter,
+        projectDir,
+        outputDir: "/output",
+        dryRun: false,
+        config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+        vendorHttpImports: fakeVendorHttpImports,
+        frameworkTransform: fakeFrameworkTransform,
+      });
+
+      assertEquals(maximumActiveWrites > 1, true);
+      assertEquals(maximumActiveWrites <= RELEASE_ASSET_UPLOAD_CONCURRENCY, true);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("fails the build when local React dependency assets cannot be vendored", async () => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const { adapter, removed } = makeAdapter();
@@ -234,8 +615,7 @@ describe("build/production-build/local-release-assets", () => {
     await assertRejects(
       () =>
         generateLocalReleaseAssetManifest({
-          // deno-lint-ignore no-explicit-any
-          adapter: adapter as any,
+          adapter,
           projectDir: "/project",
           outputDir: "/project/dist",
           dryRun: false,
@@ -248,5 +628,49 @@ describe("build/production-build/local-release-assets", () => {
     );
 
     assertEquals(removed.includes("/tmp/vf-local-release-assets-test"), true);
+  });
+
+  it("reports cleanup failures and preserves both failures when generation also fails", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const successful = makeAdapter();
+    successful.adapter.fs.remove = () => Promise.reject(new Error("cleanup denied"));
+
+    await assertRejects(
+      () =>
+        generateLocalReleaseAssetManifest({
+          adapter: successful.adapter,
+          projectDir: "/project",
+          outputDir: "/output",
+          dryRun: true,
+          config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+          vendorHttpImports: fakeVendorHttpImports,
+          frameworkTransform: fakeFrameworkTransform,
+        }),
+      Error,
+      "Failed to clean up",
+    );
+
+    const failed = makeAdapter();
+    failed.adapter.fs.remove = () => Promise.reject(new Error("cleanup also denied"));
+    let received: unknown;
+    try {
+      await generateLocalReleaseAssetManifest({
+        adapter: failed.adapter,
+        projectDir: "/project",
+        outputDir: "/output",
+        dryRun: true,
+        config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+        vendorHttpImports: () => {
+          throw new Error("vendoring failed");
+        },
+      });
+    } catch (error) {
+      received = error;
+    }
+
+    assertInstanceOf(received, AggregateError);
+    assertEquals(received.errors.length, 2);
+    assertStringIncludes(received.errors[0].message, "vendoring failed");
+    assertStringIncludes(received.errors[1].message, "temporary directory");
   });
 });

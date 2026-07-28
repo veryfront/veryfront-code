@@ -101,6 +101,7 @@ these v1 bounds.
 | Fallback gaps             |           20,000 |
 | Total route references    |          200,000 |
 | Bytes per asset           |           10 MiB |
+| Pending asset bytes       |          256 MiB |
 
 The build executor also caps the release file list, total source bytes, pending
 asset bytes, dependency traversal depth, CSS candidates, and upload

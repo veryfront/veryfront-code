@@ -1,10 +1,15 @@
 import { dirname, join } from "#veryfront/compat/path/index.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { FileInfo, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
   RELEASE_ASSET_BASE_PATH,
+  RELEASE_ASSET_CONTENT_TYPES,
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  RELEASE_ASSET_MANIFEST_LIMITS,
   RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+  RELEASE_ASSET_MAX_PENDING_BYTES,
+  RELEASE_ASSET_MAX_SIZE_BYTES,
+  RELEASE_ASSET_UPLOAD_CONCURRENCY,
 } from "#veryfront/release-assets/constants.ts";
 import {
   buildCachedHttpDependencyAssets,
@@ -15,13 +20,18 @@ import {
   type ReleaseAssetHttpDependencyVendor,
   type ReleaseAssetTransform,
 } from "#veryfront/release-assets/build-executor.ts";
-import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import {
+  parseReleaseAssetManifest,
+  type ReleaseAssetManifest,
+} from "#veryfront/release-assets/manifest-schema.ts";
 import { computeHashBytes } from "#veryfront/utils";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 export const LOCAL_RELEASE_ASSET_MANIFEST_PATH = "_veryfront/release-asset-manifest.json";
+const LOCAL_RELEASE_ASSET_SOURCE_IDENTITY_VERSION = 1;
 
 export interface LocalReleaseAssetOptions {
   adapter: RuntimeAdapter;
@@ -40,17 +50,410 @@ function shouldBuildLocalDependencyAssets(): boolean {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  try {
+    return error instanceof Error ? error.message : String(error);
+  } catch {
+    return "Unknown error";
+  }
 }
 
-async function writePreparedAsset(
+type PreparedAssetMetadata = Omit<PreparedReleaseAsset, "bytes">;
+
+function compareText(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
+function preparedMetadataEqual(
+  left: PreparedAssetMetadata,
+  right: PreparedAssetMetadata,
+): boolean {
+  return left.contentHash === right.contentHash &&
+    left.size === right.size &&
+    left.contentType === right.contentType;
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  for (let index = 0; index < left.byteLength; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+function mergeDependencyRecords(
+  ...records: Array<Record<string, PreparedAssetMetadata>>
+): Record<string, PreparedAssetMetadata> {
+  const merged: Record<string, PreparedAssetMetadata> = Object.create(null);
+  for (const record of records) {
+    for (const [specifier, entry] of Object.entries(record)) {
+      const existing = Object.hasOwn(merged, specifier) ? merged[specifier] : undefined;
+      if (existing && !preparedMetadataEqual(existing, entry)) {
+        throw new Error(`Conflicting local release dependency manifest key: ${specifier}`);
+      }
+      Object.defineProperty(merged, specifier, {
+        value: entry,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+  }
+
+  return Object.fromEntries(
+    Object.entries(merged).sort(([left], [right]) => compareText(left, right)),
+  );
+}
+
+function mergeGaps(...groups: string[][]): string[] {
+  const gaps = [...new Set(groups.flat())].sort(compareText);
+  if (gaps.length > RELEASE_ASSET_MANIFEST_LIMITS.fallbackGaps) {
+    throw new Error(
+      `Local release dependency gaps exceed ${RELEASE_ASSET_MANIFEST_LIMITS.fallbackGaps} entries`,
+    );
+  }
+  return gaps;
+}
+
+async function collectVerifiedAssets(
+  groups: PreparedReleaseAsset[][],
+  dependencies: Record<string, PreparedAssetMetadata>,
+): Promise<PreparedReleaseAsset[]> {
+  const assetsByHash = new Map<string, PreparedReleaseAsset>();
+  let totalBytes = 0;
+
+  for (const asset of groups.flat()) {
+    if (
+      !(asset.bytes instanceof Uint8Array) ||
+      asset.contentType !== RELEASE_ASSET_CONTENT_TYPES.js ||
+      !Number.isSafeInteger(asset.size) ||
+      asset.size < 0 ||
+      asset.size > RELEASE_ASSET_MAX_SIZE_BYTES ||
+      asset.bytes.byteLength !== asset.size
+    ) {
+      throw new Error("Local release dependency asset has invalid metadata");
+    }
+
+    const existing = assetsByHash.get(asset.contentHash);
+    if (existing) {
+      if (!preparedMetadataEqual(existing, asset) || !bytesEqual(existing.bytes, asset.bytes)) {
+        throw new Error(`Local release dependency asset hash collision: ${asset.contentHash}`);
+      }
+      continue;
+    }
+
+    totalBytes += asset.size;
+    if (
+      !Number.isSafeInteger(totalBytes) ||
+      totalBytes > RELEASE_ASSET_MAX_PENDING_BYTES
+    ) {
+      throw new Error(
+        `Local release dependency assets exceed ${RELEASE_ASSET_MAX_PENDING_BYTES} bytes`,
+      );
+    }
+    assetsByHash.set(asset.contentHash, asset);
+  }
+
+  const uniqueAssets = [...assetsByHash.values()];
+  await runBoundedTasks(
+    uniqueAssets,
+    RELEASE_ASSET_UPLOAD_CONCURRENCY,
+    async (asset) => {
+      const actualHash = await computeHashBytes(
+        asset.bytes as Uint8Array<ArrayBuffer>,
+      );
+      if (actualHash !== asset.contentHash) {
+        throw new Error(`Local release dependency asset hash mismatch: ${asset.contentHash}`);
+      }
+    },
+  );
+
+  const referencedHashes = new Set<string>();
+  for (const [specifier, dependency] of Object.entries(dependencies)) {
+    const asset = assetsByHash.get(dependency.contentHash);
+    if (!asset || !preparedMetadataEqual(asset, dependency)) {
+      throw new Error(`Local release dependency has no matching asset: ${specifier}`);
+    }
+    referencedHashes.add(dependency.contentHash);
+  }
+  for (const contentHash of assetsByHash.keys()) {
+    if (!referencedHashes.has(contentHash)) {
+      throw new Error(`Local release dependency asset is unreferenced: ${contentHash}`);
+    }
+  }
+
+  return uniqueAssets.sort((left, right) => compareText(left.contentHash, right.contentHash));
+}
+
+async function computeSourceContentHash(
+  reactVersion: string,
+  dependencies: Record<string, PreparedAssetMetadata>,
+  gaps: string[],
+): Promise<string> {
+  const identity = {
+    version: LOCAL_RELEASE_ASSET_SOURCE_IDENTITY_VERSION,
+    reactVersion,
+    dependencies: Object.entries(dependencies).map(([specifier, entry]) => ({
+      specifier,
+      contentHash: entry.contentHash,
+      size: entry.size,
+      contentType: entry.contentType,
+    })),
+    gaps,
+  };
+  return await computeHashBytes(
+    new TextEncoder().encode(JSON.stringify(identity)) as Uint8Array<ArrayBuffer>,
+  );
+}
+
+async function runBoundedTasks<T>(
+  items: readonly T[],
+  concurrency: number,
+  task: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) return;
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
+    throw new TypeError("Local release asset concurrency must be a positive safe integer");
+  }
+
+  let nextIndex = 0;
+  let stopScheduling = false;
+  const failures: Array<{ index: number; error: unknown }> = [];
+
+  async function worker(): Promise<void> {
+    while (!stopScheduling) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      try {
+        await task(items[index]!, index);
+      } catch (error) {
+        failures.push({ index, error });
+        stopScheduling = true;
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, items.length) },
+      () => worker(),
+    ),
+  );
+
+  failures.sort((left, right) => left.index - right.index);
+  if (failures.length === 1) throw failures[0]!.error;
+  if (failures.length > 1) {
+    throw new AggregateError(
+      failures.map(({ error }) => error),
+      `${failures.length} local release asset operations failed`,
+    );
+  }
+}
+
+async function statPath(
+  adapter: RuntimeAdapter,
+  path: string,
+): Promise<FileInfo> {
+  const lstat = adapter.fs.lstat?.bind(adapter.fs);
+  return lstat ? await lstat(path) : await adapter.fs.stat(path);
+}
+
+async function statPathIfPresent(
+  adapter: RuntimeAdapter,
+  path: string,
+): Promise<FileInfo | null> {
+  try {
+    return await statPath(adapter, path);
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+}
+
+async function planOutputDirectories(
+  adapter: RuntimeAdapter,
+  directoryPaths: string[],
+): Promise<string[]> {
+  const missing: string[] = [];
+  for (const path of directoryPaths) {
+    const info = await statPathIfPresent(adapter, path);
+    if (!info) {
+      missing.push(path);
+      continue;
+    }
+    if (info.isSymlink || !info.isDirectory || info.isFile) {
+      throw new Error(`Local release asset output path is not a safe directory: ${path}`);
+    }
+  }
+  return missing;
+}
+
+async function preflightOutputFiles(
+  adapter: RuntimeAdapter,
+  paths: string[],
+): Promise<void> {
+  await runBoundedTasks(
+    paths,
+    RELEASE_ASSET_UPLOAD_CONCURRENCY,
+    async (path) => {
+      if (await statPathIfPresent(adapter, path)) {
+        throw new Error(`Local release asset output already exists: ${path}`);
+      }
+    },
+  );
+}
+
+async function rollbackOutput(
+  adapter: RuntimeAdapter,
+  attemptedFiles: string[],
+  createdDirectories: string[],
+): Promise<unknown[]> {
+  const failures: unknown[] = [];
+  const uniqueFiles = [...new Set(attemptedFiles)];
+  for (const path of uniqueFiles.reverse()) {
+    try {
+      await adapter.fs.remove(path);
+    } catch (error) {
+      if (!isNotFoundError(error)) failures.push(error);
+    }
+  }
+  for (const path of [...createdDirectories].reverse()) {
+    try {
+      await adapter.fs.remove(path);
+    } catch (error) {
+      if (!isNotFoundError(error)) failures.push(error);
+    }
+  }
+  return failures;
+}
+
+async function writeLocalReleaseOutputs(
   adapter: RuntimeAdapter,
   outputDir: string,
-  asset: PreparedReleaseAsset,
+  assets: PreparedReleaseAsset[],
+  manifest: ReleaseAssetManifest,
 ): Promise<void> {
-  const assetPath = join(outputDir, RELEASE_ASSET_BASE_PATH, `${asset.contentHash}.js`);
-  await adapter.fs.mkdir(dirname(assetPath), { recursive: true });
-  await adapter.fs.writeFile(assetPath, new TextDecoder().decode(asset.bytes));
+  const writeFileBytes = adapter.fs.writeFileBytes?.bind(adapter.fs);
+  if (assets.length > 0 && !writeFileBytes) {
+    throw new Error("The selected runtime adapter does not support binary release asset output");
+  }
+
+  const assetDir = join(outputDir, RELEASE_ASSET_BASE_PATH);
+  const manifestPath = join(outputDir, LOCAL_RELEASE_ASSET_MANIFEST_PATH);
+  const directoryPaths = [
+    outputDir,
+    ...(assets.length > 0 ? [dirname(assetDir), assetDir] : []),
+    dirname(manifestPath),
+  ].filter((path, index, paths) => paths.indexOf(path) === index);
+  const destinationPaths = [
+    ...assets.map((asset) => join(assetDir, `${asset.contentHash}.js`)),
+    manifestPath,
+  ];
+
+  const missingDirectories = await planOutputDirectories(adapter, directoryPaths);
+  await preflightOutputFiles(adapter, destinationPaths);
+
+  const createdDirectories: string[] = [];
+  const attemptedFiles: string[] = [];
+  try {
+    for (const path of missingDirectories) {
+      await adapter.fs.mkdir(path, { recursive: true });
+      createdDirectories.push(path);
+    }
+
+    await runBoundedTasks(
+      assets,
+      RELEASE_ASSET_UPLOAD_CONCURRENCY,
+      async (asset) => {
+        const assetPath = join(assetDir, `${asset.contentHash}.js`);
+        attemptedFiles.push(assetPath);
+        await writeFileBytes!(assetPath, asset.bytes);
+      },
+    );
+
+    attemptedFiles.push(manifestPath);
+    await adapter.fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+  } catch (error) {
+    const rollbackFailures = await rollbackOutput(
+      adapter,
+      attemptedFiles,
+      createdDirectories,
+    );
+    if (rollbackFailures.length > 0) {
+      throw new AggregateError(
+        [error, ...rollbackFailures],
+        "Local release asset output failed and rollback was incomplete",
+      );
+    }
+    throw error;
+  }
+}
+
+async function buildLocalReleaseAssets(
+  options: LocalReleaseAssetOptions,
+  tempDir: string,
+): Promise<{ manifest: ReleaseAssetManifest; assets: PreparedReleaseAsset[] }> {
+  const reactVersion = await resolveProjectReactVersion({
+    projectDir: options.projectDir,
+    config: options.config,
+  });
+  const built = await buildReactImportMapDependencyAssets({
+    tempDir,
+    reactVersion,
+    vendorHttpImports: options.vendorHttpImports,
+  });
+  const cached = await buildCachedHttpDependencyAssets({
+    cacheDir: join(options.projectDir, ".cache", "veryfront-http-bundle"),
+  });
+  let dependencies = mergeDependencyRecords(cached.dependencies, built.dependencies);
+  const dependencyUrls = buildReleaseAssetDependencyUrlMap(dependencies);
+  const framework = await buildFrameworkDependencyAssets({
+    tempDir,
+    adapter: options.adapter,
+    reactVersion,
+    projectId: options.projectId ?? "local",
+    transform: options.frameworkTransform,
+    dependencyUrls,
+  });
+  dependencies = mergeDependencyRecords(dependencies, framework.dependencies);
+  const gaps = mergeGaps(cached.gaps, built.gaps, framework.gaps);
+  const assets = await collectVerifiedAssets(
+    [cached.assets, built.assets, framework.assets],
+    dependencies,
+  );
+  const sourceContentHash = await computeSourceContentHash(
+    reactVersion,
+    dependencies,
+    gaps,
+  );
+
+  const candidate: ReleaseAssetManifest = {
+    schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+    projectId: options.projectId ?? "local",
+    releaseId: options.releaseId ?? "standalone-dev",
+    releaseVersion: 0,
+    manifestVersion: 1,
+    builderVersion: VERSION,
+    sourceContentHash,
+    createdAt: new Date().toISOString(),
+    assetBasePath: RELEASE_ASSET_BASE_PATH,
+    modules: {},
+    css: [],
+    routes: {},
+    dependencies: Object.fromEntries(
+      Object.entries(dependencies).map(([specifier, entry]) => [specifier, {
+        contentHash: entry.contentHash,
+        size: entry.size,
+        contentType: entry.contentType,
+      }]),
+    ),
+    fallback: { mode: "jit", gaps },
+  };
+  const manifest = parseReleaseAssetManifest(candidate);
+  if (!manifest) {
+    throw new Error("Local release asset manifest failed internal validation");
+  }
+  return { manifest, assets };
 }
 
 export async function generateLocalReleaseAssetManifest(
@@ -58,92 +461,58 @@ export async function generateLocalReleaseAssetManifest(
 ): Promise<ReleaseAssetManifest | null> {
   if (!shouldBuildLocalDependencyAssets()) return null;
 
-  const tempDir = await options.adapter.fs.makeTempDir("vf-local-release-assets-");
-
+  let tempDir: string;
   try {
-    try {
-      const reactVersion = await resolveProjectReactVersion({
-        projectDir: options.projectDir,
-        config: options.config,
-      });
-      const built = await buildReactImportMapDependencyAssets({
-        tempDir,
-        reactVersion,
-        vendorHttpImports: options.vendorHttpImports,
-      });
-      const cached = await buildCachedHttpDependencyAssets({
-        cacheDir: join(options.projectDir, ".cache", "veryfront-http-bundle"),
-      });
-      let dependencies = { ...cached.dependencies, ...built.dependencies };
-      const dependencyUrls = buildReleaseAssetDependencyUrlMap(dependencies);
-      const framework = await buildFrameworkDependencyAssets({
-        tempDir,
-        adapter: options.adapter,
-        reactVersion,
-        projectId: options.projectId ?? "local",
-        transform: options.frameworkTransform,
-        dependencyUrls,
-      });
-      dependencies = { ...dependencies, ...framework.dependencies };
-      const assetsByHash = new Map<string, PreparedReleaseAsset>();
-      for (const asset of [...cached.assets, ...built.assets, ...framework.assets]) {
-        assetsByHash.set(asset.contentHash, asset);
-      }
-      const gaps = [...cached.gaps, ...built.gaps, ...framework.gaps];
-      const sourceContentHash = await computeHashBytes(
-        new TextEncoder().encode(
-          [
-            options.projectDir,
-            reactVersion,
-            ...Object.entries(dependencies)
-              .map(([specifier, entry]) => `${specifier}:${entry.contentHash}`)
-              .sort(),
-          ].join("\n"),
-        ) as Uint8Array<ArrayBuffer>,
-      );
+    tempDir = await options.adapter.fs.makeTempDir("vf-local-release-assets-");
+  } catch (error) {
+    throw new Error(
+      `Failed to generate local release dependency assets: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
 
-      const manifest: ReleaseAssetManifest = {
-        schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
-        projectId: options.projectId ?? "local",
-        releaseId: options.releaseId ?? "standalone-dev",
-        releaseVersion: 0,
-        manifestVersion: 1,
-        builderVersion: VERSION,
-        sourceContentHash,
-        createdAt: new Date().toISOString(),
-        assetBasePath: RELEASE_ASSET_BASE_PATH,
-        modules: {},
-        css: [],
-        routes: {},
-        dependencies: Object.fromEntries(
-          Object.entries(dependencies).map(([specifier, entry]) => [specifier, {
-            contentHash: entry.contentHash,
-            size: entry.size,
-            contentType: entry.contentType,
-          }]),
-        ),
-        fallback: { mode: "jit", gaps },
-      };
-
-      if (options.dryRun) return manifest;
-
-      await Promise.all(
-        [...assetsByHash.values()].map((asset) =>
-          writePreparedAsset(options.adapter, options.outputDir, asset)
-        ),
-      );
-
-      const manifestPath = join(options.outputDir, LOCAL_RELEASE_ASSET_MANIFEST_PATH);
-      await options.adapter.fs.mkdir(dirname(manifestPath), { recursive: true });
-      await options.adapter.fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
-
-      return manifest;
-    } catch (error) {
-      throw new Error(
-        `Failed to generate local release dependency assets: ${errorMessage(error)}`,
+  let result: ReleaseAssetManifest | undefined;
+  let generationFailure: Error | undefined;
+  try {
+    const built = await buildLocalReleaseAssets(options, tempDir);
+    if (!options.dryRun) {
+      await writeLocalReleaseOutputs(
+        options.adapter,
+        options.outputDir,
+        built.assets,
+        built.manifest,
       );
     }
-  } finally {
-    await options.adapter.fs.remove(tempDir, { recursive: true }).catch(() => undefined);
+    result = built.manifest;
+  } catch (error) {
+    generationFailure = new Error(
+      `Failed to generate local release dependency assets: ${errorMessage(error)}`,
+      { cause: error },
+    );
   }
+
+  let cleanupFailure: Error | undefined;
+  try {
+    await options.adapter.fs.remove(tempDir, { recursive: true });
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      cleanupFailure = new Error(
+        "Failed to clean up the local release dependency asset temporary directory",
+        { cause: error },
+      );
+    }
+  }
+
+  if (generationFailure && cleanupFailure) {
+    throw new AggregateError(
+      [generationFailure, cleanupFailure],
+      "Local release dependency asset generation and cleanup both failed",
+    );
+  }
+  if (generationFailure) throw generationFailure;
+  if (cleanupFailure) throw cleanupFailure;
+  if (!result) {
+    throw new Error("Local release dependency asset generation produced no manifest");
+  }
+  return result;
 }

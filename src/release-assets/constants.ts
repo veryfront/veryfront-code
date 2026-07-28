@@ -33,6 +33,9 @@ export const RELEASE_ASSET_CONTENT_TYPE_ALLOWLIST: readonly ReleaseAssetContentT
 /** Maximum size (bytes) for a single uploaded asset (10 MB). */
 export const RELEASE_ASSET_MAX_SIZE_BYTES = 10 * 1024 * 1024;
 
+/** Maximum aggregate bytes retained while preparing one asset generation. */
+export const RELEASE_ASSET_MAX_PENDING_BYTES = 256 * 1024 * 1024;
+
 /** Work and memory bounds enforced by every manifest producer and consumer. */
 export const RELEASE_ASSET_MANIFEST_LIMITS = Object.freeze(
   {

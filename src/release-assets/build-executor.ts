@@ -29,10 +29,17 @@ import { createConfigShimModule } from "#veryfront/config/config-shim.ts";
 import { mergeConfigs as mergeLoadedConfig } from "#veryfront/config/loader.ts";
 import { serverLogger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { dirname, isAbsolute, join, normalize, toFileUrl } from "#veryfront/compat/path/index.ts";
+import {
+  dirname,
+  fromFileUrl,
+  isAbsolute,
+  join,
+  normalize,
+  toFileUrl,
+} from "#veryfront/compat/path/index.ts";
 import {
   FRAMEWORK_EMBEDDED_SRC_DIR,
   FRAMEWORK_SRC_DIR,
@@ -66,6 +73,7 @@ import {
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
   RELEASE_ASSET_MANIFEST_LIMITS,
   RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+  RELEASE_ASSET_MAX_PENDING_BYTES,
   RELEASE_ASSET_MAX_SIZE_BYTES,
   RELEASE_ASSET_UPLOAD_CONCURRENCY,
   type ReleaseAssetContentType,
@@ -104,14 +112,13 @@ const REACT_IMPORT_MAP_DEPENDENCIES = [
 const MAX_RELEASE_FILES = 50_000;
 const MAX_RELEASE_FILE_PATH_LENGTH = RELEASE_ASSET_MANIFEST_LIMITS.manifestKeyLength;
 const MAX_RELEASE_SOURCE_BYTES = 64 * 1024 * 1024;
-const MAX_PENDING_ASSET_BYTES = 256 * 1024 * 1024;
 const MAX_CSS_CANDIDATES = 100_000;
 const MAX_CSS_INPUT_BYTES = RELEASE_ASSET_MAX_SIZE_BYTES;
 const MAX_BUILD_IDENTIFIER_LENGTH = RELEASE_ASSET_MANIFEST_LIMITS.identifierLength;
 const MAX_STYLE_PROFILE_HASH_LENGTH = RELEASE_ASSET_MANIFEST_LIMITS.styleProfileHashLength;
 const MAX_DEPENDENCY_MODULES = RELEASE_ASSET_MANIFEST_LIMITS.dependencyEntries;
 const MAX_DEPENDENCY_SPECIFIERS = RELEASE_ASSET_MANIFEST_LIMITS.dependencySpecifiers;
-const MAX_DEPENDENCY_SOURCE_BYTES = MAX_PENDING_ASSET_BYTES;
+const MAX_DEPENDENCY_SOURCE_BYTES = RELEASE_ASSET_MAX_PENDING_BYTES;
 const MAX_DEPENDENCY_DIRECTORY_DEPTH = 64;
 const MAX_DEPENDENCY_SPECIFIER_LENGTH = RELEASE_ASSET_MANIFEST_LIMITS.manifestKeyLength;
 const FRAMEWORK_DEPENDENCY_ENTRY_RESERVE = Object.keys(PLATFORM_UTILITIES).length;
@@ -326,9 +333,9 @@ function rememberPendingAsset(
     return false;
   }
 
-  if (store.totalBytes + bytes.byteLength > MAX_PENDING_ASSET_BYTES) {
+  if (store.totalBytes + bytes.byteLength > RELEASE_ASSET_MAX_PENDING_BYTES) {
     throw new Error(
-      `Pending release assets exceed ${MAX_PENDING_ASSET_BYTES} bytes`,
+      `Pending release assets exceed ${RELEASE_ASSET_MAX_PENDING_BYTES} bytes`,
     );
   }
 
@@ -796,7 +803,7 @@ function addDependencyUrlAliases(
 ): void {
   setDependencyUrlAlias(urls, dependency.manifestKey, url);
   if (dependency.sourcePath) {
-    setDependencyUrlAlias(urls, `file://${dependency.sourcePath}`, url);
+    setDependencyUrlAlias(urls, toFileUrl(dependency.sourcePath).href, url);
   }
   for (const specifier of dependency.specifiers) {
     setDependencyUrlAlias(urls, normalizeDependencySpecifier(specifier), url);
@@ -1126,7 +1133,7 @@ function resolveLocalDependencyPath(specifier: string, parentFilePath?: string):
       ) {
         return null;
       }
-      return normalize(decodeURIComponent(url.pathname));
+      return normalize(fromFileUrl(url));
     } catch (_) {
       return null;
     }
@@ -1143,6 +1150,65 @@ function isPathInsideRoot(filePath: string, rootPath: string): boolean {
   const file = normalize(filePath);
   const root = normalize(rootPath);
   return file === root || file.startsWith(`${root}/`) || file.startsWith(`${root}\\`);
+}
+
+async function readHttpDependencyCacheFile(
+  fs: ReturnType<typeof createFileSystem>,
+  filePath: string,
+): Promise<{ code: string; sourceUrl: string }> {
+  const fileInfo = fs.lstat ? await fs.lstat(filePath) : await fs.stat(filePath);
+  if (
+    fileInfo.isSymlink ||
+    !fileInfo.isFile ||
+    fileInfo.isDirectory ||
+    !Number.isSafeInteger(fileInfo.size) ||
+    fileInfo.size < 0 ||
+    fileInfo.size > RELEASE_ASSET_MAX_SIZE_BYTES
+  ) {
+    throw new Error("HTTP dependency cache file is not a safe bounded regular file");
+  }
+
+  const bytes = await fs.readFile(filePath);
+  if (
+    bytes.byteLength !== fileInfo.size ||
+    bytes.byteLength > RELEASE_ASSET_MAX_SIZE_BYTES
+  ) {
+    throw new Error("HTTP dependency cache file changed while it was being read");
+  }
+
+  let code: string;
+  try {
+    code = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (error) {
+    throw new Error("HTTP dependency cache file is not valid UTF-8", { cause: error });
+  }
+
+  const embeddedSourceUrl = extractSourceUrl(code);
+  if (
+    !isSafeBuildText(embeddedSourceUrl, MAX_DEPENDENCY_SPECIFIER_LENGTH) ||
+    (!embeddedSourceUrl.startsWith("http://") &&
+      !embeddedSourceUrl.startsWith("https://"))
+  ) {
+    throw new Error("HTTP dependency cache file is missing a valid HTTP source marker");
+  }
+
+  let parsedSourceUrl: URL;
+  try {
+    parsedSourceUrl = new URL(embeddedSourceUrl);
+  } catch (error) {
+    throw new Error("HTTP dependency cache file has an invalid HTTP source marker", {
+      cause: error,
+    });
+  }
+  if (parsedSourceUrl.protocol !== "http:" && parsedSourceUrl.protocol !== "https:") {
+    throw new Error("HTTP dependency cache file has an invalid HTTP source marker");
+  }
+
+  const sourceUrl = normalizeHttpUrl(parsedSourceUrl.toString());
+  if (!isSafeBuildText(sourceUrl, MAX_DEPENDENCY_SPECIFIER_LENGTH)) {
+    throw new Error("HTTP dependency cache source exceeds the supported boundary");
+  }
+  return { code, sourceUrl };
 }
 
 function isSafeBuildText(
@@ -1212,6 +1278,7 @@ async function collectLocalHttpDependencyModules(
 ): Promise<void> {
   const fs = createFileSystem();
   const cacheRoot = normalize(cacheDir);
+  let physicalCacheRoot: string | undefined;
   const seen = new Set<string>();
   const queue: Array<{ specifier: string; parentFilePath?: string }> = [];
 
@@ -1236,22 +1303,21 @@ async function collectLocalHttpDependencyModules(
     if (!isPathInsideRoot(filePath, cacheRoot)) {
       throw new Error(`Vendored HTTP dependency resolved outside cache root: ${specifier}`);
     }
+    physicalCacheRoot ??= normalize(await realPath(cacheDir));
+    const physicalFilePath = normalize(await realPath(filePath));
+    if (!isPathInsideRoot(physicalFilePath, physicalCacheRoot)) {
+      throw new Error(`Vendored HTTP dependency escaped its physical cache root: ${specifier}`);
+    }
     seen.add(filePath);
 
-    const fileInfo = await fs.stat(filePath);
-    if (
-      !fileInfo.isFile ||
-      !Number.isSafeInteger(fileInfo.size) ||
-      fileInfo.size < 0 ||
-      fileInfo.size > RELEASE_ASSET_MAX_SIZE_BYTES
-    ) {
-      throw new Error("Vendored dependency file exceeds the supported boundary");
-    }
-    const depCode = await fs.readTextFile(filePath);
-    const manifestKey = extractSourceUrl(depCode) ?? `file://${filePath}`;
+    const { code: depCode, sourceUrl: manifestKey } = await readHttpDependencyCacheFile(
+      fs,
+      filePath,
+    );
+    const fileUrl = toFileUrl(filePath).href;
     const depSpecifiers = new Set<string>([
       normalizeDependencySpecifier(specifier),
-      `file://${filePath}`,
+      fileUrl,
     ]);
 
     mergeDependencyModules(
@@ -1363,12 +1429,14 @@ export async function buildReactImportMapDependencyAssets(options: {
 
 async function collectCachedHttpDependencyModules(
   cacheDir: string,
+  physicalCacheRoot: string,
   dependencies: DependencyModuleCollection,
 ): Promise<void> {
   const fs = createFileSystem();
   const cacheRoot = normalize(cacheDir);
 
   let fileCount = 0;
+  let entryCount = 0;
 
   async function visit(dir: string, depth: number): Promise<void> {
     if (depth > MAX_DEPENDENCY_DIRECTORY_DEPTH) {
@@ -1376,16 +1444,28 @@ async function collectCachedHttpDependencyModules(
         `Cached dependency tree exceeds ${MAX_DEPENDENCY_DIRECTORY_DEPTH} levels`,
       );
     }
-    let entries: AsyncIterable<{ name: string; isFile?: boolean; isDirectory?: boolean }>;
-    try {
-      entries = fs.readDir(dir);
-    } catch (error) {
-      if (isNotFoundError(error)) return;
-      throw error;
+    const entries: Array<{
+      name: string;
+      isFile: boolean;
+      isDirectory: boolean;
+      isSymlink?: boolean;
+    }> = [];
+    for await (const entry of fs.readDir(dir)) {
+      entryCount++;
+      if (entryCount > MAX_DEPENDENCY_SPECIFIERS) {
+        throw new Error(
+          `Cached dependency tree exceeds ${MAX_DEPENDENCY_SPECIFIERS} filesystem entries`,
+        );
+      }
+      entries.push(entry);
     }
+    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
 
-    for await (const entry of entries) {
+    for (const entry of entries) {
       const path = join(dir, entry.name);
+      if (entry.isSymlink) {
+        throw new Error(`Cached HTTP dependency tree contains a symbolic link: ${path}`);
+      }
       if (entry.isDirectory) {
         await visit(path, depth + 1);
         continue;
@@ -1399,26 +1479,19 @@ async function collectCachedHttpDependencyModules(
       if (!isPathInsideRoot(filePath, cacheRoot)) {
         throw new Error(`Cached HTTP dependency resolved outside cache root: ${filePath}`);
       }
+      const physicalFilePath = normalize(await realPath(filePath));
+      if (!isPathInsideRoot(physicalFilePath, physicalCacheRoot)) {
+        throw new Error(`Cached HTTP dependency escaped its physical cache root: ${filePath}`);
+      }
 
-      const fileInfo = await fs.stat(filePath);
-      if (
-        !fileInfo.isFile ||
-        !Number.isSafeInteger(fileInfo.size) ||
-        fileInfo.size < 0 ||
-        fileInfo.size > RELEASE_ASSET_MAX_SIZE_BYTES
-      ) {
-        throw new Error("Cached dependency file exceeds the supported boundary");
-      }
-      const code = await fs.readTextFile(filePath);
-      const manifestKey = extractSourceUrl(code) ?? `file://${filePath}`;
-      const specifiers = [`file://${filePath}`];
-      if (manifestKey.startsWith("http://") || manifestKey.startsWith("https://")) {
-        specifiers.push(manifestKey);
-      }
+      const { code, sourceUrl: manifestKey } = await readHttpDependencyCacheFile(
+        fs,
+        filePath,
+      );
 
       mergeDependencyModules(
         dependencies,
-        specifiers.map((specifier) => ({
+        [toFileUrl(filePath).href, manifestKey].map((specifier) => ({
           manifestKey,
           specifier,
           sourcePath: filePath,
@@ -1441,23 +1514,28 @@ export async function buildCachedHttpDependencyAssets(options: {
   const fs = createFileSystem();
   let cacheStat: Awaited<ReturnType<typeof fs.stat>>;
   try {
-    cacheStat = await fs.stat(options.cacheDir);
+    cacheStat = fs.lstat ? await fs.lstat(options.cacheDir) : await fs.stat(options.cacheDir);
   } catch (error) {
     if (isNotFoundError(error)) {
       return { dependencies: {}, assets: [], gaps: [] };
     }
     throw error;
   }
-  if (!cacheStat?.isDirectory) {
-    return { dependencies: {}, assets: [], gaps: [] };
+  if (cacheStat.isSymlink || cacheStat.isFile || !cacheStat.isDirectory) {
+    throw new Error("Cached HTTP dependency path is not a safe directory");
   }
+  const physicalCacheRoot = normalize(await realPath(options.cacheDir));
 
   const dependencyModules = createDependencyModuleCollection();
   const uploadQueue: PreparedAsset[] = [];
   const pendingBytes = createPendingAssetStore();
   const gaps: string[] = [];
 
-  await collectCachedHttpDependencyModules(options.cacheDir, dependencyModules);
+  await collectCachedHttpDependencyModules(
+    options.cacheDir,
+    physicalCacheRoot,
+    dependencyModules,
+  );
 
   const finalized = await finalizeDependencyModules(
     dependencyModules.modules,

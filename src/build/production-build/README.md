@@ -118,6 +118,24 @@ counts the source tree without creating output. If a write fails, files and
 directories created by that copy attempt are rolled back; an incomplete
 rollback is reported as an aggregate error.
 
+### Local release dependency assets
+
+When `VERYFRONT_RELEASE_ASSET_DEPENDENCY_IMPORT_MAP=1`, a production build
+generates content-addressed React, framework, and cached HTTP dependency assets
+plus `_veryfront/release-asset-manifest.json`. The manifest source identity is
+derived from canonical dependency content rather than checkout paths, and the
+assembled manifest is validated through the release-asset parser before it is
+returned or written.
+
+Cached HTTP dependencies must be bounded regular UTF-8 files with an embedded
+HTTP(S) `@vf-source` marker. Non-directory cache roots, symbolic links, missing
+provenance, conflicting dependency claims, hash mismatches, and unreferenced
+assets fail the build. Output destinations are preflighted, asset bytes are
+written through the selected runtime adapter with bounded concurrency, and
+existing content-addressed files are never overwritten. Failed publication is
+rolled back; temporary-directory cleanup failures are surfaced rather than
+discarded.
+
 ### Generate Client Runtime
 
 ```typescript
