@@ -55,17 +55,25 @@ describe("classifyModuleRequest", () => {
       }
     });
 
-    it("does NOT classify _snippets path without .js extension as snippet", () => {
-      // Falls through to dev-module since DEV_MODULE_PREFIX matches
-      const result = classifyModuleRequest(url("/_vf_modules/_snippets/abc123.ts"));
-      assertEquals(result.kind, "dev-module");
+    it("rejects a reserved snippet path without a .js extension", () => {
+      for (
+        const pathname of [
+          "/_vf_modules/_snippets",
+          "/_vf_modules/_snippets/abc123.ts",
+        ]
+      ) {
+        assertEquals(classifyModuleRequest(url(pathname)), {
+          kind: "invalid-module",
+          namespace: "snippet",
+        });
+      }
     });
 
-    it("does NOT accept trailing content after the snippet module", () => {
+    it("rejects trailing content after the snippet module", () => {
       const result = classifyModuleRequest(
         url("/_vf_modules/_snippets/abc123.js/extra"),
       );
-      assertEquals(result.kind, "dev-module");
+      assertEquals(result, { kind: "invalid-module", namespace: "snippet" });
     });
   });
 
@@ -122,6 +130,22 @@ describe("classifyModuleRequest", () => {
       assertEquals(result.kind, "cross-project-latest");
       if (result.kind === "cross-project-latest") {
         assertEquals(result.path, "a/b/c/deep.js");
+      }
+    });
+
+    it("rejects malformed requests in the reserved cross-project namespace", () => {
+      for (
+        const pathname of [
+          "/_vf_modules/_cross",
+          "/_vf_modules/_cross/demo_project/@/index.js",
+          "/_vf_modules/_cross/demo@not-semver/@/index.js",
+          "/_vf_modules/_cross/demo/@/",
+        ]
+      ) {
+        assertEquals(classifyModuleRequest(url(pathname)), {
+          kind: "invalid-module",
+          namespace: "cross-project",
+        });
       }
     });
   });

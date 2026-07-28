@@ -262,10 +262,19 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status, 404);
   });
 
-  it("should return 404 for snippet with missing hash", async () => {
+  it("rejects malformed paths in framework-owned module namespaces", async () => {
     const response = await serve(new Request("http://localhost:3000/_vf_modules/_snippets/.js"));
 
-    assertEquals(response.status === 404 || response.status === 500, true);
+    assertEquals(response.status, 400);
+    assertEquals(await response.text(), "Invalid module path");
+
+    const malformedCrossProject = await serve(
+      new Request(
+        "http://localhost:3000/_vf_modules/_cross/demo_project/@/index.js",
+      ),
+    );
+    assertEquals(malformedCrossProject.status, 400);
+    assertEquals(await malformedCrossProject.text(), "Invalid module path");
   });
 
   it("returns 400 for a structurally invalid cross-project import path", async () => {

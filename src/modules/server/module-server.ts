@@ -303,6 +303,17 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         });
       }
 
+      if (kind.kind === "invalid-module") {
+        logger.warn("Rejected malformed reserved module request", {
+          namespace: kind.namespace,
+          path: diagnosticPath,
+        });
+        return createModuleResponse(method, "Invalid module path", HTTP_BAD_REQUEST, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+      }
+
       let requestQuery: ReturnType<typeof parseModuleRequestQuery>;
       try {
         requestQuery = parseModuleRequestQuery(url);
