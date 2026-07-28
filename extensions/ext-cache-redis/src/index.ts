@@ -89,7 +89,7 @@ const extRedis: ExtensionFactory = () => {
 
       if (!url) {
         ctx.logger.debug(
-          "[ext-cache-redis] REDIS_URL not configured — skipping TokenCacheStore registration",
+          "[ext-cache-redis] REDIS_URL not configured; skipping TokenCacheStore registration",
         );
         return;
       }
