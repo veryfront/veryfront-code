@@ -2,14 +2,25 @@ import {
   HMR_CLOSE_MESSAGE_TOO_LARGE,
   HMR_CLOSE_NORMAL,
   HMR_CLOSE_RATE_LIMIT,
+  MAX_TIMER_DELAY_MS,
   serverLogger as logger,
 } from "#veryfront/utils";
 import type { WebSocketContext } from "#veryfront/server/dev-server/hmr-types.ts";
+import { getWebSocketMessageSizeBytes } from "#veryfront/utils/websocket-message-size.ts";
+
+const DEFAULT_CLOSE_TIMEOUT_MS = 500;
+
+export interface CloseAllConnectionsOptions {
+  timeoutMs?: number;
+}
 
 export function setupWebSocketHandlers(
   socket: WebSocket,
   context: WebSocketContext,
 ): void {
+  if (!Number.isSafeInteger(context.maxMessageSize) || context.maxMessageSize <= 0) {
+    throw new RangeError("WebSocket maxMessageSize must be a positive safe integer");
+  }
   context.clients.add(socket);
 
   function sendConnectedMessage(): void {
@@ -40,9 +51,7 @@ export function setupWebSocketHandlers(
 
   socket.onmessage = (event) => {
     try {
-      const messageSize = typeof event.data === "string"
-        ? event.data.length
-        : event.data.byteLength ?? 0;
+      const messageSize = getWebSocketMessageSizeBytes(event.data);
 
       if (messageSize > context.maxMessageSize) {
         logger.warn("HMR message too large, closing connection", {
@@ -64,21 +73,28 @@ export function setupWebSocketHandlers(
         return;
       }
 
-      let message: { type?: string };
+      let parsed: unknown;
       try {
-        message = JSON.parse(event.data);
+        parsed = JSON.parse(event.data);
       } catch (parseError) {
         logger.warn("Failed to parse HMR message", { error: parseError });
         return;
       }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        logger.warn("Ignored malformed HMR message envelope");
+        return;
+      }
+      const type = typeof (parsed as { type?: unknown }).type === "string"
+        ? (parsed as { type: string }).type
+        : undefined;
 
-      if (message.type === "ping") {
+      if (type === "ping") {
         socket.send(JSON.stringify({ type: "pong" }));
         return;
       }
 
       logger.debug("Received HMR message from client", {
-        type: message.type,
+        type,
         data: event.data.slice(0, 100),
       });
     } catch (error) {
@@ -100,12 +116,39 @@ export function setupWebSocketHandlers(
 export async function closeAllConnections(
   clients: Set<WebSocket>,
   rateLimiter: { cleanup(socket: WebSocket): void },
+  options: CloseAllConnectionsOptions = {},
 ): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 0 ||
+    timeoutMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new RangeError(
+      `WebSocket close timeoutMs must be an integer between 0 and ${MAX_TIMER_DELAY_MS}`,
+    );
+  }
   if (clients.size === 0) {
     return;
   }
 
-  for (const client of clients) {
+  const snapshot = [...clients];
+  const closeWaiters = snapshot
+    .filter((client) => client.readyState !== WebSocket.CLOSED)
+    .map((client) => {
+      let settle!: () => void;
+      const promise = new Promise<void>((resolve) => {
+        settle = resolve;
+      });
+      const onClose = () => settle();
+      client.addEventListener("close", onClose, { once: true });
+      return {
+        promise,
+        dispose: () => client.removeEventListener("close", onClose),
+      };
+    });
+
+  for (const client of snapshot) {
     try {
       if (
         client.readyState === WebSocket.OPEN ||
@@ -118,15 +161,26 @@ export async function closeAllConnections(
     }
   }
 
-  // WebSocket close handshake requires multiple round trips through the event loop.
-  // Alternate between microtasks and macrotasks to ensure all I/O completes.
-  for (let i = 0; i < 10; i++) {
-    await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 50)); // no cleanup needed: one-shot
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    if (closeWaiters.length > 0) {
+      const allClosed = Promise.all(closeWaiters.map(({ promise }) => promise));
+      const closeTimeout = new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, timeoutMs);
+      });
+      await Promise.race([allClosed, closeTimeout]);
+    }
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+    for (const waiter of closeWaiters) waiter.dispose();
   }
 
-  for (const client of clients) {
-    rateLimiter.cleanup(client);
+  for (const client of snapshot) {
+    try {
+      rateLimiter.cleanup(client);
+    } catch (error) {
+      logger.debug("Error cleaning up WebSocket rate-limit state", error);
+    }
   }
   clients.clear();
 }

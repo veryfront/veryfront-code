@@ -3,25 +3,18 @@ import {
   HMR_CLOSE_RATE_LIMIT,
   HMR_MAX_MESSAGE_SIZE_BYTES,
 } from "#veryfront/utils";
+import { getWebSocketMessageSizeBytes } from "#veryfront/utils/websocket-message-size.ts";
 
 export type HmrClientMessageSocket = {
   send(message: string): void;
   close(code?: number, reason?: string): void;
 };
 
-const utf8Encoder = new TextEncoder();
-
 type HmrClientRateLimiter<TSocket> = {
   check(socket: TSocket): boolean;
 };
 
-export function getHmrWebSocketMessageSize(data: unknown): number {
-  if (typeof data === "string") return utf8Encoder.encode(data).byteLength;
-  if (data instanceof ArrayBuffer) return data.byteLength;
-  if (ArrayBuffer.isView(data)) return data.byteLength;
-  if (data instanceof Blob) return data.size;
-  return 0;
-}
+export const getHmrWebSocketMessageSize = getWebSocketMessageSizeBytes;
 
 export function handleHmrClientMessage<TSocket extends HmrClientMessageSocket>(
   input: {
