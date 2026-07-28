@@ -11,6 +11,7 @@ import {
   setRawMode,
   writeStdout,
 } from "veryfront/platform";
+import { isTruthyEnvValue } from "veryfront/utils";
 import { DEFAULT_DEV_PORT } from "../shared/constants.ts";
 import { bold, dim, error as errorColor, warning as warningColor } from "../ui/colors.ts";
 import { isJsonMode } from "../shared/json-output.ts";
@@ -18,7 +19,7 @@ import { isJsonMode } from "../shared/json-output.ts";
 type LoggerMethod = (...args: unknown[]) => void;
 
 function debugEnabled(): boolean {
-  return _verboseMode || getEnv("VERYFRONT_DEBUG") === "1";
+  return _verboseMode || isTruthyEnvValue(getEnv("VERYFRONT_DEBUG"));
 }
 
 export const cliLogger: {

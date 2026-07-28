@@ -8,18 +8,22 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import { deleteEnv, getEnv, setEnv } from "veryfront/platform";
 import { resetInteractiveMode, setNonInteractive } from "../shared/interactive.ts";
 import { setJsonMode } from "../shared/json-output.ts";
 import {
+  cliLogger,
   confirmPrompt,
   ensureConfirmPromptAvailable,
   formatBytes,
   isTTY,
+  isVerbose,
   logError,
   logInfo,
   logSuccess,
   logWarning,
   promptUser,
+  setVerboseMode,
   showHeader,
   showLogo,
   VERSION,
@@ -32,6 +36,7 @@ function stripAnsi(str: string): string {
 
 function captureOutput(fn: () => void): { stdout: string; stderr: string } {
   const originalLog = console.log;
+  const originalDebug = console.debug;
   const originalError = console.error;
   const originalWarn = console.warn;
 
@@ -39,6 +44,9 @@ function captureOutput(fn: () => void): { stdout: string; stderr: string } {
   let stderr = "";
 
   console.log = (...args: unknown[]) => {
+    stdout += `${args.join(" ")}\n`;
+  };
+  console.debug = (...args: unknown[]) => {
     stdout += `${args.join(" ")}\n`;
   };
   console.error = (...args: unknown[]) => {
@@ -52,6 +60,7 @@ function captureOutput(fn: () => void): { stdout: string; stderr: string } {
     fn();
   } finally {
     console.log = originalLog;
+    console.debug = originalDebug;
     console.error = originalError;
     console.warn = originalWarn;
   }
@@ -72,6 +81,26 @@ async function withMockPrompt<T>(
     globalThis.prompt = originalPrompt;
   }
 }
+
+describe("cliLogger", () => {
+  it("uses the shared truthy semantics for VERYFRONT_DEBUG", () => {
+    const originalDebug = getEnv("VERYFRONT_DEBUG");
+    const originalVerbose = isVerbose();
+    setVerboseMode(false);
+    setEnv("VERYFRONT_DEBUG", " Yes ");
+
+    try {
+      assertStringIncludes(captureOutput(() => cliLogger.debug("details")).stdout, "details");
+    } finally {
+      if (originalDebug === undefined) {
+        deleteEnv("VERYFRONT_DEBUG");
+      } else {
+        setEnv("VERYFRONT_DEBUG", originalDebug);
+      }
+      setVerboseMode(originalVerbose);
+    }
+  });
+});
 
 describe("showHeader", () => {
   it("renders a compact one-line command header", () => {
