@@ -74,6 +74,7 @@ describe("build/production-build/build/build-cleanup", () => {
     it("should not throw for valid stats", () => {
       logBuildCompletion({
         pages: 10,
+        components: 0,
         chunks: 5,
         assets: 3,
         totalSize: 1024 * 1024 * 2, // 2MB
@@ -85,6 +86,7 @@ describe("build/production-build/build/build-cleanup", () => {
     it("should handle zero values", () => {
       logBuildCompletion({
         pages: 0,
+        components: 0,
         chunks: 0,
         assets: 0,
         totalSize: 0,
@@ -96,6 +98,7 @@ describe("build/production-build/build/build-cleanup", () => {
     it("should handle very large values", () => {
       logBuildCompletion({
         pages: 10000,
+        components: 0,
         chunks: 500,
         assets: 200,
         totalSize: 1024 * 1024 * 1024, // 1GB

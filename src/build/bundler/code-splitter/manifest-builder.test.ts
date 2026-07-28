@@ -108,7 +108,7 @@ describe("build/bundler/code-splitter/manifest-builder", () => {
       };
       const hints = getPreloadHints(output, "/out");
       assertEquals(hints.length, 1);
-      assertEquals(hints[0].includes("react"), true);
+      assertEquals(hints[0]?.includes("react"), true);
     });
 
     it("should return empty array when no critical imports", () => {

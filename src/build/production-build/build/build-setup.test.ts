@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { setupBuildDirectories } from "./build-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -16,7 +16,7 @@ function createMockAdapter(): RuntimeAdapter {
         (async function* () {
         })(),
       stat: () => Promise.resolve({ isFile: false, isDirectory: true, size: 0 }),
-      remove: () => Promise.resolve(),
+      remove: (path: string, opts?: { recursive?: boolean }) => Deno.remove(path, opts),
       readTextFile: () => Promise.resolve(""),
       writeTextFile: () => Promise.resolve(),
     },
@@ -73,6 +73,61 @@ describe("build/production-build/build/build-setup", () => {
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }
+    });
+
+    it("should preserve existing output in dry run", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      const outputDir = `${tmpDir}/dry-run-output`;
+      const sentinelPath = `${outputDir}/keep.txt`;
+      const adapter = createMockAdapter();
+
+      try {
+        await Deno.mkdir(outputDir, { recursive: true });
+        await Deno.writeTextFile(sentinelPath, "existing artifact");
+
+        await setupBuildDirectories(adapter, outputDir, true);
+
+        assertEquals(await Deno.readTextFile(sentinelPath), "existing artifact");
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("should propagate output cleanup failures", async () => {
+      const cleanupError = new Error("permission denied");
+      const adapter = createMockAdapter();
+      adapter.fs.remove = () => Promise.reject(cleanupError);
+
+      const error = await assertRejects(() =>
+        setupBuildDirectories(adapter, "/protected/output", false)
+      );
+
+      assertEquals(error, cleanupError);
+    });
+
+    it("should use the selected adapter for every directory operation", async () => {
+      const removed: string[] = [];
+      const created: string[] = [];
+      const adapter = createMockAdapter();
+      adapter.fs.remove = (path) => {
+        removed.push(path);
+        return Promise.resolve();
+      };
+      adapter.fs.mkdir = (path) => {
+        created.push(path);
+        return Promise.resolve();
+      };
+
+      await setupBuildDirectories(adapter, "/virtual/output", false);
+
+      assertEquals(removed, ["/virtual/output"]);
+      assertEquals(created, [
+        "/virtual/output",
+        "/virtual/output/_veryfront",
+        "/virtual/output/_veryfront/chunks",
+        "/virtual/output/_veryfront/data",
+        "/virtual/output/assets",
+      ]);
     });
 
     it("should handle existing directories gracefully", async () => {

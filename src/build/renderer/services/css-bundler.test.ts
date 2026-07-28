@@ -19,7 +19,7 @@ describe("build/renderer/services/css-bundler", () => {
       const result = createBundleResult();
       bundleCss(
         { path: "style.css", content: "body { color: red; }" },
-        { mode: "development", projectDir: "/tmp", external: [] },
+        { mode: "development", projectDir: "/tmp", external: [], sources: [] },
         result,
       );
       assertEquals(result.outputs.has("style.css"), true);
@@ -32,7 +32,7 @@ describe("build/renderer/services/css-bundler", () => {
       const result = createBundleResult();
       bundleCss(
         { path: "style.css", content: "body {\n  color: red;\n  /* comment */\n}" },
-        { mode: "production", projectDir: "/tmp", external: [] },
+        { mode: "production", projectDir: "/tmp", external: [], sources: [] },
         result,
       );
       const output = result.outputs.get("style.css")!;
@@ -46,7 +46,7 @@ describe("build/renderer/services/css-bundler", () => {
       const css = "body {\n  color: red;\n  /* comment */\n}";
       bundleCss(
         { path: "style.css", content: css },
-        { mode: "development", projectDir: "/tmp", external: [] },
+        { mode: "development", projectDir: "/tmp", external: [], sources: [] },
         result,
       );
       const output = result.outputs.get("style.css")!;
@@ -57,7 +57,7 @@ describe("build/renderer/services/css-bundler", () => {
       const result = createBundleResult();
       bundleCss(
         { path: "empty.css", content: "" },
-        { mode: "production", projectDir: "/tmp", external: [] },
+        { mode: "production", projectDir: "/tmp", external: [], sources: [] },
         result,
       );
       assertEquals(result.outputs.has("empty.css"), true);
@@ -68,7 +68,7 @@ describe("build/renderer/services/css-bundler", () => {
       const result = createBundleResult();
       bundleCss(
         { path: "bg.css", content: 'body { background: url("image.png"); }' },
-        { mode: "production", projectDir: "/tmp", external: [] },
+        { mode: "production", projectDir: "/tmp", external: [], sources: [] },
         result,
       );
       const output = result.outputs.get("bg.css")!;
@@ -79,7 +79,7 @@ describe("build/renderer/services/css-bundler", () => {
       const result = createBundleResult();
       bundleCss(
         { path: "s.css", content: "div { color: red; }" },
-        { mode: "production", projectDir: "/tmp", external: [] },
+        { mode: "production", projectDir: "/tmp", external: [], sources: [] },
         result,
       );
       const output = result.outputs.get("s.css")!;

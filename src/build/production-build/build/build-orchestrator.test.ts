@@ -103,12 +103,19 @@ describe("build/production-build/build/build-orchestrator", () => {
       );
     });
 
-    it("does not throw when chunks were built", () => {
-      assertBuildProducedOutput(
-        { ...emptyStats, chunks: 3 },
-        someRoutes,
-        true,
-        false,
+    it("throws when chunks were built but no pages were generated", () => {
+      assertRejects(
+        () =>
+          Promise.resolve().then(() =>
+            assertBuildProducedOutput(
+              { ...emptyStats, chunks: 3 },
+              someRoutes,
+              true,
+              false,
+            )
+          ),
+        Error,
+        "no pages",
       );
     });
   });

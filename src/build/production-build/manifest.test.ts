@@ -138,7 +138,7 @@ describe("build/production-build/manifest", () => {
       const result = generateManifest({
         ...baseOptions,
         enableSplitting: true,
-        chunkManifest: { invalid: true },
+        chunkManifest: { invalid: true } as never,
       });
 
       assertEquals(result.chunks, null);

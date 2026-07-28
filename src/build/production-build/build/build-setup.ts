@@ -1,8 +1,7 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import { join } from "#veryfront/compat/path/index.ts";
-import { handleErrorWithFallback } from "#veryfront/errors";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 export async function setupBuildDirectories(
   adapter: RuntimeAdapter,
@@ -11,18 +10,17 @@ export async function setupBuildDirectories(
 ): Promise<void> {
   logger.info("Setting up build directories...");
 
-  await handleErrorWithFallback(
-    () => adapter.fs.remove(outputDir, { recursive: true }),
-    undefined,
-    logger,
-  );
-
   if (dryRun) {
     logger.info("Build directories ready");
     return;
   }
 
-  const fs = createFileSystem();
+  try {
+    await adapter.fs.remove(outputDir, { recursive: true });
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
   const dirs = [
     outputDir,
     join(outputDir, "_veryfront"),
@@ -32,15 +30,7 @@ export async function setupBuildDirectories(
   ];
 
   for (const dir of dirs) {
-    try {
-      await fs.mkdir(dir, { recursive: true });
-    } catch (error) {
-      const code = error && typeof error === "object" && "code" in error
-        ? (error as { code?: string }).code
-        : undefined;
-
-      if (code !== "EEXIST") throw error;
-    }
+    await adapter.fs.mkdir(dir, { recursive: true });
   }
 
   logger.info("Build directories ready");

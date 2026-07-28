@@ -165,7 +165,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
 }
 
 /**
- * A build that emits zero pages and zero chunks is not a deployable artifact,
+ * A build that emits zero pages is not a deployable static artifact,
  * so reporting it as a success lets broken releases through (an empty dist/
  * deployed behind a "Build completed successfully" message serves only 404s).
  * Fail the build instead, with a message that points at the actual cause.
@@ -176,7 +176,7 @@ export function assertBuildProducedOutput(
   ssg: boolean,
   dryRun: boolean,
 ): void {
-  if (dryRun || stats.pages > 0 || stats.chunks > 0) return;
+  if (dryRun || stats.pages > 0) return;
 
   const routeCount = routes.pages.length + routes.app.length;
   const message = !ssg
