@@ -101,6 +101,8 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         projectSlug: config?.fs?.veryfront?.projectSlug ?? env.projectSlug,
       });
       const projectSlug = runtimeAuth.projectSlug;
+      const shutdownController = new AbortController();
+      let mdxWatcher: Promise<void> | null = null;
 
       // Validate provider config and print warnings (framework returns plain text, CLI adds colors)
       const aiValidation = validateProviderConfig(config);
@@ -115,14 +117,34 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       if (config?.experimental?.precompileMDX) {
         const outputDir = join(projectDir, ".veryfront", "compiled");
         try {
-          await compileAllMDX({ projectDir, outputDir, mode: "development" });
-          void watchMDX({ projectDir, outputDir, mode: "development" });
-        } catch {
-          // MDX pre-compilation failed
+          await compileAllMDX({
+            projectDir,
+            outputDir,
+            mode: "development",
+            signal: shutdownController.signal,
+          });
+          mdxWatcher = watchMDX({
+            projectDir,
+            outputDir,
+            mode: "development",
+            signal: shutdownController.signal,
+          }).catch((watchError) => {
+            if (shutdownController.signal.aborted) return;
+            console.error(
+              `  ${errorColor("✗")} MDX watcher stopped: ${
+                watchError instanceof Error ? watchError.message : String(watchError)
+              }`,
+            );
+          });
+        } catch (compileError) {
+          console.error(
+            `  ${errorColor("✗")} MDX pre-compilation failed: ${
+              compileError instanceof Error ? compileError.message : String(compileError)
+            }`,
+          );
         }
       }
 
-      const shutdownController = new AbortController();
       let devServer: Awaited<ReturnType<typeof startDevServer>> | null = null;
       let mcpServer: MCPDevServer | null = null;
 
@@ -193,6 +215,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         try {
           keyboardHandler?.stop();
           shutdownController.abort();
+          await mdxWatcher;
           await mcpServer?.stop();
           await devServer?.stop();
         } catch {

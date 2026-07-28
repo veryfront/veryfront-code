@@ -2,6 +2,8 @@ export interface CompileOptions {
   projectDir: string;
   outputDir: string;
   mode: "development" | "production";
+  /** Cancels batch compilation or closes a long-running MDX watcher. */
+  signal?: AbortSignal;
 }
 
 export interface MDXFrontmatter {

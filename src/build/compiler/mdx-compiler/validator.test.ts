@@ -98,6 +98,15 @@ describe("MDX compiler validator", () => {
       );
     });
 
+    it("rejects non-MDX and control-character paths", () => {
+      expect(() => validateCompileParams("test.md", "# Hello", validOptions)).toThrow(
+        "filePath must end with .mdx",
+      );
+      expect(() => validateCompileParams("bad\nname.mdx", "# Hello", validOptions)).toThrow(
+        "filePath must be a safe filesystem path",
+      );
+    });
+
     it("should accept development mode", () => {
       const opts = { ...validOptions, mode: "development" as const };
       expect(() => validateCompileParams("test.mdx", "# Hello", opts)).not.toThrow();

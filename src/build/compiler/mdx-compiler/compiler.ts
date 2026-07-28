@@ -1,11 +1,10 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
+import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
 import type { CompileOptions, CompileResult, MDXFrontmatter } from "./types.ts";
 import { validateCompileParams, validateFileExists } from "./validator.ts";
-import { extractExports, parseFrontmatter } from "./frontmatter-parser.ts";
 import { compileMDX } from "./mdx-processor.ts";
-import { transformFinalImports, transformImports } from "./import-transformer.ts";
-import { generateModuleCode } from "./code-generator.ts";
 import { transpileCode } from "./transpiler.ts";
 import { writeCompiledFile } from "./file-writer.ts";
 
@@ -22,21 +21,29 @@ export function compileMDXFile(
 
       logger.info(`Compiling MDX file: ${filePath}`);
 
-      const { frontmatter: yamlFrontmatter, content: withoutYaml } = await parseFrontmatter(
+      const processor = resolveContract<ContentProcessor>("ContentProcessor");
+      const extracted = processor.extractFrontmatter({
         content,
-      );
-      const { frontmatter: exportedVars, content: mdxContent } = extractExports(withoutYaml);
-
-      const frontmatter: MDXFrontmatter = { ...yamlFrontmatter, ...exportedVars };
+        syntax: "mdx",
+      });
+      const frontmatter = extracted.frontmatter as MDXFrontmatter;
+      const generatedExports = {
+        frontmatter,
+        title: frontmatter.title === undefined ? "" : frontmatter.title,
+        description: frontmatter.description === undefined ? "" : frontmatter.description,
+        layout: frontmatter.layout === undefined ? true : frontmatter.layout,
+      };
 
       try {
-        const { code: compiledCode, imports } = await compileMDX(mdxContent, options);
+        const { code: compiledCode, imports } = await compileMDX(
+          extracted.body,
+          options,
+          { exports: generatedExports },
+        );
 
         logger.debug("MDX compiled output (first 500 chars):", compiledCode.substring(0, 500));
 
-        const moduleCode = generateModuleCode(frontmatter, transformImports(compiledCode));
-        const transpiledCode = await transpileCode(moduleCode, options);
-        const finalCode = transformFinalImports(transpiledCode);
+        const finalCode = await transpileCode(compiledCode, options);
 
         const outputPath = await writeCompiledFile(filePath, finalCode, options);
 

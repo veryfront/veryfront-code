@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { writeCompiledFile } from "./file-writer.ts";
 
 describe("build/compiler/mdx-compiler/file-writer", () => {
@@ -100,6 +100,77 @@ describe("build/compiler/mdx-compiler/file-writer", () => {
           outputPath.includes("//"),
           false,
           "output path should not contain double slashes",
+        );
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("rejects source paths outside the project instead of escaping the output", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      const projectDir = `${tmpDir}/project`;
+      const outsidePath = `${tmpDir}/outside.mdx`;
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(outsidePath, "# Outside");
+
+      try {
+        await assertRejects(
+          () =>
+            writeCompiledFile(outsidePath, "outside", {
+              projectDir,
+              outputDir: `${tmpDir}/output`,
+              mode: "production",
+            }),
+          Error,
+          "outside",
+        );
+        await assertRejects(
+          () => Deno.stat(`${tmpDir}/output/outside.js`),
+          Deno.errors.NotFound,
+        );
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("rejects a source symlink that escapes the project", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      const projectDir = `${tmpDir}/project`;
+      const outsidePath = `${tmpDir}/outside.mdx`;
+      const linkedPath = `${projectDir}/linked.mdx`;
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(outsidePath, "# Outside");
+      await Deno.symlink(outsidePath, linkedPath);
+
+      try {
+        await assertRejects(
+          () =>
+            writeCompiledFile(linkedPath, "outside", {
+              projectDir,
+              outputDir: `${tmpDir}/output`,
+              mode: "production",
+            }),
+          Error,
+          "outside",
+        );
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("does not leave temporary files after atomic publication", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      const outputDir = `${tmpDir}/output`;
+      try {
+        await writeCompiledFile(`${tmpDir}/page.mdx`, "compiled", {
+          projectDir: tmpDir,
+          outputDir,
+          mode: "production",
+        });
+
+        assertEquals(
+          [...Deno.readDirSync(outputDir)].some((entry) => entry.name.includes(".tmp-")),
+          false,
         );
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
