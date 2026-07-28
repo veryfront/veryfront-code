@@ -13,6 +13,22 @@ const ENV_OVERRIDES: Record<string, string> = {
   debug: "VERYFRONT_DEBUG",
 };
 
+function normalizeControlPlaneForComparison(controlPlane: string): string | null {
+  try {
+    const url = new URL(controlPlane);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    return `${url.origin}${pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+function controlPlanesMatch(left: string, right: string): boolean {
+  const normalizedLeft = normalizeControlPlaneForComparison(left);
+  const normalizedRight = normalizeControlPlaneForComparison(right);
+  return normalizedLeft !== null && normalizedLeft === normalizedRight;
+}
+
 export async function detectConfigSource(
   projectDir: string,
 ): Promise<string | null> {
@@ -28,6 +44,9 @@ export async function detectConfigSource(
     ]
   ) {
     if (await fs.exists(join(projectDir, name))) return name;
+  }
+  if (await fs.exists(join(projectDir, ".veryfront", "project.json"))) {
+    return ".veryfront/project.json";
   }
   return null;
 }
@@ -56,20 +75,33 @@ export async function getConfigCommandData(projectDir: string): Promise<ConfigCo
   const { getEnvironmentConfig } = await import("veryfront/config");
   const config = getEnvironmentConfig();
   const { readConfigFile } = await import("#cli/shared/config");
+  const { resolveCliApiUrl } = await import("../../shared/constants.ts");
+  const { readProjectLink } = await import("../../shared/project-link.ts");
 
-  const configSource = await detectConfigSource(projectDir);
+  const detectedConfigSource = await detectConfigSource(projectDir);
   const envOverrides = getEnvOverrides();
   const fileConfig = await readConfigFile(projectDir);
+  const projectLink = await readProjectLink(projectDir);
+  const linkedProjectSlug = projectLink &&
+      !config.projectSlug &&
+      !fileConfig?.projectSlug &&
+      controlPlanesMatch(projectLink.controlPlane, resolveCliApiUrl(config, fileConfig?.apiUrl))
+    ? projectLink.projectSlug
+    : undefined;
 
   return {
-    projectSlug: config.projectSlug ?? fileConfig?.projectSlug ?? null,
+    projectSlug: config.projectSlug ?? fileConfig?.projectSlug ?? linkedProjectSlug ?? null,
     nodeEnv: config.nodeEnv,
     veryfrontEnv: config.veryfrontEnv || null,
     apiBaseUrl: config.apiBaseUrl,
     debug: config.debug,
     ci: config.ci,
     hasApiToken: !!(config.apiToken ?? fileConfig?.apiToken),
-    configSource,
+    configSource: linkedProjectSlug
+      ? ".veryfront/project.json"
+      : detectedConfigSource === ".veryfront/project.json"
+      ? null
+      : detectedConfigSource,
     envOverrides,
   };
 }
