@@ -54,6 +54,11 @@ const mdxRootBareDependencyStrategy: ImportRewriteStrategy = {
 const mdxRootDependencyRewriter = new UnifiedImportRewriter({
   strategies: [mdxRootBareDependencyStrategy],
 });
+import { parallelMap } from "#veryfront/utils/parallel.ts";
+import {
+  assertMdxModuleImportCount,
+  MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
+} from "./module-fetcher/limits.ts";
 
 /**
  * Rewrite @/ aliased imports to /_vf_modules/ paths.
@@ -203,14 +208,16 @@ export async function transformJsxImports(
   }
 
   if (importsToProcess.length === 0) return code;
+  assertMdxModuleImportCount("compiled MDX JSX imports", importsToProcess.length);
 
   const transformStart = performance.now();
   logger.debug(
     `${LOG_PREFIX_MDX_LOADER} Transforming ${importsToProcess.length} JSX imports in parallel`,
   );
 
-  const transformResults = await Promise.all(
-    importsToProcess.map(async ({ specifier, filePath, ext }) => {
+  const transformResults = await parallelMap(
+    importsToProcess,
+    async ({ specifier, filePath, ext }) => {
       try {
         const isFrameworkFile = filePath.startsWith(FRAMEWORK_ROOT);
         let jsxCode: string | Uint8Array;
@@ -284,7 +291,8 @@ export async function transformJsxImports(
         logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform JSX import: ${filePath}`, error);
         return null;
       }
-    }),
+    },
+    { concurrency: MAX_MDX_MODULE_TRANSFORM_CONCURRENCY },
   );
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} JSX transform phase completed`, {

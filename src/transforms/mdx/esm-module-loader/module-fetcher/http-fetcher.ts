@@ -19,6 +19,7 @@ import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { readHttpModuleText } from "../../../shared/http-module-response.ts";
 import { MAX_MDX_MODULE_CODE_BYTES } from "./recovery-payload.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
+import { assertMdxModuleImportCount } from "./limits.ts";
 
 export interface FetchModuleViaHttpOptions {
   fetchFn?: typeof fetch;
@@ -166,13 +167,13 @@ export async function fetchModuleViaHTTP(
         key: "relativePath" as const,
       })),
     ];
+    assertMdxModuleImportCount(normalizedPath, allImports.length);
 
-    const results = await Promise.all(
-      allImports.map(async ({ original, path, start, end, key }) => {
-        const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
-        return { original, start, end, nestedFilePath, [key]: path };
-      }),
-    );
+    const results = [];
+    for (const { original, path, start, end, key } of allImports) {
+      const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
+      results.push({ original, start, end, nestedFilePath, [key]: path });
+    }
 
     const replacements: SourceSpanReplacement[] = [];
     for (const { original, start, end, nestedFilePath } of results) {

@@ -215,6 +215,7 @@ function findFromSpan(
 export function findStaticImportFromSpans(
   source: string,
   matcher: SpecifierMatcher,
+  maxMatches = Number.MAX_SAFE_INTEGER,
 ): StaticImportSpan[] {
   const spans: StaticImportSpan[] = [];
   let cursor = 0;
@@ -243,6 +244,7 @@ export function findStaticImportFromSpans(
     const span = findFromSpan(source, afterKeyword, matcher);
     if (span) {
       spans.push(span);
+      if (spans.length >= maxMatches) return spans;
       cursor = span.end;
       continue;
     }

@@ -28,6 +28,20 @@ import { normalizePath } from "./module-cache.ts";
 import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 import { persistResolvedModule } from "./persistence.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
+import {
+  MAX_MDX_MODULE_GRAPH_ENTRIES,
+  ModuleGraphLimitError,
+  ModuleImportLimitError,
+  ModuleSourceLimitError,
+} from "./limits.ts";
+import { MAX_MDX_MODULE_CODE_BYTES, utf8ByteLength } from "./recovery-payload.ts";
+
+export {
+  MAX_MDX_MODULE_GRAPH_ENTRIES,
+  ModuleGraphLimitError,
+  ModuleImportLimitError,
+  ModuleSourceLimitError,
+} from "./limits.ts";
 
 // Re-export extracted modules for backward compatibility
 export { rewriteDntImports } from "./import-rewriter.ts";
@@ -77,7 +91,10 @@ function isFatalModuleFetchError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return error.name === "MissingModuleError" ||
     error instanceof TransformTreeTimeoutError ||
-    error instanceof CircularModuleDependencyError;
+    error instanceof CircularModuleDependencyError ||
+    error instanceof ModuleGraphLimitError ||
+    error instanceof ModuleImportLimitError ||
+    error instanceof ModuleSourceLimitError;
 }
 
 /**
@@ -93,6 +110,13 @@ export async function fetchAndCacheModule(
   const log = getLog(context);
   const normalizedPath = normalizePath(modulePath, parentModulePath);
   const projectSlug = context.projectSlug || "unknown";
+  const moduleGraph = context.moduleGraph ??= new Set<string>();
+  if (!moduleGraph.has(normalizedPath)) {
+    if (moduleGraph.size >= MAX_MDX_MODULE_GRAPH_ENTRIES) {
+      throw new ModuleGraphLimitError(normalizedPath);
+    }
+    moduleGraph.add(normalizedPath);
+  }
 
   const now = Date.now();
   context.transformDeadline ??= now + TRANSFORM_TREE_TIMEOUT_MS;
@@ -240,6 +264,14 @@ async function doFetchAndCacheModule(
     }
 
     const { sourceCode, actualFilePath } = resolved;
+    const sourceSizeBytes = utf8ByteLength(sourceCode);
+    if (sourceSizeBytes > MAX_MDX_MODULE_CODE_BYTES) {
+      throw new ModuleSourceLimitError(
+        normalizedPath,
+        sourceSizeBytes,
+        MAX_MDX_MODULE_CODE_BYTES,
+      );
+    }
 
     const contentHash = hashString(sourceCode);
     const transformCacheKey = contentSourceId
@@ -368,5 +400,6 @@ export function createModuleFetcherContext(
     ...options,
     // Initialize in-flight tracking for circular import detection
     inFlightModules: new Map(),
+    moduleGraph: new Set(),
   };
 }

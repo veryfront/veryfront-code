@@ -14,6 +14,12 @@ import {
   rewriteDntImports,
   startRenderSession,
 } from "./index.ts";
+import {
+  MAX_MDX_MODULE_GRAPH_ENTRIES,
+  ModuleGraphLimitError,
+  ModuleSourceLimitError,
+} from "./limits.ts";
+import { MAX_MDX_MODULE_CODE_BYTES } from "./recovery-payload.ts";
 import { FRAMEWORK_ROOT, HASH_SEED_FNV1A } from "../constants.ts";
 import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
 import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
@@ -361,6 +367,37 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       assertEquals(ctx.inFlightModules instanceof Map, true);
       assertEquals(ctx.inFlightModules!.size, 0);
     });
+
+    it("initializes a bounded module graph", () => {
+      const ctx = createModuleFetcherContext("/cache", mockAdapter, "/project", "proj-123");
+      assertEquals(ctx.moduleGraph instanceof Set, true);
+      assertEquals(ctx.moduleGraph!.size, 0);
+    });
+  });
+
+  it("rejects a new module after the request graph reaches its limit", async () => {
+    let resolved = false;
+    const adapter = {
+      env: { get: (_key: string) => undefined },
+      fs: {
+        resolveFile: () => {
+          resolved = true;
+          return Promise.resolve(null);
+        },
+      },
+    } as any;
+    const ctx = createModuleFetcherContext("/cache", adapter, "/project", "proj-limit", {
+      strictMissingModules: false,
+    });
+    for (let index = 0; index < MAX_MDX_MODULE_GRAPH_ENTRIES; index++) {
+      ctx.moduleGraph!.add(`_vf_modules/existing-${index}.js`);
+    }
+
+    await assertRejects(
+      () => fetchAndCacheModule("_vf_modules/one-too-many.js", ctx),
+      ModuleGraphLimitError,
+    );
+    assertEquals(resolved, false);
   });
 
   describe("strictMissingModules", () => {
@@ -415,6 +452,31 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
 
         const result = await fetchAndCacheModule("/_vf_modules/lib/utils.js", ctx);
         assertEquals(result, null, "Should return null for missing module when strict mode is off");
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("does not downgrade an oversized source to a non-strict stub", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-size-cache-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-size-proj-" });
+      const adapter = {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: () => Promise.resolve("/virtual/oversized.ts"),
+          readFile: () => Promise.resolve("x".repeat(MAX_MDX_MODULE_CODE_BYTES + 1)),
+        },
+      } as any;
+
+      try {
+        const ctx = createModuleFetcherContext(esmCacheDir, adapter, projectDir, "proj-size", {
+          strictMissingModules: false,
+        });
+        await assertRejects(
+          () => fetchAndCacheModule("/_vf_modules/oversized.js", ctx),
+          ModuleSourceLimitError,
+        );
       } finally {
         await remove(esmCacheDir, { recursive: true });
         await remove(projectDir, { recursive: true });
