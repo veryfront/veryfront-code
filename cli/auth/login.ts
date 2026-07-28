@@ -67,6 +67,8 @@ export async function validateToken(
   env: EnvironmentConfig = getEnvironmentConfig(),
   options: CredentialValidationOptions = {},
 ): Promise<UserInfo | null> {
+  if (!token.trim()) return null;
+
   try {
     const response = await fetch(`${getApiUrl(env).replace(/\/$/, "")}/me`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },

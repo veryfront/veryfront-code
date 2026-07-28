@@ -60,13 +60,18 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
   });
 
   describe("Token validation", { sanitizeOps: false, sanitizeResources: false }, () => {
-    it("should detect invalid token format", async () => {
+    it("should reject empty tokens without a network request", async () => {
       const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
       try {
-        globalThis.fetch = (() =>
-          Promise.resolve(new Response(null, { status: 401 }))) as typeof fetch;
+        globalThis.fetch = (() => {
+          fetchCalls++;
+          return Promise.resolve(new Response(null, { status: 401 }));
+        }) as typeof fetch;
         const { validateToken } = await import("./login.ts");
         assertEquals(await validateToken(""), null);
+        assertEquals(await validateToken(" \t "), null);
+        assertEquals(fetchCalls, 0);
       } finally {
         globalThis.fetch = originalFetch;
       }
