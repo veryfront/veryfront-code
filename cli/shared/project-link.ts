@@ -97,8 +97,7 @@ export async function readProjectLink(projectDir: string): Promise<ProjectLink |
   try {
     const value: unknown = JSON.parse(await Deno.readTextFile(projectLinkPath(projectDir)));
     if (isProjectLink(value)) return value;
-  } catch (error) {
-    if (isNotFoundError(error)) return null;
+  } catch {
     throw invalidProjectLinkError(projectDir);
   }
   throw invalidProjectLinkError(projectDir);

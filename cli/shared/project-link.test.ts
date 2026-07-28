@@ -92,6 +92,25 @@ describe("project link persistence", () => {
     });
   });
 
+  it("rejects an existing project link that cannot be read", async () => {
+    if (Deno.build.os === "windows") return;
+
+    await withTempProject(async (projectDir) => {
+      await writeRawProjectLink(projectDir, { version: 1, ...LINK });
+      const path = join(projectDir, ".veryfront", "project.json");
+      await Deno.chmod(path, 0);
+      try {
+        await assertRejects(
+          () => readProjectLink(projectDir),
+          Error,
+          ".veryfront/project.json",
+        );
+      } finally {
+        await Deno.chmod(path, 0o600);
+      }
+    });
+  });
+
   it("rejects a symlinked Veryfront directory without touching its target", async () => {
     if (Deno.build.os === "windows") return;
 
