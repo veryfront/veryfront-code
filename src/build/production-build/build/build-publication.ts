@@ -53,12 +53,46 @@ async function acquireBuildLock(
       handle = undefined;
       break;
     } catch (error) {
-      await handle?.close().catch(() => undefined);
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-        if (ownsLock) {
-          await nodeFs.rm(lockPath, { force: true }).catch(() => undefined);
+      const cleanupErrors: unknown[] = [];
+      if (handle) {
+        try {
+          await handle.close();
+        } catch (closeError) {
+          cleanupErrors.push(
+            publicationError(
+              `Failed to close incomplete build output lock: ${lockPath}`,
+              closeError,
+            ),
+          );
         }
-        throw publicationError(`Failed to acquire build output lock: ${lockPath}`, error);
+      }
+
+      const lockAlreadyExists = !ownsLock &&
+        (error as NodeJS.ErrnoException).code === "EEXIST";
+      if (!lockAlreadyExists) {
+        if (ownsLock) {
+          try {
+            await nodeFs.rm(lockPath, { force: true });
+          } catch (removeError) {
+            cleanupErrors.push(
+              publicationError(
+                `Failed to remove incomplete build output lock: ${lockPath}`,
+                removeError,
+              ),
+            );
+          }
+        }
+        const acquisitionError = publicationError(
+          `Failed to acquire build output lock: ${lockPath}`,
+          error,
+        );
+        if (cleanupErrors.length > 0) {
+          throw new AggregateError(
+            [acquisitionError, ...cleanupErrors],
+            "Build output lock setup failed and cleanup also failed",
+          );
+        }
+        throw acquisitionError;
       }
       if (Date.now() - startedAt >= timeoutMs) {
         throw publicationError(
@@ -72,16 +106,27 @@ async function acquireBuildLock(
   }
 
   let released = false;
+  let releaseInFlight: Promise<void> | undefined;
   return async (): Promise<void> => {
     if (released) return;
-    const current = await nodeFs.readFile(lockPath, "utf8").catch((error) => {
-      throw publicationError(`Failed to verify build output lock: ${lockPath}`, error);
-    });
-    if (current !== content) {
-      throw publicationError(`Build output lock ownership changed unexpectedly: ${lockPath}`);
+    if (releaseInFlight) return await releaseInFlight;
+
+    const operation = (async (): Promise<void> => {
+      const current = await nodeFs.readFile(lockPath, "utf8").catch((error) => {
+        throw publicationError(`Failed to verify build output lock: ${lockPath}`, error);
+      });
+      if (current !== content) {
+        throw publicationError(`Build output lock ownership changed unexpectedly: ${lockPath}`);
+      }
+      await nodeFs.rm(lockPath);
+      released = true;
+    })();
+    releaseInFlight = operation;
+    try {
+      await operation;
+    } finally {
+      if (releaseInFlight === operation) releaseInFlight = undefined;
     }
-    await nodeFs.rm(lockPath);
-    released = true;
   };
 }
 
@@ -107,6 +152,7 @@ export async function createBuildPublication(
       "Atomic build publication requires filesystem rename support",
     );
   }
+  const atomicRename = rename;
 
   const parentDir = dirname(finalDir);
   const outputName = basename(finalDir);
@@ -123,71 +169,142 @@ export async function createBuildPublication(
 
   let published = false;
   let cleaned = false;
+  let cleanupRequested = false;
+  let backupCleanupPending = false;
+  let publishInFlight: Promise<void> | undefined;
+  let cleanupInFlight: Promise<void> | undefined;
+
+  async function performPublish(): Promise<void> {
+    if (!(await fs.exists(buildDir))) {
+      throw publicationError(`Build staging directory is missing: ${buildDir}`);
+    }
+
+    const hadPreviousOutput = await fs.exists(finalDir);
+    if (hadPreviousOutput) {
+      try {
+        await atomicRename(finalDir, backupDir);
+      } catch (error) {
+        throw publicationError("Failed to preserve the previous build output", error);
+      }
+    }
+
+    try {
+      await atomicRename(buildDir, finalDir);
+      published = true;
+    } catch (error) {
+      const promotionError = publicationError("Failed to publish staged build output", error);
+      if (hadPreviousOutput) {
+        try {
+          await atomicRename(backupDir, finalDir);
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [
+              promotionError,
+              publicationError("Failed to restore the previous build output", rollbackError),
+            ],
+            "Build publication failed and the previous output could not be restored",
+          );
+        }
+      }
+      throw promotionError;
+    }
+
+    if (!hadPreviousOutput) return;
+
+    backupCleanupPending = true;
+    try {
+      await fs.remove(backupDir, { recursive: true });
+      backupCleanupPending = false;
+    } catch (error) {
+      logger.warn("Published build but could not remove its backup directory", {
+        backupDir,
+        error,
+      });
+    }
+  }
+
+  async function performPublicationCleanup(
+    pendingPublish: Promise<void> | undefined,
+  ): Promise<void> {
+    if (pendingPublish) {
+      try {
+        await pendingPublish;
+      } catch {
+        // The publish caller owns the primary failure; cleanup still owns all resources.
+      }
+    }
+
+    const errors: unknown[] = [];
+
+    if (backupCleanupPending) {
+      try {
+        if (await fs.exists(backupDir)) {
+          await fs.remove(backupDir, { recursive: true });
+        }
+        backupCleanupPending = false;
+      } catch (error) {
+        errors.push(
+          publicationError("Failed to remove published build backup", error),
+        );
+      }
+    }
+
+    if (!published) {
+      try {
+        if (await fs.exists(buildDir)) {
+          await fs.remove(buildDir, { recursive: true });
+        }
+      } catch (error) {
+        errors.push(
+          publicationError("Failed to remove abandoned build staging directory", error),
+        );
+      }
+    }
+
+    try {
+      await releaseLock();
+    } catch (error) {
+      errors.push(error);
+    }
+
+    if (errors.length === 0) {
+      cleaned = true;
+      return;
+    }
+    if (errors.length === 1) throw errors[0];
+    throw new AggregateError(errors, "Failed to clean up build publication resources");
+  }
 
   return {
     finalDir,
     buildDir,
     async publish(): Promise<void> {
       if (published) return;
-      if (!(await fs.exists(buildDir))) {
-        throw publicationError(`Build staging directory is missing: ${buildDir}`);
+      if (cleanupRequested) {
+        throw publicationError("Cannot publish build output after cleanup has started");
       }
+      if (publishInFlight) return await publishInFlight;
 
-      const hadPreviousOutput = await fs.exists(finalDir);
-      if (hadPreviousOutput) await rename(finalDir, backupDir);
-
+      const operation = performPublish();
+      publishInFlight = operation;
       try {
-        await rename(buildDir, finalDir);
-        published = true;
-      } catch (error) {
-        if (hadPreviousOutput) {
-          try {
-            await rename(backupDir, finalDir);
-          } catch (rollbackError) {
-            throw new AggregateError(
-              [error, rollbackError],
-              "Build publication failed and the previous output could not be restored",
-            );
-          }
-        }
-        throw publicationError("Failed to publish staged build output", error);
-      }
-
-      if (hadPreviousOutput) {
-        try {
-          await fs.remove(backupDir, { recursive: true });
-        } catch (error) {
-          logger.warn("Published build but could not remove its backup directory", {
-            backupDir,
-            error,
-          });
-        }
+        await operation;
+      } finally {
+        if (publishInFlight === operation) publishInFlight = undefined;
       }
     },
     async cleanup(): Promise<void> {
       if (cleaned) return;
-      const errors: unknown[] = [];
+      cleanupRequested = true;
+      if (cleanupInFlight) return await cleanupInFlight;
 
-      if (!published && await fs.exists(buildDir)) {
-        try {
-          await fs.remove(buildDir, { recursive: true });
-        } catch (error) {
-          errors.push(error);
-        }
-      }
-
+      const operation = performPublicationCleanup(publishInFlight);
+      cleanupInFlight = operation;
       try {
-        await releaseLock();
-      } catch (error) {
-        errors.push(error);
+        await operation;
+      } finally {
+        if (cleanupInFlight === operation) cleanupInFlight = undefined;
       }
-
-      if (errors.length === 0) {
-        cleaned = true;
-        return;
-      }
-      if (errors.length === 1) throw errors[0];
-      throw new AggregateError(errors, "Failed to clean up build publication resources");
     },
   };
 }

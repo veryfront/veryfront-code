@@ -5,6 +5,7 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { createSplitterPlugin } from "./esbuild-plugin.ts";
 import "../../../transforms/plugins/__tests__/code-parser-setup.ts";
+import { MAX_CODE_SPLITTER_MODULE_BYTES } from "./constants.ts";
 
 describe("build/bundler/code-splitter/esbuild-plugin", () => {
   describe("createSplitterPlugin", () => {
@@ -178,6 +179,74 @@ describe("build/bundler/code-splitter/esbuild-plugin", () => {
         );
       } finally {
         await remove(rootDir, { recursive: true });
+      }
+    });
+
+    it("rejects project modules that are not valid UTF-8", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-splitter-plugin-project-" });
+      const modulePath = join(projectDir, "invalid.ts");
+      await Deno.writeFile(modulePath, new Uint8Array([0xff]));
+
+      const plugin = createSplitterPlugin(projectDir);
+      // deno-lint-ignore no-explicit-any
+      let loader: (args: any) => any = () => null;
+      const mockBuild = {
+        onResolve() {},
+        // deno-lint-ignore no-explicit-any
+        onLoad(_opts: unknown, cb: (args: any) => any) {
+          loader = cb;
+        },
+        onDispose() {},
+      };
+      // deno-lint-ignore no-explicit-any
+      plugin.setup(mockBuild as any);
+
+      try {
+        await assertRejects(
+          () => loader({ path: modulePath }),
+          TypeError,
+          "valid UTF-8",
+        );
+      } finally {
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects oversized project modules before reading them", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-splitter-plugin-project-" });
+      const modulePath = join(projectDir, "oversized.ts");
+      const file = await Deno.open(modulePath, {
+        create: true,
+        write: true,
+      });
+      try {
+        await file.truncate(MAX_CODE_SPLITTER_MODULE_BYTES + 1);
+      } finally {
+        file.close();
+      }
+
+      const plugin = createSplitterPlugin(projectDir);
+      // deno-lint-ignore no-explicit-any
+      let loader: (args: any) => any = () => null;
+      const mockBuild = {
+        onResolve() {},
+        // deno-lint-ignore no-explicit-any
+        onLoad(_opts: unknown, cb: (args: any) => any) {
+          loader = cb;
+        },
+        onDispose() {},
+      };
+      // deno-lint-ignore no-explicit-any
+      plugin.setup(mockBuild as any);
+
+      try {
+        await assertRejects(
+          () => loader({ path: modulePath }),
+          TypeError,
+          "exceeds",
+        );
+      } finally {
+        await remove(projectDir, { recursive: true });
       }
     });
   });

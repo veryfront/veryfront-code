@@ -11,8 +11,9 @@ import type {
   PluginBuild,
 } from "veryfront/extensions/bundler";
 import { dirname, extname, isAbsolute, relative } from "#veryfront/compat/path/index.ts";
-import { readTextFile, realPath } from "#veryfront/compat/fs.ts";
+import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
 import { stripServerOnlyExports } from "#veryfront/transforms/pipeline/stages/browser-server-exports-strip.ts";
+import { MAX_CODE_SPLITTER_MODULE_BYTES } from "./constants.ts";
 
 const JAVASCRIPT_LOADERS = new Map<string, string>([
   [".js", "js"],
@@ -20,6 +21,7 @@ const JAVASCRIPT_LOADERS = new Map<string, string>([
   [".ts", "ts"],
   [".tsx", "tsx"],
 ]);
+const fs = createFileSystem();
 
 function loaderForPath(path: string): string | null {
   return JAVASCRIPT_LOADERS.get(extname(path)) ?? null;
@@ -34,6 +36,50 @@ async function canonicalPath(path: string, description: string): Promise<string>
     return await realPath(path);
   } catch (error) {
     throw new TypeError(`Unable to resolve ${description}: ${path}`, { cause: error });
+  }
+}
+
+async function readProjectModule(path: string): Promise<string> {
+  const before = fs.lstat ? await fs.lstat(path) : await fs.stat(path);
+  if (
+    before.isSymlink ||
+    !before.isFile ||
+    before.isDirectory ||
+    !Number.isSafeInteger(before.size) ||
+    before.size < 0
+  ) {
+    throw new TypeError(`Code-splitter module must be a safe regular file: ${path}`);
+  }
+  if (before.size > MAX_CODE_SPLITTER_MODULE_BYTES) {
+    throw new TypeError(
+      `Code-splitter module exceeds ${MAX_CODE_SPLITTER_MODULE_BYTES} bytes: ${path}`,
+    );
+  }
+
+  const bytes = await fs.readFile(path);
+  const [canonicalAfter, after] = await Promise.all([
+    canonicalPath(path, "code-splitter module after read"),
+    fs.lstat ? fs.lstat(path) : fs.stat(path),
+  ]);
+  if (
+    canonicalAfter !== path ||
+    after.isSymlink ||
+    !after.isFile ||
+    after.isDirectory ||
+    after.size !== before.size ||
+    bytes.byteLength !== before.size ||
+    bytes.byteLength > MAX_CODE_SPLITTER_MODULE_BYTES ||
+    after.mtime?.getTime() !== before.mtime?.getTime()
+  ) {
+    throw new TypeError(`Code-splitter module changed while it was being read: ${path}`);
+  }
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (error) {
+    throw new TypeError(`Code-splitter module must contain valid UTF-8: ${path}`, {
+      cause: error,
+    });
   }
 }
 
@@ -56,7 +102,7 @@ async function loadStrippedProjectModule(
     throw new TypeError(`Code-splitter module is outside the project directory: ${args.path}`);
   }
 
-  const contents = await readTextFile(args.path);
+  const contents = await readProjectModule(canonicalModulePath);
   return {
     contents: await stripServerOnlyExports(contents, args.path),
     loader,

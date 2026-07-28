@@ -37,8 +37,12 @@ export function assertAssetPath(value: unknown, description: string): asserts va
   }
 }
 
-function assertRoutePath(value: string): void {
+export function assertRoutePath(
+  value: unknown,
+  description = "route path in chunk manifest",
+): asserts value is string {
   if (
+    typeof value !== "string" ||
     value.length === 0 ||
     value.length > MAX_MANIFEST_PATH_LENGTH ||
     value !== value.normalize("NFC") ||
@@ -52,7 +56,7 @@ function assertRoutePath(value: string): void {
         index > 0 && (segment === "" || segment === "." || segment === "..")
       ))
   ) {
-    throw new TypeError(`Invalid route path in chunk manifest: ${JSON.stringify(value)}`);
+    throw new TypeError(`Invalid ${description}: ${JSON.stringify(value)}`);
   }
 }
 

@@ -70,7 +70,35 @@ describe("build/production-build/build/build-orchestrator", () => {
           buildProduction({
             projectDir: "/tmp/nonexistent-project-" + Date.now(),
           }),
+        Error,
+        "does not exist",
       );
+    });
+
+    it("distinguishes project directory inspection failures from absence", async () => {
+      const error = await assertRejects(
+        () =>
+          buildProduction({
+            projectDir: "invalid\0project",
+          }),
+        Error,
+        "Could not inspect project directory",
+      );
+      assertInstanceOf(error, Error);
+      assertInstanceOf(error.cause, TypeError);
+    });
+
+    it("rejects a project path that is not a directory", async () => {
+      const projectFile = await Deno.makeTempFile({ prefix: "vf-build-project-" });
+      try {
+        await assertRejects(
+          () => buildProduction({ projectDir: projectFile }),
+          Error,
+          "is not a directory",
+        );
+      } finally {
+        await Deno.remove(projectFile);
+      }
     });
 
     it("should be a function", () => {

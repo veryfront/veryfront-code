@@ -48,10 +48,10 @@ export class CodeSplitter {
           mode: this.options.mode,
         });
 
+        const { entryPoints, routeMap } = createEntryPoints(this.options.routes);
         await ensureDir(this.options.outDir);
         await ensureDefaultParserContracts();
 
-        const { entryPoints, routeMap } = createEntryPoints(this.options.routes);
         const buildContext = await createBuildContext(this.options, entryPoints);
         const result = await rebuildAndDispose(buildContext);
 

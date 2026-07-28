@@ -6,3 +6,6 @@ export const MAX_CHUNK_MANIFEST_BYTES = 5 * 1024 * 1024;
 
 /** Maximum number of records or list items in one chunk manifest collection. */
 export const MAX_CHUNK_MANIFEST_ENTRIES = 10_000;
+
+/** Maximum source-module size accepted by the browser code-splitting transform. */
+export const MAX_CODE_SPLITTER_MODULE_BYTES = 32 * 1024 * 1024;

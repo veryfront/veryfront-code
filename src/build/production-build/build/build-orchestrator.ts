@@ -1,7 +1,7 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import type { BuildOptions, BuildStats } from "#veryfront/server/build-types.ts";
-import { createError, toError } from "#veryfront/errors";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { CONFIG_INVALID, createError, toError } from "#veryfront/errors";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import {
   cleanupCaches,
   cleanupRenderer,
@@ -27,18 +27,36 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
       const startTime = Date.now();
       const normalizedOptions = normalizeBuildOptions(options);
 
+      const fs = createFileSystem();
+      let projectInfo: Awaited<ReturnType<typeof fs.stat>>;
       try {
-        const fs = createFileSystem();
-        const exists = await fs.exists(normalizedOptions.projectDir);
-        if (!exists) throw new Error("Directory does not exist");
+        projectInfo = await fs.stat(normalizedOptions.projectDir);
       } catch (error) {
-        logger.error(`Project directory check failed: ${error}`);
-        throw toError(
-          createError({
-            type: "config",
-            message: `Invalid project directory: ${normalizedOptions.projectDir} does not exist`,
-          }),
-        );
+        if (isNotFoundError(error)) {
+          throw CONFIG_INVALID.create({
+            detail: `Invalid project directory: ${
+              JSON.stringify(normalizedOptions.projectDir)
+            } does not exist`,
+            cause: error,
+          });
+        }
+        logger.error("Project directory inspection failed", {
+          projectDir: normalizedOptions.projectDir,
+          error,
+        });
+        throw CONFIG_INVALID.create({
+          detail: `Could not inspect project directory ${
+            JSON.stringify(normalizedOptions.projectDir)
+          }`,
+          cause: error,
+        });
+      }
+      if (!projectInfo.isDirectory) {
+        throw CONFIG_INVALID.create({
+          detail: `Invalid project directory: ${
+            JSON.stringify(normalizedOptions.projectDir)
+          } is not a directory`,
+        });
       }
 
       logger.info("Starting production build", options);

@@ -4,6 +4,7 @@
  */
 
 import type { SplitOptions } from "./types.ts";
+import { assertRoutePath } from "./manifest-validator.ts";
 
 interface EntryPointsResult {
   entryPoints: Record<string, string>;
@@ -38,9 +39,7 @@ export function createEntryPoints(
   const routeFiles = new Map<string, string>();
 
   for (const route of routes) {
-    if (!route.path || !route.path.startsWith("/")) {
-      throw new TypeError(`Code-splitter route paths must start with "/": ${route.path}`);
-    }
+    assertRoutePath(route.path, "code-splitter route path");
     if (!route.file) {
       throw new TypeError(`Code-splitter route ${JSON.stringify(route.path)} has no source file`);
     }

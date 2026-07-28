@@ -80,7 +80,7 @@ describe("build/production-build/build/build-publication", () => {
       await assertRejects(
         () => publication.cleanup(),
         Error,
-        "transient removal failure",
+        "Failed to remove abandoned build staging directory",
       );
       await publication.cleanup();
       await assertRejects(
@@ -88,6 +88,151 @@ describe("build/production-build/build/build-publication", () => {
         Deno.errors.NotFound,
       );
     } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("surfaces and retries published-backup cleanup failures", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-build-publication-" });
+    const outputDir = `${root}/dist`;
+    await Deno.mkdir(outputDir);
+    await Deno.writeTextFile(`${outputDir}/version.txt`, "old");
+    const delegate = createFileSystem();
+    let failBackupRemoval = true;
+    const flakyFs = new Proxy(delegate, {
+      get(target, property) {
+        if (property === "remove") {
+          return async (path: string, options?: { recursive?: boolean }): Promise<void> => {
+            if (path.includes(".veryfront-backup-") && failBackupRemoval) {
+              throw new Error("backup removal failed");
+            }
+            await target.remove(path, options);
+          };
+        }
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as FileSystem;
+
+    const publication = await createBuildPublication(outputDir, false, {
+      fs: flakyFs,
+    });
+    try {
+      await Deno.mkdir(publication.buildDir);
+      await Deno.writeTextFile(`${publication.buildDir}/version.txt`, "new");
+      await publication.publish();
+
+      assertEquals(await Deno.readTextFile(`${outputDir}/version.txt`), "new");
+      await assertRejects(
+        () => publication.cleanup(),
+        Error,
+        "Failed to remove published build backup",
+      );
+
+      failBackupRemoval = false;
+      await publication.cleanup();
+      assertEquals(
+        [...Deno.readDirSync(root)].some((entry) => entry.name.includes(".veryfront-backup-")),
+        false,
+      );
+    } finally {
+      failBackupRemoval = false;
+      await publication.cleanup().catch(() => undefined);
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("coalesces concurrent publication attempts", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-build-publication-" });
+    const outputDir = `${root}/dist`;
+    const delegate = createFileSystem();
+    let renameCalls = 0;
+    let signalRenameStarted!: () => void;
+    let releaseRename!: () => void;
+    const renameStarted = new Promise<void>((resolvePromise) => {
+      signalRenameStarted = resolvePromise;
+    });
+    const renameGate = new Promise<void>((resolvePromise) => {
+      releaseRename = resolvePromise;
+    });
+    const delayedFs = new Proxy(delegate, {
+      get(target, property) {
+        if (property === "rename") {
+          return async (from: string, to: string): Promise<void> => {
+            renameCalls++;
+            signalRenameStarted();
+            await renameGate;
+            await target.rename!(from, to);
+          };
+        }
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as FileSystem;
+
+    const publication = await createBuildPublication(outputDir, false, {
+      fs: delayedFs,
+    });
+    try {
+      await Deno.mkdir(publication.buildDir);
+      await Deno.writeTextFile(`${publication.buildDir}/version.txt`, "new");
+
+      const firstPublish = publication.publish();
+      await renameStarted;
+      const secondPublish = publication.publish();
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));
+      assertEquals(renameCalls, 1);
+
+      releaseRename();
+      await Promise.all([firstPublish, secondPublish]);
+      assertEquals(await Deno.readTextFile(`${outputDir}/version.txt`), "new");
+    } finally {
+      releaseRename();
+      await publication.cleanup().catch(() => undefined);
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("releases the build lock when a staging cleanup probe fails", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-build-publication-" });
+    const outputDir = `${root}/dist`;
+    const delegate = createFileSystem();
+    let failStageProbe = true;
+    const flakyFs = new Proxy(delegate, {
+      get(target, property) {
+        if (property === "exists") {
+          return async (path: string): Promise<boolean> => {
+            if (path.includes(".veryfront-stage-") && failStageProbe) {
+              throw new Error("stage probe failed");
+            }
+            return await target.exists(path);
+          };
+        }
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as FileSystem;
+
+    const first = await createBuildPublication(outputDir, false, {
+      fs: flakyFs,
+    });
+    let second: Awaited<ReturnType<typeof createBuildPublication>> | undefined;
+    try {
+      await assertRejects(
+        () => first.cleanup(),
+        Error,
+        "Failed to remove abandoned build staging directory",
+      );
+
+      second = await createBuildPublication(outputDir, false, {
+        lockTimeoutMs: 25,
+      });
+      failStageProbe = false;
+      await first.cleanup();
+    } finally {
+      failStageProbe = false;
+      await second?.cleanup().catch(() => undefined);
+      await first.cleanup().catch(() => undefined);
       await Deno.remove(root, { recursive: true });
     }
   });

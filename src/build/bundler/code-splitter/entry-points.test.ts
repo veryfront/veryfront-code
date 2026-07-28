@@ -134,6 +134,29 @@ describe("entry-points", () => {
         "Invalid code-splitter entry name",
       );
     });
+
+    it("rejects non-canonical route paths before creating entries", () => {
+      const invalidPaths = [
+        "about",
+        "/about/",
+        "/blog//post",
+        "/a/../b",
+        "/search?draft=true",
+        "/cafe\u0301",
+        "/bad\\route",
+      ];
+
+      for (const path of invalidPaths) {
+        assertThrows(
+          () =>
+            createEntryPoints([
+              { path, file: "/project/pages/about.tsx" },
+            ]),
+          TypeError,
+          "Invalid code-splitter route path",
+        );
+      }
+    });
   });
 
   describe("convertPathToName", () => {
