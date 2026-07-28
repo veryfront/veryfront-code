@@ -74,22 +74,6 @@ function buildRequestProfileLogContext(record: RequestProfileRecord): Record<str
   };
 }
 
-function logRequestCompletion(
-  message: string,
-  statusCode: number,
-  context: Record<string, unknown>,
-): void {
-  if (statusCode >= 500) {
-    logger.error(message, context);
-  } else if (statusCode >= 400) {
-    logger.warn(message, context);
-  } else if (statusCode >= 200 && statusCode < 400) {
-    logger.debug(message, context);
-  } else {
-    logger.info(message, context);
-  }
-}
-
 class RequestTracker {
   private inFlight = new Map<string, TrackedRequest>();
   private statusInterval: ReturnType<typeof setInterval> | undefined;
@@ -125,6 +109,12 @@ class RequestTracker {
 
     // Global singleton status logging should not keep short-lived CLI processes alive.
     if (this.statusInterval) unrefTimer(this.statusInterval);
+  }
+
+  private stopStatusLogging(): void {
+    if (!this.statusInterval) return;
+    clearInterval(this.statusInterval);
+    this.statusInterval = undefined;
   }
 
   start(
@@ -204,6 +194,7 @@ class RequestTracker {
     if (tracked.verySlowTimer) clearTimeout(tracked.verySlowTimer);
 
     this.inFlight.delete(requestId);
+    if (this.inFlight.size === 0) this.stopStatusLogging();
 
     const durationMs = Math.round(performance.now() - tracked.startTime);
 
@@ -231,7 +222,7 @@ class RequestTracker {
       logContext.request_profile = buildRequestProfileLogContext(profile);
     }
 
-    logRequestCompletion(`${tracked.method} ${tracked.path} ${statusCode}`, statusCode, logContext);
+    logger.debug(`${tracked.method} ${tracked.path} ${statusCode}`, logContext);
   }
 
   markLongLived(requestId: string): void {
@@ -320,10 +311,7 @@ class RequestTracker {
   }
 
   shutdown(): void {
-    if (this.statusInterval) {
-      clearInterval(this.statusInterval);
-      this.statusInterval = undefined;
-    }
+    this.stopStatusLogging();
 
     for (const tracked of this.inFlight.values()) {
       if (tracked.slowTimer) clearTimeout(tracked.slowTimer);

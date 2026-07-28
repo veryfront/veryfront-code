@@ -221,25 +221,36 @@ describe("server/runtime-handler/request-tracker", () => {
       assertEquals(entry?.context?.statusCode, 302);
     });
 
-    it("logs client error request completions at warn level", () => {
+    it("logs websocket upgrade completions at debug level", () => {
+      const entries = captureLogs();
+
+      requestTracker.start("upgrade-req", "proj", "/_ws", "GET");
+      requestTracker.complete("upgrade-req", 101);
+
+      const entry = entries.find((candidate) => candidate.message === "GET /_ws 101");
+      assertEquals(entry?.level, "debug");
+      assertEquals(entry?.context?.statusCode, 101);
+    });
+
+    it("logs client error request completions at debug level", () => {
       const entries = captureLogs();
 
       requestTracker.start("not-found", "proj", "/missing", "GET");
       requestTracker.complete("not-found", 404);
 
       const entry = entries.find((candidate) => candidate.message === "GET /missing 404");
-      assertEquals(entry?.level, "warn");
+      assertEquals(entry?.level, "debug");
       assertEquals(entry?.context?.statusCode, 404);
     });
 
-    it("logs server error request completions at error level", () => {
+    it("logs server error request completions at debug level", () => {
       const entries = captureLogs();
 
       requestTracker.start("error-req", "proj", "/broken", "GET");
       requestTracker.complete("error-req", 500);
 
       const entry = entries.find((candidate) => candidate.message === "GET /broken 500");
-      assertEquals(entry?.level, "error");
+      assertEquals(entry?.level, "debug");
       assertEquals(entry?.context?.statusCode, 500);
     });
 
@@ -346,6 +357,34 @@ describe("server/runtime-handler/request-tracker", () => {
   });
 
   describe("timer cleanup", () => {
+    it("stops status logging after the final request completes", () => {
+      const clearedIntervals: ReturnType<typeof setInterval>[] = [];
+      const originalSetInterval = globalThis.setInterval;
+      const originalClearInterval = globalThis.clearInterval;
+      let statusInterval: ReturnType<typeof setInterval> | undefined;
+
+      globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+        statusInterval = originalSetInterval(...args);
+        return statusInterval;
+      }) as typeof setInterval;
+      globalThis.clearInterval = ((id?: ReturnType<typeof setInterval>) => {
+        if (id !== undefined) clearedIntervals.push(id);
+        originalClearInterval(id);
+      }) as typeof clearInterval;
+
+      try {
+        requestTracker.start("status-interval", "proj", "/_ws", "GET");
+        requestTracker.complete("status-interval", 101);
+
+        assertEquals(statusInterval !== undefined, true);
+        assertEquals(clearedIntervals.includes(statusInterval!), true);
+      } finally {
+        requestTracker.shutdown();
+        globalThis.setInterval = originalSetInterval;
+        globalThis.clearInterval = originalClearInterval;
+      }
+    });
+
     it("should clear both slow and very slow timers on completion", () => {
       const clearedTimers: ReturnType<typeof setTimeout>[] = [];
       const originalClearTimeout = globalThis.clearTimeout;

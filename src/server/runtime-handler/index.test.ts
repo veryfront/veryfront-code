@@ -83,7 +83,7 @@ describe("server/runtime-handler/index", () => {
     });
   });
 
-  it("emits one security configuration warning for the default development config", async () => {
+  it("does not emit security guidance for the safe development defaults", async () => {
     const projectDir = await Deno.makeTempDir();
     const adapter = new DenoAdapter();
     const { lines, restore } = captureConsoleOutput();
@@ -109,11 +109,7 @@ describe("server/runtime-handler/index", () => {
       line.includes("CSRF protection is not configured") ||
       line.includes("Neither CORS nor CSRF protection is configured")
     );
-    assertEquals(securityGuidance.length, 1);
-    assertEquals(
-      securityGuidance[0]?.includes("Neither CORS nor CSRF protection is configured"),
-      true,
-    );
+    assertEquals(securityGuidance.length, 0);
   });
 
   it("returns 502 when x-token is missing in proxy mode", async () => {

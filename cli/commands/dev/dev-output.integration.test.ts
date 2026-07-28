@@ -7,7 +7,11 @@ import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { delay } from "#std/async";
 import { TEST_TIMEOUTS } from "../../../tests/_helpers/constants.ts";
 import { withTestContext } from "../../../tests/_helpers/context.ts";
-import { fetchWithTimeout, pollHttpReadyByTimeout } from "../../../tests/_helpers/http-polling.ts";
+import {
+  fetchWithTimeout,
+  pollHttpReadyByTimeout,
+  waitForPromiseWithTimeout,
+} from "../../../tests/_helpers/http-polling.ts";
 
 const NOISY_DEFAULT_FRAGMENTS = [
   "declares capabilities",
@@ -23,6 +27,8 @@ const NOISY_DEFAULT_FRAGMENTS = [
   "built handler",
   "Using runtime model",
   "GET / 200",
+  "GET /_ws 101",
+  "Neither CORS nor CSRF protection is configured",
 ] as const;
 
 const DEBUG_EXTENSION_DIAGNOSTICS = [
@@ -169,6 +175,7 @@ function startVeryfrontDev(
   });
 
   const child = command.spawn();
+  const status = child.status;
   const decoder = new TextDecoder();
   let captured = "";
 
@@ -199,24 +206,18 @@ function startVeryfrontDev(
         // Process may already have exited.
       }
 
-      const status = await Promise.race([
-        child.status,
-        delay(2_000).then(() => undefined),
-      ]);
-
-      if (status === undefined) {
+      try {
+        await waitForPromiseWithTimeout(status, 2_000, "dev server did not stop after SIGTERM");
+      } catch {
         try {
           child.kill("SIGKILL");
         } catch {
           // Process may already have exited.
         }
-        await child.status;
+        await status;
       }
 
-      await Promise.race([
-        Promise.all([stdoutDone, stderrDone]),
-        delay(1_000),
-      ]);
+      await Promise.all([stdoutDone, stderrDone]);
     },
   };
 }
@@ -241,7 +242,6 @@ async function requestPageAndApi(port: number): Promise<void> {
 
 describe(
   "veryfront dev output",
-  { sanitizeOps: false, sanitizeResources: false },
   () => {
     it(
       "keeps default dev output focused on readiness and hides routine diagnostics",

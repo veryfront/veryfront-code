@@ -146,6 +146,24 @@ describe("security/http/config", () => {
     assertEquals(getOutput().includes("Neither CORS nor CSRF protection is configured"), false);
   });
 
+  it("does not warn for the same-origin development default", async () => {
+    Deno.env.set("NODE_ENV", "development");
+    const { getOutput, restore } = captureConsoleLog();
+    const loader = new SecurityConfigLoader(
+      "/project",
+      createMockAdapter(),
+      { security: {} },
+    );
+
+    try {
+      await loader.ensureLoaded();
+    } finally {
+      restore();
+    }
+
+    assertEquals(getOutput().includes("Neither CORS nor CSRF protection is configured"), false);
+  });
+
   it("honors explicit CSRF disablement in production", async () => {
     Deno.env.set("NODE_ENV", "production");
     const { getOutput, restore } = captureConsoleLog();
