@@ -17,6 +17,13 @@ export interface SerializedRouteResponse {
   readonly body: Uint8Array | null;
 }
 
+/** Maximum response body buffered for transfer out of an isolated route worker. */
+export const MAX_WORKER_RESPONSE_BODY_BYTES = 10 * 1024 * 1024;
+/** Maximum response headers transferred out of an isolated route worker. */
+export const MAX_WORKER_RESPONSE_HEADERS = 256;
+const MAX_WORKER_RESPONSE_HEADER_CODE_UNITS = 64 * 1024;
+const MAX_WORKER_RESPONSE_STATUS_TEXT_CODE_UNITS = 1_024;
+
 /*
  * Capture the Web API primordials before any project handler can mutate its
  * worker/global realm. Every operation below uses these bindings directly:
@@ -27,6 +34,7 @@ const NativeResponse = Response;
 const NativePromise = Promise;
 const NativeUint8Array = Uint8Array;
 const NativeArrayBuffer = ArrayBuffer;
+const NativeNumber = Number;
 const NativeObjectPrototype = Object.prototype;
 const apply = Reflect.apply;
 const isArray = Array.isArray;
@@ -34,9 +42,11 @@ const defineProperty = Object.defineProperty;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getPrototypeOf = Object.getPrototypeOf;
 const isInteger = Number.isInteger;
+const isSafeInteger = Number.isSafeInteger;
 const isPromise = nodeUtilTypes.isPromise;
 const isProxy = nodeUtilTypes.isProxy;
 const stringToUpperCase = String.prototype.toUpperCase;
+const stringCharCodeAt = String.prototype.charCodeAt;
 const RESPONSE_STATUS_GETTER = getOwnPropertyDescriptor(
   NativeResponse.prototype,
   "status",
@@ -61,9 +71,21 @@ const RESPONSE_TYPE_GETTER = getOwnPropertyDescriptor(
   NativeResponse.prototype,
   "type",
 )?.get;
-const RESPONSE_ARRAY_BUFFER = getOwnPropertyDescriptor(
-  NativeResponse.prototype,
-  "arrayBuffer",
+const STREAM_GET_READER = getOwnPropertyDescriptor(
+  ReadableStream.prototype,
+  "getReader",
+)?.value;
+const READER_READ = getOwnPropertyDescriptor(
+  ReadableStreamDefaultReader.prototype,
+  "read",
+)?.value;
+const READER_CANCEL = getOwnPropertyDescriptor(
+  ReadableStreamDefaultReader.prototype,
+  "cancel",
+)?.value;
+const READER_RELEASE_LOCK = getOwnPropertyDescriptor(
+  ReadableStreamDefaultReader.prototype,
+  "releaseLock",
 )?.value;
 const HEADERS_FOR_EACH = getOwnPropertyDescriptor(
   Headers.prototype,
@@ -90,6 +112,13 @@ const ARRAY_BUFFER_BYTE_LENGTH_GETTER = getOwnPropertyDescriptor(
   NativeArrayBuffer.prototype,
   "byteLength",
 )?.get;
+const TYPED_ARRAY_SET = getOwnPropertyDescriptor(
+  TYPED_ARRAY_PROTOTYPE,
+  "set",
+)?.value;
+const PROMISE_CATCH = NativePromise.prototype.catch;
+const ARRAY_PUSH = Array.prototype.push;
+const isNativeUint8Array = nodeUtilTypes.isUint8Array;
 
 function preventThenableAssimilation<T extends object>(value: T): T {
   defineProperty(value, "then", {
@@ -131,6 +160,17 @@ function invalidResponseError(): Error {
     createError({
       type: "api",
       message: "API handler must return a Response",
+    }),
+  );
+}
+
+function responseBodyTooLargeError(actual?: number): Error {
+  const measured = actual === undefined ? "declared Content-Length" : `${actual} bytes`;
+  return toError(
+    createError({
+      type: "api",
+      message:
+        `API response body exceeds the isolated worker transfer limit (${measured}; limit ${MAX_WORKER_RESPONSE_BODY_BYTES} bytes)`,
     }),
   );
 }
@@ -185,16 +225,31 @@ function snapshotResponseSlots(value: unknown): ResponseSlotSnapshot | null {
 
     const headers: Array<readonly [string, string]> = [];
     let invalidHeader = false;
+    let headerCodeUnits = 0;
     apply(HEADERS_FOR_EACH, nativeHeaders, [
       (headerValue: unknown, headerName: unknown) => {
-        if (typeof headerName !== "string" || typeof headerValue !== "string") {
+        if (
+          typeof headerName !== "string" ||
+          typeof headerValue !== "string" ||
+          headers.length >= MAX_WORKER_RESPONSE_HEADERS
+        ) {
+          invalidHeader = true;
+          return;
+        }
+        headerCodeUnits += headerName.length + headerValue.length;
+        if (headerCodeUnits > MAX_WORKER_RESPONSE_HEADER_CODE_UNITS) {
           invalidHeader = true;
           return;
         }
         headers[headers.length] = [headerName, headerValue];
       },
     ]);
-    if (invalidHeader) return null;
+    if (
+      invalidHeader ||
+      statusText.length > MAX_WORKER_RESPONSE_STATUS_TEXT_CODE_UNITS
+    ) {
+      return null;
+    }
 
     return {
       type,
@@ -290,9 +345,7 @@ export async function serializeRouteResponse(
   requestMethod?: string,
 ): Promise<SerializedRouteResponse> {
   const snapshot = snapshotResponseSlots(value);
-  if (!snapshot || typeof RESPONSE_ARRAY_BUFFER !== "function") {
-    throw invalidResponseError();
-  }
+  if (!snapshot) throw invalidResponseError();
   if (snapshot.status === 0) throw invalidResponseError();
 
   let body: Uint8Array | null = null;
@@ -303,12 +356,8 @@ export async function serializeRouteResponse(
     ? undefined
     : apply(stringToUpperCase, requestMethod, []);
   if (normalizedMethod !== "HEAD" && snapshot.body !== null) {
-    try {
-      const bytes = await apply(RESPONSE_ARRAY_BUFFER, value, []);
-      body = new NativeUint8Array(bytes as ArrayBuffer);
-    } catch {
-      throw invalidResponseError();
-    }
+    assertDeclaredResponseBodySize(snapshot.headers);
+    body = await readBoundedResponseBody(snapshot.body);
   }
 
   const headers: Array<[string, string]> = [];
@@ -324,6 +373,119 @@ export async function serializeRouteResponse(
     headers,
     body,
   });
+}
+
+function assertDeclaredResponseBodySize(
+  headers: ReadonlyArray<readonly [string, string]>,
+): void {
+  for (let index = 0; index < headers.length; index++) {
+    const header = headers[index];
+    if (!header || header[0] !== "content-length") continue;
+    if (header[1].length === 0) throw invalidResponseError();
+    for (let offset = 0; offset < header[1].length; offset++) {
+      const code = apply(stringCharCodeAt, header[1], [offset]) as number;
+      if (code < 48 || code > 57) throw invalidResponseError();
+    }
+
+    const declaredLength = NativeNumber(header[1]);
+    if (
+      !isSafeInteger(declaredLength) ||
+      declaredLength > MAX_WORKER_RESPONSE_BODY_BYTES
+    ) {
+      throw responseBodyTooLargeError();
+    }
+    return;
+  }
+}
+
+function cancelResponseReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): void {
+  if (typeof READER_CANCEL !== "function") return;
+  try {
+    const cancellation = apply(READER_CANCEL, reader, []);
+    if (isPromise(cancellation)) {
+      apply(PROMISE_CATCH, cancellation, [() => undefined]);
+    }
+  } catch {
+    // Cancellation is best effort after the primary response failure is known.
+  }
+}
+
+async function readBoundedResponseBody(
+  stream: ReadableStream<Uint8Array>,
+): Promise<Uint8Array> {
+  if (
+    typeof STREAM_GET_READER !== "function" ||
+    typeof READER_READ !== "function" ||
+    typeof READER_RELEASE_LOCK !== "function" ||
+    typeof TYPED_ARRAY_SET !== "function" ||
+    typeof TYPED_ARRAY_BYTE_LENGTH_GETTER !== "function"
+  ) {
+    throw invalidResponseError();
+  }
+
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = apply(STREAM_GET_READER, stream, []) as ReadableStreamDefaultReader<Uint8Array>;
+  } catch {
+    throw invalidResponseError();
+  }
+
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      let result: ReadableStreamReadResult<Uint8Array>;
+      try {
+        result = await apply(READER_READ, reader, []) as ReadableStreamReadResult<Uint8Array>;
+      } catch {
+        cancelResponseReader(reader);
+        throw invalidResponseError();
+      }
+      if (result === null || typeof result !== "object" || isProxy(result)) {
+        cancelResponseReader(reader);
+        throw invalidResponseError();
+      }
+
+      const done = getOwnPropertyDescriptor(result, "done");
+      const value = getOwnPropertyDescriptor(result, "value");
+      if (!done || !("value" in done) || typeof done.value !== "boolean") {
+        cancelResponseReader(reader);
+        throw invalidResponseError();
+      }
+      if (done.value) break;
+
+      const chunk = value && "value" in value ? value.value : undefined;
+      if (!isNativeUint8Array(chunk) || isProxy(chunk)) {
+        cancelResponseReader(reader);
+        throw invalidResponseError();
+      }
+      const chunkByteLength = apply(TYPED_ARRAY_BYTE_LENGTH_GETTER!, chunk, []) as number;
+      if (chunkByteLength > MAX_WORKER_RESPONSE_BODY_BYTES - totalBytes) {
+        cancelResponseReader(reader);
+        throw responseBodyTooLargeError(totalBytes + chunkByteLength);
+      }
+
+      apply(ARRAY_PUSH, chunks, [chunk]);
+      totalBytes += chunkByteLength;
+    }
+  } finally {
+    try {
+      apply(READER_RELEASE_LOCK, reader, []);
+    } catch {
+      // The response outcome is already determined.
+    }
+  }
+
+  const body = new NativeUint8Array(totalBytes);
+  let offset = 0;
+  for (let index = 0; index < chunks.length; index++) {
+    const chunk = chunks[index]!;
+    apply(TYPED_ARRAY_SET, body, [chunk, offset]);
+    offset += apply(TYPED_ARRAY_BYTE_LENGTH_GETTER!, chunk, []) as number;
+  }
+  return body;
 }
 
 const INVALID_SERIALIZED_FIELD = Symbol("invalid-serialized-field");
@@ -344,8 +506,10 @@ function snapshotSerializedHeaders(
   value: unknown,
 ): Array<readonly [string, string]> | null {
   if (!isArray(value) || isProxy(value)) return null;
+  if (value.length > MAX_WORKER_RESPONSE_HEADERS) return null;
 
   const headers: Array<readonly [string, string]> = [];
+  let headerCodeUnits = 0;
   for (let index = 0; index < value.length; index += 1) {
     const pair = readOwnDataField(value, index);
     if (!isArray(pair) || isProxy(pair) || pair.length !== 2) return null;
@@ -355,6 +519,8 @@ function snapshotSerializedHeaders(
     if (typeof name !== "string" || typeof headerValue !== "string") {
       return null;
     }
+    headerCodeUnits += name.length + headerValue.length;
+    if (headerCodeUnits > MAX_WORKER_RESPONSE_HEADER_CODE_UNITS) return null;
     headers[index] = [name, headerValue];
   }
   return headers;
@@ -386,7 +552,8 @@ function snapshotSerializedBody(
       typeof buffer !== "object" ||
       isProxy(buffer) ||
       typeof byteLength !== "number" ||
-      typeof byteOffset !== "number"
+      typeof byteOffset !== "number" ||
+      byteLength > MAX_WORKER_RESPONSE_BODY_BYTES
     ) {
       return INVALID_SERIALIZED_FIELD;
     }
@@ -426,6 +593,7 @@ export function deserializeRouteResponse(value: unknown): Response {
     typeof status !== "number" ||
     !isInteger(status) ||
     typeof statusText !== "string" ||
+    statusText.length > MAX_WORKER_RESPONSE_STATUS_TEXT_CODE_UNITS ||
     headers === null ||
     body === INVALID_SERIALIZED_FIELD
   ) {

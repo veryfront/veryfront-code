@@ -29,6 +29,16 @@ export class NavigationHandlers {
 
   createClickHandler(callbacks: NavigationCallbacks) {
     return (event: MouseEvent) => {
+      if (
+        event.defaultPrevented ||
+        (typeof event.button === "number" && event.button !== 0) ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
       if (!(event.target instanceof HTMLElement)) return;
 
       const anchor = findAnchorElement(event.target);
@@ -53,12 +63,13 @@ export class NavigationHandlers {
   createMouseOverHandler(callbacks: NavigationCallbacks) {
     return (event: MouseEvent) => {
       if (!(event.target instanceof HTMLElement)) return;
-      if (event.target.tagName !== "A") return;
+      const anchor = findAnchorElement(event.target);
+      if (!anchor || !isInternalLink(anchor)) return;
 
-      const href = event.target.getAttribute("href");
-      if (!href || href.startsWith("http") || href.startsWith("#")) return;
+      const href = anchor.getAttribute("href");
+      if (!href) return;
 
-      if (!this.shouldPrefetchOnHover(event.target)) return;
+      if (!this.shouldPrefetchOnHover(anchor)) return;
       if (this.prefetchQueue.has(href)) return;
 
       this.prefetchQueue.add(href);

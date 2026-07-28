@@ -1,443 +1,203 @@
-# Routing Module
+# Routing module
 
-## Purpose
+`src/routing` is Veryfront's internal route-resolution and browser-navigation
+infrastructure. It owns route-pattern matching, file-path candidates, API route
+execution, and the low-level client navigation helpers used by the rendering
+runtime.
 
-The routing module provides pattern-based URL matching, dynamic route handling, API route processing, and client-side navigation for file-based routing systems.
+Application authors normally use:
 
-## Scope
+- `veryfront/router` for `Link`, `useRouter`, and React navigation;
+- `veryfront` for API route types and response helpers; and
+- the [Pages and routing guide](../../docs/guides/pages-and-routing.md) and
+  [API routes guide](../../docs/guides/api-routes.md) for application-facing
+  conventions.
 
-### What this module does:
+`#veryfront/routing` and its deep paths are workspace-internal imports. The
+source barrel is also mapped as `veryfront/routing` inside this repository, but
+`./routing` is not a published package export. Do not make application code
+depend on an internal deep path.
 
-- Route pattern matching with dynamic segments (`/blog/:slug`)
-- File path to URL slug mapping and normalization
-- API route handling with request/response helpers
-- Client-side page loading and prefetching
-- Path parameter extraction
-- Route specificity scoring for conflict resolution
-- CORS handling for API routes
+## Responsibilities and boundaries
 
-### What this module does NOT do:
+The module owns four cohesive areas:
 
-- Static file serving (see `platform/`)
-- SSR/RSC rendering (see `rendering/`)
-- HTTP server implementation (see `server/`)
-- Middleware pipeline execution (see `middleware/`)
+| Area           | Responsibility                                                                  |
+| -------------- | ------------------------------------------------------------------------------- |
+| `matchers/`    | Compile and rank static, dynamic, and catch-all URL patterns.                   |
+| `slug-mapper/` | Normalize slugs and generate portable app/pages file candidates.                |
+| `api/`         | Discover, load, isolate, execute, and describe API route modules.               |
+| `client/`      | Load bounded navigation data, manage caches, and handle eligible browser links. |
 
-## Architecture
+It does not own HTTP listening (`server/`), rendering (`rendering/`), React's
+public router (`react/`), middleware composition (`middleware/`), or static
+asset serving (`platform/` and `server/`).
 
-```
-routing/
-├── matchers/              # Route pattern matching
-│   ├── router.ts         # PageRouteMatcher implementation
-│   ├── matcher.ts        # Pattern matching logic
-│   └── types.ts          # Route types
-├── slug-mapper/          # Path/slug conversion
-│   ├── normalizer.ts     # Path normalization
-│   ├── mapper.ts         # Slug to path mapping
-│   └── types.ts          # Mapper types
-├── api/                  # API route handling
-│   ├── handler.ts        # APIRouteHandler
-│   ├── context.ts        # Request context
-│   ├── responses.ts      # Response helpers
-│   └── cors.ts           # CORS utilities
-├── client/               # Client-side routing
-│   ├── page-loader.ts    # Page data loading
-│   ├── prefetch.ts       # Link prefetching
-│   ├── navigation.ts     # Navigation handlers
-│   └── types.ts          # Client types
-└── registry/             # Route registry
-    ├── registry.ts       # Route storage
-    └── types.ts          # Registry types
-```
+## Route grammar
 
-## Key Exports
+The canonical file-route grammar is:
 
-### Route Matching
+| Pattern              | Meaning                                         |
+| -------------------- | ----------------------------------------------- |
+| `/about`             | Static route.                                   |
+| `/blog/[slug]`       | One required segment.                           |
+| `/docs/[...parts]`   | One or more catch-all segments.                 |
+| `/docs/[[...parts]]` | Optional catch-all, including the empty suffix. |
+| `/files/[name].json` | Dynamic segment with a literal suffix.          |
 
-- `PageRouteMatcher` - Main router class
-- `matchRoute(pattern, path)` - Match URL to pattern
-- `parseRoute(pattern)` - Parse route pattern
-- `getSpecificityScore(pattern)` - Calculate route priority
-- `normalizePath(path)` - Normalize URL path
+Malformed bracket syntax, duplicate parameter names, and more than one
+catch-all do not produce a valid match. When two registered routes have equal
+structural specificity for the same pathname, collection matchers return
+`null` instead of selecting one by registration order.
 
-### Slug Mapping
+Route parameters are percent-decoded one segment at a time. For compatibility,
+a malformed percent escape is retained as its raw string; it is not interpreted
+or allowed to crash matching. Request validation remains responsible for
+rejecting malformed application input.
 
-- `pathToSlug(path)` - Convert file path to URL slug
-- `slugToPath(slug)` - Convert URL slug to file path
-- `normalizeSlug(slug)` - Normalize slug format
-- `extractParams(pattern, path)` - Extract route parameters
-- `getPathCandidates(slug)` - Get possible file paths for slug
-- `isDynamicRoute(path)` - Check if route has dynamic segments
-- `matchesPattern(path, pattern)` - Test if path matches pattern
+## Matcher reference
 
-### API Routes
+`PageRouteMatcher` is the page-route collection:
 
-- `APIRouteHandler` - API route handler class
-- `createContext(request, params)` - Create API context
-- `json(data, status?)` - JSON response helper
-- `redirect(url, status?)` - Redirect response
-- `notFound(message?)` - 404 response
-- `badRequest(message?)` - 400 response
-- `unauthorized(message?)` - 401 response
-- `forbidden(message?)` - 403 response
-- `serverError(message?)` - 500 response
-- `applyCORSHeaders(response, config)` - Add CORS headers
-- `handleCORSPreflight(config)` - Handle OPTIONS requests
+```ts
+import { PageRouteMatcher } from "#veryfront/routing";
 
-### Client-Side Routing
+const matcher = new PageRouteMatcher();
+matcher.addRoute("/blog/[slug]", "/project/app/blog/[slug]/page.tsx");
 
-- `PageLoader` - Load page data client-side
-- `PageTransition` - Handle page transitions
-- `NavigationHandlers` - Navigation event handlers
-- `ViewportPrefetch` - Auto-prefetch visible links
-- `extractPageDataFromScript()` - Parse SSR page data
-
-## Dependencies
-
-### Internal
-
-- `#veryfront/types` - TypeScript types
-- `#veryfront/security` - Input validation, CORS
-
-### External
-
-None (zero external dependencies)
-
-## Usage Examples
-
-### Route Matching
-
-```typescript
-import { normalizePath, PageRouteMatcher } from "#veryfront/routing";
-
-// Create router
-const router = new PageRouteMatcher();
-
-// Add routes
-router.addRoute({
-  pattern: "/blog/:slug",
-  filePath: "pages/blog/[slug].tsx",
-});
-
-router.addRoute({
-  pattern: "/blog/:category/:slug",
-  filePath: "pages/blog/[category]/[slug].tsx",
-});
-
-// Match URL
-const match = router.match("/blog/hello-world");
-console.log(match);
-// {
-//   params: { slug: 'hello-world' },
-//   filePath: 'pages/blog/[slug].tsx',
-//   pattern: '/blog/:slug'
-// }
+const match = matcher.match("/blog/hello");
+// match?.params.slug === "hello"
+// match?.route.page === "/project/app/blog/[slug]/page.tsx"
 ```
 
-### Dynamic Route Parameters
+Its relevant methods are:
 
-```typescript
-import { extractParams, matchRoute } from "#veryfront/routing";
-
-const pattern = "/api/users/:id/posts/:postId";
-const path = "/api/users/123/posts/456";
-
-const match = matchRoute(pattern, path);
-if (match) {
-  console.log(match.params);
-  // { id: '123', postId: '456' }
-}
+```ts
+addRoute(pattern: string, page: string): void
+match(pathname: string): RouteMatch | null
+clearCache(): void
+getRoutes(): Route[]
 ```
 
-### Slug Mapping
+`addRoute` replaces an existing definition with the same pattern and clears
+positive and negative cache entries. Returned routes, matches, parameters, and
+catch-all arrays are immutable snapshots; callers do not own matcher state.
+The match cache holds at most 500 entries.
 
-```typescript
-import { normalizeSlug, pathToSlug, slugToPath } from "#veryfront/routing";
+The lower-level functions have these signatures:
 
-// File path → URL slug
-const slug = pathToSlug("pages/blog/[category]/[slug].tsx");
-console.log(slug); // "/blog/:category/:slug"
-
-// URL slug → File path candidates
-const paths = slugToPath("/blog/react/hooks");
-console.log(paths);
-// [
-//   'pages/blog/[category]/[slug].tsx',
-//   'pages/blog/react/[slug].tsx',
-//   'pages/blog/react/hooks.tsx'
-// ]
-
-// Normalize slug
-const normalized = normalizeSlug("/blog//post/");
-console.log(normalized); // "/blog/post"
+```ts
+parseRoute(pattern: string, page: string): Route
+matchRoute(pathname: string, route: Route): RouteMatch | null
+normalizePath(path: string): string
+getSpecificityScore(route: Route): number
 ```
 
-### API Routes
+`getSpecificityScore` exists for compatibility. New ordering code should use
+the structural matcher rather than comparing its numeric projection.
 
-```typescript
-import { type APIContext, badRequest, json, notFound } from "#veryfront/routing";
+## Slug and path-candidate reference
 
-// GET /api/users/:id
-export async function GET(ctx: APIContext) {
-  const { params, query } = ctx;
-
-  if (!params.id) {
-    return badRequest("User ID is required");
-  }
-
-  const user = await db.users.findById(params.id);
-
-  if (!user) {
-    return notFound("User not found");
-  }
-
-  return json(user);
-}
-
-// POST /api/users
-export async function POST(ctx: APIContext) {
-  const body = await ctx.request.json();
-
-  const user = await db.users.create(body);
-
-  return json(user, 201);
-}
-
-// DELETE /api/users/:id
-export async function DELETE(ctx: APIContext) {
-  await db.users.delete(ctx.params.id);
-
-  return new Response(null, { status: 204 });
-}
+```ts
+normalizeSlug(slug: string): string
+slugToPath(slug: string): string
+pathToSlug(path: string): string
+getSlugFromPath(filePath: string): string
+extractParams(pattern: string, slug: string): RouteParams | null
+isDynamicRoute(pattern: string): boolean
+matchesPattern(pattern: string, slug: string): boolean
+getPathCandidates(projectDir: string, slug: string): PathCandidates
+getSupportedExtensions(): string[]
 ```
 
-### API CORS Configuration
+`getPathCandidates` returns separate `appRouter` and `pagesRouter` arrays and
+uses the runtime-compatible path joiner. Candidate slugs reject backslashes,
+control characters, `.`/`..` traversal, more than 256 segments, and strings
+longer than 4,096 characters. `getSupportedExtensions` returns a copy.
 
-```typescript
-import { applyCORSHeaders, handleCORSPreflight } from "#veryfront/routing";
+## Browser navigation contracts
 
-export async function OPTIONS() {
-  return handleCORSPreflight({
-    origin: ["https://app.example.com"],
-    methods: ["GET", "POST", "DELETE"],
-    credentials: true,
-  });
-}
+`PageLoader` is constructed without arguments:
 
-export async function GET(ctx: APIContext) {
-  const response = json({ data: "example" });
+```ts
+import { PageLoader } from "#veryfront/routing";
 
-  return applyCORSHeaders(response, {
-    origin: ["https://app.example.com"],
-    credentials: true,
-  });
-}
+const loader = new PageLoader();
+const page = await loader.loadPage("/about?preview=1");
+await loader.prefetch("/pricing");
+loader.clearCache();
 ```
 
-### Client-Side Page Loading
+The loader:
 
-```typescript
-import { PageLoader, ViewportPrefetch } from "#veryfront/routing";
+- accepts only bounded internal navigation paths;
+- deduplicates concurrent requests for the same path;
+- keeps separate 50-entry page and SPA caches;
+- aborts active work and prevents old requests from repopulating a cleared
+  cache;
+- falls back from `/_veryfront/data/*.json` to navigation HTML only on a JSON
+  endpoint `404`;
+- rejects malformed JSON, malformed successful HTML, non-object page data,
+  invalid `Content-Length`, and bodies larger than 4 MiB; and
+- requires successful fallback HTML to contain `#root`. A page-data script, if
+  present, must contain a JSON object.
 
-// Create page loader
-const loader = new PageLoader("/");
+The exported legacy `parsePageDataFromHTML` helper still returns empty data for
+missing or malformed optional fields. Runtime navigation deliberately uses the
+strict parser instead.
 
-// Load page data
-const pageData = await loader.loadPage("/blog/hello");
-console.log(pageData.html, pageData.data);
+`NavigationHandlers` intercepts only unhandled primary-button clicks without
+modifier keys. `ViewportPrefetch` and hover prefetch use the same eligibility
+check. Explicit schemes, fragments, network paths, backslash network-path
+variants, downloads, and targets other than `_self` stay under native browser
+control.
 
-// Auto-prefetch visible links
-const prefetch = new ViewportPrefetch(loader);
-prefetch.start();
-
-// Manual prefetch
-await loader.prefetch("/about");
+```ts
+const handlers = new NavigationHandlers(100, { hover: true });
+const viewport = new ViewportPrefetch(
+  (path) => void loader.prefetch(path),
+  { viewport: true },
+);
+viewport.setup(document);
 ```
 
-### Client-Side Navigation
+Call `handlers.clear()` and `viewport.disconnect()` when their owner is
+destroyed.
 
-```typescript
-import { NavigationHandlers, PageTransition } from "#veryfront/routing";
+## API and OpenAPI boundaries
 
-const handlers = new NavigationHandlers({
-  loader: new PageLoader("/"),
-  onNavigate: (url) => {
-    console.log("Navigating to:", url);
-  },
-  onError: (error) => {
-    console.error("Navigation error:", error);
-  },
-});
+See [api/README.md](./api/README.md) for route module shapes,
+`APIRouteHandler`, method resolution, isolation, CORS, and OpenAPI contracts.
+Important transport limits include:
 
-// Handle link clicks
-handlers.attachToLinks();
+| Boundary                          |                            Limit |
+| --------------------------------- | -------------------------------: |
+| Browser navigation response       |                            4 MiB |
+| Isolated-worker response transfer |                           10 MiB |
+| Isolated-worker response headers  |   256 entries / 64 Ki code units |
+| Serialized OpenAPI document       |                           16 MiB |
+| Generated MCP tool response       | 4 MiB by default, 16 MiB maximum |
 
-// Page transitions
-const transition = new PageTransition({
-  duration: 300,
-  fadeOut: true,
-});
+OpenAPI schema conversion and generated operation-ID uniqueness fail closed.
+Generated MCP tools capture their transport configuration, enforce a deadline,
+reject redirects, preserve fixed credential precedence, and bound request and
+response JSON. Multi-tool registry publication is atomic.
 
-transition.start(() => {
-  // Update page content
-  document.body.innerHTML = newHTML;
-});
-```
+## Verification
 
-### Route Specificity
-
-```typescript
-import { getSpecificityScore } from "#veryfront/routing";
-
-// More specific routes have higher scores
-const scores = [
-  getSpecificityScore("/blog/react/hooks"), // 300 (static)
-  getSpecificityScore("/blog/:category/hooks"), // 201 (1 dynamic)
-  getSpecificityScore("/blog/:category/:slug"), // 102 (2 dynamic)
-  getSpecificityScore("/:path*"), // 1 (catch-all)
-];
-
-console.log(scores); // [300, 201, 102, 1]
-```
-
-## Route Pattern Syntax
-
-### Static Segments
-
-```
-/blog/about           → Matches exactly "/blog/about"
-/api/users            → Matches exactly "/api/users"
-```
-
-### Dynamic Segments
-
-```
-/blog/:slug           → Matches "/blog/hello", "/blog/world"
-/api/users/:id        → Matches "/api/users/123"
-/blog/:cat/:slug      → Matches "/blog/react/hooks"
-```
-
-### Catch-All Segments
-
-```
-/docs/:path*          → Matches "/docs/a", "/docs/a/b", "/docs/a/b/c"
-```
-
-### File Path Mapping
-
-```
-pages/blog/[slug].tsx       → /blog/:slug
-pages/api/users/[id].ts     → /api/users/:id
-pages/[...path].tsx         → /:path*
-```
-
-## Performance
-
-### Route Matching
-
-- Static routes: O(1) lookup
-- Dynamic routes: O(n) where n = number of dynamic routes
-- Specificity scoring: O(1) per route
-
-### Optimization Tips
-
-1. **Use static routes** when possible (faster matching)
-2. **Order routes** by specificity (more specific first)
-3. **Cache match results** for frequently accessed routes
-4. **Prefetch pages** for better navigation performance
-
-## Testing
+Run the complete module gate from the repository root:
 
 ```bash
-# Run routing tests
-deno task test src/routing/
-
-# Test route matching
-deno task test src/routing/matchers/
-
-# Test slug mapping
-deno task test src/routing/slug-mapper/
-
-# Test API routes
-deno task test src/routing/api/
-
-# Test client routing
-deno task test src/routing/client/
+deno fmt --check src/routing
+deno lint src/routing
+deno check src/routing/index.ts src/routing/api/index.ts
+deno test -A --unstable-worker-options --trace-leaks src/routing
 ```
 
-## Maintainer
+Changes to `client/` also require regenerating and testing the embedded
+production client bundle:
 
-**Team:** Routing Team
-**Code Owners:** See CODEOWNERS file
-
-## Related Modules
-
-- [`server/`](../server/README.md) - HTTP server integration
-- [`rendering/`](../rendering/README.md) - Page rendering
-- [`middleware/`](../middleware/README.md) - Request pipeline
-- [`security/`](../security/README.md) - CORS and validation
-
-## Troubleshooting
-
-### Route Not Matching
-
-```typescript
-// Problem: Route doesn't match
-const match = router.match("/blog/hello");
-console.log(match); // null
-
-// Solution: Check route pattern
-router.addRoute({
-  pattern: "/blog/:slug", // Must use : for dynamic segments
-  filePath: "pages/blog/[slug].tsx",
-});
+```bash
+deno run -A scripts/build/prebundle-client-scripts.ts
+deno test -A --trace-leaks src/build/production-build/templates.test.ts
 ```
-
-### Conflicting Routes
-
-```typescript
-// Problem: Multiple routes match same URL
-router.addRoute({ pattern: "/blog/:slug", filePath: "a.tsx" });
-router.addRoute({ pattern: "/blog/:category", filePath: "b.tsx" });
-
-// Solution: Use specificity scoring or more specific patterns
-router.addRoute({ pattern: "/blog/category/:name", filePath: "b.tsx" });
-router.addRoute({ pattern: "/blog/:slug", filePath: "a.tsx" });
-```
-
-### CORS Errors
-
-```typescript
-// Problem: CORS errors in browser
-// Error: "No 'Access-Control-Allow-Origin' header"
-
-// Solution: Add CORS headers
-export async function GET(ctx: APIContext) {
-  const response = json({ data: "example" });
-
-  return applyCORSHeaders(response, {
-    origin: "*", // or specific origins
-    methods: ["GET"],
-  });
-}
-```
-
-### Path Normalization
-
-```typescript
-// Problem: Inconsistent path formats
-const paths = ["/blog/", "blog", "/blog//post"];
-
-// Solution: Normalize all paths
-import { normalizePath } from "#veryfront/routing";
-
-const normalized = paths.map(normalizePath);
-console.log(normalized); // ['/blog', '/blog', '/blog/post']
-```
-
-## References
-
-- [File-based Routing](https://veryfront.com/docs/routing)
-- [API Routes](https://veryfront.com/docs/api-routes)
-- [Client-side Routing](https://veryfront.com/docs/client-routing)
-- [Veryfront Routing Guide](https://veryfront.com/docs/routing)

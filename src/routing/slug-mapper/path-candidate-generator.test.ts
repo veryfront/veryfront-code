@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   generateAppRouterCandidates,
@@ -73,6 +73,33 @@ describe("path-candidate-generator", () => {
 
       assertEquals(appRouter.length > 0, true);
       assertEquals(pagesRouter.length > 0, true);
+    });
+
+    it("normalizes redundant route separators before joining", () => {
+      const candidates = getPathCandidates("/project", "/docs//intro/");
+
+      assertEquals(
+        candidates.appRouter.some((candidate) => candidate.endsWith("/app/docs/intro/page.tsx")),
+        true,
+      );
+    });
+
+    it("rejects traversal, platform separators, controls, and unbounded slugs", () => {
+      for (
+        const slug of [
+          "../secret",
+          "docs/../../secret",
+          "docs\\secret",
+          "docs/\0secret",
+          "a".repeat(4_097),
+        ]
+      ) {
+        assertThrows(
+          () => getPathCandidates("/project", slug),
+          TypeError,
+          "slug",
+        );
+      }
     });
   });
 

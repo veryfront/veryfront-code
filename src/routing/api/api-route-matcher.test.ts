@@ -349,6 +349,22 @@ describe("ApiRouteMatcher", () => {
       assertEquals(cachedMatch.route.page, "pages/dynamic50/[id].tsx");
       assertEquals(cachedMatch.params, { id: "test" });
     });
+
+    it("does not expose matcher-owned registry or match state", () => {
+      const router = createRouter();
+      router.addRoute("/api/users/[id]", "pages/api/users.tsx");
+      const match = router.match("/api/users/42");
+      assertExists(match);
+
+      const routes = router.routes;
+      routes.clear();
+
+      assertEquals(Object.isFrozen(match), true);
+      assertEquals(Object.isFrozen(match.route), true);
+      assertEquals(Object.isFrozen(match.params), true);
+      router.clearCache();
+      assertEquals(router.match("/api/users/42")?.route.page, "pages/api/users.tsx");
+    });
   });
 
   describe("Cache management", () => {

@@ -238,6 +238,74 @@ describe("NavigationHandlers", () => {
         mocks.cleanup();
       }
     });
+
+    it("leaves modified and non-primary clicks to the browser", () => {
+      const mocks = setupNavigationHandlerMocks();
+      try {
+        const handlers = new NavigationHandlers();
+        let navigationCount = 0;
+        let preventedCount = 0;
+        const clickHandler = handlers.createClickHandler({
+          onNavigate() {
+            navigationCount++;
+            return Promise.resolve();
+          },
+          onPrefetch() {},
+        });
+        const anchor = createMockAnchor("/about");
+
+        for (
+          const eventFields of [
+            { button: 1 },
+            { button: 0, metaKey: true },
+            { button: 0, ctrlKey: true },
+            { button: 0, shiftKey: true },
+            { button: 0, altKey: true },
+            { button: 0, defaultPrevented: true },
+          ]
+        ) {
+          clickHandler({
+            target: anchor,
+            preventDefault() {
+              preventedCount++;
+            },
+            ...eventFields,
+          } as unknown as MouseEvent);
+        }
+
+        assertEquals(navigationCount, 0);
+        assertEquals(preventedCount, 0);
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("does not intercept active-content or network-path URLs", () => {
+      const mocks = setupNavigationHandlerMocks();
+      try {
+        const handlers = new NavigationHandlers();
+        let navigationCount = 0;
+        const clickHandler = handlers.createClickHandler({
+          onNavigate() {
+            navigationCount++;
+            return Promise.resolve();
+          },
+          onPrefetch() {},
+        });
+
+        for (const href of ["javascript:alert(1)", "data:text/html,x", "//example.com/page"]) {
+          clickHandler({
+            button: 0,
+            target: createMockAnchor(href),
+            preventDefault() {},
+          } as unknown as MouseEvent);
+        }
+
+        assertEquals(navigationCount, 0);
+      } finally {
+        mocks.cleanup();
+      }
+    });
   });
 
   describe("createPopStateHandler", () => {
@@ -370,6 +438,53 @@ describe("NavigationHandlers", () => {
         await delay(100);
 
         assertEquals(prefetchCalled, false, "Should not prefetch for non-anchor elements");
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("prefetches an internal anchor when the event starts on a nested element", async () => {
+      const mocks = setupNavigationHandlerMocks();
+      try {
+        const handlers = new NavigationHandlers(scaleMs(10), { hover: true });
+        let prefetchedUrl = "";
+        const mouseOverHandler = handlers.createMouseOverHandler({
+          onNavigate: async () => {},
+          onPrefetch(url) {
+            prefetchedUrl = url;
+          },
+        });
+        const anchor = createMockAnchor("/nested");
+        const child = createMockElement("span") as HTMLElement;
+        Object.defineProperty(child, "parentElement", { value: anchor });
+
+        mouseOverHandler({ target: child } as unknown as MouseEvent);
+        await delay(50);
+
+        assertEquals(prefetchedUrl, "/nested");
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("does not prefetch active-content or network-path URLs", async () => {
+      const mocks = setupNavigationHandlerMocks();
+      try {
+        const handlers = new NavigationHandlers(scaleMs(10), { hover: true });
+        let prefetchCount = 0;
+        const mouseOverHandler = handlers.createMouseOverHandler({
+          onNavigate: async () => {},
+          onPrefetch() {
+            prefetchCount++;
+          },
+        });
+
+        for (const href of ["javascript:alert(1)", "data:text/html,x", "//example.com/page"]) {
+          mouseOverHandler({ target: createMockAnchor(href) } as unknown as MouseEvent);
+        }
+        await delay(50);
+
+        assertEquals(prefetchCount, 0);
       } finally {
         mocks.cleanup();
       }

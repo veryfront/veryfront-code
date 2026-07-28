@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    44 |      75.9% | Current formal closure evidence remains valid       |
+| Closed                         |    45 |      77.6% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    12 |      20.7% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    11 |      19.0% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -69,6 +69,7 @@ stricter closure count.
 - `registry`
 - `release-assets`
 - `repositories`
+- `routing`
 - `runs`
 - `runtime`
 - `sandbox`
@@ -96,7 +97,6 @@ stricter closure count.
 - `proxy`
 - `react`
 - `rendering`
-- `routing`
 - `security`
 - `server`
 - `skill`
@@ -125,7 +125,7 @@ The current closed review chain covers `agent`, `cache`, `channels`, `chat`,
 `client`, `config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
 `internal-agents`, `mcp`, `middleware`, `observability`, `oauth`, `platform`, `provider`,
-`prompt`, `registry`, `release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
+`prompt`, `registry`, `release-assets`, `repositories`, `routing`, `runs`, `runtime`, `sandbox`, `schedule`,
 `schemas`, `studio`, `task`, `tool`, `trigger`, `types`, `webhook`, `index.ts`, and
 `version.ts`.
 The chain also covers `testing` after its portable assertions, BDD adapters,
@@ -5240,5 +5240,146 @@ following compatibility and environment residuals are explicit:
 
 The `observability` unit is closed at 43 of 58 formal units; 15 units remain
 open or awaiting top-level revalidation.
+
+### Routing closure checkpoint
+
+The `routing` audit unit owns the canonical file-route grammar and specificity
+rules, page and API route collections, file candidate generation, API discovery
+and execution, isolated response transport, OpenAPI generation and MCP
+projection, and the low-level browser navigation helpers consumed by Rendering.
+Its direct dependencies include configuration, errors, platform adapters,
+registry transactions, schemas, security isolation, tools/resources, and shared
+path, response-body, and cache utilities. Direct consumers span Build's
+embedded client bundle, Rendering's browser router, Server API/OpenAPI request
+handlers and route discovery, and Security's project worker.
+
+The current findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** click, hover, and viewport
+  navigation used inconsistent prefix checks and ignored modified,
+  already-handled, nested-anchor, scheme-relative, backslash, and non-primary
+  interactions. External or active-content links could be prefetched or
+  intercepted instead of retaining native browser semantics. One
+  case-insensitive internal-link predicate now rejects every explicit scheme,
+  network-path variant, fragment, download, and non-`_self` target; all three
+  navigation paths reuse it, and click handling honors prior cancellation,
+  button, and modifier state.
+- **Symptom -> Source -> Consequence -> Remedy:** PageLoader treated every JSON
+  failure as permission to fetch HTML, read successful bodies without a bound,
+  accepted malformed page-data and blank fallback documents, and let requests
+  started before `clearCache()` repopulate or retire a newer request. Server
+  failures could be hidden, hostile responses could retain unbounded memory,
+  malformed output could blank the page, and an ABA race could corrupt cache
+  ownership. Only an exact JSON `404` now falls back; internal paths,
+  `Content-Length`, fatal UTF-8, object JSON, fallback `#root`, and optional
+  page-data JSON are validated; response reads stop at 4 MiB; rejected bodies
+  are cancelled; active requests are aborted on clear; and generation plus
+  promise-identity checks prevent stale publication and cleanup.
+- **Symptom -> Source -> Consequence -> Remedy:** replacing an existing
+  50-entry cache key evicted an unrelated oldest entry, while page metadata
+  omitted by a later navigation remained in the document. Normal updates
+  reduced cache capacity and leaked the previous page's description or
+  OpenGraph title. Eviction now applies only to new keys, and frontmatter
+  metadata is synchronised in both directions so omitted values remove the
+  prior page's tag.
+- **Symptom -> Source -> Consequence -> Remedy:** page and API matchers returned
+  cached matches, routes, catch-all arrays, and route maps that exposed mutable
+  collection state. A consumer could mutate future cache hits or clear and
+  rewrite a matcher's registered definitions without using its lifecycle API.
+  Cached collection values and every public route/map result are now immutable
+  detached snapshots while preserving the established cached-result identity.
+- **Symptom -> Source -> Consequence -> Remedy:** file candidates mixed manual
+  slash concatenation with platform paths and admitted traversal, backslashes,
+  controls, and unbounded segment counts. Candidate probing could escape its
+  intended root or produce host-specific paths. Every candidate now uses the
+  compatibility joiner; project roots and slugs are validated; `.` and `..`,
+  platform separators, controls, more than 256 segments, and more than 4,096
+  characters fail before path construction; and supported extensions are
+  returned by copy.
+- **Symptom -> Source -> Consequence -> Remedy:** `createRoute` silently
+  replaced failed schema conversion with permissive metadata, retained mutable
+  caller configuration, overwrote reused handler metadata, and failed on frozen
+  handlers. Generated specifications could contradict runtime validation or
+  drift after admission. Route configuration is read through own data
+  descriptors, text/tags/status/schema collections are bounded and deeply
+  detached, invalid schemas fail closed with field provenance, metadata is
+  immutable, first-use callable identity remains compatible, and frozen or
+  reused handlers receive a callable wrapper.
+- **Symptom -> Source -> Consequence -> Remedy:** generated OpenAPI MCP tools
+  retained live configuration/spec objects, allowed per-call Authorization to
+  replace configured credentials, joined base paths ambiguously, followed
+  redirects, trusted unbounded request/response JSON, and could wait forever
+  when fetch ignored cancellation. Tool behavior could be redirected after
+  review, credentials could be downgraded, and network or memory lifecycle
+  could escape its owner. Generation now captures bounded data-only operations,
+  schemas, headers, fetch, and policy; validates absolute HTTP(S) base URLs and
+  operation uniqueness; preserves base paths; applies fixed headers last;
+  rejects redirects; bounds body and response JSON; decodes UTF-8 strictly; and
+  races caller cancellation plus a 30-second default deadline independently of
+  fetch cooperation.
+- **Symptom -> Source -> Consequence -> Remedy:** generated MCP registration
+  published tools one at a time and swallowed a later conflict. Callers could
+  receive a partial tool set whose registry state depended on insertion order.
+  The established log-and-return error contract remains compatible, but tool
+  publication now uses the project-scoped registry transaction so every
+  generated tool commits together or none do.
+- **Symptom -> Source -> Consequence -> Remedy:** OpenAPI serialization recursed
+  and encoded without structural or output budgets, coerced hostile thrown
+  values through `String`, and generated colliding operation IDs for distinct
+  paths such as a literal `ById` and `{id}`. A docs request could overflow the
+  stack or memory, invoke caller conversion hooks, or expose an ambiguous
+  operation/tool catalog. Data-only snapshots now cap nesting at 128, values at
+  100,000, and encoded JSON/YAML at 16 MiB; diagnostics use the non-coercive
+  snapshot contract; and duplicate generated operation IDs reject the complete
+  specification with route provenance.
+- **Symptom -> Source -> Consequence -> Remedy:** isolated API workers captured
+  responses with unbounded `arrayBuffer()` and accepted unconstrained
+  transferred header/status/body records. A project handler could exhaust the
+  worker or host during the trusted handoff. Response slots are read through
+  captured Web API primitives; declared and streamed bodies stop at 10 MiB;
+  header count and aggregate text, status text, transferred typed arrays, and
+  deserialization are revalidated; oversized streams are cancelled promptly;
+  and `HEAD` never consumes a body.
+- **Symptom -> Source -> Consequence -> Remedy:** both module READMEs described
+  nonexistent aliases, constructors, methods, middleware, and package exports,
+  while the generated production router still embedded the pre-hardening
+  client. Maintainers and compiled releases could follow contracts that source
+  mode did not implement. The READMEs now separate application-facing and
+  internal surfaces and document exact signatures, grammar, lifecycle, trust,
+  and limits; the production client template was regenerated and has a
+  deterministic source-bundle equality test.
+
+Current reproducible evidence:
+
+- all Routing suites pass 45 top-level tests and 1,271 nested steps with zero
+  failures under `--unstable-worker-options --trace-leaks`, including route
+  grammar and ambiguity, discovery and method semantics, host/worker execution,
+  cache races, browser link policy, bounded navigation and response transfer,
+  OpenAPI mutation/serialization, MCP cancellation and transport limits, and
+  atomic registry conflict handling;
+- direct production Routing coverage is 84.8 percent branches, 94.5 percent
+  functions, and 80.9 percent lines;
+- affected Rendering and Build consumers pass three tests and 62 nested steps,
+  including byte-for-byte regeneration of both embedded client bundles;
+  Server OpenAPI/docs/discovery consumers pass three tests and 13 steps; and
+  the Security worker-script matrix passes five tests and 38 steps;
+- all 98 Routing files format, all 95 TypeScript files lint, both source barrels
+  typecheck, the generated template test passes, and `git diff --check` is
+  clean; and
+- documentation validation passes 40 API reference pages, 67 guides, 112
+  public documentation files, executable examples, and all 747 links.
+
+Intentional compatibility boundaries remain explicit:
+
+| Severity | Boundary                                                                                | Current control                                                                                                                                                                  | Follow-up trigger                                                                                                                   |
+| -------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Low      | Malformed percent escapes remain raw route-parameter strings.                           | Matching cannot crash; route ambiguity still fails closed; application request validation can reject the raw value.                                                              | Change decoding semantics only in a published route-grammar compatibility release.                                                  |
+| Low      | The exported legacy `parsePageDataFromHTML` helper retains lenient empty-data behavior. | PageLoader and production navigation use the strict parser, so successful malformed server output cannot blank a runtime page.                                                   | Deprecate and remove the lenient helper after confirming no direct internal or ecosystem consumers require it.                      |
+| Low      | PageLoader's explicit cache setters and getters preserve caller object identity.        | Cache size, request lifecycle, network inputs, and wire JSON are bounded; callers that use the low-level setters own mutation of their supplied value.                           | Add a separately named snapshot cache API or announce an identity-breaking change before freezing arbitrary component-bearing data. |
+| Low      | Ordinary generated-tool HTTP failures return `{ error: true, message }`.                | Cancellation, deadlines, redirect policy, malformed/oversized data, and other lifecycle or trust-boundary violations reject; the retained result shape is bounded and sanitized. | Standardize all MCP tool transport failures on typed rejection in a versioned tool contract.                                        |
+
+No known unresolved critical or high-confidence Routing production risk remains.
+`routing` is closed at 45 of 58 formal units; 13 units remain open or awaiting
+top-level revalidation.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

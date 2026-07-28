@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateMCPToolsFromSpec } from "./mcp-tools.ts";
 import type { OpenAPISpec } from "./types.ts";
@@ -14,7 +20,7 @@ function makeSpec(paths: OpenAPISpec["paths"]): OpenAPISpec {
 
 function generateTools(
   spec: OpenAPISpec,
-  options?: { baseUrl: string; toolPrefix?: string },
+  options?: Parameters<typeof generateMCPToolsFromSpec>[1],
 ) {
   return generateMCPToolsFromSpec(spec, options ?? { baseUrl: "http://localhost:3000" });
 }
@@ -264,6 +270,160 @@ describe("routing/api/openapi/mcp-tools", () => {
         assertEquals(requestHeaders.get("X-End-User-Id"), null);
       } finally {
         globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("captures the specification and rejects duplicate generated tool IDs", () => {
+      const operation = {
+        operationId: "listItems",
+        summary: "Original summary",
+        responses: { "200": { description: "OK" } },
+      };
+      const spec = makeSpec({ "/api/items": { get: operation } });
+      const [tool] = generateTools(spec);
+      assertExists(tool);
+
+      operation.summary = "Mutated summary";
+      assertEquals(tool.description.includes("Original summary"), true);
+      assertEquals(tool.description.includes("Mutated summary"), false);
+
+      assertThrows(
+        () =>
+          generateTools(makeSpec({
+            "/api/one": { get: operation },
+            "/api/two": { get: { ...operation } },
+          })),
+        TypeError,
+        "duplicate",
+      );
+    });
+
+    it("keeps configured headers authoritative and rejects redirects", async () => {
+      let request: Request | undefined;
+      let redirect: RequestRedirect | undefined;
+      const [tool] = generateTools(
+        makeSpec({
+          "/api/items": {
+            post: {
+              operationId: "createItem",
+              parameters: [{
+                name: "Authorization",
+                in: "header",
+                required: false,
+                schema: { type: "string" },
+              }],
+              requestBody: {
+                content: { "application/json": { schema: { type: "object" } } },
+              },
+              responses: { "200": { description: "OK" } },
+            },
+          },
+        }),
+        {
+          baseUrl: "https://api.example.test/root",
+          headers: { Authorization: "Bearer configured" },
+          fetch(input, init) {
+            request = new Request(input, init);
+            redirect = init?.redirect;
+            return Promise.resolve(Response.json({ ok: true }));
+          },
+        },
+      );
+      assertExists(tool);
+
+      await tool.execute({
+        headers: { Authorization: "Bearer caller" },
+        body: { name: "item" },
+      });
+
+      assertExists(request);
+      assertEquals(request.url, "https://api.example.test/root/api/items");
+      assertEquals(request.headers.get("authorization"), "Bearer configured");
+      assertEquals(request.headers.get("content-type"), "application/json");
+      assertEquals(redirect, "error");
+    });
+
+    it("links request cancellation to the execution context", async () => {
+      const caller = new AbortController();
+      const cancellationReason = new Error("caller stopped");
+      let requestSignal: AbortSignal | undefined;
+      const [tool] = generateTools(
+        makeSpec({
+          "/api/wait": {
+            get: {
+              operationId: "wait",
+              responses: { "200": { description: "OK" } },
+            },
+          },
+        }),
+        {
+          baseUrl: "https://api.example.test",
+          fetch(_input, init) {
+            requestSignal = init?.signal ?? undefined;
+            return new Promise<Response>(() => {});
+          },
+        },
+      );
+      assertExists(tool);
+
+      const execution = tool.execute({}, { abortSignal: caller.signal });
+      caller.abort(cancellationReason);
+
+      await assertRejects(() => execution, Error, "caller stopped");
+      assertExists(requestSignal);
+      assertEquals(requestSignal.aborted, true);
+      assertStrictEquals(requestSignal.reason, cancellationReason);
+    });
+
+    it("enforces its deadline when a fetch implementation ignores abort", async () => {
+      const [tool] = generateTools(
+        makeSpec({
+          "/api/wait": {
+            get: {
+              operationId: "waitWithTimeout",
+              responses: { "200": { description: "OK" } },
+            },
+          },
+        }),
+        {
+          baseUrl: "https://api.example.test",
+          timeoutMs: 10,
+          fetch: () => new Promise<Response>(() => {}),
+        },
+      );
+      assertExists(tool);
+
+      await assertRejects(() => tool.execute({}), Error, "timed out");
+    });
+
+    it("rejects oversized and malformed JSON response bodies", async () => {
+      for (
+        const response of [
+          new Response("x".repeat(65), {
+            headers: { "content-type": "text/plain" },
+          }),
+          new Response(new Uint8Array([0xff]), {
+            headers: { "content-type": "application/json" },
+          }),
+        ]
+      ) {
+        const [tool] = generateTools(
+          makeSpec({
+            "/api/data": {
+              get: {
+                operationId: "getData",
+                responses: { "200": { description: "OK" } },
+              },
+            },
+          }),
+          {
+            baseUrl: "https://api.example.test",
+            maxResponseBytes: 64,
+            fetch: () => Promise.resolve(response),
+          },
+        );
+        assertExists(tool);
+        await assertRejects(() => tool.execute({}), TypeError);
       }
     });
   });

@@ -27,10 +27,14 @@ import {
   type OpenAPIPathDescription,
 } from "./path-utils.ts";
 import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];
 type HttpMethodLower = Lowercase<HttpMethod>;
+export const MAX_OPENAPI_SERIALIZATION_BYTES = 16 * 1024 * 1024;
+const MAX_OPENAPI_SERIALIZATION_DEPTH = 128;
+const MAX_OPENAPI_SERIALIZATION_VALUES = 100_000;
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const arraySort = Array.prototype.sort;
@@ -51,6 +55,8 @@ const weakSetHas = NativeWeakSet.prototype.has;
 const NativeJSON = JSON;
 const jsonStringify = NativeJSON.stringify;
 const stringStartsWith = String.prototype.startsWith;
+const utf8Encoder = new TextEncoder();
+const textEncoderEncode = TextEncoder.prototype.encode;
 const serializationErrors = new NativeWeakSet<object>();
 
 interface GenerateSpecOptions {
@@ -115,11 +121,57 @@ function throwSerializationFailure(error: unknown): never {
   );
 }
 
+interface SerializationBudget {
+  bytes: number;
+  values: number;
+}
+
+function consumeSerializationValue(
+  budget: SerializationBudget,
+  depth: number,
+): void {
+  if (depth > MAX_OPENAPI_SERIALIZATION_DEPTH) {
+    throw new OpenAPISpecSerializationError(
+      `nesting exceeds ${MAX_OPENAPI_SERIALIZATION_DEPTH} levels`,
+    );
+  }
+  budget.values++;
+  if (budget.values > MAX_OPENAPI_SERIALIZATION_VALUES) {
+    throw new OpenAPISpecSerializationError(
+      `value count exceeds ${MAX_OPENAPI_SERIALIZATION_VALUES}`,
+    );
+  }
+}
+
+function consumeSerializationText(
+  budget: SerializationBudget,
+  value: string,
+): void {
+  if (value.length > MAX_OPENAPI_SERIALIZATION_BYTES) {
+    throw new OpenAPISpecSerializationError(
+      `text exceeds the ${MAX_OPENAPI_SERIALIZATION_BYTES}-byte input limit`,
+    );
+  }
+  budget.bytes += apply(textEncoderEncode, utf8Encoder, [value]).byteLength;
+  if (budget.bytes > MAX_OPENAPI_SERIALIZATION_BYTES) {
+    throw new OpenAPISpecSerializationError(
+      `text exceeds the ${MAX_OPENAPI_SERIALIZATION_BYTES}-byte input limit`,
+    );
+  }
+}
+
 function snapshotSerializableValue(
   value: unknown,
   ancestors: WeakSet<object>,
+  budget: SerializationBudget,
+  depth: number,
 ): unknown {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  consumeSerializationValue(budget, depth);
+  if (typeof value === "string") {
+    consumeSerializationText(budget, value);
+    return value;
+  }
+  if (value === null || typeof value === "boolean") return value;
   if (typeof value === "number") {
     if (!numberIsFinite(value)) throw new OpenAPISpecSerializationError("non-finite number");
     return value === 0 ? 0 : value;
@@ -144,6 +196,11 @@ function snapshotSerializableValue(
       if (typeof length !== "number" || !numberIsSafeInteger(length) || length < 0) {
         throw new OpenAPISpecSerializationError("invalid array length");
       }
+      if (length > MAX_OPENAPI_SERIALIZATION_VALUES - budget.values) {
+        throw new OpenAPISpecSerializationError(
+          `value count exceeds ${MAX_OPENAPI_SERIALIZATION_VALUES}`,
+        );
+      }
 
       const snapshot = new NativeArray<unknown>(length);
       for (let index = 0; index < length; index++) {
@@ -163,7 +220,12 @@ function snapshotSerializableValue(
           {
             configurable: true,
             enumerable: true,
-            value: snapshotSerializableValue(descriptor.value, ancestors),
+            value: snapshotSerializableValue(
+              descriptor.value,
+              ancestors,
+              budget,
+              depth + 1,
+            ),
             writable: true,
           },
         ]);
@@ -177,11 +239,17 @@ function snapshotSerializableValue(
     }
     const snapshot = apply(objectCreate, Object, [null]) as Record<string, unknown>;
     const keys = apply(ownKeys, Reflect, [value]) as PropertyKey[];
+    if (keys.length > MAX_OPENAPI_SERIALIZATION_VALUES - budget.values) {
+      throw new OpenAPISpecSerializationError(
+        `value count exceeds ${MAX_OPENAPI_SERIALIZATION_VALUES}`,
+      );
+    }
     for (let index = 0; index < keys.length; index++) {
       const key = keys[index]!;
       if (typeof key !== "string") {
         throw new OpenAPISpecSerializationError("symbol-keyed property");
       }
+      consumeSerializationText(budget, key);
       const descriptor = apply(getOwnPropertyDescriptor, Object, [value, key]) as
         | PropertyDescriptor
         | undefined;
@@ -196,7 +264,12 @@ function snapshotSerializableValue(
         {
           configurable: true,
           enumerable: true,
-          value: snapshotSerializableValue(descriptor.value, ancestors),
+          value: snapshotSerializableValue(
+            descriptor.value,
+            ancestors,
+            budget,
+            depth + 1,
+          ),
           writable: true,
         },
       ]);
@@ -208,7 +281,25 @@ function snapshotSerializableValue(
 }
 
 function snapshotOpenAPISpecForSerialization(spec: OpenAPISpec): OpenAPISpec {
-  return snapshotSerializableValue(spec, new NativeWeakSet()) as OpenAPISpec;
+  return snapshotSerializableValue(
+    spec,
+    new NativeWeakSet(),
+    { bytes: 0, values: 0 },
+    0,
+  ) as OpenAPISpec;
+}
+
+function assertBoundedOpenAPISerialization(serialized: string): string {
+  if (
+    serialized.length > MAX_OPENAPI_SERIALIZATION_BYTES ||
+    apply(textEncoderEncode, utf8Encoder, [serialized]).byteLength >
+      MAX_OPENAPI_SERIALIZATION_BYTES
+  ) {
+    throw new OpenAPISpecSerializationError(
+      `encoded output exceeds ${MAX_OPENAPI_SERIALIZATION_BYTES} bytes`,
+    );
+  }
+  return serialized;
 }
 
 function compareCodeUnits(left: string, right: string): number {
@@ -219,6 +310,28 @@ function compareCodeUnits(left: string, right: string): number {
 function isOpenAPIRoutePattern(pattern: string): boolean {
   return pattern === "/api" ||
     apply(stringStartsWith, pattern, ["/api/"]) === true;
+}
+
+type OperationOwners = Map<string, { method: HttpMethod; pattern: string }>;
+
+export class OpenAPIOperationIdRegistry {
+  readonly #owners: OperationOwners = new Map();
+
+  record(pathItem: OpenAPIPathItem, pattern: string): void {
+    for (const method of HTTP_METHODS) {
+      const operation = pathItem[method.toLowerCase() as HttpMethodLower];
+      const operationId = operation?.operationId;
+      if (!operationId) continue;
+      const owner = this.#owners.get(operationId);
+      if (owner) {
+        throw new TypeError(
+          `generated operationId ${JSON.stringify(operationId)} duplicates ` +
+            `${owner.method} ${JSON.stringify(owner.pattern)}`,
+        );
+      }
+      this.#owners.set(operationId, { method, pattern });
+    }
+  }
 }
 
 export async function generateOpenAPISpec(
@@ -252,6 +365,7 @@ export async function generateOpenAPISpec(
     openApiRoute: OpenAPIPathDescription;
   }> = [];
   const routePatternsByShape = new Map<string, string>();
+  const operationIds = new OpenAPIOperationIdRegistry();
 
   const registeredRoutes = [...router.routes];
   apply(arraySort, registeredRoutes, [
@@ -296,11 +410,12 @@ export async function generateOpenAPISpec(
       );
       if (!pathItem || Object.keys(pathItem).length === 0) continue;
 
+      operationIds.record(pathItem, pattern);
       spec.paths[openApiRoute.path] = pathItem;
     } catch (error) {
       throw new OpenAPISpecGenerationError(
         pattern,
-        error instanceof Error ? error.message : String(error),
+        snapshotThrowableDiagnostic(error),
         { cause: error },
       );
     }
@@ -459,11 +574,13 @@ export async function generateOpenAPIJson(
 
 export function specToJson(spec: OpenAPISpec): string {
   try {
-    return apply(jsonStringify, NativeJSON, [
-      snapshotOpenAPISpecForSerialization(spec),
-      null,
-      2,
-    ]) as string;
+    return assertBoundedOpenAPISerialization(
+      apply(jsonStringify, NativeJSON, [
+        snapshotOpenAPISpecForSerialization(spec),
+        null,
+        2,
+      ]) as string,
+    );
   } catch (error) {
     return throwSerializationFailure(error);
   }
@@ -471,7 +588,9 @@ export function specToJson(spec: OpenAPISpec): string {
 
 export function specToYaml(spec: OpenAPISpec): string {
   try {
-    return stringifyYaml(snapshotOpenAPISpecForSerialization(spec));
+    return assertBoundedOpenAPISerialization(
+      stringifyYaml(snapshotOpenAPISpecForSerialization(spec)),
+    );
   } catch (error) {
     return throwSerializationFailure(error);
   }

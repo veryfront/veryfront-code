@@ -9,6 +9,7 @@ import {
   isInternalLink,
   manageFocus,
   parsePageDataFromHTML,
+  parsePageDataFromHTMLStrict,
   updateMetaTags,
 } from "./dom-utils.ts";
 import {
@@ -82,6 +83,26 @@ describe("DOM Utils", () => {
     it("should handle links starting with http (not https)", () => {
       const anchor = createMockAnchor("http://example.com");
       assertEquals(isInternalLink(anchor), false, "Should recognize http links as external");
+    });
+
+    it("rejects every explicit URL scheme and network-path reference", () => {
+      for (
+        const href of [
+          "HTTP://example.com",
+          "javascript:alert(1)",
+          "data:text/html,unsafe",
+          "tel:+12025550123",
+          "//example.com/path",
+          "\\\\example.com\\path",
+          "/\\example.com/path",
+        ]
+      ) {
+        assertEquals(isInternalLink(createMockAnchor(href)), false, href);
+      }
+    });
+
+    it("rejects reserved targets without relying on attribute case", () => {
+      assertEquals(isInternalLink(createMockAnchor("/page", { target: "_BLANK" })), false);
     });
   });
 
@@ -178,6 +199,7 @@ describe("DOM Utils", () => {
       tagName: string;
       getAttribute: (name: string) => string | null;
       setAttribute: (name: string, value: string) => void;
+      remove?: () => void;
     };
 
     function setupMockDocument(): { headElements: MockMetaElement[]; cleanup: () => void } {
@@ -207,13 +229,18 @@ describe("DOM Utils", () => {
         },
         createElement: (tag: string) => {
           const attributes = new Map<string, string>();
-          return {
+          const element: MockMetaElement = {
             tagName: tag.toUpperCase(),
             setAttribute: (name: string, value: string) => {
               attributes.set(name, value);
             },
             getAttribute: (name: string) => attributes.get(name) ?? null,
+            remove: () => {
+              const index = headElements.indexOf(element);
+              if (index !== -1) headElements.splice(index, 1);
+            },
           };
+          return element;
         },
       } as unknown as Document;
 
@@ -282,6 +309,23 @@ describe("DOM Utils", () => {
       try {
         updateMetaTags({});
         assertEquals(mocks.headElements.length, 0, "Should not create meta tags");
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("removes metadata from the previous page when the next page omits it", () => {
+      const mocks = setupMockDocument();
+      try {
+        updateMetaTags({
+          description: "Previous description",
+          ogTitle: "Previous OpenGraph title",
+        });
+        assertEquals(mocks.headElements.length, 2);
+
+        updateMetaTags({});
+
+        assertEquals(mocks.headElements.length, 0);
       } finally {
         mocks.cleanup();
       }
@@ -1184,6 +1228,25 @@ describe("DOM Utils", () => {
         assertEquals(result.content, "", "Should handle null innerHTML");
       } finally {
         (globalThis as GlobalWithDOMParser).DOMParser = originalDOMParser;
+      }
+    });
+  });
+
+  describe("parsePageDataFromHTMLStrict", () => {
+    it("rejects missing roots and malformed page-data scripts", () => {
+      for (
+        const html of [
+          "<html><body>missing root</body></html>",
+          '<div id="root"></div><script data-veryfront-page>{broken</script>',
+        ]
+      ) {
+        let threw = false;
+        try {
+          parsePageDataFromHTMLStrict(html);
+        } catch {
+          threw = true;
+        }
+        assertEquals(threw, true);
       }
     });
   });

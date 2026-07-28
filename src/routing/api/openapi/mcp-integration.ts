@@ -1,5 +1,7 @@
 import { registerResource, registerTool } from "#veryfront/mcp";
 import { logger as baseLogger } from "#veryfront/utils";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
+import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { createOpenAPIResource } from "./mcp-resource.ts";
 import { generateMCPToolsFromSpec } from "./mcp-tools.ts";
 import type { OpenAPISpec } from "./types.ts";
@@ -27,7 +29,9 @@ export async function registerOpenAPIMCP(
       result.resourceId = "openapi_spec";
       logger.debug("Registered openapi://spec resource");
     } catch (error) {
-      logger.warn("Failed to register resource:", { error: String(error) });
+      logger.warn("Failed to register resource:", {
+        error: snapshotThrowableDiagnostic(error),
+      });
     }
   }
 
@@ -43,17 +47,24 @@ export async function registerOpenAPIMCP(
       headers: config.headers,
     });
 
-    for (const tool of tools) {
-      registerTool(tool.id, tool);
-      result.toolIds.push(tool.id);
-    }
+    const toolIds = await runWithRegistryTransaction(async () => {
+      const registeredIds: string[] = [];
+      for (const tool of tools) {
+        registerTool(tool.id, tool);
+        registeredIds.push(tool.id);
+      }
+      return registeredIds;
+    });
+    result.toolIds.push(...toolIds);
 
     logger.info("Registered API tools", {
       count: tools.length,
       prefix: config.toolPrefix ?? "api",
     });
   } catch (error) {
-    logger.warn("Failed to generate tools:", { error: String(error) });
+    logger.warn("Failed to generate or register tools:", {
+      error: snapshotThrowableDiagnostic(error),
+    });
   }
 
   return result;

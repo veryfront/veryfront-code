@@ -133,6 +133,21 @@ describe("pattern-route-matcher", () => {
       assertEquals(routes.length, 2);
     });
 
+    it("returns immutable matches and detached route snapshots", () => {
+      const router = new PageRouteMatcher();
+      router.addRoute("/files/[...path]", "files.tsx");
+
+      const match = router.match("/files/a/b");
+      const routes = router.getRoutes();
+      assertEquals(Object.isFrozen(match), true);
+      assertEquals(Object.isFrozen(match?.params), true);
+      assertEquals(Object.isFrozen(match?.params.path), true);
+      assertEquals(Object.isFrozen(routes[0]), true);
+
+      routes.length = 0;
+      assertEquals(router.getRoutes().length, 1);
+    });
+
     it("should normalize trailing slashes", () => {
       const router = new PageRouteMatcher();
       router.addRoute("/about", "about.tsx");

@@ -1,4 +1,5 @@
 import { rendererLogger } from "#veryfront/utils";
+import { isInternalLink } from "./dom-utils.ts";
 
 const logger = rendererLogger.component("veryfront");
 
@@ -55,10 +56,7 @@ export class ViewportPrefetch {
   }
 
   private shouldObserveAnchor(anchor: HTMLAnchorElement, isViewportEnabled: boolean): boolean {
-    const href = anchor.getAttribute("href");
-    if (!href) return false;
-    if (href.startsWith("http") || href.startsWith("#")) return false;
-    if (anchor.getAttribute("download")) return false;
+    if (!isInternalLink(anchor)) return false;
 
     const prefetchAttribute = anchor.getAttribute("data-prefetch");
     if (prefetchAttribute === "false") return false;

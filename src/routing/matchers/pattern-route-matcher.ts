@@ -4,6 +4,7 @@ import { matchRouteWithSpecificity, type RankedRouteMatch } from "./route-matche
 import { normalizePath } from "#veryfront/utils/path-utils.ts";
 import { compareRouteSpecificity } from "#veryfront/utils/route-path-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { snapshotRoute, snapshotRouteMatch } from "./snapshot.ts";
 
 /** Max entries in the route-match LRU cache */
 const ROUTE_CACHE_MAX_ENTRIES = 500;
@@ -61,7 +62,7 @@ export class PageRouteMatcher {
       }
     }
 
-    const result = !ambiguous && best ? best.match : null;
+    const result = !ambiguous && best ? snapshotRouteMatch(best.match) : null;
     this.cache.set(normalizedPathname, result);
     return result;
   }
@@ -71,6 +72,6 @@ export class PageRouteMatcher {
   }
 
   getRoutes(): Route[] {
-    return [...this.routes];
+    return this.routes.map(snapshotRoute);
   }
 }

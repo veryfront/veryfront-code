@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageLoader } from "./page-loader.ts";
 import type { RouteData, SpaPageData } from "./types.ts";
@@ -115,6 +120,19 @@ describe("routing/client/page-loader", () => {
       assertEquals(loader.isSpaDataCached("/spa-new"), true);
       assertEquals(loader.isSpaDataCached("/spa-1"), true);
     });
+
+    it("does not evict an unrelated entry when replacing a cached path", () => {
+      const loader = new PageLoader();
+
+      for (let i = 0; i < 50; i++) {
+        loader.setCache(`/page-${i}`, makeRouteData({ html: `<div>${i}</div>` }));
+      }
+
+      loader.setCache("/page-20", makeRouteData({ html: "<div>updated</div>" }));
+
+      assertEquals(loader.isCached("/page-0"), true);
+      assertEquals(loader.getCached("/page-20")?.html, "<div>updated</div>");
+    });
   });
 
   describe("loadPage()", () => {
@@ -142,6 +160,80 @@ describe("routing/client/page-loader", () => {
         assertEquals(requestedUrl, "/_veryfront/data/index.json?page=2");
       } finally {
         globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does not hide a failed or malformed data endpoint behind HTML fallback", async () => {
+      for (
+        const response of [
+          new Response("failed", { status: 500 }),
+          new Response("{broken", {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ]
+      ) {
+        const originalFetch = globalThis.fetch;
+        let fetchCount = 0;
+        globalThis.fetch = () => {
+          fetchCount++;
+          return Promise.resolve(response);
+        };
+        try {
+          await assertRejects(() => new PageLoader().fetchPageData("/page"), Error);
+          assertEquals(fetchCount, 1);
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      }
+    });
+
+    it("rejects invalid or oversized response metadata before consuming the body", async () => {
+      for (const contentLength of ["invalid", `${4 * 1024 * 1024 + 1}`]) {
+        const originalFetch = globalThis.fetch;
+        let pullCount = 0;
+        let cancelCount = 0;
+        const body = new ReadableStream<Uint8Array>({
+          pull() {
+            pullCount++;
+          },
+          cancel() {
+            cancelCount++;
+          },
+        }, { highWaterMark: 0 });
+        globalThis.fetch = () =>
+          Promise.resolve(
+            new Response(body, {
+              headers: { "content-length": contentLength },
+            }),
+          );
+
+        try {
+          await assertRejects(
+            () => new PageLoader().fetchPageData("/page"),
+            Error,
+            contentLength === "invalid" ? "invalid Content-Length" : "exceeds",
+          );
+          await Promise.resolve();
+          assertEquals(pullCount, 0);
+          assertEquals(cancelCount, 1);
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      }
+    });
+
+    it("rejects external, active-content, and unbounded navigation paths", () => {
+      const loader = new PageLoader();
+      for (
+        const path of [
+          "https://example.com/page",
+          "//example.com/page",
+          "javascript:alert(1)",
+          "a".repeat(8_193),
+        ]
+      ) {
+        assertThrows(() => loader.loadPage(path), TypeError, "path");
       }
     });
   });
@@ -271,6 +363,42 @@ describe("routing/client/page-loader", () => {
 
       assertEquals(result, data);
       assertEquals(fetchCount, 1);
+    });
+
+    it("does not let a cleared request repopulate cache or retire its successor", async () => {
+      const loader = new PageLoader();
+      const oldData = makeRouteData({ html: "<div>old</div>" });
+      const newData = makeRouteData({ html: "<div>new</div>" });
+      let resolveOld!: (value: RouteData) => void;
+      let resolveNew!: (value: RouteData) => void;
+      const oldRequest = new Promise<RouteData>((resolve) => {
+        resolveOld = resolve;
+      });
+      const newRequest = new Promise<RouteData>((resolve) => {
+        resolveNew = resolve;
+      });
+      let fetchCount = 0;
+
+      // deno-lint-ignore no-explicit-any
+      (loader as any).fetchPageData = () => {
+        fetchCount++;
+        return fetchCount === 1 ? oldRequest : newRequest;
+      };
+
+      const firstLoad = loader.loadPage("/race");
+      loader.clearCache();
+      const secondLoad = loader.loadPage("/race");
+
+      resolveOld(oldData);
+      await firstLoad;
+
+      assertEquals(loader.getCached("/race"), undefined);
+      assertStrictEquals(loader.loadPage("/race"), secondLoad);
+      assertEquals(fetchCount, 2);
+
+      resolveNew(newData);
+      assertEquals(await secondLoad, newData);
+      assertEquals(loader.getCached("/race"), newData);
     });
   });
 });

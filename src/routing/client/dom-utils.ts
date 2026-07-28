@@ -2,15 +2,30 @@ import { rendererLogger } from "#veryfront/utils";
 import type { FrontmatterData, PageData } from "./types.ts";
 
 const logger = rendererLogger.component("veryfront");
+const EXPLICIT_URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 export function isInternalLink(target: HTMLAnchorElement): boolean {
-  const href = target.getAttribute("href");
+  const rawHref = target.getAttribute("href");
+  if (!rawHref) return false;
+  const href = rawHref.trim();
   if (!href) return false;
 
-  if (href.startsWith("http") || href.startsWith("mailto:") || href.startsWith("#")) return false;
+  if (
+    href.startsWith("#") ||
+    EXPLICIT_URL_SCHEME.test(href) ||
+    /^[\\/]{2}/.test(href) ||
+    /^[/\\][\\/]/.test(href)
+  ) {
+    return false;
+  }
 
-  const linkTarget = target.getAttribute("target");
-  if (linkTarget === "_blank" || target.hasAttribute("download")) return false;
+  const linkTarget = target.getAttribute("target")?.trim().toLowerCase();
+  if (
+    (linkTarget && linkTarget !== "_self") ||
+    target.getAttribute("download") !== null
+  ) {
+    return false;
+  }
 
   return true;
 }
@@ -26,22 +41,32 @@ export function findAnchorElement(element: HTMLElement | null): HTMLAnchorElemen
 }
 
 export function updateMetaTags(frontmatter: FrontmatterData): void {
-  if (frontmatter.description) {
-    updateMetaTag('meta[name="description"]', "name", "description", frontmatter.description);
-  }
-
-  if (frontmatter.ogTitle) {
-    updateMetaTag('meta[property="og:title"]', "property", "og:title", frontmatter.ogTitle);
-  }
+  updateMetaTag(
+    'meta[name="description"]',
+    "name",
+    "description",
+    frontmatter.description,
+  );
+  updateMetaTag(
+    'meta[property="og:title"]',
+    "property",
+    "og:title",
+    frontmatter.ogTitle,
+  );
 }
 
 function updateMetaTag(
   selector: string,
   attributeName: string,
   attributeValue: string,
-  content: string,
+  content: string | undefined,
 ): void {
   let metaTag = document.querySelector(selector);
+
+  if (!content) {
+    metaTag?.remove();
+    return;
+  }
 
   if (!metaTag) {
     metaTag = document.createElement("meta");
@@ -171,4 +196,38 @@ export function parsePageDataFromHTML(html: string): { content: string; pageData
   }
 
   return { content, pageData };
+}
+
+/**
+ * Parse a navigation document without the legacy empty-page fallbacks.
+ *
+ * PageLoader uses this boundary after a successful HTTP response so malformed
+ * server output cannot replace the current page with a silent blank document.
+ */
+export function parsePageDataFromHTMLStrict(
+  html: string,
+): { content: string; pageData: PageData } {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const root = doc.getElementById("root");
+  if (!root) throw new TypeError("Navigation HTML must contain a #root element");
+
+  const pageDataScript = doc.querySelector("script[data-veryfront-page]");
+  if (!pageDataScript) return { content: root.innerHTML, pageData: {} };
+  const scriptContent = pageDataScript.textContent;
+  if (!scriptContent) {
+    throw new TypeError("Navigation page-data script must contain JSON");
+  }
+
+  let pageData: unknown;
+  try {
+    pageData = JSON.parse(scriptContent);
+  } catch (cause) {
+    throw new TypeError("Navigation page-data script contains malformed JSON", {
+      cause,
+    });
+  }
+  if (typeof pageData !== "object" || pageData === null || Array.isArray(pageData)) {
+    throw new TypeError("Navigation page-data script must contain a JSON object");
+  }
+  return { content: root.innerHTML, pageData: pageData as PageData };
 }

@@ -3,6 +3,8 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   generateOpenAPISpec,
+  MAX_OPENAPI_SERIALIZATION_BYTES,
+  OpenAPIOperationIdRegistry,
   OpenAPISpecGenerationError,
   OpenAPISpecSerializationError,
   OpenAPISpecUnavailableError,
@@ -275,6 +277,34 @@ describe("routing/api/openapi/spec-generator", () => {
     }
 
     assertEquals(fileReads, 0);
+  });
+
+  it("rejects generated operation IDs that collide across distinct paths", () => {
+    const operationIds = new OpenAPIOperationIdRegistry();
+    operationIds.record(
+      {
+        get: {
+          operationId: "getUsersById",
+          responses: {},
+        },
+      },
+      "/api/users/ById",
+    );
+
+    assertThrows(
+      () =>
+        operationIds.record(
+          {
+            get: {
+              operationId: "getUsersById",
+              responses: {},
+            },
+          },
+          "/api/users/[id]",
+        ),
+      TypeError,
+      'generated operationId "getUsersById" duplicates',
+    );
   });
 
   it("uses code-unit ordering for canonically equivalent route patterns", async () => {
@@ -590,6 +620,47 @@ describe("routing/api/openapi/spec-generator", () => {
           reason,
         );
       }
+    });
+
+    it("rejects excessive nesting before invoking the output encoders", () => {
+      const extension: Record<string, unknown> = {};
+      let cursor = extension;
+      for (let depth = 0; depth < 130; depth++) {
+        const next: Record<string, unknown> = {};
+        cursor.next = next;
+        cursor = next;
+      }
+      const spec = {
+        openapi: "3.1.0",
+        info: { title: "API", version: "1.0.0" },
+        paths: {},
+        extension,
+      } as unknown as OpenAPISpec;
+
+      for (const serialize of [specToJson, specToYaml]) {
+        assertThrows(
+          () => serialize(spec),
+          OpenAPISpecSerializationError,
+          "nesting exceeds",
+        );
+      }
+    });
+
+    it("rejects an OpenAPI document whose text exceeds the serialization bound", () => {
+      const spec = {
+        openapi: "3.1.0",
+        info: {
+          title: "x".repeat(MAX_OPENAPI_SERIALIZATION_BYTES + 1),
+          version: "1.0.0",
+        },
+        paths: {},
+      } as OpenAPISpec;
+
+      assertThrows(
+        () => specToJson(spec),
+        OpenAPISpecSerializationError,
+        "input limit",
+      );
     });
 
     it("wraps throwing and revoked proxy inspection failures for both formats", () => {

@@ -7,6 +7,7 @@ import {
   type RankedRouteMatch,
 } from "#veryfront/routing/matchers/route-matcher.ts";
 import { compareRouteSpecificity } from "#veryfront/utils/route-path-utils.ts";
+import { snapshotRoute, snapshotRouteMatch } from "#veryfront/routing/matchers/snapshot.ts";
 
 /** Max entries in the route-match LRU cache */
 const ROUTE_CACHE_MAX_ENTRIES = 500;
@@ -44,7 +45,18 @@ export class ApiRouteMatcher {
 
   /** Public accessor for route entries */
   get routes(): Map<string, RouteEntry> {
-    return this._routes;
+    return new Map(
+      Array.from(this._routes, ([pattern, entry]) => [
+        pattern,
+        Object.freeze({
+          regex: Object.freeze(new RegExp(entry.regex.source, entry.regex.flags)),
+          route: snapshotRoute(entry.route),
+          paramNames: Object.freeze([...entry.paramNames]) as string[],
+          isOptionalCatchAll: entry.isOptionalCatchAll,
+          isCatchAll: entry.isCatchAll,
+        }),
+      ]),
+    );
   }
 
   addRoute(pattern: string, page: string): void {
@@ -97,13 +109,13 @@ export class ApiRouteMatcher {
       }
     }
 
-    const result = !ambiguous && best ? best.match : null;
+    const result = !ambiguous && best ? snapshotRouteMatch(best.match) : null;
     this.routeCache.set(normalizedPath, result);
     return result;
   }
 
   listRoutes(): Route[] {
-    return Array.from(this._routes.values()).map(({ route }) => route);
+    return Array.from(this._routes.values(), ({ route }) => snapshotRoute(route));
   }
 
   clear(): void {
