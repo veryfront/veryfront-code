@@ -34,6 +34,19 @@ function handle(
   return handleReleaseAssetRequest(new Request(url, { method }), url, options);
 }
 
+function handleWithSignal(
+  url: URL,
+  options: Parameters<typeof handleReleaseAssetRequest>[2],
+  signal: AbortSignal,
+): Promise<Response | null> {
+  return handleReleaseAssetRequest(new Request(url, { signal }), url, options);
+}
+
+async function flushAsyncWork(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe("proxy release asset handler", () => {
   afterEach(() => clearReleaseAssetProxyCache());
 
@@ -148,6 +161,226 @@ describe("proxy release asset handler", () => {
     assertEquals(calls, 2);
   });
 
+  it("coalesces concurrent requests for the same content hash", async () => {
+    const source = "export const shared = true;";
+    const gate = Promise.withResolvers<void>();
+    let calls = 0;
+    const fetchImpl = makeFetch(async () => {
+      calls++;
+      await gate.promise;
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+
+    const pending = Array.from(
+      { length: 20 },
+      () => handle(url, { apiBaseUrl: API_BASE, fetchImpl }),
+    );
+    await flushAsyncWork();
+    assertEquals(calls, 1);
+
+    gate.resolve();
+    const responses = await Promise.all(pending);
+    assertEquals(responses.map((response) => response?.status), Array(20).fill(200));
+    assertEquals(calls, 1);
+  });
+
+  it("coalesces by hash without serving bytes under the wrong extension", async () => {
+    const source = "export const typed = true;";
+    const gate = Promise.withResolvers<void>();
+    let calls = 0;
+    const fetchImpl = makeFetch(async () => {
+      calls++;
+      await gate.promise;
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const jsUrl = await assetUrl(source, "js");
+    const cssUrl = await assetUrl(source, "css");
+    const javascript = handle(jsUrl, { apiBaseUrl: API_BASE, fetchImpl });
+    const stylesheet = handle(cssUrl, { apiBaseUrl: API_BASE, fetchImpl });
+    await flushAsyncWork();
+    assertEquals(calls, 1);
+
+    gate.resolve();
+    assertEquals((await javascript)?.status, 200);
+    assertEquals((await stylesheet)?.status, 502);
+    assertEquals(calls, 1);
+  });
+
+  it("lets one follower abort without cancelling surviving consumers", async () => {
+    const source = "export const survivor = true;";
+    const gate = Promise.withResolvers<void>();
+    let calls = 0;
+    const upstreamSignals: AbortSignal[] = [];
+    const fetchImpl = makeFetch(async (_url, init) => {
+      calls++;
+      if (init?.signal) upstreamSignals.push(init.signal);
+      await gate.promise;
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+    const survivor = handle(url, { apiBaseUrl: API_BASE, fetchImpl });
+    const followerController = new AbortController();
+    const follower = handleWithSignal(
+      url,
+      { apiBaseUrl: API_BASE, fetchImpl },
+      followerController.signal,
+    );
+    await flushAsyncWork();
+
+    followerController.abort(new Error("client disconnected"));
+    assertEquals((await follower)?.status, 499);
+    assertEquals(upstreamSignals[0]?.aborted, false);
+
+    gate.resolve();
+    assertEquals((await survivor)?.status, 200);
+    assertEquals(
+      (await handle(url, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
+      200,
+    );
+    assertEquals(calls, 1);
+  });
+
+  it("times out one follower without cancelling a longer-lived consumer", async () => {
+    const source = "export const patientSurvivor = true;";
+    const gate = Promise.withResolvers<void>();
+    const upstreamSignals: AbortSignal[] = [];
+    const fetchImpl = makeFetch(async (_url, init) => {
+      if (init?.signal) upstreamSignals.push(init.signal);
+      await gate.promise;
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+    const survivor = handle(url, {
+      apiBaseUrl: API_BASE,
+      fetchImpl,
+      timeoutMs: 100,
+    });
+    const follower = handle(url, {
+      apiBaseUrl: API_BASE,
+      fetchImpl,
+      timeoutMs: 5,
+    });
+    const releaseId = setTimeout(() => gate.resolve(), 25);
+
+    assertEquals((await follower)?.status, 504);
+    assertEquals(upstreamSignals[0]?.aborted, false);
+    assertEquals((await survivor)?.status, 200);
+    clearTimeout(releaseId);
+  });
+
+  it("lets a longer-lived follower outlast the initiating caller", async () => {
+    const source = "export const lateSurvivor = true;";
+    const gate = Promise.withResolvers<void>();
+    const upstreamSignals: AbortSignal[] = [];
+    const fetchImpl = makeFetch(async (_url, init) => {
+      if (init?.signal) upstreamSignals.push(init.signal);
+      await gate.promise;
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+    const initiatingCaller = handle(url, {
+      apiBaseUrl: API_BASE,
+      fetchImpl,
+      timeoutMs: 5,
+    });
+    const follower = handle(url, {
+      apiBaseUrl: API_BASE,
+      fetchImpl,
+      timeoutMs: 100,
+    });
+    const releaseId = setTimeout(() => gate.resolve(), 25);
+
+    const [initiatingResponse, followerResponse] = await Promise.all([
+      initiatingCaller,
+      follower,
+    ]);
+    assertEquals(initiatingResponse?.status, 504);
+    assertEquals(followerResponse?.status, 200);
+    assertEquals(upstreamSignals[0]?.aborted, false);
+    clearTimeout(releaseId);
+  });
+
+  it("abandons and replaces an active load after its sole caller aborts", async () => {
+    const source = "export const replacement = true;";
+    let calls = 0;
+    const abandonedSignals: AbortSignal[] = [];
+    const fetchImpl = makeFetch((_url, init) => {
+      calls++;
+      if (calls === 1) {
+        if (init?.signal) abandonedSignals.push(init.signal);
+        return new Promise<Response>(() => {});
+      }
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+    const controller = new AbortController();
+    const abandoned = handleWithSignal(
+      url,
+      { apiBaseUrl: API_BASE, fetchImpl },
+      controller.signal,
+    );
+    await flushAsyncWork();
+    assertEquals(calls, 1);
+
+    controller.abort(new Error("sole caller disconnected"));
+    assertEquals((await abandoned)?.status, 499);
+    assertEquals(abandonedSignals[0]?.aborted, true);
+    assertEquals(
+      (await handle(url, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
+      200,
+    );
+    assertEquals(calls, 2);
+  });
+
+  it("cancels a late response when an abandoned upstream fetch ignores abort", async () => {
+    const source = "export const abandonedResponse = true;";
+    const lateResponse = Promise.withResolvers<Response>();
+    let bodyCancelled = false;
+    let upstreamSignal: AbortSignal | undefined;
+    const fetchImpl = makeFetch((_url, init) => {
+      upstreamSignal = init?.signal ?? undefined;
+      return lateResponse.promise;
+    });
+    const url = await assetUrl(source, "js");
+    const controller = new AbortController();
+    const abandoned = handleWithSignal(
+      url,
+      { apiBaseUrl: API_BASE, fetchImpl },
+      controller.signal,
+    );
+    await flushAsyncWork();
+
+    controller.abort(new Error("sole caller disconnected"));
+    assertEquals((await abandoned)?.status, 499);
+    assertEquals(upstreamSignal?.aborted, true);
+
+    lateResponse.resolve(
+      new Response(
+        new ReadableStream({
+          cancel() {
+            bodyCancelled = true;
+          },
+        }),
+        { headers: { "Content-Type": "text/javascript" } },
+      ),
+    );
+    await flushAsyncWork();
+    assertEquals(bodyCancelled, true);
+  });
+
   it("rejects oversized upstream bodies before buffering declared bytes", async () => {
     const fetchImpl = makeFetch(() =>
       new Response("small", {
@@ -182,8 +415,10 @@ describe("proxy release asset handler", () => {
   });
 
   it("bounds an upstream fetch that never settles", async () => {
+    let calls = 0;
     const fetchImpl = makeFetch((_url, init) =>
       new Promise<Response>((_resolve, reject) => {
+        calls++;
         init?.signal?.addEventListener(
           "abort",
           () => reject(new DOMException("Aborted", "AbortError")),
@@ -195,8 +430,13 @@ describe("proxy release asset handler", () => {
 
     assertEquals(
       (await handle(url, { apiBaseUrl: API_BASE, fetchImpl, timeoutMs: 1 }))?.status,
-      502,
+      504,
     );
+    assertEquals(
+      (await handle(url, { apiBaseUrl: API_BASE, fetchImpl, timeoutMs: 1 }))?.status,
+      504,
+    );
+    assertEquals(calls, 2);
   });
 
   it("bounds an upstream response body that never settles", async () => {
@@ -210,8 +450,116 @@ describe("proxy release asset handler", () => {
 
     assertEquals(
       (await handle(url, { apiBaseUrl: API_BASE, fetchImpl, timeoutMs: 1 }))?.status,
-      502,
+      504,
     );
+  });
+
+  it("bounds aggregate cold loads, queued work, and aborts queued callers", async () => {
+    const gate = Promise.withResolvers<void>();
+    const sources = Array.from(
+      { length: 51 },
+      (_, index) => `export const asset${index} = ${index};`,
+    );
+    const urls = await Promise.all(sources.map((source) => assetUrl(source, "js")));
+    const sourceByHash = new Map(
+      urls.map((url, index) => [
+        url.pathname.slice("/_vf/assets/".length, -".js".length),
+        sources[index]!,
+      ]),
+    );
+    let active = 0;
+    let maxActive = 0;
+    let calls = 0;
+    const fetchImpl = makeFetch(async (input) => {
+      calls++;
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await gate.promise;
+      active--;
+      const hash = new URL(input).pathname.split("/").at(-1)!;
+      return new Response(sourceByHash.get(hash), {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const queuedController = new AbortController();
+    const pending = urls.slice(0, 50).map((url, index) =>
+      index === 4
+        ? handleWithSignal(
+          url,
+          { apiBaseUrl: API_BASE, fetchImpl },
+          queuedController.signal,
+        )
+        : handle(url, { apiBaseUrl: API_BASE, fetchImpl })
+    );
+    await flushAsyncWork();
+    assertEquals(calls, 4);
+    assertEquals(maxActive, 4);
+
+    queuedController.abort(new Error("queued caller disconnected"));
+    assertEquals((await pending[4])?.status, 499);
+    const replacement = handle(urls[50]!, { apiBaseUrl: API_BASE, fetchImpl });
+
+    gate.resolve();
+    const responses = await Promise.all(pending);
+    assertEquals((await replacement)?.status, 200);
+    assertEquals(
+      responses.filter((response) => response?.status === 200).length,
+      19,
+    );
+    assertEquals(
+      responses.filter((response) => response?.status === 503).length,
+      30,
+    );
+    assertEquals(
+      responses.filter((response) => response?.status === 499).length,
+      1,
+    );
+    assertEquals(
+      responses
+        .filter((response) => response?.status === 503)
+        .every((response) => response?.headers.get("Retry-After") === "1"),
+      true,
+    );
+    assertEquals(maxActive, 4);
+    assertEquals(calls, 20);
+
+    assertEquals(
+      (await handle(urls[49]!, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
+      200,
+    );
+    assertEquals(calls, 21);
+  });
+
+  it("bounds same-hash followers while retaining one upstream load", async () => {
+    const source = "export const boundedFollowers = true;";
+    const gate = Promise.withResolvers<void>();
+    let calls = 0;
+    const fetchImpl = makeFetch(async () => {
+      calls++;
+      await gate.promise;
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+    const pending = Array.from(
+      { length: 80 },
+      () => handle(url, { apiBaseUrl: API_BASE, fetchImpl }),
+    );
+    await flushAsyncWork();
+    assertEquals(calls, 1);
+
+    gate.resolve();
+    const responses = await Promise.all(pending);
+    assertEquals(
+      responses.filter((response) => response?.status === 200).length,
+      64,
+    );
+    assertEquals(
+      responses.filter((response) => response?.status === 503).length,
+      16,
+    );
+    assertEquals(calls, 1);
   });
 
   it("allows only GET and HEAD on the immutable asset endpoint", async () => {
@@ -259,5 +607,42 @@ describe("proxy release asset handler", () => {
     await handle(url, { apiBaseUrl: API_BASE, fetchImpl });
     await handle(url, { apiBaseUrl: API_BASE, fetchImpl });
     assertEquals(calls, 1);
+  });
+
+  it("evicts completed assets by aggregate byte weight", async () => {
+    const bodySize = 8 * 1024 * 1024;
+    const sources = Array.from(
+      { length: 4 },
+      (_, index) => String(index).repeat(bodySize),
+    );
+    const urls = await Promise.all(sources.map((source) => assetUrl(source, "js")));
+    const sourceByHash = new Map(
+      urls.map((url, index) => [
+        url.pathname.slice("/_vf/assets/".length, -".js".length),
+        sources[index]!,
+      ]),
+    );
+    let calls = 0;
+    const fetchImpl = makeFetch((input) => {
+      calls++;
+      const hash = new URL(input).pathname.split("/").at(-1)!;
+      return new Response(sourceByHash.get(hash), {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+
+    for (const url of urls) {
+      assertEquals(
+        (await handle(url, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
+        200,
+      );
+    }
+    assertEquals(calls, 4);
+
+    assertEquals(
+      (await handle(urls[0]!, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
+      200,
+    );
+    assertEquals(calls, 5);
   });
 });
