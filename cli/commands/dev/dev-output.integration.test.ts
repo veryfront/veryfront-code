@@ -7,7 +7,7 @@ import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { delay } from "#std/async";
 import { TEST_TIMEOUTS } from "../../../tests/_helpers/constants.ts";
 import { withTestContext } from "../../../tests/_helpers/context.ts";
-import { pollHttpReadyByTimeout } from "../../../tests/_helpers/http-polling.ts";
+import { fetchWithTimeout, pollHttpReadyByTimeout } from "../../../tests/_helpers/http-polling.ts";
 
 const NOISY_DEFAULT_FRAGMENTS = [
   "declares capabilities",
@@ -39,13 +39,15 @@ const DEBUG_API_BUILD_DIAGNOSTICS = [
   "built handler",
 ] as const;
 
+const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
+
 interface CliRun {
   output: () => string;
   stop: () => Promise<void>;
 }
 
 function stripAnsi(value: string): string {
-  return value.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+  return value.replace(ANSI_ESCAPE_PATTERN, "");
 }
 
 function assertIncludesAny(
@@ -220,7 +222,7 @@ function startVeryfrontDev(
 }
 
 async function requestPageAndApi(port: number): Promise<void> {
-  const pageResponse = await fetch(`http://127.0.0.1:${port}/`);
+  const pageResponse = await fetchWithTimeout(`http://127.0.0.1:${port}/`);
   try {
     assertEquals(pageResponse.status, 200);
     assertStringIncludes(await pageResponse.text(), "quiet dev logs page");
@@ -228,7 +230,7 @@ async function requestPageAndApi(port: number): Promise<void> {
     await pageResponse.body?.cancel().catch(() => {});
   }
 
-  const apiResponse = await fetch(`http://127.0.0.1:${port}/api/ping`);
+  const apiResponse = await fetchWithTimeout(`http://127.0.0.1:${port}/api/ping`);
   try {
     assertEquals(apiResponse.status, 200);
     assertEquals(await apiResponse.json(), { ok: true });
@@ -241,72 +243,78 @@ describe(
   "veryfront dev output",
   { sanitizeOps: false, sanitizeResources: false },
   () => {
-    it("keeps default dev output focused on readiness and hides routine diagnostics", async () => {
-      await withTestContext("quiet-dev-output-default", async (context) => {
-        await scaffoldMinimalProject(context.projectDir);
-        const port = await context.allocatePort();
-        const run = startVeryfrontDev(context.projectDir, port);
-        context.addCleanup(run.stop);
+    it(
+      "keeps default dev output focused on readiness and hides routine diagnostics",
+      { timeout: TEST_TIMEOUTS.INTEGRATION },
+      async () => {
+        await withTestContext("quiet-dev-output-default", async (context) => {
+          await scaffoldMinimalProject(context.projectDir);
+          const port = await context.allocatePort();
+          const run = startVeryfrontDev(context.projectDir, port);
+          context.addCleanup(run.stop);
 
-        const ready = await pollHttpReadyByTimeout(`http://127.0.0.1:${port}/`, {
-          timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
-          requestTimeoutMs: 1_000,
-          verifyWithSecondRequest: false,
+          const ready = await pollHttpReadyByTimeout(`http://127.0.0.1:${port}/`, {
+            timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
+            requestTimeoutMs: 1_000,
+            verifyWithSecondRequest: false,
+          });
+          assert(ready.ready, `dev server did not become ready:\n${run.output()}`);
+
+          await requestPageAndApi(port);
+          await delay(300);
+
+          const output = run.output();
+          assertStringIncludes(output, "Server ready at");
+
+          for (const fragment of NOISY_DEFAULT_FRAGMENTS) {
+            assert(
+              !output.includes(fragment),
+              `default dev output should not include "${fragment}"\nOutput:\n${output}`,
+            );
+          }
         });
-        assert(ready.ready, `dev server did not become ready:\n${run.output()}`);
+      },
+    );
 
-        await requestPageAndApi(port);
-        await delay(300);
+    it(
+      "keeps representative diagnostics visible with --debug",
+      { timeout: TEST_TIMEOUTS.INTEGRATION },
+      async () => {
+        await withTestContext("quiet-dev-output-debug", async (context) => {
+          await scaffoldMinimalProject(context.projectDir);
+          const port = await context.allocatePort();
+          const run = startVeryfrontDev(context.projectDir, port, ["--debug"]);
+          context.addCleanup(run.stop);
 
-        const output = run.output();
-        assertStringIncludes(output, "Server ready at");
+          const ready = await pollHttpReadyByTimeout(`http://127.0.0.1:${port}/`, {
+            timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
+            requestTimeoutMs: 1_000,
+            verifyWithSecondRequest: false,
+          });
+          assert(ready.ready, `debug dev server did not become ready:\n${run.output()}`);
 
-        for (const fragment of NOISY_DEFAULT_FRAGMENTS) {
-          assert(
-            !output.includes(fragment),
-            `default dev output should not include "${fragment}"\nOutput:\n${output}`,
+          await requestPageAndApi(port);
+          await delay(300);
+
+          const output = run.output();
+          assertStringIncludes(output, "Server ready at");
+          assertIncludesAny(
+            output,
+            DEBUG_EXTENSION_DIAGNOSTICS,
+            "--debug should expose extension diagnostics",
           );
-        }
-      });
-    });
-
-    it("keeps representative diagnostics visible with --debug", async () => {
-      await withTestContext("quiet-dev-output-debug", async (context) => {
-        await scaffoldMinimalProject(context.projectDir);
-        const port = await context.allocatePort();
-        const run = startVeryfrontDev(context.projectDir, port, ["--debug"], {
-          LOG_LEVEL: "DEBUG",
+          assertIncludesAny(
+            output,
+            DEBUG_REQUEST_DIAGNOSTICS,
+            "--debug should expose request diagnostics",
+          );
+          assertIncludesAny(
+            output,
+            DEBUG_API_BUILD_DIAGNOSTICS,
+            "--debug should expose API build diagnostics",
+          );
         });
-        context.addCleanup(run.stop);
-
-        const ready = await pollHttpReadyByTimeout(`http://127.0.0.1:${port}/`, {
-          timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
-          requestTimeoutMs: 1_000,
-          verifyWithSecondRequest: false,
-        });
-        assert(ready.ready, `debug dev server did not become ready:\n${run.output()}`);
-
-        await requestPageAndApi(port);
-        await delay(300);
-
-        const output = run.output();
-        assertStringIncludes(output, "Server ready at");
-        assertIncludesAny(
-          output,
-          DEBUG_EXTENSION_DIAGNOSTICS,
-          "--debug should expose extension diagnostics",
-        );
-        assertIncludesAny(
-          output,
-          DEBUG_REQUEST_DIAGNOSTICS,
-          "--debug should expose request diagnostics",
-        );
-        assertIncludesAny(
-          output,
-          DEBUG_API_BUILD_DIAGNOSTICS,
-          "--debug should expose API build diagnostics",
-        );
-      });
-    });
+      },
+    );
   },
 );
