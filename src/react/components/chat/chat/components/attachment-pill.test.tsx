@@ -33,6 +33,13 @@ describe("AttachmentPill", () => {
     );
     assertStringIncludes(html, "Remove handoff-notes.md");
   });
+
+  it("keeps the remove control visible when reached by keyboard", () => {
+    const html = renderToString(
+      <AttachmentPill attachment={readyFile} onRemove={() => undefined} />,
+    );
+    assertStringIncludes(html, "md:focus-visible:opacity-100");
+  });
 });
 
 // The composability contract: a consuming developer must be able to recompose
