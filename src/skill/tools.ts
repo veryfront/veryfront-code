@@ -23,6 +23,8 @@ import type { Skill, SkillContent, SkillScriptExecutor } from "./types.ts";
 import {
   SKILL_ASSETS_DIR,
   SKILL_MD_FILENAME,
+  SKILL_NAME_REGEX,
+  SKILL_PROVIDER_SAFE_ID_REGEX,
   SKILL_REFERENCES_DIR,
   SKILL_RESOURCES_DIR,
   SKILL_SCRIPTS_DIR,
@@ -92,16 +94,35 @@ function resolveVisibleSkillOrThrow(
 ): Skill {
   const scope = { agentId: context?.agentId };
   const skill = skillRegistry.resolveVisibleSkill(skillId, scope);
-  if (!skill) {
-    const visible = skillRegistry.getVisibleSkillIds(scope).join(", ");
+  if (skill) {
+    return skill;
+  }
+
+  if (!isUnresolvedSkillSelectorValid(skillId)) {
     throw toError(
       createError({
         type: "agent",
-        message: `Skill "${skillId}" not found. Available skills: ${visible || "none"}`,
+        message:
+          `Invalid skill id "${skillId}": must be lowercase alphanumeric with hyphens, 1-64 characters`,
       }),
     );
   }
-  return skill;
+
+  const visible = skillRegistry.getVisibleSkillIds(scope).join(", ");
+  throw toError(
+    createError({
+      type: "agent",
+      message: `Skill "${skillId}" not found. Available skills: ${visible || "none"}`,
+    }),
+  );
+}
+
+function isUnresolvedSkillSelectorValid(skillId: string): boolean {
+  if (SKILL_NAME_REGEX.test(skillId)) {
+    return true;
+  }
+
+  return skillId.includes("--") && SKILL_PROVIDER_SAFE_ID_REGEX.test(skillId);
 }
 
 function hasRuntimeSkillBoundary(

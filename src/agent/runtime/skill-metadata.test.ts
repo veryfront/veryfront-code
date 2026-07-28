@@ -12,11 +12,15 @@ Deno.test("parseRuntimeSkillMetadata parses valid frontmatter", () => {
   const content = `---
 name: My Skill
 description: A useful skill
+metadata:
+  display_name: My Display Skill
+  tier: project
 ---
 Body content here`;
   const metadata = parseRuntimeSkillMetadata(content);
   assertExists(metadata);
   assertEquals(metadata.name, "My Skill");
+  assertEquals(metadata.metadata, { display_name: "My Display Skill", tier: "project" });
   assertEquals(metadata.description, "A useful skill");
 });
 
@@ -33,10 +37,12 @@ Deno.test("parseRuntimeSkillMetadata returns empty metadata for empty content", 
   assertEquals(metadata.name, undefined);
 });
 
-Deno.test("buildRuntimeSkillDefinition builds a skill definition from valid content", () => {
+Deno.test("buildRuntimeSkillDefinition builds a canonical skill definition from valid content", () => {
   const content = `---
-name: Code Review
+name: code-review
 description: Reviews code quality
+metadata:
+  display_name: Code Review
 ---
 # Code Review Skill
 Review the code for quality issues.`;
@@ -44,9 +50,64 @@ Review the code for quality issues.`;
   const skill = buildRuntimeSkillDefinition({ id: "code-review", content });
   assertExists(skill);
   assertEquals(skill.id, "code-review");
-  assertEquals(skill.name, "Code Review");
+  assertEquals(skill.name, "code-review");
+  assertEquals(skill.displayName, "Code Review");
   assertEquals(skill.description, "Reviews code quality");
+  assertEquals(skill.metadata, { display_name: "Code Review" });
   assertEquals(skill.instructions, content);
+});
+
+Deno.test("buildRuntimeSkillDefinition recovers a legacy display-style frontmatter name", () => {
+  const content = `---
+name: Process Email
+description: Process email
+---
+Body`;
+  const skill = buildRuntimeSkillDefinition({ id: "process-email", content });
+  assertExists(skill);
+  assertEquals(skill.id, "process-email");
+  assertEquals(skill.name, "process-email");
+  assertEquals(skill.displayName, "Process Email");
+});
+
+Deno.test("buildRuntimeSkillDefinition rejects invalid canonical ids", () => {
+  const errors: Array<Record<string, unknown> | undefined> = [];
+  const skill = buildRuntimeSkillDefinition({
+    id: "Process Email",
+    content: `---
+description: Process email
+---
+Body`,
+    logger: {
+      error: (_message, metadata) => errors.push(metadata),
+    },
+  });
+
+  assertEquals(skill, null);
+  assertEquals(errors[0]?.id, "Process Email");
+});
+
+Deno.test("buildRuntimeSkillDefinition accepts provider-safe owned namespaced ids", () => {
+  const content = `---
+name: x_y
+description: Owned helper
+metadata:
+  display_name: Owned Helper
+---
+Body`;
+  const skill = buildRuntimeSkillDefinition({
+    id: "a_b--x_y",
+    content,
+    ownerAgentId: "a.b",
+    shortName: "x_y",
+  });
+
+  assertExists(skill);
+  assertEquals(skill.id, "a_b--x_y");
+  assertEquals(skill.name, "a_b--x_y");
+  assertEquals(skill.displayName, "Owned Helper");
+  assertEquals(skill.ownerAgentId, "a.b");
+  assertEquals(skill.shortName, "x_y");
 });
 
 Deno.test("buildRuntimeSkillDefinition uses id as fallback name", () => {
@@ -65,6 +126,8 @@ name: Test
 # This is the heading
 Some body text`;
   const skill = buildRuntimeSkillDefinition({ id: "test", content });
+  assertEquals(skill?.name, "test");
+  assertEquals(skill?.displayName, "Test");
   assertEquals(skill?.description, "This is the heading");
 });
 

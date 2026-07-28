@@ -25,6 +25,9 @@ function emptyResult(): DiscoveryResult {
     prompts: new Map(),
     workflows: new Map(),
     tasks: new Map(),
+    schedules: new Map(),
+    webhooks: new Map(),
+    evals: new Map(),
     errors: [],
   };
 }
@@ -97,6 +100,38 @@ Deno.test("directory and flat agents discover side by side with owned skills reg
   } finally {
     skillRegistry.clearAll();
     cleanupAgents(["lead", "researcher"]);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("directory agents with dotted ids register provider-safe owned skill ids", async () => {
+  const root = await Deno.makeTempDir();
+  skillRegistry.clearAll();
+  try {
+    const agentsDir = `${root}/agents`;
+    await Deno.mkdir(`${agentsDir}/a.b/skills/x_y`, { recursive: true });
+    await Deno.writeTextFile(
+      `${agentsDir}/a.b/AGENT.md`,
+      `---\nname: Dotted Agent\nskills: [x_y]\n---\nHandle dotted ids.\n`,
+    );
+    await Deno.writeTextFile(
+      `${agentsDir}/a.b/skills/x_y/SKILL.md`,
+      `---\nname: X Y\ndescription: Owned underscore helper\nmetadata:\n  display_name: X Y\n---\nUse X Y.\n`,
+    );
+
+    const result = emptyResult();
+    await discoverRuntimeAgentMarkdownDefinitions(agentsDir, result, context);
+
+    assertEquals(result.errors, []);
+    const skill = skillRegistry.get("a_b--x_y");
+    assertEquals(skill?.id, "a_b--x_y");
+    assertEquals(skill?.metadata.name, "a_b--x_y");
+    assertEquals(skill?.metadata.displayName, "X Y");
+    assertEquals(skill?.ownerAgentId, "a.b");
+    assertEquals(skill?.shortName, "x_y");
+  } finally {
+    skillRegistry.clearAll();
+    cleanupAgents(["a.b"]);
     await Deno.remove(root, { recursive: true });
   }
 });

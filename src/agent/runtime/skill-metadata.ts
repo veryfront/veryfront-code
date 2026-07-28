@@ -1,5 +1,6 @@
 import { extract } from "#std/front-matter/yaml.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import { SKILL_NAME_REGEX, SKILL_PROVIDER_SAFE_ID_REGEX } from "#veryfront/skill/types.ts";
 
 function normalizeAllowedTools(value: string | string[] | undefined): string[] {
   if (value === undefined) {
@@ -22,6 +23,7 @@ export interface RuntimeSkillFrontmatter {
   name: string | undefined;
   description: string | undefined;
   allowedTools: string[];
+  metadata: Record<string, string> | undefined;
   model: string | undefined;
   thinking: false | number | undefined;
   maxSteps: number | undefined;
@@ -35,25 +37,49 @@ export const getRuntimeSkillFrontmatterSchema = defineSchema((v) =>
       "allowed-tools": v.union([v.string(), v.array(v.string())]).optional(),
       allowed_tools: v.union([v.string(), v.array(v.string())]).optional(),
       model: v.string().optional(),
+      metadata: v.record(v.string(), v.unknown()).optional(),
       thinking: v.union([v.literal(false), v.coerce.number().int().positive()]).optional(),
       "max-steps": v.coerce.number().int().positive().optional(),
     })
     .passthrough()
     .transform((data): RuntimeSkillFrontmatter => {
       const d = data as Record<string, unknown>;
+      const metadata = normalizeMetadata(d.metadata);
       return {
-        name: (typeof d.name === "string" ? d.name.trim() : undefined) || undefined,
+        name: normalizeOptionalString(d.name),
         description: (typeof d.description === "string" ? d.description.trim() : undefined) ||
           undefined,
         allowedTools: normalizeAllowedTools(
           (d["allowed-tools"] ?? d.allowed_tools) as string | string[] | undefined,
         ),
+        metadata,
         model: (typeof d.model === "string" ? d.model.trim() : undefined) || undefined,
         thinking: d.thinking as false | number | undefined,
         maxSteps: d["max-steps"] as number | undefined,
       };
     })
 );
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return (typeof value === "string" ? value.trim() : undefined) || undefined;
+}
+
+function normalizeMetadata(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) {
+    return undefined;
+  }
+
+  const metadata: Record<string, string> = {};
+  for (const [key, rawValue] of entries) {
+    metadata[key] = String(rawValue);
+  }
+  return metadata;
+}
 
 /** Schema for runtime skill frontmatter.
  * @deprecated Use getRuntimeSkillFrontmatterSchema()
@@ -64,9 +90,11 @@ export const RuntimeSkillFrontmatterSchema = lazySchema(getRuntimeSkillFrontmatt
 export type RuntimeSkillDefinition = {
   id: string;
   name: string;
+  displayName?: string;
   description: string;
   instructions: string;
   allowedTools: string[];
+  metadata?: Record<string, string>;
   model?: string;
   thinking?: false | number;
   maxSteps?: number;
@@ -261,19 +289,37 @@ export function buildRuntimeSkillDefinition(input: {
   sourcePath?: string;
   logger?: RuntimeSkillMetadataLogger;
 }): RuntimeSkillDefinition | null {
+  if (!isRuntimeSkillIdValid(input)) {
+    input.logger?.error?.("Invalid skill id; skipping skill", {
+      id: input.id,
+      error: input.ownerAgentId === undefined && input.shortName === undefined
+        ? "must be lowercase alphanumeric with hyphens, 1-64 characters"
+        : "must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters",
+    });
+    return null;
+  }
+
   const document = parseRuntimeSkillDocument(input.content, { logger: input.logger });
   if (!document) {
     return null;
   }
 
   const { metadata, body } = document;
+  const canonicalName = input.id;
+  const explicitDisplayName = metadata.metadata?.display_name?.trim() || undefined;
+  const legacyDisplayName = metadata.name && metadata.name !== canonicalName
+    ? metadata.name
+    : undefined;
+  const displayName = explicitDisplayName ?? legacyDisplayName;
 
   return {
     id: input.id,
-    name: metadata.name ?? input.id,
+    name: canonicalName,
+    ...(displayName ? { displayName } : {}),
     description: metadata.description ?? extractDescriptionFromMarkdown(body, input.id),
     instructions: input.content,
     allowedTools: metadata.allowedTools,
+    ...(metadata.metadata ? { metadata: metadata.metadata } : {}),
     ...(metadata.model ? { model: metadata.model } : {}),
     ...(metadata.thinking !== undefined ? { thinking: metadata.thinking } : {}),
     ...(metadata.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
@@ -284,6 +330,18 @@ export function buildRuntimeSkillDefinition(input: {
     ...(input.shortName === undefined ? {} : { shortName: input.shortName }),
     ...(input.sourcePath === undefined ? {} : { sourcePath: input.sourcePath }),
   };
+}
+
+function isRuntimeSkillIdValid(input: {
+  id: string;
+  ownerAgentId?: string;
+  shortName?: string;
+}): boolean {
+  if (input.ownerAgentId !== undefined || input.shortName !== undefined) {
+    return SKILL_PROVIDER_SAFE_ID_REGEX.test(input.id);
+  }
+
+  return SKILL_NAME_REGEX.test(input.id);
 }
 
 /** Normalizes runtime skill reference path. */

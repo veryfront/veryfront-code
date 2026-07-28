@@ -238,3 +238,36 @@ Deno.test("load_skill loads the caller's own skill via its short name", async ()
     await Deno.remove(tempDir, { recursive: true });
   }
 });
+
+Deno.test("load_skill resolves provider-safe owned short names before plain-id validation", async () => {
+  const tempDir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(
+      `${tempDir}/SKILL.md`,
+      `---\nname: X Y\ndescription: Owned helper\n---\n\nUse the owned helper.\n`,
+    );
+
+    skillRegistry.clearAll();
+    registerSkill(
+      "a_b--x_y",
+      makeSkill({
+        id: "a_b--x_y",
+        rootPath: tempDir,
+        ownerAgentId: "a.b",
+        shortName: "x_y",
+      }),
+    );
+
+    const loadSkill = createLoadSkillTool();
+    const content = await loadSkill.execute(
+      { skillId: "x_y" },
+      { agentId: "a.b" },
+    ) as { instructions: string; skillId: string };
+
+    assertEquals(content.skillId, "a_b--x_y");
+    assertEquals(content.instructions.trim(), "Use the owned helper.");
+  } finally {
+    skillRegistry.clearAll();
+    await Deno.remove(tempDir, { recursive: true });
+  }
+});

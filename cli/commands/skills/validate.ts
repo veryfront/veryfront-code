@@ -9,7 +9,7 @@ import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json
 import { exitProcess, logError, logSuccess, logWarning } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
 import { basename } from "#std/path.ts";
-import { parseSkillFrontmatter, validateSkillMetadata } from "veryfront/skill";
+import { parseSkillFrontmatter, SKILL_NAME_REGEX, validateSkillMetadata } from "veryfront/skill";
 
 interface ValidationIssue {
   severity: "error" | "warning";
@@ -36,7 +36,9 @@ export async function validateSkillDirectory(dir: string): Promise<ValidationIss
 
   try {
     const parsed = await parseSkillFrontmatter(content);
-    validateSkillMetadata(parsed.frontmatter, basename(dir));
+    const directoryName = basename(dir);
+    validateCanonicalFrontmatterName(parsed.frontmatter, directoryName);
+    validateSkillMetadata(parsed.frontmatter, directoryName);
     if (!parsed.body.trim()) {
       issues.push({ severity: "warning", message: "SKILL.md body is empty" });
     }
@@ -46,6 +48,24 @@ export async function validateSkillDirectory(dir: string): Promise<ValidationIss
   }
 
   return issues;
+}
+
+function validateCanonicalFrontmatterName(
+  frontmatter: Record<string, unknown>,
+  directoryName: string,
+): void {
+  if (typeof frontmatter.name !== "string") return;
+
+  const name = frontmatter.name.trim();
+  if (!SKILL_NAME_REGEX.test(name)) {
+    throw new Error(
+      `Invalid skill name "${name}": must be lowercase alphanumeric with hyphens, 1-64 characters`,
+    );
+  }
+
+  if (name !== directoryName) {
+    throw new Error(`Skill name "${name}" does not match directory name "${directoryName}"`);
+  }
 }
 
 async function outputResults(

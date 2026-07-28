@@ -7,9 +7,12 @@ import { validateSkillDirectory } from "./validate.ts";
 async function withTempSkill(
   files: Record<string, string>,
   fn: (dir: string) => Promise<void>,
+  skillDirName = "test-skill",
 ): Promise<void> {
-  const dir = await Deno.makeTempDir({ prefix: "vf-skill-validate-" });
+  const rootDir = await Deno.makeTempDir({ prefix: "vf-skill-validate-" });
+  const dir = join(rootDir, skillDirName);
   try {
+    await Deno.mkdir(dir, { recursive: true });
     for (const [path, content] of Object.entries(files)) {
       const target = join(dir, path);
       await Deno.mkdir(join(target, ".."), { recursive: true });
@@ -17,7 +20,7 @@ async function withTempSkill(
     }
     await fn(dir);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(rootDir, { recursive: true });
   }
 }
 
@@ -37,7 +40,7 @@ Review the submitted changes.
     }, async (dir) => {
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues, []);
-    });
+    }, "code-review");
   });
 
   it("reports a missing SKILL.md", async () => {
@@ -60,8 +63,26 @@ description: Invalid name.
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues.length, 1);
       assertEquals(issues[0]?.severity, "error");
-      assertEquals(issues[0]?.message.includes("Invalid skill name"), true);
-    });
+      assertEquals(issues[0]?.message.includes('Invalid skill name "BadName"'), true);
+    }, "bad-name");
+  });
+
+  it("reports SKILL.md frontmatter name mismatch with directory", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: email
+description: Mismatched name.
+---
+
+# Email
+`,
+    }, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues, [{
+        severity: "error",
+        message: 'Skill name "email" does not match directory name "process-email"',
+      }]);
+    }, "process-email");
   });
 
   it("warns when SKILL.md has no instruction body", async () => {
@@ -74,6 +95,6 @@ description: Empty instruction body.
     }, async (dir) => {
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues, [{ severity: "warning", message: "SKILL.md body is empty" }]);
-    });
+    }, "empty-body");
   });
 });
