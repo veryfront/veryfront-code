@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { assertThrows } from "#veryfront/testing/assert.ts";
 import { convertPathToName, createEntryPoints } from "./entry-points.ts";
 
 describe("entry-points", () => {
@@ -93,6 +94,45 @@ describe("entry-points", () => {
       expect(result.entryPoints).toEqual({
         "blog-post-detail": "/project/pages/blog/post/detail.tsx",
       });
+    });
+
+    it("rejects duplicate route paths instead of silently replacing an entry", () => {
+      assertThrows(
+        () =>
+          createEntryPoints([
+            { path: "/about", file: "/project/pages/about.tsx" },
+            { path: "/about", file: "/project/app/about.tsx" },
+          ]),
+        TypeError,
+        "Duplicate code-splitter route",
+      );
+    });
+
+    it("rejects generated entry-name collisions instead of dropping a route", () => {
+      assertThrows(
+        () =>
+          createEntryPoints([
+            { path: "/a-b", file: "/project/pages/a-b.tsx" },
+            { path: "/a/b", file: "/project/pages/a/b.tsx" },
+          ]),
+        TypeError,
+        "collides",
+      );
+    });
+
+    it("rejects custom names that could escape the output directory", () => {
+      assertThrows(
+        () =>
+          createEntryPoints([
+            {
+              path: "/about",
+              file: "/project/pages/about.tsx",
+              name: "../outside",
+            },
+          ]),
+        TypeError,
+        "Invalid code-splitter entry name",
+      );
     });
   });
 

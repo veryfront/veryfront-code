@@ -83,7 +83,7 @@ describe("build/bundler/code-splitter/build-context", () => {
     it("should not duplicate entries", () => {
       const result = getExternalDependencies(["react"]);
       const reactCount = result.filter((r) => r === "react").length;
-      assertEquals(reactCount, 2); // one from base, one from custom - dedup is caller's job
+      assertEquals(reactCount, 1);
     });
   });
 
@@ -100,7 +100,7 @@ describe("build/bundler/code-splitter/build-context", () => {
 
     it("should create a shim file in the specified directory", async () => {
       const shimPath = await createShimFile(tmpDir);
-      assertEquals(shimPath.includes(".veryfront-shim.js"), true);
+      assertEquals(shimPath.includes(".veryfront-shim-"), true);
     });
 
     it("should write global polyfills", async () => {

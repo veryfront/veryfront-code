@@ -32,5 +32,18 @@ describe("build/production-build/build/code-splitter-orchestrator", () => {
       assertEquals(result.manifest, null);
       assertEquals(result.chunks, 0);
     });
+
+    it("does not emit placeholder chunks for Markdown routes", async () => {
+      const result = await runCodeSplitting(
+        "/project",
+        "/output",
+        [{ path: "/", file: "/project/pages/index.mdx", slug: "index" }],
+        true,
+        false,
+      );
+
+      assertEquals(result.manifest, null);
+      assertEquals(result.chunks, 0);
+    });
   });
 });

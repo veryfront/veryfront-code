@@ -4,13 +4,30 @@
  */
 
 import type { Metafile } from "veryfront/extensions/bundler";
-import { join, relative } from "#veryfront/compat/path/index.ts";
+import { isAbsolute, join, relative, resolve } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { ChunkInfo, ChunkManifest, MetafileOutput } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { computeHashBytes } from "#veryfront/utils";
 
 const fs = createFileSystem();
+
+function toManifestPath(path: string, outDir: string): string {
+  const absolutePath = isAbsolute(path) ? path : resolve(path);
+  const relativePath = relative(resolve(outDir), absolutePath)
+    .replaceAll("\\", "/")
+    .replace(/^\.\//, "");
+
+  if (
+    !relativePath ||
+    relativePath.startsWith("/") ||
+    relativePath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new TypeError(`Chunk output is outside the configured output directory: ${path}`);
+  }
+
+  return relativePath;
+}
 
 /** Extracts entry name from entry point path */
 export function extractEntryName(entryPoint: string): string {
@@ -56,7 +73,7 @@ export function isCriticalImport(path: string): boolean {
 export function getPreloadHints(output: MetafileOutput, outDir: string): string[] {
   const imports = output.imports ?? [];
   return imports.filter((imp) => isCriticalImport(imp.path)).map((imp) =>
-    relative(outDir, imp.path)
+    toManifestPath(imp.path, outDir)
   );
 }
 
@@ -71,9 +88,9 @@ export async function getChunkInfo(
 
   return {
     name: extractChunkName(file),
-    file: relative(outDir, file),
-    imports: output.imports.map((imp) => relative(outDir, imp.path)),
-    css: output.cssBundle ? relative(outDir, output.cssBundle) : undefined,
+    file: toManifestPath(file, outDir),
+    imports: output.imports.map((imp) => toManifestPath(imp.path, outDir)),
+    css: output.cssBundle ? toManifestPath(output.cssBundle, outDir) : undefined,
     size: content.byteLength,
     hash,
   };
@@ -89,13 +106,19 @@ function addRouteToManifest(
 ): void {
   if (!output.entryPoint) return;
 
-  const entryName = extractEntryName(output.entryPoint);
-  const routePath = routeMap.get(entryName) ?? `/${entryName}`;
+  const entryName = extractChunkName(relativePath);
+  const routePath = routeMap.get(entryName);
+  if (routePath === undefined) {
+    throw new TypeError(`No route mapping exists for code-splitter entry ${entryName}`);
+  }
+  if (Object.hasOwn(manifest.routes, routePath)) {
+    throw new TypeError(`Duplicate route in chunk manifest: ${routePath}`);
+  }
 
   manifest.routes[routePath] = {
     entry: relativePath,
-    chunks: output.imports.map((imp) => relative(outDir, imp.path)),
-    css: output.cssBundle ? [relative(outDir, output.cssBundle)] : [],
+    chunks: output.imports.map((imp) => toManifestPath(imp.path, outDir)),
+    css: output.cssBundle ? [toManifestPath(output.cssBundle, outDir)] : [],
     preload: getPreloadHints(output, outDir),
   };
 }
@@ -113,10 +136,14 @@ export async function buildManifest(
     shared: [],
   };
 
-  for (const [outputFile, output] of Object.entries(metafile.outputs)) {
+  for (
+    const [outputFile, output] of Object.entries(metafile.outputs).sort(([left], [right]) =>
+      left.localeCompare(right)
+    )
+  ) {
     if (!outputFile.endsWith(".js")) continue;
 
-    const relativePath = relative(outDir, outputFile);
+    const relativePath = toManifestPath(outputFile, outDir);
     manifest.chunks[relativePath] = await getChunkInfo(outputFile, output, outDir);
 
     if (output.entryPoint) {

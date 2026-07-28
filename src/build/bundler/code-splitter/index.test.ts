@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   CodeSplitter,
@@ -7,6 +7,8 @@ import {
   createCodeSplitter,
   generatePreloadLinks,
   getChunksForRoute,
+  loadChunkManifest,
+  validateChunkManifest,
 } from "./index.ts";
 import type { ChunkManifest } from "./types.ts";
 
@@ -122,6 +124,98 @@ describe("build/bundler/code-splitter/index", () => {
     it("should generate links without preload or css arrays", () => {
       const links = generatePreloadLinks(manifest, "/about");
       assertEquals(links.includes("about.js"), true);
+    });
+
+    it("escapes safe URL delimiter characters in generated attributes", () => {
+      const links = generatePreloadLinks({
+        ...manifest,
+        routes: {
+          "/": {
+            entry: "entry&variant.js",
+            chunks: [],
+          },
+        },
+      }, "/");
+
+      assertEquals(links.includes("entry&amp;variant.js"), true);
+    });
+
+    it("rejects unsafe manifest paths instead of emitting HTML", () => {
+      assertThrows(
+        () =>
+          generatePreloadLinks({
+            ...manifest,
+            routes: {
+              "/": {
+                entry: 'entry.js" onload="alert(1)',
+                chunks: [],
+              },
+            },
+          }, "/"),
+        TypeError,
+        "safe relative asset path",
+      );
+    });
+
+    it("rejects non-HTTP preload base URLs", () => {
+      assertThrows(
+        () => generatePreloadLinks(manifest, "/", "javascript:alert(1)"),
+        TypeError,
+        "HTTP(S)",
+      );
+    });
+  });
+
+  describe("validateChunkManifest", () => {
+    const validManifest: ChunkManifest = {
+      version: "1.0",
+      routes: {
+        "/": {
+          entry: "index.js",
+          chunks: [],
+        },
+      },
+      chunks: {
+        "index.js": {
+          name: "index",
+          file: "index.js",
+          imports: [],
+          size: 12,
+          hash: "1234abcd",
+        },
+      },
+      shared: [],
+    };
+
+    it("accepts a complete bounded manifest", () => {
+      assertEquals(validateChunkManifest(validManifest), validManifest);
+    });
+
+    it("rejects routes that reference missing entry chunks", () => {
+      assertThrows(
+        () =>
+          validateChunkManifest({
+            ...validManifest,
+            chunks: {},
+          }),
+        TypeError,
+        "unknown entry chunk",
+      );
+    });
+
+    it("wraps malformed on-disk manifests as build errors", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-chunk-manifest-" });
+      const manifestPath = `${tempDir}/manifest.json`;
+      try {
+        await Deno.writeTextFile(manifestPath, '{"version":"future"}');
+        await assertRejects(
+          () => loadChunkManifest(manifestPath),
+          Error,
+          "Failed to load chunk manifest",
+        );
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
     });
   });
 });

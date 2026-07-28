@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  buildManifest,
   calculateFileHash,
   extractChunkName,
   extractEntryName,
@@ -154,6 +155,68 @@ describe("build/bundler/code-splitter/manifest-builder", () => {
 
     it("should handle paths with multiple segments", () => {
       assertEquals(extractChunkName("a/b/c/d/file.js"), "file");
+    });
+  });
+
+  describe("buildManifest", () => {
+    it("maps routes by emitted entry name rather than source basename", async () => {
+      const outDir = await Deno.makeTempDir({ prefix: "vf-manifest-builder-" });
+      const outputFile = `${outDir}/blog-post.js`;
+      try {
+        await Deno.writeTextFile(outputFile, "export default 1;");
+        const manifest = await buildManifest(
+          {
+            inputs: {},
+            outputs: {
+              [outputFile]: {
+                imports: [],
+                exports: ["default"],
+                entryPoint: "/project/pages/blog/index.tsx",
+                inputs: {},
+                bytes: 17,
+              },
+            },
+          },
+          new Map([["blog-post", "/blog/post"]]),
+          outDir,
+        );
+
+        assertEquals(manifest.routes["/blog/post"]?.entry, "blog-post.js");
+        assertEquals(manifest.routes["/index"], undefined);
+      } finally {
+        await Deno.remove(outDir, { recursive: true });
+      }
+    });
+
+    it("rejects emitted entries without a route mapping", async () => {
+      const outDir = await Deno.makeTempDir({ prefix: "vf-manifest-builder-" });
+      const outputFile = `${outDir}/orphan.js`;
+      try {
+        await Deno.writeTextFile(outputFile, "export default 1;");
+        await assertRejects(
+          () =>
+            buildManifest(
+              {
+                inputs: {},
+                outputs: {
+                  [outputFile]: {
+                    imports: [],
+                    exports: ["default"],
+                    entryPoint: "/project/pages/index.tsx",
+                    inputs: {},
+                    bytes: 17,
+                  },
+                },
+              },
+              new Map(),
+              outDir,
+            ),
+          TypeError,
+          "No route mapping",
+        );
+      } finally {
+        await Deno.remove(outDir, { recursive: true });
+      }
     });
   });
 });

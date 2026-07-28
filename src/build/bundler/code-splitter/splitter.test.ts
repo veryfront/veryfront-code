@@ -175,8 +175,9 @@ describe("build/bundler/code-splitter/splitter", () => {
           moduleResolution: "bundled",
         });
 
-        await splitter.split();
+        const splitResult = await splitter.split();
         assertEquals(tryResolve("CodeParser") !== undefined, true);
+        assertEquals(splitResult.manifest.routes["/"]?.entry, "index.js");
         const browserOutputs = await readJsOutputs(outDir);
 
         assertEquals(browserOutputs.includes("browser page"), true);
@@ -184,6 +185,12 @@ describe("build/bundler/code-splitter/splitter", () => {
         assertEquals(browserOutputs.includes("createHash"), false);
         assertEquals(browserOutputs.includes("hashSecret"), false);
         assertEquals(browserOutputs.includes("notFound"), false);
+        const outputNames = [];
+        for await (const entry of readDir(outDir)) outputNames.push(entry.name);
+        assertEquals(
+          outputNames.some((name) => name.startsWith(".veryfront-shim-")),
+          false,
+        );
       } finally {
         await stop();
         if (previousCodeParser) register("CodeParser", previousCodeParser);

@@ -19,16 +19,21 @@ export async function runCodeSplitting(
     return { manifest: null, chunks: 0 };
   }
 
+  const scriptRoutes = routes.filter((route) => !/\.mdx?$/i.test(route.file));
+  if (scriptRoutes.length === 0) {
+    logger.info("Skipping code splitting: document routes are compiled by the MDX pipeline");
+    return { manifest: null, chunks: 0 };
+  }
+
   logger.info("Running code splitter...");
 
   const splitter = createCodeSplitter({
     projectDir,
     outDir: join(outputDir, "_veryfront/chunks"),
     mode: "production",
-    routes: routes.map(({ path, file, slug }) => ({
+    routes: scriptRoutes.map(({ path, file }) => ({
       path,
       file,
-      name: slug.replaceAll("/", "-"),
     })),
     shared: ["react", "react-dom"],
     external: [],

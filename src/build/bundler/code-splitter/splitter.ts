@@ -90,6 +90,8 @@ export class CodeSplitter {
     const shared = new Map<string, ChunkInfo>();
 
     for (const [file, info] of Object.entries(outputs)) {
+      if (!file.endsWith(".js")) continue;
+
       const relativePath = relative(this.options.outDir, file);
       const chunkInfo = await getChunkInfo(file, info, this.options.outDir);
 
