@@ -10,14 +10,26 @@ async function streamToString(stream: ReadableStream<Uint8Array>): Promise<strin
   const decoder = new TextDecoder();
   const chunks: string[] = [];
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(decoder.decode(value, { stream: true }));
-  }
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
 
-  chunks.push(decoder.decode());
-  return chunks.join("");
+    chunks.push(decoder.decode());
+    return chunks.join("");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function notifyErrorObserver(observer: SSROptions["onError"], error: unknown): void {
+  try {
+    observer?.(error instanceof Error ? error : new Error(String(error)));
+  } catch (observerError) {
+    logger.error("SSR onError observer failed", observerError);
+  }
 }
 
 export async function renderToStringAdapter(
@@ -33,10 +45,16 @@ export async function renderToStringAdapter(
         SpanNames.SSR_REACT_RENDER_TO_STREAM,
         () =>
           server.renderToReadableStream!(element, {
+            bootstrapModules: options.bootstrapModules,
+            bootstrapScripts: options.bootstrapScripts,
+            identifierPrefix: options.identifierPrefix,
+            namespaceURI: options.namespaceURI,
+            nonce: options.nonce,
             onError: (error: unknown) => {
               logger.error("SSR renderToReadableStream error", error);
-              options.onError?.(error as Error);
+              notifyErrorObserver(options.onError, error);
             },
+            progressiveChunkSize: options.progressiveChunkSize,
           }),
         { "ssr.method": "renderToReadableStream" },
       )) as ReadableStream<Uint8Array>;
@@ -50,12 +68,17 @@ export async function renderToStringAdapter(
   try {
     return (await withSpan(
       SpanNames.SSR_REACT_RENDER_TO_STRING,
-      () => Promise.resolve(server.renderToString(element)),
+      () =>
+        Promise.resolve(
+          server.renderToString(element, {
+            identifierPrefix: options.identifierPrefix,
+          }),
+        ),
       { "ssr.method": "renderToString" },
     )) as string;
   } catch (error) {
     logger.error("SSR renderToString failed", error);
-    options.onError?.(error as Error);
+    notifyErrorObserver(options.onError, error);
     throw error;
   }
 }
@@ -67,10 +90,12 @@ export async function renderToStaticMarkupAdapter(
   const { renderToStaticMarkup } = await getReactDOMServer(options.reactVersion);
 
   try {
-    return renderToStaticMarkup(element);
+    return renderToStaticMarkup(element, {
+      identifierPrefix: options.identifierPrefix,
+    });
   } catch (error) {
     logger.error("SSR renderToStaticMarkup failed", error);
-    options.onError?.(error as Error);
+    notifyErrorObserver(options.onError, error);
     throw error;
   }
 }
