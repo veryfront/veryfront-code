@@ -31,4 +31,6 @@ export interface InitOptions {
   force?: boolean;
   /** Runtime for the scaffolded project. Defaults to "node". */
   runtime?: InitRuntime;
+  /** Initialize Git for programmatic calls; the CLI wizard controls this interactively. */
+  initGit?: boolean;
 }
