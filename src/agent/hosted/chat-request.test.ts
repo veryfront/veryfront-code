@@ -1452,6 +1452,10 @@ describe("agent/hosted-chat-request", () => {
           role: "user",
           parts: [
             {
+              type: "text",
+              text: "Review these attachments.",
+            },
+            {
               type: "image",
               upload_id: "upload-image-1",
               media_type: "image/png",
@@ -1470,6 +1474,10 @@ describe("agent/hosted-chat-request", () => {
     });
 
     const expectedParts = [
+      {
+        type: "text",
+        text: "Review these attachments.",
+      },
       {
         type: "file",
         uploadId: "upload-image-1",
