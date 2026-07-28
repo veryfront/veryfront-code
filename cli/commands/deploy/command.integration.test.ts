@@ -324,7 +324,8 @@ it("uses canonical production read-back in human and JSON modes", async () => {
           verboseOutput.includes("Control plane: https://control.example.test/api"),
           true,
         );
-        assertEquals(verboseOutput.includes("npx veryfront open"), true);
+        assertEquals(verboseOutput.includes("veryfront open"), true);
+        assertEquals(verboseOutput.includes("npx"), false);
       }
     }
 
