@@ -31,6 +31,8 @@ export interface CacheStats {
   name: string;
   entries: number;
   maxEntries?: number;
+  /** Number of independently bounded cache partitions or directories. */
+  cacheDirs?: number;
   estimatedSizeBytes?: number;
   /** Cache backend type (memory, redis, api) */
   backend?: string;
@@ -57,6 +59,7 @@ export interface MonitoringCacheStats {
   name: string;
   entries: number;
   maxEntries?: number;
+  cacheDirs?: number;
   estimatedSizeBytes?: number;
   backend?: string;
 }
@@ -240,6 +243,9 @@ function snapshotCacheStats(
   const maxEntries = rawStats.maxEntries === undefined
     ? undefined
     : requireCacheStatInteger(rawStats.maxEntries, "Cache maxEntries");
+  const cacheDirs = rawStats.cacheDirs === undefined
+    ? undefined
+    : requireCacheStatInteger(rawStats.cacheDirs, "Cache directories");
   const estimatedSizeBytes = rawStats.estimatedSizeBytes === undefined
     ? undefined
     : requireCacheStatInteger(
@@ -261,6 +267,7 @@ function snapshotCacheStats(
     name: registeredName,
     entries,
     ...(maxEntries === undefined ? {} : { maxEntries }),
+    ...(cacheDirs === undefined ? {} : { cacheDirs }),
     ...(estimatedSizeBytes === undefined ? {} : { estimatedSizeBytes }),
     ...(backend === undefined ? {} : { backend }),
   };
@@ -306,6 +313,7 @@ function toMonitoringCacheStats(cache: CacheStats): MonitoringCacheStats {
     name: cache.name,
     entries: cache.entries,
     ...(cache.maxEntries !== undefined ? { maxEntries: cache.maxEntries } : {}),
+    ...(cache.cacheDirs !== undefined ? { cacheDirs: cache.cacheDirs } : {}),
     ...(cache.estimatedSizeBytes !== undefined
       ? { estimatedSizeBytes: cache.estimatedSizeBytes }
       : {}),

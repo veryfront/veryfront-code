@@ -124,6 +124,25 @@ describe("memory/profiler", () => {
       assert(names.includes("test-cache-2"));
     });
 
+    it("preserves validated cache partition counts", () => {
+      registerCache("test-cache", () => ({
+        name: "test-cache",
+        entries: 10,
+        maxEntries: 20,
+        cacheDirs: 2,
+      }));
+
+      assertEquals(
+        getCacheStats().find((stats) => stats.name === "test-cache"),
+        {
+          name: "test-cache",
+          entries: 10,
+          maxEntries: 20,
+          cacheDirs: 2,
+        },
+      );
+    });
+
     it("snapshots and validates callback results before aggregation", () => {
       registerCache(
         "test-cache",
