@@ -4,7 +4,8 @@
  * CI's typecheck leg only covers source entry points and test runs use
  * --no-check, so type errors in *.test.ts(x) are invisible — latent call-
  * signature rot accumulates silently (426 errors across 113 files at the
- * time this baseline was cut). This gate typechecks every test file and
+ * time this baseline was cut). This gate typechecks every source-adjacent test
+ * file plus a small set of explicitly ratcheted integration tests, then
  * compares the set of FAILING FILES against the committed baseline:
  *
  *  - a failing file not in the baseline fails the gate (no new rot);
@@ -12,6 +13,9 @@
  *    from the baseline (shrink-only ratchet).
  */
 const decoder = new TextDecoder();
+const focusedIntegrationTests = [
+  "tests/integration/data/fetching-cache.test.ts",
+] as const;
 
 function listTestFiles(root: string): string[] {
   const out: string[] = [];
@@ -26,7 +30,11 @@ function listTestFiles(root: string): string[] {
   return out;
 }
 
-const testFiles = [...listTestFiles("src"), ...listTestFiles("cli")].sort();
+const testFiles = [
+  ...listTestFiles("src"),
+  ...listTestFiles("cli"),
+  ...focusedIntegrationTests,
+].sort();
 const command = new Deno.Command(Deno.execPath(), {
   args: ["check", "--no-lock", ...testFiles],
   stdout: "piped",
@@ -37,7 +45,11 @@ const output = decoder.decode(result.stdout) + decoder.decode(result.stderr);
 const plain = output.replace(/\x1b\[[0-9;]*m/g, "");
 
 const failing = new Set<string>();
-for (const match of plain.matchAll(/file:\/\/[^\s:]+?\/((?:src|cli)\/[^\s:]+\.test\.tsx?)/g)) {
+for (
+  const match of plain.matchAll(
+    /file:\/\/[^\s:]+?\/((?:src|cli|tests)\/[^\s:]+\.test\.tsx?)/g,
+  )
+) {
   failing.add(match[1]);
 }
 

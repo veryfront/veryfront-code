@@ -1,21 +1,25 @@
 import "../../_helpers/contract-init.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { DataFetcher } from "#veryfront/data/index.ts";
+import { type DataContext, DataFetcher, type PageWithData } from "#veryfront/data/index.ts";
 
 describe("DataFetcher LRU/TTL basic behavior", () => {
   it("caches and clears data correctly", async () => {
     const fetcher = new DataFetcher();
     const baseUrl = new URL("http://localhost/products/1");
 
-    const pageModule = {
-      getStaticData: ({ params }: { params: { id: string } }) => ({
-        props: { id: params.id },
-        revalidate: 1,
-      }),
+    const pageModule: PageWithData<{ id: string }> = {
+      default: null,
+      getStaticData: ({ params }) => {
+        const id = params.id;
+        return {
+          props: { id: Array.isArray(id) ? id.join("/") : id ?? "" },
+          revalidate: 1,
+        };
+      },
     };
 
-    function makeCtx(id: string): any {
+    function makeCtx(id: string): DataContext {
       return {
         params: { id },
         url: new URL(`http://localhost/products/${id}`),
@@ -24,17 +28,17 @@ describe("DataFetcher LRU/TTL basic behavior", () => {
       };
     }
 
-    const r1 = await fetcher.fetchData(pageModule as any, makeCtx("1"), "production");
-    assertEquals(r1.props.id, "1");
+    const r1 = await fetcher.fetchData(pageModule, makeCtx("1"), "production");
+    assertEquals(r1.props?.id, "1");
 
-    const r2 = await fetcher.fetchData(pageModule as any, makeCtx("1"), "production");
-    assertEquals(r2.props.id, "1");
+    const r2 = await fetcher.fetchData(pageModule, makeCtx("1"), "production");
+    assertEquals(r2.props?.id, "1");
 
-    const r3 = await fetcher.fetchData(pageModule as any, makeCtx("2"), "production");
-    assertEquals(r3.props.id, "2");
+    const r3 = await fetcher.fetchData(pageModule, makeCtx("2"), "production");
+    assertEquals(r3.props?.id, "2");
 
     fetcher.clearCache("/products/1");
-    const r4 = await fetcher.fetchData(pageModule as any, makeCtx("1"), "production");
-    assertEquals(r4.props.id, "1");
+    const r4 = await fetcher.fetchData(pageModule, makeCtx("1"), "production");
+    assertEquals(r4.props?.id, "1");
   });
 });
