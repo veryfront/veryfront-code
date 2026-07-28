@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { join } from "veryfront/platform/path";
 import { saveToken } from "../auth/token-store.ts";
 import {
   applyRuntimeAuthContext,
@@ -25,6 +26,19 @@ function clearEnv(): void {
       // expected: env may already be unset
     }
   }
+}
+
+async function writeRawProjectLink(projectDir: string, projectSlug: string): Promise<void> {
+  await Deno.mkdir(join(projectDir, ".veryfront"), { recursive: true });
+  await Deno.writeTextFile(
+    join(projectDir, ".veryfront", "project.json"),
+    JSON.stringify({
+      version: 1,
+      controlPlane: "https://api.veryfront.com",
+      projectId: "linked-project-id",
+      projectSlug,
+    }),
+  );
 }
 
 async function useTempConfigHome(): Promise<string> {
@@ -100,9 +114,10 @@ describe("cli/shared/runtime-auth", () => {
     const linkedDir = await Deno.makeTempDir({ prefix: "vf-linked-project-" });
     const unlinkedDir = await Deno.makeTempDir({ prefix: "vf-unlinked-project-" });
     tempDirs.push(linkedDir, unlinkedDir);
+    await writeRawProjectLink(linkedDir, "persisted-project");
     await Deno.writeTextFile(
-      `${linkedDir}/veryfront.json`,
-      JSON.stringify({ projectSlug: "persisted-project" }),
+      join(unlinkedDir, "package.json"),
+      JSON.stringify({ name: "unlinked" }),
     );
 
     assertEquals(await resolveLinkedProjectSlug(linkedDir), "persisted-project");

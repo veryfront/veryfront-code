@@ -1,6 +1,7 @@
 import { getEnv, setEnv } from "veryfront/platform";
 import { readToken } from "../auth/token-store.ts";
 import { readConfigFile } from "./config.ts";
+import { readProjectLink } from "./project-link.ts";
 
 export interface RuntimeAuthOptions {
   linkedProjectSlug?: string;
@@ -24,7 +25,10 @@ export async function resolveLinkedProjectSlug(
   const configured = normalizeEnvValue(configuredProjectSlug);
   if (configured) return configured;
 
-  return normalizeEnvValue((await readConfigFile(projectDir))?.projectSlug);
+  const configProjectSlug = normalizeEnvValue((await readConfigFile(projectDir))?.projectSlug);
+  if (configProjectSlug) return configProjectSlug;
+
+  return normalizeEnvValue((await readProjectLink(projectDir))?.projectSlug);
 }
 
 export async function resolveRuntimeAuthContext(

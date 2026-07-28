@@ -15,11 +15,12 @@ import { type EnvironmentConfig, getConfig, getEnvironmentConfig } from "veryfro
 import {
   type ApiClient,
   createApiClient,
+  type ProjectReferenceSource,
   resolveConfigWithAuth,
   resolveConfigWithAuthDetails,
   type ResolvedConfig,
-  writeProjectSlug,
 } from "#cli/shared/config";
+import { writeProjectLink } from "../../shared/project-link.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { brand, createNoopSpinner, createSpinner, dim, formatDuration } from "#cli/ui";
@@ -32,6 +33,8 @@ import {
   getProjectTarget,
   normalizeControlPlane,
   type ProjectTarget,
+  PUSH_RECEIPT_RELATIVE_PATH,
+  type PushReceipt,
   readPushReceipt,
   resolveGitSource,
   validatePushReceipt,
@@ -604,7 +607,6 @@ export async function resolvePushedSource(input: {
   projectId: string;
   projectSlug: string;
   branch: string;
-  requireClean: boolean;
 }): Promise<{ commitSha: string | null; sourceDigest: string }> {
   const receipt = await readPushReceipt(input.projectDir);
   if (!receipt) {
@@ -621,7 +623,6 @@ export async function resolvePushedSource(input: {
     branch: input.branch,
     commitSha: gitSource.commitSha,
     clean: gitSource.clean,
-    requireClean: input.requireClean,
   });
   return { commitSha, sourceDigest: receipt.sourceDigest };
 }
@@ -850,9 +851,38 @@ async function inferDeployProjectSlug(projectDir: string): Promise<string> {
   return normalizeProjectSlug(dirName);
 }
 
+function shouldPersistProjectLink(source: ProjectReferenceSource): boolean {
+  return source.kind === "inferred" || source.kind === "local-link";
+}
+
+function projectApiReference(config: ResolvedConfig): string {
+  return config.projectId ?? config.projectSlug;
+}
+
+function needsBootstrapPush(
+  receipt: PushReceipt | null,
+  skipSourcePush: boolean | undefined,
+): boolean {
+  return !skipSourcePush && !receipt;
+}
+
+async function persistProjectLink(
+  projectDir: string,
+  config: ResolvedConfig,
+  project: ProjectTarget,
+): Promise<ResolvedConfig> {
+  await writeProjectLink(projectDir, {
+    controlPlane: config.apiUrl,
+    projectId: project.id,
+    projectSlug: project.slug,
+  });
+  return { ...config, projectId: project.id, projectSlug: project.slug };
+}
+
 async function ensureProjectLinkedForDeploy(
   projectDir: string,
   env: EnvironmentConfig,
+  receipt: PushReceipt | null,
   dryRun: boolean,
   quiet: boolean,
 ): Promise<{
@@ -863,7 +893,8 @@ async function ensureProjectLinkedForDeploy(
 }> {
   const details = await resolveConfigWithAuthDetails(projectDir, env);
   const initial = details.config;
-  const isInferredReference = details.projectReferenceSource.kind === "inferred";
+  const projectReferenceSource = details.projectReferenceSource;
+  const isInferredReference = projectReferenceSource.kind === "inferred";
   const projectReference = isInferredReference
     ? normalizeProjectSlug(initial.projectSlug || await inferDeployProjectSlug(projectDir))
     : initial.projectSlug;
@@ -872,9 +903,14 @@ async function ensureProjectLinkedForDeploy(
 
   if (!isInferredReference) {
     try {
-      const project = await getProject(client, projectReference);
+      const project = await getProject(client, projectApiReference(config));
+      const resolvedConfig = shouldPersistProjectLink(projectReferenceSource)
+        ? dryRun
+          ? { ...config, projectId: project.id, projectSlug: project.slug }
+          : await persistProjectLink(projectDir, config, project)
+        : { ...config, projectSlug: project.slug };
       return {
-        config: { ...config, projectSlug: project.slug },
+        config: resolvedConfig,
         client,
         project,
         plannedProjectSlug: project.slug,
@@ -895,6 +931,12 @@ async function ensureProjectLinkedForDeploy(
   }
 
   const suggestedSlug = normalizeProjectSlug(projectReference);
+  if (receipt) {
+    throw new Error(
+      `The local push receipt is orphaned: ${PUSH_RECEIPT_RELATIVE_PATH} targets project "${receipt.projectSlug}", but deploy inferred "${suggestedSlug}" because there is no explicit config or local project link. Remove the receipt and run veryfront push again, or relink this project before deploying.`,
+    );
+  }
+
   if (dryRun) {
     if (!quiet) logInfo(`Would create project ${suggestedSlug}`);
     return {
@@ -911,15 +953,15 @@ async function ensureProjectLinkedForDeploy(
     env,
     initial.apiUrl,
   );
-  await writeProjectSlug(projectDir, created.slug);
   if (!quiet && isVerbose()) logInfo(`Created project ${created.slug}`);
   const createdConfig = { ...initial, projectSlug: created.slug };
   const createdClient = createApiClient(createdConfig);
   const project = created.projectId
     ? { id: created.projectId, slug: created.slug }
     : await getProject(createdClient, created.slug);
+  const linkedConfig = await persistProjectLink(projectDir, createdConfig, project);
   return {
-    config: createdConfig,
+    config: linkedConfig,
     client: createdClient,
     project,
     plannedProjectSlug: created.slug,
@@ -1121,23 +1163,25 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   };
 
   const environmentConfig = await runWithProgress(getEnvironmentConfig);
+  const receipt = await runWithProgress(() => readPushReceipt(projectDir));
   const setup = await runWithProgress(() =>
-    ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, quiet)
+    ensureProjectLinkedForDeploy(projectDir, environmentConfig, receipt, dryRun, quiet)
   );
   let { config, client, project } = setup;
+  const bootstrapPush = needsBootstrapPush(receipt, skipSourcePush);
 
   if (dryRun && !project) {
     spinner.stop();
     if (!quiet) {
-      const actions = skipSourcePush
-        ? `create release and deploy to "${env}"`
-        : `push source to "${branch}", create release, and deploy to "${env}"`;
+      const actions = bootstrapPush
+        ? `push source to "${branch}", create release, and deploy to "${env}"`
+        : `create release and deploy to "${env}"`;
       logInfo(`Would ${actions} for project ${setup.plannedProjectSlug}`);
     }
     return;
   }
 
-  if (!skipSourcePush) {
+  if (bootstrapPush) {
     updateProgress("Uploading source...", `Pushing source to "${branch}"...`);
     await runWithProgress(() =>
       pushCommand({
@@ -1155,7 +1199,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 
   if (!project) {
     updateProgress("Building release...", "Resolving project...");
-    project = await runWithProgress(() => getProject(client, config.projectSlug));
+    project = await runWithProgress(() => getProject(client, projectApiReference(config)));
   }
 
   updateProgress("Building release...", `Looking up environment "${env}"...`);
@@ -1174,8 +1218,24 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   }
 
   if (dryRun) {
+    if (!bootstrapPush && !skipSourcePush) {
+      await runWithProgress(() =>
+        resolvePushedSource({
+          projectDir,
+          controlPlane: config.apiUrl,
+          projectId: project.id,
+          projectSlug: project.slug,
+          branch,
+        })
+      );
+    }
     spinner.stop();
-    if (!quiet) logInfo(`Would create release from "${branch}" and deploy to "${env}"`);
+    if (!quiet) {
+      const actions = bootstrapPush
+        ? `push source to "${branch}", create release, and deploy to "${env}"`
+        : `create release and deploy to "${env}"`;
+      logInfo(`Would ${actions}`);
+    }
     return;
   }
 
@@ -1188,7 +1248,6 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
       projectId: project.id,
       projectSlug: project.slug,
       branch,
-      requireClean: env === "production",
     });
   } catch (error) {
     spinner.stop();
@@ -1327,8 +1386,16 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
   try {
     streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
     const environmentConfig = getEnvironmentConfig();
-    const setup = await ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, true);
+    const receipt = await readPushReceipt(projectDir);
+    const setup = await ensureProjectLinkedForDeploy(
+      projectDir,
+      environmentConfig,
+      receipt,
+      dryRun,
+      true,
+    );
     let { config, client, project } = setup;
+    const bootstrapPush = needsBootstrapPush(receipt, skipSourcePush);
     streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });
 
     if (dryRun && !project) {
@@ -1345,7 +1412,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
           controlPlane: normalizeControlPlane(config.apiUrl),
           plannedActions: [
             "create-project",
-            ...(skipSourcePush ? [] : ["push-source"]),
+            ...(bootstrapPush ? ["push-source"] : []),
             "create-release",
             "deploy",
           ],
@@ -1354,7 +1421,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
       return;
     }
 
-    if (!skipSourcePush) {
+    if (bootstrapPush) {
       streamJsonLine({ type: "step", name: "push-source", status: "started" });
       await pushCommand({
         projectDir,
@@ -1369,7 +1436,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     }
 
     streamJsonLine({ type: "step", name: "resolve-target", status: "started" });
-    if (!project) project = await getProject(client, config.projectSlug);
+    if (!project) project = await getProject(client, projectApiReference(config));
     const environment = await getEnvironmentByName(client, project.id, env);
     if (!environment) {
       streamJsonLine({
@@ -1385,6 +1452,15 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     streamJsonLine({ type: "step", name: "resolve-target", status: "completed" });
 
     if (dryRun) {
+      if (!bootstrapPush && !skipSourcePush) {
+        await resolvePushedSource({
+          projectDir,
+          controlPlane: config.apiUrl,
+          projectId: project.id,
+          projectSlug: project.slug,
+          branch,
+        });
+      }
       streamJsonLine({
         type: "result",
         success: true,
@@ -1396,6 +1472,11 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
           environment: env,
           environmentId: environment.id,
           controlPlane: normalizeControlPlane(config.apiUrl),
+          plannedActions: [
+            ...(bootstrapPush ? ["push-source"] : []),
+            "create-release",
+            "deploy",
+          ],
         },
       });
       return;
@@ -1408,7 +1489,6 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
       projectId: project.id,
       projectSlug: project.slug,
       branch,
-      requireClean: env === "production",
     });
     streamJsonLine({ type: "step", name: "verify-source", status: "completed" });
 

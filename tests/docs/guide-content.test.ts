@@ -97,7 +97,9 @@ describe("guide content contracts", () => {
       const text = await Deno.readTextFile(path);
 
       assertStringIncludes(text, deploy);
-      assertStringIncludes(text, "writes `veryfront.json`");
+      assertStringIncludes(text, "It does not write");
+      assertStringIncludes(text, "`veryfront.json`");
+      assertStringIncludes(text, "last verified Push receipt");
       assertStringIncludes(text, "prints the environment URL");
     }
   });

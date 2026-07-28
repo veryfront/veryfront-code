@@ -19,6 +19,7 @@ import {
   getRelease,
   getReleaseSourceDigest,
   parseDeployArgs,
+  resolvePushedSource,
   verifyDeployment,
   verifyReleaseSource,
   waitForEnvironmentReady,
@@ -26,7 +27,7 @@ import {
 } from "./index.ts";
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
-import { computeSourceDigest } from "../../shared/deployment-provenance.ts";
+import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -57,6 +58,76 @@ async function expectErrorMessage(fn: () => Promise<unknown>): Promise<string | 
     return (e as Error).message;
   }
 }
+
+async function runGit(projectDir: string, ...args: string[]) {
+  const result = await new Deno.Command("git", {
+    args,
+    cwd: projectDir,
+    clearEnv: true,
+    env: Object.fromEntries(
+      Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
+    ),
+    stdout: "null",
+    stderr: "piped",
+  }).output();
+  assertEquals(result.success, true, new TextDecoder().decode(result.stderr));
+}
+
+async function commitProject(projectDir: string) {
+  await runGit(projectDir, "init", "--quiet");
+  await runGit(projectDir, "config", "user.email", "test@veryfront.com");
+  await runGit(projectDir, "config", "user.name", "Veryfront Test");
+  await runGit(projectDir, "add", ".");
+  await runGit(projectDir, "commit", "--quiet", "-m", "initial");
+  return new TextDecoder().decode(
+    (await new Deno.Command("git", {
+      args: ["rev-parse", "HEAD"],
+      cwd: projectDir,
+      clearEnv: true,
+      env: Object.fromEntries(
+        Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
+      ),
+      stdout: "piped",
+    }).output()).stdout,
+  ).trim();
+}
+
+describe("pushed source provenance", () => {
+  it("accepts dirty metadata when the pushed source digest targets the current commit", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+      const commitSha = await commitProject(projectDir);
+      const sourceDigest = await computeSourceDigest([
+        { path: "app.ts", content: "export const value = 1;\n" },
+      ]);
+      await writePushReceipt(projectDir, {
+        controlPlane: "https://control.example.test/api",
+        projectId: "550e8400-e29b-41d4-a716-446655440000",
+        projectSlug: "my-project",
+        branch: "main",
+        commitSha,
+        sourceDigest,
+        clean: false,
+        pushedAt: "2026-07-10T09:20:00.000Z",
+      });
+      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+
+      const result = await resolvePushedSource({
+        projectDir,
+        controlPlane: "https://control.example.test/api",
+        projectId: "550e8400-e29b-41d4-a716-446655440000",
+        projectSlug: "my-project",
+        branch: "main",
+      });
+
+      assertEquals(result, { commitSha, sourceDigest });
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+});
 
 describe("environment URL readiness", () => {
   const hostedTarget = {

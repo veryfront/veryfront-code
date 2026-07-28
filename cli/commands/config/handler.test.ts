@@ -1,9 +1,38 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "veryfront/platform/path";
 import { createSuccessEnvelope } from "../../shared/json-output.ts";
 import { detectConfigSource, getConfigCommandData, getEnvOverrides } from "./handler.ts";
+
+const CONFIG_ENV_KEYS = [
+  "VERYFRONT_PROJECT_SLUG",
+  "VERYFRONT_PROJECT_ID",
+  "TENANT_PROJECT_SLUG",
+  "TENANT_PROJECT_ID",
+  "VERYFRONT_API_BASE_URL",
+  "VERYFRONT_API_TOKEN",
+  "NODE_ENV",
+  "VERYFRONT_ENV",
+  "VERYFRONT_DEBUG",
+] as const;
+
+async function withSavedEnv(
+  keys: readonly string[],
+  fn: () => Promise<void> | void,
+): Promise<void> {
+  const saved = new Map(keys.map((key) => [key, Deno.env.get(key)]));
+  try {
+    for (const key of keys) Deno.env.delete(key);
+    await fn();
+  } finally {
+    for (const key of keys) {
+      const value = saved.get(key);
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    }
+  }
+}
 
 async function withTempConfigProject(
   files: Record<string, string>,
@@ -18,6 +47,23 @@ async function withTempConfigProject(
   } finally {
     await Deno.remove(projectDir, { recursive: true });
   }
+}
+
+async function writeRawProjectLink(
+  projectDir: string,
+  projectSlug: string,
+  controlPlane = "https://api.veryfront.com",
+): Promise<void> {
+  await Deno.mkdir(join(projectDir, ".veryfront"), { recursive: true });
+  await Deno.writeTextFile(
+    join(projectDir, ".veryfront", "project.json"),
+    JSON.stringify({
+      version: 1,
+      controlPlane,
+      projectId: "linked-project-id",
+      projectSlug,
+    }),
+  );
 }
 
 describe("Config Command", () => {
@@ -81,9 +127,7 @@ describe("Config Command", () => {
 
   describe("getConfigCommandData", () => {
     it("reports projectSlug from veryfront.config.ts", async () => {
-      const saved = Deno.env.get("VERYFRONT_PROJECT_SLUG");
-      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
-      try {
+      await withSavedEnv(CONFIG_ENV_KEYS, async () => {
         await withTempConfigProject(
           {
             "veryfront.config.ts": [
@@ -97,9 +141,82 @@ describe("Config Command", () => {
             assertEquals(data.configSource, "veryfront.config.ts");
           },
         );
-      } finally {
-        if (saved) Deno.env.set("VERYFRONT_PROJECT_SLUG", saved);
-      }
+      });
+    });
+
+    it("reports projectSlug and source from a local project link", async () => {
+      await withTempConfigProject({}, async (projectDir) => {
+        await writeRawProjectLink(projectDir, "linked-project");
+
+        const data = await getConfigCommandData(projectDir);
+
+        assertEquals(data.projectSlug, "linked-project");
+        assertEquals(data.configSource, ".veryfront/project.json");
+      });
+    });
+
+    it("rejects a local project link for a different control plane", async () => {
+      await withSavedEnv(CONFIG_ENV_KEYS, async () => {
+        await withTempConfigProject({}, async (projectDir) => {
+          await writeRawProjectLink(
+            projectDir,
+            "linked-project",
+            "https://api.other.veryfront.com",
+          );
+
+          await assertRejects(
+            () => getConfigCommandData(projectDir),
+            Error,
+            ".veryfront/project.json",
+          );
+          await assertRejects(
+            () => getConfigCommandData(projectDir),
+            Error,
+            "https://api.other.veryfront.com",
+          );
+          await assertRejects(
+            () => getConfigCommandData(projectDir),
+            Error,
+            "https://api.veryfront.com",
+          );
+        });
+      });
+    });
+
+    it("uses VERYFRONT_PROJECT_ID before validating a stale local project link", async () => {
+      await withSavedEnv(CONFIG_ENV_KEYS, async () => {
+        Deno.env.set("VERYFRONT_PROJECT_ID", "project-id-from-env");
+        await withTempConfigProject({}, async (projectDir) => {
+          await writeRawProjectLink(
+            projectDir,
+            "linked-project",
+            "https://api.other.veryfront.com",
+          );
+
+          const data = await getConfigCommandData(projectDir);
+
+          assertEquals(data.projectSlug, "project-id-from-env");
+          assertEquals(data.configSource, null);
+        });
+      });
+    });
+
+    it("uses TENANT_PROJECT_ID before validating a stale local project link", async () => {
+      await withSavedEnv(CONFIG_ENV_KEYS, async () => {
+        Deno.env.set("TENANT_PROJECT_ID", "tenant-project-id-from-env");
+        await withTempConfigProject({}, async (projectDir) => {
+          await writeRawProjectLink(
+            projectDir,
+            "linked-project",
+            "https://api.other.veryfront.com",
+          );
+
+          const data = await getConfigCommandData(projectDir);
+
+          assertEquals(data.projectSlug, "tenant-project-id-from-env");
+          assertEquals(data.configSource, null);
+        });
+      });
     });
   });
 
@@ -117,25 +234,23 @@ describe("Config Command", () => {
       }
     });
 
-    it("returns empty array when no overrides set", () => {
-      const keys = Object.values({
-        projectSlug: "VERYFRONT_PROJECT_SLUG",
-        apiBaseUrl: "VERYFRONT_API_BASE_URL",
-        apiToken: "VERYFRONT_API_TOKEN",
-        nodeEnv: "NODE_ENV",
-        veryfrontEnv: "VERYFRONT_ENV",
-        debug: "VERYFRONT_DEBUG",
-      });
-      const saved = keys.map((k) => Deno.env.get(k));
-      keys.forEach((k) => Deno.env.delete(k));
-      try {
+    it("returns empty array when no overrides set", async () => {
+      await withSavedEnv(CONFIG_ENV_KEYS, () => {
         const overrides = getEnvOverrides();
         assertEquals(overrides.length, 0);
-      } finally {
-        keys.forEach((k, i) => {
-          if (saved[i]) Deno.env.set(k, saved[i]!);
-        });
-      }
+      });
+    });
+
+    it("reports project ID environment overrides honestly", async () => {
+      await withSavedEnv(CONFIG_ENV_KEYS, () => {
+        Deno.env.set("VERYFRONT_PROJECT_ID", "project-id-from-env");
+        Deno.env.set("TENANT_PROJECT_ID", "tenant-project-id-from-env");
+
+        assertEquals(getEnvOverrides(), [
+          "projectSlug (VERYFRONT_PROJECT_ID)",
+          "projectSlug (TENANT_PROJECT_ID)",
+        ]);
+      });
     });
   });
 });
