@@ -414,6 +414,71 @@ describe("WorkflowClient", () => {
       assertEquals(approval?.comment, "Looks good!");
     });
 
+    it("persists approval allowlists and expiry before accepting a decision", async () => {
+      const restrictedBackend = new MemoryBackend();
+      const restrictedClient = createWorkflowClient({
+        backend: restrictedBackend,
+        approval: { expirationCheckInterval: 0 },
+      });
+      const workflowId = "restricted-approval-policy-workflow";
+      restrictedClient.register(
+        workflow({
+          id: workflowId,
+          steps: [
+            waitForApproval("review", {
+              approvers: ["alice@example.com"],
+              timeout: 60_000,
+            }),
+          ],
+        }),
+      );
+      const requestedAfter = Date.now();
+
+      try {
+        const handle = await restrictedClient.start(workflowId, {});
+        await handle.settled();
+
+        const [approval] = await restrictedClient.getPendingApprovals(handle.runId);
+        assertExists(approval);
+        assertEquals(approval.approvers, ["alice@example.com"]);
+        assertEquals(
+          approval.expiresAt !== undefined &&
+            approval.expiresAt.getTime() >= requestedAfter + 59_000 &&
+            approval.expiresAt.getTime() <= Date.now() + 60_000,
+          true,
+        );
+
+        await assertRejects(
+          () =>
+            restrictedClient.approve(
+              handle.runId,
+              approval.id,
+              "mallory@example.com",
+            ),
+          VeryfrontError,
+          "Not authorized",
+        );
+        assertEquals(
+          (await restrictedBackend.getPendingApproval(handle.runId, approval.id))
+            ?.status,
+          "pending",
+        );
+
+        await restrictedClient.approve(
+          handle.runId,
+          approval.id,
+          "alice@example.com",
+        );
+        assertEquals(
+          (await restrictedBackend.getPendingApproval(handle.runId, approval.id))
+            ?.status,
+          "approved",
+        );
+      } finally {
+        await restrictedClient.destroy();
+      }
+    });
+
     it("allows an approval to resume while its notifier is still pending", async () => {
       const approvalPersisted = Promise.withResolvers<string>();
       const releaseNotifier = Promise.withResolvers<void>();

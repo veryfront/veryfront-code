@@ -23,7 +23,7 @@ export function waitForApproval(id: string, options: WaitForApprovalOptions = {}
       waitType: "approval",
       message: options.message ?? "Approval required",
       payload: options.payload,
-      approvers: options.approvers,
+      approvers: options.approvers === undefined ? undefined : [...options.approvers],
       timeout: options.timeout,
       checkpoint: true,
       retry: options.retry,

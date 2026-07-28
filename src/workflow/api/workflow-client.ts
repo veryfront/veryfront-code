@@ -5,9 +5,11 @@
  **************************/
 
 import { logger as baseLogger } from "#veryfront/utils";
+import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import type {
   PendingApproval,
   RunFilter,
+  WaitNodeConfig,
   WorkflowDefinition,
   WorkflowRun,
   WorkflowStatus,
@@ -23,6 +25,53 @@ import { ApprovalManager, type ApprovalManagerConfig } from "../runtime/approval
 import type { Workflow } from "../dsl/workflow.ts";
 
 const logger = baseLogger.component("workflow-client");
+
+function restoreApprovalWaitConfig(value: unknown): WaitNodeConfig | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+
+  const input = value as Record<string, unknown>;
+  if (input.type !== "approval") return null;
+
+  const message = input.message;
+  if (message !== undefined && typeof message !== "string") {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "Persisted approval wait message must be a string",
+    });
+  }
+
+  const approvers = input.approvers;
+  if (
+    approvers !== undefined &&
+    (!Array.isArray(approvers) ||
+      !approvers.every((approver) => typeof approver === "string"))
+  ) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "Persisted approval wait approvers must be an array of strings",
+    });
+  }
+
+  const timeout = input.timeout;
+  if (
+    timeout !== undefined &&
+    typeof timeout !== "string" &&
+    typeof timeout !== "number"
+  ) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "Persisted approval wait timeout must be a string or number",
+    });
+  }
+
+  return {
+    type: "wait",
+    waitType: "approval",
+    message,
+    payload: input.payload,
+    approvers: approvers === undefined ? undefined : [...approvers],
+    timeout,
+  };
+}
 
 /** Configuration used by workflow client. */
 export interface WorkflowClientConfig {
@@ -54,9 +103,7 @@ export class WorkflowClient {
       debug: this.debug,
       ...config.executor,
       onWaiting: async (run, nodeId) => {
-        const input = run.nodeStates[nodeId]?.input as
-          | { type?: string; message?: string; payload?: unknown }
-          | undefined;
+        const input = run.nodeStates[nodeId]?.input;
 
         if (!input) {
           logger.debug("No wait config found for node", { nodeId });
@@ -64,17 +111,11 @@ export class WorkflowClient {
           return;
         }
 
-        if (input.type !== "approval") {
+        const waitConfig = restoreApprovalWaitConfig(input);
+        if (!waitConfig) {
           await userOnWaiting?.(run, nodeId);
           return;
         }
-
-        const waitConfig = {
-          type: "wait" as const,
-          waitType: "approval" as const,
-          message: input.message,
-          payload: input.payload,
-        };
 
         try {
           await this.approvalManager.createApproval(run, nodeId, waitConfig, run.context);

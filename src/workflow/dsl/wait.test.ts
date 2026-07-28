@@ -47,6 +47,14 @@ describe("waitForApproval()", () => {
     const config = expectWaitConfig(node);
     assertEquals(config.approvers, ["admin@example.com", "lead@example.com"]);
   });
+
+  it("snapshots the approver allowlist at definition time", () => {
+    const approvers = ["admin@example.com"];
+    const node = waitForApproval("owned-review-policy", { approvers });
+    approvers[0] = "attacker@example.com";
+
+    assertEquals(expectWaitConfig(node).approvers, ["admin@example.com"]);
+  });
 });
 
 describe("waitForEvent()", () => {
