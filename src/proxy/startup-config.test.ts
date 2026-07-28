@@ -28,6 +28,7 @@ Deno.test("proxy startup configuration", async (t) => {
     assertEquals(config.serverRequestTimeoutMs, 90_000);
     assertEquals(config.serverRetryCount, 1);
     assertEquals(config.serverRetryDelayMs, 100);
+    assertEquals(config.maxActiveWebSocketBridges, 256);
     assertEquals(config.shutdownDrainTimeoutMs, 25_000);
     assertEquals(config.shutdownCleanupTimeoutMs, 4_000);
     assertEquals(config.expectedReplicas, undefined);
@@ -54,6 +55,7 @@ Deno.test("proxy startup configuration", async (t) => {
         VERYFRONT_SERVER_REQUEST_TIMEOUT_MS: "120000",
         VERYFRONT_SERVER_RETRY_COUNT: "3",
         VERYFRONT_SERVER_RETRY_DELAY_MS: "250",
+        VERYFRONT_PROXY_MAX_WEBSOCKET_BRIDGES: "512",
         SHUTDOWN_DRAIN_TIMEOUT_MS: "30000",
         SHUTDOWN_CLEANUP_TIMEOUT_MS: "3500",
         VERYFRONT_PROXY_EXPECTED_REPLICAS: "2",
@@ -75,6 +77,7 @@ Deno.test("proxy startup configuration", async (t) => {
     assertEquals(config.serverRequestTimeoutMs, 120_000);
     assertEquals(config.serverRetryCount, 3);
     assertEquals(config.serverRetryDelayMs, 250);
+    assertEquals(config.maxActiveWebSocketBridges, 512);
     assertEquals(config.shutdownDrainTimeoutMs, 30_000);
     assertEquals(config.shutdownCleanupTimeoutMs, 3_500);
     assertEquals(config.expectedReplicas, 2);
@@ -307,6 +310,15 @@ Deno.test("proxy startup configuration", async (t) => {
         ),
       TypeError,
       "decimal integer",
+    );
+    assertThrows(
+      () =>
+        readProxyStartupConfig(
+          environment({ VERYFRONT_PROXY_MAX_WEBSOCKET_BRIDGES: "0" }),
+          false,
+        ),
+      RangeError,
+      "between 1 and 65535",
     );
     assertThrows(
       () =>

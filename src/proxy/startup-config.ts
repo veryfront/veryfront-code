@@ -10,6 +10,10 @@ import { isIP } from "node:net";
 import type { ProxyConfig } from "./handler.ts";
 import { parseProxyDrainTimeoutMs } from "./request-drain.ts";
 import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
+import {
+  DEFAULT_PROXY_WEBSOCKET_BRIDGE_CAPACITY,
+  MAX_PROXY_WEBSOCKET_BRIDGE_CAPACITY,
+} from "./websocket-bridge-registry.ts";
 
 const DEFAULT_API_BASE_URL = "https://api.veryfront.com";
 const DEFAULT_DEVELOPMENT_SERVER_URL = "http://localhost:3001";
@@ -50,6 +54,7 @@ export interface ProxyStartupConfig {
   readonly serverRequestTimeoutMs: number;
   readonly serverRetryCount: number;
   readonly serverRetryDelayMs: number;
+  readonly maxActiveWebSocketBridges: number;
   readonly shutdownDrainTimeoutMs: number;
   readonly shutdownCleanupTimeoutMs: number;
   readonly routingInvalidationSecret: string;
@@ -395,6 +400,13 @@ export function readProxyStartupConfig(
       "VERYFRONT_SERVER_RETRY_DELAY_MS",
       0,
       MAX_SERVER_RETRY_DELAY_MS,
+    ),
+    maxActiveWebSocketBridges: parseInteger(
+      read("VERYFRONT_PROXY_MAX_WEBSOCKET_BRIDGES"),
+      DEFAULT_PROXY_WEBSOCKET_BRIDGE_CAPACITY,
+      "VERYFRONT_PROXY_MAX_WEBSOCKET_BRIDGES",
+      1,
+      MAX_PROXY_WEBSOCKET_BRIDGE_CAPACITY,
     ),
     shutdownDrainTimeoutMs: parseProxyDrainTimeoutMs(
       read("SHUTDOWN_DRAIN_TIMEOUT_MS"),

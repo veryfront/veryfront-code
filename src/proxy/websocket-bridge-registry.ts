@@ -1,7 +1,12 @@
 import {
   PROXY_WS_CLOSE_GOING_AWAY,
+  PROXY_WS_CLOSE_TRY_AGAIN_LATER,
   type ProxyWebSocketBridge,
 } from "./websocket-bridge-protocol.ts";
+
+export const DEFAULT_PROXY_WEBSOCKET_BRIDGE_CAPACITY = 256;
+export const MAX_PROXY_WEBSOCKET_BRIDGE_CAPACITY = 65_535;
+const CAPACITY_EXHAUSTED_REASON = "Proxy WebSocket bridge capacity exhausted";
 
 interface TrackedProxyWebSocketBridge {
   readonly close: (code: number, reason: string) => void;
@@ -14,8 +19,24 @@ interface TrackedProxyWebSocketBridge {
  */
 export class ProxyWebSocketBridgeRegistry {
   private readonly bridges = new Set<TrackedProxyWebSocketBridge>();
+  private readonly maxActiveBridges: number;
   private closing = false;
   private closePromise: Promise<void> | null = null;
+
+  constructor(
+    maxActiveBridges = DEFAULT_PROXY_WEBSOCKET_BRIDGE_CAPACITY,
+  ) {
+    if (
+      !Number.isSafeInteger(maxActiveBridges) ||
+      maxActiveBridges < 1 ||
+      maxActiveBridges > MAX_PROXY_WEBSOCKET_BRIDGE_CAPACITY
+    ) {
+      throw new RangeError(
+        `Proxy WebSocket bridge capacity must be an integer between 1 and ${MAX_PROXY_WEBSOCKET_BRIDGE_CAPACITY}`,
+      );
+    }
+    this.maxActiveBridges = maxActiveBridges;
+  }
 
   track(bridge: ProxyWebSocketBridge): boolean {
     let close: unknown;
@@ -59,12 +80,18 @@ export class ProxyWebSocketBridgeRegistry {
       }),
     });
     if (this.closing) {
-      try {
-        tracked.close(PROXY_WS_CLOSE_GOING_AWAY, "Proxy is shutting down");
-      } catch {
-        // The registry is already closed; the caller cannot retain ownership.
-      }
-      return false;
+      return this.closeUnownedBridge(
+        tracked,
+        PROXY_WS_CLOSE_GOING_AWAY,
+        "Proxy is shutting down",
+      );
+    }
+    if (this.bridges.size >= this.maxActiveBridges) {
+      return this.closeUnownedBridge(
+        tracked,
+        PROXY_WS_CLOSE_TRY_AGAIN_LATER,
+        CAPACITY_EXHAUSTED_REASON,
+      );
     }
     this.bridges.add(tracked);
     void tracked.closed.then(
@@ -72,6 +99,22 @@ export class ProxyWebSocketBridgeRegistry {
       () => this.bridges.delete(tracked),
     );
     return true;
+  }
+
+  private closeUnownedBridge(
+    bridge: TrackedProxyWebSocketBridge,
+    code: number,
+    reason: string,
+  ): false {
+    // Rejected ownership must still observe bridge settlement so a failing
+    // implementation cannot surface an unhandled promise rejection.
+    void bridge.closed.catch(() => undefined);
+    try {
+      bridge.close(code, reason);
+    } catch {
+      // The caller cannot retain registry ownership after rejection.
+    }
+    return false;
   }
 
   get size(): number {

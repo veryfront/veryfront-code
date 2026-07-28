@@ -89,21 +89,22 @@ separate deployment-policy decision and currently emits the proxy's existing
 unauthenticated-forwarding warning rather than being treated as malformed
 configuration.
 
-| Environment variable                  | Default                  | Allowed value or range                                         |
-| ------------------------------------- | ------------------------ | -------------------------------------------------------------- |
-| `VERYFRONT_PROXY_API_BASE_URL`        | Veryfront Cloud API      | Canonical HTTP(S) URL, optional path                           |
-| `LOCAL_PROJECTS`                      | unset                    | Canonical absolute-path map; development only                  |
-| `VERYFRONT_SERVER_URL`                | localhost in development | HTTP(S) origin; required in production                         |
-| `VERYFRONT_PROXY_URL`                 | unset                    | HTTP(S) bind origin; mutually exclusive with `HOST` and `PORT` |
-| `HOST`                                | `0.0.0.0`                | Canonical hostname or IP address                               |
-| `PORT`                                | `8080`                   | `1..65535`                                                     |
-| `VERYFRONT_API_REQUEST_TIMEOUT_MS`    | `30000`                  | `1..300000`                                                    |
-| `VERYFRONT_SERVER_REQUEST_TIMEOUT_MS` | `90000`                  | `1..900000`                                                    |
-| `VERYFRONT_SERVER_RETRY_COUNT`        | `1`                      | `0..5`                                                         |
-| `VERYFRONT_SERVER_RETRY_DELAY_MS`     | `100`                    | `0..60000`                                                     |
-| `SHUTDOWN_DRAIN_TIMEOUT_MS`           | `25000`                  | `0..600000`                                                    |
-| `SHUTDOWN_CLEANUP_TIMEOUT_MS`         | `4000`                   | `0..2147483647`                                                |
-| `VERYFRONT_PROXY_EXPECTED_REPLICAS`   | unset                    | `1..10000`; required in production                             |
+| Environment variable                    | Default                  | Allowed value or range                                         |
+| --------------------------------------- | ------------------------ | -------------------------------------------------------------- |
+| `VERYFRONT_PROXY_API_BASE_URL`          | Veryfront Cloud API      | Canonical HTTP(S) URL, optional path                           |
+| `LOCAL_PROJECTS`                        | unset                    | Canonical absolute-path map; development only                  |
+| `VERYFRONT_SERVER_URL`                  | localhost in development | HTTP(S) origin; required in production                         |
+| `VERYFRONT_PROXY_URL`                   | unset                    | HTTP(S) bind origin; mutually exclusive with `HOST` and `PORT` |
+| `HOST`                                  | `0.0.0.0`                | Canonical hostname or IP address                               |
+| `PORT`                                  | `8080`                   | `1..65535`                                                     |
+| `VERYFRONT_API_REQUEST_TIMEOUT_MS`      | `30000`                  | `1..300000`                                                    |
+| `VERYFRONT_SERVER_REQUEST_TIMEOUT_MS`   | `90000`                  | `1..900000`                                                    |
+| `VERYFRONT_SERVER_RETRY_COUNT`          | `1`                      | `0..5`                                                         |
+| `VERYFRONT_SERVER_RETRY_DELAY_MS`       | `100`                    | `0..60000`                                                     |
+| `VERYFRONT_PROXY_MAX_WEBSOCKET_BRIDGES` | `256`                    | `1..65535`                                                     |
+| `SHUTDOWN_DRAIN_TIMEOUT_MS`             | `25000`                  | `0..600000`                                                    |
+| `SHUTDOWN_CLEANUP_TIMEOUT_MS`           | `4000`                   | `0..2147483647`                                                |
+| `VERYFRONT_PROXY_EXPECTED_REPLICAS`     | unset                    | `1..10000`; required in production                             |
 
 The request boundary validates and canonicalizes the `Host` authority before
 using it for project routing or token identity. Ports and DNS trailing dots are

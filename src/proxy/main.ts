@@ -23,6 +23,7 @@
  * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
  * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
  * - VERYFRONT_API_REQUEST_TIMEOUT_MS: Deadline for BFF API requests
+ * - VERYFRONT_PROXY_MAX_WEBSOCKET_BRIDGES: Per-replica live WebSocket bridge limit
  * - SHUTDOWN_DRAIN_TIMEOUT_MS: Time to wait for active SSE responses during shutdown
  * - SHUTDOWN_CLEANUP_TIMEOUT_MS: Total cleanup budget after request draining
  */
@@ -140,7 +141,9 @@ const SHUTDOWN_DRAIN_TIMEOUT_MS = startupConfig.shutdownDrainTimeoutMs;
 const SHUTDOWN_CLEANUP_TIMEOUT_MS = startupConfig.shutdownCleanupTimeoutMs;
 const routingInvalidationSecret = startupConfig.routingInvalidationSecret;
 const proxyRequestDrainTracker = new ProxyRequestDrainTracker();
-const proxyWebSocketBridgeRegistry = new ProxyWebSocketBridgeRegistry();
+const proxyWebSocketBridgeRegistry = new ProxyWebSocketBridgeRegistry(
+  startupConfig.maxActiveWebSocketBridges,
+);
 let shuttingDown = false;
 
 const authProvider = await importFirstPartyExtensionModule<unknown>(

@@ -94,6 +94,26 @@ function createBridge(options: {
   return { bridge, client, server, targets };
 }
 
+function createRegistryBridge() {
+  let resolveClosed!: () => void;
+  const closeCalls: Array<{ code?: number; reason?: string }> = [];
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+  const bridge: ProxyWebSocketBridge = Object.freeze({
+    closed,
+    close(code?: number, reason?: string): void {
+      closeCalls.push({ code, reason });
+      resolveClosed();
+    },
+  });
+  return Object.freeze({
+    bridge,
+    closeCalls,
+    resolveClosed,
+  });
+}
+
 function messageBytes(message: SocketMessage): number[] {
   if (typeof message === "string") {
     return [...new TextEncoder().encode(message)];
@@ -344,6 +364,96 @@ describe("proxy WebSocket bridge lifecycle", () => {
 });
 
 describe("proxy WebSocket bridge registry", () => {
+  it("bounds default admission and closes excess bridges deterministically", async () => {
+    const registry = new ProxyWebSocketBridgeRegistry();
+    const bridges = Array.from(
+      { length: 257 },
+      () => createRegistryBridge(),
+    );
+
+    const admission = bridges.map(({ bridge }) => registry.track(bridge));
+    const excess = bridges[256];
+
+    assertEquals(admission.filter(Boolean).length, 256);
+    assertEquals(registry.size, 256);
+    assert(excess);
+    assertEquals(excess.closeCalls, [{
+      code: 1013,
+      reason: "Proxy WebSocket bridge capacity exhausted",
+    }]);
+
+    await registry.close();
+    assertEquals(registry.size, 0);
+  });
+
+  it("releases bounded admission exactly when a tracked bridge settles", async () => {
+    const registry = new ProxyWebSocketBridgeRegistry(2);
+    const first = createRegistryBridge();
+    const second = createRegistryBridge();
+    const excess = createRegistryBridge();
+
+    assertEquals(registry.track(first.bridge), true);
+    assertEquals(registry.track(second.bridge), true);
+    assertEquals(registry.track(excess.bridge), false);
+    assertEquals(registry.size, 2);
+    assertEquals(excess.closeCalls, [{
+      code: 1013,
+      reason: "Proxy WebSocket bridge capacity exhausted",
+    }]);
+
+    first.resolveClosed();
+    await first.bridge.closed;
+    await Promise.resolve();
+    assertEquals(registry.size, 1);
+
+    const replacement = createRegistryBridge();
+    assertEquals(registry.track(replacement.bridge), true);
+    assertEquals(registry.size, 2);
+
+    await registry.close();
+    assertEquals(second.closeCalls, [{
+      code: 1001,
+      reason: "Proxy is shutting down",
+    }]);
+    assertEquals(replacement.closeCalls, [{
+      code: 1001,
+      reason: "Proxy is shutting down",
+    }]);
+    assertEquals(registry.size, 0);
+  });
+
+  it("closes an excess live bridge before it can open an upstream socket", async () => {
+    const registry = new ProxyWebSocketBridgeRegistry(1);
+    const incumbent = createRegistryBridge();
+    assertEquals(registry.track(incumbent.bridge), true);
+
+    const client = new FakeWebSocket();
+    client.readyState = WebSocket.OPEN;
+    const excess = createBridge({ client });
+
+    assertEquals(registry.track(excess.bridge), false);
+    await excess.bridge.closed;
+    await Promise.resolve();
+
+    assertEquals(excess.targets, []);
+    assertEquals(client.closeCalls, [{
+      code: 1013,
+      reason: "Proxy WebSocket bridge capacity exhausted",
+    }]);
+
+    await registry.close();
+  });
+
+  it("rejects invalid capacities instead of allowing an unbounded registry", () => {
+    for (const capacity of [0, -1, 1.5, Number.NaN, Infinity, 65_536]) {
+      assertThrows(
+        () => new ProxyWebSocketBridgeRegistry(capacity),
+        RangeError,
+        "capacity must be an integer between 1 and 65535",
+      );
+    }
+  });
+
   it("tracks live bridges, shares close, and rejects late ownership", async () => {
     const registry = new ProxyWebSocketBridgeRegistry();
     const first = createBridge();

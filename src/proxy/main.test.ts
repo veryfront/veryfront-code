@@ -66,6 +66,10 @@ describe("proxy main request URL parsing", () => {
     );
     assertStringIncludes(
       source,
+      "startupConfig.maxActiveWebSocketBridges",
+    );
+    assertStringIncludes(
+      source,
       "createProxyContextHeaders(req.headers, ctx)",
     );
   });
