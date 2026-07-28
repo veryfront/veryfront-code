@@ -113,7 +113,9 @@ describe("validatePushReceipt", () => {
           })
         ),
       Error,
-      "different branch",
+      'The latest push is for branch "main", but deploy targets "feature-x". ' +
+        "Run veryfront deploy --branch main to deploy the latest push, " +
+        "or veryfront push --branch feature-x to preview feature-x first.",
     );
   });
 

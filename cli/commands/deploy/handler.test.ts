@@ -32,7 +32,7 @@ describe("Deploy Handler", () => {
     it("should use defaults when no flags provided", () => {
       const result = parseDeployArgs(createArgs());
       assertSuccess(result);
-      assertEquals(result.data.branch, "main");
+      assertEquals(result.data.branch, undefined);
       assertEquals(result.data.env, "production");
       assertEquals(result.data.dryRun, false);
       assertEquals(result.data.force, false);

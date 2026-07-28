@@ -432,7 +432,7 @@ describe("DeployArgsSchema", () => {
     assertEquals(result.success, true);
     if (!result.success) return;
 
-    assertEquals(result.data.branch, "main");
+    assertEquals(result.data.branch, undefined);
     assertEquals(result.data.env, "production");
   });
 
@@ -461,7 +461,7 @@ describe("parseDeployArgs", () => {
     assertEquals(result.success, true);
     if (!result.success) return;
 
-    assertEquals(result.data.branch, "main");
+    assertEquals(result.data.branch, undefined);
     assertEquals(result.data.env, "production");
   });
 
