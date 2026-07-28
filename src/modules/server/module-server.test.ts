@@ -246,7 +246,9 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
   }
 
   it("should return 404 for non-module path prefix", async () => {
-    const response = await serve(new Request("http://localhost:3000/not-a-module"));
+    const response = await serve(
+      new Request("http://localhost:3000/not-a-module?project="),
+    );
 
     assertEquals(response.status, 404);
     assertEquals(await response.text(), "Module not found");
@@ -295,6 +297,38 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(response.status, 400);
       assertEquals(await response.text(), "Invalid module path");
     }
+  });
+
+  it("rejects malformed and ambiguous module query identities before lookup", async () => {
+    for (
+      const requestUrl of [
+        "http://localhost:3000/_vf_modules/page.js?project=",
+        "http://localhost:3000/_vf_modules/page.js?project=first&project=second",
+        "http://localhost:3000/_vf_modules/page.js?project=not_canonical",
+        "http://localhost:3000/_vf_modules/page.js?branch=%0Ahidden",
+        "http://localhost:3000/_vf_modules/page.js?t=one&t=two",
+      ]
+    ) {
+      const response = await serve(new Request(requestUrl));
+      assertEquals(response.status, 400);
+      assertEquals(await response.text(), "Invalid module query");
+    }
+  });
+
+  it("rejects invalid configured module identities before lookup", async () => {
+    const { serveModule } = await import("./module-server.ts");
+    const response = await serveModule(
+      new Request("http://localhost:3000/_vf_modules/page.js"),
+      {
+        projectId: "test",
+        projectDir: "/tmp/test",
+        adapter: denoAdapter,
+        projectSlug: "not_canonical",
+      },
+    );
+
+    assertEquals(response.status, 400);
+    assertEquals(await response.text(), "Invalid module identity");
   });
 
   it("should serve _dnt.shims.js with _veryfront/ prefix", async () => {

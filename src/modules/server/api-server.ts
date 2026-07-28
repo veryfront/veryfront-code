@@ -1,4 +1,5 @@
 import { serverLogger as logger } from "#veryfront/utils";
+import { parseDataEndpointPath } from "./data-endpoint-path.ts";
 
 export interface PageRenderResult {
   html: string;
@@ -18,9 +19,20 @@ export class APIServer {
   constructor(private options: APIServerOptions) {}
 
   async handleRequest(pathname: string): Promise<Response | null> {
-    if (!pathname.startsWith("/_veryfront/data/")) return null;
-
-    const slug = pathname.replace("/_veryfront/data/", "").replace(".json", "");
+    let slug: string;
+    try {
+      const parsed = parseDataEndpointPath(pathname);
+      if (!parsed.matched) return null;
+      slug = parsed.slug;
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid data request path" }), {
+        status: 400,
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "no-cache",
+        },
+      });
+    }
     const pageSlug = slug || "index";
 
     try {

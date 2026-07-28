@@ -132,5 +132,48 @@ describe("modules/server/api-server", () => {
       const body = await response?.json();
       assertEquals(body.slug, "blog/my-post");
     });
+
+    it("should decode safe path segments before rendering", async () => {
+      let renderedSlug = "";
+      const server = new APIServer({
+        renderer: {
+          renderPage: (slug) => {
+            renderedSlug = slug;
+            return Promise.resolve({ html: "", frontmatter: {} });
+          },
+        },
+      });
+
+      const response = await server.handleRequest(
+        "/_veryfront/data/guides/hello%20world.json",
+      );
+      assertEquals(response?.status, 200);
+      assertEquals(renderedSlug, "guides/hello world");
+    });
+
+    it("should reject malformed data paths before rendering", async () => {
+      let renderCalls = 0;
+      const server = new APIServer({
+        renderer: {
+          renderPage: () => {
+            renderCalls++;
+            return Promise.resolve({ html: "", frontmatter: {} });
+          },
+        },
+      });
+
+      for (
+        const pathname of [
+          "/_veryfront/data/../secret.json",
+          "/_veryfront/data/a%2Fb.json",
+          "/_veryfront/data/page.json/extra",
+        ]
+      ) {
+        const response = await server.handleRequest(pathname);
+        assertEquals(response?.status, 400);
+        assertEquals(await response?.json(), { error: "Invalid data request path" });
+      }
+      assertEquals(renderCalls, 0);
+    });
   });
 });

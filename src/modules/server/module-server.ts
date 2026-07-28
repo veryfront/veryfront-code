@@ -80,6 +80,11 @@ import { classifyModuleRequest, DEV_MODULE_PREFIX } from "./classify.ts";
 import { transformModuleToServable } from "./module-transform.ts";
 import { readBoundedModuleSource } from "./module-source-reader.ts";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
+import {
+  normalizeModuleBranch,
+  normalizeModuleProjectSlug,
+  parseModuleRequestQuery,
+} from "./module-request-query.ts";
 
 const logger = serverLogger.component("module-server");
 const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
@@ -289,6 +294,28 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         : undefined;
       const method = req.method.toUpperCase();
       const isHeadRequest = method === "HEAD";
+      const kind = classifyModuleRequest(url);
+
+      if (kind.kind === "not-module") {
+        return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+      }
+
+      let requestQuery: ReturnType<typeof parseModuleRequestQuery>;
+      try {
+        requestQuery = parseModuleRequestQuery(url);
+      } catch (error) {
+        logger.warn("Rejected invalid module request query", {
+          path: diagnosticPath,
+          error: getErrorMessage(error),
+        });
+        return createModuleResponse(method, "Invalid module query", HTTP_BAD_REQUEST, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+      }
 
       const secureFs = createSecureFs({
         baseDir: projectDir,
@@ -330,15 +357,6 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         userAgent: debugUserAgent.slice(0, 50),
       });
 
-      const kind = classifyModuleRequest(url);
-
-      if (kind.kind === "not-module") {
-        return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-cache",
-        });
-      }
-
       if (kind.kind === "snippet") {
         const { hash } = kind;
         if (!hash) {
@@ -348,10 +366,31 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           });
         }
 
+        const { slug: domainProjectSlug, branch: domainBranch } = parseProjectDomain(url.host);
+        let snippetProjectSlug: string | null;
+        let snippetBranch: string | null;
+        try {
+          snippetProjectSlug = normalizeModuleProjectSlug(
+            options.projectSlug ?? requestQuery.projectSlug ?? domainProjectSlug,
+          );
+          snippetBranch = normalizeModuleBranch(
+            options.branch ?? requestQuery.branch ?? domainBranch,
+          );
+        } catch (error) {
+          logger.warn("Rejected invalid snippet request identity", {
+            hash,
+            error: getErrorMessage(error),
+          });
+          return createModuleResponse(method, "Invalid module identity", HTTP_BAD_REQUEST, {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-cache",
+          });
+        }
+
         const { getCompiledSnippetAsync } = await import(
           "#veryfront/rendering/snippet-renderer.ts"
         );
-        const snippetProjectScope = options.projectSlug?.trim() ||
+        const snippetProjectScope = snippetProjectSlug ||
           options.projectUUID?.trim() || projectId;
         const snippetCode = await getCompiledSnippetAsync(hash, snippetProjectScope);
 
@@ -362,9 +401,6 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             "Cache-Control": "no-cache",
           });
         }
-
-        const { slug: domainProjectSlug, branch: snippetBranch } = parseProjectDomain(url.host);
-        const snippetProjectSlug = options.projectSlug ?? domainProjectSlug;
 
         const isSSR = isSSRModuleRequest(req, url);
 
@@ -557,12 +593,25 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
       const filePathWithoutExt = modulePath.replace(/\.(?:mjs|js)$/i, "");
 
-      let projectSlug = options.projectSlug ?? url.searchParams.get("project");
-      let branch = options.branch ?? url.searchParams.get("branch");
+      let projectSlug = options.projectSlug ?? requestQuery.projectSlug;
+      let branch = options.branch ?? requestQuery.branch;
       if (!projectSlug) {
         const parsedHost = parseProjectDomain(url.host);
         projectSlug = parsedHost.slug;
         branch ??= parsedHost.branch;
+      }
+      try {
+        projectSlug = normalizeModuleProjectSlug(projectSlug);
+        branch = normalizeModuleBranch(branch);
+      } catch (error) {
+        logger.warn("Rejected invalid module request identity", {
+          path: diagnosticPath,
+          error: getErrorMessage(error),
+        });
+        return createModuleResponse(method, "Invalid module identity", HTTP_BAD_REQUEST, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
       }
 
       const isSSR = isSSRModuleRequest(req, url);
@@ -742,7 +791,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             profile: true,
           });
 
-          const hmrTimestamp = url.searchParams.get("t");
+          const hmrTimestamp = requestQuery.hmrToken;
           if (hmrTimestamp) {
             code = await addHMRTimestamps(code, hmrTimestamp);
             logger.debug("HMR timestamp injection", {

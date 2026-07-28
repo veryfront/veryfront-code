@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { applySSRImportRewrites, applySSRImportRewritesAsync } from "./ssr-import-rewriter.ts";
 
@@ -57,6 +57,43 @@ describe("modules/server/ssr-import-rewriter", () => {
       assertEquals(
         result,
         `import Z from "/_vf_modules/app.js?ssr=true&project=mysite&branch=main&v=5000";`,
+      );
+    });
+
+    it("should encode project, branch, and cache identities as query values", () => {
+      const code = `import Z from "@/app";`;
+      const result = applySSRImportRewrites(code, {
+        projectSlug: "site & docs",
+        branch: "feature/a #1%",
+        cacheBuster: "version&next#part",
+      });
+      assertEquals(
+        result,
+        `import Z from "/_vf_modules/app.js?ssr=true&project=site%20%26%20docs&branch=feature%2Fa%20%231%25&v=version%26next%23part";`,
+      );
+    });
+
+    it("should reject query identities outside the supported boundary", () => {
+      assertThrows(
+        () =>
+          applySSRImportRewrites(`import Z from "@/app";`, {
+            branch: "x".repeat(1_025),
+          }),
+        TypeError,
+      );
+      assertThrows(
+        () =>
+          applySSRImportRewrites(`import Z from "@/app";`, {
+            cacheBuster: "",
+          }),
+        TypeError,
+      );
+      assertThrows(
+        () =>
+          applySSRImportRewrites(`import Z from "@/app";`, {
+            branch: "feature\u0000hidden",
+          }),
+        TypeError,
       );
     });
 
@@ -118,6 +155,32 @@ describe("modules/server/ssr-import-rewriter", () => {
       const code = `import { fn } from "./mod";`;
       const result = applySSRImportRewrites(code, { cacheBuster: 1000 });
       assertEquals(result.includes("./mod?ssr"), false);
+    });
+  });
+
+  describe("applySSRImportRewritesAsync - query encoding", () => {
+    it("should encode asynchronously resolved cache identities", async () => {
+      const result = await applySSRImportRewritesAsync(
+        `import { helper } from "./utils.js";`,
+        {
+          branch: "feature/docs",
+          resolveCacheBuster: () => "content&revision",
+        },
+      );
+      assertEquals(
+        result,
+        `import { helper } from "./utils.js?ssr=true&branch=feature%2Fdocs&v=content%26revision";`,
+      );
+    });
+
+    it("should reject invalid asynchronously resolved cache identities", async () => {
+      await assertRejects(
+        () =>
+          applySSRImportRewritesAsync(`import Z from "@/app";`, {
+            resolveCacheBuster: () => "\ud800",
+          }),
+        TypeError,
+      );
     });
   });
 

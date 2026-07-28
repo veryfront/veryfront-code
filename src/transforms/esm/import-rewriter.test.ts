@@ -1,10 +1,29 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { addHMRTimestamps, rewriteBareImports } from "./import-rewriter.ts";
 
 describe("transforms/esm/import-rewriter", () => {
   describe("addHMRTimestamps", () => {
+    it("encodes the timestamp as one query value", async () => {
+      const result = await addHMRTimestamps(`import x from "./x.js";`, "one&two #three");
+      assertEquals(result, `import x from "./x.js?t=one%26two%20%23three";`);
+    });
+
+    it("rejects timestamp identities outside the supported boundary", async () => {
+      await assertRejects(
+        () => addHMRTimestamps(`import x from "./x.js";`, "x".repeat(257)),
+        TypeError,
+      );
+      await assertRejects(
+        () => addHMRTimestamps(`import x from "./x.js";`, " trailing "),
+        TypeError,
+      );
+      await assertRejects(
+        () => addHMRTimestamps(`import x from "./x.js";`, "\ud800"),
+        TypeError,
+      );
+    });
     it("adds timestamp to relative import", async () => {
       const code = `import { foo } from "./utils.js";`;
       const result = await addHMRTimestamps(code, "12345");

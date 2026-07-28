@@ -163,4 +163,57 @@ describe("server/handlers/request/module/module.handler", () => {
       assertEquals(result.response?.status, 404);
     });
   });
+
+  describe("handle - page data", () => {
+    it("decodes a safe data slug exactly once", async () => {
+      let renderedSlug = "";
+      setRendererInitializer(createInitializer({
+        renderPage: (slug: string) => {
+          renderedSlug = slug;
+          return Promise.resolve({ html: "<p>ok</p>", frontmatter: {} });
+        },
+      }));
+
+      const handler = new ModuleHandler();
+      const result = await handler.handle(
+        new Request("http://localhost/_veryfront/data/hello%20world.json"),
+        makeCtx(),
+      );
+
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 200);
+      assertEquals(renderedSlug, "hello world");
+    });
+
+    it("rejects malformed data paths before rendering", async () => {
+      let renderCalls = 0;
+      setRendererInitializer(createInitializer({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.reject(new Error("must not render"));
+        },
+      }));
+
+      const handler = new ModuleHandler();
+      for (
+        const pathname of [
+          "/_veryfront/data/a%2Fb.json",
+          "/_veryfront/data/a//b.json",
+          "/_veryfront/data/page.json/extra",
+        ]
+      ) {
+        const result = await handler.handle(
+          new Request(`http://localhost${pathname}`),
+          makeCtx(),
+        );
+        assertEquals(result.continue, false);
+        assertEquals(result.response?.status, 400);
+        assertEquals(await result.response?.json(), {
+          error: "Invalid data request path",
+          status: 400,
+        });
+      }
+      assertEquals(renderCalls, 0);
+    });
+  });
 });

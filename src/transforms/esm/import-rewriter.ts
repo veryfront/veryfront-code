@@ -9,9 +9,29 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { sanitizeVendorExportName } from "../shared/vendor-export-name.ts";
 
 const logger = rendererLogger.component("esm");
+const MAX_HMR_TIMESTAMP_CODE_UNITS = 256;
 
-export function addHMRTimestamps(code: string, timestamp: string | number): Promise<string> {
-  return withSpan(
+export async function addHMRTimestamps(
+  code: string,
+  timestamp: string | number,
+): Promise<string> {
+  const timestampValue = String(timestamp);
+  if (
+    timestampValue.length === 0 ||
+    timestampValue.length > MAX_HMR_TIMESTAMP_CODE_UNITS ||
+    timestampValue !== timestampValue.trim()
+  ) {
+    throw new TypeError("HMR timestamp must be a bounded non-empty query identity");
+  }
+
+  let encodedTimestamp: string;
+  try {
+    encodedTimestamp = encodeURIComponent(timestampValue);
+  } catch {
+    throw new TypeError("HMR timestamp contains malformed text encoding");
+  }
+
+  return await withSpan(
     "transforms.esm.addHMRTimestamps",
     () =>
       replaceSpecifiers(code, (specifier: string) => {
@@ -25,9 +45,9 @@ export function addHMRTimestamps(code: string, timestamp: string | number): Prom
         if (specifier.includes("?t=") || specifier.includes("&t=")) return null;
 
         const separator = specifier.includes("?") ? "&" : "?";
-        return `${specifier}${separator}t=${timestamp}`;
+        return `${specifier}${separator}t=${encodedTimestamp}`;
       }),
-    { "transforms.timestamp": String(timestamp) },
+    { "transforms.timestamp": timestampValue },
   );
 }
 

@@ -7,6 +7,7 @@ import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 
 type CacheBuster = number | string;
+const MAX_SSR_QUERY_IDENTITY_CODE_UNITS = 1_024;
 
 export interface SSRImportRewriteTarget {
   specifier: string;
@@ -201,9 +202,37 @@ function buildRelativeRewrite(
   };
 }
 
+function encodeSSRQueryIdentity(value: string, label: string): string {
+  let containsControlCharacter = false;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+      containsControlCharacter = true;
+      break;
+    }
+  }
+  if (
+    value.length === 0 ||
+    value.length > MAX_SSR_QUERY_IDENTITY_CODE_UNITS ||
+    value !== value.trim() ||
+    containsControlCharacter
+  ) {
+    throw new TypeError(`${label} must be a bounded non-empty query identity`);
+  }
+  try {
+    return encodeURIComponent(value);
+  } catch {
+    throw new TypeError(`${label} contains malformed text encoding`);
+  }
+}
+
 function buildScopedParams(options: SSRRewriteOptions): string {
-  const projectParam = options.projectSlug ? `&project=${options.projectSlug}` : "";
-  const branchParam = options.branch ? `&branch=${options.branch}` : "";
+  const projectParam = options.projectSlug
+    ? `&project=${encodeSSRQueryIdentity(options.projectSlug, "SSR project slug")}`
+    : "";
+  const branchParam = options.branch
+    ? `&branch=${encodeSSRQueryIdentity(options.branch, "SSR branch")}`
+    : "";
   return `${projectParam}${branchParam}`;
 }
 
@@ -213,7 +242,9 @@ function rewritePathAliases(code: string, options: SSRRewriteOptions): string {
   return code.replace(/from\s+["']@\/([^"']+)["']/g, (_match, path: string) => {
     const { target, prefix } = buildAliasRewrite(path, options);
     const cacheBuster = getCacheBusterSync(target, options);
-    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
+    return `from "${prefix}${scopedParams}&v=${
+      encodeSSRQueryIdentity(cacheBuster, "SSR cache buster")
+    }"`;
   });
 }
 
@@ -223,7 +254,9 @@ function rewriteRelativeImports(code: string, options: SSRRewriteOptions): strin
   return code.replace(/from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g, (_match, path: string) => {
     const { target, prefix } = buildRelativeRewrite(path);
     const cacheBuster = getCacheBusterSync(target, options);
-    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
+    return `from "${prefix}${scopedParams}&v=${
+      encodeSSRQueryIdentity(cacheBuster, "SSR cache buster")
+    }"`;
   });
 }
 
@@ -262,7 +295,9 @@ async function rewritePathAliasesAsync(
     const path = match[1] ?? "";
     const { target, prefix } = buildAliasRewrite(path, options);
     const cacheBuster = await getCacheBusterAsync(target, options);
-    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
+    return `from "${prefix}${scopedParams}&v=${
+      encodeSSRQueryIdentity(cacheBuster, "SSR cache buster")
+    }"`;
   });
 }
 
@@ -275,7 +310,9 @@ async function rewriteRelativeImportsAsync(
     const path = match[1] ?? "";
     const { target, prefix } = buildRelativeRewrite(path);
     const cacheBuster = await getCacheBusterAsync(target, options);
-    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
+    return `from "${prefix}${scopedParams}&v=${
+      encodeSSRQueryIdentity(cacheBuster, "SSR cache buster")
+    }"`;
   });
 }
 
