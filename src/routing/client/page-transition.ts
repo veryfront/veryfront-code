@@ -1,4 +1,5 @@
 import { PAGE_TRANSITION_DELAY_MS } from "#veryfront/config";
+import { retireClientHeadOwnership } from "#veryfront/html/client-head-manager.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { applyHeadDirectives, executeScripts, manageFocus, updateMetaTags } from "./dom-utils.ts";
@@ -18,15 +19,19 @@ export class PageTransition {
   }
 
   updatePage(data: RouteData, isPopState: boolean, scrollY: number): void {
-    const title = data.frontmatter?.title;
-    if (title) document.title = title;
-
-    updateMetaTags(data.frontmatter ?? {});
-
     const rootElement = document.getElementById("root");
-    if (!rootElement || !data.html) return;
+    if (!rootElement || !data.html) {
+      this.updateDocumentMetadata(document, data);
+      return;
+    }
 
     this.performTransition(rootElement, data, isPopState, scrollY);
+  }
+
+  private updateDocumentMetadata(targetDocument: Document, data: RouteData): void {
+    const title = data.frontmatter?.title;
+    if (title) targetDocument.title = title;
+    updateMetaTags(data.frontmatter ?? {}, targetDocument);
   }
 
   private performTransition(
@@ -46,11 +51,26 @@ export class PageTransition {
       this.pendingTransitionTimeout = undefined;
 
       // Server-rendered navigation HTML may include framework-managed scripts.
-      rootElement.innerHTML = validateTrustedHtml(String(data.html), { allowInlineScripts: true });
+      const trustedHtml = validateTrustedHtml(String(data.html), {
+        allowInlineScripts: true,
+      });
+      // Replacing the React root disconnects every <Head> registration. Retire
+      // its document-level ownership first even when the destination has no
+      // legacy head directive, otherwise stale canonical/style/script nodes
+      // survive indefinitely.
+      retireClientHeadOwnership(rootElement.ownerDocument);
+      // Commit destination metadata only after old React ownership is retired;
+      // otherwise the delayed retirement removes the title/meta just written by
+      // updatePage. Do this before inserting route directives so document-level
+      // selectors cannot accidentally mutate directive nodes in the new body.
+      this.updateDocumentMetadata(rootElement.ownerDocument, data);
+      rootElement.innerHTML = trustedHtml;
       rootElement.style.opacity = "1";
 
-      executeScripts(rootElement);
+      // Route head directives intentionally run last and may refine the
+      // frontmatter baseline.
       applyHeadDirectives(rootElement);
+      executeScripts(rootElement);
       this.setupViewportPrefetch(rootElement);
       manageFocus(rootElement);
       this.handleScroll(isPopState, scrollY);
@@ -85,6 +105,7 @@ export class PageTransition {
 
     errorDiv.append(heading, message, button);
 
+    retireClientHeadOwnership(rootElement.ownerDocument);
     rootElement.innerHTML = "";
     rootElement.appendChild(errorDiv);
   }

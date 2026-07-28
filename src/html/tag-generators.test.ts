@@ -9,6 +9,88 @@ import {
 } from "./tag-generators.ts";
 
 describe("tag-generators", () => {
+  it("does not let structured metadata spoof framework head ownership", () => {
+    const markerAttributes = {
+      "DATA-VF-HEAD": "spoofed",
+      "data-vf-react-head": "spoofed",
+      "Data-Vf-React-Head-Owner": "spoofed",
+      "data-vf-shell-head": "spoofed",
+      "data-veryfront-managed": "spoofed",
+      "DATA-VF-HASH": "spoofed",
+    };
+    const output = [
+      generateMetaTags({
+        meta: [{ name: "author", content: "A", ...markerAttributes }],
+      } as never),
+      generateLinkTags({
+        links: [{ rel: "preload", href: "/asset", ...markerAttributes }],
+      } as never),
+      generateScriptTags({
+        scripts: [{ src: "/asset.js", ...markerAttributes }],
+      } as never),
+      generateStyleTags({
+        styles: [{ content: ".safe{}", ...markerAttributes }],
+      } as never),
+    ].join("\n");
+
+    assertEquals(output.includes("spoofed"), false);
+  });
+
+  it("marks only framework shell singletons as adoptable", () => {
+    const metas = generateMetaTags({
+      description: "Description",
+      meta: [
+        { name: "author", content: "Author" },
+        { property: "og:title", content: "Title" },
+        { property: "og:image", content: "/image.png" },
+      ],
+    });
+    const links = generateLinkTags({
+      links: [
+        { rel: "canonical", href: "https://example.com/" },
+        { rel: "stylesheet", href: "/app.css" },
+      ],
+      icons: [{ href: "/favicon.ico" }],
+    });
+
+    assertEquals(
+      /<meta charset="UTF-8"[^>]*data-vf-shell-head/.test(metas),
+      false,
+    );
+    assertEquals(
+      /<meta name="viewport"[^>]*data-vf-shell-head="true"/.test(metas),
+      true,
+    );
+    assertEquals(
+      /<meta name="description"[^>]*data-vf-shell-head="true"/.test(metas),
+      true,
+    );
+    assertEquals(
+      /<meta name="author"[^>]*data-vf-shell-head/.test(metas),
+      false,
+    );
+    assertEquals(
+      /<meta property="og:title"[^>]*data-vf-shell-head="true"/.test(metas),
+      true,
+    );
+    assertEquals(
+      /<meta property="og:image"[^>]*data-vf-shell-head/.test(metas),
+      false,
+    );
+    assertEquals(
+      /<link rel="canonical"[^>]*data-vf-shell-head="true"/.test(links),
+      true,
+    );
+    assertEquals(
+      /<link rel="stylesheet"[^>]*data-vf-shell-head/.test(links),
+      false,
+    );
+    assertEquals(
+      /<link rel="icon"[^>]*data-vf-shell-head/.test(links),
+      false,
+    );
+  });
+
   describe("generateMetaTags", () => {
     it("should always include charset meta tag", () => {
       assertStringIncludes(generateMetaTags({}), '<meta charset="UTF-8">');

@@ -1,5 +1,12 @@
 import { rendererLogger } from "#veryfront/utils";
 import type { FrontmatterData, PageData } from "./types.ts";
+import {
+  HEAD_LEGACY_MANAGED_ATTRIBUTE,
+  HEAD_REACT_OWNER_ATTRIBUTE,
+  headLinkSingletonKeyFromRecord,
+  headMetaSingletonKeyFromRecord,
+} from "#veryfront/html/managed-head-protocol.ts";
+import { retireClientHeadOwnership } from "#veryfront/html/client-head-manager.ts";
 
 const logger = rendererLogger.component("veryfront");
 
@@ -25,36 +32,58 @@ export function findAnchorElement(element: HTMLElement | null): HTMLAnchorElemen
   return current instanceof HTMLAnchorElement ? current : null;
 }
 
-export function updateMetaTags(frontmatter: FrontmatterData): void {
+export function updateMetaTags(
+  frontmatter: FrontmatterData,
+  targetDocument: Document = document,
+): void {
   if (frontmatter.description) {
-    updateMetaTag('meta[name="description"]', "name", "description", frontmatter.description);
+    updateMetaTag(
+      targetDocument,
+      'meta[name="description"]',
+      "name",
+      "description",
+      frontmatter.description,
+    );
   }
 
   if (frontmatter.ogTitle) {
-    updateMetaTag('meta[property="og:title"]', "property", "og:title", frontmatter.ogTitle);
+    updateMetaTag(
+      targetDocument,
+      'meta[property="og:title"]',
+      "property",
+      "og:title",
+      frontmatter.ogTitle,
+    );
   }
 }
 
 function updateMetaTag(
+  targetDocument: Document,
   selector: string,
   attributeName: string,
   attributeValue: string,
   content: string,
 ): void {
-  let metaTag = document.querySelector(selector);
+  let metaTag = targetDocument.querySelector(selector);
 
   if (!metaTag) {
-    metaTag = document.createElement("meta");
+    metaTag = targetDocument.createElement("meta");
     metaTag.setAttribute(attributeName, attributeValue);
-    document.head.appendChild(metaTag);
+    targetDocument.head.appendChild(metaTag);
   }
 
   metaTag.setAttribute("content", content);
 }
 
 export function executeScripts(container: HTMLElement): void {
+  const targetDocument = container.ownerDocument ?? document;
   for (const oldScript of container.querySelectorAll("script")) {
-    const newScript = document.createElement("script");
+    // Head-directive scripts are activated when their clone is appended to the
+    // document head. Activating them here as body scripts as well would execute
+    // the same server-provided code twice.
+    if (isInsideHeadDirective(oldScript, container)) continue;
+
+    const newScript = targetDocument.createElement("script");
 
     for (const { name, value } of oldScript.attributes) {
       newScript.setAttribute(name, value);
@@ -65,41 +94,71 @@ export function executeScripts(container: HTMLElement): void {
   }
 }
 
+function isInsideHeadDirective(node: Element, boundary: Element): boolean {
+  let current = node.parentElement;
+  while (current && current !== boundary) {
+    if (
+      current.tagName.toLowerCase() === "vf-head" ||
+      current.getAttribute("data-veryfront-head") === "1"
+    ) {
+      return true;
+    }
+    current = current.parentElement;
+  }
+  return false;
+}
+
 export function applyHeadDirectives(container: HTMLElement): void {
-  const nodes = container.querySelectorAll('[data-veryfront-head="1"], vf-head');
+  const targetDocument = container.ownerDocument ?? document;
+  const nodes = [...container.querySelectorAll('[data-veryfront-head="1"], vf-head')]
+    .filter((node) =>
+      typeof node.getAttribute !== "function" ||
+      node.getAttribute(HEAD_REACT_OWNER_ATTRIBUTE) !== "1"
+    );
   if (!nodes.length) return;
 
-  cleanManagedHeadTags();
+  retireClientHeadOwnership(targetDocument);
+  cleanManagedHeadTags(targetDocument);
 
   for (const wrapper of nodes) {
-    const contentSource =
-      typeof HTMLTemplateElement !== "undefined" && wrapper instanceof HTMLTemplateElement
-        ? wrapper.content
-        : wrapper;
+    const TemplateElement = targetDocument.defaultView?.HTMLTemplateElement ??
+      globalThis.HTMLTemplateElement;
+    const contentSource = TemplateElement && wrapper instanceof TemplateElement
+      ? wrapper.content
+      : wrapper;
 
-    processHeadWrapper(contentSource);
+    processHeadWrapper(contentSource, targetDocument);
     wrapper.parentElement?.removeChild(wrapper);
   }
 }
 
-function cleanManagedHeadTags(): void {
-  for (const element of document.head.querySelectorAll('[data-veryfront-managed="1"]')) {
+function cleanManagedHeadTags(targetDocument: Document): void {
+  for (
+    const element of targetDocument.head.querySelectorAll(
+      `[${HEAD_LEGACY_MANAGED_ATTRIBUTE}="1"]`,
+    )
+  ) {
     element.parentElement?.removeChild(element);
   }
 }
 
-function processHeadWrapper(wrapper: Element | DocumentFragment): void {
+function processHeadWrapper(
+  wrapper: Element | DocumentFragment,
+  targetDocument: Document,
+): void {
+  const ElementConstructor = targetDocument.defaultView?.Element ??
+    globalThis.Element;
   for (const node of wrapper.childNodes) {
-    if (!(node instanceof Element)) continue;
+    if (!ElementConstructor || !(node instanceof ElementConstructor)) continue;
 
     const tagName = node.tagName.toLowerCase();
 
     if (tagName === "title") {
-      document.title = node.textContent || document.title;
+      targetDocument.title = node.textContent ?? "";
       continue;
     }
 
-    const clone = document.createElement(tagName);
+    const clone = targetDocument.createElement(tagName);
 
     for (const { name, value } of node.attributes) {
       clone.setAttribute(name, value);
@@ -109,8 +168,33 @@ function processHeadWrapper(wrapper: Element | DocumentFragment): void {
       clone.textContent = node.textContent;
     }
 
-    clone.setAttribute("data-veryfront-managed", "1");
-    document.head.appendChild(clone);
+    replaceExistingHeadSingleton(targetDocument, clone);
+    clone.setAttribute(HEAD_LEGACY_MANAGED_ATTRIBUTE, "1");
+    targetDocument.head.appendChild(clone);
+  }
+}
+
+function headSingletonKey(element: Element): string | undefined {
+  const tagName = element.tagName.toLowerCase();
+  if (tagName !== "meta" && tagName !== "link") return undefined;
+
+  const attributes = Object.create(null) as Record<string, string>;
+  if (!element.attributes) return undefined;
+  for (const { name, value } of element.attributes) attributes[name.toLowerCase()] = value;
+  return tagName === "meta"
+    ? headMetaSingletonKeyFromRecord(attributes)
+    : headLinkSingletonKeyFromRecord(attributes);
+}
+
+function replaceExistingHeadSingleton(
+  targetDocument: Document,
+  replacement: Element,
+): void {
+  const singletonKey = headSingletonKey(replacement);
+  if (!singletonKey || singletonKey === "meta:charset") return;
+
+  for (const existing of [...(targetDocument.head?.children ?? [])]) {
+    if (headSingletonKey(existing) === singletonKey) existing.remove();
   }
 }
 

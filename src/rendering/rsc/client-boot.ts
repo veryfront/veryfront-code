@@ -23,6 +23,7 @@ import {
   recoverFromDependencySnapshotConflict,
   recoverFromSnapshotBoundModuleFailure,
 } from "./dependency-snapshot-recovery.ts";
+import { HEAD_REACT_OWNER_ATTRIBUTE } from "#veryfront/html/managed-head-protocol.ts";
 
 /**
  * Import React using the page's import map when available.
@@ -95,6 +96,27 @@ function createPageHydrationRoot(
   }
 
   return mount;
+}
+
+/**
+ * Remove server Head placeholders that sit outside the root React will own.
+ * They cannot ever register with the client manager (the fallback-root path
+ * deliberately leaves hidden siblings behind), so retaining them would keep
+ * selective-hydration cleanup blocked forever.
+ */
+export function retireAbandonedHeadOwnerMarkers(
+  previousBodyChildren: readonly Element[],
+  hydrationRoot: Element,
+): void {
+  for (const child of previousBodyChildren) {
+    const candidates = [
+      ...(child.hasAttribute(HEAD_REACT_OWNER_ATTRIBUTE) ? [child] : []),
+      ...child.querySelectorAll(`[${HEAD_REACT_OWNER_ATTRIBUTE}]`),
+    ];
+    for (const marker of candidates) {
+      if (!hydrationRoot.contains(marker)) marker.remove();
+    }
+  }
 }
 
 interface RSCBootDocument {
@@ -220,6 +242,7 @@ async function hydratePageComponent(
     const hydrationRoot = shouldWrapPageHydrationRoot(root, document.body)
       ? createPageHydrationRoot(bodyChildren, document.body)
       : root;
+    retireAbandonedHeadOwnerMarkers(bodyChildren, hydrationRoot);
     const component = await wrapWithRouterProvider(
       React.createElement(Component, {}),
       hydrationData,

@@ -20,6 +20,7 @@ import { routeForPage } from "#veryfront/release-assets/route-path.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { buildNonceAttribute, escapeHTML } from "./html-escape.ts";
+import { HEAD_SHELL_PROVENANCE_ATTRIBUTE } from "./managed-head-protocol.ts";
 import {
   generateHydrationData,
   getDevScripts,
@@ -400,10 +401,10 @@ async function generateHTMLShellPartsImpl(
   const start = `<!DOCTYPE html>
 <html ${htmlAttrs}>
 <head>
+  ${metaTags}
   ${hydrationErrorSuppression}
   ${themePersistenceScript}
-  ${metaTags}
-  <title>${escapeHTML(effectiveTitle)}</title>
+  <title ${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true">${escapeHTML(effectiveTitle)}</title>
 
   <!-- Import map for ESM module resolution -->
   <script type="importmap"${nonceAttr}>

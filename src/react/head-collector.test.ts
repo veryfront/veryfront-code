@@ -122,6 +122,47 @@ describe("head-collector", () => {
       assertEquals(head.links.length, 1);
       assertEquals(head.links[0], { rel: "canonical", href: "https://example.com/page" });
     });
+
+    it("normalizes singleton values and distinguishes theme-color media", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({
+          metas: [
+            { name: "Viewport", content: "width=400" },
+            { name: "theme-color", content: "white" },
+            {
+              name: "theme-color",
+              content: "black",
+              media: "(prefers-color-scheme: dark)",
+            },
+          ],
+          links: [{ rel: "CANONICAL", href: "https://example.com/old" }],
+        });
+        collectHead({
+          metas: [
+            { name: "viewport", content: "width=900" },
+            { name: "THEME-COLOR", content: "blue" },
+          ],
+          links: [{
+            rel: "canonical",
+            href: "https://example.com/current",
+          }],
+        });
+      });
+
+      assertEquals(head.metas, [
+        { name: "viewport", content: "width=900" },
+        { name: "THEME-COLOR", content: "blue" },
+        {
+          name: "theme-color",
+          content: "black",
+          media: "(prefers-color-scheme: dark)",
+        },
+      ]);
+      assertEquals(head.links, [{
+        rel: "canonical",
+        href: "https://example.com/current",
+      }]);
+    });
   });
 
   describe("repeatable tags accumulate", () => {
@@ -150,6 +191,27 @@ describe("head-collector", () => {
       });
 
       assertEquals(head.metas.length, 2);
+    });
+  });
+
+  describe("script identity aliases", () => {
+    it("deduplicates when either id or src intersects", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({
+          scripts: [{ id: "layout", src: "/shared.js" }],
+        });
+        collectHead({
+          scripts: [{ id: "page", src: "/shared.js" }],
+        });
+        collectHead({
+          scripts: [{ id: "layout", src: "/other.js" }],
+        });
+      });
+
+      assertEquals(head.scripts, [{
+        id: "layout",
+        src: "/shared.js",
+      }]);
     });
   });
 
