@@ -2,9 +2,9 @@
 
 Reads the per-row `ChatSidebar.Item` context.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-`useChatSidebarItem` is the per-item context reader for the [`ChatSidebar`](../components/chat-sidebar.md) compound — exported today; throws outside a `ChatSidebar.Item`. It is what makes a swapped or extended row keep its select/rename/delete behaviour: a fully custom row composed inside `.Item` reads the same state and actions the built-in leaves (`.Title`, `.Menu`, `.Rename`, `.Delete`) consume, without re-threading props. The raw context object stays unexported; this hook is the supported way in.
+`useChatSidebarItem` is the per-item context reader for the [`ChatSidebar`](../components/chat-sidebar.md) compound - exported today; throws outside a `ChatSidebar.Item`. It is what makes a swapped or extended row keep its select/rename/delete behaviour: a fully custom row composed inside `.Item` reads the same state and actions the built-in leaves (`.Title`, `.Menu`, `.Rename`, `.Delete`) consume, without re-threading props. The raw context object stays unexported; this hook is the supported way in.
 
 ## Import
 
@@ -39,7 +39,7 @@ None. The row's data comes from the surrounding `ChatSidebar.Item` (its `convers
 | Name           | Type                                                         | Description                                                                             |
 | -------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
 | `conversation` | [`Conversation`](use-conversations.md#the-conversation-type) | The row's conversation.                                                                 |
-| `isActive`     | `boolean`                                                    | `conversation.id === activeId` — selection, reflected as `data-active` on the row.      |
+| `isActive`     | `boolean`                                                    | `conversation.id === activeId` - selection, reflected as `data-active` on the row.      |
 | `canRename`    | `boolean`                                                    | An `onRename` is resolved (prop or provider); `.Item.Rename` null-renders when `false`. |
 | `menuOpen`     | `boolean`                                                    | The row's `⋯` menu is open (keeps the row highlighted today).                           |
 
@@ -81,9 +81,9 @@ function Row({ conversation }) {
 
 ## Used by
 
-- [`ChatSidebar`](../components/chat-sidebar.md) — the `.Item.*` leaves read this context; the hook exposes the same door to you.
+- [`ChatSidebar`](../components/chat-sidebar.md) - the `.Item.*` leaves read this context; the hook exposes the same door to you.
 
 ## Related
 
-- [`useConversations`](use-conversations.md) — the underlying conversation-list state and actions.
-- [`ChatSidebar`](../components/chat-sidebar.md) — the compound this hook reads.
+- [`useConversations`](use-conversations.md) - the underlying conversation-list state and actions.
+- [`ChatSidebar`](../components/chat-sidebar.md) - the compound this hook reads.

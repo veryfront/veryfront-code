@@ -2,7 +2,7 @@
 
 Context reader for the `AgentPicker` compound: search query, filtered options, and selection.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -21,13 +21,13 @@ function useAgentPicker(): AgentPickerContext & {
 };
 ```
 
-`AgentOption = { id, name, description?, avatarUrl?, disabled? }` — the same option type `AgentPicker.Root` takes.
+`AgentOption = { id, name, description?, avatarUrl?, disabled? }` - the same option type `AgentPicker.Root` takes.
 
 A **context reader plus picker state**: it reads the scoped context provided by `AgentPicker.Root` and exposes the search/selection surface. Per the providers contract, the raw context object stays unexported.
 
 ## Options
 
-None — state comes from the nearest `AgentPicker.Root`.
+None - state comes from the nearest `AgentPicker.Root`.
 
 ## Returns
 
@@ -79,11 +79,11 @@ function MyOptions() {
 
 ## Used by
 
-- [`AgentPicker`](../components/agent-picker.md) — `.Search`, `.List`, and `.Item` are thin shells over this hook, so the two can never drift.
-- [`ChatAgentPicker`](../components/chat-agent-picker.md) — the preset over the same compound.
+- [`AgentPicker`](../components/agent-picker.md) - `.Search`, `.List`, and `.Item` are thin shells over this hook, so the two can never drift.
+- [`ChatAgentPicker`](../components/chat-agent-picker.md) - the preset over the same compound.
 
 ## Related
 
 - [`AgentPicker`](../components/agent-picker.md)
-- [`useAgents`](./use-agents.md) — the agents behind the options
-- `agentsToPickerOptions` — maps agents to picker options
+- [`useAgents`](./use-agents.md) - the agents behind the options
+- `agentsToPickerOptions` - maps agents to picker options

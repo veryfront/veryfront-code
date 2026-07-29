@@ -2,7 +2,7 @@
 
 Context reader for the `AgentCard` compound.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -24,7 +24,7 @@ None.
 
 ## Returns
 
-The `AgentCard` compound's context — the card state that `AgentCard.Header` / `.Reasoning` / `.Tools` / `.Body` render from:
+The `AgentCard` compound's context - the card state that `AgentCard.Header` / `.Reasoning` / `.Tools` / `.Body` render from:
 
 ```ts
 {
@@ -57,9 +57,9 @@ function MyCardExtras() {
 
 ## Used by
 
-- [`AgentCard`](../components/agent-card.md) — every part is a thin shell over this reader.
+- [`AgentCard`](../components/agent-card.md) - every part is a thin shell over this reader.
 
 ## Related
 
 - [`AgentCard`](../components/agent-card.md)
-- [`useAgentMetadata`](./use-agent-metadata.md) — agent data outside the compound
+- [`useAgentMetadata`](./use-agent-metadata.md) - agent data outside the compound

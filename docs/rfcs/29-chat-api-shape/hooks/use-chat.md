@@ -1,8 +1,8 @@
 # useChat
 
-The base chat session hook — messages, status, streaming state, and session actions. Input state is _not_ here (it lives in `useChatInput`).
+The base chat session hook - messages, status, streaming state, and session actions. Input state is _not_ here (it lives in `useChatInput`).
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -18,7 +18,7 @@ function useChat<TMessage extends ChatMessage = ChatMessage>(
 ): UseChatResult<TMessage>;
 
 interface UseChatOptions<TMessage extends ChatMessage = ChatMessage> {
-  /** Endpoint string, or a transport object — auth works on day one without a custom client. */
+  /** Endpoint string, or a transport object - auth works on day one without a custom client. */
   api: string | ChatTransport<TMessage>;
   id?: string;
   initialMessages?: TMessage[];
@@ -83,7 +83,7 @@ Messages are typed `ChatMessage<TMetadata, TDataParts, TTools>` (AI SDK v5 `UIMe
 | Name                 | Type                                               | Description                                                                                      |
 | -------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `messages`           | `TMessage[]`                                       | The transcript; **per-message `status`/`error` on the message object**                           |
-| `status`             | `'ready' \| 'submitted' \| 'streaming' \| 'error'` | Session status — mirrored as `data-status` on `ChatRoot` / `ChatInput.Root` / `ChatInput.Submit` |
+| `status`             | `'ready' \| 'submitted' \| 'streaming' \| 'error'` | Session status - mirrored as `data-status` on `ChatRoot` / `ChatInput.Root` / `ChatInput.Submit` |
 | `error`              | `Error \| null`                                    | Session-level error                                                                              |
 | `streamingMessageId` | `string \| null`                                   | Which message is streaming now                                                                   |
 
@@ -93,19 +93,19 @@ Messages are typed `ChatMessage<TMetadata, TDataParts, TTools>` (AI SDK v5 `UIMe
 | ------------------------------ | ----------------------------------------------------------------- |
 | `sendMessage`                  | Send a message                                                    |
 | `stop`                         | Abort the in-flight response                                      |
-| `reload(messageId?)`           | Regenerate — optionally from a specific message                   |
+| `reload(messageId?)`           | Regenerate - optionally from a specific message                   |
 | `setModel`                     | Switch model                                                      |
 | `editMessage`                  | Edit a message (the composer inside a `Message` is the edit form) |
 | `setMessages`                  | Replace the transcript (e.g. thread-level clear)                  |
-| `getBranches` / `switchBranch` | Message branching (existing API, kept) — see `useMessageBranches` |
+| `getBranches` / `switchBranch` | Message branching (existing API, kept) - see `useMessageBranches` |
 
 ### Prop getters
 
-None — `useChat` owns session state, not interactive nodes. Getters live on the hooks that own elements ([`useChatInput`](./use-chat-input.md), [`useChatScroll`](./use-chat-scroll.md), …).
+None - `useChat` owns session state, not interactive nodes. Getters live on the hooks that own elements ([`useChatInput`](./use-chat-input.md), [`useChatScroll`](./use-chat-scroll.md), …).
 
 ### Not here (by design)
 
-- **No `input` / `setInput` / `handleInputChange`** — input state has one owner, `useChatInput` (breaking-changes ledger).
+- **No `input` / `setInput` / `handleInputChange`** - input state has one owner, `useChatInput` (breaking-changes ledger).
 - **Streams are provider-scoped, not mount-scoped:** keyed by conversation id in the conversations/chat context; switching threads neither aborts nor orphans an in-flight stream, and it persists to the correct thread. Use [`useConversationChat`](./use-conversation-chat.md) for thread binding.
 
 ## Example
@@ -141,6 +141,6 @@ function MyChat() {
 
 ## Related
 
-- [`useConversationChat`](./use-conversation-chat.md) — `useChat` bound to the active conversation
-- [`useChatContext`](./use-chat-context.md) — read the shared session from `ChatRoot`
+- [`useConversationChat`](./use-conversation-chat.md) - `useChat` bound to the active conversation
+- [`useChatContext`](./use-chat-context.md) - read the shared session from `ChatRoot`
 - [`useCompletion`](./use-completion.md) · [`useStreaming`](./use-streaming.md)

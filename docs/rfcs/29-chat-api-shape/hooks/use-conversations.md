@@ -1,26 +1,26 @@
 # useConversations
 
-Headless state and actions for the conversation list — select, create, rename, remove, and agent switching.
+Headless state and actions for the conversation list - select, create, rename, remove, and agent switching.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-`useConversations` owns the conversations domain. It is the L3 foundation that [`ChatSidebar`](../components/chat-sidebar.md) is built on — the hook is sufficient to rebuild the sidebar verbatim.
+`useConversations` owns the conversations domain. It is the L3 foundation that [`ChatSidebar`](../components/chat-sidebar.md) is built on - the hook is sufficient to rebuild the sidebar verbatim.
 
 > **Removed:** the deprecated aliases `active` and `activeId` are **dropped** (breaking-changes ledger). Use `activeConversation` and `activeConversationId`.
 
 ## The `Conversation` type
 
-One conversation type: **`Conversation`** — the separate `ConversationSummary` type is gone (resolved decision). The fields the reference pages rely on:
+One conversation type: **`Conversation`** - the separate `ConversationSummary` type is gone (resolved decision). The fields the reference pages rely on:
 
 ```ts
 interface Conversation {
   id: string;
   title: string;
-  /** The conversation's active/primary agent — never the sole participant. */
+  /** The conversation's active/primary agent - never the sole participant. */
   agentId?: string;
-  /** Last-activity timestamp — drives the sidebar's recency buckets. */
+  /** Last-activity timestamp - drives the sidebar's recency buckets. */
   updatedAt: number;
-  /** Message summary — lets a list row show empty/count without loading messages. */
+  /** Message summary - lets a list row show empty/count without loading messages. */
   messageCount: number;
   createdAt?: number;
   messages?: ChatMessage[];
@@ -74,12 +74,12 @@ interface UseConversationsResult {
 
 ## Options
 
-**Resolution rule:** an argless `useConversations()` reads the nearest [`ConversationsProvider`](use-conversations-context.md) — same list, same active thread as every other consumer of that provider. Passing options (`storageKey` and/or `store`) creates **standalone state** owned by this hook call, independent of any provider.
+**Resolution rule:** an argless `useConversations()` reads the nearest [`ConversationsProvider`](use-conversations-context.md) - same list, same active thread as every other consumer of that provider. Passing options (`storageKey` and/or `store`) creates **standalone state** owned by this hook call, independent of any provider.
 
 | Option       | Type                 | Description                                                                                            |
 | ------------ | -------------------- | ------------------------------------------------------------------------------------------------------ |
-| `storageKey` | `string`             | Persistence scope for the conversation list. Providing it opts out of the provider — standalone state. |
-| `store`      | `ConversationsStore` | Custom conversation store. Providing it opts out of the provider — standalone state.                   |
+| `storageKey` | `string`             | Persistence scope for the conversation list. Providing it opts out of the provider - standalone state. |
+| `store`      | `ConversationsStore` | Custom conversation store. Providing it opts out of the provider - standalone state.                   |
 
 ## Returns
 
@@ -91,7 +91,7 @@ interface UseConversationsResult {
 | `activeConversation`   | `Conversation \| undefined` | The active conversation (replaces the dropped `active` alias).                           |
 | `activeConversationId` | `string \| undefined`       | Id of the active conversation (replaces the dropped `activeId` alias).                   |
 | `isLoading`            | `boolean`                   | Fetch in flight (drives `data-loading` on `ChatSidebar.Root`).                           |
-| `activeReady`          | `boolean`                   | The active conversation is resolved and ready (#2978) — no userland thread-ready guards. |
+| `activeReady`          | `boolean`                   | The active conversation is resolved and ready (#2978) - no userland thread-ready guards. |
 
 ### Actions
 
@@ -104,11 +104,11 @@ interface UseConversationsResult {
 | `update`      | Update a conversation.                                                                              |
 | `save`        | Persist conversation state.                                                                         |
 | `bind`        | Bind a chat session to a thread and return an unsubscribe function (used by `useConversationChat`). |
-| `selectAgent` | Switch agents — see below.                                                                          |
+| `selectAgent` | Switch agents - see below.                                                                          |
 
 ### Prop getters
 
-The RFC does not define prop getters for this hook — hook state plus your own elements suffice.
+The RFC does not define prop getters for this hook - hook state plus your own elements suffice.
 
 ## `selectAgent`
 
@@ -118,10 +118,10 @@ selectAgent(agentId, { conversation?: 'new' | 'same' })
 
 Two plain words, no heuristics:
 
-- **`'new'` (the default)** — creates and activates a fresh conversation with that agent.
-- **`'same'`** — keeps the current conversation and switches its agent.
+- **`'new'` (the default)** - creates and activates a fresh conversation with that agent.
+- **`'same'`** - keeps the current conversation and switches its agent.
 
-The shape is multi-agent-ready by construction: a conversation's `agentId` means the _active/primary_ agent, never the sole participant — agent identity is carried per message. A future `policy: 'add-to-conversation'` slots into `selectAgent` additively.
+The shape is multi-agent-ready by construction: a conversation's `agentId` means the _active/primary_ agent, never the sole participant - agent identity is carried per message. A future `policy: 'add-to-conversation'` slots into `selectAgent` additively.
 
 ## Example
 
@@ -165,11 +165,11 @@ function MySidebar() {
 
 ## Used by
 
-- [`ChatSidebar`](../components/chat-sidebar.md) — every part of the compound is a thin shell over this hook.
-- `useConversationChat` — binds a `useChat` session to the active thread (seed + persist) and exposes `ready`.
+- [`ChatSidebar`](../components/chat-sidebar.md) - every part of the compound is a thin shell over this hook.
+- `useConversationChat` - binds a `useChat` session to the active thread (seed + persist) and exposes `ready`.
 
 ## Related
 
-- [`useConversation`](use-conversation.md) — a single conversation by id.
-- [`useConversationsContext`](use-conversations-context.md) — reads the `ConversationsProvider` context.
-- `ConversationsProvider` — the provider that scopes conversation state (renders zero nodes).
+- [`useConversation`](use-conversation.md) - a single conversation by id.
+- [`useConversationsContext`](use-conversations-context.md) - reads the `ConversationsProvider` context.
+- `ConversationsProvider` - the provider that scopes conversation state (renders zero nodes).

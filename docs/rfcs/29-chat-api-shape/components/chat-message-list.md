@@ -1,8 +1,8 @@
 # ChatMessageList
 
-The transcript — one scroll container with an accessible log region and a scroll-to-bottom button, driven by the `useChatScroll` contract.
+The transcript - one scroll container with an accessible log region and a scroll-to-bottom button, driven by the `useChatScroll` contract.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -22,25 +22,25 @@ import {
 
 ## Parts index
 
-- [`.Root`](#chatmessagelist-root--changed) — `changed`: today's two nodes collapse to one scroll container; data/render props deleted; imperative `data-*` scroll state added
-- [`.Content`](#chatmessagelistcontent--changed) — `changed`: `role="log"` + streaming a11y contract move here from the scroll container
-- [`.ScrollButton`](#chatmessagelistscrollbutton--changed) — `changed`: stays mounted, inert + unfocusable at bottom (today it unmounts)
+- [`.Root`](#chatmessagelist-root--changed) - `changed`: today's two nodes collapse to one scroll container; data/render props deleted; imperative `data-*` scroll state added
+- [`.Content`](#chatmessagelistcontent--changed) - `changed`: `role="log"` + streaming a11y contract move here from the scroll container
+- [`.ScrollButton`](#chatmessagelistscrollbutton--changed) - `changed`: stays mounted, inert + unfocusable at bottom (today it unmounts)
 
 ## Anatomy
 
 ```tsx
 <ChatMessageList>
   {/* the ONE scroll container */}
-  <ChatMessageList.Content /> {/* role="log" column — default: one <Message> per turn */}
+  <ChatMessageList.Content /> {/* role="log" column - default: one <Message> per turn */}
   <ChatMessageList.ScrollButton /> {/* jump to latest; inert + unfocusable at bottom */}
 </ChatMessageList>;
 ```
 
-`<ChatMessageList>` with **no children renders exactly this default anatomy** (today's default children are `<ChatMessageList.Content />`; the scroll button today only exists via the deleted `renderScrollButton` prop). Message iteration is `children` or the default map with the `tools` registry — `renderMessage` is deleted (composition, not render-prop config).
+`<ChatMessageList>` with **no children renders exactly this default anatomy** (today's default children are `<ChatMessageList.Content />`; the scroll button today only exists via the deleted `renderScrollButton` prop). Message iteration is `children` or the default map with the `tools` registry - `renderMessage` is deleted (composition, not render-prop config).
 
 ## Default DOM (childless render)
 
-What the transcript renders today (as composed by the preset), annotated per node. **Note:** today `.Root` is _two_ nodes — a non-scrolling `relative` wrapper plus the scroll div — because the scroll button must overlay the visible viewport, not scroll away with the content. The RFC's single-node contract collapses this to **one** scroll container; the button then anchors via **`position: sticky` at the viewport's bottom edge** — inside the scroll container, no wrapper node, no portal (proposed resolution, review welcome):
+What the transcript renders today (as composed by the preset), annotated per node. **Note:** today `.Root` is _two_ nodes - a non-scrolling `relative` wrapper plus the scroll div - because the scroll button must overlay the visible viewport, not scroll away with the content. The RFC's single-node contract collapses this to **one** scroll container; the button then anchors via **`position: sticky` at the viewport's bottom edge** - inside the scroll container, no wrapper node, no portal (proposed resolution, review welcome):
 
 ```html
 <div class="relative flex-1 min-h-0 flex flex-col">
@@ -74,7 +74,7 @@ What the transcript renders today (as composed by the preset), annotated per nod
     ↓
   </button>
   <!-- .ScrollButton: absolute overlay, bottom-center of the WRAPPER
-           (the visible viewport), sibling of the scroll div — not inside it.
+           (the visible viewport), sibling of the scroll div - not inside it.
            Today it unmounts at bottom; RFC keeps it mounted, inert + unfocusable -->
 </div>
 ```
@@ -83,46 +83,46 @@ What the transcript renders today (as composed by the preset), annotated per nod
 
 Every part renders **one** node, takes `asChild`, extends its node's `HTMLAttributes`, merges `className` (Tailwind-aware, consumer wins), and composes `ref`.
 
-### `ChatMessageList` (`.Root`) — `changed`
+### `ChatMessageList` (`.Root`) - `changed`
 
 _Changed: today's two nodes (relative wrapper + scroll div) collapse into one scroll container; `messages`/`isLoading`/`renderMessage`/`renderScrollButton` and friends are deleted (see the ledger below), and imperative `data-*` scroll state is added._
 
-The scroll container `<div>` + the compound's scoped context. Default content: `<ChatMessageList.Content />` + `<ChatMessageList.ScrollButton />`; pass children to replace the viewport composition. Always renders (no null condition) — an empty thread is the container with `data-empty`.
+The scroll container `<div>` + the compound's scoped context. Default content: `<ChatMessageList.Content />` + `<ChatMessageList.ScrollButton />`; pass children to replace the viewport composition. Always renders (no null condition) - an empty thread is the container with `data-empty`.
 
-**Layout:** in-flow flex child (`flex-1 min-h-0`) — the only scrolling element; positioning context for `.ScrollButton`. (Today: two nodes, wrapper + scroller — see Default DOM; the RFC collapses them.)
+**Layout:** in-flow flex child (`flex-1 min-h-0`) - the only scrolling element; positioning context for `.ScrollButton`. (Today: two nodes, wrapper + scroller - see Default DOM; the RFC collapses them.)
 
 | Prop        | Type                                     | Default         | Description                                                                                            |
 | ----------- | ---------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------ |
-| `tools?`    | `{ [name: string]: Component }`          | —               | Tools registry for the default map; resolution: inline render fn → registry by name → default renderer |
+| `tools?`    | `{ [name: string]: Component }`          | -               | Tools registry for the default map; resolution: inline render fn → registry by name → default renderer |
 | `children?` | `ReactNode`                              | default anatomy | Your own viewport composition (replaces `.Content` + `.ScrollButton`)                                  |
 | `asChild`   | `boolean`                                | `false`         | Merge the scroll container onto your element                                                           |
-| + native    | `HTMLAttributes<HTMLDivElement>` · `ref` | —               | Spread onto the single node; `className` merges                                                        |
+| + native    | `HTMLAttributes<HTMLDivElement>` · `ref` | -               | Spread onto the single node; `className` merges                                                        |
 
-**State attributes (proposed):** `data-at-bottom` · `data-autoscrolling` · `data-scrollable` — **updated imperatively** (no React re-render per scroll tick) — plus `data-loading` (fetch in flight) and `data-empty` (zero messages). Today none of these exist; scroll state lives in `useStickToBottom` React state.
+**State attributes (proposed):** `data-at-bottom` · `data-autoscrolling` · `data-scrollable` - **updated imperatively** (no React re-render per scroll tick) - plus `data-loading` (fetch in flight) and `data-empty` (zero messages). Today none of these exist; scroll state lives in `useStickToBottom` React state.
 
 **Behavior (today → contract):** stick-to-bottom follows new content only while pinned; a new _user_ turn force-scrolls (and re-pins) even from scrolled-up history. The RFC subsumes both into [`useChatScroll`](../hooks/use-chat-scroll.md): escape-on-scroll-up + resume threshold, `turnAnchor: "bottom" | "top"`, position restore on thread switch, `preserveScrollOnPrepend`. Component-level scroll options surface as `scroll?: UseChatScrollOptions`; omit it to use hook defaults, or call `useChatScroll` directly for custom transcript shells.
 
-### `ChatMessageList.Content` — `changed`
+### `ChatMessageList.Content` - `changed`
 
 _Changed: `role="log"` and the streaming a11y contract move here from the scroll container (`aria-relevant="additions"`, `aria-busy` while streaming)._
 
-The transcript column — one `<div>`, `role="log"`. Default content: one [`Message`](./message.md) per entry in the session's `messages` (keyed by id, streaming row marked via context), followed by a pending assistant placeholder row **only while loading and the last message is not yet an assistant turn**. Children replace the default map entirely (read `messages` from [`useChatContext`](../hooks/use-chat-context.md)).
+The transcript column - one `<div>`, `role="log"`. Default content: one [`Message`](./message.md) per entry in the session's `messages` (keyed by id, streaming row marked via context), followed by a pending assistant placeholder row **only while loading and the last message is not yet an assistant turn**. Children replace the default map entirely (read `messages` from [`useChatContext`](../hooks/use-chat-context.md)).
 
-**Layout:** in-flow inside the scroller — centered fixed-width column (`max-w-[850px] mx-auto`), uniform vertical gap between rows; taller than the viewport it scrolls within.
+**Layout:** in-flow inside the scroller - centered fixed-width column (`max-w-[850px] mx-auto`), uniform vertical gap between rows; taller than the viewport it scrolls within.
 
 | Prop                                                          | Type | Description                                                   |
 | ------------------------------------------------------------- | ---- | ------------------------------------------------------------- |
 | `asChild` + native (`HTMLAttributes<HTMLDivElement>`) + `ref` |      | Own the column node; children replace the default message map |
 
-**A11y (proposed):** `role="log"`, `aria-relevant="additions"`, `aria-busy` while streaming (no token-level SR spam); completion announced once via a visually-hidden `role="status"` region. _(Today `role="log" aria-live="polite"` sits on the scroll container, not on `.Content` — the RFC moves it here.)_
+**A11y (proposed):** `role="log"`, `aria-relevant="additions"`, `aria-busy` while streaming (no token-level SR spam); completion announced once via a visually-hidden `role="status"` region. _(Today `role="log" aria-live="polite"` sits on the scroll container, not on `.Content` - the RFC moves it here.)_
 
-### `ChatMessageList.ScrollButton` — `changed`
+### `ChatMessageList.ScrollButton` - `changed`
 
-_Changed: stays mounted at bottom — inert + unfocusable — instead of unmounting, and the `icon` prop falls to the icon-slot ban; today it exists only via the deleted `renderScrollButton` prop._
+_Changed: stays mounted at bottom - inert + unfocusable - instead of unmounting, and the `icon` prop falls to the icon-slot ban; today it exists only via the deleted `renderScrollButton` prop._
 
 One `<button>` (`aria-label="Scroll to bottom"`). Default content: a down-arrow icon when childless; pass children to replace it (today's `icon` prop falls to the icon-slot ban). Clicking smooth-scrolls to the bottom and re-pins.
 
-**Layout:** today, absolute overlay — bottom-center of the visible viewport (`absolute bottom-4 left-1/2 -translate-x-1/2`) on the non-scrolling wrapper. **Proposed:** with `.Root` collapsed to one scroll container, the button anchors via **`position: sticky` at the viewport's bottom edge** — inside the scroller, no wrapper node, no portal — floating above the rows either way.
+**Layout:** today, absolute overlay - bottom-center of the visible viewport (`absolute bottom-4 left-1/2 -translate-x-1/2`) on the non-scrolling wrapper. **Proposed:** with `.Root` collapsed to one scroll container, the button anchors via **`position: sticky` at the viewport's bottom edge** - inside the scroller, no wrapper node, no portal - floating above the rows either way.
 
 | Prop                                                | Type | Description                                        |
 | --------------------------------------------------- | ---- | -------------------------------------------------- |
@@ -135,8 +135,8 @@ One `<button>` (`aria-label="Scroll to bottom"`). Default content: a down-arrow 
 | Today's prop                                   | Replacement                                                                        |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------- |
 | `messages` · `isLoading`                       | Session from `ChatRoot` context (#2973); explicit prop > nearest context > default |
-| `renderMessage`                                | **Deleted** — `children` composition or the `tools` registry                       |
-| `renderScrollButton`                           | **Deleted** — `.ScrollButton` is a composable part                                 |
+| `renderMessage`                                | **Deleted** - `children` composition or the `tools` registry                       |
+| `renderScrollButton`                           | **Deleted** - `.ScrollButton` is a composable part                                 |
 | `editMessage` · `getBranches` · `switchBranch` | `ChatRoot` context / `useMessageBranches`                                          |
 | `onSourceClick`                                | `Sources` / `InlineCitation` composition                                           |
 | `onFeedback`                                   | `MessageFeedback` cut from v1                                                      |
@@ -171,7 +171,7 @@ Container attachment at L3 is resolved: attach `viewportRef` or spread `getViewp
 
 ### Default
 
-Inside `<Chat />` as `Chat.MessageList` — default message rendering, scroll behavior, and a11y wired up:
+Inside `<Chat />` as `Chat.MessageList` - default message rendering, scroll behavior, and a11y wired up:
 
 ```tsx
 <Chat agentId="support-agent" api="/api/ag-ui" />;
@@ -199,12 +199,12 @@ Style scroll state with CSS variants, not props:
 }
 [data-at-bottom] .my-scroll-btn {
   opacity: 0;
-} /* stays mounted — inert + unfocusable */
+} /* stays mounted - inert + unfocusable */
 ```
 
 ### Headless (L3)
 
-Drive your own transcript with [`useChatScroll`](../hooks/use-chat-scroll.md) — state and actions from the hook, elements yours:
+Drive your own transcript with [`useChatScroll`](../hooks/use-chat-scroll.md) - state and actions from the hook, elements yours:
 
 ```tsx
 function MyTranscript({ chat }) {
@@ -226,10 +226,10 @@ function MyTranscript({ chat }) {
 
 ## Customization (eject path)
 
-1. **Per-part first:** restyling one part type never ejects the row — pass a `tools` registry, or compose `Message.Parts` per message. The row next; the list never.
+1. **Per-part first:** restyling one part type never ejects the row - pass a `tools` registry, or compose `Message.Parts` per message. The row next; the list never.
 2. **Own the iteration:** pass `children` to `.Content` to replace the default map.
 3. **Own the container:** `asChild` on `.Root` to merge the scroll container onto your element.
-4. **Full custom:** rebuild on `useChatScroll` — same escape-on-scroll-up, resume threshold, anchoring, and prepend preservation, your DOM.
+4. **Full custom:** rebuild on `useChatScroll` - same escape-on-scroll-up, resume threshold, anchoring, and prepend preservation, your DOM.
 
 ## Related
 

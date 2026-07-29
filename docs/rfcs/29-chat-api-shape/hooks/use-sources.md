@@ -2,7 +2,7 @@
 
 The citation list for a message, derived from its source parts.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -22,7 +22,7 @@ interface UseSourcesResult {
   isEmpty: boolean;
 }
 
-// The pure primitive under the hook — no React, no context.
+// The pure primitive under the hook - no React, no context.
 function extractSourcesFromParts(parts: ChatMessage["parts"]): Source[];
 ```
 
@@ -43,7 +43,7 @@ function extractSourcesFromParts(parts: ChatMessage["parts"]): Source[];
 
 ### Actions
 
-None — the hook is a pure derivation over the message's parts.
+None - the hook is a pure derivation over the message's parts.
 
 ### Prop getters
 
@@ -73,11 +73,11 @@ function MySources({ message }: { message: ChatMessage }) {
 
 ## Used by
 
-- [`Sources`](../components/sources.md) — `.Root` (`data-empty`; no `data-open` — the row has no disclosure) · `.List` · `.Pill`. Also available as `Message.Sources` (same component, namespace re-export).
-- [`InlineCitation`](../components/inline-citation.md) — footnote markers rendered from the same source parts via the markdown `components.citation` slot.
+- [`Sources`](../components/sources.md) - `.Root` (`data-empty`; no `data-open` - the row has no disclosure) · `.List` · `.Pill`. Also available as `Message.Sources` (same component, namespace re-export).
+- [`InlineCitation`](../components/inline-citation.md) - footnote markers rendered from the same source parts via the markdown `components.citation` slot.
 
 ## Related
 
-- [`useMessageParts`](use-message-parts.md) — the full typed part list.
-- [`useMessageContext`](use-message-context.md) — the in-context message.
+- [`useMessageParts`](use-message-parts.md) - the full typed part list.
+- [`useMessageContext`](use-message-context.md) - the in-context message.
 - Helper: `extractSourcesFromParts(parts)`.

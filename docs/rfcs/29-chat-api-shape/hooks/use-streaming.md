@@ -1,8 +1,8 @@
 # useStreaming
 
-Low-level stream state — kept as today, no reshape.
+Low-level stream state - kept as today, no reshape.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -12,7 +12,7 @@ import { useStreaming } from "veryfront/chat";
 
 ## Signature
 
-The RFC keeps `useStreaming` **as today** — a low-level, app-agnostic streaming primitive (POST fetch, chunked text) and the generic escape hatch beneath the chat surface. No reshape; stated here in full so the page is self-contained:
+The RFC keeps `useStreaming` **as today** - a low-level, app-agnostic streaming primitive (POST fetch, chunked text) and the generic escape hatch beneath the chat surface. No reshape; stated here in full so the page is self-contained:
 
 ```ts
 function useStreaming(options: {
@@ -48,9 +48,9 @@ Usage is unchanged from today's `useStreaming`. See the current library referenc
 
 ## Used by
 
-No L2 components consume it directly in the RFC's inventory — higher-level hooks ([`useChat`](./use-chat.md)) own streaming for chat sessions. Note that chat streams are **provider-scoped, not mount-scoped** (keyed by conversation id — see the RFC's State ownership contract).
+No L2 components consume it directly in the RFC's inventory - higher-level hooks ([`useChat`](./use-chat.md)) own streaming for chat sessions. Note that chat streams are **provider-scoped, not mount-scoped** (keyed by conversation id - see the RFC's State ownership contract).
 
 ## Related
 
-- [`useChat`](./use-chat.md) — chat session streaming (per-message status, `streamingMessageId`)
-- [`useCompletion`](./use-completion.md) — one-shot text
+- [`useChat`](./use-chat.md) - chat session streaming (per-message status, `streamingMessageId`)
+- [`useCompletion`](./use-completion.md) - one-shot text

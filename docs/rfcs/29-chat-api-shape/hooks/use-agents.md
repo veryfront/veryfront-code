@@ -2,9 +2,9 @@
 
 Fetches the list of available agents.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): this hook is hard-wired to veryfront's `/api/agents` backend — fetch, envelope normalizers, and error registry — so it is **not generic as "signature kept" implies**. Move it to a veryfront adapter, or require an injected `transport`/`fetcher` and document the backend contract.
+> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): this hook is hard-wired to veryfront's `/api/agents` backend - fetch, envelope normalizers, and error registry - so it is **not generic as "signature kept" implies**. Move it to a veryfront adapter, or require an injected `transport`/`fetcher` and document the backend contract.
 
 ## Import
 
@@ -64,11 +64,11 @@ const options = agentsToPickerOptions(agents);
 
 ## Used by
 
-- [`ChatAgentPicker`](../components/chat-agent-picker.md) — sources its option list (via `agentsToPickerOptions`)
+- [`ChatAgentPicker`](../components/chat-agent-picker.md) - sources its option list (via `agentsToPickerOptions`)
 - [`AgentPicker`](../components/agent-picker.md) compositions
 
 ## Related
 
-- [`useAgentMetadata`](./use-agent-metadata.md) — one agent by id
+- [`useAgentMetadata`](./use-agent-metadata.md) - one agent by id
 - [`useAgent`](./use-agent.md)
-- `agentsToPickerOptions` / `normalizeAgentsListResponse` — helpers
+- `agentsToPickerOptions` / `normalizeAgentsListResponse` - helpers

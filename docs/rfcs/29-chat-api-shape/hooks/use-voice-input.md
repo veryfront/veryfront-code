@@ -1,8 +1,8 @@
 # useVoiceInput
 
-Speech-to-text dictation state for the composer — start/stop listening and a live transcript.
+Speech-to-text dictation state for the composer - start/stop listening and a live transcript.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -65,7 +65,7 @@ interface UseVoiceInputResult {
 
 ### Prop getters
 
-None — voice is consumed through `useChatInput({ voice })`, which exposes `getVoiceProps` and folds the transcript into the input value. There is no userland transcript weaving.
+None - voice is consumed through `useChatInput({ voice })`, which exposes `getVoiceProps` and folds the transcript into the input value. There is no userland transcript weaving.
 
 ## Example
 
@@ -94,8 +94,8 @@ const chatInput = useChatInput({ chat, voice });
 
 ## Used by
 
-- [`useChatInput`](./use-chat-input.md) — via the `voice` option; surfaces `isListening` and `getVoiceProps`
-- [`ChatInput.Voice`](../components/chat-input.md) — the dictation toggle leaf (`data-listening`)
+- [`useChatInput`](./use-chat-input.md) - via the `voice` option; surfaces `isListening` and `getVoiceProps`
+- [`ChatInput.Voice`](../components/chat-input.md) - the dictation toggle leaf (`data-listening`)
 
 ## Related
 

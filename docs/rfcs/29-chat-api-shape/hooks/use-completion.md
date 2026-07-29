@@ -1,10 +1,10 @@
 # useCompletion
 
-One-shot text generation (non-chat) — kept as today, no reshape.
+One-shot text generation (non-chat) - kept as today, no reshape.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): non-chat one-shot text generation, no L2 consumer, couples to veryfront errors — **proposed cut** from the chat public surface. A chat library shouldn't ship a stray completion hook.
+> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): non-chat one-shot text generation, no L2 consumer, couples to veryfront errors - **proposed cut** from the chat public surface. A chat library shouldn't ship a stray completion hook.
 
 ## Import
 
@@ -41,9 +41,9 @@ Usage is unchanged from today's `useCompletion`. See the current library referen
 
 ## Used by
 
-No L2 components consume it in the RFC's inventory — it is a standalone session hook for non-chat, one-shot text.
+No L2 components consume it in the RFC's inventory - it is a standalone session hook for non-chat, one-shot text.
 
 ## Related
 
-- [`useChat`](./use-chat.md) — the full chat session
-- [`useStreaming`](./use-streaming.md) — low-level stream state
+- [`useChat`](./use-chat.md) - the full chat session
+- [`useStreaming`](./use-streaming.md) - low-level stream state

@@ -1,8 +1,8 @@
 # useChatActions
 
-Context reader for the `ChatActions` compound — and nothing more.
+Context reader for the `ChatActions` compound - and nothing more.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -16,7 +16,7 @@ import { useChatActions } from "veryfront/chat";
 function useChatActions(): ChatActionsContext;
 ```
 
-A **context reader only**, scoped to the [`ChatActions`](../components/chat-actions.md) compound. It does **not** carry action implementations: thread-level export and clear _compose from_ the public helpers instead —
+A **context reader only**, scoped to the [`ChatActions`](../components/chat-actions.md) compound. It does **not** carry action implementations: thread-level export and clear _compose from_ the public helpers instead:
 
 ```ts
 exportAsMarkdown(messages)              // → markdown string
@@ -28,11 +28,11 @@ Per the providers contract, the raw context object stays unexported.
 
 ## Options
 
-None — state comes from the nearest `ChatActions.Root`.
+None - state comes from the nearest `ChatActions.Root`.
 
 ## Returns
 
-The `ChatActions` compound's context — **menu data only** (open state lives in the dropdown primitive, not this reader):
+The `ChatActions` compound's context - **menu data only** (open state lives in the dropdown primitive, not this reader):
 
 ```ts
 {
@@ -73,10 +73,10 @@ function MyActionItems() {
 
 ## Used by
 
-- [`ChatActions`](../components/chat-actions.md) — every part is a thin shell over this reader.
+- [`ChatActions`](../components/chat-actions.md) - every part is a thin shell over this reader.
 
 ## Related
 
 - [`ChatActions`](../components/chat-actions.md)
-- `exportAsMarkdown` / `downloadMarkdown` — transcript export helpers
-- `useChat` — `setMessages` for clear
+- `exportAsMarkdown` / `downloadMarkdown` - transcript export helpers
+- `useChat` - `setMessages` for clear

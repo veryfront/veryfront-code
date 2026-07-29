@@ -2,11 +2,11 @@
 
 Headless state and actions for durable uploaded files.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): owns the durable-list domain that rides with [`AttachmentsPanel`](../components/attachments-panel.md) — proposed for the same optional module, not core v1. Also the clearest proliferation smell: `useUpload` (pending) and `useAttachments` (durable) have near-identical shapes; consider collapsing toward one transport-pluggable primitive parameterized by persistence.
+> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): owns the durable-list domain that rides with [`AttachmentsPanel`](../components/attachments-panel.md) - proposed for the same optional module, not core v1. Also the clearest proliferation smell: `useUpload` (pending) and `useAttachments` (durable) have near-identical shapes; consider collapsing toward one transport-pluggable primitive parameterized by persistence.
 
-`useAttachments` owns the durable-file domain: the list of uploaded files, their loading state, and the upload/remove lifecycle. It is the L3 foundation that `AttachmentsPanel` is built on — the hook is sufficient to rebuild the panel verbatim.
+`useAttachments` owns the durable-file domain: the list of uploaded files, their loading state, and the upload/remove lifecycle. It is the L3 foundation that `AttachmentsPanel` is built on - the hook is sufficient to rebuild the panel verbatim.
 
 > **Renamed:** the old `useUploadsRegistry` alias is **deleted** (breaking-changes ledger). `useAttachments` is the name.
 
@@ -62,7 +62,7 @@ interface AttachmentsTransport {
 
 | Name        | Type             | Description                                                                                                                                                                                                                             |
 | ----------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `items`     | `UploadedFile[]` | The durable files. **Error state is per item** — a failed upload surfaces on that item (styled via `data-upload-state="error"` / `data-error` on the row), not as a global `uploadError`. The global `uploadError` is removed (ledger). |
+| `items`     | `UploadedFile[]` | The durable files. **Error state is per item** - a failed upload surfaces on that item (styled via `data-upload-state="error"` / `data-error` on the row), not as a global `uploadError`. The global `uploadError` is removed (ledger). |
 | `isLoading` | `boolean`        | Fetch in flight (drives `data-loading` on `AttachmentsPanel.Root`).                                                                                                                                                                     |
 
 ### Actions
@@ -77,7 +77,7 @@ interface AttachmentsTransport {
 
 ### Prop getters
 
-The RFC does not define prop getters for this hook — hook state plus your own elements suffice. (Composer-side drop-target and file-input getters live on `useUpload`.)
+The RFC does not define prop getters for this hook - hook state plus your own elements suffice. (Composer-side drop-target and file-input getters live on `useUpload`.)
 
 ## Example
 
@@ -106,9 +106,9 @@ function MyFiles() {
 
 ## Used by
 
-- [`AttachmentsPanel`](../components/attachments-panel.md) — every part of the compound is a thin shell over this hook's state.
+- [`AttachmentsPanel`](../components/attachments-panel.md) - every part of the compound is a thin shell over this hook's state.
 
 ## Related
 
-- [`useAttachmentsPanel`](../hooks/use-attachments-panel.md) — reads the `AttachmentsPanel` compound's context.
-- `useUpload` — composer-side _pending_ uploads (`getDropTargetProps`, `getAttachInputProps`); a separate domain from durable files.
+- [`useAttachmentsPanel`](../hooks/use-attachments-panel.md) - reads the `AttachmentsPanel` compound's context.
+- `useUpload` - composer-side _pending_ uploads (`getDropTargetProps`, `getAttachInputProps`); a separate domain from durable files.

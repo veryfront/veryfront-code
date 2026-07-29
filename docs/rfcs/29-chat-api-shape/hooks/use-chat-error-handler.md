@@ -1,10 +1,10 @@
 # useChatErrorHandler
 
-Error state and handlers for chat surfaces — the hook behind `ChatErrorBoundary`. Existing signature, kept.
+Error state and handlers for chat surfaces - the hook behind `ChatErrorBoundary`. Existing signature, kept.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): nothing chat-specific — a bare `{ error, handleError, clearError, hasError }` error-state hook. **Proposed:** move to `veryfront/ui` as a generic `useErrorHandler` rather than ship it as chat API.
+> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): nothing chat-specific - a bare `{ error, handleError, clearError, hasError }` error-state hook. **Proposed:** move to `veryfront/ui` as a generic `useErrorHandler` rather than ship it as chat API.
 
 ## Import
 
@@ -71,9 +71,9 @@ function MyErrorBanner() {
 ## Used by
 
 - [`ChatErrorBoundary`](../components/chat-error-boundary.md)
-- [`Chat`](../components/chat.md) — error display (`Chat.ErrorBanner`) in the L1 default composition
+- [`Chat`](../components/chat.md) - error display (`Chat.ErrorBanner`) in the L1 default composition
 
 ## Related
 
-- [`useChat`](./use-chat.md) — session-level `error` and per-message `status`/`error`
+- [`useChat`](./use-chat.md) - session-level `error` and per-message `status`/`error`
 - [`ChatErrorBoundary`](../components/chat-error-boundary.md)

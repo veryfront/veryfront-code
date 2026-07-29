@@ -1,8 +1,8 @@
 # useConversationChat
 
-`useChat` bound to a `ConversationsProvider`'s active thread — seeds from and persists to the active conversation, and tells you when it's `ready`.
+`useChat` bound to a `ConversationsProvider`'s active thread - seeds from and persists to the active conversation, and tells you when it's `ready`.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -43,10 +43,10 @@ function useConversationChat(options: {
 
 | Name              | Type                  | Description                                                                          |
 | ----------------- | --------------------- | ------------------------------------------------------------------------------------ |
-| `chat`            | `UseChatResult`       | The bound session — pass to `ChatRoot`, `ChatInput`, `useChatInput`, …               |
+| `chat`            | `UseChatResult`       | The bound session - pass to `ChatRoot`, `ChatInput`, `useChatInput`, …               |
 | `conversationId`  | `string \| undefined` | The active conversation id the session is bound to.                                  |
 | `resolvedAgentId` | `string \| undefined` | The resolved agent id                                                                |
-| `ready`           | `boolean`             | Replaces every userland thread-ready guard (#2978) — consumers never write their own |
+| `ready`           | `boolean`             | Replaces every userland thread-ready guard (#2978) - consumers never write their own |
 
 ### Actions
 
@@ -59,7 +59,7 @@ None.
 ### Behavior
 
 - **Seed + persist:** the session is seeded from the `ConversationsProvider`'s active thread and persists back to it (replaces the userland `usePersistMessages` effect).
-- **Streams are provider-scoped:** keyed by conversation id — switching threads neither aborts nor orphans an in-flight stream, and it persists to the correct thread.
+- **Streams are provider-scoped:** keyed by conversation id - switching threads neither aborts nor orphans an in-flight stream, and it persists to the correct thread.
 
 ## Example
 
@@ -88,11 +88,11 @@ function Workspace() {
 
 ## Used by
 
-- [`Chat`](../components/chat.md) — the L1 preset runs the session hooks internally
+- [`Chat`](../components/chat.md) - the L1 preset runs the session hooks internally
 - Any L2/L3 composition that pairs conversations with a chat session
 
 ## Related
 
-- [`useChat`](./use-chat.md) — the unbound base hook
+- [`useChat`](./use-chat.md) - the unbound base hook
 - [`useChatContext`](./use-chat-context.md)
-- `useConversations` / `ConversationsProvider` — thread list, `activeReady`, `selectAgent`
+- `useConversations` / `ConversationsProvider` - thread list, `activeReady`, `selectAgent`

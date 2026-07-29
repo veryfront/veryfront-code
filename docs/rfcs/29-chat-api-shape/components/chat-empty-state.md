@@ -2,9 +2,9 @@
 
 The zero-messages view: hero agent avatar, heading, and a wrapping row of typed prompt-suggestion chips.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): `Avatar` defaults `alt="Veryfront Agent"` — a brand string a generic consumer would ship to screen readers. Use a neutral default (`"Agent"`), or make `alt` required with no brand default.
+> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): `Avatar` defaults `alt="Veryfront Agent"` - a brand string a generic consumer would ship to screen readers. Use a neutral default (`"Agent"`), or make `alt` required with no brand default.
 
 ## Import
 
@@ -21,11 +21,11 @@ import {
 
 ## Parts index
 
-- [`.Root`](#chatemptystateroot--kept) — `kept`
-- [`.Avatar`](#chatemptystateavatar--changed) — `changed`: `isCreating` styling boolean → `data-creating`
-- [`.Heading`](#chatemptystateheading--changed) — `changed`: `level` removed; use `asChild` for custom heading levels
-- [`.Suggestions`](#chatemptystatesuggestions--changed) — `changed`: `data-empty` state attribute added
-- [`.Suggestion`](#chatemptystatesuggestion--kept) — `kept`
+- [`.Root`](#chatemptystateroot--kept) - `kept`
+- [`.Avatar`](#chatemptystateavatar--changed) - `changed`: `isCreating` styling boolean → `data-creating`
+- [`.Heading`](#chatemptystateheading--changed) - `changed`: `level` removed; use `asChild` for custom heading levels
+- [`.Suggestions`](#chatemptystatesuggestions--changed) - `changed`: `data-empty` state attribute added
+- [`.Suggestion`](#chatemptystatesuggestion--kept) - `kept`
 
 ## Anatomy
 
@@ -41,7 +41,7 @@ import {
 </ChatEmptyState.Root>;
 ```
 
-Unlike `ToolCall`/`AgentPicker`, this compound is **composition-only today — there is no childless preset**: each part is a small piece you arrange yourself (the `<Chat />` L1 preset does this arranging for `Chat.Empty`). The proposed contract adds a data-driven childless render when an `agent` prop or nearest agent context is available.
+Unlike `ToolCall`/`AgentPicker`, this compound is **composition-only today - there is no childless preset**: each part is a small piece you arrange yourself (the `<Chat />` L1 preset does this arranging for `Chat.Empty`). The proposed contract adds a data-driven childless render when an `agent` prop or nearest agent context is available.
 
 ## Default DOM (childless render)
 
@@ -49,7 +49,7 @@ The canonical composition above renders this DOM today (classes abbreviated to l
 
 ```html
 <div class="flex flex-1 flex-col items-center justify-center gap-3.5 px-4">
-  <!-- .Root — vertical flex column, centered
+  <!-- .Root - vertical flex column, centered
                                                                                   both axes; flex-1 assumes a flex parent
                                                                                   (fills the transcript viewport) -->
   <div class="size-16 shrink-0 rounded-full overflow-hidden flex items-center justify-center">
@@ -67,7 +67,7 @@ The canonical composition above renders this DOM today (classes abbreviated to l
     Support Agent
   </h2>
   <div role="group" class="mt-4 flex flex-wrap justify-center gap-2">
-    <!-- .Suggestions — wrapping centered row;
+    <!-- .Suggestions - wrapping centered row;
                                                                             chips reflow to multiple lines -->
     <button class="h-9 rounded-md px-3.5">Create a plan</button>
     <!-- .Suggestion (ui Button, tertiary/sm) -->
@@ -76,70 +76,70 @@ The canonical composition above renders this DOM today (classes abbreviated to l
 </div>
 ```
 
-Conditional presence: the `<img>`/initial swap on `.Avatar` is runtime (image load failure falls back to the initial); with `isCreating` the avatar pulses. Nothing here is absolutely positioned or hover-revealed — the whole view is an in-flow flex column.
+Conditional presence: the `<img>`/initial swap on `.Avatar` is runtime (image load failure falls back to the initial); with `isCreating` the avatar pulses. Nothing here is absolutely positioned or hover-revealed - the whole view is an in-flow flex column.
 
 ## Parts
 
-### `ChatEmptyState.Root` — `kept`
+### `ChatEmptyState.Root` - `kept`
 
-The container — one `<div>`. Already on the node contract today: `extends React.HTMLAttributes<HTMLDivElement>`, spreads `{...props}`, `ref` prop, `className` merges. **Layout: in-flow vertical flex column (`flex flex-1 flex-col`), children centered on both axes with `gap-3.5`; `flex-1` makes it fill a flex parent (the transcript area).**
+The container - one `<div>`. Already on the node contract today: `extends React.HTMLAttributes<HTMLDivElement>`, spreads `{...props}`, `ref` prop, `className` merges. **Layout: in-flow vertical flex column (`flex flex-1 flex-col`), children centered on both axes with `gap-3.5`; `flex-1` makes it fill a flex parent (the transcript area).**
 
 | Prop                                    | Type                             | Description                                                             |
 | --------------------------------------- | -------------------------------- | ----------------------------------------------------------------------- |
 | `children`                              | `ReactNode`                      | The parts, in your order                                                |
 | `asChild` _(proposed)_ + native + `ref` | `HTMLAttributes<HTMLDivElement>` | Native spread and `ref` exist today; `asChild` is the proposed addition |
 
-### `ChatEmptyState.Avatar` — `changed`
+### `ChatEmptyState.Avatar` - `changed`
 
 _Changed: the `isCreating` styling boolean becomes `data-creating`; everything else is as today._
 
-The hero avatar — renders the shared `ui` `Avatar` (one `<div>` circle containing either the image or a single-initial `<span>`), sized 64px in `muted` tone. **Layout: in-flow `shrink-0` circle (`size-16`), a flex child of the Root column.** Default content: the agent's image when `src` resolves, otherwise the first initial of `alt` (container-query scaled to fill). Never null-renders — no `src` just means the initial.
+The hero avatar - renders the shared `ui` `Avatar` (one `<div>` circle containing either the image or a single-initial `<span>`), sized 64px in `muted` tone. **Layout: in-flow `shrink-0` circle (`size-16`), a flex child of the Root column.** Default content: the agent's image when `src` resolves, otherwise the first initial of `alt` (container-query scaled to fill). Never null-renders - no `src` just means the initial.
 
 | Prop             | Type                                             | Default             | Description                                                                           |
 | ---------------- | ------------------------------------------------ | ------------------- | ------------------------------------------------------------------------------------- |
-| `src`            | `string`                                         | —                   | Avatar image URL (`agent.avatarUrl`); load failure falls back to the initial          |
+| `src`            | `string`                                         | -                   | Avatar image URL (`agent.avatarUrl`); load failure falls back to the initial          |
 | `alt`            | `string`                                         | `"Veryfront Agent"` | Accessible name + initial source                                                      |
-| `isCreating`     | `boolean`                                        | —                   | Pulses the avatar while the agent is being provisioned; reflected as `data-creating`. |
+| `isCreating`     | `boolean`                                        | -                   | Pulses the avatar while the agent is being provisioned; reflected as `data-creating`. |
 | + native + `ref` | `HTMLAttributes<HTMLDivElement>` (no `children`) |                     | Spread onto the Avatar node today; `asChild` proposed                                 |
 
-### `ChatEmptyState.Heading` — `changed?`
+### `ChatEmptyState.Heading` - `changed?`
 
 _Changed: `level` is removed; use `asChild` to provide a different heading element._
 
-The title — one heading element, `<h2>` by default. **Layout: in-flow centered text block (`text-center text-balance`), a flex child of the Root column.** Default content: none — children are the text (typically the agent name).
+The title - one heading element, `<h2>` by default. **Layout: in-flow centered text block (`text-center text-balance`), a flex child of the Root column.** Default content: none - children are the text (typically the agent name).
 
 | Prop             | Type                                 | Default | Description                      |
 | ---------------- | ------------------------------------ | ------- | -------------------------------- |
-| `children`       | `ReactNode`                          | —       | The heading text                 |
+| `children`       | `ReactNode`                          | -       | The heading text                 |
 | + native + `ref` | `HTMLAttributes<HTMLHeadingElement>` |         | Spread today; `asChild` proposed |
 
-### `ChatEmptyState.Suggestions` — `changed`
+### `ChatEmptyState.Suggestions` - `changed`
 
 _Changed: a `data-empty` state attribute is added (proposed); today emptiness is just rendering no children._
 
-The chip container — one `<div role="group">`. **Layout: in-flow wrapping row (`flex flex-wrap justify-center gap-2`), pushed off the heading with `mt-4`; chips reflow onto multiple centered lines.** Default content: none — you map suggestion items onto `.Suggestion` children.
+The chip container - one `<div role="group">`. **Layout: in-flow wrapping row (`flex flex-wrap justify-center gap-2`), pushed off the heading with `mt-4`; chips reflow onto multiple centered lines.** Default content: none - you map suggestion items onto `.Suggestion` children.
 
 | Prop             | Type                             | Default   | Description                      |
 | ---------------- | -------------------------------- | --------- | -------------------------------- |
 | `role`           | `string`                         | `"group"` | Overridable via native spread    |
-| `children`       | `ReactNode`                      | —         | The `.Suggestion` chips          |
+| `children`       | `ReactNode`                      | -         | The `.Suggestion` chips          |
 | + native + `ref` | `HTMLAttributes<HTMLDivElement>` |           | Spread today; `asChild` proposed |
 
-**State attributes (proposed):** `data-empty` — zero suggestion items (global list-container vocabulary). Today emptiness is simply "you rendered no children".
+**State attributes (proposed):** `data-empty` - zero suggestion items (global list-container vocabulary). Today emptiness is simply "you rendered no children".
 
-### `ChatEmptyState.Suggestion` — `kept`
+### `ChatEmptyState.Suggestion` - `kept`
 
-One prompt chip — one `<button>` (a `ui` Button, locked to `variant="tertiary"`, `size="sm"`, `h-9 px-3.5`). **Layout: in-flow flex-row chip inside the wrapping Suggestions row.** Default content: none — children are the label. Click behavior is yours (`onClick` → send the item's `prompt`).
+One prompt chip - one `<button>` (a `ui` Button, locked to `variant="tertiary"`, `size="sm"`, `h-9 px-3.5`). **Layout: in-flow flex-row chip inside the wrapping Suggestions row.** Default content: none - children are the label. Click behavior is yours (`onClick` → send the item's `prompt`).
 
 | Prop             | Type                                      | Default | Description                                                                            |
 | ---------------- | ----------------------------------------- | ------- | -------------------------------------------------------------------------------------- |
 | `size`           | `ButtonProps['size']`                     | `"sm"`  | Any Button prop except `variant` passes through today (`Omit<ButtonProps, 'variant'>`) |
-| `children`       | `ReactNode`                               | —       | The chip label                                                                         |
+| `children`       | `ReactNode`                               | -       | The chip label                                                                         |
 | + native + `ref` | `ButtonHTMLAttributes<HTMLButtonElement>` |         | Spread today (via Button); `asChild` proposed                                          |
 
 ## Context (what the parts read)
 
-**None.** `ChatEmptyState` is purely presentational — the parts share no context and there is no `useChatEmptyState()`. Data enters through props/children, and the suggestion data is a pure helper:
+**None.** `ChatEmptyState` is purely presentational - the parts share no context and there is no `useChatEmptyState()`. Data enters through props/children, and the suggestion data is a pure helper:
 
 ### Typed suggestions
 
@@ -147,7 +147,7 @@ One prompt chip — one `<button>` (a `ui` Button, locked to `variant="tertiary"
 getAgentPromptSuggestionItems(agent); // → { label: string; prompt: string }[]
 ```
 
-Made public in the proposal (issue #2978). You map the items onto `.Suggestion` yourself, so **selection hands the item back** — `{ label, prompt }` is in hand in your `onClick`; no `.find` massaging to recover the prompt from a clicked label. (The lossy `getAgentPromptSuggestions(agent) → string[]` remains only for compatibility.)
+Made public in the proposal (issue #2978). You map the items onto `.Suggestion` yourself, so **selection hands the item back** - `{ label, prompt }` is in hand in your `onClick`; no `.find` massaging to recover the prompt from a clicked label. (The lossy `getAgentPromptSuggestions(agent) → string[]` remains only for compatibility.)
 
 ## State attributes
 
@@ -163,7 +163,7 @@ Rendered inside the `<Chat />` preset (as `Chat.Empty`) when the transcript has 
 
 ### Composed
 
-Map the typed items onto `.Suggestion` — the item is in hand at click time:
+Map the typed items onto `.Suggestion` - the item is in hand at click time:
 
 ```tsx
 function EmptyState({ agent }: { agent: Agent }) {
@@ -190,7 +190,7 @@ function EmptyState({ agent }: { agent: Agent }) {
 
 ### Headless
 
-The suggestion data is a pure helper — no hook required. Render anything:
+The suggestion data is a pure helper - no hook required. Render anything:
 
 ```tsx
 const items = getAgentPromptSuggestionItems(agent)
@@ -206,12 +206,12 @@ const items = getAgentPromptSuggestionItems(agent)
 
 ## Customization (eject path)
 
-1. **L1** — the default empty state inside `<Chat />`.
-2. **L2** — paste the composition (printed under _Anatomy_); every part is a single node (`asChild`, `className`, `data-*`) and the layout between them is yours.
-3. **L3** — `getAgentPromptSuggestionItems(agent)` + your own markup; nothing else is needed.
+1. **L1** - the default empty state inside `<Chat />`.
+2. **L2** - paste the composition (printed under _Anatomy_); every part is a single node (`asChild`, `className`, `data-*`) and the layout between them is yours.
+3. **L3** - `getAgentPromptSuggestionItems(agent)` + your own markup; nothing else is needed.
 
 ## Related
 
-- `Chat` — the L1 preset (`Chat.Empty`)
-- [`useAgentMetadata`](../hooks/use-agent-metadata.md) — source of the `agent` passed to the helper
-- `getAgentPromptSuggestionItems` / `getAgentPromptSuggestions` — helpers
+- `Chat` - the L1 preset (`Chat.Empty`)
+- [`useAgentMetadata`](../hooks/use-agent-metadata.md) - source of the `agent` passed to the helper
+- `getAgentPromptSuggestionItems` / `getAgentPromptSuggestions` - helpers

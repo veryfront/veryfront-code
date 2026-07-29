@@ -1,8 +1,8 @@
 # useMessageContext
 
-Reads the scoped context of the nearest `Message.Root` — the message, its streaming/editing state, and its per-message actions.
+Reads the scoped context of the nearest `Message.Root` - the message, its streaming/editing state, and its per-message actions.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -42,7 +42,7 @@ interface UseMessageContextResult<TMessage extends ChatMessage> {
 
 ## Options
 
-This hook takes no options — it is a context reader. It must be called under a `Message.Root` (which mounts `MessageContextProvider`); use `useMessageContextOptional` when the component may render outside one. Session callbacks (`editMessage`, `reload`) resolve from the nearest `ChatRoot` context — they are never re-threaded per message.
+This hook takes no options - it is a context reader. It must be called under a `Message.Root` (which mounts `MessageContextProvider`); use `useMessageContextOptional` when the component may render outside one. Session callbacks (`editMessage`, `reload`) resolve from the nearest `ChatRoot` context - they are never re-threaded per message.
 
 ## Returns
 
@@ -63,8 +63,8 @@ This hook takes no options — it is a context reader. It must be called under a
 | Name         | Type                      | Description                                                                                                                           |
 | ------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `copy`       | `() => Promise<void>`     | Copy `textContent` to the clipboard; sets `copied` transiently.                                                                       |
-| `regenerate` | `() => void` _(optional)_ | Regenerate this message (session `reload` from `ChatRoot` context). Present on assistant turns with `reload` only — absent otherwise. |
-| `startEdit`  | `() => void`              | Enter edit mode — render a `ChatInput` inside the message; it _is_ the edit form.                                                     |
+| `regenerate` | `() => void` _(optional)_ | Regenerate this message (session `reload` from `ChatRoot` context). Present on assistant turns with `reload` only - absent otherwise. |
+| `startEdit`  | `() => void`              | Enter edit mode - render a `ChatInput` inside the message; it _is_ the edit form.                                                     |
 | `cancelEdit` | `() => void`              | Leave edit mode without submitting.                                                                                                   |
 
 ### Prop getters
@@ -93,11 +93,11 @@ function MyMessageActions() {
 
 ## Used by
 
-- [`Message`](../components/message.md) — `.Root` provides the context; `.Text`, `.Actions`, `.CopyAction`, `.RegenerateAction`, `.EditAction` and the other sub-parts consume it.
-- [`MessageActionBar`](../components/message-action-bar.md) — re-export of the `Message.Actions` family.
+- [`Message`](../components/message.md) - `.Root` provides the context; `.Text`, `.Actions`, `.CopyAction`, `.RegenerateAction`, `.EditAction` and the other sub-parts consume it.
+- [`MessageActionBar`](../components/message-action-bar.md) - re-export of the `Message.Actions` family.
 
 ## Related
 
-- [`useMessageParts`](use-message-parts.md) — typed part groups for the current message.
-- [`useClipboard`](use-clipboard.md) — the copy/copied primitive.
-- [`useMessageBranches`](use-message-branches.md) — branch navigation for the current message.
+- [`useMessageParts`](use-message-parts.md) - typed part groups for the current message.
+- [`useClipboard`](use-clipboard.md) - the copy/copied primitive.
+- [`useMessageBranches`](use-message-branches.md) - branch navigation for the current message.

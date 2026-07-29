@@ -1,8 +1,8 @@
 # useMessageBranches
 
-Branch position and navigation for the current message — a thin layer over `getBranches` / `switchBranch` on `useChat`.
+Branch position and navigation for the current message - a thin layer over `getBranches` / `switchBranch` on `useChat`.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -67,9 +67,9 @@ function MyBranchPicker() {
 
 ## Used by
 
-- [`BranchPicker`](../components/branch-picker.md) — `.Root <div>` (`data-active`) · `.Previous <button>` · `.Count <span>` · `.Next <button>`. `BranchPicker` and `Message.BranchPicker` are the same component (namespace re-export), never parallel implementations.
+- [`BranchPicker`](../components/branch-picker.md) - `.Root <div>` (`data-active`) · `.Previous <button>` · `.Count <span>` · `.Next <button>`. `BranchPicker` and `Message.BranchPicker` are the same component (namespace re-export), never parallel implementations.
 
 ## Related
 
-- [`useMessageContext`](use-message-context.md) — the in-context message (branching pairs with edit/regenerate).
-- `useChat` — owns the underlying `getBranches` / `switchBranch`.
+- [`useMessageContext`](use-message-context.md) - the in-context message (branching pairs with edit/regenerate).
+- `useChat` - owns the underlying `getBranches` / `switchBranch`.

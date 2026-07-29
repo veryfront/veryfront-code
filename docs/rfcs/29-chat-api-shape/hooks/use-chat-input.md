@@ -1,8 +1,8 @@
 # useChatInput
 
-The sole owner of composer input state — value, submit fold/guard/clear, attachments, and voice — with prop getters for headless rendering.
+The sole owner of composer input state - value, submit fold/guard/clear, attachments, and voice - with prop getters for headless rendering.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -33,7 +33,7 @@ function useChatInput(options?: {
   stop: () => void;
   clear: () => void;
   attach: (files: FileList | File[]) => void;
-  // Prop getters — all accept (overrides?)
+  // Prop getters - all accept (overrides?)
   getFormProps: (overrides?) => FormProps;
   getFieldProps: (overrides?) => TextareaProps;
   getSubmitProps: (overrides?) => ButtonProps;
@@ -51,8 +51,8 @@ Options are the `ChatInput.Root` props minus the DOM props.
 | -------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `chat`               | `UseChatResult`                      | The session to submit into. Falls back to the nearest `ChatRoot` context (explicit prop > nearest context > default).                                |
 | `upload`             | `UseUploadResult`                    | Pending attachments; submit folds them into the message and guards while uploads are in flight.                                                      |
-| `voice`              | `UseVoiceInputResult`                | Dictation; the transcript folds into `value` inside the hook — no userland transcript weaving.                                                       |
-| `value` / `onChange` | `string` / `(value: string) => void` | Controlled mode. Omit for uncontrolled. `useChatInput` is the _single_ owner of input state — `useChat` does not expose `input`/`handleInputChange`. |
+| `voice`              | `UseVoiceInputResult`                | Dictation; the transcript folds into `value` inside the hook - no userland transcript weaving.                                                       |
+| `value` / `onChange` | `string` / `(value: string) => void` | Controlled mode. Omit for uncontrolled. `useChatInput` is the _single_ owner of input state - `useChat` does not expose `input`/`handleInputChange`. |
 | `submitMode`         | `'enter' \| 'ctrlEnter' \| 'none'`   | Which key submits from the field.                                                                                                                    |
 
 ## Returns
@@ -79,7 +79,7 @@ Options are the `ChatInput.Root` props minus the DOM props.
 
 ### Prop getters
 
-Every getter takes `(overrides?)` — pass your props _into_ the getter. Handlers compose (yours first; `preventDefault` cancels the internal handler), `className` merges Tailwind-aware, `style` shallow-merges consumer-wins, refs compose. Getter names map 1:1 to `ChatInput` parts.
+Every getter takes `(overrides?)` - pass your props _into_ the getter. Handlers compose (yours first; `preventDefault` cancels the internal handler), `className` merges Tailwind-aware, `style` shallow-merges consumer-wins, refs compose. Getter names map 1:1 to `ChatInput` parts.
 
 | Getter               | Spread onto       | Part      | Notes                                                                        |
 | -------------------- | ----------------- | --------- | ---------------------------------------------------------------------------- |
@@ -107,15 +107,15 @@ function MyChatInput() {
 }
 ```
 
-Editing reuses the same hook, with a concrete mechanism: `useChatInput` reads `useMessageContextOptional()`. Inside a message whose context has `isEditing`, it seeds `value` from the message's `textContent`, routes submit to `editMessage(message.id, value)` instead of `sendMessage`, and maps Escape to `cancelEdit`. No extra options — nesting _is_ the wiring, which is why a `ChatInput` rendered inside a `Message` _is_ the edit form (nearest provider wins).
+Editing reuses the same hook, with a concrete mechanism: `useChatInput` reads `useMessageContextOptional()`. Inside a message whose context has `isEditing`, it seeds `value` from the message's `textContent`, routes submit to `editMessage(message.id, value)` instead of `sendMessage`, and maps Escape to `cancelEdit`. No extra options - nesting _is_ the wiring, which is why a `ChatInput` rendered inside a `Message` _is_ the edit form (nearest provider wins).
 
 ## Used by
 
-- [`ChatInput`](../components/chat-input.md) — every leaf is a thin shell over this hook's getters, so the two can never drift. The hook's state is scoped to children via `ChatInputContextProvider`.
+- [`ChatInput`](../components/chat-input.md) - every leaf is a thin shell over this hook's getters, so the two can never drift. The hook's state is scoped to children via `ChatInputContextProvider`.
 
 ## Related
 
-- [`useChatInputContext`](./use-chat-input-context.md) — read the scoped state from inside a `<ChatInput>`
-- [`useUpload`](./use-upload.md) — attachment lifecycle
-- [`useVoiceInput`](./use-voice-input.md) — dictation
-- `mergeProps` — the normative merge, public, for composing several hooks onto one element
+- [`useChatInputContext`](./use-chat-input-context.md) - read the scoped state from inside a `<ChatInput>`
+- [`useUpload`](./use-upload.md) - attachment lifecycle
+- [`useVoiceInput`](./use-voice-input.md) - dictation
+- `mergeProps` - the normative merge, public, for composing several hooks onto one element

@@ -2,9 +2,9 @@
 
 Copies a string to the clipboard and reports transient "copied" feedback.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): this is a generic browser util (already shared with the code-block copy button), not a chat hook — **proposed** to reposition as a generic util or fold into `useMessageContext.copy`. Also: the page silently reshapes the real signature (`useClipboard(timeout)` → `{ copy: (text) => Promise<void> }` becomes `useClipboard(text)` → `{ copy: () => void }`) — disclose the change with a `changed` note or keep the arg on `copy()`.
+> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): this is a generic browser util (already shared with the code-block copy button), not a chat hook - **proposed** to reposition as a generic util or fold into `useMessageContext.copy`. Also: the page silently reshapes the real signature (`useClipboard(timeout)` → `{ copy: (text) => Promise<void> }` becomes `useClipboard(text)` → `{ copy: () => void }`) - disclose the change with a `changed` note or keep the arg on `copy()`.
 
 ## Import
 
@@ -27,7 +27,7 @@ interface UseClipboardResult {
 
 | Option | Type     | Default | Description                                 |
 | ------ | -------- | ------- | ------------------------------------------- |
-| `text` | `string` | —       | The string to copy when `copy()` is called. |
+| `text` | `string` | -       | The string to copy when `copy()` is called. |
 
 ## Returns
 
@@ -35,7 +35,7 @@ interface UseClipboardResult {
 
 | Name     | Type      | Description                                                                                                                                                                             |
 | -------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `copied` | `boolean` | `true` transiently after a successful copy. Copy buttons mirror this as `data-copied` — style the feedback with CSS, never a `.Copied` sub-component (deleted from `MessageActionBar`). |
+| `copied` | `boolean` | `true` transiently after a successful copy. Copy buttons mirror this as `data-copied` - style the feedback with CSS, never a `.Copied` sub-component (deleted from `MessageActionBar`). |
 
 ### Actions
 
@@ -67,10 +67,10 @@ function MyCopyButton({ text }: { text: string }) {
 
 ## Used by
 
-- [`Message`](../components/message.md) — `.CopyAction` (`data-copied`); `useMessageContext` exposes the same `copy`/`copied` pair pre-bound to the message's `textContent`.
-- [`MessageActionBar`](../components/message-action-bar.md) — re-export of the `Message.Actions` family.
+- [`Message`](../components/message.md) - `.CopyAction` (`data-copied`); `useMessageContext` exposes the same `copy`/`copied` pair pre-bound to the message's `textContent`.
+- [`MessageActionBar`](../components/message-action-bar.md) - re-export of the `Message.Actions` family.
 
 ## Related
 
-- [`useMessageContext`](use-message-context.md) — message-bound `copy` / `copied`.
-- Helper: `getTextContent(msg)` — the flat text you typically pass in.
+- [`useMessageContext`](use-message-context.md) - message-bound `copy` / `copied`.
+- Helper: `getTextContent(msg)` - the flat text you typically pass in.

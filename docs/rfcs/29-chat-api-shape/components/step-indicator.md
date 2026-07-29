@@ -2,7 +2,7 @@
 
 A labelled divider between an assistant turn's steps, with per-step lifecycle state. Render it whole, or compose the parts.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -14,22 +14,22 @@ import { StepIndicator, StepIndicatorLabel, type StepIndicatorLabelProps } from 
 
 ## Parts index
 
-- [`.Root`](#stepindicatorroot--changed) — `changed`: `isComplete` boolean → `data-state`; `icon` deleted
-- [`.Rule`](#stepindicatorrule--changed) — `changed`: named one-node rule part
-- [`.Label`](#stepindicatorlabel--changed) — `changed`: `<div>` → `<span>`; `icon` override → children
+- [`.Root`](#stepindicatorroot--changed) - `changed`: `isComplete` boolean → `data-state`; `icon` deleted
+- [`.Rule`](#stepindicatorrule--changed) - `changed`: named one-node rule part
+- [`.Label`](#stepindicatorlabel--changed) - `changed`: `<div>` → `<span>`; `icon` override → children
 
 ## Anatomy
 
 ```tsx
 <StepIndicator.Root>
-  {/* <div role="separator"> — one per step boundary */}
-  <StepIndicator.Rule /> {/* <span aria-hidden> — the leading horizontal rule */}
+  {/* <div role="separator"> - one per step boundary */}
+  <StepIndicator.Rule /> {/* <span aria-hidden> - the leading horizontal rule */}
   <StepIndicator.Label /> {/* status glyph + "Step N" pill */}
-  <StepIndicator.Rule /> {/* <span aria-hidden> — the trailing rule */}
+  <StepIndicator.Rule /> {/* <span aria-hidden> - the trailing rule */}
 </StepIndicator.Root>;
 ```
 
-`<StepIndicator>` with **no children renders the default anatomy**: `Rule` → `Label` → `Rule` — a horizontal rule broken by a centered step pill. Pass children to recompose.
+`<StepIndicator>` with **no children renders the default anatomy**: `Rule` → `Label` → `Rule` - a horizontal rule broken by a centered step pill. Pass children to recompose.
 
 > **Resolved restructure.** Today's component is one divider per step boundary:
 > a `<div>` taking `stepIndex` + `isComplete` and rendering rule-pill-rule. The
@@ -44,11 +44,11 @@ The actual HTML of `<StepIndicator stepIndex={1} isComplete />` today (classes a
 
 ```html
 <div class="flex items-center gap-3 py-3 text-xs">
-  <!-- .Root — in-flow flex row, vertically centered, gap-3 -->
+  <!-- .Root - in-flow flex row, vertically centered, gap-3 -->
   <div class="flex-1 h-px bg-edge"></div>
-  <!-- .Rule — grows; absorbs half the free width, 1px tall -->
+  <!-- .Rule - grows; absorbs half the free width, 1px tall -->
   <div class="flex items-center gap-1.5 px-2 py-0.5 rounded-full border">
-    <!-- .Label — fixed-size pill, flex row gap-1.5 -->
+    <!-- .Label - fixed-size pill, flex row gap-1.5 -->
     <svg class="size-3.5" />
     <!--   complete: green check icon -->
     <!-- …or, when not complete: -->
@@ -57,15 +57,15 @@ The actual HTML of `<StepIndicator stepIndex={1} isComplete />` today (classes a
     <!--   label text: stepIndex + 1 -->
   </div>
   <div class="flex-1 h-px bg-edge"></div>
-  <!-- .Rule — second rule, mirrors the first -->
+  <!-- .Rule - second rule, mirrors the first -->
 </div>
 ```
 
-No absolute positioning, no conditional parts — everything always renders; only the glyph inside `.Label` switches with state. The two `flex-1` rules make the pill self-center at any container width.
+No absolute positioning, no conditional parts - everything always renders; only the glyph inside `.Label` switches with state. The two `flex-1` rules make the pill self-center at any container width.
 
 ## Parts
 
-### `StepIndicator.Root` — `changed`
+### `StepIndicator.Root` - `changed`
 
 Changed: today's `isComplete` boolean becomes `data-state="pending|active|complete"`, and the `icon` prop is deleted.
 
@@ -76,17 +76,17 @@ flex row. Step data enters here; sub-parts read it from context.
 
 | Prop                     | Type                                           | Default | Description                                                                                                                                                                                                        |
 | ------------------------ | ---------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `stepIndex` _(required)_ | `number`                                       | —       | Zero-based; `.Label` renders `Step {stepIndex + 1}`.                                                                                                                                                               |
-| ~~`isComplete`~~         | `boolean`                                      | —       | **Removed (proposed):** the boolean prop becomes `data-state="pending\|active\|complete"` — style off the attribute, no boolean-prop variants. Today it switches the `.Label` glyph (green check vs. pulsing dot). |
-| ~~`icon`~~               | `ReactNode`                                    | —       | **Removed** (today overrides the complete/pending glyph via context). The RFC bans `icon` slot props; pass children to `StepIndicator.Label` instead.                                                              |
+| `stepIndex` _(required)_ | `number`                                       | -       | Zero-based; `.Label` renders `Step {stepIndex + 1}`.                                                                                                                                                               |
+| ~~`isComplete`~~         | `boolean`                                      | -       | **Removed (proposed):** the boolean prop becomes `data-state="pending\|active\|complete"` - style off the attribute, no boolean-prop variants. Today it switches the `.Label` glyph (green check vs. pulsing dot). |
+| ~~`icon`~~               | `ReactNode`                                    | -       | **Removed** (today overrides the complete/pending glyph via context). The RFC bans `icon` slot props; pass children to `StepIndicator.Label` instead.                                                              |
 | `asChild` _(proposed)_   | `boolean`                                      | `false` | Merge the root node onto your own element.                                                                                                                                                                         |
-| + native                 | `React.HTMLAttributes<HTMLDivElement>` · `ref` | —       | Spread onto the single node; `className` merges.                                                                                                                                                                   |
+| + native                 | `React.HTMLAttributes<HTMLDivElement>` · `ref` | -       | Spread onto the single node; `className` merges.                                                                                                                                                                   |
 
 **State attributes (proposed):**
 
 | Attribute    | Values                          | Meaning                                                                                                                                                                          |
 | ------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `data-state` | `pending \| active \| complete` | Step lifecycle, on each step. Today the state is presented only visually (check icon vs. pulsing dot), and only two of the three states exist — `active` is a proposed addition. |
+| `data-state` | `pending \| active \| complete` | Step lifecycle, on each step. Today the state is presented only visually (check icon vs. pulsing dot), and only two of the three states exist - `active` is a proposed addition. |
 
 ```css
 [data-state="pending"] {
@@ -100,19 +100,19 @@ flex row. Step data enters here; sub-parts read it from context.
 }
 ```
 
-### `StepIndicator.Rule` — `changed`
+### `StepIndicator.Rule` - `changed`
 
 One of the flanking horizontal rules. It renders a `<span aria-hidden="true">`.
 Default content: none, it is the 1px line. Always renders; two appear in the
 default anatomy, one either side of the label.
 
-**Layout:** in-flow flex child, `flex-1 h-px` — each rule absorbs half the free width, which is what centers the pill.
+**Layout:** in-flow flex child, `flex-1 h-px` - each rule absorbs half the free width, which is what centers the pill.
 
 | Prop                                    | Type | Description                                          |
 | --------------------------------------- | ---- | ---------------------------------------------------- |
 | `asChild` + native + `ref` _(proposed)_ |      | Own the node. Today the part takes only `className`. |
 
-### `StepIndicator.Label` — `changed`
+### `StepIndicator.Label` - `changed`
 
 The step pill. Today a `<div>`; proposed `<span>`. Default content: status glyph,
 green `CheckCircle` when complete, a 2px-dot pulsing while pending, a pulsing
@@ -127,16 +127,16 @@ ring while active, followed by the text `Step {stepIndex + 1}`. Always renders.
 
 ## Context (what the parts read)
 
-`useStepIndicator(step?)` — a **per-boundary reader**: pass the boundary explicitly at L3, or omit the arg to read the nearest `StepIndicator.Root` context (explicit arg › context › default):
+`useStepIndicator(step?)` - a **per-boundary reader**: pass the boundary explicitly at L3, or omit the arg to read the nearest `StepIndicator.Root` context (explicit arg › context › default):
 
 ```ts
 {
   stepIndex: number;
-  state: "pending" | "active" | "complete"; // proposed — drives data-state
+  state: "pending" | "active" | "complete"; // proposed - drives data-state
 }
 ```
 
-Steps derive from the message's `step-start` parts; `state: 'active'` is the latest boundary while the message streams. No prop getters — the component has no interactivity. One shape, shared with [`useStepIndicator`](../hooks/use-step-indicator.md).
+Steps derive from the message's `step-start` parts; `state: 'active'` is the latest boundary while the message streams. No prop getters - the component has no interactivity. One shape, shared with [`useStepIndicator`](../hooks/use-step-indicator.md).
 
 _Grounding:_ today's context is `{ stepIndex, isComplete, icon }`. The RFC replaces the boolean + icon slot with the three-value `state`.
 
@@ -163,15 +163,15 @@ One `StepIndicator` per step boundary; `.Label` is a sibling between the two
 </StepIndicator.Root>;
 ```
 
-Style each step off `[data-state]` — no boolean props.
+Style each step off `[data-state]` - no boolean props.
 
 ### Headless (L3)
 
-Pass the boundary explicitly and the hook needs no `StepIndicator.Root` — the L3 eject runs standalone (mirrors `useToolCall(part?)` / `useReasoning(input?)`):
+Pass the boundary explicitly and the hook needs no `StepIndicator.Root` - the L3 eject runs standalone (mirrors `useToolCall(part?)` / `useReasoning(input?)`):
 
 ```tsx
 function MyStepDivider({ stepIndex, state }: { stepIndex: number; state: StepState }) {
-  const step = useStepIndicator({ stepIndex, state }); // explicit — no Root required
+  const step = useStepIndicator({ stepIndex, state }); // explicit - no Root required
   return (
     <div className="anything" data-state={step.state}>
       Step {step.stepIndex + 1}
@@ -184,7 +184,7 @@ Or omit the arg to read the surrounding `StepIndicator.Root` context (the L2 pat
 
 ```tsx
 function ContextDivider() {
-  const { stepIndex, state } = useStepIndicator(); // argless — reads the nearest Root
+  const { stepIndex, state } = useStepIndicator(); // argless - reads the nearest Root
   return (
     <div className="anything" data-state={state}>
       Step {stepIndex + 1}
@@ -197,7 +197,7 @@ function ContextDivider() {
 </StepIndicator.Root>;
 ```
 
-`useStepIndicator()` returns `{ stepIndex, state }` — the per-boundary state that drives `data-state="pending|active|complete"`.
+`useStepIndicator()` returns `{ stepIndex, state }` - the per-boundary state that drives `data-state="pending|active|complete"`.
 
 ## Customization (eject path)
 
@@ -207,5 +207,5 @@ function ContextDivider() {
 
 ## Related
 
-- [`useStepIndicator`](../hooks/use-step-indicator.md) — step state
+- [`useStepIndicator`](../hooks/use-step-indicator.md) - step state
 - [Message](./message.md) · [ToolCall](./tool-call.md)

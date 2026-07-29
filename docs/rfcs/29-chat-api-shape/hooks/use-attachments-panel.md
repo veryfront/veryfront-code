@@ -2,11 +2,11 @@
 
 Reads the `AttachmentsPanel` compound's scoped context.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): a justified reader, but it exists only because the durable [`AttachmentsPanel`](../components/attachments-panel.md) exists — proposed to move with it into the optional attachments module, not core v1.
+> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): a justified reader, but it exists only because the durable [`AttachmentsPanel`](../components/attachments-panel.md) exists - proposed to move with it into the optional attachments module, not core v1.
 
-`useAttachmentsPanel` is the context reader for the [`AttachmentsPanel`](../components/attachments-panel.md) compound. Use it inside `AttachmentsPanel.Root` to build custom parts that share the same state the built-in parts consume — without re-threading props. Contexts are scoped: the panel shares state with _its_ children only, never as an app-wide store. The raw context object stays unexported; this hook is the supported way in.
+`useAttachmentsPanel` is the context reader for the [`AttachmentsPanel`](../components/attachments-panel.md) compound. Use it inside `AttachmentsPanel.Root` to build custom parts that share the same state the built-in parts consume - without re-threading props. Contexts are scoped: the panel shares state with _its_ children only, never as an app-wide store. The raw context object stays unexported; this hook is the supported way in.
 
 ## Import
 
@@ -20,7 +20,7 @@ import { useAttachmentsPanel } from "veryfront/chat";
 function useAttachmentsPanel(): AttachmentsPanelContextValue;
 ```
 
-Returns the panel's context value — the [`useAttachments`](use-attachments.md)-backed state (`items`, `isLoading`, and the actions) that `AttachmentsPanel.Root` provides to its children, plus the panel-only composition surface (`attachAccept`, `onClose`, `triggerAttach`):
+Returns the panel's context value - the [`useAttachments`](use-attachments.md)-backed state (`items`, `isLoading`, and the actions) that `AttachmentsPanel.Root` provides to its children, plus the panel-only composition surface (`attachAccept`, `onClose`, `triggerAttach`):
 
 ```ts
 {
@@ -45,11 +45,11 @@ None. State configuration (`url | transport`, `storageKey`) belongs to `useAttac
 
 ### State
 
-The panel state provided by `AttachmentsPanel.Root` — the same surface as `useAttachments`: `items: UploadedFile[]` (with per-item error state) and `isLoading` — plus the panel-only fields Root was configured with: `attachAccept` (the native picker's `accept`) and `onClose` (the panel's dismiss handler, which gates `.Header`'s close button).
+The panel state provided by `AttachmentsPanel.Root` - the same surface as `useAttachments`: `items: UploadedFile[]` (with per-item error state) and `isLoading` - plus the panel-only fields Root was configured with: `attachAccept` (the native picker's `accept`) and `onClose` (the panel's dismiss handler, which gates `.Header`'s close button).
 
 ### Actions
 
-The panel actions provided by `AttachmentsPanel.Root`: `upload`, `add`, `remove`, `clear`, `refresh` — plus `triggerAttach()`, which opens the hidden native file picker that `.Root` mounts (what `.Action` calls).
+The panel actions provided by `AttachmentsPanel.Root`: `upload`, `add`, `remove`, `clear`, `refresh` - plus `triggerAttach()`, which opens the hidden native file picker that `.Root` mounts (what `.Action` calls).
 
 ### Prop getters
 
@@ -83,9 +83,9 @@ function FilesPanel() {
 
 ## Used by
 
-- [`AttachmentsPanel`](../components/attachments-panel.md) — the compound's own parts read this context; the hook exposes the same door to you.
+- [`AttachmentsPanel`](../components/attachments-panel.md) - the compound's own parts read this context; the hook exposes the same door to you.
 
 ## Related
 
-- [`useAttachments`](use-attachments.md) — the underlying durable-file state and actions.
-- [`AttachmentsPanel`](../components/attachments-panel.md) — the compound this hook reads.
+- [`useAttachments`](use-attachments.md) - the underlying durable-file state and actions.
+- [`AttachmentsPanel`](../components/attachments-panel.md) - the compound this hook reads.

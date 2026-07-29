@@ -1,8 +1,8 @@
 # useUpload
 
-Composer-side pending-upload state — the attachment list, its lifecycle, and drop-target/file-input prop getters.
+Composer-side pending-upload state - the attachment list, its lifecycle, and drop-target/file-input prop getters.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -94,15 +94,15 @@ function Composer({ chat }) {
 
 ## Used by
 
-- [`useChatInput`](./use-chat-input.md) — via the `upload` option: submit folds attachments into the message and guards while uploads are in flight; `getFieldProps` handles paste-to-attach.
-- [`ChatInput`](../components/chat-input.md) — `.Root` accepts `upload`; `data-dragging` appears on the drop target.
-- [`AttachmentPill`](../components/attachment-pill.md) — renders items from `attachments`.
+- [`useChatInput`](./use-chat-input.md) - via the `upload` option: submit folds attachments into the message and guards while uploads are in flight; `getFieldProps` handles paste-to-attach.
+- [`ChatInput`](../components/chat-input.md) - `.Root` accepts `upload`; `data-dragging` appears on the drop target.
+- [`AttachmentPill`](../components/attachment-pill.md) - renders items from `attachments`.
 
 ## Related
 
-- [`useAttachmentPill`](./use-attachment-pill.md) — per-item context reader
-- `useAttachments` — the _durable_ files hook (server-persisted panel files); `useUpload` is the composer-side pending set
+- [`useAttachmentPill`](./use-attachment-pill.md) - per-item context reader
+- `useAttachments` - the _durable_ files hook (server-persisted panel files); `useUpload` is the composer-side pending set
 
 ## Note
 
-For durable, server-persisted files see `useAttachments` / `AttachmentsPanel` — a separate surface with the same conventions.
+For durable, server-persisted files see `useAttachments` / `AttachmentsPanel` - a separate surface with the same conventions.

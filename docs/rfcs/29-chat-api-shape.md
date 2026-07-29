@@ -1,28 +1,28 @@
-# RFC: `veryfront/chat` API shape — a reset
+# RFC: `veryfront/chat` API shape - a reset
 
-> **Per-piece documentation:** every proposed component and hook has a user-facing docs page under [`29-chat-api-shape/`](./29-chat-api-shape/README.md) — 25 components, 34 hooks, helpers, providers.
+> **Per-piece documentation:** every proposed component and hook has a user-facing docs page under [`29-chat-api-shape/`](./29-chat-api-shape/README.md) - 25 components, 34 hooks, helpers, providers.
 
 **Status:** draft for discussion. **North star: `veryfront/ui`.** Chat should be a
-**regular component library built exactly like `veryfront/ui`** — each component a
+**regular component library built exactly like `veryfront/ui`** - each component a
 single, fully-controllable node. `veryfront/ui` already nails this (it's a Radix-API
 fork + `cva`, `asChild`, `extends HTMLAttributes`); `veryfront/chat` should follow
 the same convention and **build on those primitives**. No installer, no copied
-source, no headless-only detour — just clean components you fully control from the
+source, no headless-only detour - just clean components you fully control from the
 import. **Goal:** every node and every attribute is the consumer's.
 
 ## The `veryfront/ui` convention chat must adopt
 
-This is _already how `ui/button.tsx` and `ui/dropdown-menu.tsx` are written_ — apply
+This is _already how `ui/button.tsx` and `ui/dropdown-menu.tsx` are written_ - apply
 it to every chat component:
 
 1. **`extends React.HTMLAttributes<T>`** (the right element type) and **`{...props}`
    onto the single node.** That one line is what makes _every_ native attribute the
    consumer's: `className`, `style`, `data-*`, `aria-*`, `onClick`, `id`, `ref`.
-2. **`asChild`** (the `ui` `Slot`) on every component — swap `div`→`p`, merge onto
+2. **`asChild`** (the `ui` `Slot`) on every component - swap `div`→`p`, merge onto
    your own element.
-3. **`cva` variants + `className` merge** (`cx`) for styling — same tokens as `ui`.
+3. **`cva` variants + `className` merge** (`cx`) for styling - same tokens as `ui`.
 4. **`ref` as a prop** (React 19), like `ui`.
-5. **Compound + single node** — `DropdownMenu` is the template: `Root/Trigger/
+5. **Compound + single node** - `DropdownMenu` is the template: `Root/Trigger/
    Content/Item`, each one node, `Trigger` `asChild`.
 
 ```tsx
@@ -33,13 +33,13 @@ export interface ChatInputSubmitProps extends React.ButtonHTMLAttributes<HTMLBut
 export function ChatInputSubmit({ asChild, className, ...props }: ChatInputSubmitProps) {
   const chatInput = useChatInputContext(); // behaviour from the hook
   const Comp = asChild ? Slot : Button;
-  // consumer props go INTO the getter — handlers compose, className merges (rule 9)
+  // consumer props go INTO the getter - handlers compose, className merges (rule 9)
   return <Comp {...chatInput.getSubmitProps({ className: cx("…", className), ...props })} />;
 }
 ```
 
 Now the consumer gets everything for free: `<ChatInput.Submit data-x aria-label="Send"
-className="…" onClick={…} asChild>` — or swaps the element entirely.
+className="…" onClick={…} asChild>` - or swaps the element entirely.
 
 ---
 
@@ -51,70 +51,71 @@ className="…" onClick={…} asChild>` — or swaps the element entirely.
 Everything follows from this. React Aria proves you can do it **from a plain
 package import**: hooks return **prop getters** (props you spread onto elements you
 render) and primitives take **`asChild`** (merge behaviour onto your element). No
-copying source, no CLI — **every node and every attribute is already in the
-consumer's hands** through the API. The thing we keep tripping on — a component
-that renders DOM you can't reach — simply never exists.
+copying source, no CLI - **every node and every attribute is already in the
+consumer's hands** through the API. The thing we keep tripping on - a component
+that renders DOM you can't reach - simply never exists.
 
 **Why a per-node `className` prop is not the fix.** Customizing a node means owning
-the _element_, not decorating it — the consumer may want to **change the tag**
+the _element_, not decorating it - the consumer may want to **change the tag**
 (`div` → `p`, `button` → `a`), **add `data-*` / `aria-*` attributes**, wrap it, or
 change its children. A `className` prop hands you none of that; it just lets you
 paint a box the library still owns. The only real answer is to **own the element**
-— via `asChild` or prop getters. So the requirement isn't "expose more class
-hooks"; it's "never render an element the consumer can't supply themselves."
 
-## Reusability — generic core vs veryfront adapter (a hard requirement)
+- via `asChild` or prop getters. So the requirement isn't "expose more class
+  hooks"; it's "never render an element the consumer can't supply themselves."
 
-**Every public hook and component must be reusable by ANY consumer to build ANY chat UI — not tied to the veryfront application.** This is non-negotiable. A full-surface review found the surface is overwhelmingly generic, but a small set of pieces are hard-wired to veryfront's backend/product and are currently documented as neutral "signature kept," hiding the coupling. Those must move behind a **veryfront adapter** (or gain injectable transport), leaving a clean generic core.
+## Reusability - generic core vs veryfront adapter (a hard requirement)
 
-> **`veryfront/chat` is an AG-UI client (`src/agent/ag-ui/`).** The agent / tool-call / status / streaming **shape is the [AG-UI protocol](https://ag-ui.com)** — a generic open standard the library is _meant_ to implement. That shape is **not** app coupling; supporting it is the point. So agent status values (`thinking` / `tool_execution` / `completed` / …), tool-call lifecycle, and streaming events are all generic. The genuine coupling is the veryfront-specific bits **around** the protocol — the REST agent-catalog transport, brand strings, product settings, and skill vocabulary — listed below.
+**Every public hook and component must be reusable by ANY consumer to build ANY chat UI - not tied to the veryfront application.** This is non-negotiable. A full-surface review found the surface is overwhelmingly generic, but a small set of pieces are hard-wired to veryfront's backend/product and are currently documented as neutral "signature kept," hiding the coupling. Those must move behind a **veryfront adapter** (or gain injectable transport), leaving a clean generic core.
+
+> **`veryfront/chat` is an AG-UI client (`src/agent/ag-ui/`).** The agent / tool-call / status / streaming **shape is the [AG-UI protocol](https://ag-ui.com)** - a generic open standard the library is _meant_ to implement. That shape is **not** app coupling; supporting it is the point. So agent status values (`thinking` / `tool_execution` / `completed` / …), tool-call lifecycle, and streaming events are all generic. The genuine coupling is the veryfront-specific bits **around** the protocol - the REST agent-catalog transport, brand strings, product settings, and skill vocabulary - listed below.
 
 | Coupled piece                                 | Coupling (verified in `src/`)                                                                                                                                               | Decouple path                                                                                                                |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `useAgents` · `useAgentMetadata` · `useAgent` | hardcoded `fetch("/api/agents")`, veryfront envelope/normalizers, error registry, SDK types                                                                                 | move to the adapter, or require an injected `transport`/`fetcher` and document the backend contract                          |
 | `AgentCard`                                   | imports veryfront agent-SDK message/tool **types** and duplicates `Message`/`ToolCall` for a runtime view (the status _values_ are AG-UI-standard, so **not** the coupling) | type against the generic AG-UI shape, or move the SDK-typed card to the adapter                                              |
 | `ToolCall` + `isSkillToolPart`                | auto-compacts by hardcoded tool names (`load_skill`, `execute_skill_script`); "skill" is a veryfront concept                                                                | default `variant="card"`; opt a tool into compact via the `tools` registry; drop the skill guard from the public generic API |
-| `ChatEmptyState.Avatar`                       | default `alt="Veryfront Agent"` — brand string shipped to screen readers                                                                                                    | neutral default (`"Agent"`) or make `alt` required                                                                           |
+| `ChatEmptyState.Avatar`                       | default `alt="Veryfront Agent"` - brand string shipped to screen readers                                                                                                    | neutral default (`"Agent"`) or make `alt` required                                                                           |
 | `ChatActions.Preset` `settings`               | `autoSubmit` / `autoFixErrors` are agent-runtime toggles                                                                                                                    | drop from the public reader; consumers compose a settings submenu from generic `.Item`s                                      |
 | `ModelSelector` logo                          | provider logo hardcoded to `https://models.dev/logos/…`, no override                                                                                                        | add a logo-source slot/override; document the external dependency                                                            |
 | `Message` defaults                            | default renderer reads hardcoded `metadata.agentName` / `agentId` / `agentAvatarUrl` / `model`                                                                              | document as an override-able convention, not an implicit contract                                                            |
 | `markdown`                                    | "Veryfront hardening pass" branding on a standard sanitize step                                                                                                             | neutral wording                                                                                                              |
 
-**Generic core** (stays in `veryfront/chat`): `Chat` / `ChatRoot` / `ChatInput` / `ChatMessageList` / `Message`, every reader, `AgentPicker`, `ModelSelector`, the composer / upload / voice primitives, and **editing + branching** (verified fully client-side — no app coupling; a standard chat UX that earns its place). **veryfront adapter** (moves out): the `/api/agents` fetch hooks, `ChatAgentPicker`, `AgentCard`, skill-tool guards, and the envelope normalizers.
+**Generic core** (stays in `veryfront/chat`): `Chat` / `ChatRoot` / `ChatInput` / `ChatMessageList` / `Message`, every reader, `AgentPicker`, `ModelSelector`, the composer / upload / voice primitives, and **editing + branching** (verified fully client-side - no app coupling; a standard chat UX that earns its place). **veryfront adapter** (moves out): the `/api/agents` fetch hooks, `ChatAgentPicker`, `AgentCard`, skill-tool guards, and the envelope normalizers.
 
 Individual pages flag their coupling inline; this table is the single source of truth for the split.
 
-## Earns its place — proposed v1 scope cuts & relocations
+## Earns its place - proposed v1 scope cuts & relocations
 
-A generic library ships only what a generic consumer needs. The full-surface review flagged pieces that don't earn a place in the core chat surface — app-shaped, not chat-specific, or without a consumer. Each disposition below **removes or relocates public surface**, so it is a proposal to confirm, not a done deal:
+A generic library ships only what a generic consumer needs. The full-surface review flagged pieces that don't earn a place in the core chat surface - app-shaped, not chat-specific, or without a consumer. Each disposition below **removes or relocates public surface**, so it is a proposal to confirm, not a done deal:
 
 | Piece                                                         | Finding                                                                                                                                                                                        | Proposed disposition                                                                                                                |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `AttachmentsPanel` + `useAttachments` + `useAttachmentsPanel` | durable "file browser" is a RAG / doc-Q&A product feature (empty state: _"upload files to start asking questions about them"_); it is the reason the attachment surface has **4 hooks, not 2** | ship as an **optional module** (e.g. `veryfront/chat/attachments`), not core v1 — the composer keeps `AttachmentPill` + `useUpload` |
+| `AttachmentsPanel` + `useAttachments` + `useAttachmentsPanel` | durable "file browser" is a RAG / doc-Q&A product feature (empty state: _"upload files to start asking questions about them"_); it is the reason the attachment surface has **4 hooks, not 2** | ship as an **optional module** (e.g. `veryfront/chat/attachments`), not core v1 - the composer keeps `AttachmentPill` + `useUpload` |
 | `useCompletion`                                               | self-described non-chat one-shot text generation, no L2 consumer, couples to veryfront errors                                                                                                  | **cut** from the chat public surface                                                                                                |
-| `ChatErrorBoundary` + `useChatErrorHandler`                   | no chat-specific logic — a stock React error boundary + error-state hook                                                                                                                       | **move to `veryfront/ui`** as `ErrorBoundary` / `useErrorHandler`                                                                   |
+| `ChatErrorBoundary` + `useChatErrorHandler`                   | no chat-specific logic - a stock React error boundary + error-state hook                                                                                                                       | **move to `veryfront/ui`** as `ErrorBoundary` / `useErrorHandler`                                                                   |
 | `useClipboard`                                                | a generic browser util, not a chat hook (already shared with the code-block copy button)                                                                                                       | reposition as a generic util, or fold into `useMessageContext.copy`; disclose the reshaped signature                                |
-| `useConversation` (single-by-id)                              | zero internal consumers — speculative public surface                                                                                                                                           | **cut** until a real consumer exists                                                                                                |
-| `MessageActionBar`                                            | a re-export of `Message.Actions` that re-documents the same parts verbatim (drift risk)                                                                                                        | trim to a thin alias stub — canonical home is `Message.Actions`                                                                     |
+| `useConversation` (single-by-id)                              | zero internal consumers - speculative public surface                                                                                                                                           | **cut** until a real consumer exists                                                                                                |
+| `MessageActionBar`                                            | a re-export of `Message.Actions` that re-documents the same parts verbatim (drift risk)                                                                                                        | trim to a thin alias stub - canonical home is `Message.Actions`                                                                     |
 
-**Editing + branching stays** — confirmed generic (standard chat UX, fully client-side), so it earns its place despite the coupling worry raised earlier.
+**Editing + branching stays** - confirmed generic (standard chat UX, fully client-side), so it earns its place despite the coupling worry raised earlier.
 
 ## Hard rules (what "clean" means here)
 
 1. **No `xxxClassName` / `xxxProps` bags. Ever.** One `className` targets one node.
 2. **No hidden DOM.** A primitive renders **one** element (or merges onto yours via
    `asChild`). Structure = you compose primitives + your own divs. There is never
-   an "inner div you can't class" — because you rendered it.
+   an "inner div you can't class" - because you rendered it.
 3. **`asChild` everywhere** (Radix Slot). Any primitive can merge its behaviour +
    a11y onto _your_ element, so you pick the tag and own all classes.
-4. **Prop getters for full headless.** Hooks return `getXProps()` you spread — you
+4. **Prop getters for full headless.** Hooks return `getXProps()` you spread - you
    render the elements. (React Aria model.)
 5. **Config lives on the component that uses it.** `models` goes on the model
    selector, not the root. Root context is opt-in (Layer 2), never required.
 6. **Scoped context, not app-wide magic.** A `<ChatInput>` shares state with _its_
    children only; it is not a global store the whole tree reads implicitly.
 7. **Style state via `data-*`, not props.** `data-streaming`, `data-active`,
-   `data-loading` — style with CSS/Tailwind variants, no boolean props. (React
+   `data-loading` - style with CSS/Tailwind variants, no boolean props. (React
    Aria model.)
 8. **Compatibility is explicit.** The current styled components stay during the
    migration, but this RFC includes one batched breaking release. Additive
@@ -122,18 +123,18 @@ A generic library ships only what a generic consumer needs. The full-surface rev
    breaking-change ledger below.
 9. **Merging is exact, or the contract is a lie.** Handlers compose (consumer
    first, `preventDefault` cancels internal), classes merge Tailwind-aware
-   (consumer wins), refs compose, getters take overrides. See _Merge semantics_ —
+   (consumer wins), refs compose, getters take overrides. See _Merge semantics_:
    normative, conformance-tested.
-10. **Default-render parity: the styling is already right — keep it.** The
+10. **Default-render parity: the styling is already right - keep it.** The
     reshape moves _ownership_ of nodes; it does not redesign them. For every
     component, the childless/L1 default render must produce the **identical DOM
-    tree and classes as today** — zero layout regressions. Wrappers deleted from
+    tree and classes as today** - zero layout regressions. Wrappers deleted from
     a primitive (e.g. `ChatInput`'s internal centering div, `ChatRoot`'s
     container) reappear as explicit markup in the printed default composition,
     so pixels never change. The only DOM deltas permitted are the ones
     explicitly badged `changed` in the docs with a stated reason (currently:
     `ChatMessageList`'s two-node root collapse, `StepIndicator`'s state
-    vocabulary, `Message.Tokens`' popover trim) — each is a review item, not a
+    vocabulary, `Message.Tokens`' popover trim) - each is a review item, not a
     side effect. The conformance harness pins this with default-render DOM
     snapshots.
 
@@ -150,15 +151,15 @@ These apply to every piece; reference blocks cite them instead of restating them
    `composeEventHandlers` semantics). A naive `{...getXProps()} {...props}` spread
    is **not** the pattern: L2 components compose internally; L3 consumers pass
    their props _into_ the getter.
-2. **`getXProps(overrides?)`** — every prop getter accepts the consumer's props
+2. **`getXProps(overrides?)`** - every prop getter accepts the consumer's props
    and returns the merged result: handlers chained per rule 1, `className` merged
    per rule 3, `style` shallow-merged consumer-wins, `id`/`aria-*` consumer-wins.
 3. **`className` merges Tailwind-aware** (`cx` = clsx + tailwind-merge): consumer
    classes beat variant defaults (`p-4` overrides a default `p-2`).
 4. **Refs compose.** The `ref` prop and internal refs are merged; none dropped.
 5. **`asChild` applies the same single merged result** onto the child element per
-   rules 1–4; getters are never double-applied.
-6. **`mergeProps` is public API** — the exact merge used internally, exported for
+   rules 1-4; getters are never double-applied.
+6. **`mergeProps` is public API** - the exact merge used internally, exported for
    L3 consumers composing several hooks onto one element (React Aria model).
 
 ### `data-*` state contract
@@ -171,7 +172,7 @@ styling props. Global vocabulary (each block lists which apply):
 | `data-status="ready\|submitted\|streaming\|error"`                                                                                     | `ChatRoot` · `ChatInput.Root` · `.Submit`                                                                                                                  | session status (mirrors `useChat().status`)                              |
 | `data-streaming`                                                                                                                       | `Message.Root` · `.Text` · `Reasoning.Root`                                                                                                                | this content is streaming now                                            |
 | `data-role="user\|assistant\|system"`                                                                                                  | `Message.Root`                                                                                                                                             | author                                                                   |
-| `data-agent-id="<id>"`                                                                                                                 | `Message.Root`                                                                                                                                             | producing agent (per-message — multi-agent ready)                        |
+| `data-agent-id="<id>"`                                                                                                                 | `Message.Root`                                                                                                                                             | producing agent (per-message - multi-agent ready)                        |
 | `data-state="input-streaming\|input-available\|output-available\|output-error\|approval-requested\|approval-responded\|output-denied"` | `ToolCall.Root`                                                                                                                                            | tool lifecycle incl. human-in-the-loop approval                          |
 | `data-open`                                                                                                                            | disclosure + popper roots/triggers (`ToolCall`, `Reasoning`, `Sources`, `ChatInput.Model`, `AgentPicker.Trigger`, `ChatActions.Trigger`, `InlineCitation`) | expanded                                                                 |
 | `data-state="pending\|active\|complete"`                                                                                               | `StepIndicator.Root`                                                                                                                                       | step lifecycle                                                           |
@@ -185,33 +186,33 @@ styling props. Global vocabulary (each block lists which apply):
 | `data-copied`                                                                                                                          | copy buttons                                                                                                                                               | transient copied feedback                                                |
 | `data-dragging`                                                                                                                        | `ChatInput.Root` (drop target)                                                                                                                             | file drag-over                                                           |
 | `data-compact`                                                                                                                         | `ChatInput.Root`                                                                                                                                           | single-line/narrow layout                                                |
-| `data-at-bottom` · `data-autoscrolling` · `data-scrollable`                                                                            | `ChatMessageList`                                                                                                                                          | scroll state — updated imperatively (no React re-render per scroll tick) |
+| `data-at-bottom` · `data-autoscrolling` · `data-scrollable`                                                                            | `ChatMessageList`                                                                                                                                          | scroll state - updated imperatively (no React re-render per scroll tick) |
 | `data-floating`                                                                                                                        | `Message.Actions`                                                                                                                                          | hidden-but-animatable (never unmount-to-hide)                            |
 | `data-listening`                                                                                                                       | `ChatInput.Voice`                                                                                                                                          | dictation active                                                         |
 | `data-disabled`                                                                                                                        | any interactive leaf                                                                                                                                       | disabled                                                                 |
 
-### Prop getters — resolved
+### Prop getters - resolved
 
 L2 primitives are the 95% path. **Every stateful hook still exposes getters for
-its interactive nodes, because the L2 components are implemented with them** — so
+its interactive nodes, because the L2 components are implemented with them** - so
 the two can never drift. Display-only leaves (`Message.Avatar`, `Sources.Pill`
 label) need no getter: hook state + your element suffices. Each hook's reference
 block lists its exact getters.
 
-### TypeScript generics (locked before v1 — retrofit would be breaking)
+### TypeScript generics (locked before v1 - retrofit would be breaking)
 
 - **Messages:** `ChatMessage<TMetadata, TDataParts, TTools>` (AI SDK v5
   `UIMessage` shape). `useChat<TMessage>` preserves the type through
   `useMessageParts`, `Message.Parts`' render prop, and helpers.
 - **Tools:** `useToolCall<TTools>` narrows per tool name (`part.type ===
-  'tool-…'`). The tools registry (below) is typed against `TTools` — a wrong
+  'tool-…'`). The tools registry (below) is typed against `TTools` - a wrong
   renderer signature is a compile error.
 - **Data parts** flow typed through the same path; custom part renderers receive
   the narrowed part type.
 
 ### Part rendering & the tools registry (per-piece ejection at every layer)
 
-The most common customization — "render _this_ tool/part my way" — must never
+The most common customization - "render _this_ tool/part my way" - must never
 force ejecting the tree:
 
 - **L1:** `<Chat tools={{ web_search: MyToolCard }} />`
@@ -223,11 +224,11 @@ default renderer. Registry values are components receiving the typed part.
 
 ### The markdown exception (the only sanctioned multi-node primitive)
 
-`Markdown` (and therefore `Message.Text`) necessarily renders a node tree — the
+`Markdown` (and therefore `Message.Text`) necessarily renders a node tree - the
 one documented exception to the node contract, tamed by:
 
 - **`components={{ code, a, img, table, … }}` override map** (react-markdown
-  convention): every emitted element type is replaceable — still no unreachable
+  convention): every emitted element type is replaceable - still no unreachable
   node. `RichCodeBlock` is the default `code` renderer; swap it via the map.
 - **Streaming is owned here** (streamdown model): incremental block parsing (only
   the tail block re-renders per token), unterminated fence/emphasis repair, and
@@ -270,51 +271,51 @@ assistant-ui viewport):
 
 ### State ownership (resolves the races)
 
-- **Input state has one owner: `useChatInput`** — controlled (`value`/`onChange`)
+- **Input state has one owner: `useChatInput`** - controlled (`value`/`onChange`)
   or uncontrolled; `useChat` does **not** expose `input`/`handleInputChange`.
-  Voice folds in via `useChatInput({ voice })` — no userland transcript weaving.
+  Voice folds in via `useChatInput({ voice })` - no userland transcript weaving.
 - **Streams are provider-scoped, not mount-scoped:** keyed by conversation id in
   the conversations/chat context; switching threads neither aborts nor orphans an
   in-flight stream, and it persists to the correct thread. `useConversationChat`
-  exposes `ready` — consumers never write their own thread-ready guard.
+  exposes `ready` - consumers never write their own thread-ready guard.
 - **Editing reuses the composer:** `ChatInput` inside a `Message` _is_ the edit
   form (context-sensitive, assistant-ui model); `Message.Root` gets
-  `data-editing`; nearest provider wins — the explicit nested-context rule.
+  `data-editing`; nearest provider wins - the explicit nested-context rule.
 - **Context precedence everywhere:** explicit prop > nearest context > default.
 - **Readiness flows into chat context:** `ChatContextValue` includes `ready:
-  boolean` — `ChatRoot` reads `activeReady` from the nearest
+  boolean` - `ChatRoot` reads `activeReady` from the nearest
   `ConversationsProvider` (standalone: `true`). `Chat.If` selectors and the
   default composition gate skeletons on it; consumers never re-derive it.
 - **The edit mechanism, concretely:** `useChatInput` reads
   `useMessageContextOptional()`. Inside a message with `isEditing`, it seeds
   `value` from `textContent`, routes submit to `editMessage(message.id, value)`
-  instead of `sendMessage`, and maps Escape to `cancelEdit`. No extra props —
+  instead of `sendMessage`, and maps Escape to `cancelEdit`. No extra props:
   nesting _is_ the wiring.
 - **Scroll attachment + button anchoring:** `useChatScroll` returns
-  `viewportRef` (and `getViewportProps(overrides?)`) — attach either to your
+  `viewportRef` (and `getViewportProps(overrides?)`) - attach either to your
   scroller. `ChatMessageList.ScrollButton` anchors via `position: sticky` at
-  the viewport's bottom edge (no wrapper node, no portal) — proposed
+  the viewport's bottom edge (no wrapper node, no portal) - proposed
   resolution, review welcome.
-- **`useReasoning` gets an explicit-input form** — `useReasoning({ text,
-  isStreaming }?)` — so the L3 eject works without a `Reasoning.Root`
+- **`useReasoning` gets an explicit-input form** - `useReasoning({ text,
+  isStreaming }?)` - so the L3 eject works without a `Reasoning.Root`
   (mirrors `useToolCall(part?)` / `useSources(message?)`).
-- **`StepIndicator` model:** per-boundary reader — `useStepIndicator(step?)`
+- **`StepIndicator` model:** per-boundary reader - `useStepIndicator(step?)`
   → `{ stepIndex, state: 'pending' | 'active' | 'complete' }` (boundary explicit
   at L3, from context at L2; mirrors `useToolCall(part?)` / `useSources(message?)`),
   steps derived from `step-start` parts; `active` = the latest boundary while the
   message streams. One shape, both docs pages.
 - **Audit-settled details:** `AttachmentPill.Root` takes `upload?:
-  UseUploadResult`, defaulting to the nearest `ChatInput` context's upload —
+  UseUploadResult`, defaulting to the nearest `ChatInput` context's upload:
   that's how `.Retry`/`.Remove` route without handler props. `ChatSidebar`
   gains `.Item.Menu.Trigger` (the icon-slot replacement). `Sources.Root` drops
   `data-open` (it has no disclosure). Childless `<Message.Parts/>` renders the
-  default per-type mapping (registry-aware) — the public default for
+  default per-type mapping (registry-aware) - the public default for
   `.Content`. One conversation type: `Conversation` (no `ConversationSummary`).
   Optional context hooks return `null` (never `undefined`), library-wide.
   `Message.Tokens` popover trim is settled: it becomes a display-only `<span>`
   (breakdown popover falls under the positioning-anchor exception). `formatSize` joins the
   public helpers. The canonical DOM-delta ledger is the docs pages' `changed`/
-  `new` badges — rule 10's inline list is illustrative, not exhaustive.
+  `new` badges - rule 10's inline list is illustrative, not exhaustive.
 
 ---
 
@@ -328,7 +329,7 @@ L2  Components (ui-style)  <ChatInput><ChatInput.Field/><ChatInput.Submit/></Cha
 L3  Headless hooks        const c = useChatInput(); <textarea {...c.getFieldProps()} />
 ```
 
-### L3 — Headless hooks (React Aria style)
+### L3 - Headless hooks (React Aria style)
 
 State + actions + **prop getters**. You render every node. Total control, zero DOM
 opinion. This is the foundation the other layers compose.
@@ -353,24 +354,25 @@ const list = useConversations()                // conversations, active, select/
 `useChatInput` owns the submit fold/guard/clear (kills the userland glue). Prop
 getters carry the a11y + handlers; **you** own the tag and classes.
 
-### L2 — Primitives (Radix / React-Aria-Components style)
+### L2 - Primitives (Radix / React-Aria-Components style)
 
 Thin components over L3. **Single node each**, `asChild`, scoped context, `data-*`
 state. You still add the layout divs. No config threaded through a root.
 
 **Node contract (the guarantee).** Every primitive renders **exactly one** DOM node
-— never a private stack of wrappers:
+
+- never a private stack of wrappers:
 
 - **Leaf** primitives _are_ one element: `ChatInput.Field` → one `<textarea>`,
   `ChatInput.Submit` → one `<button>`, `ChatInput.Model` → one trigger.
 - **Container** primitives render **one** semantic node and provide context to
   their children: **`ChatInput` → a single `<form>`**, `Message` → a single
   `<article>`, `MessageList` → a single scroll container. They add **zero** wrapper
-  divs — _you_ supply every layout div in between.
+  divs - _you_ supply every layout div in between.
 - Every one of these is `asChild`, so the single node is _yours_ to swap
   (`div`→`p`), attribute (`data-*`), and class.
 
-So `<ChatInput>` is **one `<form>` + context** — not an input chrome. This is the whole "no div you can't reach": between the form and
+So `<ChatInput>` is **one `<form>` + context** - not an input chrome. This is the whole "no div you can't reach": between the form and
 the textarea and the button, there is nothing but the markup _you_ wrote.
 
 ```tsx
@@ -398,7 +400,7 @@ the textarea and the button, there is nothing but the markup _you_ wrote.
 </ChatInput.Submit>;
 ```
 
-Same for messages — every part-type is a reachable node, no opaque `Message.Part`:
+Same for messages - every part-type is a reachable node, no opaque `Message.Part`:
 
 ```tsx
 <Message message={m}>
@@ -413,7 +415,7 @@ Same for messages — every part-type is a reachable node, no opaque `Message.Pa
 </Message>;
 ```
 
-### L1 — Preset (black box)
+### L1 - Preset (black box)
 
 The batteries default, built from L2 with sensible defaults.
 
@@ -423,13 +425,13 @@ The batteries default, built from L2 with sensible defaults.
 
 ---
 
-## The adoption journey — pit of success
+## The adoption journey - pit of success
 
 The three layers are not three products; they are **one graduation path**. A
 consumer must be able to _choose their journey_ and evolve without ever hitting a
 rewrite cliff:
 
-1. **Start black-box (L1).** `<Chat agentId api/>` — running in five minutes,
+1. **Start black-box (L1).** `<Chat agentId api/>` - running in five minutes,
    zero decisions.
 2. **Customize a piece (L1 → L2).** The L1 preset's **default composition is
    public**: the RFC (and later the docs) print the exact L2 source that `<Chat>`
@@ -441,9 +443,9 @@ rewrite cliff:
 
 **Requirements this places on the API (checked per piece in the reference):**
 
-- Every L1 default is expressible as documented public L2 — no private components,
+- Every L1 default is expressible as documented public L2 - no private components,
   no internal-only props.
-- Every L2 component is a thin shell over a public L3 hook — the hook is exported
+- Every L2 component is a thin shell over a public L3 hook - the hook is exported
   and sufficient to rebuild the component verbatim.
 - Steps are _per-piece_, not all-or-nothing: swapping one message part or one
   toolbar button never forces ejecting the rest of the tree.
@@ -456,7 +458,7 @@ rewrite cliff:
 
 | Pain (from the composed example)                    | Resolution                                                                                              |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| "how do I class/attribute/retag the node inside X?" | Every node `extends HTMLAttributes` + `asChild` — it's yours (className, `data-*`, tag). No hidden div. |
+| "how do I class/attribute/retag the node inside X?" | Every node `extends HTMLAttributes` + `asChild` - it's yours (className, `data-*`, tag). No hidden div. |
 | `models` on the root felt wrong                     | Config on the leaf (`ChatInput.Model models=`); root context is opt-in only.                            |
 | `usePersistMessages` effect                         | `useConversationChat` / `useChatInput` own it (L3).                                                     |
 | `isStreaming` index math                            | `data-streaming` from context; or `chatInput.isStreaming`.                                              |
@@ -464,7 +466,7 @@ rewrite cliff:
 | `AttachmentsPanel.Item` opaque                      | It's a primitive over `useAttachments`; compose the row or use the hook.                                |
 | suggestion massaging / `.find`                      | `useAgent`/helper returns `{ label, prompt }[]`; callback returns the item.                             |
 
-The six issues already filed (#2973–#2978) become **the first concrete steps** of
+The six issues already filed (#2973-#2978) become **the first concrete steps** of
 L2/L3 rather than one-off patches.
 
 ---
@@ -484,7 +486,7 @@ components (L2) consume. Node in `<angle>`.
 | `useConversationChat`          | hook                     | `useChat` bound to a `ConversationsProvider`'s active thread (seed + persist) → `{ chat, bound, resolvedAgentId, ready }`                                                                                                                                                                 |
 | `useCompletion`                | hook                     | one-shot text (non-chat)                                                                                                                                                                                                                                                                  |
 | `useStreaming`                 | hook                     | low-level stream state                                                                                                                                                                                                                                                                    |
-| `useChatActions`               | hook                     | context reader for the `ChatActions` compound only — thread-level export/clear _compose from_ `exportAsMarkdown`/`downloadMarkdown` + `setMessages`                                                                                                                                       |
+| `useChatActions`               | hook                     | context reader for the `ChatActions` compound only - thread-level export/clear _compose from_ `exportAsMarkdown`/`downloadMarkdown` + `setMessages`                                                                                                                                       |
 | `useChatContext` / `…Optional` | hook                     | read `ChatRoot` context                                                                                                                                                                                                                                                                   |
 | `Chat`                         | **L1 preset**            | `<Chat agentId api/>`                                                                                                                                                                                                                                                                     |
 | `ChatRoot`                     | provider                 | scoped chat context; renders **no node by default** (`asChild` for a node)                                                                                                                                                                                                                |
@@ -495,7 +497,7 @@ components (L2) consume. Node in `<angle>`.
 ### ChatInput
 
 `useChatInput` · `useChatInputContext` · `useVoiceInput` · `useUpload`
-**`ChatInput`** — `Root <form>` · `.Field <textarea>` ·
+**`ChatInput`** - `Root <form>` · `.Field <textarea>` ·
 `.Attach <button>` · `.Model <button/trigger>` · `.Voice <button>` · `.Submit
 <button>` (Send↔Stop by state) · `.Send <button>` · `.Stop <button>` · `.Export
 <button>` · `.Toolbar <div>`.
@@ -503,7 +505,7 @@ components (L2) consume. Node in `<angle>`.
 ### Message
 
 `useMessageContext` · `useMessageParts` · `useClipboard`
-**`Message`** — `Root <article>` · `.Avatar <div>` · `.Header <header>` (`.Name
+**`Message`** - `Root <article>` · `.Avatar <div>` · `.Header <header>` (`.Name
 <span>`, `.Timestamp <time>`) · `.Content <div>` · `.Parts` _(render-fn iterator,
 no node)_ · `.Text` · `.Reasoning` · `.Source` · `.File` · `.Image` · `.Sources
 
@@ -514,37 +516,37 @@ no node)_ · `.Text` · `.Reasoning` · `.Source` · `.File` · `.Image` · `.So
 
 ### Tool calls
 
-`useToolCall` — **`ToolCall`** — `Root <div>` · `.Trigger <button>` · `.Body
+`useToolCall` - **`ToolCall`** - `Root <div>` · `.Trigger <button>` · `.Body
 
 <div>` · `.Input <pre>` · `.Output <div>` · `.Error <div>`.
 
 ### Reasoning · Steps · Sources
 
-- `useReasoning` — **`Reasoning`** — `Root <div>` · `.Trigger <button>` · `.Content <div>`.
-- `useStepIndicator` — **`StepIndicator`** — `Root <div role="separator">` ·
+- `useReasoning` - **`Reasoning`** - `Root <div>` · `.Trigger <button>` · `.Content <div>`.
+- `useStepIndicator` - **`StepIndicator`** - `Root <div role="separator">` ·
   `.Rule <span aria-hidden>` · `.Label <span>`.
-- `useSources` — **`Sources`** — `Root <div>` · `.List <ul>` · `.Pill <a>`.
-- **`InlineCitation`** — `.Trigger <a>` · `.Card <div>` (exists today; doubles as the default `components.citation` renderer in the markdown override map).
-- **`ChatActions`** — `Root` · `.Trigger <button>` · `.Content <div>` · `.Item <button>` · `.Preset <button>`.
+- `useSources` - **`Sources`** - `Root <div>` · `.List <ul>` · `.Pill <a>`.
+- **`InlineCitation`** - `.Trigger <a>` · `.Card <div>` (exists today; doubles as the default `components.citation` renderer in the markdown override map).
+- **`ChatActions`** - `Root` · `.Trigger <button>` · `.Content <div>` · `.Item <button>` · `.Preset <button>`.
 
 ### Message actions
 
-- **`MessageActionBar`** — re-export of the `Message.Actions` family
+- **`MessageActionBar`** - re-export of the `Message.Actions` family
   (`.CopyAction` `.RegenerateAction` `.EditAction`; `.Copied` deleted →
   `data-copied`).
-- **`BranchPicker`** — `Root <div>` · `.Previous <button>` · `.Count <span>` · `.Next <button>`.
-- ~~`MessageFeedback`~~ — cut from v1 (no backend endpoint); returns additively later.
+- **`BranchPicker`** - `Root <div>` · `.Previous <button>` · `.Count <span>` · `.Next <button>`.
+- ~~`MessageFeedback`~~ - cut from v1 (no backend endpoint); returns additively later.
 
 ### Attachments
 
-- _ChatInput, pending:_ `useAttachmentPill` — **`AttachmentPill`** — `Root <div>` · `.Thumbnail <img>` · `.Icon <span>` · `.Label <span>` · `.Retry <button>` · `.Remove <button>`.
-- _Durable files:_ `useAttachments` · `useAttachmentsPanel` — **`AttachmentsPanel`** — `Root <div>` · `.Header <header>` · `.List <ul>` · `.Item <li>` (`.Icon` `.Preview` `.Remove` today; `.Name` `.Size` via #2975) · `.Loading <div>` · `.Empty <div>` · `.Action <button>`.
+- _ChatInput, pending:_ `useAttachmentPill` - **`AttachmentPill`** - `Root <div>` · `.Thumbnail <img>` · `.Icon <span>` · `.Label <span>` · `.Retry <button>` · `.Remove <button>`.
+- _Durable files:_ `useAttachments` · `useAttachmentsPanel` - **`AttachmentsPanel`** - `Root <div>` · `.Header <header>` · `.List <ul>` · `.Item <li>` (`.Icon` `.Preview` `.Remove` today; `.Name` `.Size` via #2975) · `.Loading <div>` · `.Empty <div>` · `.Action <button>`.
 
 ### Conversations
 
 `useConversations` · `useConversation` · `useConversationsContext` ·
 `ConversationsProvider`
-**`ChatSidebar`** — `Root <nav>` · `.NewButton <button>` · `.List <ul>` · `.Group
+**`ChatSidebar`** - `Root <nav>` · `.NewButton <button>` · `.List <ul>` · `.Group
 
 <div>` · `.Item <li>` (`.Title <span>` *(#2977)*, `.Menu <DropdownMenu>`, `.Rename`,
 `.Delete`) · `.Empty <div>`.
@@ -552,21 +554,21 @@ no node)_ · `.Text` · `.Reasoning` · `.Source` · `.File` · `.Image` · `.So
 ### Agents & models
 
 - `useAgents` · `useAgentMetadata` · `useAgent` · `useAgentCard` · `useAgentPicker` · `useModelSelector`.
-- **`AgentPicker`** — `Root` (provider) · `.Trigger <button>` · `.Content <div>` · `.Search <input>` · `.List <ul>` · `.Item <button>` · `.Create <button>` · `.Manage <button>`.
-- **`ModelSelector`** — `Root · .Trigger · .Content · .Search · .List · .Item`.
-- **`AgentCard`**, **`ChatAgentPicker`** — presets over the above.
+- **`AgentPicker`** - `Root` (provider) · `.Trigger <button>` · `.Content <div>` · `.Search <input>` · `.List <ul>` · `.Item <button>` · `.Create <button>` · `.Manage <button>`.
+- **`ModelSelector`** - `Root · .Trigger · .Content · .Search · .List · .Item`.
+- **`AgentCard`**, **`ChatAgentPicker`** - presets over the above.
 
 ### Empty state · Markdown · Shell
 
-- **`ChatEmptyState`** — `Root <div>` · `.Avatar` · `.Heading <h2>` · `.Suggestions <div>` · `.Suggestion <button>`.
-- **`Markdown`** / `RichCodeBlock` — rendered content (built on `ui/code-block`).
-- **`AppShell`** (from `veryfront/ui`) — `.Sidebar · .SidebarHeader · .SidebarContent · .SidebarFooter · .Main · .Header · .Content · .Trigger`; `useAppShell` · `useChatScroll` · `ColorModeToggle`.
+- **`ChatEmptyState`** - `Root <div>` · `.Avatar` · `.Heading <h2>` · `.Suggestions <div>` · `.Suggestion <button>`.
+- **`Markdown`** / `RichCodeBlock` - rendered content (built on `ui/code-block`).
+- **`AppShell`** (from `veryfront/ui`) - `.Sidebar · .SidebarHeader · .SidebarContent · .SidebarFooter · .Main · .Header · .Content · .Trigger`; `useAppShell` · `useChatScroll` · `ColorModeToggle`.
 
-### Helpers (pure functions — no DOM)
+### Helpers (pure functions - no DOM)
 
 `getTextContent` · `groupPartsInOrder` · `isToolPart` · `isReasoningPart` ·
 `isSkillToolPart` · `extractSourcesFromParts` · `getAgentPromptSuggestions`
-(+ **`getAgentPromptSuggestionItems`** — issue #2978) · `normalizeAgentMetadata` ·
+(+ **`getAgentPromptSuggestionItems`** - issue #2978) · `normalizeAgentMetadata` ·
 `normalizeAgentsListResponse` · `exportAsMarkdown` · `downloadMarkdown` ·
 `extractChatMessageMetadata`.
 
@@ -579,12 +581,12 @@ no node)_ · `.Text` · `.Reasoning` · `.Source` · `.File` · `.Image` · `.So
 
 Per piece: node · props · sub-parts · hook · L1/L2/L3 · eject path. Everything
 inherits the _Cross-cutting contracts_ (merge semantics, `data-*`, getters,
-generics) — blocks only state what's specific to them.
+generics) - blocks only state what's specific to them.
 
-### `ChatInput` — the composer
+### `ChatInput` - the composer
 
 - **Node:** `.Root` renders **one `<form>`** + scoped context. Zero wrapper divs
-  (the current hidden `max-w-[850px]` div is deleted — layout is yours).
+  (the current hidden `max-w-[850px]` div is deleted - layout is yours).
 - **Props (`.Root`):** `extends React.FormHTMLAttributes<HTMLFormElement>` ·
   `asChild` · `chat?: UseChatResult` (else nearest `ChatRoot` context) ·
   `upload?: UseUploadResult` · `voice?: UseVoiceInputResult` · `value?/onChange?`
@@ -594,16 +596,16 @@ generics) — blocks only state what's specific to them.
   | Part              | Node                 | `data-*`                                     | Notes                                                                    |
   | ----------------- | -------------------- | -------------------------------------------- | ------------------------------------------------------------------------ |
   | `.Root`           | `<form>`             | `data-status` `data-dragging` `data-compact` | submit = fold attachments → guard while uploading → send → clear (#2974) |
-  | `.Field`          | `<textarea>`         | —                                            | IME-guarded Enter, `submitMode`, paste-to-attach                         |
-  | `.Attach`         | `<button>`           | —                                            | opens file picker                                                        |
+  | `.Field`          | `<textarea>`         | -                                            | IME-guarded Enter, `submitMode`, paste-to-attach                         |
+  | `.Attach`         | `<button>`           | -                                            | opens file picker                                                        |
   | `.Model`          | `<button>` (trigger) | `data-open`                                  | `models={…}` on the leaf; popper uses the positioning-anchor exception   |
   | `.Voice`          | `<button>`           | `data-listening`                             | transcript folds into value via the hook                                 |
   | `.Submit`         | `<button>`           | `data-status`                                | canonical morphing Send↔Stop                                             |
-  | `.Send` / `.Stop` | `<button>`           | —                                            | null-render when off-state                                               |
-  | `.Export`         | `<button>`           | —                                            | `exportAsMarkdown` under the hood                                        |
-  | `.Toolbar`        | `<div>`              | —                                            | pure layout convenience, optional                                        |
+  | `.Send` / `.Stop` | `<button>`           | -                                            | null-render when off-state                                               |
+  | `.Export`         | `<button>`           | -                                            | `exportAsMarkdown` under the hood                                        |
+  | `.Toolbar`        | `<div>`              | -                                            | pure layout convenience, optional                                        |
 
-- **Hook:** `useChatInput(options)` — options = the `.Root` props minus DOM.
+- **Hook:** `useChatInput(options)` - options = the `.Root` props minus DOM.
   Returns state `{ value, canSubmit, status, isStreaming, attachments,
   isListening }` (`isStreaming` = `status === 'streaming'`, sugar the examples
   lean on),
@@ -618,12 +620,12 @@ generics) — blocks only state what's specific to them.
 - **Eject path:** paste the L1 composition → restyle/reorder leaves (they're
   yours) → replace any leaf with your element via `asChild` or its getter.
 
-### `AttachmentPill` — pending upload chip (composer-side)
+### `AttachmentPill` - pending upload chip (composer-side)
 
-- **Node:** `.Root` = one `<div>` (row card only when childless — render-or-
+- **Node:** `.Root` = one `<div>` (row card only when childless - render-or-
   compose, current behavior kept).
 - **Sub-parts:** `.Thumbnail <img>` · `.Icon <span>` · `.Label <span>` ·
-  `.Retry <button>` · `.Remove <button>` — each one node, `asChild`.
+  `.Retry <button>` · `.Remove <button>` - each one node, `asChild`.
 - **`data-*` (`.Root`):** `data-upload-state="idle|uploading|processing|error|done"` · `data-error`.
 - **Hook:** `useAttachmentPill()` → `{ attachment, state, retry, remove }`
   (context reader; list comes from `useUpload().attachments`).
@@ -641,16 +643,16 @@ generics) — blocks only state what's specific to them.
   as a global throw.
 - **`useVoiceInput({ language?, continuous?, interimResults?, onTranscript? })`**
   → `{ isSupported, isListening, transcript, start, stop, toggle, clear,
-  error }` (existing signature kept). Consumed via `useChatInput({ voice })` —
+  error }` (existing signature kept). Consumed via `useChatInput({ voice })`:
   no userland transcript weaving.
 
-### `Message` — one message row
+### `Message` - one message row
 
 - **Node:** `.Root` = one **`<article>`** + scoped context
   (`MessageContextProvider`). No other node.
 - **Props (`.Root`):** `extends React.HTMLAttributes<HTMLElement>` · `asChild` ·
   `message: ChatMessage<TMetadata, TDataParts, TTools>`. Session callbacks
-  (`editMessage`, `reload`) come from nearest `ChatRoot` context — never
+  (`editMessage`, `reload`) come from nearest `ChatRoot` context - never
   re-threaded per message (kills the ~30-prop re-threading).
 - **`data-*` (`.Root`):** `data-role` · `data-agent-id` · `data-streaming` ·
   `data-editing` · `data-error`.
@@ -658,86 +660,86 @@ generics) — blocks only state what's specific to them.
 
   | Part                                            | Node                         | `data-*`                    | Notes                                                      |
   | ----------------------------------------------- | ---------------------------- | --------------------------- | ---------------------------------------------------------- |
-  | `.Avatar`                                       | `<div>`                      | —                           | derives from **message** metadata (multi-agent ready)      |
-  | `.Header` / `.Name` / `.Timestamp`              | `<header>` `<span>` `<time>` | —                           |                                                            |
-  | `.Content`                                      | `<div>`                      | —                           |                                                            |
-  | `.Parts`                                        | _(no node)_                  | —                           | render-fn iterator: `{(part) => …}`, typed, registry-aware |
+  | `.Avatar`                                       | `<div>`                      | -                           | derives from **message** metadata (multi-agent ready)      |
+  | `.Header` / `.Name` / `.Timestamp`              | `<header>` `<span>` `<time>` | -                           |                                                            |
+  | `.Content`                                      | `<div>`                      | -                           |                                                            |
+  | `.Parts`                                        | _(no node)_                  | -                           | render-fn iterator: `{(part) => …}`, typed, registry-aware |
   | `.Text` `.Reasoning` `.Source` `.File` `.Image` | per type                     | `data-streaming` on `.Text` | per-part leaves (#2976 + new file/image)                   |
   | `.Sources`                                      | `<section>`                  | `data-empty`                |                                                            |
   | `.Actions`                                      | `<div>`                      | `data-floating`             | hidden-but-animatable, never unmounted                     |
   | `.CopyAction` `.RegenerateAction` `.EditAction` | `<button>`                   | `data-copied` on copy       |                                                            |
   | `.BranchPicker`                                 | `<div>`                      | `data-active`               | see `useMessageBranches`                                   |
-  | `.Tokens`                                       | `<span>`                     | —                           | renders `ChatMessageMetadataUsage`                         |
-  | `.Continuing`                                   | `<span>`                     | —                           |                                                            |
+  | `.Tokens`                                       | `<span>`                     | -                           | renders `ChatMessageMetadataUsage`                         |
+  | `.Continuing`                                   | `<span>`                     | -                           |                                                            |
 
 - **Hooks:** `useMessageContext(Optional)` →
   `{ message, role, isStreaming, parts, textContent, copy, copied, isEditing,
   startEdit, cancelEdit, regenerate }`. `useMessageParts<TMessage>(message?)` →
   typed `PartGroup[]` (groups adjacent parts; `groupPartsInOrder` is the pure
   primitive under it, exported for L3). `useClipboard(text)` → `{ copied, copy }`.
-- **Editing:** render a `ChatInput` _inside_ the message when `isEditing` —
+- **Editing:** render a `ChatInput` _inside_ the message when `isEditing`:
   nearest-provider-wins; no separate edit-form family.
-- **Eject path:** parts first (`tools` registry / `.Parts` render fn) — restyling
+- **Eject path:** parts first (`tools` registry / `.Parts` render fn) - restyling
   one part type never ejects the row; the row next; the list never.
 
 ### `ToolCall`
 
 - **Nodes:** `.Root <div>` · `.Trigger <button>` · `.Body <div>` · `.Input` ·
   `.Output` · `.Error <div>`. `.Input`/`.Output` are `RichCodeBlock`/`Markdown`-
-  backed (markdown exception applies — `components` map reaches them).
+  backed (markdown exception applies - `components` map reaches them).
   `variant="compact"` is the retired `SkillTool`.
 - **`data-*` (`.Root`):** `data-state` (full lifecycle incl.
   `approval-requested | approval-responded | output-denied`) · `data-open`
   (auto-opens on completion).
-- **Hook:** `useToolCall<TTools>(part?)` — part explicit at L3, from context at
+- **Hook:** `useToolCall<TTools>(part?)` - part explicit at L3, from context at
   L2 → `{ part, state, input (partial while streaming), output, errorText, isOpen,
   toggle, getTriggerProps, getBodyProps }`.
   Rendering resolution: inline render fn → `tools` registry by name → default.
 
 ### `Reasoning` · `StepIndicator` · `Sources` · `InlineCitation`
 
-- **`Reasoning`** — `.Root <div>` (`data-open` `data-streaming`; auto-open while
+- **`Reasoning`** - `.Root <div>` (`data-open` `data-streaming`; auto-open while
   streaming, auto-close done) · `.Trigger <button>` · `.Content <div>`.
   `useReasoning()` → `{ open, toggle, isStreaming, duration, getTriggerProps,
   getContentProps }`.
-- **`StepIndicator`** — `.Root <div role="separator">` · `.Rule <span aria-hidden>` ·
+- **`StepIndicator`** - `.Root <div role="separator">` · `.Rule <span aria-hidden>` ·
   `.Label <span>`;
   `useStepIndicator()` → step state (`data-state="pending|active|complete"`).
-- **`Sources`** — `.Root <div>` (`data-open` `data-empty`) · `.List <ul>` ·
+- **`Sources`** - `.Root <div>` (`data-open` `data-empty`) · `.List <ul>` ·
   `.Pill <a>`; `useSources(message?)` (explicit at L3, context at L2) → `{ sources, isEmpty }` over
   `extractSourcesFromParts`.
-- **`InlineCitation`** — `.Trigger <a>` · `.Card <div>` (`data-open`); default
+- **`InlineCitation`** - `.Trigger <a>` · `.Card <div>` (`data-open`); default
   renderer behind the markdown `components.citation` slot.
 
 ### `BranchPicker` · `MessageActionBar` (re-exports)
 
-- **`BranchPicker`** = `Message.BranchPicker` — `.Root <div>` · `.Previous
+- **`BranchPicker`** = `Message.BranchPicker` - `.Root <div>` · `.Previous
   <button>` · `.Count <span>` · `.Next <button>`. `useMessageBranches()` →
-  `{ index, count, previous, next }` — thin over the existing
+  `{ index, count, previous, next }` - thin over the existing
   `getBranches`/`switchBranch` on `useChat`.
 - **`MessageActionBar`** = `Message.Actions` family, one implementation
   (`.Copied` deleted → `data-copied`).
 
-### `Chat` — the L1 preset
+### `Chat` - the L1 preset
 
 - **Props (trimmed from today's 28):** `agentId` · `api | transport` ·
   `uploadApi?` · `tools?: { [name]: Component }` · `labels?` (i18n) ·
   `chat?: UseChatResult` (controlled) · `children?` (compose inside the preset).
 - **Compound (kept from today):** `.Root .MessageList .Input .Empty .Skeleton
   .If .Message .ErrorBanner`. `.If` is the selector conditional:
-  `<Chat.If test={(s) => s.isEmpty}>…</Chat.If>` — no boolean-prop variants.
-- **The default composition is public** — printed in the docs; ejecting = paste
+  `<Chat.If test={(s) => s.isEmpty}>…</Chat.If>` - no boolean-prop variants.
+- **The default composition is public** - printed in the docs; ejecting = paste
   it (identical pixels: it carries the theme scope, providers, and default
   classes). Everything `<Chat>` renders is reachable L2.
 
 ### `ChatRoot` · `ChatThemeScope` · `ChatErrorBoundary`
 
-- **`ChatRoot`** — the scoped session provider: `chat={useChat()}` is the single
+- **`ChatRoot`** - the scoped session provider: `chat={useChat()}` is the single
   shared context (#2973); renders **no node by default** (a node only via
   `asChild`); precedence: explicit prop > this context > default.
-- **`ChatThemeScope`** — one `<div>` carrying the token scope
+- **`ChatThemeScope`** - one `<div>` carrying the token scope
   (`[data-vf-ui]`); the legacy string `ChatTheme` system is retired (ledger).
-- **`ChatErrorBoundary`** — error boundary; `useChatErrorHandler()` →
+- **`ChatErrorBoundary`** - error boundary; `useChatErrorHandler()` →
   `{ error, handleError, clearError, hasError }` (existing signature). Errors
   render `role="alert"`.
 
@@ -748,26 +750,26 @@ generics) — blocks only state what's specific to them.
   (inert + unfocusable at bottom).
 - **`data-*`:** `data-at-bottom` · `data-autoscrolling` · `data-scrollable`
   (imperative updates) · `data-loading` · `data-empty`.
-- **Hook:** `useChatScroll` — the full scroll contract (see _Cross-cutting
+- **Hook:** `useChatScroll` - the full scroll contract (see _Cross-cutting
   contracts_). Message iteration is `children` or the default map with the
-  `tools` registry — `renderMessage` is deleted (composition, not render-prop
+  `tools` registry - `renderMessage` is deleted (composition, not render-prop
   config).
 
 ### Session hooks
 
-- **`useChat<TMessage>(options)`** — see inventory row; adds the transport
+- **`useChat<TMessage>(options)`** - see inventory row; adds the transport
   object, per-message `status`/`error`, `reload(messageId?)`; drops
   `input`/`setInput`/`handleInputChange` (ledger). Streams are provider-scoped
   (see State ownership).
 - **`useConversationChat({ agentId?, api?, … })`** →
-  `{ chat, bound, resolvedAgentId, ready }` — `ready` replaces every userland
+  `{ chat, bound, resolvedAgentId, ready }` - `ready` replaces every userland
   thread-ready guard (#2978).
-- **`useChatContext(Optional)`** — reads `ChatRoot`'s context; raw context
+- **`useChatContext(Optional)`** - reads `ChatRoot`'s context; raw context
   objects stay unexported (today's rule, kept).
-- **`useCompletion` / `useStreaming`** — kept as today (one-shot text /
+- **`useCompletion` / `useStreaming`** - kept as today (one-shot text /
   low-level stream state); documented signatures, no reshape.
 
-### `AttachmentsPanel` — durable files (same depth as messages)
+### `AttachmentsPanel` - durable files (same depth as messages)
 
 - **Nodes:** `.Root <div>` (`data-loading` `data-empty`) · `.Header <header>` ·
   `.List <ul>` · `.Item <li>` (`data-upload-state` `data-active`) with leaves
@@ -778,52 +780,52 @@ generics) — blocks only state what's specific to them.
   children replace it entirely (no half-hidden row card).
 - **Hooks:** `useAttachments({ url | transport, storageKey? })` →
   `{ items: UploadedFile[], isLoading, upload, add, remove, clear, refresh }` +
-  per-item error state (no global `uploadError` — ledger). `useUploadsRegistry`
+  per-item error state (no global `uploadError` - ledger). `useUploadsRegistry`
   alias deleted (ledger). `useAttachmentsPanel()` = the compound's context
   reader.
-- **Eject path:** per-item — restyle `.Item` children or map `items` yourself;
+- **Eject path:** per-item - restyle `.Item` children or map `items` yourself;
   the panel chrome never holds the data hostage.
 
-### `ChatSidebar` — conversations
+### `ChatSidebar` - conversations
 
 - **Nodes:** `.Root <nav>` (`data-loading` `data-empty`) · `.NewButton <button>`
   · `.List <ul>` · `.Group <div>` · `.Item <li>` (`data-active`) with leaves
   `.Title <span>` (#2977) · `.Menu` (a `ui` `DropdownMenu`) · `.Rename` ·
-  `.Delete` · `.Empty <div>`. `renderItem` deleted — compose `.Item` children
+  `.Delete` · `.Empty <div>`. `renderItem` deleted - compose `.Item` children
   or map `conversations` yourself.
 - **Hooks:** `useConversations({ storageKey?, store? })` → `{ conversations,
   activeConversation, activeConversationId, isLoading, activeReady (#2978),
   select, create, rename, remove, update, save, bind,
   selectAgent(agentId, { conversation?: 'new' | 'same' }) }` (deprecated
-  aliases `active`/`activeId` dropped — ledger). `useConversation(id)` →
+  aliases `active`/`activeId` dropped - ledger). `useConversation(id)` →
   `{ conversation, isLoading, reload }`. `useConversationsContext(Optional)`
   reads `ConversationsProvider`.
 
 ### Agents & models
 
-- **`AgentPicker`** — `.Root` (provider; popper uses the positioning-anchor exception) · `.Trigger
+- **`AgentPicker`** - `.Root` (provider; popper uses the positioning-anchor exception) · `.Trigger
   <button>` (`data-open`) · `.Content <div>` · `.Search <input>` · `.List <ul>`
   · `.Item <button>` (`data-active`, `data-invalid` kept) · `.Create <button>` ·
   `.Manage <button>`. Boolean props `selected`/`isLoading`/`invalid` →
   `data-*` (ledger); `inputStyle` deleted. `useAgentPicker()` = context reader +
   `{ query, setQuery, options, select }`.
-- **`ModelSelector`** — same anatomy minus `.Create/.Manage`;
+- **`ModelSelector`** - same anatomy minus `.Create/.Manage`;
   `useModelSelector()` reader; `models` config on the leaf/trigger, liftable per
   the escalation rule.
-- **`AgentCard`** — `.Root <div>` · `.Header` · `.Reasoning` · `.Tools` ·
+- **`AgentCard`** - `.Root <div>` · `.Header` · `.Reasoning` · `.Tools` ·
   `.Body` (today's parts kept); `useAgentCard()` reader.
-- **`ChatAgentPicker`** — preset over `AgentPicker` (+ `agentsToPickerOptions`
+- **`ChatAgentPicker`** - preset over `AgentPicker` (+ `agentsToPickerOptions`
   helper, public).
 - **Hooks:** `useAgents({ enabled? })` → `{ agents, isLoading, error, refetch }`
   · `useAgentMetadata(agentId)` → `{ agent, isLoading, error }` ·
-  `useAgent({ agent, onToolCall?, onToolResult?, onError? })` — existing
+  `useAgent({ agent, onToolCall?, onToolResult?, onError? })` - existing
   signatures kept.
 
 ### `ChatActions`
 
 - **Nodes:** `.Root` (provider) · `.Trigger <button>` (`data-open`) · `.Content
   <div>` · `.Item <button>` · `.Preset <button>`. `trigger?: ReactNode` prop
-  deleted — compose `.Trigger` children (ledger). `useChatActions()` = context
+  deleted - compose `.Trigger` children (ledger). `useChatActions()` = context
   reader; thread-level export/clear compose from `exportAsMarkdown` /
   `downloadMarkdown` + `setMessages`.
 
@@ -832,18 +834,18 @@ generics) — blocks only state what's specific to them.
 - **Nodes:** `.Root <div>` · `.Avatar <div>` · `.Heading <h2>` · `.Suggestions
   <div>` (`data-empty`) · `.Suggestion <button>`. Suggestions come typed:
   `getAgentPromptSuggestionItems(agent)` → `{ label, prompt }[]` (made public,
-  #2978) — selection hands the *item* back, no `.find` massaging.
+  #2978) - selection hands the *item* back, no `.find` massaging.
 
 ### `Markdown` · `RichCodeBlock`
 
-- **`Markdown`** — the sanctioned multi-node exception (see _Cross-cutting
+- **`Markdown`** - the sanctioned multi-node exception (see _Cross-cutting
   contracts_): `components={{ code, a, img, table, citation, … }}` override map;
   owns streaming (incremental parse, fence repair, prefix hardening).
-  `renderCodeBlock` deleted — it's `components.code` (ledger).
-- **`RichCodeBlock`** — default `components.code`; alias over `ui` `CodeBlock`
-  (whose `copyIcon`/`collapseIcon` props fall to the icon-slot ban — ledger).
+  `renderCodeBlock` deleted - it's `components.code` (ledger).
+- **`RichCodeBlock`** - default `components.code`; alias over `ui` `CodeBlock`
+  (whose `copyIcon`/`collapseIcon` props fall to the icon-slot ban - ledger).
 
-### `AppShell` (reference — lives in `veryfront/ui`)
+### `AppShell` (reference - lives in `veryfront/ui`)
 
 `.Sidebar .SidebarHeader .SidebarContent .SidebarFooter .Main .Header .Content
 .Trigger` + `useAppShell()`. Already shaped; chat consumes, doesn't own.
@@ -861,22 +863,22 @@ providers render zero nodes; every `use*Context` has an `Optional` variant.
 | Helper                                                                 | Signature → purpose                                   |
 | ---------------------------------------------------------------------- | ----------------------------------------------------- |
 | `getTextContent(msg)`                                                  | flat text of a message                                |
-| `groupPartsInOrder(parts)`                                             | `PartGroup[]` — the primitive under `useMessageParts` |
+| `groupPartsInOrder(parts)`                                             | `PartGroup[]` - the primitive under `useMessageParts` |
 | `isToolPart` / `isReasoningPart` / `isSkillToolPart`                   | part type guards                                      |
-| `extractSourcesFromParts(parts)`                                       | citation list — primitive under `useSources`          |
+| `extractSourcesFromParts(parts)`                                       | citation list - primitive under `useSources`          |
 | `getAgentPromptSuggestions(agent)`                                     | `string[]` (lossy; kept for compat)                   |
-| `getAgentPromptSuggestionItems(agent)`                                 | `{ label, prompt }[]` — public (#2978)                |
+| `getAgentPromptSuggestionItems(agent)`                                 | `{ label, prompt }[]` - public (#2978)                |
 | `normalizeAgentMetadata` / `normalizeAgentsListResponse`               | API response normalizers                              |
 | `exportAsMarkdown(messages)` / `downloadMarkdown(messages, filename?)` | transcript export                                     |
 | `extractChatMessageMetadata(value)`                                    | typed metadata off a message                          |
 | `agentsToPickerOptions(agents)`                                        | picker option mapping                                 |
-| `mergeProps(...propsObjects)`                                          | **new** — the normative merge, public                 |
+| `mergeProps(...propsObjects)`                                          | **new** - the normative merge, public                 |
 
 ---
 
-## Examples — the three layers
+## Examples - the three layers
 
-**L1 — black box.** Batteries; runs every hook internally.
+**L1 - black box.** Batteries; runs every hook internally.
 
 ```tsx
 <ConversationsProvider storageKey="ops">
@@ -891,8 +893,8 @@ providers render zero nodes; every `use*Context` has an `Optional` variant.
 </ConversationsProvider>;
 ```
 
-**L2 — component composition.** `ui`-style components; you own every layout div;
-config on the leaf; state via `data-*`. Self-contained — this compiles:
+**L2 - component composition.** `ui`-style components; you own every layout div;
+config on the leaf; state via `data-*`. Self-contained - this compiles:
 
 ```tsx
 function App() {
@@ -933,7 +935,7 @@ function Workspace() {
 }
 ```
 
-**L3 — headless hooks.** You render every element; prop getters carry behaviour;
+**L3 - headless hooks.** You render every element; prop getters carry behaviour;
 swap tags freely.
 
 ```tsx
@@ -951,14 +953,14 @@ function MyChatInput() {
 }
 ```
 
-Same components, same hooks, one convention — pick the altitude per surface.
+Same components, same hooks, one convention - pick the altitude per surface.
 
 ---
 
 ## Prior art & deviations (audited from live docs, July 2026)
 
 Benchmarks: **Vercel AI Elements**, **shadcn/ui chat components** (June 2026),
-**assistant-ui**, **Base UI**, **React Aria** — all checked against current docs,
+**assistant-ui**, **Base UI**, **React Aria** - all checked against current docs,
 not memory.
 
 | Decision           | Prior art                                                                                                                                | Ours                                              | Why                                                                                                                                                                                              |
@@ -966,7 +968,7 @@ not memory.
 | Distribution       | AI Elements: copied source; shadcn: npm headless (`@shadcn/react`) + styled registry; assistant-ui: npm primitives + copied styled layer | **npm package, all three layers**                 | Full control comes from the API (this RFC's thesis); shadcn's headless package is precedent that this is now mainstream                                                                          |
 | Polymorphism       | Radix / shadcn-styled / assistant-ui: `asChild`; Base UI / React Aria: `render` prop                                                     | **`asChild`**                                     | Ecosystem familiarity + migration cost; `render`'s real advantages (explicit target, state access) are covered by `data-*` + L3 hooks; Base UI has an open issue proposing a move _to_ `asChild` |
 | Headless surface   | React Aria: props objects + `mergeProps`; Downshift: getters                                                                             | **`getXProps(overrides?)` + public `mergeProps`** | Getters merge at the call site (kills the clobber trap); `mergeProps` exported for multi-hook composition                                                                                        |
-| Streaming markdown | `streamdown` (AI Elements `MessageResponse`)                                                                                             | owned by `Markdown`                               | Incremental parse, fence repair, link/image-prefix hardening are table stakes — and a security surface                                                                                           |
+| Streaming markdown | `streamdown` (AI Elements `MessageResponse`)                                                                                             | owned by `Markdown`                               | Incremental parse, fence repair, link/image-prefix hardening are table stakes - and a security surface                                                                                           |
 | Tool UI            | assistant-ui toolkit registry (precedence chain, HITL taxonomy); AI Elements `Tool` + `Confirmation` approval states                     | **tools registry + `data-state` incl. approval**  | Most common customization; human-in-the-loop is the 2026 baseline, not an extra                                                                                                                  |
 | Scrolling          | shadcn `MessageScroller` state machine; assistant-ui viewport anchoring                                                                  | **`useChatScroll` contract**                      | Stick-to-bottom alone is under-spec'd for restore/prepend/anchoring                                                                                                                              |
 | Editing            | assistant-ui: composer primitives switch to edit mode by context                                                                         | same                                              | One component family, no `EditForm` duplicate                                                                                                                                                    |
@@ -985,7 +987,7 @@ toolbar, "open in external chat" hand-off, generated-image part chrome beyond
 The RFC specifies the contract; **no test code ships in this PR**. In
 implementation the harness is built _first_ and gates every enabling issue.
 
-**Per-component — one shared conformance harness, every component registers:**
+**Per-component - one shared conformance harness, every component registers:**
 renders exactly one node (or zero + context) · `className` merges (consumer beats
 variant default) · arbitrary `data-*`/`aria-*` spread through · consumer handler
 AND internal handler both fire, consumer first, `preventDefault` cancels ·
@@ -994,7 +996,7 @@ declared `data-*` states appear/disappear with state · a11y row (role, name,
 keyboard reachable).
 
 ```ts
-// illustrative harness registration — not shipped code
+// illustrative harness registration - not shipped code
 conformance(ChatInput.Submit, {
   node: "button",
   states: { "data-status": ["ready", "streaming"] },
@@ -1002,12 +1004,12 @@ conformance(ChatInput.Submit, {
 });
 ```
 
-**Per-hook — behaviour tests:** each hook's state machine and getters
+**Per-hook - behaviour tests:** each hook's state machine and getters
 (`useChatInput`: fold/guard/clear, IME guard, controlled mode; attachments:
 lifecycle idle→uploading→…; `useChatScroll`: escape/resume, prepend preserve;
 `useToolCall`: full `data-state` walk incl. approval).
 
-**Per-domain — a few integration tests:** composer round-trip, abort mid-stream,
+**Per-domain - a few integration tests:** composer round-trip, abort mid-stream,
 thread-switch mid-stream (stream survives, persists to the right thread), upload
 end-to-end, edit-and-branch.
 
@@ -1015,7 +1017,7 @@ end-to-end, edit-and-branch.
 
 ## Migration (additive first, then one breaking release)
 
-1. **Extract L3 hooks** from the existing components (the state is already there —
+1. **Extract L3 hooks** from the existing components (the state is already there:
    `ChatInputContext`, `MessageContext`, `useConversations`). Publish them with prop
    getters. _(Additive.)_
 2. **Rephrase current components as L2** over those hooks: single-node, `asChild`,
@@ -1041,39 +1043,39 @@ the migration ledger for the breaking release.
   merge, spread-through, `asChild`, `ref`, `data-*` states); every hook gets
   behaviour tests. The RFC specifies the contract; no test code ships in the RFC PR.
 
-- **`data-*` contract and prop-getter surface**: resolved — see _Cross-cutting
+- **`data-*` contract and prop-getter surface**: resolved - see _Cross-cutting
   contracts_.
 - **Every sub-part is a real named export + namespace alias** (generalizes
   #2976): `export function ChatInputField(props: ChatInputFieldProps)` _and_
-  `ChatInput.Field = ChatInputField` — same function, two access styles. Every
+  `ChatInput.Field = ChatInputField` - same function, two access styles. Every
   `XxxProps` interface is exported. Flat names follow the AI Elements
   convention (`ChatInputField` ~ `PromptInputTextarea`). Why: tree-shaking
   (namespace-only compounds drag all parts into the bundle), typed wrapping in
   consumer design systems, and no more "reachable only via the compound" leaves.
-- **One implementation per feature — `Message.*` is canonical.** The standalone
+- **One implementation per feature - `Message.*` is canonical.** The standalone
   `MessageActionBar` / `BranchPicker` / `Sources` / `Reasoning` names are the same
   components (namespace re-exports for use outside a `Message`), never parallel
-  implementations. `MessageActionBar.Copied` is deleted — copied feedback is
+  implementations. `MessageActionBar.Copied` is deleted - copied feedback is
   `data-copied` on `.CopyAction`, per rule 7.
 - **`ChatInput.Submit` is the canonical morphing button** (`data-status` drives
   Send↔Stop; children swap via CSS or the `.Send`/`.Stop` leaves, which
   null-render when off-state). No `icon=`/`stopIcon=` props.
 - **New part leaves:** `Message.File` and `Message.Image` join
-  `.Text/.Reasoning/.Source` — sent and received attachments are renderable parts.
+  `.Text/.Reasoning/.Source` - sent and received attachments are renderable parts.
 - **Attachments input surface:** `useUpload` exposes `getDropTargetProps()`
   (thread-wide dropzone, `data-dragging`) and `getFieldProps` handles
   paste-to-attach.
 - **Transport:** `useChat` accepts `api: string | { url, headers, credentials,
-  fetch, body }` — auth works on day one without a custom client.
+  fetch, body }` - auth works on day one without a custom client.
 - **Config escalation rule:** config lives on the leaf; when two leaves need the
-  same value (`models`, `uploadApi`), it may be _lifted_ to opt-in root context —
+  same value (`models`, `uploadApi`), it may be _lifted_ to opt-in root context:
   leaf prop always wins.
 - **L1 i18n:** `<Chat labels={…}>` overrides built-in strings; at L2/L3 the
   consumer owns all text (children), so no library i18n framework.
 - **`icon` slot props are banned** (grounding found ~30 files using
   `icon?: ReactNode`): a leaf renders its default icon when childless; pass
   children to replace it. Same rule kills `renderMessage`/`renderItem`/
-  `renderScrollButton`/`renderCodeBlock` config props — composition or the
+  `renderScrollButton`/`renderCodeBlock` config props - composition or the
   registry, not render-prop config.
 - **Breaking-changes ledger (batched into the one break):** `useChat` loses
   `input`/`setInput`/`handleInputChange` (input moves to `useChatInput`);
@@ -1085,16 +1087,16 @@ the migration ledger for the breaking release.
 
 - **Nothing ships ahead of its backend** (decided): the surface is trimmed to
   what the platform actually supports today. Applied: **`MessageFeedback` /
-  `Message.Feedback` are cut from v1** — `onFeedback` is a consumer callback with
+  `Message.Feedback` are cut from v1** - `onFeedback` is a consumer callback with
   no backend endpoint behind it; the component returns additively when the
-  endpoint exists. **`Message.BranchPicker` stays** — `getBranches`/
+  endpoint exists. **`Message.BranchPicker` stays** - `getBranches`/
   `switchBranch` already exist on `useChat`; documented via a thin
-  `useMessageBranches` over them. **`Message.Tokens` stays** — it renders the
+  `useMessageBranches` over them. **`Message.Tokens` stays** - it renders the
   `ChatMessageMetadataUsage` the backend already sends. Any future checklist
   entry gets the same test: no backend, no component.
-- **Agent select** (confirmed — matches current studio behavior):
+- **Agent select** (confirmed - matches current studio behavior):
   `selectAgent(agentId, { conversation?: 'new' | 'same' })` on
-  `useConversations`. **Default `'new'`** — creates and activates a fresh
+  `useConversations`. **Default `'new'`** - creates and activates a fresh
   conversation with that agent; `'same'` keeps the current conversation and
   switches its agent. Two plain words, no heuristics.
 - **Multi-agent-ready by construction** (decided): conversations may later host
@@ -1106,8 +1108,8 @@ the migration ledger for the breaking release.
   `data-agent-id` for per-agent styling; a future
   `policy: 'add-to-conversation'` slots into `selectAgent` additively.
 - **Virtualization: out of scope v1, committed for later** (decided): v1 rows
-  must stay virtualization-ready — single node per row, measurement-friendly,
-  `content-visibility` compatible — so it can land additively without reshaping
+  must stay virtualization-ready - single node per row, measurement-friendly,
+  `content-visibility` compatible - so it can land additively without reshaping
   the API.
 
 ## Resolved positioning-anchor exception

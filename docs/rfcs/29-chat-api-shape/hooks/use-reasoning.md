@@ -1,8 +1,8 @@
 # useReasoning
 
-Disclosure state for a reasoning part — auto-open while streaming, auto-close when done.
+Disclosure state for a reasoning part - auto-open while streaming, auto-close when done.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -37,7 +37,7 @@ interface UseReasoningResult {
 
 | Option  | Type                                      | Default                          | Description                                                                                                                                                                                                                    |
 | ------- | ----------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `input` | `{ text: string; isStreaming?: boolean }` | nearest `Reasoning.Root` context | Explicit at L3 — the L3 eject works without a `Reasoning.Root` (mirrors `useToolCall(part?)` / `useSources(message?)`). Argless, the hook reads the surrounding `Reasoning` context (`Message.Reasoning` / `Reasoning` at L2). |
+| `input` | `{ text: string; isStreaming?: boolean }` | nearest `Reasoning.Root` context | Explicit at L3 - the L3 eject works without a `Reasoning.Root` (mirrors `useToolCall(part?)` / `useSources(message?)`). Argless, the hook reads the surrounding `Reasoning` context (`Message.Reasoning` / `Reasoning` at L2). |
 
 ## Returns
 
@@ -67,7 +67,7 @@ interface UseReasoningResult {
 
 ```tsx
 function MyReasoning({ part }: { part: ReasoningPart }) {
-  const reasoning = useReasoning({ text: part.text, isStreaming: part.state === "streaming" }); // explicit at L3 — no Reasoning.Root needed
+  const reasoning = useReasoning({ text: part.text, isStreaming: part.state === "streaming" }); // explicit at L3 - no Reasoning.Root needed
   return (
     <div className="my-reasoning" data-open={reasoning.open || undefined}>
       <button {...reasoning.getTriggerProps({ className: "my-trigger" })}>
@@ -85,9 +85,9 @@ function MyReasoning({ part }: { part: ReasoningPart }) {
 
 ## Used by
 
-- [`Reasoning`](../components/reasoning.md) — `.Root` (`data-open`, `data-streaming`) · `.Trigger` · `.Content`. Also available as `Message.Reasoning` (same component, namespace re-export).
+- [`Reasoning`](../components/reasoning.md) - `.Root` (`data-open`, `data-streaming`) · `.Trigger` · `.Content`. Also available as `Message.Reasoning` (same component, namespace re-export).
 
 ## Related
 
-- [`useMessageParts`](use-message-parts.md) — where reasoning parts come from (`isReasoningPart`).
-- [`useToolCall`](use-tool-call.md) — the same disclosure pattern for tool parts.
+- [`useMessageParts`](use-message-parts.md) - where reasoning parts come from (`isReasoningPart`).
+- [`useToolCall`](use-tool-call.md) - the same disclosure pattern for tool parts.

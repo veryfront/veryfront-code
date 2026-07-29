@@ -2,7 +2,7 @@
 
 Reads the scoped composer state provided by the nearest `ChatInput` (via `ChatInputContextProvider`).
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -17,7 +17,7 @@ function useChatInputContext(): UseChatInputResult;
 function useChatInputContextOptional(): UseChatInputResult | null;
 ```
 
-Returns the same object as [`useChatInput`](./use-chat-input.md) — state, actions, and prop getters — from the nearest `ChatInputContextProvider` (rendered by `ChatInput.Root`). Per the providers rule, every `use*Context` hook has an `Optional` variant; the raw context object stays unexported.
+Returns the same object as [`useChatInput`](./use-chat-input.md) - state, actions, and prop getters - from the nearest `ChatInputContextProvider` (rendered by `ChatInput.Root`). Per the providers rule, every `use*Context` hook has an `Optional` variant; the raw context object stays unexported.
 
 ## Options
 
@@ -35,11 +35,11 @@ See [`useChatInput`](./use-chat-input.md) for the full tables.
 
 ## Scoping
 
-A `<ChatInput>` shares state with _its_ children only — this is scoped context, not an app-wide store. When composers nest (a `ChatInput` inside a `Message` is the edit form), the **nearest provider wins**.
+A `<ChatInput>` shares state with _its_ children only - this is scoped context, not an app-wide store. When composers nest (a `ChatInput` inside a `Message` is the edit form), the **nearest provider wins**.
 
 ## Example
 
-A custom leaf inside a `<ChatInput>` — behavior from context, markup yours:
+A custom leaf inside a `<ChatInput>` - behavior from context, markup yours:
 
 ```tsx
 function CharCount(props: React.HTMLAttributes<HTMLSpanElement>) {
@@ -64,7 +64,7 @@ function ClearButton({ className, ...props }: React.ButtonHTMLAttributes<HTMLBut
 </ChatInput>;
 ```
 
-This is exactly how the built-in leaves are implemented — for example, `ChatInput.Submit` reads `useChatInputContext()` and passes your props into `getSubmitProps`.
+This is exactly how the built-in leaves are implemented - for example, `ChatInput.Submit` reads `useChatInputContext()` and passes your props into `getSubmitProps`.
 
 ## Used by
 
@@ -73,5 +73,5 @@ This is exactly how the built-in leaves are implemented — for example, `ChatIn
 
 ## Related
 
-- [`useChatInput`](./use-chat-input.md) — creates the state this hook reads
-- [`ChatInput`](../components/chat-input.md) — provides the context via `ChatInputContextProvider`
+- [`useChatInput`](./use-chat-input.md) - creates the state this hook reads
+- [`ChatInput`](../components/chat-input.md) - provides the context via `ChatInputContextProvider`

@@ -2,7 +2,7 @@
 
 The batteries-included preset over `AgentPicker`: fetches the project's agents itself and renders the picker only when there is something to switch between.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -15,11 +15,11 @@ import { ChatAgentPicker, type ChatAgentPickerProps } from "veryfront/chat";
 
 ## Parts index
 
-- [`ChatAgentPicker`](#chatagentpicker--changed) — `changed`: `className` trigger alias removed; boolean state props → `data-*` (via `AgentPicker`)
+- [`ChatAgentPicker`](#chatagentpicker--changed) - `changed`: `className` trigger alias removed; boolean state props → `data-*` (via `AgentPicker`)
 
 ## Anatomy
 
-`ChatAgentPicker` is a **preset**, not a compound: it has no parts of its own. It runs [`useAgents`](../hooks/use-agents.md), maps the result through `agentsToPickerOptions`, and renders the public [`AgentPicker`](./agent-picker.md) preset — so ejecting means pasting that composition (identical output, same code path):
+`ChatAgentPicker` is a **preset**, not a compound: it has no parts of its own. It runs [`useAgents`](../hooks/use-agents.md), maps the result through `agentsToPickerOptions`, and renders the public [`AgentPicker`](./agent-picker.md) preset - so ejecting means pasting that composition (identical output, same code path):
 
 ```tsx
 <ChatAgentPicker value={agentId} onValueChange={setAgentId} />;
@@ -45,10 +45,10 @@ function ChatAgentPicker(
 
 ## Default DOM (childless render)
 
-`ChatAgentPicker` contributes **zero nodes of its own** — its rendered DOM is exactly the [`AgentPicker` default DOM](./agent-picker.md#default-dom-childless-render) (anchor `<span>` → Pill trigger → portalled panel with search/list/action rows), or **nothing at all**:
+`ChatAgentPicker` contributes **zero nodes of its own** - its rendered DOM is exactly the [`AgentPicker` default DOM](./agent-picker.md#default-dom-childless-render) (anchor `<span>` → Pill trigger → portalled panel with search/list/action rows), or **nothing at all**:
 
 ```html
-<!-- fewer than minAgents (default 2) available — incl. while the fetch is
+<!-- fewer than minAgents (default 2) available - incl. while the fetch is
      in flight or after an error (both leave `agents` empty): -->
 <!-- (no DOM) -->
 
@@ -66,24 +66,24 @@ function ChatAgentPicker(
 
 ## Parts
 
-### `ChatAgentPicker` — `changed`
+### `ChatAgentPicker` - `changed`
 
 **Changed:** the `className` trigger alias is removed; the underlying boolean state props (`selected` / `isLoading` / `invalid`) become `data-*`.
 
-The whole preset — one component, no sub-parts. **Layout: whatever `AgentPicker` renders (or nothing).**
+The whole preset - one component, no sub-parts. **Layout: whatever `AgentPicker` renders (or nothing).**
 
 | Prop                    | Type                                 | Default | Description                                                                                                                       |
 | ----------------------- | ------------------------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `value`                 | `string`                             | —       | Selected agent id (controlled)                                                                                                    |
-| `onValueChange`         | `(id: string) => void`               | —       | Called with the chosen agent id                                                                                                   |
-| `minAgents`             | `number`                             | `2`     | Minimum agent count before it renders — with one agent there is nothing to switch to; set `1` to always show once an agent exists |
+| `value`                 | `string`                             | -       | Selected agent id (controlled)                                                                                                    |
+| `onValueChange`         | `(id: string) => void`               | -       | Called with the chosen agent id                                                                                                   |
+| `minAgents`             | `number`                             | `2`     | Minimum agent count before it renders - with one agent there is nothing to switch to; set `1` to always show once an agent exists |
 | `enabled`               | `boolean`                            | `true`  | `false` skips the fetch and renders nothing                                                                                       |
-| `onCreate` / `onManage` | `() => void`                         | —       | Forwarded to `AgentPicker` — enables its `.Create` / `.Manage` rows                                                               |
-| + native _(proposed)_   | `HTMLAttributes` · `asChild` · `ref` | —       | Pending the popper-anchor decision (the preset's outer node is `AgentPicker.Root`'s)                                              |
+| `onCreate` / `onManage` | `() => void`                         | -       | Forwarded to `AgentPicker` - enables its `.Create` / `.Manage` rows                                                               |
+| + native _(proposed)_   | `HTMLAttributes` · `asChild` · `ref` | -       | Pending the popper-anchor decision (the preset's outer node is `AgentPicker.Root`'s)                                              |
 
-**Removed (proposed):** `className` (today it aliases the trigger's class through two layers — the node contract bans the indirection; eject to the composition and class `AgentPicker.Trigger` directly). Boolean state props from the underlying surface (`selected` / `isLoading` / `invalid`) become `data-*`; `inputStyle` is deleted (see [`AgentPicker`](./agent-picker.md)).
+**Removed (proposed):** `className` (today it aliases the trigger's class through two layers - the node contract bans the indirection; eject to the composition and class `AgentPicker.Trigger` directly). Boolean state props from the underlying surface (`selected` / `isLoading` / `invalid`) become `data-*`; `inputStyle` is deleted (see [`AgentPicker`](./agent-picker.md)).
 
-**Null-render conditions:** fewer than `minAgents` options — which includes _while loading_ and _on fetch error_ (both leave the agents list empty). There is no spinner state at this level; the picker simply appears when the data does.
+**Null-render conditions:** fewer than `minAgents` options - which includes _while loading_ and _on fetch error_ (both leave the agents list empty). There is no spinner state at this level; the picker simply appears when the data does.
 
 ## Context (what the parts read)
 
@@ -111,7 +111,7 @@ const [agentId, setAgentId] = React.useState<string>()
 <ChatAgentPicker value={agentId} onValueChange={setAgentId} />
 ```
 
-### Composed — eject to the same public composition
+### Composed - eject to the same public composition
 
 ```tsx
 function MyAgentPicker() {
@@ -157,11 +157,11 @@ function MyPickerList() {
 
 ## Customization (eject path)
 
-1. **L1** — `<ChatAgentPicker />` as-is.
-2. **L2** — paste the preset's public composition (printed under _Anatomy_ — it is the whole component) and edit one piece; `agentsToPickerOptions` keeps your options identical to the preset's.
-3. **L3** — [`useAgents`](../hooks/use-agents.md) + [`useAgentPicker()`](../hooks/use-agent-picker.md) driving elements you render yourself.
+1. **L1** - `<ChatAgentPicker />` as-is.
+2. **L2** - paste the preset's public composition (printed under _Anatomy_ - it is the whole component) and edit one piece; `agentsToPickerOptions` keeps your options identical to the preset's.
+3. **L3** - [`useAgents`](../hooks/use-agents.md) + [`useAgentPicker()`](../hooks/use-agent-picker.md) driving elements you render yourself.
 
 ## Related
 
-- [`AgentPicker`](./agent-picker.md) — the compound this preset composes (parts, DOM, positioning-anchor exception)
+- [`AgentPicker`](./agent-picker.md) - the compound this preset composes (parts, DOM, positioning-anchor exception)
 - [`useAgentPicker`](../hooks/use-agent-picker.md) · [`useAgents`](../hooks/use-agents.md)

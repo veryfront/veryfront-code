@@ -1,8 +1,8 @@
 # Chat
 
-The L1 preset — a batteries-included chat surface built entirely from the public L2 components, with sensible defaults. Render it whole, or compose inside it with the `Chat.*` compound parts.
+The L1 preset - a batteries-included chat surface built entirely from the public L2 components, with sensible defaults. Render it whole, or compose inside it with the `Chat.*` compound parts.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -26,14 +26,14 @@ import {
 
 ## Parts index
 
-- [`.Root`](#chatroot--changed) — `changed`: container `<div>` deleted — zero nodes
-- [`.MessageList`](#chatmessagelist--changed) — `changed`: scroll state surfaces as imperative `data-*`
-- [`.Input`](#chatinput--changed) — `changed`: hidden centering div deleted — one `<form>`
-- [`.Empty`](#chatempty--changed) — `changed`: `icon`/content props → agent-derived defaults + composition
-- [`.Skeleton`](#chatskeleton--kept) — `kept`
-- [`.If`](#chatif--changed) — `changed`: `condition` → `test` selector; raw-boolean form dropped
-- [`.Message`](#chatmessage--changed) — `changed`: `<div>` → `<article>`; row state as `data-*`
-- [`.ErrorBanner`](#chaterrorbanner--changed) — `changed`: `error` optional with context fallback; `icon`/`retryLabel` removed
+- [`.Root`](#chatroot--changed) - `changed`: container `<div>` deleted - zero nodes
+- [`.MessageList`](#chatmessagelist--changed) - `changed`: scroll state surfaces as imperative `data-*`
+- [`.Input`](#chatinput--changed) - `changed`: hidden centering div deleted - one `<form>`
+- [`.Empty`](#chatempty--changed) - `changed`: `icon`/content props → agent-derived defaults + composition
+- [`.Skeleton`](#chatskeleton--kept) - `kept`
+- [`.If`](#chatif--changed) - `changed`: `condition` → `test` selector; raw-boolean form dropped
+- [`.Message`](#chatmessage--changed) - `changed`: `<div>` → `<article>`; row state as `data-*`
+- [`.ErrorBanner`](#chaterrorbanner--changed) - `changed`: `error` optional with context fallback; `icon`/`retryLabel` removed
 
 ## Anatomy
 
@@ -42,7 +42,7 @@ import {
 ```tsx
 <Chat agentId="support-agent" api="/api/ag-ui">
   <Chat.Root>
-    {/* session context — zero nodes (RFC) */}
+    {/* session context - zero nodes (RFC) */}
     <Chat.If test={(s) => s.isEmpty && !s.ready}>
       <Chat.Skeleton /> {/* history/agent metadata still loading */}
     </Chat.If>
@@ -69,7 +69,7 @@ The actual HTML `<Chat agentId api />` renders today (thread with messages), ann
 
 ```html
 <style>…generated token CSS (CSP-nonce aware)…</style>       <!-- injected by Chat.Root today; moves to ChatThemeScope (RFC) -->
-<div data-vf-ui data-vf-chat data-chat-container             <!-- Chat.Root container today (RFC: deleted — zero nodes) -->
+<div data-vf-ui data-vf-chat data-chat-container             <!-- Chat.Root container today (RFC: deleted - zero nodes) -->
      class="flex flex-col h-full overflow-hidden relative"    style="max-height:100%">
                                                              <!-- vertical flex column; clips its own overflow -->
 
@@ -94,7 +94,7 @@ The actual HTML `<Chat agentId api />` renders today (thread with messages), ann
 
   <div class="max-w-2xl mx-auto px-4 pb-3">                  <!-- Chat.ErrorBanner: in-flow between list and composer; -->
     <div>…message… <button>Retry</button></div>              <!-- only present while session error is non-null; -->
-                                                             <!-- ui Alert is a plain <div> today — role="alert" is a -->
+                                                             <!-- ui Alert is a plain <div> today - role="alert" is a -->
                                                              <!-- PROPOSED a11y addition (streaming a11y contract) -->
   </div>
 
@@ -124,7 +124,7 @@ The actual HTML `<Chat agentId api />` renders today (thread with messages), ann
 Empty-thread variants of the transcript slot:
 
 ```html
-<!-- while history/agent metadata loads — Chat.Skeleton -->
+<!-- while history/agent metadata loads - Chat.Skeleton -->
 <output aria-busy="true" class="flex-1 min-h-0 overflow-hidden">     <!-- fills transcript slot, no scroll -->
   <div class="py-6 w-full max-w-[850px] mx-auto px-9 flex flex-col gap-5">  <!-- same column as the real list -->
     …user bubble skeleton (h-8 w-48 self-end = right-aligned)…
@@ -133,21 +133,21 @@ Empty-thread variants of the transcript slot:
   <span class="sr-only">Loading messages...</span>
 </output>
 
-<!-- resolved + empty — Chat.Empty (idle hero) -->
+<!-- resolved + empty - Chat.Empty (idle hero) -->
 <div class="flex flex-1 flex-col items-center justify-center gap-3.5 px-4"> <!-- centered both axes in the slot -->
-  …avatar (today: 48px AgentAvatar via ChatEmpty's icon slot; RFC: 64px ChatEmptyState.Avatar — see Chat.Empty)
+  …avatar (today: 48px AgentAvatar via ChatEmpty's icon slot; RFC: 64px ChatEmptyState.Avatar - see Chat.Empty)
   · <h2> heading · description <p> · suggestions chip row…
 </div>
 ```
 
 ## The public default composition
 
-Per the adoption journey, **the L1 default composition is public** — ejecting = paste it and edit. The exact L2 source lands with the implementation; this tree is derived faithfully from today's preset source with RFC names — **illustrative until implementation**:
+Per the adoption journey, **the L1 default composition is public** - ejecting = paste it and edit. The exact L2 source lands with the implementation; this tree is derived faithfully from today's preset source with RFC names - **illustrative until implementation**:
 
 ```tsx
-// what <Chat agentId api uploadApi tools labels /> renders — illustrative until implementation
+// what <Chat agentId api uploadApi tools labels /> renders - illustrative until implementation
 function ChatDefault({ agentId, api, uploadApi, tools, labels, chat: controlled, children }) {
-  // App mode: self-driven session — seed + persist via nearest ConversationsProvider.
+  // App mode: self-driven session - seed + persist via nearest ConversationsProvider.
   // Controlled mode: `chat` prop wins.
   const conversation = useConversationChat({ agentId, api });
   const chat = controlled ?? conversation.chat;
@@ -155,10 +155,10 @@ function ChatDefault({ agentId, api, uploadApi, tools, labels, chat: controlled,
 
   return (
     <ChatRoot chat={chat}>
-      {/* context only — zero nodes (#2973) */}
+      {/* context only - zero nodes (#2973) */}
       <ChatThemeScope className="relative flex h-full flex-col overflow-hidden">
         <Chat.If test={(s) => s.isEmpty && !s.ready}>
-          <Chat.Skeleton /> {/* covers history/agent load — no hero flash */}
+          <Chat.Skeleton /> {/* covers history/agent load - no hero flash */}
         </Chat.If>
         <Chat.If test={(s) => s.isEmpty && s.ready}>
           <Chat.Empty /> {/* agent-derived hero + typed suggestions */}
@@ -177,7 +177,7 @@ function ChatDefault({ agentId, api, uploadApi, tools, labels, chat: controlled,
         <div className="flex-shrink-0 pb-6">
           {/* composer outer: pinned by flex order, never shrinks */}
           <div className="mx-auto w-full max-w-[850px] px-4">
-            {/* centered clamp — same width as the transcript */}
+            {/* centered clamp - same width as the transcript */}
             {upload.attachments.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 pb-4">
                 {/* pending AttachmentPill row */}
@@ -189,7 +189,7 @@ function ChatDefault({ agentId, api, uploadApi, tools, labels, chat: controlled,
             <ChatInput upload={upload}>
               {/* one <form>; session from ChatRoot context */}
               <div className="relative rounded-[var(--radius-lg)] bg-[var(--secondary)] px-3 py-2 transition-all">
-                {/* the composer card — also the file-drop target */}
+                {/* the composer card - also the file-drop target */}
                 <ChatInput.Field placeholder={labels?.placeholder} />
                 <div className="mt-2.5 flex min-h-[44px] items-center justify-between">
                   {/* footer toolbar: space-between split */}
@@ -220,26 +220,26 @@ Trimmed from today's 28 props to seven:
 
 | Prop                 | Type                                                   | Default             | Description                                                                                                                          |
 | -------------------- | ------------------------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `agentId`            | `string`                                               | —                   | App mode: fetches agent name/avatar/suggestions and scopes requests                                                                  |
-| `api` \| `transport` | `string \| { url, headers, credentials, fetch, body }` | `"/api/ag-ui"`      | Endpoint or transport object — auth works without a custom client                                                                    |
-| `uploadApi?`         | `string`                                               | —                   | Durable upload endpoint (multipart `file` → `{ url }`); omitted → attachments inline as base64 `data:` URLs (today's behavior, kept) |
-| `tools?`             | `{ [name: string]: Component }`                        | —                   | Tools registry; resolution: inline render fn → registry by name → default renderer                                                   |
-| `labels?`            | object                                                 | built-ins           | i18n overrides for built-in strings (L1 only — at L2/L3 the consumer owns all text)                                                  |
-| `chat?`              | `UseChatResult`                                        | —                   | Controlled mode — bring your own `useChat()`; app-mode props are ignored                                                             |
+| `agentId`            | `string`                                               | -                   | App mode: fetches agent name/avatar/suggestions and scopes requests                                                                  |
+| `api` \| `transport` | `string \| { url, headers, credentials, fetch, body }` | `"/api/ag-ui"`      | Endpoint or transport object - auth works without a custom client                                                                    |
+| `uploadApi?`         | `string`                                               | -                   | Durable upload endpoint (multipart `file` → `{ url }`); omitted → attachments inline as base64 `data:` URLs (today's behavior, kept) |
+| `tools?`             | `{ [name: string]: Component }`                        | -                   | Tools registry; resolution: inline render fn → registry by name → default renderer                                                   |
+| `labels?`            | object                                                 | built-ins           | i18n overrides for built-in strings (L1 only - at L2/L3 the consumer owns all text)                                                  |
+| `chat?`              | `UseChatResult`                                        | -                   | Controlled mode - bring your own `useChat()`; app-mode props are ignored                                                             |
 | `children?`          | `ReactNode`                                            | default composition | Replaces the default composition.                                                                                                    |
 
-`asChild` is **not** listed for the preset: `<Chat>` deliberately renders a tree, not one node — the node contract applies to each L2 part it is made of. The preset does not expose a `ref`; use `ChatRoot` or composed parts when a root ref is needed.
+`asChild` is **not** listed for the preset: `<Chat>` deliberately renders a tree, not one node - the node contract applies to each L2 part it is made of. The preset does not expose a `ref`; use `ChatRoot` or composed parts when a root ref is needed.
 
 ### Removed (today → where it went)
 
-Every today-only prop, with its replacement — this is the ledger a reviewer should judge:
+Every today-only prop, with its replacement - this is the ledger a reviewer should judge:
 
 | Today's prop                                                                                         | Replacement                                                                                    |
 | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `initialMessages` · `onError` · `onUpdate`                                                           | `useConversationChat` options (L2); presence-resolved persistence lives there                  |
 | `placeholder`                                                                                        | `labels`, or compose `ChatInput.Field placeholder`                                             |
-| `className` · `maxHeight` · `theme`                                                                  | Deleted; string `ChatTheme` retired (ledger) — style the pasted composition / `ChatThemeScope` |
-| `renderMessage`                                                                                      | **Deleted** (render-prop-config ban) — `tools` registry or `Message.Parts` composition         |
+| `className` · `maxHeight` · `theme`                                                                  | Deleted; string `ChatTheme` retired (ledger) - style the pasted composition / `ChatThemeScope` |
+| `renderMessage`                                                                                      | **Deleted** (render-prop-config ban) - `tools` registry or `Message.Parts` composition         |
 | `suggestions` · `onSuggestionClick` · `onSuggestionSelect`                                           | `ChatEmptyState` composition + `getAgentPromptSuggestionItems(agent)` (#2978)                  |
 | `emptyState` · `initializing` · `skeleton`                                                           | `Chat.If` composition with `Chat.Empty` / `Chat.Skeleton`                                      |
 | `agent` (`ChatAgentInfo`)                                                                            | Derived from `agentId` metadata; message identity is **per-message** (multi-agent decision)    |
@@ -250,13 +250,13 @@ Every today-only prop, with its replacement — this is the ledger a reviewer sh
 
 ## Parts
 
-Every part is one node + `asChild` + `extends HTMLAttributes` + composed `ref` (the whole contract), except where noted. Each part is the same component as its standalone export — never a parallel implementation.
+Every part is one node + `asChild` + `extends HTMLAttributes` + composed `ref` (the whole contract), except where noted. Each part is the same component as its standalone export - never a parallel implementation.
 
-### `Chat.Root` — `changed`
+### `Chat.Root` - `changed`
 
-The scoped session provider (= [`ChatRoot`](./chat-root.md)). **Renders no node by default** (RFC — today it renders the container `<div>`; see that page's ledger). All session state enters here; every other part reads it from context.
+The scoped session provider (= [`ChatRoot`](./chat-root.md)). **Renders no node by default** (RFC - today it renders the container `<div>`; see that page's ledger). All session state enters here; every other part reads it from context.
 
-**Layout:** none (zero nodes); with `asChild`, your element — today's container is the outer flex column.
+**Layout:** none (zero nodes); with `asChild`, your element - today's container is the outer flex column.
 
 | Prop       | Type            | Description                                  |
 | ---------- | --------------- | -------------------------------------------- |
@@ -264,15 +264,15 @@ The scoped session provider (= [`ChatRoot`](./chat-root.md)). **Renders no node 
 | `asChild`  | `boolean`       | Opt into a node by merging onto your element |
 | `children` | `ReactNode`     | Subtree that reads the context               |
 
-**State attributes (proposed):** `data-status="ready|submitted|streaming|error"` — only on a DOM node when `asChild` provides one.
+**State attributes (proposed):** `data-status="ready|submitted|streaming|error"` - only on a DOM node when `asChild` provides one.
 
-### `Chat.MessageList` — `changed`
+### `Chat.MessageList` - `changed`
 
 **Changed:** scroll state surfaces as imperative `data-*` attributes (see below); full ledger on [`ChatMessageList`](./chat-message-list.md).
 
 The transcript (= [`ChatMessageList`](./chat-message-list.md)). One scroll container `<div>`; default content = `.Content` (the centered `role="log"` column mapping one [`Chat.Message`](./message.md) per turn) + `.ScrollButton`.
 
-**Layout:** in-flow flex child — `flex-1 min-h-0`, the only scrolling element; anchors the absolutely-positioned scroll button.
+**Layout:** in-flow flex child - `flex-1 min-h-0`, the only scrolling element; anchors the absolutely-positioned scroll button.
 
 | Prop                       | Type        | Description                                            |
 | -------------------------- | ----------- | ------------------------------------------------------ |
@@ -280,11 +280,11 @@ The transcript (= [`ChatMessageList`](./chat-message-list.md)). One scroll conta
 | `children?`                | `ReactNode` | Replace the default `.Content`/`.ScrollButton` anatomy |
 | `asChild` + native + `ref` |             | Own the scroll container node                          |
 
-**State attributes (proposed):** `data-at-bottom` · `data-autoscrolling` · `data-scrollable` (imperative — no re-render per scroll tick) · `data-loading` · `data-empty`.
+**State attributes (proposed):** `data-at-bottom` · `data-autoscrolling` · `data-scrollable` (imperative - no re-render per scroll tick) · `data-loading` · `data-empty`.
 
-### `Chat.Input` — `changed`
+### `Chat.Input` - `changed`
 
-The composer (= [`ChatInput`](./chat-input.md)). **One `<form>`** + scoped context — the current hidden `max-w-[850px]` centering div is deleted; in the pasted composition that layout div is yours. Default content: `.Field` textarea + toolbar with `.Attach` / `.Model` / `.Submit` (Send↔Stop morph; `.Stop`/`.Send`/`.Voice` self-gate to `null` by state today). L1 wires voice input by default when the browser supports it; `.Voice` null-renders otherwise.
+The composer (= [`ChatInput`](./chat-input.md)). **One `<form>`** + scoped context - the current hidden `max-w-[850px]` centering div is deleted; in the pasted composition that layout div is yours. Default content: `.Field` textarea + toolbar with `.Attach` / `.Model` / `.Submit` (Send↔Stop morph; `.Stop`/`.Send`/`.Voice` self-gate to `null` by state today). L1 wires voice input by default when the browser supports it; `.Voice` null-renders otherwise.
 
 **Layout:** in-flow flex child, `shrink-0` (never collapses under a long transcript); the composer card is `relative` and doubles as the file-drop target.
 
@@ -295,11 +295,11 @@ The composer (= [`ChatInput`](./chat-input.md)). **One `<form>`** + scoped conte
 
 **State attributes (proposed):** `data-status` · `data-dragging` · `data-compact`.
 
-### `Chat.Empty` — `changed`
+### `Chat.Empty` - `changed`
 
 **Changed:** today's `icon` / `title` / `description` / `suggestions` / `onSuggestion*` / `quickActions` props give way to agent-derived defaults and `ChatEmptyState.*` composition.
 
-The idle hero (= [`ChatEmptyState`](./chat-empty-state.md) preset). One `<div>`. Default content today: the agent avatar — the **48px `AgentAvatar`** (`size-12`, image or initial) passed through `ChatEmpty`'s `icon` slot in app mode — → `<h2>` heading (agent name; today's fallback string `"What can I help with?"`) → optional description `<p>` → suggestion chip row (typed `{ label, prompt }[]` via `getAgentPromptSuggestionItems`, #2978 — selection hands back the _item_). **DOM delta (proposed):** the hero avatar becomes the **64px `ChatEmptyState.Avatar`** — the `icon` slot falls to the icon-slot ban, so the hero standardizes on the composable `ChatEmptyState.*` avatar instead of a slotted `AgentAvatar`. **Renders only on an empty, resolved thread** (via `Chat.If` in the composition).
+The idle hero (= [`ChatEmptyState`](./chat-empty-state.md) preset). One `<div>`. Default content today: the agent avatar - the **48px `AgentAvatar`** (`size-12`, image or initial) passed through `ChatEmpty`'s `icon` slot in app mode - → `<h2>` heading (agent name; today's fallback string `"What can I help with?"`) → optional description `<p>` → suggestion chip row (typed `{ label, prompt }[]` via `getAgentPromptSuggestionItems`, #2978 - selection hands back the _item_). **DOM delta (proposed):** the hero avatar becomes the **64px `ChatEmptyState.Avatar`** - the `icon` slot falls to the icon-slot ban, so the hero standardizes on the composable `ChatEmptyState.*` avatar instead of a slotted `AgentAvatar`. **Renders only on an empty, resolved thread** (via `Chat.If` in the composition).
 
 **Layout:** fills the transcript slot (`flex-1`), centers its column of children on both axes.
 
@@ -307,69 +307,69 @@ The idle hero (= [`ChatEmptyState`](./chat-empty-state.md) preset). One `<div>`.
 | -------------------------- | ---- | ------------------------------------------------------- |
 | `asChild` + native + `ref` |      | Own the node; children replace the default hero anatomy |
 
-Today's `icon?: ReactNode` prop falls to the **icon-slot ban** — compose `ChatEmptyState.Avatar` / children instead. Today's `title`/`description`/`suggestions`/`onSuggestion*`/`quickActions` props: derived from agent metadata in the default; compose `ChatEmptyState.*` for custom content.
+Today's `icon?: ReactNode` prop falls to the **icon-slot ban** - compose `ChatEmptyState.Avatar` / children instead. Today's `title`/`description`/`suggestions`/`onSuggestion*`/`quickActions` props: derived from agent metadata in the default; compose `ChatEmptyState.*` for custom content.
 
-### `Chat.Skeleton` — `kept`
+### `Chat.Skeleton` - `kept`
 
-The loading placeholder. One `<output aria-busy="true">` node. Default content: alternating skeleton rows in the same `max-w-[850px]` column as the real list — right-aligned user bubbles (`self-end`) and assistant rows (avatar circle + name bar + text lines) — plus a visually-hidden "Loading messages..." for assistive tech. Rendered while the thread's history or agent metadata is still loading (so the hero never flashes first).
+The loading placeholder. One `<output aria-busy="true">` node. Default content: alternating skeleton rows in the same `max-w-[850px]` column as the real list - right-aligned user bubbles (`self-end`) and assistant rows (avatar circle + name bar + text lines) - plus a visually-hidden "Loading messages..." for assistive tech. Rendered while the thread's history or agent metadata is still loading (so the hero never flashes first).
 
-**Layout:** fills the transcript slot (`flex-1 min-h-0`), overflow hidden — a stand-in with the exact column box of `.Content`.
+**Layout:** fills the transcript slot (`flex-1 min-h-0`), overflow hidden - a stand-in with the exact column box of `.Content`.
 
 | Prop                       | Type | Description                                                                                                              |
 | -------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------ |
-| `asChild` + native + `ref` |      | Own the node; children replace the default rows _(today: `className` only — the convention row is the proposed reshape)_ |
+| `asChild` + native + `ref` |      | Own the node; children replace the default rows _(today: `className` only - the convention row is the proposed reshape)_ |
 
-### `Chat.If` — `changed`
+### `Chat.If` - `changed`
 
-**Changed:** today's `condition: boolean | fn` prop becomes the required `test` selector — the raw-boolean form is dropped.
+**Changed:** today's `condition: boolean | fn` prop becomes the required `test` selector - the raw-boolean form is dropped.
 
-The selector conditional — **renders no node**; renders `children` when the selector passes, else `fallback`.
+The selector conditional - **renders no node**; renders `children` when the selector passes, else `fallback`.
 
-**Layout:** none (no node) — children participate in the parent's flex flow directly.
+**Layout:** none (no node) - children participate in the parent's flex flow directly.
 
 | Prop                | Type                               | Default | Description                                                                                                                                                                 |
 | ------------------- | ---------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test` _(required)_ | `(s: ChatContextValue) => boolean` | —       | Selector over the shared session context (today's prop is `condition: boolean \| fn` — the rename and the drop of the raw-boolean form follow the no-boolean-variants rule) |
+| `test` _(required)_ | `(s: ChatContextValue) => boolean` | -       | Selector over the shared session context (today's prop is `condition: boolean \| fn` - the rename and the drop of the raw-boolean form follow the no-boolean-variants rule) |
 | `fallback?`         | `ReactNode`                        | `null`  | Rendered when the selector fails (kept from today)                                                                                                                          |
 
-Outside a `Chat.Root`, the selector cannot run — today the part renders `fallback` (`null`) in that case.
+Outside a `Chat.Root`, the selector cannot run - today the part renders `fallback` (`null`) in that case.
 
-### `Chat.Message` — `changed`
+### `Chat.Message` - `changed`
 
-One message row (= [`Message`](./message.md)). One **`<article>`** (today: a `<div>`) + scoped `MessageContext`. Default content: avatar/header, then parts in order (text as `Markdown`, reasoning, tool calls, sources), then hover-revealed actions. Session callbacks (`editMessage`, `reload`) come from `ChatRoot` context — never re-threaded per message.
+One message row (= [`Message`](./message.md)). One **`<article>`** (today: a `<div>`) + scoped `MessageContext`. Default content: avatar/header, then parts in order (text as `Markdown`, reasoning, tool calls, sources), then hover-revealed actions. Session callbacks (`editMessage`, `reload`) come from `ChatRoot` context - never re-threaded per message.
 
 **Layout:** in-flow column (`flex flex-col gap-1.5 w-full`) inside the transcript column; row actions are hidden-but-animatable (`opacity-0 group-hover:opacity-100` today → `data-floating`, never unmount-to-hide).
 
 | Prop                       | Type                                         | Description                                                                                                                                                              |
 | -------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `message` _(required)_     | `ChatMessage<TMetadata, TDataParts, TTools>` | The turn to render — inside the preset's default map, `Chat.Message` resolves `message` from the iteration context, so the composition can print `<Chat.Message />` bare |
+| `message` _(required)_     | `ChatMessage<TMetadata, TDataParts, TTools>` | The turn to render - inside the preset's default map, `Chat.Message` resolves `message` from the iteration context, so the composition can print `<Chat.Message />` bare |
 | `asChild` + native + `ref` |                                              | Own the `<article>`                                                                                                                                                      |
 
 **State attributes (proposed):** `data-role` · `data-agent-id` · `data-streaming` · `data-editing` · `data-error`.
 
-### `Chat.ErrorBanner` — `changed`
+### `Chat.ErrorBanner` - `changed`
 
 **Changed:** `error` becomes optional (falling back to the session error from context); the `icon` and `retryLabel` props are removed.
 
-Session error display. Default content today: a centered wrapper (`max-w-2xl mx-auto`) holding a `ui` `Alert` (`variant="error"`) with the error message and, when a retry handler exists, a link-style **Retry** button wired to `reload`. Today the `ui` `Alert` renders a plain `<div>` — `role="alert"` is a **proposed a11y addition** (streaming a11y contract), not today's DOM. **Renders `null` while the session has no error** — safe to include unconditionally.
+Session error display. Default content today: a centered wrapper (`max-w-2xl mx-auto`) holding a `ui` `Alert` (`variant="error"`) with the error message and, when a retry handler exists, a link-style **Retry** button wired to `reload`. Today the `ui` `Alert` renders a plain `<div>` - `role="alert"` is a **proposed a11y addition** (streaming a11y contract), not today's DOM. **Renders `null` while the session has no error** - safe to include unconditionally.
 
 **Layout:** in-flow between the transcript and the composer (not an overlay); appears/disappears with the error.
 
 | Prop                       | Type    | Description                                                                                                                                           |
 | -------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `error?`                   | `Error` | Explicit error; falls back to the session error from `ChatRoot` context _(today `error` is required and context-blind — the fallback is the reshape)_ |
+| `error?`                   | `Error` | Explicit error; falls back to the session error from `ChatRoot` context _(today `error` is required and context-blind - the fallback is the reshape)_ |
 | `asChild` + native + `ref` |         | Own the node; children replace the default Alert content                                                                                              |
 
 Today's `icon` prop falls to the **icon-slot ban**; `retryLabel` becomes children / `labels`. The wrapper + `Alert` collapse to one `<div role="alert">` so the single-node contract holds.
 
 ## Context (what the parts read)
 
-`useChatContext()` — throws outside `Chat.Root` / `ChatRoot`; `useChatContextOptional()` returns `null` instead. Today's context is a 25-field bag (messages, input, submit/stop, model, attachments, branching, feedback, theme, …); per #2973 it collapses to **the shared session plus derived flags**:
+`useChatContext()` - throws outside `Chat.Root` / `ChatRoot`; `useChatContextOptional()` returns `null` instead. Today's context is a 25-field bag (messages, input, submit/stop, model, attachments, branching, feedback, theme, …); per #2973 it collapses to **the shared session plus derived flags**:
 
 ```ts
 {
   ...UseChatResult,          // messages, status, error, streamingMessageId, sendMessage, stop, reload, …
-  isEmpty: boolean           // derived — the selector field the RFC examples use
+  isEmpty: boolean           // derived - the selector field the RFC examples use
   ready: boolean             // ChatRoot reads activeReady from the nearest ConversationsProvider; standalone: true
 }
 ```
@@ -380,7 +380,7 @@ Today's `icon` prop falls to the **icon-slot ban**; `retryLabel` becomes childre
 
 ### Default
 
-Batteries included — runs every hook internally:
+Batteries included - runs every hook internally:
 
 ```tsx
 <ConversationsProvider storageKey="ops">
@@ -395,7 +395,7 @@ Batteries included — runs every hook internally:
 </ConversationsProvider>;
 ```
 
-### Per-piece customization — no ejection
+### Per-piece customization - no ejection
 
 ```tsx
 {/* one tool renderer swapped (`tools`); rest untouched */}
@@ -436,7 +436,7 @@ function Workspace() {
 
 ### Headless (L3)
 
-You render every element; consumer props go _into_ the getters — never `{...getter()} {...props}`:
+You render every element; consumer props go _into_ the getters - never `{...getter()} {...props}`:
 
 ```tsx
 function MyChatInput() {
@@ -455,11 +455,11 @@ function MyChatInput() {
 
 ## Customization (eject path)
 
-The three layers are one graduation path — no rewrite cliff:
+The three layers are one graduation path - no rewrite cliff:
 
-1. **L1, per-piece:** `tools` registry, `labels`, or `children` recomposition — swapping one tool renderer never forces ejecting the tree.
-2. **L2 — eject:** paste the public default composition (identical pixels — it carries the theme scope, providers, and default classes) and edit the one piece you care about. Everything `<Chat>` renders is reachable L2 — no private components, no internal-only props.
-3. **L3 — rebuild:** replace any L2 leaf, one at a time, with your own element driven by the same hook (`asChild` or prop getters).
+1. **L1, per-piece:** `tools` registry, `labels`, or `children` recomposition - swapping one tool renderer never forces ejecting the tree.
+2. **L2 - eject:** paste the public default composition (identical pixels - it carries the theme scope, providers, and default classes) and edit the one piece you care about. Everything `<Chat>` renders is reachable L2 - no private components, no internal-only props.
+3. **L3 - rebuild:** replace any L2 leaf, one at a time, with your own element driven by the same hook (`asChild` or prop getters).
 
 ## Related
 

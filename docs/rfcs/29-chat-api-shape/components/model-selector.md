@@ -1,10 +1,10 @@
 # ModelSelector
 
-A searchable popover for choosing a model — provider-logo trigger, provider-grouped list — with `models` configured on the leaf that uses it.
+A searchable popover for choosing a model - provider-logo trigger, provider-grouped list - with `models` configured on the leaf that uses it.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): the provider logo is hardcoded to `https://models.dev/logos/${key}.svg` with no override — an undocumented external network dependency baked into a "generic" component. Add a logo-source slot/override and document the dependency.
+> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): the provider logo is hardcoded to `https://models.dev/logos/${key}.svg` with no override - an undocumented external network dependency baked into a "generic" component. Add a logo-source slot/override and document the dependency.
 
 ## Import
 
@@ -17,12 +17,12 @@ import { ModelSelector, ModelSelectorItem, type ModelSelectorItemProps } from "v
 
 ## Parts index
 
-- [`.Root`](#modelselectorroot--changed) — `changed`: `renderItem` + root `className` deleted; `onChange` renamed `onValueChange`; `models` moves leaf-first
-- [`.Trigger`](#modelselectortrigger--changed) — `changed`: gains leaf-first `models`; `data-open` / `data-disabled`
-- [`.Content`](#modelselectorcontent--changed) — `changed`: Command shell `<div>` collapses to one node
-- [`.Search`](#modelselectorsearch--changed) — `changed`: `CommandInput` row → one `<input>`
-- [`.List`](#modelselectorlist--changed) — `changed`: `<div>` scroll container → `<ul>`
-- [`.Item`](#modelselectoritem--changed) — `changed`: `role="option"` `<div>` → `<button>`; `selected` prop → `data-active`
+- [`.Root`](#modelselectorroot--changed) - `changed`: `renderItem` + root `className` deleted; `onChange` renamed `onValueChange`; `models` moves leaf-first
+- [`.Trigger`](#modelselectortrigger--changed) - `changed`: gains leaf-first `models`; `data-open` / `data-disabled`
+- [`.Content`](#modelselectorcontent--changed) - `changed`: Command shell `<div>` collapses to one node
+- [`.Search`](#modelselectorsearch--changed) - `changed`: `CommandInput` row → one `<input>`
+- [`.List`](#modelselectorlist--changed) - `changed`: `<div>` scroll container → `<ul>`
+- [`.Item`](#modelselectoritem--changed) - `changed`: `role="option"` `<div>` → `<button>`; `selected` prop → `data-active`
 
 ## Anatomy
 
@@ -51,13 +51,13 @@ What the preset actually renders today (classes abbreviated to layout-relevant o
 
 ```html
 <span data-vf-popper-anchor class="relative inline-block">
-  <!-- .Root — positioning-anchor exception -->
+  <!-- .Root - positioning-anchor exception -->
   <button
     aria-haspopup="dialog"
     aria-expanded
     class="inline-flex h-9 items-center gap-1.5 rounded-full px-3"
   >
-    <!-- .Trigger — ui Pill (variant="pill"); in-flow row -->
+    <!-- .Trigger - ui Pill (variant="pill"); in-flow row -->
     <img class="size-4 shrink-0 object-contain" src="https://models.dev/logos/openai.svg" />
     <!-- provider logo (glyph fallback on 404) -->
     <span class="min-w-0 truncate">GPT-4o</span>
@@ -67,7 +67,7 @@ What the preset actually renders today (classes abbreviated to layout-relevant o
   </button>
   <!-- variant="icon" instead renders: round size-9 button, logo centered, no label/chevron -->
 
-  <!-- .Content — only while open. NOT in flow: portalled to the nearest
+  <!-- .Content - only while open. NOT in flow: portalled to the nearest
        [data-vf-ui] scope root (falls back to document.body),
        position: fixed, placed 8px below the trigger rect by the floating logic
        (flips above on viewport-bottom collision; clamped to 8px gutters). -->
@@ -82,7 +82,7 @@ What the preset actually renders today (classes abbreviated to layout-relevant o
         <!-- clear; only while query non-empty -->
       </div>
       <div class="max-h-[320px] overflow-y-auto p-2.5">
-        <!-- .List — the scroll container (hidden scrollbar) -->
+        <!-- .List - the scroll container (hidden scrollbar) -->
         <div class="text-center py-8 px-4">No models found.</div>
         <!-- CommandEmpty; only when filter matches nothing -->
         <div class="p-0.5">
@@ -116,7 +116,7 @@ Notes for the reviewer:
 
 ## Parts
 
-### `ModelSelector.Root` — `changed`
+### `ModelSelector.Root` - `changed`
 
 Changed: `renderItem` and root-level `className` are deleted, `onChange` is renamed `onValueChange` (callback convention, matching `AgentPicker.Root`), and `models` moves from required-on-root to leaf-first (liftable) config.
 
@@ -124,64 +124,64 @@ The compound's scoped context (selection, open state, disabled) + the popover ro
 
 | Prop                         | Type                                 | Default | Description                                                                                                                                    |
 | ---------------------------- | ------------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `value`                      | `string`                             | —       | Selected `"provider/model"` value; `undefined` = agent default (resolves to the first model for display)                                       |
-| `onValueChange` _(required)_ | `(model: string) => void`            | —       | Called with the chosen value (selection also closes the popover). _Renamed from today's `onChange`_                                            |
-| `disabled`                   | `boolean`                            | —       | Blocks opening; dims the trigger                                                                                                               |
-| `models`                     | `ModelOption[]`                      | —       | _Liftable_ config — see below. `ModelOption = { value, label, provider?, description?, badge? }`                                               |
-| `children`                   | `ReactNode`                          | —       | Omit for the default preset; pass to recompose                                                                                                 |
-| + native _(proposed)_        | `HTMLAttributes` · `asChild` · `ref` | —       | Applied to the anchor wrapper only while the positioning-anchor exception is active; otherwise to the root-owned nodeless trigger-ref surface. |
+| `value`                      | `string`                             | -       | Selected `"provider/model"` value; `undefined` = agent default (resolves to the first model for display)                                       |
+| `onValueChange` _(required)_ | `(model: string) => void`            | -       | Called with the chosen value (selection also closes the popover). _Renamed from today's `onChange`_                                            |
+| `disabled`                   | `boolean`                            | -       | Blocks opening; dims the trigger                                                                                                               |
+| `models`                     | `ModelOption[]`                      | -       | _Liftable_ config - see below. `ModelOption = { value, label, provider?, description?, badge? }`                                               |
+| `children`                   | `ReactNode`                          | -       | Omit for the default preset; pass to recompose                                                                                                 |
+| + native _(proposed)_        | `HTMLAttributes` · `asChild` · `ref` | -       | Applied to the anchor wrapper only while the positioning-anchor exception is active; otherwise to the root-owned nodeless trigger-ref surface. |
 
-**Removed (proposed):** `renderItem` (render-prop ban — compose `.Item` children or map options yourself), Root-level `className` (today it styles the _trigger_; class the `.Trigger` itself).
+**Removed (proposed):** `renderItem` (render-prop ban - compose `.Item` children or map options yourself), Root-level `className` (today it styles the _trigger_; class the `.Trigger` itself).
 
-**`models` — config on the leaf, liftable (escalation rule):** the default home for `models` is the leaf that uses it — `<ModelSelector.Trigger models={MODELS} />` / `<ChatInput.Model models={MODELS} />`. When more than one leaf needs the same list it may be _lifted_ to opt-in Root context (`<ModelSelector.Root models={MODELS}>`); **the leaf prop always wins** (explicit prop > nearest context > default). Today `models` is required on the root — the leaf-first placement is the proposed change.
+**`models` - config on the leaf, liftable (escalation rule):** the default home for `models` is the leaf that uses it - `<ModelSelector.Trigger models={MODELS} />` / `<ChatInput.Model models={MODELS} />`. When more than one leaf needs the same list it may be _lifted_ to opt-in Root context (`<ModelSelector.Root models={MODELS}>`); **the leaf prop always wins** (explicit prop > nearest context > default). Today `models` is required on the root - the leaf-first placement is the proposed change.
 
-### `ModelSelector.Trigger` — `changed`
+### `ModelSelector.Trigger` - `changed`
 
 Changed: gains the leaf-first `models` prop plus `data-open` / `data-disabled`; today it takes only `variant`, `children`, and `className`.
 
 One `<button>` (today a `ui` Pill or a round icon button merged onto `PopoverTrigger` via `asChild`; `aria-haspopup`/`aria-expanded` wired). Two default appearances via `variant`:
 
-- `"pill"` _(default)_ — **in-flow `inline-flex h-9` row, `gap-1.5`**: provider logo (`shrink-0`, models.dev SVG with glyph fallback) → selected label (or `"Select model"`, `min-w-0 truncate`) → chevron (`ml-auto`).
-- `"icon"` — **round `size-9` flex-centered button**, logo only, accessible name from the selected label (`aria-label`).
+- `"pill"` _(default)_ - **in-flow `inline-flex h-9` row, `gap-1.5`**: provider logo (`shrink-0`, models.dev SVG with glyph fallback) → selected label (or `"Select model"`, `min-w-0 truncate`) → chevron (`ml-auto`).
+- `"icon"` - **round `size-9` flex-centered button**, logo only, accessible name from the selected label (`aria-label`).
 
 Children replace the default content (today children render inside a plain `<button>`).
 
 | Prop                                    | Type               | Default  | Description                            |
 | --------------------------------------- | ------------------ | -------- | -------------------------------------- |
 | `variant`                               | `'pill' \| 'icon'` | `'pill'` | Default-content style                  |
-| `models` _(proposed)_                   | `ModelOption[]`    | —        | Leaf-first config placement (see Root) |
-| `children`                              | `ReactNode`        | —        | Replace the logo/label/chevron default |
+| `models` _(proposed)_                   | `ModelOption[]`    | -        | Leaf-first config placement (see Root) |
+| `children`                              | `ReactNode`        | -        | Replace the logo/label/chevron default |
 | `asChild` + native + `ref` _(proposed)_ |                    |          | Own the node; today only `className`   |
 
 **State attributes (proposed):** `data-open` (today only `aria-expanded`), `data-disabled`.
 
-### `ModelSelector.Content` — `changed`
+### `ModelSelector.Content` - `changed`
 
 Changed: today it interposes the Command shell `<div>` (filter context); proposed one node, context via React.
 
-The popover panel — one `<div role="dialog">`. **Layout: not in flow — portalled to the nearest `[data-vf-ui]` scope root (falls back to `document.body`), `position: fixed`, placed by the floating logic below the trigger (collision-flipped, gutter-clamped), `z-50`, `min-w-[260px]`.** Today it also interposes the Command shell `<div>` (filter context); proposed: one node, context via React. **Renders `null` while closed.** Alignment defaults to `align="start"` and `side="bottom"`. Public props are `align?: 'start' | 'center' | 'end'` and `side?: 'top' | 'right' | 'bottom' | 'left'`.
+The popover panel - one `<div role="dialog">`. **Layout: not in flow - portalled to the nearest `[data-vf-ui]` scope root (falls back to `document.body`), `position: fixed`, placed by the floating logic below the trigger (collision-flipped, gutter-clamped), `z-50`, `min-w-[260px]`.** Today it also interposes the Command shell `<div>` (filter context); proposed: one node, context via React. **Renders `null` while closed.** Alignment defaults to `align="start"` and `side="bottom"`. Public props are `align?: 'start' | 'center' | 'end'` and `side?: 'top' | 'right' | 'bottom' | 'left'`.
 
 | Prop                                    | Type        | Description                                |
 | --------------------------------------- | ----------- | ------------------------------------------ |
 | `children`                              | `ReactNode` | `.Search` / `.List` / your own nodes       |
 | `asChild` + native + `ref` _(proposed)_ |             | Own the panel node; today only `className` |
 
-### `ModelSelector.Search` — `changed`
+### `ModelSelector.Search` - `changed`
 
 Changed: today a `CommandInput` row; proposed one `<input>` node.
 
-The filter input — one `<input>` (today a `CommandInput` row; same internal mechanics as `AgentPicker.Search`: `relative` row, absolute icon left / conditional clear button right, `h-12 w-full` input). Case-insensitive substring filter over item labels. **Layout: in-flow row at the top of the panel (border-b divider).**
+The filter input - one `<input>` (today a `CommandInput` row; same internal mechanics as `AgentPicker.Search`: `relative` row, absolute icon left / conditional clear button right, `h-12 w-full` input). Case-insensitive substring filter over item labels. **Layout: in-flow row at the top of the panel (border-b divider).**
 
 | Prop                                    | Type     | Default              | Description                                |
 | --------------------------------------- | -------- | -------------------- | ------------------------------------------ |
 | `placeholder`                           | `string` | `"Search models..."` |                                            |
 | `asChild` + native + `ref` _(proposed)_ |          |                      | Own the input node; today only `className` |
 
-### `ModelSelector.List` — `changed`
+### `ModelSelector.List` - `changed`
 
 Changed: today a `<div>` scroll container; proposed node `<ul>`, plus `data-empty`.
 
-The option region — one scroll container (today `<div class="max-h-[320px] overflow-y-auto">`; proposed node `<ul>`). Default content (preset): "No models found." empty row, then provider-grouped `.Item` rows. Composed: children replace it. **Layout: in-flow block below `.Search`; the panel's only scrolling region.**
+The option region - one scroll container (today `<div class="max-h-[320px] overflow-y-auto">`; proposed node `<ul>`). Default content (preset): "No models found." empty row, then provider-grouped `.Item` rows. Composed: children replace it. **Layout: in-flow block below `.Search`; the panel's only scrolling region.**
 
 | Prop                                    | Type        | Description                                 |
 | --------------------------------------- | ----------- | ------------------------------------------- |
@@ -190,22 +190,22 @@ The option region — one scroll container (today `<div class="max-h-[320px] ove
 
 **State attributes (proposed):** `data-empty` (zero options).
 
-### `ModelSelector.Item` — `changed`
+### `ModelSelector.Item` - `changed`
 
 Changed: today a `role="option"` `<div>`; proposed `<button>`, with the `selected` boolean prop replaced by `data-active`.
 
-One selectable model row — today a `role="option"` `<div>` (proposed: `<button>`). **Layout: in-flow `flex items-center gap-3 min-w-0` row; the label is `flex-1 truncate`; badge sits between label and check; check is `ml-auto`.** Default content: provider logo → label → badge pill (only when the option has `badge`) → check glyph (selected only). Filtered-out rows are `hidden`. Selecting calls `onValueChange` and closes the popover.
+One selectable model row - today a `role="option"` `<div>` (proposed: `<button>`). **Layout: in-flow `flex items-center gap-3 min-w-0` row; the label is `flex-1 truncate`; badge sits between label and check; check is `ml-auto`.** Default content: provider logo → label → badge pill (only when the option has `badge`) → check glyph (selected only). Filtered-out rows are `hidden`. Selecting calls `onValueChange` and closes the popover.
 
 | Prop                                    | Type          | Description                                                                          |
 | --------------------------------------- | ------------- | ------------------------------------------------------------------------------------ |
 | `model` _(required)_                    | `ModelOption` | The row's option; its `value` is the selection value, its `label` the search keyword |
 | `asChild` + native + `ref` _(proposed)_ |               | Own the row node; today only `className`                                             |
 
-**State attributes (proposed):** `data-active` — replaces today's `selected?: boolean` prop (composed items already default to matching the context selection).
+**State attributes (proposed):** `data-active` - replaces today's `selected?: boolean` prop (composed items already default to matching the context selection).
 
 ## Context (what the parts read)
 
-`useModelSelector()` — throws outside `ModelSelector.Root`:
+`useModelSelector()` - throws outside `ModelSelector.Root`:
 
 ```ts
 {
@@ -278,12 +278,12 @@ function MyModelMenu() {
 
 ## Customization (eject path)
 
-1. **L1** — the default appearance inside `<Chat />` (via `ChatInput.Model`).
-2. **L2** — paste the preset composition (printed under _Anatomy_); restyle, reorder, or retag any part (`asChild`); the badge/logo/label nodes are replaceable via `.Item` children.
-3. **L3** — drive your own elements from [`useModelSelector()`](../hooks/use-model-selector.md).
+1. **L1** - the default appearance inside `<Chat />` (via `ChatInput.Model`).
+2. **L2** - paste the preset composition (printed under _Anatomy_); restyle, reorder, or retag any part (`asChild`); the badge/logo/label nodes are replaceable via `.Item` children.
+3. **L3** - drive your own elements from [`useModelSelector()`](../hooks/use-model-selector.md).
 
 ## Related
 
-- [`AgentPicker`](./agent-picker.md) — same anatomy plus `.Create` / `.Manage` (and the shared positioning-anchor exception)
+- [`AgentPicker`](./agent-picker.md) - same anatomy plus `.Create` / `.Manage` (and the shared positioning-anchor exception)
 - [`useModelSelector`](../hooks/use-model-selector.md)
-- `ChatInput.Model` — the composer's model trigger (`models` on the leaf, `data-open`)
+- `ChatInput.Model` - the composer's model trigger (`models` on the leaf, `data-open`)

@@ -1,10 +1,10 @@
 # ToolCall
 
-A disclosure for one tool invocation — input, output, and the full lifecycle including human-in-the-loop approval. Render it whole, or compose the parts.
+A disclosure for one tool invocation - input, output, and the full lifecycle including human-in-the-loop approval. Render it whole, or compose the parts.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): `variant` auto-selects `compact` by **hardcoded veryfront tool names** (`load_skill`, `load_skill_reference`, `execute_skill_script`) via `isSkillToolPart` — "skill" is a veryfront concept. Default `variant="card"` for all tools; let consumers opt a tool into compact via the `tools` registry; keep the skill guard out of the generic public API.
+> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): `variant` auto-selects `compact` by **hardcoded veryfront tool names** (`load_skill`, `load_skill_reference`, `execute_skill_script`) via `isSkillToolPart` - "skill" is a veryfront concept. Default `variant="card"` for all tools; let consumers opt a tool into compact via the `tools` registry; keep the skill guard out of the generic public API.
 
 ## Import
 
@@ -16,12 +16,12 @@ import { ToolCall, ToolCallTrigger, type ToolCallTriggerProps } from "veryfront/
 
 ## Parts index
 
-- [`.Root`](#toolcallroot--changed) — `changed`: `tool` → `part` rename; `icon` deleted; `data-state` approval lifecycle; auto-open on completion
-- [`.Trigger`](#toolcalltrigger--changed) — `changed`: `icon` deleted — children replace the default content
-- [`.Body`](#toolcallbody--kept) — `kept`
-- [`.Input`](#toolcallinput--changed) — `changed`: bespoke regex-highlighted `<pre>` → `RichCodeBlock`
-- [`.Output`](#toolcalloutput--changed) — `changed`: becomes `Markdown`/`RichCodeBlock`-backed
-- [`.Error`](#toolcallerror--changed) — `changed`: `role="alert"` proposed (today's Alert renders no role)
+- [`.Root`](#toolcallroot--changed) - `changed`: `tool` → `part` rename; `icon` deleted; `data-state` approval lifecycle; auto-open on completion
+- [`.Trigger`](#toolcalltrigger--changed) - `changed`: `icon` deleted - children replace the default content
+- [`.Body`](#toolcallbody--kept) - `kept`
+- [`.Input`](#toolcallinput--changed) - `changed`: bespoke regex-highlighted `<pre>` → `RichCodeBlock`
+- [`.Output`](#toolcalloutput--changed) - `changed`: becomes `Markdown`/`RichCodeBlock`-backed
+- [`.Error`](#toolcallerror--changed) - `changed`: `role="alert"` proposed (today's Alert renders no role)
 
 ## Anatomy
 
@@ -45,9 +45,9 @@ The actual HTML of `<ToolCall part={part} />` today (classes abbreviated to layo
 
 ```html
 <div class="w-full overflow-hidden rounded-md border px-4 py-2.5">
-  <!-- .Root — in-flow block card, full width -->
+  <!-- .Root - in-flow block card, full width -->
   <button class="flex w-full items-center justify-between gap-3">
-    <!-- .Trigger — full-width flex row; name cluster left, chevron pushed right -->
+    <!-- .Trigger - full-width flex row; name cluster left, chevron pushed right -->
     <div class="flex min-w-0 items-center gap-2">
       <!--   name cluster: flex row gap-2; min-w-0 lets the name truncate -->
       <svg class="size-3.5 shrink-0" />
@@ -62,30 +62,30 @@ The actual HTML of `<ToolCall part={part} />` today (classes abbreviated to layo
   </button>
 
   <div class="mt-3 border-t pt-3">
-    <!-- .Body — in-flow block; PRESENT ONLY WHEN EXPANDED -->
+    <!-- .Body - in-flow block; PRESENT ONLY WHEN EXPANDED -->
     <div class="space-y-2 overflow-hidden">
-      <!-- .Input — ONLY when part.input !== undefined -->
+      <!-- .Input - ONLY when part.input !== undefined -->
       <h4 class="text-xs">Parameters</h4>
       <div class="rounded-md bg-secondary p-3">
         <pre class="whitespace-pre-wrap font-mono text-sm">…highlighted JSON…</pre>
       </div>
     </div>
     <div class="mt-3 space-y-2 border-t pt-3">
-      <!-- .Output — ONLY when output is not null/undefined -->
+      <!-- .Output - ONLY when output is not null/undefined -->
       <h4 class="text-xs">Result</h4>
       <div class="overflow-x-auto rounded-md bg-secondary">…auto-table or JSON…</div>
       <!-- wide tables scroll horizontally -->
     </div>
     <div class="mt-3 border-t pt-3">
-      <!-- .Error — ONLY when part.errorText exists -->
+      <!-- .Error - ONLY when part.errorText exists -->
       <div>…error Alert: icon + text…</div>
-      <!-- role="alert" is PROPOSED — today's Alert renders no role -->
+      <!-- role="alert" is PROPOSED - today's Alert renders no role -->
     </div>
   </div>
 </div>
 ```
 
-No absolute positioning anywhere — every part is an in-flow block/flex child; the disclosure works by mounting/unmounting `.Body`.
+No absolute positioning anywhere - every part is an in-flow block/flex child; the disclosure works by mounting/unmounting `.Body`.
 
 Compact variant (`variant="compact"`, default for skill tools) renders a single in-flow row instead:
 
@@ -101,7 +101,7 @@ Compact variant (`variant="compact"`, default for skill tools) renders a single 
 
 ## Parts
 
-### `ToolCall.Root` — `changed`
+### `ToolCall.Root` - `changed`
 
 Changed: today's `tool` prop is renamed `part`, the `icon` prop is deleted, the full lifecycle (including the approval states) surfaces as `data-state`, and `data-open` auto-opens on completion (today: collapsed by default, auto-open on error only).
 
@@ -111,13 +111,13 @@ The card container (one `<div>`, bordered, rounded) + the compound's scoped cont
 
 | Prop                   | Type                                                    | Default                                                                                                        | Description                                                                                                                                                                                           |
 | ---------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `part` _(required)_    | typed tool part (`ChatToolPart \| ChatDynamicToolPart`) | —                                                                                                              | The tool part to render. `useToolCall<TTools>` narrows per tool name (`part.type === 'tool-…'`). _(Today's prop is named `tool`; `part` is the proposed rename to match `Message.Parts` vocabulary.)_ |
+| `part` _(required)_    | typed tool part (`ChatToolPart \| ChatDynamicToolPart`) | -                                                                                                              | The tool part to render. `useToolCall<TTools>` narrows per tool name (`part.type === 'tool-…'`). _(Today's prop is named `tool`; `part` is the proposed rename to match `Message.Parts` vocabulary.)_ |
 | `variant`              | `'card' \| 'compact'`                                   | `'compact'` for skill tools (`load_skill`, `load_skill_reference`, `execute_skill_script`), `'card'` otherwise | Presentation axis, not a severity/type. `'compact'` is the retired `SkillTool` folded in as a variant.                                                                                                |
 | `defaultExpanded`      | `boolean`                                               | auto: errored tools open, everything else collapsed                                                            | Initial expanded state when uncontrolled. Today's default keeps fast tools from stacking up expanded and burying the reply; errors stay open so failures aren't hidden behind a click.                |
-| `onToggle`             | `(next: boolean, e: MouseEvent) => void`                | —                                                                                                              | Called when the disclosure toggles.                                                                                                                                                                   |
-| ~~`icon`~~             | `ReactNode`                                             | —                                                                                                              | **Removed.** The RFC bans `icon` slot props (~30 files use them today); pass children to `ToolCall.Trigger` to replace the default icon.                                                              |
+| `onToggle`             | `(next: boolean, e: MouseEvent) => void`                | -                                                                                                              | Called when the disclosure toggles.                                                                                                                                                                   |
+| ~~`icon`~~             | `ReactNode`                                             | -                                                                                                              | **Removed.** The RFC bans `icon` slot props (~30 files use them today); pass children to `ToolCall.Trigger` to replace the default icon.                                                              |
 | `asChild` _(proposed)_ | `boolean`                                               | `false`                                                                                                        | Merge the root node onto your own element.                                                                                                                                                            |
-| + native               | `React.HTMLAttributes<HTMLDivElement>` · `ref`          | —                                                                                                              | Spread onto the single node; `className` merges.                                                                                                                                                      |
+| + native               | `React.HTMLAttributes<HTMLDivElement>` · `ref`          | -                                                                                                              | Spread onto the single node; `className` merges.                                                                                                                                                      |
 
 **State attributes (proposed):**
 
@@ -138,9 +138,9 @@ The card container (one `<div>`, bordered, rounded) + the compound's scoped cont
 }
 ```
 
-### `ToolCall.Trigger` — `changed`
+### `ToolCall.Trigger` - `changed`
 
-Changed: the `icon` prop is deleted — pass children to replace the default icon/name/badge content.
+Changed: the `icon` prop is deleted - pass children to replace the default icon/name/badge content.
 
 One full-width `<button>`. Default content: wrench icon → tool name (`truncate`, from `part.toolName`) → status badge (a pill with per-state icon + label: pulsing clock while running, green check when completed, yellow clock awaiting approval, red X on error, orange X when denied) → chevron pushed right, rotating 180° when open. Always renders.
 
@@ -151,9 +151,9 @@ One full-width `<button>`. Default content: wrench icon → tool name (`truncate
 | ~~`icon`~~                                         | `ReactNode` | **Removed** (today overrides the leading wrench icon). Pass children to replace the default icon/name/badge content. |
 | `asChild` + native (`ButtonHTMLAttributes`, `ref`) |             | Own the node; `data-open` _(proposed)_ mirrors the root.                                                             |
 
-### `ToolCall.Body` — `kept`
+### `ToolCall.Body` - `kept`
 
-One `<div>` (top border, padded). Default content: `Input` → `Output` → `Error`. **Renders `null` while the disclosure is collapsed** — safe to include unconditionally.
+One `<div>` (top border, padded). Default content: `Input` → `Output` → `Error`. **Renders `null` while the disclosure is collapsed** - safe to include unconditionally.
 
 **Layout:** in-flow block below the trigger; mounted/unmounted by open state (no height animation today).
 
@@ -161,7 +161,7 @@ One `<div>` (top border, padded). Default content: `Input` → `Output` → `Err
 | -------------------------- | ---- | -------------------------------------------------------------------------- |
 | `asChild` + native + `ref` |      | Own the node; children replace the default `Input`/`Output`/`Error` stack. |
 
-### `ToolCall.Input` — `changed`
+### `ToolCall.Input` - `changed`
 
 Changed: today's bespoke regex-highlighted `<pre>` moves onto `RichCodeBlock`, so the markdown `components` override map reaches it.
 
@@ -174,11 +174,11 @@ The "Parameters" block: a muted `Parameters` heading + the tool input as syntax-
 | `children`                 | `ReactNode` | Replaces the rendered value (the heading and surface stay). |
 | `asChild` + native + `ref` |             | Own the node.                                               |
 
-**Proposed:** the JSON rendering moves onto `RichCodeBlock`, so it falls under the markdown exception — the `Markdown` `components={{ code, … }}` override map reaches it. Today it is a bespoke `<pre>` with regex highlighting.
+**Proposed:** the JSON rendering moves onto `RichCodeBlock`, so it falls under the markdown exception - the `Markdown` `components={{ code, … }}` override map reaches it. Today it is a bespoke `<pre>` with regex highlighting.
 
-### `ToolCall.Output` — `changed`
+### `ToolCall.Output` - `changed`
 
-Changed: the value rendering becomes `Markdown`/`RichCodeBlock`-backed — the same markdown exception as `.Input`, every emitted element replaceable via the `components` map.
+Changed: the value rendering becomes `Markdown`/`RichCodeBlock`-backed - the same markdown exception as `.Input`, every emitted element replaceable via the `components` map.
 
 The "Result" block: a muted `Result` heading + the output. Default rendering: an array of uniform objects becomes an auto `<table>` (title-cased column headers from the first row's keys); anything else renders as syntax-highlighted JSON. **Renders `null` when `part.output` is `undefined` or `null`.**
 
@@ -189,11 +189,11 @@ The "Result" block: a muted `Result` heading + the output. Default rendering: an
 | `children`                 | `ReactNode` | Replaces the rendered value (heading and surface stay). |
 | `asChild` + native + `ref` |             | Own the node.                                           |
 
-**Proposed:** `Markdown`/`RichCodeBlock`-backed, same markdown exception as `.Input` — every emitted element stays replaceable via the `components` map.
+**Proposed:** `Markdown`/`RichCodeBlock`-backed, same markdown exception as `.Input` - every emitted element stays replaceable via the `components` map.
 
-### `ToolCall.Error` — `changed`
+### `ToolCall.Error` - `changed`
 
-Changed: `role="alert"` is a _proposed_ addition — today's error Alert renders no role.
+Changed: `role="alert"` is a _proposed_ addition - today's error Alert renders no role.
 
 One `<div>` wrapping an error-variant `Alert` (X-circle icon + `part.errorText`). **Renders `null` unless the part carries `errorText`.**
 
@@ -205,13 +205,13 @@ One `<div>` wrapping an error-variant `Alert` (X-circle icon + `part.errorText`)
 
 ### Compact variant
 
-With `variant="compact"` (the default for skill tools), the root renders a single-line row instead of the card: pulsing sparkles icon + shimmering `Loading skill: <name>` while running, then a check + `Loaded skill: <name>` on `output-available`. Pass children to `ToolCall.Root` to replace the row entirely — the context still provides the part.
+With `variant="compact"` (the default for skill tools), the root renders a single-line row instead of the card: pulsing sparkles icon + shimmering `Loading skill: <name>` while running, then a check + `Loaded skill: <name>` on `output-available`. Pass children to `ToolCall.Root` to replace the row entirely - the context still provides the part.
 
-**Layout:** one in-flow flex row (`min-w-0 gap-2`); icon `shrink-0`, label truncates. No border, no disclosure — nothing expands.
+**Layout:** one in-flow flex row (`min-w-0 gap-2`); icon `shrink-0`, label truncates. No border, no disclosure - nothing expands.
 
 ## Context (what the parts read)
 
-`useToolCall<TTools>(part?)` — part explicit at L3, from context at L2; throws outside a `ToolCall` when no part is passed:
+`useToolCall<TTools>(part?)` - part explicit at L3, from context at L2; throws outside a `ToolCall` when no part is passed:
 
 ```ts
 {
@@ -233,9 +233,9 @@ _Grounding:_ today's context is `{ tool, isExpanded, toggle, hasOutput, hasError
 
 "Render _this_ tool my way" never forces ejecting the tree. Resolution order:
 
-1. **Inline render fn** — `<Message.Parts>{(part) => …}</Message.Parts>`
-2. **Tools registry by name** — `<Chat tools={{ web_search: MyToolCard }} />` or `<ChatMessageList tools={…}>`. Registry values are components receiving the typed part; the registry is typed against `TTools`, so a wrong renderer signature is a compile error.
-3. **Default renderer** — this component.
+1. **Inline render fn** - `<Message.Parts>{(part) => …}</Message.Parts>`
+2. **Tools registry by name** - `<Chat tools={{ web_search: MyToolCard }} />` or `<ChatMessageList tools={…}>`. Registry values are components receiving the typed part; the registry is typed against `TTools`, so a wrong renderer signature is a compile error.
+3. **Default renderer** - this component.
 
 ## Examples
 
@@ -301,12 +301,12 @@ function MyToolCard({ part }: { part: MyToolPart }) {
 
 ## Customization (eject path)
 
-1. **L1:** `tools={{ name: Component }}` on `<Chat>` — replace one tool's card, nothing else moves.
+1. **L1:** `tools={{ name: Component }}` on `<Chat>` - replace one tool's card, nothing else moves.
 2. **L2:** paste the default `ToolCall` composition inside your `Message.Parts` render fn and restyle each part; swap any part's element via `asChild`.
 3. **L3:** `useToolCall(part)` and render every node yourself with the getters.
 
 ## Related
 
-- [`useToolCall`](../hooks/use-tool-call.md) — state, getters, per-tool type narrowing
-- [`useMessageParts`](../hooks/use-message-parts.md) — typed part iteration
-- [Message](./message.md) — the row that hosts tool parts
+- [`useToolCall`](../hooks/use-tool-call.md) - state, getters, per-tool type narrowing
+- [`useMessageParts`](../hooks/use-message-parts.md) - typed part iteration
+- [Message](./message.md) - the row that hosts tool parts

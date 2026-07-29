@@ -1,10 +1,10 @@
 # BranchPicker
 
-Previous/next navigation between message branches — a namespace re-export of `Message.BranchPicker`.
+Previous/next navigation between message branches - a namespace re-export of `Message.BranchPicker`.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-`BranchPicker` **is** `Message.BranchPicker` — one implementation, re-exported under a standalone name. It is a thin surface over the `getBranches` / `switchBranch` capabilities that **already exist on `useChat`**, via `useMessageBranches`. Today the wiring is split: a presentational `BranchPicker` (controlled `current`/`total`/`onPrev`/`onNext` props) plus a `Message.BranchPicker` wrapper that feeds it from message context — including the off-by-one bookkeeping (`BranchInfo.current` is 1-based, `switchBranch` takes a 0-based index, so prev/next are `switchBranch(id, current - 2)` / `switchBranch(id, current)`). The proposal hides that math inside `useMessageBranches`.
+`BranchPicker` **is** `Message.BranchPicker` - one implementation, re-exported under a standalone name. It is a thin surface over the `getBranches` / `switchBranch` capabilities that **already exist on `useChat`**, via `useMessageBranches`. Today the wiring is split: a presentational `BranchPicker` (controlled `current`/`total`/`onPrev`/`onNext` props) plus a `Message.BranchPicker` wrapper that feeds it from message context - including the off-by-one bookkeeping (`BranchInfo.current` is 1-based, `switchBranch` takes a 0-based index, so prev/next are `switchBranch(id, current - 2)` / `switchBranch(id, current)`). The proposal hides that math inside `useMessageBranches`.
 
 ## Import
 
@@ -16,14 +16,14 @@ import { Message } from "veryfront/chat"; // Message.BranchPicker
 import { BranchPicker, BranchPickerCount, type BranchPickerCountProps } from "veryfront/chat";
 ```
 
-`BranchPicker.Count` and `BranchPickerCount` are the same function — namespace alias and flat export, two access styles (same for every sub-part).
+`BranchPicker.Count` and `BranchPickerCount` are the same function - namespace alias and flat export, two access styles (same for every sub-part).
 
 ## Parts index
 
-- [`.Root`](#branchpickerroot--changed) — `changed`: controlled `current`/`total`/`onPrev`/`onNext` props removed — context-driven
-- [`.Previous`](#branchpickerprevious--changed) — `changed`: `icon` prop deleted; `data-disabled` proposed
-- [`.Count`](#branchpickercount--kept) — `kept`
-- [`.Next`](#branchpickernext--changed) — `changed`: `icon` prop deleted; `data-disabled` proposed
+- [`.Root`](#branchpickerroot--changed) - `changed`: controlled `current`/`total`/`onPrev`/`onNext` props removed - context-driven
+- [`.Previous`](#branchpickerprevious--changed) - `changed`: `icon` prop deleted; `data-disabled` proposed
+- [`.Count`](#branchpickercount--kept) - `kept`
+- [`.Next`](#branchpickernext--changed) - `changed`: `icon` prop deleted; `data-disabled` proposed
 
 ## Anatomy
 
@@ -31,10 +31,10 @@ Each part renders one node, `extends` its native attributes, spreads `{...props}
 
 ```tsx
 <BranchPicker.Root>
-  {/* ONE <div> — null unless >1 branch */}
-  <BranchPicker.Previous /> {/* ‹ chevron — disabled on the first branch */}
-  <BranchPicker.Count /> {/* "2/3" — position / total */}
-  <BranchPicker.Next /> {/* › chevron — disabled on the last branch */}
+  {/* ONE <div> - null unless >1 branch */}
+  <BranchPicker.Previous /> {/* ‹ chevron - disabled on the first branch */}
+  <BranchPicker.Count /> {/* "2/3" - position / total */}
+  <BranchPicker.Next /> {/* › chevron - disabled on the last branch */}
 </BranchPicker.Root>;
 ```
 
@@ -42,11 +42,11 @@ Each part renders one node, `extends` its native attributes, spreads `{...props}
 
 ## Default DOM (childless render)
 
-What the childless picker actually renders (today's source classes, abbreviated to layout). The picker is always visible when mounted — no hover reveal, no absolute positioning; visibility is all-or-nothing via the `total <= 1` null-render.
+What the childless picker actually renders (today's source classes, abbreviated to layout). The picker is always visible when mounted - no hover reveal, no absolute positioning; visibility is all-or-nothing via the `total <= 1` null-render.
 
 ```html
 <div class="inline-flex items-center gap-1 text-xs">
-  <!-- BranchPicker.Root — in-flow INLINE-flex ROW, gap 1; sizes to its
+  <!-- BranchPicker.Root - in-flow INLINE-flex ROW, gap 1; sizes to its
              content, so it sits inline next to the action bar in a footer row -->
   <button
     class="
@@ -57,10 +57,10 @@ What the childless picker actually renders (today's source classes, abbreviated 
   >
     <svg class="size-3">‹</svg>
   </button>
-  <!-- .Previous — fixed 5×5 round button, chevron svg size-3;
+  <!-- .Previous - fixed 5×5 round button, chevron svg size-3;
              `disabled` on the first branch (dimmed, unclickable) -->
   <span class="tabular-nums min-w-[2ch] text-center">2/3</span>
-  <!-- .Count — tabular-nums + min-w-[2ch] so the row doesn't jitter
+  <!-- .Count - tabular-nums + min-w-[2ch] so the row doesn't jitter
              as the numbers change width -->
   <button
     class="
@@ -70,19 +70,19 @@ What the childless picker actually renders (today's source classes, abbreviated 
   >
     <svg class="size-3">›</svg>
   </button>
-  <!-- .Next — mirror of .Previous; `disabled` on the last branch -->
+  <!-- .Next - mirror of .Previous; `disabled` on the last branch -->
 </div>
 ```
 
-Note: the branch picker is **not** part of `<Message>`'s childless default anatomy — you place it in your composition (typically in the footer row next to `Message.Actions`).
+Note: the branch picker is **not** part of `<Message>`'s childless default anatomy - you place it in your composition (typically in the footer row next to `Message.Actions`).
 
 ## Parts
 
-### `BranchPicker.Root` — `changed`
+### `BranchPicker.Root` - `changed`
 
-**Changed:** today's controlled `current` / `total` / `onPrev` / `onNext` props are removed — branch data and actions come from context via `useMessageBranches`.
+**Changed:** today's controlled `current` / `total` / `onPrev` / `onNext` props are removed - branch data and actions come from context via `useMessageBranches`.
 
-The container — one `<div>` + the picker's scoped state. As `Message.BranchPicker` it reads the branch info for the current message from context; **renders `null` unless the message has more than one branch** (`total <= 1`) — safe to include unconditionally.
+The container - one `<div>` + the picker's scoped state. As `Message.BranchPicker` it reads the branch info for the current message from context; **renders `null` unless the message has more than one branch** (`total <= 1`) - safe to include unconditionally.
 
 **Layout:** in-flow `inline-flex` row (`items-center gap-1`); sizes to content; always visible when mounted (no hover reveal).
 
@@ -90,15 +90,15 @@ The container — one `<div>` + the picker's scoped state. As `Message.BranchPic
 | ---------- | ---------------------------------------------- | --------------- | ---------------------------------------------- |
 | `children` | `ReactNode`                                    | default anatomy | Compose Previous / Count / Next in your order. |
 | `asChild`  | `boolean`                                      | `false`         | Merge the node onto your own element.          |
-| + native   | `React.HTMLAttributes<HTMLDivElement>` · `ref` | —               | Spread onto the `<div>`; `className` merges.   |
+| + native   | `React.HTMLAttributes<HTMLDivElement>` · `ref` | -               | Spread onto the `<div>`; `className` merges.   |
 
-**Removed (proposed):** today's controlled props `current` / `total` / `onPrev` / `onNext` (required on the standalone component today). Branch data and actions come from the surrounding `Message.Root` context + the session's `getBranches` / `switchBranch` (via `useMessageBranches`) — never re-threaded per message. There is no controlled standalone mode in this RFC; the re-export requires `Message.Root` context.
+**Removed (proposed):** today's controlled props `current` / `total` / `onPrev` / `onNext` (required on the standalone component today). Branch data and actions come from the surrounding `Message.Root` context + the session's `getBranches` / `switchBranch` (via `useMessageBranches`) - never re-threaded per message. There is no controlled standalone mode in this RFC; the re-export requires `Message.Root` context.
 
-**State attributes (proposed):** `data-active` — selected branch (per the global `data-*` contract; today the picker exposes no state attributes).
+**State attributes (proposed):** `data-active` - selected branch (per the global `data-*` contract; today the picker exposes no state attributes).
 
-### `BranchPicker.Previous` — `changed`
+### `BranchPicker.Previous` - `changed`
 
-One `<button>`. Default content: a left-chevron glyph (`size-3` svg); `aria-label="Previous variant"`. Switches to the previous branch. **Natively `disabled` on the first branch** (`current <= 1`) — dimmed and unclickable via `disabled:opacity-50 disabled:pointer-events-none`. Children replace the glyph (the `icon` prop is deleted — icon-slot ban).
+One `<button>`. Default content: a left-chevron glyph (`size-3` svg); `aria-label="Previous variant"`. Switches to the previous branch. **Natively `disabled` on the first branch** (`current <= 1`) - dimmed and unclickable via `disabled:opacity-50 disabled:pointer-events-none`. Children replace the glyph (the `icon` prop is deleted - icon-slot ban).
 
 **Layout:** in-flow fixed `size-5` round icon button.
 
@@ -106,24 +106,24 @@ One `<button>`. Default content: a left-chevron glyph (`size-3` svg); `aria-labe
 | ---------- | ------------------------------------------------------- | ------------- | ------------------------------------------------------------------- |
 | `children` | `ReactNode`                                             | chevron glyph | Replace the default glyph.                                          |
 | `asChild`  | `boolean`                                               | `false`       | Your element becomes the button.                                    |
-| + native   | `React.ButtonHTMLAttributes<HTMLButtonElement>` · `ref` | —             | Spread onto the `<button>`; `onClick` composes per merge semantics. |
+| + native   | `React.ButtonHTMLAttributes<HTMLButtonElement>` · `ref` | -             | Spread onto the `<button>`; `onClick` composes per merge semantics. |
 
-**State attributes (proposed):** `data-disabled` — on the interactive leaf when disabled (global contract; complements the native `disabled` attribute).
+**State attributes (proposed):** `data-disabled` - on the interactive leaf when disabled (global contract; complements the native `disabled` attribute).
 
-### `BranchPicker.Count` — `kept`
+### `BranchPicker.Count` - `kept`
 
-One `<span>`. Default content: the 1-based position over the total — `2/3`. `tabular-nums min-w-[2ch] text-center` so the row doesn't jitter as numbers change. Children replace the label (e.g. `Draft {index + 1} of {count}` from the hook). Always rendered when the Root is (no own null-condition).
+One `<span>`. Default content: the 1-based position over the total - `2/3`. `tabular-nums min-w-[2ch] text-center` so the row doesn't jitter as numbers change. Children replace the label (e.g. `Draft {index + 1} of {count}` from the hook). Always rendered when the Root is (no own null-condition).
 
 **Layout:** in-flow inline text; reserves `2ch` minimum width.
 
 | Prop                                                          | Type        | Default         | Description                |
 | ------------------------------------------------------------- | ----------- | --------------- | -------------------------- |
 | `children`                                                    | `ReactNode` | `current/total` | Replace the default label. |
-| `asChild` + native (`HTMLAttributes<HTMLSpanElement>`, `ref`) |             | —               | Own the node.              |
+| `asChild` + native (`HTMLAttributes<HTMLSpanElement>`, `ref`) |             | -               | Own the node.              |
 
-### `BranchPicker.Next` — `changed`
+### `BranchPicker.Next` - `changed`
 
-One `<button>` — the mirror of `.Previous`: right-chevron glyph, `aria-label="Next variant"`, switches to the next branch, **natively `disabled` on the last branch** (`current >= total`). Same props table and proposed `data-disabled` as `.Previous`.
+One `<button>` - the mirror of `.Previous`: right-chevron glyph, `aria-label="Next variant"`, switches to the next branch, **natively `disabled` on the last branch** (`current >= total`). Same props table and proposed `data-disabled` as `.Previous`.
 
 **Layout:** in-flow fixed `size-5` round icon button.
 
@@ -141,7 +141,7 @@ useMessageBranches() // inside Message.Root + ChatRoot
 }
 ```
 
-Thin over the **existing** `getBranches(messageId)` / `switchBranch(messageId, branchIndex)` on `useChat` — the hook owns the 1-based/0-based conversion today's wrapper does by hand. The message comes from the surrounding `Message.Root` context; the session callbacks from the nearest `ChatRoot` context.
+Thin over the **existing** `getBranches(messageId)` / `switchBranch(messageId, branchIndex)` on `useChat` - the hook owns the 1-based/0-based conversion today's wrapper does by hand. The message comes from the surrounding `Message.Root` context; the session callbacks from the nearest `ChatRoot` context.
 
 ## Examples
 
@@ -186,11 +186,11 @@ function MyBranchPicker() {
 
 1. **L1:** paste the public `<Chat>` composition and edit the branch picker on the row.
 2. **L2:** compose `BranchPicker.*` in your own layout; swap any node via `asChild`.
-3. **L3:** `useMessageBranches()` and your own markup — or `getBranches` / `switchBranch` on `useChat` directly.
+3. **L3:** `useMessageBranches()` and your own markup - or `getBranches` / `switchBranch` on `useChat` directly.
 
 ## Related
 
-- [`useMessageBranches`](../hooks/use-message-branches.md) — `{ index, count, previous, next }`
-- [`useChat`](../hooks/use-chat.md) — the underlying `getBranches` / `switchBranch`
-- [Message](./message.md) — the canonical home (`Message.BranchPicker`)
-- [MessageActionBar](./message-action-bar.md) — the neighboring actions family
+- [`useMessageBranches`](../hooks/use-message-branches.md) - `{ index, count, previous, next }`
+- [`useChat`](../hooks/use-chat.md) - the underlying `getBranches` / `switchBranch`
+- [Message](./message.md) - the canonical home (`Message.BranchPicker`)
+- [MessageActionBar](./message-action-bar.md) - the neighboring actions family

@@ -1,8 +1,8 @@
 # useToolCall
 
-Tool-call lifecycle state, disclosure behaviour, and prop getters for a tool part — typed per tool name.
+Tool-call lifecycle state, disclosure behaviour, and prop getters for a tool part - typed per tool name.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -50,7 +50,7 @@ interface UseToolCallResult<TTools> {
 
 | Option | Type                                  | Default                    | Description                                                                                                                                                                                      |
 | ------ | ------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `part` | `ChatToolPart \| ChatDynamicToolPart` | nearest `ToolCall` context | Explicit at L3; from context at L2. `TTools` narrows `input`/`output` per tool name (`part.type === 'tool-…'`) — a wrong renderer signature against the typed tools registry is a compile error. |
+| `part` | `ChatToolPart \| ChatDynamicToolPart` | nearest `ToolCall` context | Explicit at L3; from context at L2. `TTools` narrows `input`/`output` per tool name (`part.type === 'tool-…'`) - a wrong renderer signature against the typed tools registry is a compile error. |
 
 ## Returns
 
@@ -60,7 +60,7 @@ interface UseToolCallResult<TTools> {
 | ----------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `part`      | `ChatToolPart \| ChatDynamicToolPart` | The resolved tool part (narrowed per tool name via `TTools`).                                             |
 | `state`     | `ToolCallState`                       | Full lifecycle, including human-in-the-loop approval states. Mirrored as `data-state` on `ToolCall.Root`. |
-| `input`     | `Partial<ToolInput<TTools>>`          | Tool arguments — **partial while streaming** (`input-streaming`).                                         |
+| `input`     | `Partial<ToolInput<TTools>>`          | Tool arguments - **partial while streaming** (`input-streaming`).                                         |
 | `output`    | `ToolOutput<TTools> \| undefined`     | Tool result once `output-available`.                                                                      |
 | `errorText` | `string \| undefined`                 | Error message when `output-error`.                                                                        |
 | `isOpen`    | `boolean`                             | Disclosure state (mirrored as `data-open`; auto-opens on completion).                                     |
@@ -75,7 +75,7 @@ interface UseToolCallResult<TTools> {
 
 | Getter                        | Spreads onto                  | Description                                                                                                                                                                                             |
 | ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `getTriggerProps(overrides?)` | your trigger `<button>`       | Toggle handler + disclosure a11y. Merge semantics apply: pass your props _in_ — handlers compose (consumer first, `preventDefault` cancels internal), `className` merges Tailwind-aware, consumer wins. |
+| `getTriggerProps(overrides?)` | your trigger `<button>`       | Toggle handler + disclosure a11y. Merge semantics apply: pass your props _in_ - handlers compose (consumer first, `preventDefault` cancels internal), `className` merges Tailwind-aware, consumer wins. |
 | `getBodyProps(overrides?)`    | your collapsible body element | Disclosure body wiring, same merge semantics.                                                                                                                                                           |
 
 ## Example
@@ -91,7 +91,7 @@ function MyToolCard({ part }: { part: ChatToolPart }) {
           onClick: () => track("tool-toggled"), // composes; runs before internal toggle
         })}
       >
-        {tool.part.type} — {tool.state}
+        {tool.part.type} - {tool.state}
       </button>
       {tool.isOpen && (
         <div {...tool.getBodyProps({ className: "my-body" })}>
@@ -109,9 +109,9 @@ Rendering resolution when a tool part is displayed: inline render fn → `tools`
 
 ## Used by
 
-- [`ToolCall`](../components/tool-call.md) — `.Root` (`data-state`, `data-open`) · `.Trigger` · `.Body` · `.Input` · `.Output` · `.Error`.
+- [`ToolCall`](../components/tool-call.md) - `.Root` (`data-state`, `data-open`) · `.Trigger` · `.Body` · `.Input` · `.Output` · `.Error`.
 
 ## Related
 
-- [`useMessageParts`](use-message-parts.md) — where tool parts come from.
+- [`useMessageParts`](use-message-parts.md) - where tool parts come from.
 - Helpers: `isToolPart`, `isSkillToolPart`, `mergeProps` (compose several hooks onto one element).

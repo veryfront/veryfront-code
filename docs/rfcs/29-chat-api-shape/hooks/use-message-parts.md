@@ -1,8 +1,8 @@
 # useMessageParts
 
-Returns a message's parts as typed, ordered groups — the data behind `Message.Parts`.
+Returns a message's parts as typed, ordered groups - the data behind `Message.Parts`.
 
-> **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
+> **Status: proposed (RFC).** This page documents the _proposed_ API shape - not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
 ## Import
 
@@ -19,7 +19,7 @@ function useMessageParts<TMessage extends ChatMessage = ChatMessage>(
   message?: TMessage,
 ): PartGroup<TMessage>[];
 
-// The pure primitive under the hook — no React, no context.
+// The pure primitive under the hook - no React, no context.
 function groupPartsInOrder(parts: ChatMessage["parts"]): PartGroup[];
 ```
 
@@ -39,7 +39,7 @@ function groupPartsInOrder(parts: ChatMessage["parts"]): PartGroup[];
 
 ### Actions
 
-None — the hook is a pure derivation over the message's parts.
+None - the hook is a pure derivation over the message's parts.
 
 ### Prop getters
 
@@ -66,15 +66,15 @@ function MyMessageBody({ message }: { message: ChatMessage }) {
 }
 ```
 
-At L2 the same data drives `Message.Parts` (a render-fn iterator, no node) — resolution order for part rendering is inline render fn → `tools` registry by name → default renderer.
+At L2 the same data drives `Message.Parts` (a render-fn iterator, no node) - resolution order for part rendering is inline render fn → `tools` registry by name → default renderer.
 
 ## Used by
 
-- [`Message`](../components/message.md) — `.Parts` is the render-fn iterator over this hook; `.Text`, `.Reasoning`, `.Source`, `.File`, `.Image` are the per-part leaves.
+- [`Message`](../components/message.md) - `.Parts` is the render-fn iterator over this hook; `.Text`, `.Reasoning`, `.Source`, `.File`, `.Image` are the per-part leaves.
 
 ## Related
 
-- [`useMessageContext`](use-message-context.md) — also exposes `parts` for the in-context message.
-- [`useToolCall`](use-tool-call.md) — tool part state once you have a tool part.
-- [`useSources`](use-sources.md) — citation list derived from parts.
+- [`useMessageContext`](use-message-context.md) - also exposes `parts` for the in-context message.
+- [`useToolCall`](use-tool-call.md) - tool part state once you have a tool part.
+- [`useSources`](use-sources.md) - citation list derived from parts.
 - Helpers: `groupPartsInOrder`, `isToolPart`, `isReasoningPart`, `isSkillToolPart`, `getTextContent`.
