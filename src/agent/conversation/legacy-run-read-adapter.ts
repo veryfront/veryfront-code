@@ -384,10 +384,10 @@ function readVersion2(
         }
         validator.openTools.delete(toolCallId);
         const parsed = parseCanonicalToolInput(validator.toolInputText.get(toolCallId) ?? "");
-        validator.completedToolNames.set(toolCallId, toolName);
         validator.toolNames.delete(toolCallId);
         validator.toolInputText.delete(toolCallId);
         if (parsed.ok) {
+          validator.completedToolNames.set(toolCallId, toolName);
           push({
             type: "tool_input_ready",
             toolCallId,
@@ -413,6 +413,7 @@ function readVersion2(
         if (validator.completedToolNames.get(toolCallId) !== toolName) {
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
+        validator.completedToolNames.delete(toolCallId);
         if (event.providerExecuted === true) {
           push({
             type: "provider_tool_start",

@@ -348,6 +348,113 @@ describe("conversation run lifecycle read adapter", () => {
     }
   });
 
+  it("rejects provider-executed v2 tool results after malformed tool input", () => {
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 2,
+      events: [
+        {
+          type: "TOOL_CALL_START",
+          toolCallId: "provider-bad",
+          toolName: "web_search",
+          stream_protocol_version: 2,
+          logical_sequence: 1,
+          idempotency_key: "tool:bad:start",
+        },
+        {
+          type: "TOOL_CALL_ARGS",
+          toolCallId: "provider-bad",
+          delta: '{"query":',
+          stream_protocol_version: 2,
+          logical_sequence: 2,
+          idempotency_key: "tool:bad:args",
+        },
+        {
+          type: "TOOL_CALL_END",
+          toolCallId: "provider-bad",
+          toolName: "web_search",
+          stream_protocol_version: 2,
+          logical_sequence: 3,
+          idempotency_key: "tool:bad:end",
+        },
+        {
+          type: "TOOL_CALL_RESULT",
+          toolCallId: "provider-bad",
+          toolName: "web_search",
+          content: '{"answer":42}',
+          isError: false,
+          providerExecuted: true,
+          stream_protocol_version: 2,
+          logical_sequence: 4,
+          idempotency_key: "tool:bad:result",
+        },
+      ],
+    });
+
+    assertEquals(result.status, "invalid");
+    if (result.status === "invalid") {
+      assertEquals(result.code, "VERSION_2_LIFECYCLE_VIOLATION");
+    }
+  });
+
+  it("rejects duplicate provider-executed v2 tool results", () => {
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 2,
+      events: [
+        {
+          type: "TOOL_CALL_START",
+          toolCallId: "provider-dupe",
+          toolName: "web_search",
+          stream_protocol_version: 2,
+          logical_sequence: 1,
+          idempotency_key: "tool:dupe:start",
+        },
+        {
+          type: "TOOL_CALL_ARGS",
+          toolCallId: "provider-dupe",
+          delta: '{"query":"weather"}',
+          stream_protocol_version: 2,
+          logical_sequence: 2,
+          idempotency_key: "tool:dupe:args",
+        },
+        {
+          type: "TOOL_CALL_END",
+          toolCallId: "provider-dupe",
+          toolName: "web_search",
+          stream_protocol_version: 2,
+          logical_sequence: 3,
+          idempotency_key: "tool:dupe:end",
+        },
+        {
+          type: "TOOL_CALL_RESULT",
+          toolCallId: "provider-dupe",
+          toolName: "web_search",
+          content: '{"answer":42}',
+          isError: false,
+          providerExecuted: true,
+          stream_protocol_version: 2,
+          logical_sequence: 4,
+          idempotency_key: "tool:dupe:result:1",
+        },
+        {
+          type: "TOOL_CALL_RESULT",
+          toolCallId: "provider-dupe",
+          toolName: "web_search",
+          content: '{"answer":43}',
+          isError: false,
+          providerExecuted: true,
+          stream_protocol_version: 2,
+          logical_sequence: 5,
+          idempotency_key: "tool:dupe:result:2",
+        },
+      ],
+    });
+
+    assertEquals(result.status, "invalid");
+    if (result.status === "invalid") {
+      assertEquals(result.code, "VERSION_2_LIFECYCLE_VIOLATION");
+    }
+  });
+
   it("round trips provider-executed error results through durable v2 as AG-UI tool errors", () => {
     const durableEvents = writeDurableEvents(frames([
       {
