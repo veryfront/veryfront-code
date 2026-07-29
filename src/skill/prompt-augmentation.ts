@@ -32,7 +32,8 @@ export function buildSkillManifestPrompt(skills: Map<string, Skill>): string {
 
   let displayedSkillCount = 0;
   for (const [id, skill] of skills) {
-    lines.push(`- **${id}**: ${skill.metadata.description}`);
+    const label = skill.metadata.displayName ? `${skill.metadata.displayName} (\`${id}\`)` : id;
+    lines.push(`- **${label}**: ${skill.metadata.description}`);
     displayedSkillCount += 1;
     if (displayedSkillCount === MAX_SKILL_MANIFEST_PROMPT_ENTRIES) {
       break;

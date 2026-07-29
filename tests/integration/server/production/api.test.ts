@@ -117,6 +117,12 @@ describe(
           await withTestContext(
             "production-server-app-route-methods",
             async (context: TestContext) => {
+              await mkdir(join(context.projectDir, "app"), { recursive: true });
+              await writeTextFile(
+                join(context.projectDir, "app", "page.tsx"),
+                `export default function Page(){ return 'home'; }`,
+              );
+
               const postDir = join(context.projectDir, "app", "post", "[slug]");
               await mkdir(postDir, { recursive: true });
               await writeTextFile(

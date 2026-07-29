@@ -285,7 +285,7 @@ export class ExtensionLoader {
       }
 
       this.setupOrder.push(resolved);
-      this.logger.info(`Extension "${ext.name}" v${ext.version} loaded from ${resolved.source}`);
+      this.logger.debug(`Extension "${ext.name}" v${ext.version} loaded from ${resolved.source}`);
     }
   }
 

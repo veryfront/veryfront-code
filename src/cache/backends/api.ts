@@ -2,6 +2,7 @@ import { logger as baseLogger, sanitizeUrlForSpan } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { tryGetCacheKeyContext } from "../cache-key-builder.ts";
+import { isValidCachePattern, sanitizeCacheKey } from "../keys/index.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import type { CacheBackend } from "../types.ts";
 import { getEnvValue } from "./helpers.ts";
@@ -90,8 +91,22 @@ export class ApiCacheBackend implements CacheBackend {
     });
   }
 
-  private prefixKey(key: string): string {
-    return this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
+  private async prefixKey(key: string): Promise<string> {
+    const prefixed = this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
+    const sanitized = await sanitizeCacheKey(prefixed, this.keyPrefix);
+    if (sanitized === prefixed) return prefixed;
+
+    // Defence in depth: a key that leaked raw URL/query/undefined tokens would
+    // otherwise be rejected by the API with `HTTP 400: Cache key contains
+    // invalid characters`, and on the control-plane /execute path that 400
+    // loops until the request is flagged stuck (issues #162 / #175). Sanitize
+    // so the request succeeds, and warn so the upstream generation bug stays
+    // visible rather than being silently masked. Do not log any key-derived
+    // value because a leaked raw URL can carry credentials.
+    logger.warn("Cache key was not API-safe; sanitized before request", {
+      originalLength: prefixed.length,
+    });
+    return sanitized;
   }
 
   private async request<T>(
@@ -205,9 +220,10 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   async get(key: string): Promise<string | null> {
+    const prefixedKey = await this.prefixKey(key);
     const result = await this.request<{ value: string | null }>(
       "GET",
-      `/get?key=${encodeURIComponent(this.prefixKey(key))}`,
+      `/get?key=${encodeURIComponent(prefixedKey)}`,
     );
     return result?.value ?? null;
   }
@@ -215,7 +231,9 @@ export class ApiCacheBackend implements CacheBackend {
   async getBatch(keys: string[]): Promise<Map<string, string | null>> {
     if (keys.length === 0) return new Map<string, string | null>();
 
-    const prefixedByKey = new Map(keys.map((k) => [k, this.prefixKey(k)] as const));
+    const prefixedByKey = new Map(
+      await Promise.all(keys.map(async (key) => [key, await this.prefixKey(key)] as const)),
+    );
     const response = await this.request<{ values: Record<string, string | null> }>(
       "POST",
       "/get-batch",
@@ -242,7 +260,7 @@ export class ApiCacheBackend implements CacheBackend {
 
   async set(key: string, value: string, ttlSeconds = 300): Promise<void> {
     await this.request("POST", "/set", {
-      key: this.prefixKey(key),
+      key: await this.prefixKey(key),
       value,
       ttl: ttlSeconds,
     });
@@ -251,22 +269,42 @@ export class ApiCacheBackend implements CacheBackend {
   async setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
     if (entries.length === 0) return;
 
-    const prefixedEntries = entries.map(({ key, value, ttl }) => ({
-      key: this.prefixKey(key),
-      value,
-      ttl,
-    }));
+    const prefixedEntries = await Promise.all(
+      entries.map(async ({ key, value, ttl }) => ({
+        key: await this.prefixKey(key),
+        value,
+        ttl,
+      })),
+    );
 
     await this.request("POST", "/set-batch", { entries: prefixedEntries });
   }
 
   async del(key: string): Promise<void> {
-    await this.request("POST", "/del", { key: this.prefixKey(key) }, { failOnError: true });
+    await this.request(
+      "POST",
+      "/del",
+      { key: await this.prefixKey(key) },
+      { failOnError: true },
+    );
   }
 
   async delByPattern(pattern: string): Promise<number> {
+    const prefixed = this.keyPrefix ? `${this.keyPrefix}:${pattern}` : pattern;
+
+    // A pattern is a glob: `*` is a wildcard, not a literal. We must NOT escape
+    // invalid characters here because rewriting a glob could broaden its
+    // deletion scope. Fail closed instead: refuse a malformed pattern (leaving
+    // the entries to expire on TTL) rather than risk deleting unrelated keys.
+    if (!isValidCachePattern(prefixed)) {
+      logger.warn("Refusing unsafe del-pattern; skipping", {
+        originalLength: prefixed.length,
+      });
+      return 0;
+    }
+
     const result = await this.request<{ deleted: number }>("POST", "/del-pattern", {
-      pattern: this.prefixKey(pattern),
+      pattern: prefixed,
     }, { failOnError: true });
     return result?.deleted ?? 0;
   }

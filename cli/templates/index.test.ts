@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { EvalRecord } from "veryfront/eval";
 
 import { getTemplate, templateConfigs } from "./index.ts";
 import { STARTER_TEMPLATE_NAMES, type TemplateName } from "./types.ts";
@@ -91,6 +92,189 @@ describe("cli/templates", () => {
 
     assertEquals(calculator.includes("execute: async"), false);
     assertEquals(calculator.includes("execute: ({ operation, a, b }) =>"), true);
+    assertEquals(
+      calculator.includes('v.enum(["add", "subtract", "multiply", "divide", "round"])'),
+      true,
+    );
+    assertEquals(
+      calculator.includes("const precision = Math.min(100, Math.max(0, Math.trunc(b)));"),
+      true,
+    );
+    assertEquals(
+      calculator.includes(
+        "const offset = Math.sign(a) * Number.EPSILON * Math.max(1, Math.abs(a));",
+      ),
+      true,
+    );
+    assertEquals(
+      calculator.includes("return { result: Number((a + offset).toFixed(precision)) };"),
+      true,
+    );
+  });
+
+  it("rounds positive and negative half cents away from zero", async () => {
+    const { default: calculator } = await import(
+      "./files/ai-agent/tools/calculator.ts"
+    );
+
+    assertEquals(
+      await calculator.execute({ operation: "round", a: 1.005, b: 2 }),
+      { result: 1.01 },
+    );
+    assertEquals(
+      await calculator.execute({ operation: "round", a: -1.005, b: 2 }),
+      { result: -1.01 },
+    );
+  });
+
+  it("gives the ai-agent enough steps to finish tool-backed answers", async () => {
+    const { default: assistant } = await import(
+      "./files/ai-agent/agents/assistant.ts"
+    );
+
+    assertEquals(assistant.config.maxSteps, 20);
+    assertEquals(
+      typeof assistant.config.system === "string" &&
+        assistant.config.system.includes(
+          "Plan the calculation before calling the calculator, use the fewest calls needed, and answer immediately after you have the result.",
+        ),
+      true,
+    );
+  });
+
+  it("uses Studio-aligned flat suggestions in the ai-agent starter", async () => {
+    const { default: assistant } = await import(
+      "./files/ai-agent/agents/assistant.ts"
+    );
+
+    assertEquals(assistant.config.suggestions, [
+      {
+        type: "prompt",
+        title: "Shape an idea",
+        prompt: "Turn this rough idea into a focused plan with the first three steps: ",
+      },
+      {
+        type: "prompt",
+        title: "Run the numbers",
+        prompt:
+          "Calculate an 18% tip on $84.50, split the total among three people, and explain the result briefly.",
+      },
+    ]);
+  });
+
+  it("accepts sentence punctuation without accepting longer monetary values", async () => {
+    const { default: assistantEval } = await import(
+      "./files/ai-agent/evals/assistant.eval.ts"
+    );
+    const moneyMetrics = assistantEval.metrics.slice(0, 4);
+    assertEquals(moneyMetrics.map((metric) => metric.name), [
+      "answer.regex",
+      "answer.regex",
+      "answer.regex",
+      "answer.regex",
+    ]);
+    const createRecord = (text: string): EvalRecord => ({
+      id: "calculator:1",
+      evalId: "eval:assistant",
+      exampleId: "calculator",
+      repetition: 1,
+      input: "Calculate the tip and split.",
+      output: { text },
+      reference: "$99.71 total; two people pay $33.24 and one pays $33.23.",
+      metadata: {},
+      trace: { events: [], toolCalls: [] },
+      usage: {},
+      durationMs: 1,
+      completed: true,
+    });
+
+    const validResults = await Promise.all(
+      moneyMetrics.map((metric) =>
+        metric.evaluate(
+          createRecord(
+            "The tip is $15.21. The total is $99.71. Two people pay $33.24, and one pays $33.23.",
+          ),
+        )
+      ),
+    );
+    assertEquals(validResults.map((result) => result.pass), [true, true, true, true]);
+
+    const tipMetric = moneyMetrics[0];
+    assertExists(tipMetric);
+    for (const valid of ["$15.21.", String.raw`\$15.21`, "($15.21)", "**$15.21**"]) {
+      assertEquals((await tipMetric.evaluate(createRecord(valid))).pass, true);
+    }
+    for (
+      const invalid of [
+        "-15.21",
+        "-$15.21",
+        String.raw`-\$15.21`,
+        "115.21",
+        "$15.210",
+        "$15.21.0",
+      ]
+    ) {
+      assertEquals((await tipMetric.evaluate(createRecord(invalid))).pass, false);
+    }
+  });
+
+  it("keeps the ai-agent starter slim, actionable, and viewport-bound", async () => {
+    const agent = await Deno.readTextFile(
+      new URL("./files/ai-agent/agents/assistant.ts", import.meta.url),
+    );
+    const assistantEval = await Deno.readTextFile(
+      new URL("./files/ai-agent/evals/assistant.eval.ts", import.meta.url),
+    );
+    const layout = await Deno.readTextFile(
+      new URL("./files/ai-agent/app/layout.tsx", import.meta.url),
+    );
+    const page = await Deno.readTextFile(
+      new URL("./files/ai-agent/app/page.tsx", import.meta.url),
+    );
+    assertEquals(agent.includes('name: "Assistant"'), true);
+    assertEquals(agent.includes('description: "Turn a rough idea into a clear next move."'), true);
+    assertEquals(
+      agent.includes("Use the calculator tool for arithmetic instead of calculating mentally."),
+      true,
+    );
+    assertEquals(
+      agent.includes(
+        "For currency splits, make rounded shares add exactly to the total and explain any remainder.",
+      ),
+      true,
+    );
+    assertEquals(
+      agent.includes(
+        'prompt: "Turn this rough idea into a focused plan with the first three steps: "',
+      ),
+      true,
+    );
+    assertEquals(
+      agent.includes(
+        '"Calculate an 18% tip on $84.50, split the total among three people, and explain the result briefly."',
+      ),
+      true,
+    );
+    assertEquals(agent.includes('title: "Shape an idea"'), true);
+    assertEquals(agent.includes('title: "Run the numbers"'), true);
+    assertEquals(assistantEval.includes('target: "agent:assistant"'), true);
+    assertEquals(
+      assistantEval.includes(
+        '"Calculate an 18% tip on $84.50, split the total among three people, and explain the result briefly."',
+      ),
+      true,
+    );
+    assertEquals(assistantEval.includes('metrics.agent.calledTool("calculator").gate()'), true);
+    assertEquals(assistantEval.includes("metrics.agent.noFailedTools().gate()"), true);
+    assertEquals(assistantEval.includes("metrics.answer.contains("), false);
+    assertEquals(assistantEval.includes("judge: judges.llm.rubric()"), true);
+    assertEquals(assistantEval.includes("metrics.judge.rubric({"), true);
+    assertEquals(layout.includes("className="), false);
+    assertEquals(layout.includes("bg-white"), false);
+    assertEquals(layout.includes("dark:bg-neutral-900"), false);
+    assertEquals(page.includes('className="h-screen"'), true);
+    assertEquals(page.includes("api="), false);
+    assertEquals(page.includes("placeholder="), false);
   });
 
   it("uses the current app-mode chat surface in starter templates", async () => {

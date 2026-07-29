@@ -3,6 +3,19 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Mutex } from "./renderer-concurrency.ts";
 
+function abortBeforeListenerRegistration(
+  controller: AbortController,
+  reason: DOMException,
+): AbortSignal {
+  return new Proxy(controller.signal, {
+    get(target, property) {
+      if (property === "addEventListener") controller.abort(reason);
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
 describe("Mutex", () => {
   it("acquires immediately when unlocked", async () => {
     const mutex = new Mutex();
@@ -116,6 +129,285 @@ describe("Mutex", () => {
 });
 
 describe("project render slots", () => {
+  it("falls back to safe limits when concurrency env values are invalid", async () => {
+    const previousMax = Deno.env.get("RENDER_MAX_CONCURRENT");
+    const previousLimit = Deno.env.get("RENDER_PER_PROJECT_LIMIT");
+    const previousQueueSize = Deno.env.get("RENDER_PER_PROJECT_QUEUE_SIZE");
+    Deno.env.set("RENDER_MAX_CONCURRENT", "3");
+    Deno.env.set("RENDER_PER_PROJECT_LIMIT", "not-a-number");
+    Deno.env.set("RENDER_PER_PROJECT_QUEUE_SIZE", "not-a-number");
+    try {
+      const concurrency = await import(
+        `./renderer-concurrency.ts?invalid-limits=${crypto.randomUUID()}`
+      );
+      const projectId = `project-${crypto.randomUUID()}`;
+
+      assertEquals(concurrency.RENDER_MAX_CONCURRENT, 3);
+      assertEquals(concurrency.RENDER_PER_PROJECT_LIMIT, 1);
+      assertEquals(concurrency.RENDER_PER_PROJECT_QUEUE_SIZE, 1);
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+      await concurrency.releaseProjectSlot(projectId);
+    } finally {
+      for (
+        const [name, previous] of [
+          ["RENDER_MAX_CONCURRENT", previousMax],
+          ["RENDER_PER_PROJECT_LIMIT", previousLimit],
+          ["RENDER_PER_PROJECT_QUEUE_SIZE", previousQueueSize],
+        ] as const
+      ) {
+        if (previous === undefined) {
+          Deno.env.delete(name);
+        } else {
+          Deno.env.set(name, previous);
+        }
+      }
+    }
+  });
+
+  it("queues foreground waiters in FIFO order", async () => {
+    const previousLimit = Deno.env.get("RENDER_PER_PROJECT_LIMIT");
+    const previousQueueSize = Deno.env.get("RENDER_PER_PROJECT_QUEUE_SIZE");
+    Deno.env.set("RENDER_PER_PROJECT_LIMIT", "1");
+    Deno.env.set("RENDER_PER_PROJECT_QUEUE_SIZE", "2");
+    try {
+      const concurrency = await import(
+        `./renderer-concurrency.ts?fifo-slots=${crypto.randomUUID()}`
+      );
+      const projectId = `project-${crypto.randomUUID()}`;
+      const order: number[] = [];
+
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+      const second = concurrency.acquireProjectSlot(projectId, {
+        wait: true,
+        timeoutMs: 500,
+      }).then((acquired: boolean) => {
+        if (acquired) order.push(2);
+        return acquired;
+      });
+      const third = concurrency.acquireProjectSlot(projectId, {
+        wait: true,
+        timeoutMs: 500,
+      }).then((acquired: boolean) => {
+        if (acquired) order.push(3);
+        return acquired;
+      });
+
+      await concurrency.releaseProjectSlot(projectId);
+      assertEquals(await second, true);
+      assertEquals(order, [2]);
+
+      await concurrency.releaseProjectSlot(projectId);
+      assertEquals(await third, true);
+      assertEquals(order, [2, 3]);
+      await concurrency.releaseProjectSlot(projectId);
+    } finally {
+      if (previousLimit === undefined) {
+        Deno.env.delete("RENDER_PER_PROJECT_LIMIT");
+      } else {
+        Deno.env.set("RENDER_PER_PROJECT_LIMIT", previousLimit);
+      }
+      if (previousQueueSize === undefined) {
+        Deno.env.delete("RENDER_PER_PROJECT_QUEUE_SIZE");
+      } else {
+        Deno.env.set("RENDER_PER_PROJECT_QUEUE_SIZE", previousQueueSize);
+      }
+    }
+  });
+
+  it("times out and removes a queued foreground waiter", async () => {
+    const previousLimit = Deno.env.get("RENDER_PER_PROJECT_LIMIT");
+    Deno.env.set("RENDER_PER_PROJECT_LIMIT", "1");
+    try {
+      const concurrency = await import(
+        `./renderer-concurrency.ts?timeout-slot=${crypto.randomUUID()}`
+      );
+      const projectId = `project-${crypto.randomUUID()}`;
+
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+      assertEquals(
+        await concurrency.acquireProjectSlot(projectId, {
+          wait: true,
+          timeoutMs: 5,
+        }),
+        false,
+      );
+
+      await concurrency.releaseProjectSlot(projectId);
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+      await concurrency.releaseProjectSlot(projectId);
+    } finally {
+      if (previousLimit === undefined) {
+        Deno.env.delete("RENDER_PER_PROJECT_LIMIT");
+      } else {
+        Deno.env.set("RENDER_PER_PROJECT_LIMIT", previousLimit);
+      }
+    }
+  });
+
+  it("aborts and removes a queued foreground waiter", async () => {
+    const previousLimit = Deno.env.get("RENDER_PER_PROJECT_LIMIT");
+    Deno.env.set("RENDER_PER_PROJECT_LIMIT", "1");
+    try {
+      const concurrency = await import(
+        `./renderer-concurrency.ts?abort-slot=${crypto.randomUUID()}`
+      );
+      const projectId = `project-${crypto.randomUUID()}`;
+      const controller = new AbortController();
+
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+      const waiting = concurrency.acquireProjectSlot(projectId, {
+        wait: true,
+        timeoutMs: 500,
+        signal: controller.signal,
+      });
+      controller.abort(new DOMException("request cancelled", "AbortError"));
+
+      await assertRejects(
+        () => waiting,
+        DOMException,
+        "request cancelled",
+      );
+      await concurrency.releaseProjectSlot(projectId);
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+      await concurrency.releaseProjectSlot(projectId);
+    } finally {
+      if (previousLimit === undefined) {
+        Deno.env.delete("RENDER_PER_PROJECT_LIMIT");
+      } else {
+        Deno.env.set("RENDER_PER_PROJECT_LIMIT", previousLimit);
+      }
+    }
+  });
+
+  it("rejects an abort missed immediately before listener registration", async () => {
+    const previousLimit = Deno.env.get("RENDER_PER_PROJECT_LIMIT");
+    Deno.env.set("RENDER_PER_PROJECT_LIMIT", "1");
+    try {
+      const concurrency = await import(
+        `./renderer-concurrency.ts?abort-registration-slot=${crypto.randomUUID()}`
+      );
+      const projectId = `project-${crypto.randomUUID()}`;
+      const controller = new AbortController();
+      const reason = new DOMException("registration race", "AbortError");
+
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+      try {
+        await assertRejects(
+          () =>
+            concurrency.acquireProjectSlot(projectId, {
+              wait: true,
+              timeoutMs: 10,
+              signal: abortBeforeListenerRegistration(controller, reason),
+            }),
+          DOMException,
+          "registration race",
+        );
+      } finally {
+        await concurrency.releaseProjectSlot(projectId);
+      }
+
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+      await concurrency.releaseProjectSlot(projectId);
+    } finally {
+      if (previousLimit === undefined) {
+        Deno.env.delete("RENDER_PER_PROJECT_LIMIT");
+      } else {
+        Deno.env.set("RENDER_PER_PROJECT_LIMIT", previousLimit);
+      }
+    }
+  });
+
+  it("grants a released slot past an aborted head waiter", async () => {
+    const previousLimit = Deno.env.get("RENDER_PER_PROJECT_LIMIT");
+    const previousQueueSize = Deno.env.get("RENDER_PER_PROJECT_QUEUE_SIZE");
+    Deno.env.set("RENDER_PER_PROJECT_LIMIT", "1");
+    Deno.env.set("RENDER_PER_PROJECT_QUEUE_SIZE", "2");
+    try {
+      const concurrency = await import(
+        `./renderer-concurrency.ts?aborted-head-slot=${crypto.randomUUID()}`
+      );
+      const projectId = `project-${crypto.randomUUID()}`;
+      const controller = new AbortController();
+
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+      const abortedWaiter = concurrency.acquireProjectSlot(projectId, {
+        wait: true,
+        timeoutMs: 500,
+        signal: controller.signal,
+      });
+      const nextWaiter = concurrency.acquireProjectSlot(projectId, {
+        wait: true,
+        timeoutMs: 500,
+      });
+
+      controller.abort(new DOMException("head waiter cancelled", "AbortError"));
+      await assertRejects(
+        () => abortedWaiter,
+        DOMException,
+        "head waiter cancelled",
+      );
+
+      await concurrency.releaseProjectSlot(projectId);
+      assertEquals(await nextWaiter, true);
+      await concurrency.releaseProjectSlot(projectId);
+
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+      await concurrency.releaseProjectSlot(projectId);
+    } finally {
+      if (previousLimit === undefined) {
+        Deno.env.delete("RENDER_PER_PROJECT_LIMIT");
+      } else {
+        Deno.env.set("RENDER_PER_PROJECT_LIMIT", previousLimit);
+      }
+      if (previousQueueSize === undefined) {
+        Deno.env.delete("RENDER_PER_PROJECT_QUEUE_SIZE");
+      } else {
+        Deno.env.set("RENDER_PER_PROJECT_QUEUE_SIZE", previousQueueSize);
+      }
+    }
+  });
+
+  it("rejects immediately when the foreground queue is full", async () => {
+    const previousLimit = Deno.env.get("RENDER_PER_PROJECT_LIMIT");
+    const previousQueueSize = Deno.env.get("RENDER_PER_PROJECT_QUEUE_SIZE");
+    Deno.env.set("RENDER_PER_PROJECT_LIMIT", "1");
+    Deno.env.set("RENDER_PER_PROJECT_QUEUE_SIZE", "1");
+    try {
+      const concurrency = await import(
+        `./renderer-concurrency.ts?full-slot=${crypto.randomUUID()}`
+      );
+      const projectId = `project-${crypto.randomUUID()}`;
+
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+      const queued = concurrency.acquireProjectSlot(projectId, {
+        wait: true,
+        timeoutMs: 500,
+      });
+      assertEquals(
+        await concurrency.acquireProjectSlot(projectId, {
+          wait: true,
+          timeoutMs: 500,
+        }),
+        false,
+      );
+
+      await concurrency.releaseProjectSlot(projectId);
+      assertEquals(await queued, true);
+      await concurrency.releaseProjectSlot(projectId);
+    } finally {
+      if (previousLimit === undefined) {
+        Deno.env.delete("RENDER_PER_PROJECT_LIMIT");
+      } else {
+        Deno.env.set("RENDER_PER_PROJECT_LIMIT", previousLimit);
+      }
+      if (previousQueueSize === undefined) {
+        Deno.env.delete("RENDER_PER_PROJECT_QUEUE_SIZE");
+      } else {
+        Deno.env.set("RENDER_PER_PROJECT_QUEUE_SIZE", previousQueueSize);
+      }
+    }
+  });
+
   it("does not delete a held project mutex while waiters are queued", async () => {
     const previousLimit = Deno.env.get("RENDER_PER_PROJECT_LIMIT");
     Deno.env.set("RENDER_PER_PROJECT_LIMIT", "1");

@@ -10,6 +10,7 @@ import { unrefTimer } from "#veryfront/compat/process.ts";
 import { isLightweightPath, isWebSocketPath } from "./request-utils.ts";
 import type { RequestProfileRecord } from "#veryfront/observability";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { isProduction } from "#veryfront/platform/environment.ts";
 
 const logger = serverLogger.component("request-tracker");
 
@@ -21,6 +22,7 @@ interface TrackedRequest {
   startTime: number;
   env?: string;
   releaseId?: string;
+  productionRuntime: boolean;
   slowTimer?: ReturnType<typeof setTimeout>;
   verySlowTimer?: ReturnType<typeof setTimeout>;
 }
@@ -74,6 +76,25 @@ function buildRequestProfileLogContext(record: RequestProfileRecord): Record<str
   };
 }
 
+function logRequestCompletion(
+  message: string,
+  statusCode: number,
+  context: Record<string, unknown>,
+  productionRuntime: boolean,
+): void {
+  if ((!isProduction() && !productionRuntime) || statusCode < 400) {
+    logger.debug(message, context);
+    return;
+  }
+
+  try {
+    if (statusCode >= 500) logger.error(message, context);
+    else logger.warn(message, context);
+  } catch {
+    // Completion observability must not change an already-produced response.
+  }
+}
+
 class RequestTracker {
   private inFlight = new Map<string, TrackedRequest>();
   private statusInterval: ReturnType<typeof setInterval> | undefined;
@@ -81,11 +102,9 @@ class RequestTracker {
   private totalCompleted = 0;
   private totalTimedOut = 0;
 
-  constructor() {
-    this.startStatusLogging();
-  }
-
   private startStatusLogging(): void {
+    if (this.statusInterval) return;
+
     this.statusInterval = setInterval(() => {
       if (this.inFlight.size === 0) return;
 
@@ -113,6 +132,12 @@ class RequestTracker {
     if (this.statusInterval) unrefTimer(this.statusInterval);
   }
 
+  private stopStatusLogging(): void {
+    if (!this.statusInterval) return;
+    clearInterval(this.statusInterval);
+    this.statusInterval = undefined;
+  }
+
   start(
     requestId: string,
     projectSlug: string | undefined,
@@ -120,7 +145,10 @@ class RequestTracker {
     method: string,
     env?: string,
     releaseId?: string,
+    productionRuntime = false,
   ): void {
+    this.startStatusLogging();
+
     const startTime = performance.now();
     this.totalRequests++;
 
@@ -132,6 +160,7 @@ class RequestTracker {
       startTime,
       env,
       releaseId,
+      productionRuntime,
     };
 
     // WebSocket connections are long-lived by design and lightweight internal
@@ -188,6 +217,7 @@ class RequestTracker {
     if (tracked.verySlowTimer) clearTimeout(tracked.verySlowTimer);
 
     this.inFlight.delete(requestId);
+    if (this.inFlight.size === 0) this.stopStatusLogging();
 
     const durationMs = Math.round(performance.now() - tracked.startTime);
 
@@ -215,7 +245,12 @@ class RequestTracker {
       logContext.request_profile = buildRequestProfileLogContext(profile);
     }
 
-    logger.info(`${tracked.method} ${tracked.path} ${statusCode}`, logContext);
+    logRequestCompletion(
+      `${tracked.method} ${tracked.path} ${statusCode}`,
+      statusCode,
+      logContext,
+      tracked.productionRuntime,
+    );
   }
 
   markLongLived(requestId: string): void {
@@ -304,7 +339,7 @@ class RequestTracker {
   }
 
   shutdown(): void {
-    if (this.statusInterval) clearInterval(this.statusInterval);
+    this.stopStatusLogging();
 
     for (const tracked of this.inFlight.values()) {
       if (tracked.slowTimer) clearTimeout(tracked.slowTimer);

@@ -209,6 +209,35 @@ describe("FSAdapterWrapper", () => {
     });
   });
 
+  describe("source snapshot freshness", () => {
+    it("should delegate freshness checks and snapshot versions", async () => {
+      let reason: string | undefined;
+      const fsAdapter = {
+        ...createMockFSAdapter(),
+        ensureSourceSnapshotFresh(value?: string) {
+          reason = value;
+          return Promise.resolve();
+        },
+        getSourceSnapshotVersion() {
+          return 11;
+        },
+      };
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      await wrapper.ensureSourceSnapshotFresh?.("page-routing");
+
+      assertEquals(reason, "page-routing");
+      assertEquals(await wrapper.getSourceSnapshotVersion?.(), 11);
+    });
+
+    it("should omit freshness methods when the adapter does not support them", () => {
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+
+      assertEquals(wrapper.ensureSourceSnapshotFresh, undefined);
+      assertEquals(wrapper.getSourceSnapshotVersion, undefined);
+    });
+  });
+
   describe("readFile", () => {
     it("should read file using readTextFile if available", async () => {
       const fsAdapter = createMockFSAdapter({

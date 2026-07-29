@@ -4,7 +4,7 @@ import { parseNpmImport } from "./npm-dependency-sources.ts";
 export type ExtensionManifest = {
   name: string;
   version?: string;
-  exports: string;
+  exports: string | Record<string, string>;
   veryfront?: {
     extension?: boolean;
     contracts?: {
@@ -27,13 +27,24 @@ export type NpmPackageMapping = {
   subPath?: string;
 };
 
+export type ExtensionEntryPoint = {
+  name: string;
+  path: string;
+};
+
+export type ExtensionPackageJson = Record<string, unknown> & {
+  name: string;
+  version: string;
+};
+
 export type ExtensionPackageSpec = {
   manifestPath: string;
   manifestDir: string;
+  entryPoints: ExtensionEntryPoint[];
   entryPoint: string;
   packageName: string;
   packageDirectoryName: string;
-  packageJson: Record<string, unknown>;
+  packageJson: ExtensionPackageJson;
   dntMappings: Record<string, NpmPackageMapping>;
   manifestDependencies: Record<string, string>;
   readmePath: string;
@@ -82,6 +93,46 @@ export function manifestDependencies(
   );
 }
 
+export function normalizeExtensionEntryPoints(input: {
+  manifestPath: string;
+  manifestDir: string;
+  exports: ExtensionManifest["exports"];
+}): ExtensionEntryPoint[] {
+  if (typeof input.exports === "string") {
+    return [{
+      name: ".",
+      path: resolveExtensionExportPath({
+        manifestPath: input.manifestPath,
+        manifestDir: input.manifestDir,
+        exportName: ".",
+        exportPath: input.exports,
+      }),
+    }];
+  }
+
+  const entryPoints: ExtensionEntryPoint[] = [];
+  for (const [exportName, exportPath] of Object.entries(input.exports)) {
+    validateExtensionExportName(input.manifestPath, exportName);
+    entryPoints.push({
+      name: exportName,
+      path: resolveExtensionExportPath({
+        manifestPath: input.manifestPath,
+        manifestDir: input.manifestDir,
+        exportName,
+        exportPath,
+      }),
+    });
+  }
+
+  if (!entryPoints.some((entryPoint) => entryPoint.name === ".")) {
+    throw new Error(
+      `${input.manifestPath} exports must include "." when using an export map`,
+    );
+  }
+
+  return entryPoints;
+}
+
 export function createExtensionPackageSpec(input: {
   manifestPath: string;
   manifest: ExtensionManifest;
@@ -106,11 +157,18 @@ export function createExtensionPackageSpec(input: {
   const packageDirectoryName = extensionPackageDirectoryName(packageName);
   const dependencies = manifestDependencies(input.manifest);
   const veryfrontPeerRange = `^${input.version}`;
+  const entryPoints = normalizeExtensionEntryPoints({
+    manifestPath: input.manifestPath,
+    manifestDir,
+    exports: input.manifest.exports,
+  });
 
   return {
     manifestPath: input.manifestPath,
     manifestDir,
-    entryPoint: join(manifestDir, input.manifest.exports),
+    entryPoints,
+    entryPoint: entryPoints.find((entryPoint) => entryPoint.name === ".")!
+      .path,
     packageName,
     packageDirectoryName,
     manifestDependencies: dependencies,
@@ -202,16 +260,77 @@ export function normalizeExtensionPackageJson(input: {
   const importPath = packageImportPath(pkg);
   if (importPath) {
     pkg.types = importPath.replace(/\.js$/, ".d.ts");
-    if (pkg.exports?.["."] && typeof pkg.exports["."] === "object") {
-      pkg.exports["."].types = pkg.types;
-    }
   }
+  addExportTypes(pkg);
   pkg.files = ["esm", "LICENSE", "NOTICE", "README.md"];
   pkg.veryfront = input.spec.packageJson.veryfront;
   delete pkg.devDependencies;
   delete pkg._generatedBy;
 
   return pkg;
+}
+
+function validateExtensionExportName(
+  manifestPath: string,
+  exportName: string,
+): void {
+  if (
+    exportName === "." ||
+    (
+      exportName.startsWith("./") &&
+      !exportName.endsWith("/") &&
+      !exportName.includes("//") &&
+      !exportName.split("/").includes("..")
+    )
+  ) {
+    return;
+  }
+
+  throw new Error(
+    `${manifestPath} contains unsupported extension export key "${exportName}". Export keys must be "." or package subpaths such as "./node".`,
+  );
+}
+
+function resolveExtensionExportPath(input: {
+  manifestPath: string;
+  manifestDir: string;
+  exportName: string;
+  exportPath: string;
+}): string {
+  if (
+    !input.exportPath.startsWith("./") ||
+    input.exportPath.endsWith("/") ||
+    input.exportPath.includes("//") ||
+    input.exportPath.split("/").includes("..")
+  ) {
+    throw new Error(
+      `${input.manifestPath} export "${input.exportName}" must point to a local file path such as "./src/index.ts"; received "${input.exportPath}".`,
+    );
+  }
+
+  return join(input.manifestDir, input.exportPath);
+}
+
+function addExportTypes(pkg: {
+  exports?: Record<string, string | { import?: string; types?: string }>;
+}): void {
+  if (!pkg.exports) return;
+
+  for (const [exportName, exportValue] of Object.entries(pkg.exports)) {
+    if (typeof exportValue === "string") {
+      if (exportValue.endsWith(".js")) {
+        pkg.exports[exportName] = {
+          import: exportValue,
+          types: exportValue.replace(/\.js$/, ".d.ts"),
+        };
+      }
+      continue;
+    }
+
+    if (typeof exportValue.import === "string") {
+      exportValue.types = exportValue.import.replace(/\.js$/, ".d.ts");
+    }
+  }
 }
 
 const BARE_IMPORT_SPECIFIER_PATTERNS = [

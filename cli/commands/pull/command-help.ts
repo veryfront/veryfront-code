@@ -4,10 +4,10 @@ export const pullHelp: CommandHelp = {
   name: "pull",
   category: "deploy",
   description: "Download project files from Veryfront remote",
-  usage: "veryfront pull [project-slug] [options]",
+  usage: "veryfront pull [project] [options]",
   options: [
     {
-      flag: "-p, --project-slug <slug>",
+      flag: "-p, --project <slug>",
       description: "Project slug to pull (overrides inferred project)",
     },
     {
@@ -50,7 +50,7 @@ export const pullHelp: CommandHelp = {
   examples: [
     "veryfront pull",
     "veryfront pull veryfront-based-38c7d03a",
-    "veryfront pull -p veryfront-based-38c7d03a --dir ./veryfront-based",
+    "veryfront pull --project veryfront-based-38c7d03a --dir ./veryfront-based",
     "veryfront pull --dir ./my-project",
     "veryfront pull --branch feature-header",
     "veryfront pull --env production",
@@ -73,6 +73,9 @@ export const pullHelp: CommandHelp = {
     "--prune --dry-run can preview anywhere and never writes or deletes local files",
     "Only supported text files are managed; ignored, unsupported, and binary files remain unchanged",
     "Pull preserves remote bytes exactly, including line endings and a missing final newline",
+    "A successful pull stores the canonical project link and creates missing package.json and tsconfig.json files",
+    "Pull confirms before writing managed files, pruning files, or creating bootstrap files; use --yes to skip",
+    "Pull never overwrites downloaded or existing bootstrap files; --dry-run reports planned bootstrap writes",
     "Invalid, duplicate, reserved, or symlink-traversing remote paths fail before local writes",
     "A fetch failure causes no writes or pruning; a local write or delete failure exits with an error",
   ],

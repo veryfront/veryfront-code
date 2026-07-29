@@ -84,13 +84,9 @@ export async function discoverSkills(
       // Validate metadata (directory name as fallback for skill name)
       const metadata = validateSkillMetadata(parsed.frontmatter, entry.name);
 
-      // Warn if metadata name differs from directory name, use directory name as ID
+      // The directory is the canonical identity; legacy/display-style names
+      // are preserved only as display metadata.
       const skillId = entry.name;
-      if (metadata.name !== entry.name) {
-        logger.warn(
-          `Skill "${metadata.name}" in directory "${entry.name}" — using directory name as ID`,
-        );
-      }
 
       // Check for duplicate IDs (first wins)
       if (skills.has(skillId)) {

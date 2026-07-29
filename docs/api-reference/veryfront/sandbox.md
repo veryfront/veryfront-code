@@ -1,7 +1,7 @@
 ---
 title: "veryfront/sandbox"
 description: "Ephemeral compute environments for isolated execution."
-order: 27
+order: 28
 ---
 
 ## Import
@@ -62,13 +62,13 @@ Create a lazily-provisioned sandbox session with automatic heartbeats.
 
 ### `sandbox.executeCommand(command, options)`
 
-Execute a command and return buffered stdout/stderr + exit code.
+Execute a bash command in the sandbox and return buffered stdout/stderr plus the exit code.
 
 **Returns:** <code>Promise&lt;ExecResult&gt;</code>
 
 ### `sandbox.executeStream(command, options)`
 
-Execute a command and stream output events as they arrive.
+Execute a bash command in the sandbox and stream newline-delimited JSON (NDJSON) output events as they arrive.
 
 **Returns:** <code>AsyncGenerator&lt;ExecStreamEvent&gt;</code>
 

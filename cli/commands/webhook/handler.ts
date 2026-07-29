@@ -5,14 +5,15 @@ import { exitProcess } from "#cli/utils";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { runTriggerTarget } from "veryfront/trigger";
-import { discoverWebhooks } from "veryfront/webhook";
-import { outputTriggerRun, readJsonFile } from "../trigger-utils.ts";
+import { discoverWebhooks, type WebhookDefinition } from "veryfront/webhook";
+import { outputTriggerList, outputTriggerRun, readJsonFile } from "../trigger-utils.ts";
+import { INVALID_ARGUMENT } from "veryfront/errors";
 
 const getWebhookArgsSchema = defineSchema((v) =>
   v.object({
-    action: v.literal("run"),
-    id: v.string(),
-    payload: v.string(),
+    action: v.enum(["run", "list"]).optional(),
+    id: v.string().optional(),
+    payload: v.string().optional(),
     debug: v.boolean().default(false),
   })
 );
@@ -28,8 +29,40 @@ const parseWebhookArgs = createArgParser(WebhookArgsSchema, {
   debug: { keys: ["debug"], type: "boolean" },
 });
 
+function formatWebhook(webhook: WebhookDefinition): string {
+  return `${webhook.id} -> ${webhook.target.kind}:${webhook.target.id}`;
+}
+
+async function handleWebhookList(_args: ParsedArgs): Promise<void> {
+  const projectDir = Deno.cwd();
+  await withProjectSourceContext(projectDir, async ({ adapter, config }) => {
+    const result = await discoverWebhooks({ projectDir, adapter, config });
+    await outputTriggerList({
+      command: "webhooks",
+      items: result.items,
+      errors: result.errors,
+      formatItem: formatWebhook,
+    });
+  });
+}
+
 export async function handleWebhookCommand(args: ParsedArgs): Promise<void> {
   const opts: WebhookArgs = parseArgsOrThrow(parseWebhookArgs, "webhook", args);
+
+  // Dispatch "list" (also the default when no action is given)
+  if (!opts.action || opts.action === "list") {
+    await handleWebhookList(args);
+    return;
+  }
+
+  // action === "run"
+  if (!opts.id) {
+    throw INVALID_ARGUMENT.create({ detail: "Usage: veryfront webhook run <id> --payload <file>" });
+  }
+  if (!opts.payload) {
+    throw INVALID_ARGUMENT.create({ detail: "webhook run requires --payload <file>" });
+  }
+
   const projectDir = Deno.cwd();
   const payload = await readJsonFile(opts.payload, "--payload JSON file");
 

@@ -32,10 +32,82 @@ export const PRODUCTION_BUILD_REQUIRED = defineError({
   suggestion: "Run 'vf build' before deploying",
 });
 
+export const ENVIRONMENT_NOT_FOUND = defineError({
+  slug: "environment-not-found",
+  category: "DEPLOY",
+  status: 404,
+  title: "Deployment environment not found",
+  suggestion: "Check environment names with: veryfront config",
+});
+
+export const RELEASE_MISSING_VERSION = defineError({
+  slug: "release-missing-version",
+  category: "DEPLOY",
+  status: 500,
+  title: "Release has no version",
+  suggestion: "Try again or check the build logs in Studio",
+});
+
+export const RELEASE_BUILD_TIMEOUT = defineError({
+  slug: "release-build-timeout",
+  category: "DEPLOY",
+  status: 408,
+  title: "Release build timed out",
+  suggestion: "Try again or check the build logs in Studio",
+});
+
+export const DEPLOYMENT_VERIFICATION_TIMEOUT = defineError({
+  slug: "deployment-verification-timeout",
+  category: "DEPLOY",
+  status: 408,
+  title: "Deployment verification timed out",
+  suggestion: "Try again or check the deployment status in Studio",
+});
+
+export const PUSH_RECEIPT_MISSING = defineError({
+  slug: "push-receipt-missing",
+  category: "DEPLOY",
+  status: 400,
+  title: "Push receipt not found",
+  suggestion: "Run: veryfront push --branch main first",
+});
+
+export const SOURCE_DIGEST_MISMATCH = defineError({
+  slug: "source-digest-mismatch",
+  category: "DEPLOY",
+  status: 409,
+  title: "Release source digest mismatch",
+  suggestion: "Run veryfront push again to re-upload source files",
+});
+
+export const PREVIEW_HOSTNAME_TOO_LONG = defineError({
+  slug: "preview-hostname-too-long",
+  category: "DEPLOY",
+  status: 400,
+  title: "Preview hostname too long",
+  suggestion: "Use a shorter project slug or branch name",
+});
+
+export const BRANCH_NOT_FOUND = defineError({
+  slug: "branch-not-found",
+  category: "DEPLOY",
+  status: 404,
+  title: "Branch not found",
+  suggestion: "List branches in Studio or push a new one with: veryfront push --branch <name>",
+});
+
 /** Registry fragment for DEPLOY errors (slug → definition). */
 export const DEPLOY_REGISTRY = {
   "deployment-error": DEPLOYMENT_ERROR,
   "platform-error": PLATFORM_ERROR,
   "env-var-missing": ENV_VAR_MISSING,
   "production-build-required": PRODUCTION_BUILD_REQUIRED,
+  "environment-not-found": ENVIRONMENT_NOT_FOUND,
+  "release-missing-version": RELEASE_MISSING_VERSION,
+  "release-build-timeout": RELEASE_BUILD_TIMEOUT,
+  "deployment-verification-timeout": DEPLOYMENT_VERIFICATION_TIMEOUT,
+  "push-receipt-missing": PUSH_RECEIPT_MISSING,
+  "source-digest-mismatch": SOURCE_DIGEST_MISMATCH,
+  "preview-hostname-too-long": PREVIEW_HOSTNAME_TOO_LONG,
+  "branch-not-found": BRANCH_NOT_FOUND,
 } as const;

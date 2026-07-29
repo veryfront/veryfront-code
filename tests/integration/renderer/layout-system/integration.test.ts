@@ -6,7 +6,7 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assertExists, assertStringIncludes } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
@@ -15,11 +15,14 @@ import { VeryfrontRenderer } from "../../../../src/rendering/orchestrator/ssr.ts
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 
-async function createRenderer(projectDir: string): Promise<VeryfrontRenderer> {
+async function createRenderer(
+  projectDir: string,
+  mode: "development" | "production" = "development",
+): Promise<VeryfrontRenderer> {
   const adapter = await getAdapter();
   const renderer = new VeryfrontRenderer({
     projectDir,
-    mode: "development",
+    mode,
     adapter,
   });
 
@@ -30,8 +33,9 @@ async function createRenderer(projectDir: string): Promise<VeryfrontRenderer> {
 async function withRenderer(
   projectDir: string,
   fn: (renderer: VeryfrontRenderer) => Promise<void>,
+  mode: "development" | "production" = "development",
 ): Promise<void> {
-  const renderer = await createRenderer(projectDir);
+  const renderer = await createRenderer(projectDir, mode);
   try {
     await fn(renderer);
   } finally {
@@ -85,6 +89,135 @@ This is a test post.
         const result = await renderer.renderPage("blog");
         assertExists(result.html);
         assertStringIncludes(result.html, "My Blog Post");
+      });
+    });
+  });
+
+  it("uses the resolved Pages route layout in a mixed-router project", async () => {
+    await withTestContext("layout-mixed-router-pages-route", async (context) => {
+      await mkdir(join(context.projectDir, "app"), { recursive: true });
+      await mkdir(join(context.projectDir, "pages/chat"), { recursive: true });
+
+      await writeTextFile(
+        join(context.projectDir, "app/layout.tsx"),
+        `export default function AppLayout({ children }) {
+  return <div id="app-layout">{children}</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "pages/chat/layout.tsx"),
+        `export default function ChatLayout({ children }) {
+  return <main id="chat-route-layout">{children}</main>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "pages/chat/index.tsx"),
+        `export default function ChatPage() {
+  return <div>Chat page</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "components/layout.tsx"),
+        `export default function FallbackLayout({ children }) {
+  return <aside id="dashboard-fallback-layout">{children}</aside>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "components/app.tsx"),
+        `export default function App({ children }) {
+  return <div id="pages-app-wrapper">{children}</div>;
+}`,
+      );
+
+      await withRenderer(context.projectDir, async (renderer) => {
+        const result = await renderer.renderPage("chat");
+        assertExists(result.html);
+        assertStringIncludes(result.html, 'id="chat-route-layout"');
+        assertStringIncludes(result.html, 'id="pages-app-wrapper"');
+        assertEquals(result.html.includes('id="dashboard-fallback-layout"'), false);
+        const payload = result.html.match(
+          /<script id="veryfront-hydration-data" type="application\/json"[^>]*>([\s\S]*?)<\/script>/,
+        )?.[1];
+        assertExists(payload);
+        const hydrationData = JSON.parse(payload) as {
+          layouts?: Array<{ kind?: string; path?: string }>;
+          pagePath?: string;
+        };
+        assertEquals(hydrationData.pagePath, "pages/chat/index.tsx");
+        assertEquals(hydrationData.layouts, [{
+          kind: "tsx",
+          path: "pages/chat/layout.tsx",
+        }]);
+      }, "production");
+    });
+  });
+
+  it("preserves convention layouts when the project has a hidden ancestor", async () => {
+    await withTestContext("layout-mixed-router-pages-conventions", async (context) => {
+      const projectDir = join(context.projectDir, ".worktrees", "project");
+      await mkdir(join(projectDir, "app"), { recursive: true });
+      await mkdir(join(projectDir, "components"), { recursive: true });
+      await mkdir(join(projectDir, "pages/chat"), { recursive: true });
+
+      await writeTextFile(
+        join(projectDir, "app/layout.tsx"),
+        `export default function AppLayout({ children }) {
+  return <div id="app-layout">{children}</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(projectDir, "components/layout.tsx"),
+        `export default function DashboardLayout({ children }) {
+  return <aside id="dashboard-layout">{children}</aside>;
+}`,
+      );
+
+      await writeTextFile(
+        join(projectDir, "components/app.tsx"),
+        `export default function App({ children }) {
+  return <div id="pages-app-wrapper">{children}</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(projectDir, "pages/review.tsx"),
+        `export default function ReviewPage() {
+  return <div>Review page</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(projectDir, "pages/chat/layout.tsx"),
+        `export default function ChatLayout({ children }) {
+  return <main id="chat-route-layout">{children}</main>;
+}`,
+      );
+
+      await writeTextFile(
+        join(projectDir, "pages/chat/index.tsx"),
+        `export default function ChatPage() {
+  return <div>Chat page</div>;
+}`,
+      );
+
+      await withRenderer(projectDir, async (renderer) => {
+        const review = await renderer.renderPage("review");
+        assertExists(review.html);
+        assertStringIncludes(review.html, 'id="dashboard-layout"');
+        assertStringIncludes(review.html, 'id="pages-app-wrapper"');
+        assertEquals(review.html.includes('id="app-layout"'), false);
+
+        const chat = await renderer.renderPage("chat");
+        assertExists(chat.html);
+        assertStringIncludes(chat.html, 'id="chat-route-layout"');
+        assertStringIncludes(chat.html, 'id="pages-app-wrapper"');
+        assertEquals(chat.html.includes('id="dashboard-layout"'), false);
+        assertEquals(chat.html.includes('id="app-layout"'), false);
       });
     });
   });

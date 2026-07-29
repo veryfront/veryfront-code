@@ -12,6 +12,7 @@ import { createFileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { getEnvironmentConfig } from "veryfront/config";
 import { isJsonMode } from "./json-output.ts";
+import { brand, dim, warning as warningColor } from "../ui/colors.ts";
 import { isQuiet } from "../utils/index.ts";
 import { detectCI } from "./interactive.ts";
 
@@ -50,8 +51,10 @@ export function shouldSkip(): boolean {
 }
 
 function printUpdateNotice(current: string, latest: string): void {
-  console.error(`\n  Update available: ${current} → ${latest}`);
-  console.error(`  Run: ${INSTALL_CMD}\n`);
+  console.error();
+  console.error(`  ${warningColor("!")} Update available: ${current} → ${latest}`);
+  console.error(`  ${dim("Run:")} ${brand(INSTALL_CMD)}`);
+  console.error();
 }
 
 export async function checkForUpdates(

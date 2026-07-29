@@ -382,6 +382,8 @@ export function mapAgUiRuntimeEventToForkParts(
     case "error": {
       const errorText = typeof event.errorText === "string"
         ? event.errorText
+        : typeof event.error === "string"
+        ? event.error
         : "Framework stream failed";
       return [{ type: "error", error: new Error(errorText) }];
     }

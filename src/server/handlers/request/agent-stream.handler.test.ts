@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import type { AgentMessage } from "#veryfront/agent";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
@@ -194,6 +195,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let discoveryCalls = 0;
     let streamContext: Record<string, unknown> | undefined;
     let runtimeSystem: unknown;
+    let runtimeMessages: AgentMessage[] | undefined;
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
@@ -202,8 +204,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
       createRuntime: (runtimeAgent) => ({
-        stream: async (_messages, context, callbacks) => {
+        stream: async (messages, context, callbacks) => {
           runtimeSystem = runtimeAgent.config.system;
+          runtimeMessages = messages;
           streamContext = context;
           callbacks?.onFinish?.({
             text: "hello from runtime",
@@ -247,6 +250,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
       title: "studio_context",
       data: { branchId: null },
     }];
+    invocation.messages[0].parts.push({
+      type: "file",
+      uploadId: "20000000-2000-4000-8000-200000000001",
+      uploadPath: "_chat/user/screenshot.png",
+      mediaType: "image/png",
+      url: "https://uploads.example.com/screenshot.png",
+      filename: "screenshot.png",
+    });
     const body = JSON.stringify(invocation);
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
@@ -268,6 +279,29 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(streamContext?.runId, "run_1");
     assertEquals(streamContext?.threadId, "10000000-1000-4000-8000-100000000001");
     assertEquals(typeof runtimeSystem, "function");
+    assertEquals(
+      runtimeMessages?.[0]?.parts as unknown,
+      [
+        { type: "text", text: "Hello" },
+        {
+          type: "file",
+          mediaType: "image/png",
+          url: "https://uploads.example.com/screenshot.png",
+          filename: "screenshot.png",
+          uploadId: "20000000-2000-4000-8000-200000000001",
+          uploadPath: "_chat/user/screenshot.png",
+        },
+        {
+          type: "text",
+          text: "Attached files from earlier conversation context:\n\n" +
+            "<uploaded_files>\n" +
+            '<file name="screenshot.png" upload_id="20000000-2000-4000-8000-200000000001" ' +
+            'path="_chat/user/screenshot.png" url="https://uploads.example.com/screenshot.png" ' +
+            'type="image/png" />\n' +
+            "</uploaded_files>",
+        },
+      ],
+    );
     const prompt = await (runtimeSystem as () => Promise<string>)();
     assertStringIncludes(
       prompt,
@@ -697,9 +731,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
         agentConfig: {
           id: "assistant-1",
           name: "Project Assistant",
-          description: "Uses project-scoped skills and tools.",
+          description: "Uses project-scoped tools with skills disabled.",
           instructions: "Use project-scoped instructions.",
-          skills: ["support-triage"],
+          skills: [],
           tools: ["search_knowledge", "get_file"],
         },
       });
@@ -725,7 +759,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         ? await (capturedSystem as () => Promise<string>)()
         : capturedSystem;
       assertStringIncludes(String(resolvedSystem), "Use project-scoped instructions.");
-      assertEquals(capturedSkills, ["support-triage"]);
+      assertEquals(capturedSkills, []);
       assertEquals((capturedTools as Record<string, unknown>).search_knowledge, true);
       assertEquals((capturedTools as Record<string, unknown>).get_file, true);
       assertEquals(capturedAllowedRemoteTools, ["get_file", "search_knowledge"]);
@@ -842,13 +876,18 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     const contextCalls: string[] = [];
     const configReads: string[] = [];
+    const sourceEvents: string[] = [];
     const fs = createNoopFsAdapter([]);
     Object.assign(fs, {
       getUnderlyingAdapter: () => fs,
       isVeryfrontAdapter: () => true,
+      ensureSourceSnapshotFresh: async () => {
+        sourceEvents.push("source-fresh");
+      },
       exists: async (path: string) => path === "/veryfront.config.ts",
       readFile: async () => {
         const branch = getCurrentRequestContext()?.branch ?? "main";
+        sourceEvents.push("config-read");
         configReads.push(branch);
         return branch === "restrict-gmail"
           ? 'export default { integrations: { allow: { gmail: { allowedTools: ["list_emails"] } } } };'
@@ -899,6 +938,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(contextCalls, ["restrict-gmail"]);
     assertEquals(configReads, ["restrict-gmail"]);
+    assertEquals(sourceEvents.slice(0, 2), ["source-fresh", "config-read"]);
     assertEquals(discoveryConfig?.integrations, {
       allow: { gmail: { allowedTools: ["list_emails"] } },
     });

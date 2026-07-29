@@ -311,7 +311,7 @@ export function clearSSRModuleCache(): void {
   _transformSemaphore = undefined;
   resetCachedTransformLimits();
 
-  logger.info("✓ Global cache cleared", {
+  logger.debug("Global cache cleared", {
     modulesCleared: moduleCount,
     failedComponentsCleared: failedCount,
     transformSlotsCleared: transformSlotsCount,

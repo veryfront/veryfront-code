@@ -29,9 +29,10 @@ import {
 import { getRuntimeUploadUrl } from "../runtime/upload-url-client.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import {
-  resolveRuntimeSkillsForAgent,
+  resolveRuntimeSkillSelectorForAgent,
   type RuntimeSkillDefinition,
 } from "../runtime/skill-metadata.ts";
+import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
 import {
   applyContextBudget,
   type ContextBudgetDiagnostics,
@@ -281,12 +282,14 @@ export function normalizeParsedHostedChatRequest(
 
 function buildHostedChatRuntimeProjectSteering<TRuntimeAgentDefinition>(input: {
   agentConfig: TRuntimeAgentDefinition;
+  skillSelectorPolicy: ResolvedSkillSelectorPolicy;
   environmentContext?: string;
   instructions: string;
   skills: RuntimeSkillDefinition[];
 }): HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition> {
   return {
     agent: input.agentConfig,
+    skillSelectorPolicy: input.skillSelectorPolicy,
     ...(input.environmentContext ? { environmentContext: input.environmentContext } : {}),
     ...(input.instructions ? { initialProjectInstructions: input.instructions } : {}),
     ...(input.skills.length > 0 ? { initialSkills: input.skills } : {}),
@@ -304,26 +307,19 @@ export async function prepareHostedChatRuntimeCreationOptions<
     authToken: input.authToken,
     branchId: input.branchId,
   });
-  // The selector controls what the prompt advertises, not what load_skill can
-  // resolve. Keep the hosted execution gate aligned with the classic runtime:
-  // every owner-visible skill remains loadable by id.
-  const loadableSkills = resolveRuntimeSkillsForAgent({
+  const skillSelectorSnapshot = resolveRuntimeSkillSelectorForAgent({
     skills: steering.skills,
     agentId: input.agentConfig.id,
-    selector: true,
+    selector: input.agentConfig.skills === false ? [] : input.agentConfig.skills,
   });
-  const advertisedSkills = resolveRuntimeSkillsForAgent({
-    skills: steering.skills,
-    agentId: input.agentConfig.id,
-    selector: input.agentConfig.skills,
-  });
+  const selectedSkills = skillSelectorSnapshot.definitions;
   const agentInstructions = input.buildInstructions({
     agentConfig: input.agentConfig,
     projectId: input.projectId,
     branchId: input.branchId,
     environmentContext: input.environmentContext,
     instructions: steering.instructions,
-    skills: advertisedSkills,
+    skills: selectedSkills,
   });
   const runtimeConfig = resolveHostedRuntimeRequestConfig({
     request: input.request,
@@ -375,14 +371,11 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.rootRunContext?.effectiveParentMessageId
         ? { parentMessageId: input.rootRunContext.effectiveParentMessageId }
         : {}),
-      availableSkillIds: loadableSkills.map((skill) => skill.id),
-      ...(loadableSkills.some((skill) => skill.sourcePath)
+      availableSkillIds: skillSelectorSnapshot.allowedSkillIds,
+      skillSelectorPolicy: skillSelectorSnapshot.policy,
+      ...(Object.keys(skillSelectorSnapshot.skillSourcePaths).length > 0
         ? {
-          skillSourcePaths: Object.fromEntries(
-            loadableSkills
-              .filter((skill) => skill.sourcePath)
-              .map((skill) => [skill.id, skill.sourcePath as string]),
-          ),
+          skillSourcePaths: skillSelectorSnapshot.skillSourcePaths,
         }
         : {}),
       ...(input.rootRunContext?.publishParentRunEvents
@@ -391,14 +384,15 @@ export async function prepareHostedChatRuntimeCreationOptions<
       clientProfile: runtimeConfig.clientProfile,
       liveProjectSteering: buildHostedChatRuntimeProjectSteering({
         agentConfig: input.agentConfig,
+        skillSelectorPolicy: skillSelectorSnapshot.policy,
         environmentContext: input.environmentContext,
         instructions: steering.instructions,
-        skills: advertisedSkills,
+        skills: selectedSkills,
       }),
     },
     steering: {
       ...steering,
-      skills: advertisedSkills,
+      skills: selectedSkills,
       agentInstructions,
     },
     runtimeConfig,

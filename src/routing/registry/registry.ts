@@ -72,20 +72,21 @@ export class RouteRegistry {
 
   execute(req: Request, ctx: HandlerContext): Promise<Response | null> {
     const url = new URL(req.url);
+    const debug = Boolean(this.config.debug || ctx.debug);
 
     return withSpan(
       "routing.registry.execute",
       async () => {
         const startTime = Date.now();
 
-        if (this.config.debug) {
+        if (debug) {
           logger.debug(`Processing ${req.method} ${url.pathname}`);
         }
 
         for (const handler of this.handlers) {
           try {
             if (handler.metadata.enabled && !handler.metadata.enabled(ctx)) {
-              if (this.config.debug) {
+              if (debug) {
                 serverLogger.debug(
                   `[RouteRegistry] Skipping disabled handler: ${handler.metadata.name}`,
                 );
@@ -100,14 +101,14 @@ export class RouteRegistry {
             const result = await handler.handle(req, ctx);
             const handlerTime = Date.now() - handlerStart;
 
-            if (this.config.debug && this.config.enableMetrics) {
+            if (debug && this.config.enableMetrics) {
               serverLogger.debug(
                 `[RouteRegistry] Handler ${handler.metadata.name} took ${handlerTime}ms`,
               );
             }
 
             if (result.response) {
-              if (this.config.debug) {
+              if (debug) {
                 serverLogger.debug(
                   `[RouteRegistry] Response from ${handler.metadata.name} (total: ${
                     Date.now() - startTime
@@ -118,7 +119,7 @@ export class RouteRegistry {
             }
 
             if (!result.continue) {
-              if (this.config.debug) {
+              if (debug) {
                 serverLogger.debug(
                   `[RouteRegistry] Chain stopped by ${handler.metadata.name} without response`,
                 );
@@ -142,7 +143,7 @@ export class RouteRegistry {
           }
         }
 
-        if (this.config.debug) {
+        if (debug) {
           serverLogger.debug(
             `[RouteRegistry] No handler matched (total: ${Date.now() - startTime}ms)`,
           );

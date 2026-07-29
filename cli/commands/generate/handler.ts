@@ -4,7 +4,7 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import { generateCommand } from "./index.ts";
-import { showLogo } from "#cli/utils";
+import { showHeader } from "#cli/utils";
 import { createArgParser } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import { cwd } from "veryfront/platform";
@@ -27,7 +27,7 @@ export const parseGenerateArgs = createArgParser(GenerateArgsSchema, {
 });
 
 export async function handleGenerateCommand(args: ParsedArgs): Promise<void> {
-  showLogo();
+  showHeader();
   const result = parseGenerateArgs(args);
   if (!result.success) {
     throw new Error(

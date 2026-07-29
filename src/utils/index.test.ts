@@ -4,6 +4,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as utils from "veryfront/utils";
 
 describe("veryfront/utils public export surface", () => {
+  it("exposes shared environment boolean parsing", () => {
+    assertEquals(typeof utils.isTruthyEnvValue, "function");
+  });
+
   it("does not expose test-only logger reset helpers", () => {
     assertEquals("__resetLoggerConfigForTests" in utils, false);
     assertEquals("__resetLogRecordEmitterForTests" in utils, false);

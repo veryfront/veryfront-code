@@ -1251,7 +1251,7 @@ const extOpenTelemetry: ExtensionFactory = () => {
       await exporterImpl.start(ctx.config);
       ctx.provide("TracingExporter", exporterImpl);
       ctx.provide("NodeTelemetryProvider", nodeTelemetryProvider);
-      ctx.logger.info("[ext-observability-opentelemetry] TracingExporter registered");
+      ctx.logger.debug("[ext-observability-opentelemetry] TracingExporter registered");
     },
     async teardown() {
       await nodeTelemetryProvider.shutdown();

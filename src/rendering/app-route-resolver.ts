@@ -9,7 +9,7 @@
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, Frontmatter } from "#veryfront/types";
-import { isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
+import { isCatchAllSegment, isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
 import { join } from "#veryfront/compat/path";
 import { extract } from "#std/front-matter/yaml.ts";
 
@@ -77,23 +77,11 @@ async function tryDynamicMatch(
   let currentDir = join(projectDir, appDirName);
 
   for (const segment of segments) {
-    const exactPath = join(currentDir, segment);
+    const routeDirectory = await findRouteDirectory(currentDir, segment, adapter);
+    if (!routeDirectory) return null;
 
-    try {
-      const stat = await adapter.fs.stat(exactPath);
-      if (stat.isDirectory) {
-        currentDir = exactPath;
-        continue;
-      }
-    } catch (_) {
-      /* expected: exact path may not exist, try dynamic segments */
-    }
-
-    const dynamic = await findDynamicDir(currentDir, adapter);
-    if (!dynamic) return null;
-
-    currentDir = join(currentDir, dynamic.name);
-    if (dynamic.isCatchAll) break;
+    currentDir = join(currentDir, routeDirectory.name);
+    if (routeDirectory.isCatchAll) break;
   }
 
   for (const ext of [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"]) {
@@ -105,16 +93,27 @@ async function tryDynamicMatch(
   return null;
 }
 
-async function findDynamicDir(
+async function findRouteDirectory(
   dir: string,
+  segment: string,
   adapter: RuntimeAdapter,
 ): Promise<{ name: string; isCatchAll: boolean } | null> {
   try {
     const entries = await adapter.fs.readDir(dir);
+    let dynamic: { name: string; isCatchAll: boolean } | null = null;
+
     for await (const entry of entries) {
-      if (!entry.isDirectory || !isDynamicSegment(entry.name)) continue;
-      return { name: entry.name, isCatchAll: entry.name.startsWith("[...") };
+      if (!entry.isDirectory && !entry.isSymlink) continue;
+      if (entry.name === segment) return { name: entry.name, isCatchAll: false };
+      if (!dynamic && isDynamicSegment(entry.name)) {
+        dynamic = {
+          name: entry.name,
+          isCatchAll: isCatchAllSegment(entry.name),
+        };
+      }
     }
+
+    return dynamic;
   } catch (_) {
     /* expected: adapter.fs.readDir may fail for npm compatibility */
   }

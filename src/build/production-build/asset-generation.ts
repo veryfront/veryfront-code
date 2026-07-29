@@ -166,7 +166,7 @@ export async function copyStaticAssets(
     }
   }
 
-  logger.info(`Copied ${stats.assets} static assets`);
+  logger.debug(`Copied ${stats.assets} static assets`);
   return stats;
 }
 

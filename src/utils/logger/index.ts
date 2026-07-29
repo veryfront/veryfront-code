@@ -11,6 +11,7 @@ export {
   __resetLoggerConfigForTests,
   __resetLogRecordEmitterForTests,
   __resetTraceContextGetterForTests,
+  __subscribeLogRecordEmitter,
   agentLogger,
   bundlerLogger,
   cliLogger,
@@ -23,10 +24,13 @@ export {
   type Logger,
   logger,
   LogLevel,
+  type LogRecordEmitter,
   proxyLogger,
   refreshLoggerConfig,
   rendererLogger,
   serverLogger,
+  setLoggerPreset,
+  setLogLevel,
 } from "./logger.ts";
 export {
   ANSI,

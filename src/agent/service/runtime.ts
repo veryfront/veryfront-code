@@ -185,7 +185,7 @@ function normalizeAgentServiceTools(
   return Object.fromEntries(tools.map((toolId) => [toolId, true]));
 }
 
-function combineAgentServiceLifecycle(
+export function combineAgentServiceLifecycle(
   primary: AgentServiceServerLifecycle,
   secondary: AgentServiceServerLifecycle | undefined,
 ): AgentServiceServerLifecycle {
@@ -195,12 +195,36 @@ function combineAgentServiceLifecycle(
 
   return {
     setShuttingDown: () => {
-      primary.setShuttingDown?.();
-      secondary.setShuttingDown?.();
+      let failure: unknown;
+      try {
+        primary.setShuttingDown?.();
+      } catch (error) {
+        failure = error;
+      }
+      try {
+        secondary.setShuttingDown?.();
+      } catch (error) {
+        failure ??= error;
+      }
+      if (failure !== undefined) {
+        throw failure;
+      }
     },
     stop: async () => {
-      await primary.stop?.();
-      await secondary.stop?.();
+      let failure: unknown;
+      try {
+        await primary.stop?.();
+      } catch (error) {
+        failure = error;
+      }
+      try {
+        await secondary.stop?.();
+      } catch (error) {
+        failure ??= error;
+      }
+      if (failure !== undefined) {
+        throw failure;
+      }
     },
   };
 }

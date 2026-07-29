@@ -3,10 +3,9 @@
  * @module
  *******************************/
 
-import { cliLogger as logger } from "#cli/utils";
-import { brand, dim, green, red } from "#cli/ui";
-import { createSpinner } from "../../ui/progress.ts";
-import { box } from "../../ui/box.ts";
+import { cliLogger as logger, isVerbose } from "#cli/utils";
+import { brand, dim, red } from "#cli/ui";
+import { createTransientSpinner } from "../../ui/progress.ts";
 import { ensureDir } from "#std/fs.ts";
 import { join } from "veryfront/platform/path";
 import { createPackageJson } from "./config-generator.ts";
@@ -17,6 +16,7 @@ import { cwd } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import {
   detectPackageManager,
+  getDlxCommand,
   getInstallCommand,
   getRunCommand,
   installDependencies,
@@ -42,6 +42,7 @@ import {
   shouldRunWizard,
   validateProjectName,
 } from "./interactive-wizard.ts";
+import { DEFAULT_TEMPLATE } from "./catalog.ts";
 
 /**
  * Icon mapping for integrations based on category/name
@@ -178,6 +179,10 @@ type StructureNode = {
   children: Map<string, StructureNode>;
 };
 
+interface InitCommandDependencies {
+  deployProject?: (projectDir: string) => Promise<string>;
+}
+
 const STRUCTURE_ORDER = [
   "app",
   "pages",
@@ -268,7 +273,10 @@ function renderProjectStructure(rootName: string, paths: string[], maxLines = 22
 /**
  * Initializes a new Veryfront project with the specified template
  */
-export async function initCommand(options: InitOptions): Promise<void> {
+export async function initCommand(
+  options: InitOptions,
+  dependencies: InitCommandDependencies = {},
+): Promise<void> {
   const { name, features = [], quiet = false } = options;
   const { integrations = [] } = options;
   const parentDir = options.parentDir ?? cwd();
@@ -279,7 +287,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   let template: InitTemplate;
   let projectName = name;
-  let initGit = false;
+  let initGit = options.initGit ?? false;
 
   // Validate project name before doing anything else
   if (name) {
@@ -316,7 +324,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     initGit = wizardResult.initGit;
     wizardRuntime = wizardResult.runtime;
   } else {
-    template = options.template ?? "minimal";
+    template = options.template ?? DEFAULT_TEMPLATE;
   }
 
   const runtime: InitRuntime = options.runtime ?? wizardRuntime;
@@ -330,17 +338,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   validateOrThrow("features", features, validateFeatures);
   validateOrThrow("integrations", integrations, validateIntegrations);
-
-  const featuresStr = features.length ? ` with features: ${features.join(", ")}` : "";
-  const integrationsStr = integrations.length
-    ? ` with integrations: ${integrations.join(", ")}`
-    : "";
-
-  log(
-    `Creating new Veryfront project${
-      projectName ? ` in ${projectName}` : ""
-    } with template: ${template}${featuresStr}${integrationsStr}`,
-  );
 
   if (projectName && (await fs.exists(projectDir)) && !options.force) {
     throw toError(
@@ -461,94 +458,71 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   if (projectName) await ensureDir(projectDir);
 
-  // Create project files with progress spinner
-  const filesSpinner = quiet ? null : createSpinner("Creating project files...");
   const createdPaths: string[] = [];
+  for (const file of templateFiles as TemplateFile[]) {
+    if (file.path === ".env" || file.path === ".env.example") continue;
+
+    const filePath = join(projectDir, file.path);
+    const fileDir = join(projectDir, ...file.path.split("/").slice(0, -1));
+
+    if (fileDir !== projectDir) await ensureDir(fileDir);
+
+    await fs.writeTextFile(filePath, file.content);
+    createdPaths.push(file.path);
+    logger.debug(`Created file: ${file.path}`);
+  }
+
+  // Skip in quiet/TUI mode since local dev uses CDN and package.json can cause hydration issues
+  if (!options.quiet) {
+    await createPackageJson(projectDir, projectName, {
+      dependencies: templateConfig?.npmDependencies,
+      firstPartyExtensions: templateConfig?.firstPartyExtensions,
+      integrations: loadedIntegrations.map((integration) => ({
+        name: integration.config.name,
+        npmDependencies: integration.config.npmDependencies,
+      })),
+    });
+    createdPaths.push("package.json");
+    if (runtime === "deno") {
+      await createDenoConfig(projectDir);
+      createdPaths.push("deno.json");
+    }
+  }
+
+  if (allEnvVars.length) {
+    const envResult = await promptForEnvVars(dedupeEnvVars(allEnvVars), {
+      skipPrompt: options.skipEnvPrompt,
+      prefilledValues: options.env,
+    });
+
+    await fs.writeTextFile(join(projectDir, ".env"), envResult.envContent);
+    createdPaths.push(".env");
+    logger.debug("Created file: .env");
+
+    await fs.writeTextFile(join(projectDir, ".env.example"), envResult.envExampleContent);
+    createdPaths.push(".env.example");
+    logger.debug("Created file: .env.example");
+  }
+
+  const gitignorePath = join(projectDir, ".gitignore");
+  let existingGitignore: string | undefined;
   try {
-    for (const file of templateFiles as TemplateFile[]) {
-      if (file.path === ".env" || file.path === ".env.example") continue;
-
-      const filePath = join(projectDir, file.path);
-      const fileDir = join(projectDir, ...file.path.split("/").slice(0, -1));
-
-      if (fileDir !== projectDir) await ensureDir(fileDir);
-
-      await fs.writeTextFile(filePath, file.content);
-      createdPaths.push(file.path);
-      logger.debug(`Created file: ${file.path}`);
-    }
-
-    // Skip in quiet/TUI mode since local dev uses CDN and package.json can cause hydration issues
-    if (!options.quiet) {
-      await createPackageJson(projectDir, projectName, {
-        dependencies: templateConfig?.npmDependencies,
-        firstPartyExtensions: templateConfig?.firstPartyExtensions,
-        integrations: loadedIntegrations.map((integration) => ({
-          name: integration.config.name,
-          npmDependencies: integration.config.npmDependencies,
-        })),
-      });
-      createdPaths.push("package.json");
-      if (runtime === "deno") {
-        await createDenoConfig(projectDir);
-        createdPaths.push("deno.json");
-      }
-    }
-
-    if (allEnvVars.length) {
-      const envResult = await promptForEnvVars(dedupeEnvVars(allEnvVars), {
-        skipPrompt: options.skipEnvPrompt,
-        prefilledValues: options.env,
-      });
-
-      await fs.writeTextFile(join(projectDir, ".env"), envResult.envContent);
-      createdPaths.push(".env");
-      logger.debug("Created file: .env");
-
-      await fs.writeTextFile(join(projectDir, ".env.example"), envResult.envExampleContent);
-      createdPaths.push(".env.example");
-      logger.debug("Created file: .env.example");
-    }
-
-    const gitignorePath = join(projectDir, ".gitignore");
-    let existingGitignore: string | undefined;
-    try {
-      existingGitignore = await fs.readTextFile(gitignorePath);
-    } catch {
-      existingGitignore = undefined;
-    }
-
-    await fs.writeTextFile(gitignorePath, generateGitignoreContent(existingGitignore));
-    createdPaths.push(".gitignore");
-    logger.debug("Updated file: .gitignore");
-
-    filesSpinner?.success("Project files created");
-  } catch (err) {
-    filesSpinner?.error("Failed to create project files");
-    throw err;
+    existingGitignore = await fs.readTextFile(gitignorePath);
+  } catch {
+    existingGitignore = undefined;
   }
 
-  // Initialize git if requested
-  if (initGit) {
-    const gitSpinner = quiet ? null : createSpinner("Initializing git repository...");
-    try {
-      const { initializeGitRepo } = await import("../../utils/git.ts");
-      const success = await initializeGitRepo(projectDir, projectName ?? "veryfront project");
-      if (success) {
-        gitSpinner?.success("Git repository initialized");
-      } else {
-        gitSpinner?.error("Git initialization failed");
-      }
-    } catch {
-      gitSpinner?.error("Git initialization failed");
-    }
-  }
+  await fs.writeTextFile(gitignorePath, generateGitignoreContent(existingGitignore));
+  createdPaths.push(".gitignore");
+  logger.debug("Updated file: .gitignore");
 
   (options as InitOptions & { _featureTips?: string[] })._featureTips = featureTips;
 
   if (!options.skipInstall) {
     const pm = await detectPackageManager(projectDir, pmPreference);
-    const installSpinner = quiet ? null : createSpinner(`Installing dependencies with ${pm}...`);
+    const installSpinner = quiet
+      ? null
+      : createTransientSpinner(`Installing dependencies with ${pm}...`);
     const installSuccess = await installDependencies(projectDir, {
       silent: true,
       packageManager: pm,
@@ -564,65 +538,77 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }
   }
 
+  // Initialize git if requested
+  if (initGit) {
+    try {
+      const { initializeGitRepo } = await import("../../utils/git.ts");
+      const success = await initializeGitRepo(projectDir, projectName ?? "veryfront project");
+      if (!success && !quiet) logger.warn("Git initialization failed");
+    } catch {
+      if (!quiet) logger.warn("Git initialization failed");
+    }
+  }
+
   // Deploy to cloud if --deploy flag is set
-  let deployedSlug: string | undefined;
+  let deployedUrl: string | undefined;
+  const manualDeployCommand = quiet
+    ? `${getDlxCommand(pmPreference)} veryfront deploy`
+    : getRunCommand(pmPreference, "deploy");
   if (options.deploy) {
-    const { chdir } = await import("veryfront/platform");
-    const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
-    const { randomSuffix } = await import("#cli/shared/slug");
-    const { reserveProjectSlug } = await import("#cli/shared/reserve-slug");
-    const { writeProjectSlug } = await import("#cli/shared/config");
-    const { pushCommand } = await import("../push/index.ts");
-    const { deployCommand } = await import("../deploy/index.ts");
-    const manualDeployHint = `Run ${brand("veryfront push --branch main")}, then ${
-      brand("veryfront deploy --branch main --env production")
-    } to deploy later.`;
+    const manualDeployHint = `Run ${brand(manualDeployCommand)} to deploy later.`;
 
-    const authResult = await ensureAuthenticated();
-    if (!authResult) {
-      log(`\n  Authentication required for --deploy. ${manualDeployHint}`);
+    if (dependencies.deployProject) {
+      try {
+        deployedUrl = await dependencies.deployProject(projectDir);
+        if (!deployedUrl) {
+          throw new Error("Deploy completed without a verified result.");
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!quiet) console.log();
+        log(`  Deploy failed: ${message}`);
+        log(`  Your project was created locally. ${manualDeployHint}`);
+      }
     } else {
-      const token = await readToken();
-      if (!token) {
-        log(`\n  Could not read auth token. ${manualDeployHint}`);
+      const { chdir } = await import("veryfront/platform");
+      const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
+      const { deployCommand } = await import("../deploy/index.ts");
+      const authResult = await ensureAuthenticated();
+
+      if (!authResult) {
+        if (!quiet) console.log();
+        log(`  Authentication required for --deploy. ${manualDeployHint}`);
       } else {
-        const slug = `${projectName ?? "my-app"}-${randomSuffix()}`;
+        const token = await readToken();
+        if (!token) {
+          if (!quiet) console.log();
+          log(`  Could not read auth token. ${manualDeployHint}`);
+        } else {
+          if (!quiet) console.log();
+          log(`  Deploying project...`);
 
-        log(`\n  Deploying as ${brand(slug)}...`);
+          try {
+            chdir(projectDir);
 
-        try {
-          const reserveResult = await reserveProjectSlug(slug, token);
-          deployedSlug = reserveResult.slug;
+            const deployment = await deployCommand({
+              projectDir,
+              branch: "main",
+              env: "production",
+              force: true,
+              dryRun: false,
+              quiet: true,
+            });
 
-          await writeProjectSlug(projectDir, deployedSlug);
-
-          chdir(projectDir);
-
-          await pushCommand({
-            projectDir,
-            branch: "main",
-            force: true,
-            dryRun: false,
-            quiet: true,
-          });
-
-          await deployCommand({
-            branch: "main",
-            env: "production",
-            force: true,
-            dryRun: false,
-            quiet: true,
-          });
-
-          log(
-            `  ${green("✓")} Deployed to ${
-              brand(`https://${deployedSlug}.production.veryfront.com`)
-            }`,
-          );
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          log(`\n  Deploy failed: ${message}`);
-          log(`  Your project was created locally. ${manualDeployHint}`);
+            if (!deployment) {
+              throw new Error("Deploy completed without a verified result.");
+            }
+            deployedUrl = deployment.url;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!quiet) console.log();
+            log(`  Deploy failed: ${message}`);
+            log(`  Your project was created locally. ${manualDeployHint}`);
+          }
         }
       }
     }
@@ -644,45 +630,34 @@ export async function initCommand(options: InitOptions): Promise<void> {
   const displayName = projectName ?? "Project";
   const structureRoot = projectName ?? ".";
   const structureLines = renderProjectStructure(structureRoot, createdPaths);
-  const successContent = [
-    `${green("✓")} ${displayName} ready!`,
-    "",
-    `${brand("Project structure")}`,
-    ...structureLines,
-    "",
-    `${brand("Next steps")}`,
-    ...localSteps,
-  ];
-
-  if (deployedSlug) {
-    successContent.push(
-      "",
-      `${green("Live:")} https://${deployedSlug}.production.veryfront.com`,
-    );
-  }
-
-  if (!deployedSlug) {
-    successContent.push(
-      "",
-      `${brand("veryfront push --branch main")} ${dim("→ upload source")}`,
-      `${brand("veryfront deploy --branch main --env production")} ${
-        dim("→ create a release and go live")
-      }`,
-    );
-  }
+  const deployCommandHint = getRunCommand(pm, "deploy");
 
   if (!quiet) {
-    console.log("");
-    console.log(box(successContent.join("\n"), { style: "rounded", padding: 1 }));
+    console.log();
+    console.log(`  ✓ ${displayName} ready`);
 
-    const tips: string[] = [];
-    if (template !== "minimal") {
-      tips.push(
-        `${dim("Add OPENAI_API_KEY to .env")}`,
-        `${dim("Add tools in tools/, agents in agents/ (auto-discovered)")}`,
-      );
+    if (isVerbose()) {
+      console.log();
+      console.log("  Project structure");
+      for (const line of structureLines) {
+        console.log(`  ${line}`);
+      }
     }
 
+    console.log();
+    for (const [index, step] of localSteps.entries()) {
+      console.log(`  ${index === 0 ? brand(step) : step}`);
+    }
+
+    if (deployedUrl) {
+      console.log();
+      console.log(`  Live: ${brand(deployedUrl)}`);
+    } else {
+      console.log();
+      console.log(`  Deploy: ${brand(deployCommandHint)}`);
+    }
+
+    const tips: string[] = [];
     const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
     if (displayFeatureTips?.length) {
       for (const tip of displayFeatureTips) {
@@ -691,12 +666,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }
 
     if (tips.length) {
-      console.log("");
+      console.log();
       for (const tip of tips) {
         console.log(`  ${tip}`);
       }
     }
 
-    console.log("");
+    console.log();
   }
 }

@@ -52,6 +52,7 @@ export class SSRCacheManager {
       this.cachedConfigHash = computeConfigHashSync({
         reactVersion: this.options.reactVersion,
         dev: this.options.dev,
+        apiBaseUrl: this.options.apiBaseUrl,
       });
     }
     return this.cachedConfigHash;

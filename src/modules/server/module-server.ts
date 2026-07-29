@@ -820,18 +820,21 @@ async function findSourceFile(
     ".ts",
     ".jsx",
     ".js",
+    ".mjs", // Already-compiled ESM (e.g. Panda's generated styled-system/*.mjs)
     ".mdx",
     ".md", // Regular sources
   ];
 
   logger.debug("findSourceFile called", { projectDir, basePath });
 
-  const knownExtMatch = basePath.match(/\.(json|tsx|ts|jsx|js|mdx|md)(\.src)?$/);
-  const requestedExtMatch = requestedModulePath.match(/\.(json|tsx|ts|jsx|js|mdx|md)(\.src)?$/);
+  const knownExtMatch = basePath.match(/\.(json|tsx|ts|jsx|js|mjs|mdx|md)(\.src)?$/);
+  const requestedExtMatch = requestedModulePath.match(
+    /\.(json|tsx|ts|jsx|js|mjs|mdx|md)(\.src)?$/,
+  );
   const hasKnownExt = knownExtMatch !== null;
   const requestedExt = requestedExtMatch?.[1] ?? knownExtMatch?.[1] ?? null;
   const rawBasePathWithoutExt = hasKnownExt
-    ? basePath.replace(/\.(json|tsx|ts|jsx|js|mdx|md)(\.src)?$/, "")
+    ? basePath.replace(/\.(json|tsx|ts|jsx|js|mjs|mdx|md)(\.src)?$/, "")
     : basePath;
   let basePathWithoutExt = rawBasePathWithoutExt.replace(/^\/+/, "");
   if (basePathWithoutExt.startsWith("_vf_modules/")) {
@@ -935,9 +938,12 @@ async function findSourceFile(
     }
   }
 
-  const projectLookupExtensions = requestedExt !== null && requestedExt !== "json"
+  const fallbackExtensions = requestedExt !== null && requestedExt !== "json"
     ? extensions.filter((ext) => ext !== ".json")
     : extensions;
+  const projectLookupExtensions = requestedExt === "mjs"
+    ? [".mjs", ...fallbackExtensions.filter((ext) => ext !== ".mjs")]
+    : fallbackExtensions;
 
   // Project file lookups (using secureFs which may go through FSAdapter in proxy mode)
   const projectFilePath = await findFirstExistingFile(

@@ -19,3 +19,7 @@ export function getNumberArg(args: ParsedArgs, ...keys: string[]): number | unde
   }
   return undefined;
 }
+
+export function getBooleanArg(args: ParsedArgs, ...keys: string[]): boolean {
+  return keys.some((key) => Boolean(args[key]));
+}

@@ -7,7 +7,7 @@
  * - Route file presence detection
  **************************/
 
-import { join } from "#veryfront/compat/path";
+import { basename, dirname, isAbsolute, join, normalize, relative } from "#veryfront/compat/path";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -61,6 +61,61 @@ export interface DetectAppRouterOptions {
   projectId?: string;
 }
 
+function isPathInside(path: string, directory: string): boolean {
+  const relativePath = relative(directory, path).replaceAll("\\", "/");
+  return relativePath === "" ||
+    (relativePath !== ".." &&
+      !relativePath.startsWith("../") &&
+      !isAbsolute(relativePath));
+}
+
+function resolveProjectPath(projectDir: string, path: string): string {
+  return normalize(isAbsolute(path) ? path : join(projectDir, path));
+}
+
+/**
+ * Resolve the router that owns an already-resolved page.
+ *
+ * Auto-detection decides which router to try first, but mixed projects can
+ * legitimately fall back to the other router. Per-page rendering must follow
+ * the route that actually resolved instead of the project-wide preference.
+ *
+ * Pages routes can also resolve from the project root. App routes cannot
+ * resolve outside their configured root, so an unmatched resolved path belongs
+ * to the Pages router.
+ */
+export function resolveRouterModeForPage(
+  projectDir: string,
+  pagePath: string,
+  config: VeryfrontConfig,
+): "app" | "pages" {
+  if (config.router === "app") return "app";
+  if (config.router === "pages") return "pages";
+
+  const resolvedPagePath = resolveProjectPath(projectDir, pagePath);
+  const appRoot = resolveProjectPath(
+    projectDir,
+    config.directories?.app ?? "app",
+  );
+  const pagesRoot = resolveProjectPath(
+    projectDir,
+    config.directories?.pages ?? "pages",
+  );
+
+  const isAppRoute = isPathInside(resolvedPagePath, appRoot);
+  const isPagesRoute = isPathInside(resolvedPagePath, pagesRoot);
+
+  if (isAppRoute && isPagesRoute) {
+    const appDistance = relative(appRoot, resolvedPagePath).split(/[\\/]/).filter(Boolean).length;
+    const pagesDistance =
+      relative(pagesRoot, resolvedPagePath).split(/[\\/]/).filter(Boolean).length;
+    return pagesDistance < appDistance ? "pages" : "app";
+  }
+
+  if (isAppRoute) return "app";
+  return "pages";
+}
+
 /**
  * Detect if app router should be used based on config and directory structure.
  *
@@ -111,16 +166,13 @@ async function detectAppRouterImpl(
   const appDirName = config?.directories?.app ?? "app";
   const pagesDirName = config?.directories?.pages ?? "pages";
 
-  const appDir = join(projectDir, appDirName);
-  const pagesDir = join(projectDir, pagesDirName);
+  const appDir = normalize(join(projectDir, appDirName));
+  const pagesDir = normalize(join(projectDir, pagesDirName));
 
-  const [appStat, pagesStat] = await Promise.all([
-    statWithFallback(appDir, adapter),
-    statWithFallback(pagesDir, adapter),
+  const [hasAppDir, hasPagesDir] = await Promise.all([
+    directoryExists(appDir, projectDir, adapter),
+    directoryExists(pagesDir, projectDir, adapter),
   ]);
-
-  const hasAppDir = Boolean(appStat?.isDirectory);
-  const hasPagesDir = Boolean(pagesStat?.isDirectory);
 
   if (hasAppDir && (await hasRouteFiles(appDir, adapter))) return true;
   if (hasPagesDir && (await hasRouteFiles(pagesDir, adapter))) return false;
@@ -132,7 +184,33 @@ async function detectAppRouterImpl(
 const ROUTE_EXTENSIONS = new Set([".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"]);
 const ROUTE_PATTERNS = ["page", "layout", "error", "loading", "not-found", "index"];
 
-async function hasRouteFiles(dir: string, adapter: RuntimeAdapter): Promise<boolean> {
+async function resolveTraversalKey(
+  dir: string,
+  adapter: RuntimeAdapter,
+  requireCanonicalPath: boolean,
+): Promise<string | null> {
+  if (!adapter.fs.realPath) {
+    return requireCanonicalPath ? null : normalize(dir);
+  }
+
+  try {
+    return normalize(await adapter.fs.realPath(dir));
+  } catch (_) {
+    /* expected: virtual adapters may not resolve physical paths */
+    return requireCanonicalPath ? null : normalize(dir);
+  }
+}
+
+async function hasRouteFiles(
+  dir: string,
+  adapter: RuntimeAdapter,
+  visited = new Set<string>(),
+  requireCanonicalPath = false,
+): Promise<boolean> {
+  const traversalKey = await resolveTraversalKey(dir, adapter, requireCanonicalPath);
+  if (traversalKey === null || visited.has(traversalKey)) return false;
+  visited.add(traversalKey);
+
   const entries = await readDirWithFallback(dir, adapter);
 
   for (const entry of entries) {
@@ -148,7 +226,17 @@ async function hasRouteFiles(dir: string, adapter: RuntimeAdapter): Promise<bool
       continue;
     }
 
-    if (entry.isDirectory && (await hasRouteFiles(join(dir, entry.name), adapter))) {
+    if (
+      entry.isDirectory &&
+      (await hasRouteFiles(join(dir, entry.name), adapter, visited))
+    ) {
+      return true;
+    }
+
+    if (
+      entry.isSymlink &&
+      (await hasRouteFiles(join(dir, entry.name), adapter, visited, true))
+    ) {
       return true;
     }
   }
@@ -156,19 +244,19 @@ async function hasRouteFiles(dir: string, adapter: RuntimeAdapter): Promise<bool
   return false;
 }
 
+type NormalizedDirEntry = {
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymlink: boolean;
+};
+
 type NormalizedStat = {
   size?: number;
   isFile: boolean;
   isDirectory: boolean;
   isSymlink: boolean;
   mtime?: Date | null;
-};
-
-type NormalizedDirEntry = {
-  name: string;
-  isFile: boolean;
-  isDirectory: boolean;
-  isSymlink: boolean;
 };
 
 async function withAdapterFallback<T>(
@@ -187,6 +275,25 @@ async function withAdapterFallback<T>(
       return defaultValue;
     }
   }
+}
+
+async function directoryExists(
+  path: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<boolean> {
+  if (normalize(path) === normalize(projectDir)) return true;
+
+  const parentEntries = await readDirWithFallback(dirname(path), adapter);
+  const directoryName = basename(path);
+  const listed = parentEntries.some((entry) =>
+    entry.name === directoryName && (entry.isDirectory || entry.isSymlink)
+  );
+  if (listed || adapter.id !== "cloudflare") return listed;
+
+  // Cloudflare KV represents directories only as key prefixes, so its parent
+  // listing can omit a directory that stat can still resolve.
+  return Boolean((await statWithFallback(path, adapter))?.isDirectory);
 }
 
 async function statWithFallback(

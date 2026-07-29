@@ -5,7 +5,7 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import { cwd } from "veryfront/platform";
 import { analyzeChunksCommand } from "./command.ts";
-import { showLogo } from "#cli/utils";
+import { showHeader } from "#cli/utils";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
@@ -24,7 +24,7 @@ export const parseAnalyzeChunksArgs = createArgParser(AnalyzeChunksArgsSchema, {
 });
 
 export async function handleAnalyzeChunksCommand(args: ParsedArgs): Promise<void> {
-  showLogo();
+  showHeader();
   const data = parseArgsOrThrow(parseAnalyzeChunksArgs, "analyze-chunks", args);
   await analyzeChunksCommand({
     projectDir: data.projectDir || cwd(),

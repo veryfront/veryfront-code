@@ -27,6 +27,7 @@ import {
   type RuntimeLoadedSkillResponseMessages,
   type RuntimeSkillMetadataLogger,
 } from "./skill-metadata.ts";
+import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
 import { narrowPolicyAfterSubmittedForm } from "./skill-policy-enforcement.ts";
 
 /** Legacy continuation-note fallback used when runtime tool inventory is unavailable. */
@@ -109,6 +110,7 @@ export type RuntimeLoadSkillToolContext = RuntimeProjectSkillContext & {
   /** Agent identity used to enforce owner-scoped skill visibility. */
   agentId?: string;
   availableSkillIds?: readonly string[];
+  skillSelectorPolicy?: ResolvedSkillSelectorPolicy;
   availableToolNames?: readonly string[];
   loadedSkillResponses?: Record<string, RuntimeLoadedSkillResponse>;
   loadedSkillReferenceResponses?: Record<string, RuntimeLoadSkillReferenceFileOutput>;
@@ -140,8 +142,13 @@ export type RuntimeLoadSkillToolOptions = {
 export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
   v.object({
     skillId: v.string()
-      .regex(/^[a-zA-Z0-9_-]+$/, 'skillId must contain only letters, numbers, "_" or "-"')
-      .describe('The skill ID to load (e.g., "react-components", "api-design")'),
+      .regex(
+        /^[a-zA-Z0-9_-]+(?:\.md)?$/,
+        'skillId must contain only letters, numbers, "_" or "-", with an optional lowercase ".md" suffix',
+      )
+      .describe(
+        'The skill ID to load. A lowercase ".md" suffix is accepted when it is the canonical ID or an unambiguous alias (e.g., "react-components" or "react-components.md").',
+      ),
     file: v.string().optional().describe(
       "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
     ),
@@ -249,10 +256,7 @@ function buildMissingSkillError(
   options: RuntimeLoadSkillToolOptions,
   skillId: string,
 ): RuntimeLoadSkillErrorOutput {
-  const knownIds = new Set([
-    ...(options.context.availableSkillIds ?? []),
-    ...(options.builtinSkillIds ?? []),
-  ]);
+  const knownIds = new Set(getKnownRuntimeSkillIds(options) ?? []);
   const available = [...knownIds].sort().join(", ");
   return {
     error: `Skill not found: ${skillId}. Available skills: ${available}`,
@@ -300,21 +304,22 @@ function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions):
     return options.description;
   }
 
-  if (!options.context.availableSkillIds && !options.builtinSkillIds) {
+  if (options.context.availableSkillIds === undefined && !options.builtinSkillIds) {
     return RUNTIME_LOAD_SKILL_DESCRIPTION;
   }
 
-  const knownIds = new Set([
-    ...(options.context.availableSkillIds ?? []),
-    ...(options.builtinSkillIds ?? []),
-  ]);
+  const knownIds = new Set(getKnownRuntimeSkillIds(options) ?? []);
   const available = [...knownIds].sort().join(", ") || "none";
 
   return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Available skill IDs: ${available}. Do not invent skill IDs. Only call load_skill with one of these IDs.`;
 }
 
 function getKnownRuntimeSkillIds(options: RuntimeLoadSkillToolOptions): string[] | null {
-  if (!options.context.availableSkillIds && !options.builtinSkillIds) {
+  if (options.context.availableSkillIds !== undefined) {
+    return [...new Set(options.context.availableSkillIds)].sort();
+  }
+
+  if (!options.builtinSkillIds) {
     return null;
   }
 
@@ -349,10 +354,51 @@ function getReferenceableLoadedRuntimeSkillIds(
   ].sort();
 }
 
+function getRuntimeSkillIdInputValues(
+  skillIds: readonly [string, ...string[]],
+  knownSkillIds: readonly string[],
+): [string, ...string[]] {
+  const knownSkillIdSet = new Set(knownSkillIds);
+  const values = skillIds.flatMap((skillId) => {
+    const alias = `${skillId}.md`;
+    return skillId.endsWith(".md") || knownSkillIdSet.has(alias) ? [skillId] : [skillId, alias];
+  });
+  return values as [string, ...string[]];
+}
+
+function normalizeRuntimeLoadSkillInputSkillId(
+  options: RuntimeLoadSkillToolOptions,
+  skillId: string,
+): string {
+  const knownSkillIds = getKnownRuntimeSkillIds(options);
+  if (knownSkillIds?.includes(skillId)) {
+    return skillId;
+  }
+
+  const aliasTarget = skillId.endsWith(".md") ? skillId.slice(0, -3) : null;
+  if (aliasTarget && (!knownSkillIds || knownSkillIds.includes(aliasTarget))) {
+    return aliasTarget;
+  }
+
+  return skillId;
+}
+
 function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) {
   const knownIds = getKnownRuntimeSkillIds(options);
-  if (!knownIds || knownIds.length === 0) {
+  if (!knownIds) {
     return runtimeLoadSkillToolInputSchema;
+  }
+
+  if (knownIds.length === 0) {
+    return defineSchema((v) =>
+      v.object({
+        skillId: v.string().refine(
+          () => false,
+          "No skills are available in this run.",
+        ).describe("No skills are available in this run."),
+        file: v.string().optional(),
+      }).strict()
+    )();
   }
 
   const knownIdSet = new Set(knownIds);
@@ -366,12 +412,15 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
     loadedIds.length > 0 && unloadedIds.length === 0 && referenceableLoadedIds.length === 0
   ) {
     const [firstLoaded, ...restLoaded] = loadedIds as [string, ...string[]];
-    const loadedEnumValues = [firstLoaded, ...restLoaded] as [string, ...string[]];
+    const loadedEnumValues = getRuntimeSkillIdInputValues(
+      [firstLoaded, ...restLoaded],
+      knownIds,
+    );
     return defineSchema((v) =>
       v.object({
         skillId: v.enum(loadedEnumValues).describe(
           `Already-loaded skill ID with no advertised reference files. Calling load_skill again is a no-op. Loaded skill IDs: ${
-            loadedIds.join(", ")
+            loadedEnumValues.join(", ")
           }`,
         ),
       }).strict()
@@ -380,12 +429,15 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
 
   if (referenceableLoadedIds.length > 0 && unloadedIds.length === 0) {
     const [firstLoaded, ...restLoaded] = referenceableLoadedIds as [string, ...string[]];
-    const loadedEnumValues = [firstLoaded, ...restLoaded] as [string, ...string[]];
+    const loadedEnumValues = getRuntimeSkillIdInputValues(
+      [firstLoaded, ...restLoaded],
+      knownIds,
+    );
     return defineSchema((v) =>
       v.object({
         skillId: v.enum(loadedEnumValues).describe(
           `Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: ${
-            referenceableLoadedIds.join(", ")
+            loadedEnumValues.join(", ")
           }`,
         ),
         file: v.string().describe(
@@ -397,14 +449,22 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
 
   if (referenceableLoadedIds.length > 0) {
     const [firstUnloaded, ...restUnloaded] = unloadedIds as [string, ...string[]];
-    const unloadedEnumValues = [firstUnloaded, ...restUnloaded] as [string, ...string[]];
+    const unloadedEnumValues = getRuntimeSkillIdInputValues(
+      [firstUnloaded, ...restUnloaded],
+      knownIds,
+    );
     const [firstLoaded, ...restLoaded] = referenceableLoadedIds as [string, ...string[]];
-    const loadedEnumValues = [firstLoaded, ...restLoaded] as [string, ...string[]];
+    const loadedEnumValues = getRuntimeSkillIdInputValues(
+      [firstLoaded, ...restLoaded],
+      knownIds,
+    );
     return defineSchema((v) =>
       v.union([
         v.object({
           skillId: v.enum(unloadedEnumValues).describe(
-            `Unloaded skill ID to load. Available unloaded skill IDs: ${unloadedIds.join(", ")}`,
+            `Unloaded skill ID to load. Available unloaded skill IDs: ${
+              unloadedEnumValues.join(", ")
+            }`,
           ),
           file: v.string().optional().describe(
             "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
@@ -413,7 +473,7 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
         v.object({
           skillId: v.enum(loadedEnumValues).describe(
             `Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: ${
-              referenceableLoadedIds.join(", ")
+              loadedEnumValues.join(", ")
             }`,
           ),
           file: v.string().describe(
@@ -425,11 +485,11 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
   }
 
   const [first, ...rest] = unloadedIds as [string, ...string[]];
-  const enumValues = [first, ...rest] as [string, ...string[]];
+  const enumValues = getRuntimeSkillIdInputValues([first, ...rest], knownIds);
   return defineSchema((v) =>
     v.object({
       skillId: v.enum(enumValues).describe(
-        `Unloaded skill ID to load. Available unloaded skill IDs: ${unloadedIds.join(", ")}`,
+        `Unloaded skill ID to load. Available unloaded skill IDs: ${enumValues.join(", ")}`,
       ),
       file: v.string().optional().describe(
         "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
@@ -529,7 +589,7 @@ export function createRuntimeLoadSkillTool(
         }`,
       });
     }
-    skillId = parsed.skillId;
+    skillId = normalizeRuntimeLoadSkillInputSkillId(options, parsed.skillId);
     file = parsed.file;
 
     if (file) {

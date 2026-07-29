@@ -195,14 +195,13 @@ export async function importModule(
     });
   }
 
-  // The cache key must include the source content: a shared hosted runtime
-  // process serves many projects and releases, and the same relative path
-  // (e.g. "tools/foo.ts") recurs across them. A path-only key keeps serving
-  // the stale module after a deploy and can hand one project's module to
-  // another project's discovery. The entry hash alone is still not enough —
-  // bundled relative imports are inlined into the module — so cached entries
-  // are only served after their recorded dependency contents re-verify.
-  const cacheKey = `${file} ${await computeHash(source)}`;
+  // A shared hosted runtime serves many projects and source generations, so
+  // namespace identical relative paths before considering entry contents.
+  // The entry hash alone is still not enough: bundled relative imports are
+  // inlined, so cached entries are only served after their recorded dependency
+  // contents re-verify.
+  const cacheNamespace = context.cacheNamespace ?? context.baseDir ?? "";
+  const cacheKey = JSON.stringify([cacheNamespace, file, await computeHash(source)]);
   const cachedEntries = transpileCache.get(cacheKey);
   if (cachedEntries) {
     const cached = await findCachedModuleWithFreshDeps(cachedEntries, context);

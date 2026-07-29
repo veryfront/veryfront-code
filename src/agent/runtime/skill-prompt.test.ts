@@ -48,7 +48,8 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock renders skills and delegation 
   const block = buildRuntimeAvailableSkillsPromptBlock([
     createSkill({
       id: "build-ui",
-      name: "Build UI guidance",
+      name: "build-ui",
+      displayName: "Build UI guidance",
       description: "Build UI",
       allowedTools: ["bash", "writeFile"],
     }),
@@ -111,6 +112,20 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock does not repeat an id-only nam
 
   assertStringIncludes(block, "- code-review: Review code");
   assertEquals(block.includes("code-review (`code-review`)"), false);
+});
+
+Deno.test("buildRuntimeAvailableSkillsPromptBlock keeps canonical name out of display labels", () => {
+  const block = buildRuntimeAvailableSkillsPromptBlock([
+    createSkill({
+      id: "process-email",
+      name: "process-email",
+      displayName: "Process Email",
+      description: "Process email",
+    }),
+  ]);
+
+  assertStringIncludes(block, "- Process Email (`process-email`): Process email");
+  assertEquals(block.includes("- process-email (`process-email`)"), false);
 });
 
 Deno.test("buildRuntimeAvailableSkillsPromptBlock truncates long skill lists", () => {

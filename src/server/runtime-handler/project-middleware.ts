@@ -12,6 +12,7 @@ import {
 import type { HandlerContext } from "#veryfront/types";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { serverLogger } from "#veryfront/utils";
+import { isWebSocketPath } from "#veryfront/server/runtime-handler/request-utils.ts";
 
 const DEFAULT_MAX_ENTRIES = 100;
 const logger = serverLogger.component("project-middleware");
@@ -85,11 +86,16 @@ export class ProjectMiddlewareRuntime {
 
   async execute(input: ProjectMiddlewareRuntimeContext): Promise<Response | undefined> {
     const { handlerContext: ctx, isSharedProxy, next, request } = input;
+    const pathname = new URL(request.url).pathname;
+
+    if (isWebSocketPath(pathname)) {
+      return next();
+    }
 
     if (
       isConfigOptionalControlPlaneRunRequest(
         request.method,
-        new URL(request.url).pathname,
+        pathname,
       )
     ) {
       return next();

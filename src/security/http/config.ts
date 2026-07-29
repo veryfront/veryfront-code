@@ -18,6 +18,7 @@ export class SecurityConfigLoader {
     private projectDir: string,
     private adapter: RuntimeAdapter,
     private configOverride?: VeryfrontConfig,
+    private productionRuntime = false,
   ) {}
 
   async ensureLoaded(): Promise<void> {
@@ -45,15 +46,16 @@ export class SecurityConfigLoader {
 
   private applyConfig(cfg?: VeryfrontConfig): void {
     const security: SecurityConfig = cfg?.security ? { ...cfg.security } as SecurityConfig : {};
+    const production = this.productionRuntime || isProduction();
 
     if (security.headers) security.headers = { ...security.headers };
 
     security.cors ??= false;
-    if (security.csrf === undefined && isProduction()) {
+    if (security.csrf === undefined && production) {
       security.csrf = true;
     }
 
-    if (!security.cors && !security.csrf) {
+    if (production && !security.cors && !security.csrf) {
       logger.warn(
         "Neither CORS nor CSRF protection is configured. " +
           "CORS is disabled by default (same-origin only). " +

@@ -11,7 +11,7 @@ describe("cli/shared/parsed-args", () => {
       project: "",
       p: "my-project",
       "project-slug": "ignored-project",
-    } as ParsedArgs;
+    } as unknown as ParsedArgs;
 
     assertEquals(getStringArg(args, "project", "p", "project-slug"), "my-project");
   });
@@ -21,7 +21,7 @@ describe("cli/shared/parsed-args", () => {
       project: "",
       p: false,
       "project-slug": 123,
-    } as ParsedArgs;
+    } as unknown as ParsedArgs;
 
     assertEquals(getStringArg(args, "project", "p", "project-slug"), undefined);
   });
@@ -38,7 +38,7 @@ describe("cli/shared/parsed-args", () => {
       empty: "",
       invalid: "20ms",
       infinite: "Infinity",
-    } as ParsedArgs;
+    } as unknown as ParsedArgs;
 
     assertEquals(getNumberArg(args, "empty"), undefined);
     assertEquals(getNumberArg(args, "invalid"), undefined);

@@ -103,6 +103,8 @@ export const getRendererScript = () => `
           typeof data.appRouterRoot === 'string' && data.appRouterRoot.replace(/^\\/+|\\/+$/g, '')
             ? data.appRouterRoot.replace(/^\\/+|\\/+$/g, '')
             : 'app';
+        const hasReleaseAssetModules =
+          data.releaseAssetModules && Object.keys(data.releaseAssetModules).length > 0;
 
         function isAppRouterPath(path) {
           const normalizedPath = typeof path === 'string' ? path.replace(/^\\/+/, '') : '';
@@ -117,9 +119,10 @@ export const getRendererScript = () => `
         }
 
         const shouldRenderRscClientPage =
-          data.clientModuleStrategy === 'rsc-module' && isAppRouterPath(normalizedPagePath);
-        const isolatedClientPage =
-          shouldRenderRscClientPage && data.isolatedClientPage === true;
+          data.clientModuleStrategy === 'rsc-module' &&
+          !hasReleaseAssetModules &&
+          isAppRouterPath(normalizedPagePath);
+        const isolatedClientPage = data.isolatedClientPage === true;
 
         async function loadHydrationComponent(path, preferRscModule) {
           const normalizedPath = typeof path === 'string' ? path.replace(/^\\/+/, '') : '';
