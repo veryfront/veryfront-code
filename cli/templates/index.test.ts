@@ -101,9 +101,28 @@ describe("cli/templates", () => {
     );
     assertEquals(
       calculator.includes(
-        'if (operation === "round") return { result: Number(a.toFixed(precision)) };',
+        "const offset = Math.sign(a) * Number.EPSILON * Math.max(1, Math.abs(a));",
       ),
       true,
+    );
+    assertEquals(
+      calculator.includes("return { result: Number((a + offset).toFixed(precision)) };"),
+      true,
+    );
+  });
+
+  it("rounds positive and negative half cents away from zero", async () => {
+    const { default: calculator } = await import(
+      "./files/ai-agent/tools/calculator.ts"
+    );
+
+    assertEquals(
+      await calculator.execute({ operation: "round", a: 1.005, b: 2 }),
+      { result: 1.01 },
+    );
+    assertEquals(
+      await calculator.execute({ operation: "round", a: -1.005, b: 2 }),
+      { result: -1.01 },
     );
   });
 

@@ -19,7 +19,10 @@ export default tool({
     if (operation === "add") return { result: a + b };
     if (operation === "subtract") return { result: a - b };
     if (operation === "multiply") return { result: a * b };
-    if (operation === "round") return { result: Number(a.toFixed(precision)) };
+    if (operation === "round") {
+      const offset = Math.sign(a) * Number.EPSILON * Math.max(1, Math.abs(a));
+      return { result: Number((a + offset).toFixed(precision)) };
+    }
     return { result: a / b };
   },
 });
