@@ -29,10 +29,15 @@
       "veryfront/ui/icons": ["./npm/esm/src/react/components/ui/icons/index.d.ts"],
       "veryfront/chat": ["./npm/esm/src/chat/index.d.ts"],
       "veryfront/chat/types": ["./npm/esm/src/chat/types.d.ts"],
-      "veryfront/chat/uploads": ["./npm/esm/src/chat/upload-handler.d.ts"]
+      "veryfront/chat/uploads": ["./npm/esm/src/chat/upload-handler.d.ts"],
+      "veryfront/observability/sentry": ["./npm/esm/src/observability/sentry.d.ts"],
+      "@veryfront/ext-observability-sentry/node": [
+        "./npm/extensions/ext-observability-sentry/esm/node.d.ts"
+      ]
     }
   },
   "include": [
+    "./fixtures/**/*.ts",
     "./fixtures/**/*.tsx"
   ]
 }

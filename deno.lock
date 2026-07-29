@@ -9,17 +9,20 @@
     "jsr:@std/async@1.2.0": "1.2.0",
     "jsr:@std/async@^1.1.0": "1.2.0",
     "jsr:@std/cli@1.0.28": "1.0.28",
-    "jsr:@std/data-structures@^1.0.10": "1.0.11",
+    "jsr:@std/data-structures@^1.0.10": "1.1.0",
     "jsr:@std/dotenv@0.225.6": "0.225.6",
     "jsr:@std/expect@1.0.18": "1.0.18",
-    "jsr:@std/fmt@1": "1.0.9",
+    "jsr:@std/fmt@1": "1.0.10",
     "jsr:@std/fmt@1.0.9": "1.0.9",
-    "jsr:@std/fs@1": "1.0.23",
+    "jsr:@std/fs@1": "1.0.24",
     "jsr:@std/fs@1.0.23": "1.0.23",
+    "jsr:@std/fs@^1.0.22": "1.0.24",
     "jsr:@std/internal@^1.0.12": "1.0.14",
-    "jsr:@std/path@1": "1.1.4",
+    "jsr:@std/internal@^1.0.14": "1.0.14",
+    "jsr:@std/path@1": "1.1.5",
     "jsr:@std/path@1.1.4": "1.1.4",
-    "jsr:@std/path@^1.1.4": "1.1.4",
+    "jsr:@std/path@^1.1.4": "1.1.5",
+    "jsr:@std/path@^1.1.5": "1.1.5",
     "jsr:@std/testing@1.0.17": "1.0.17",
     "jsr:@std/yaml@1.1.0": "1.1.0",
     "jsr:@ts-morph/bootstrap@0.27": "0.27.0",
@@ -51,6 +54,7 @@
     "npm:@opentelemetry/semantic-conventions@1.43.0": "1.43.0",
     "npm:@redis/client@1.5.8": "1.5.8",
     "npm:@sentry/deno@10.68.0": "10.68.0",
+    "npm:@sentry/node@10.68.0": "10.68.0_@opentelemetry+core@2.9.0__@opentelemetry+api@1.9.1_@opentelemetry+exporter-trace-otlp-http@0.220.0__@opentelemetry+api@1.9.1",
     "npm:@types/better-sqlite3@7.6.13": "7.6.13",
     "npm:@types/hast@3.0.3": "3.0.3",
     "npm:@types/mdast@4.0.3": "4.0.3",
@@ -107,7 +111,7 @@
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
       "dependencies": [
-        "jsr:@std/internal"
+        "jsr:@std/internal@^1.0.12"
       ]
     },
     "@std/async@1.2.0": {
@@ -116,8 +120,8 @@
     "@std/cli@1.0.28": {
       "integrity": "74ef9b976db59ca6b23a5283469c9072be6276853807a83ec6c7ce412135c70a"
     },
-    "@std/data-structures@1.0.11": {
-      "integrity": "53b98ed7efa61f107dfc14244bd2ec5557f7f7ee0bbaef6d449d7937facacb89"
+    "@std/data-structures@1.1.0": {
+      "integrity": "c35ae4ad5d8e41a38573c2fe3e19b18ea2505f63cfea201edcb8720aca1f7f58"
     },
     "@std/dotenv@0.225.6": {
       "integrity": "1d6f9db72f565bd26790fa034c26e45ecb260b5245417be76c2279e5734c421b"
@@ -126,18 +130,28 @@
       "integrity": "8566eab35200466f8609eb7e7aed062ed0db314e9a258d5d201b1b8997ce801a",
       "dependencies": [
         "jsr:@std/assert@^1.0.19",
-        "jsr:@std/internal",
+        "jsr:@std/internal@^1.0.12",
         "jsr:@std/path@^1.1.4"
       ]
     },
     "@std/fmt@1.0.9": {
       "integrity": "2487343e8899fb2be5d0e3d35013e54477ada198854e52dd05ed0422eddcabe0"
     },
+    "@std/fmt@1.0.10": {
+      "integrity": "90dfba288802ac6de82fb31d0917eb9e4450b9925b954d5e51fc29ac07419db5"
+    },
     "@std/fs@1.0.23": {
       "integrity": "3ecbae4ce4fee03b180fa710caff36bb5adb66631c46a6460aaad49515565a37",
       "dependencies": [
-        "jsr:@std/internal",
+        "jsr:@std/internal@^1.0.12",
         "jsr:@std/path@^1.1.4"
+      ]
+    },
+    "@std/fs@1.0.24": {
+      "integrity": "f3061b45b81673a2bece689da041df32d174be064c89eb6397fb5718d3fb7877",
+      "dependencies": [
+        "jsr:@std/internal@^1.0.14",
+        "jsr:@std/path@^1.1.5"
       ]
     },
     "@std/internal@1.0.14": {
@@ -146,7 +160,13 @@
     "@std/path@1.1.4": {
       "integrity": "1d2d43f39efb1b42f0b1882a25486647cb851481862dc7313390b2bb044314b5",
       "dependencies": [
-        "jsr:@std/internal"
+        "jsr:@std/internal@^1.0.12"
+      ]
+    },
+    "@std/path@1.1.5": {
+      "integrity": "ccea00982ea28c36becaf6e62f855406c76a8c32d462f66f415bbb7d83a271bc",
+      "dependencies": [
+        "jsr:@std/internal@^1.0.14"
       ]
     },
     "@std/testing@1.0.17": {
@@ -155,7 +175,9 @@
         "jsr:@std/assert@^1.0.17",
         "jsr:@std/async@^1.1.0",
         "jsr:@std/data-structures",
-        "jsr:@std/internal"
+        "jsr:@std/fs@^1.0.22",
+        "jsr:@std/internal@^1.0.12",
+        "jsr:@std/path@^1.1.4"
       ]
     },
     "@std/yaml@1.1.0": {
@@ -1744,6 +1766,51 @@
         "@opentelemetry/api",
         "@sentry/core",
         "@sentry/server-utils"
+      ]
+    },
+    "@sentry/node-core@10.68.0_@opentelemetry+api@1.9.1_@opentelemetry+core@2.9.0__@opentelemetry+api@1.9.1_@opentelemetry+exporter-trace-otlp-http@0.220.0__@opentelemetry+api@1.9.1_@opentelemetry+instrumentation@0.220.0__@opentelemetry+api@1.9.1_@opentelemetry+sdk-trace-base@2.9.0__@opentelemetry+api@1.9.1": {
+      "integrity": "sha512-VreORXnruy8A2SyprZKENAq3ArGwn35KPewLQSQ5dgDXSFtUj2scLuzZoVsZ/Uyt83td0WPvD6Lv0X7MvSYAMQ==",
+      "dependencies": [
+        "@opentelemetry/api",
+        "@opentelemetry/core@2.9.0_@opentelemetry+api@1.9.1",
+        "@opentelemetry/exporter-trace-otlp-http",
+        "@opentelemetry/instrumentation",
+        "@opentelemetry/sdk-trace-base@2.9.0_@opentelemetry+api@1.9.1",
+        "@sentry/conventions",
+        "@sentry/core",
+        "@sentry/opentelemetry",
+        "import-in-the-middle"
+      ],
+      "optionalPeers": [
+        "@opentelemetry/api",
+        "@opentelemetry/core@2.9.0_@opentelemetry+api@1.9.1",
+        "@opentelemetry/exporter-trace-otlp-http",
+        "@opentelemetry/instrumentation",
+        "@opentelemetry/sdk-trace-base@2.9.0_@opentelemetry+api@1.9.1"
+      ]
+    },
+    "@sentry/node@10.68.0_@opentelemetry+core@2.9.0__@opentelemetry+api@1.9.1_@opentelemetry+exporter-trace-otlp-http@0.220.0__@opentelemetry+api@1.9.1": {
+      "integrity": "sha512-bnvRzEehquG/894DD3BWNCBUbDWsLQfYPU+SNCMd6G4Ext75RthVkRs8R0sRaE6b8Tw9HSEgySHL834Tf8lVsA==",
+      "dependencies": [
+        "@opentelemetry/api",
+        "@opentelemetry/instrumentation",
+        "@opentelemetry/sdk-trace-base@2.9.0_@opentelemetry+api@1.9.1",
+        "@sentry/conventions",
+        "@sentry/core",
+        "@sentry/node-core",
+        "@sentry/opentelemetry",
+        "@sentry/server-utils",
+        "import-in-the-middle"
+      ]
+    },
+    "@sentry/opentelemetry@10.68.0_@opentelemetry+api@1.9.1_@opentelemetry+core@2.9.0__@opentelemetry+api@1.9.1_@opentelemetry+sdk-trace-base@2.9.0__@opentelemetry+api@1.9.1": {
+      "integrity": "sha512-JDNH9dacX0MSi7FRvabPCJUAXRMTe16bE/Gajc/7Gfcw7Rwvo4DZ0nd162PCSAW9QoEjUT12upDehEHJuFmsXg==",
+      "dependencies": [
+        "@opentelemetry/api",
+        "@opentelemetry/core@2.9.0_@opentelemetry+api@1.9.1",
+        "@opentelemetry/sdk-trace-base@2.9.0_@opentelemetry+api@1.9.1",
+        "@sentry/conventions",
+        "@sentry/core"
       ]
     },
     "@sentry/server-utils@10.68.0": {
@@ -3969,8 +4036,8 @@
         "simple-concat"
       ]
     },
-    "smol-toml@1.7.0": {
-      "integrity": "sha512-aqVvWoyO21L23mb+drl4RmMXbf6N7FdHjAhTRA9ZBL7apWBgfWC16KjrASI+1p9GAroljyMHj6fK67i0UiTNvQ=="
+    "smol-toml@1.7.1": {
+      "integrity": "sha512-PPlsspAZ4jbMBu5DMFhfUGDQLu/vrL4SyBROVS37x8ynnVmFIs1VPBz1Co8Xks3TvpIaZXmU85y4DrQ+UyVFoQ=="
     },
     "source-map-js@1.2.1": {
       "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA=="
@@ -5241,7 +5308,8 @@
       "extensions/ext-observability-sentry": {
         "dependencies": [
           "jsr:@std/assert@1.0.19",
-          "npm:@sentry/deno@10.68.0"
+          "npm:@sentry/deno@10.68.0",
+          "npm:@sentry/node@10.68.0"
         ]
       },
       "extensions/ext-parser-babel": {
