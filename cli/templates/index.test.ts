@@ -109,6 +109,10 @@ describe("cli/templates", () => {
     assertEquals(agent.includes('name: "Assistant"'), true);
     assertEquals(agent.includes('description: "Turn a rough idea into a clear next move."'), true);
     assertEquals(
+      agent.includes("Use the calculator tool for arithmetic instead of calculating mentally."),
+      true,
+    );
+    assertEquals(
       agent.includes(
         'prompt: "Turn this rough idea into a focused plan with the first three steps: "',
       ),
@@ -123,8 +127,19 @@ describe("cli/templates", () => {
     assertEquals(agent.includes('title: "Shape an idea"'), true);
     assertEquals(agent.includes('title: "Run the numbers"'), true);
     assertEquals(assistantEval.includes('target: "agent:assistant"'), true);
+    assertEquals(
+      assistantEval.includes(
+        '"Calculate an 18% tip on $84.50, split the total among three people, and explain the result briefly."',
+      ),
+      true,
+    );
+    assertEquals(assistantEval.includes('metrics.answer.contains({ text: "15.21" }).gate()'), true);
     assertEquals(assistantEval.includes('metrics.agent.calledTool("calculator").gate()'), true);
     assertEquals(assistantEval.includes("metrics.agent.noFailedTools().gate()"), true);
+    assertEquals(assistantEval.includes('metrics.answer.contains({ text: "33.24" }).gate()'), true);
+    assertEquals(assistantEval.includes('metrics.answer.contains({ text: "33.23" }).gate()'), true);
+    assertEquals(assistantEval.includes("judge: judges.llm.rubric()"), true);
+    assertEquals(assistantEval.includes("metrics.judge.rubric({"), true);
     assertEquals(layout.includes("className="), false);
     assertEquals(layout.includes("bg-white"), false);
     assertEquals(layout.includes("dark:bg-neutral-900"), false);
