@@ -63,6 +63,28 @@ describe("resolveHostedRuntimeAllowedToolNames", () => {
       assertEquals(result, null);
     });
 
+    it("removes skill infrastructure from allow-all tools when the known skill manifest is empty", () => {
+      const result = resolveHostedRuntimeAllowedToolNames({
+        allowedToolNames: null,
+        localToolNames: [
+          "search_tools",
+          "load_tools",
+          "sleep",
+          "load_skill",
+          "load_skill_reference",
+          "execute_skill_script",
+        ],
+        availableSkillIds: [],
+      });
+
+      assertEquals(result?.has("search_tools"), true);
+      assertEquals(result?.has("load_tools"), true);
+      assertEquals(result?.has("sleep"), true);
+      assertEquals(result?.has("load_skill"), false);
+      assertEquals(result?.has("load_skill_reference"), false);
+      assertEquals(result?.has("execute_skill_script"), false);
+    });
+
     it("returns empty set unchanged when allowedToolNames is empty", () => {
       const result = resolveHostedRuntimeAllowedToolNames({
         allowedToolNames: new Set(),

@@ -95,8 +95,13 @@ function resolveVisibleSkillOrThrow(
   options: SkillSelectorToolOptions = {},
 ): Skill {
   const scope = { agentId: context?.agentId };
+  const allowedSkillIds = getSelectorAllowedSkillIds(context, options);
   const skill = skillRegistry.resolveVisibleSkill(skillId, scope);
   if (!skill) {
+    if (allowedSkillIds !== undefined) {
+      throw createSkillUnavailableError();
+    }
+
     const visible = skillRegistry.getVisibleSkillIds(scope).join(", ");
     throw toError(
       createError({
@@ -105,8 +110,17 @@ function resolveVisibleSkillOrThrow(
       }),
     );
   }
-  assertSkillAllowedBySelector(skill, context, options);
+  assertSkillAllowedBySelector(skill, allowedSkillIds);
   return skill;
+}
+
+function createSkillUnavailableError(): Error {
+  return toError(
+    createError({
+      type: "agent",
+      message: "Skill is not available to this agent.",
+    }),
+  );
 }
 
 function getSelectorAllowedSkillIds(
@@ -128,20 +142,13 @@ function getSelectorAllowedSkillIds(
 
 function assertSkillAllowedBySelector(
   skill: Skill,
-  context: ToolExecutionContext | undefined,
-  options: SkillSelectorToolOptions,
+  allowedSkillIds: readonly string[] | undefined,
 ): void {
-  const allowedSkillIds = getSelectorAllowedSkillIds(context, options);
   if (allowedSkillIds === undefined || allowedSkillIds.includes(skill.id)) {
     return;
   }
 
-  throw toError(
-    createError({
-      type: "agent",
-      message: `Skill "${skill.id}" is not available to this agent.`,
-    }),
-  );
+  throw createSkillUnavailableError();
 }
 
 function hasRuntimeSkillBoundary(

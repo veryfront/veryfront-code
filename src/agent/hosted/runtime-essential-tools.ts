@@ -43,17 +43,27 @@ export function resolveHostedRuntimeAllowedToolNames(
   input: ResolveHostedRuntimeAllowedToolNamesInput,
 ): ReadonlySet<string> | null {
   const allowedToolNames = normalizeHostedRuntimeAllowedToolNames(input.allowedToolNames);
-  if (
-    !allowedToolNames ||
-    (allowedToolNames.size === 0 && !input.includeRuntimeEssentialToolsWhenEmpty)
-  ) {
+  const localToolNames = new Set(input.localToolNames);
+  const hasKnownSkillManifest = input.availableSkillIds !== undefined;
+  const hasAuthorizedSkills = (input.availableSkillIds?.length ?? 0) > 0;
+
+  if (!allowedToolNames) {
+    if (!hasKnownSkillManifest || hasAuthorizedSkills) {
+      return null;
+    }
+
+    const resolvedToolNames = new Set(localToolNames);
+    for (const toolName of EMPTY_SKILL_MANIFEST_TOOL_NAMES) {
+      resolvedToolNames.delete(toolName);
+    }
+    return resolvedToolNames;
+  }
+
+  if (allowedToolNames.size === 0 && !input.includeRuntimeEssentialToolsWhenEmpty) {
     return allowedToolNames;
   }
 
-  const localToolNames = new Set(input.localToolNames);
   const resolvedToolNames = new Set(allowedToolNames);
-  const hasKnownSkillManifest = input.availableSkillIds !== undefined;
-  const hasAuthorizedSkills = (input.availableSkillIds?.length ?? 0) > 0;
 
   if (hasKnownSkillManifest && !hasAuthorizedSkills) {
     for (const toolName of EMPTY_SKILL_MANIFEST_TOOL_NAMES) {

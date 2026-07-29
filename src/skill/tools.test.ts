@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill, skillRegistry } from "./registry.ts";
 import {
@@ -144,6 +144,55 @@ Do work.`,
       "not available to this agent",
     );
     assertEquals(readCount, 0);
+  });
+
+  it("load_skill should not disclose selector-disallowed skills in unavailable errors", async () => {
+    const allowedAdapter = createSkillTestAdapter({
+      "/project/skills/allowed-skill/SKILL.md": `---
+name: allowed-skill
+description: Allowed skill
+---
+# Instructions
+Allowed work.`,
+    });
+    const hiddenAdapter = createSkillTestAdapter({
+      "/project/skills/hidden-skill/SKILL.md": `---
+name: hidden-skill
+description: Hidden skill
+---
+# Instructions
+Hidden work.`,
+    });
+    registerSkill("allowed-skill", createNamedTestSkill("allowed-skill", allowedAdapter));
+    registerSkill("hidden-skill", createNamedTestSkill("hidden-skill", hiddenAdapter));
+
+    const tool = createLoadSkillTool();
+
+    const error = await assertRejects(
+      () =>
+        tool.execute({ skillId: "missing-skill" }, {
+          agentId: "agent",
+          allowedSkillIds: ["allowed-skill"],
+        }),
+      Error,
+    );
+
+    assert(error instanceof Error);
+    assertEquals(error.message.includes("hidden-skill"), false);
+    assertEquals(error.message.includes("allowed-skill"), false);
+
+    const hiddenError = await assertRejects(
+      () =>
+        tool.execute({ skillId: "hidden-skill" }, {
+          agentId: "agent",
+          allowedSkillIds: ["allowed-skill"],
+        }),
+      Error,
+    );
+
+    assert(hiddenError instanceof Error);
+    assertEquals(hiddenError.message.includes("hidden-skill"), false);
+    assertEquals(hiddenError.message.includes("allowed-skill"), false);
   });
 
   it("load_skill should omit prompt notes for unavailable file tools", async () => {
