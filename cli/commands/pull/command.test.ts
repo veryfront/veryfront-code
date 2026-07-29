@@ -98,8 +98,45 @@ const EXPECTED_BOOTSTRAP_TSCONFIG = {
   exclude: ["node_modules"],
 };
 
+function expectedBootstrapPackage(name: string): Record<string, unknown> {
+  return {
+    name,
+    version: "0.1.0",
+    type: "module",
+    scripts: {
+      dev: "veryfront dev",
+      build: "veryfront build",
+      start: "veryfront serve",
+      eval: "veryfront eval",
+      deploy: "veryfront deploy",
+    },
+    pnpm: {
+      onlyBuiltDependencies: ["esbuild"],
+    },
+    dependencies: {
+      react: "^19.2.4",
+      "react-dom": "^19.2.4",
+      veryfront: "^0.1.1175",
+    },
+  };
+}
+
+const OLD_PROJECT_LINK = {
+  controlPlane: "https://api.veryfront.com",
+  projectId: "proj_old",
+  projectSlug: "old-project",
+};
+
+const OLD_PROJECT_LINK_VALUE = {
+  version: 1,
+  ...OLD_PROJECT_LINK,
+};
+
+const OLD_PROJECT_LINK_TEXT =
+  `{"version":1,"controlPlane":"https://api.veryfront.com","projectId":"proj_old","projectSlug":"old-project"}\n`;
+
 const EXPECTED_BOOTSTRAP_PACKAGE = {
-  name: "pull-bootstrap",
+  name: "alpha-canonical",
   version: "0.1.0",
   type: "module",
   scripts: {
@@ -480,7 +517,7 @@ describe("pullCommand", () => {
         const url = new URL(String(input));
 
         if (url.pathname === "/projects/alpha") {
-          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha-canonical" }));
         }
 
         if (url.pathname === "/projects/alpha/files") {
@@ -513,7 +550,7 @@ describe("pullCommand", () => {
         version: 1,
         controlPlane: "https://api.veryfront.com",
         projectId: "proj_alpha",
-        projectSlug: "alpha",
+        projectSlug: "alpha-canonical",
       });
       assertEquals(
         JSON.parse(await Deno.readTextFile(join(tempDir, "package.json"))),
@@ -580,6 +617,79 @@ describe("pullCommand", () => {
       assertEquals(await Deno.readTextFile(join(tempDir, "tsconfig.json")), remoteTsconfig);
       assertEquals((await readProjectLink(tempDir))?.projectId, "proj_alpha");
     } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("restores bootstrap artifacts when generated config creation fails", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const originalWriteTextFile = Deno.writeTextFile;
+
+    try {
+      await Deno.mkdir(join(tempDir, ".veryfront"));
+      await Deno.writeTextFile(join(tempDir, ".veryfront", "project.json"), OLD_PROJECT_LINK_TEXT);
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha-canonical" }));
+        }
+
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(
+            Response.json({
+              data: [{
+                path: "app/page.tsx",
+                content: "export default null;\n",
+                size: 21,
+                type: "file",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+              }],
+              page_info: {},
+            }),
+          );
+        }
+
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      Deno.writeTextFile = ((path, data, options) => {
+        if (String(path).endsWith("tsconfig.json")) {
+          return Promise.reject(new Error("forced tsconfig failure"));
+        }
+        return originalWriteTextFile(path, data, options);
+      }) as typeof Deno.writeTextFile;
+
+      await assertRejects(
+        () =>
+          pullCommand({
+            projectDir: tempDir,
+            projectSlug: "alpha",
+            force: true,
+            quiet: true,
+          }),
+        Error,
+        "forced tsconfig failure",
+      );
+
+      assertEquals(await readProjectLink(tempDir), OLD_PROJECT_LINK_VALUE);
+      assertEquals(
+        await Deno.readTextFile(join(tempDir, ".veryfront", "project.json")),
+        OLD_PROJECT_LINK_TEXT,
+      );
+      assertEquals(await exists(join(tempDir, "package.json")), false);
+      assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
+    } finally {
+      Deno.writeTextFile = originalWriteTextFile;
       globalThis.fetch = originalFetch;
       restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
       _resetEnvironmentConfig();
@@ -693,10 +803,26 @@ describe("pullCommand", () => {
         (await readProjectLink(join(tempDir, "alpha")))?.projectSlug,
         "alpha-canonical",
       );
+      assertEquals(
+        JSON.parse(await Deno.readTextFile(join(tempDir, "alpha", "package.json"))),
+        expectedBootstrapPackage("alpha-canonical"),
+      );
+      assertEquals(
+        JSON.parse(await Deno.readTextFile(join(tempDir, "alpha", "tsconfig.json"))),
+        EXPECTED_BOOTSTRAP_TSCONFIG,
+      );
       assertEquals((await readProjectLink(join(tempDir, "beta")))?.projectId, "proj_beta");
       assertEquals(
         (await readProjectLink(join(tempDir, "beta")))?.projectSlug,
         "beta-canonical",
+      );
+      assertEquals(
+        JSON.parse(await Deno.readTextFile(join(tempDir, "beta", "package.json"))),
+        expectedBootstrapPackage("beta-canonical"),
+      );
+      assertEquals(
+        JSON.parse(await Deno.readTextFile(join(tempDir, "beta", "tsconfig.json"))),
+        EXPECTED_BOOTSTRAP_TSCONFIG,
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -1302,19 +1428,30 @@ describe("pullCommand", () => {
       Deno.env.set("VERYFRONT_API_TOKEN", "token");
       _resetEnvironmentConfig();
       globalThis.fetch = ((input: string | URL | Request) => {
-        const url = String(input);
-        const project = url.includes("/projects/alpha/") ? "alpha" : "beta";
-        return Promise.resolve(
-          Response.json({
-            data: [{
-              path: "app.ts",
-              content: `${project} new\n`,
-              size: 10,
-              type: "file",
-            }],
-            page_info: {},
-          }),
-        );
+        const url = new URL(String(input));
+        const project = url.pathname.startsWith("/projects/alpha") ? "alpha" : "beta";
+
+        if (url.pathname === `/projects/${project}`) {
+          return Promise.resolve(
+            Response.json({ id: `proj_${project}`, slug: `${project}-canonical` }),
+          );
+        }
+
+        if (url.pathname === `/projects/${project}/files`) {
+          return Promise.resolve(
+            Response.json({
+              data: [{
+                path: "app.ts",
+                content: `${project} new\n`,
+                size: 10,
+                type: "file",
+              }],
+              page_info: {},
+            }),
+          );
+        }
+
+        throw new Error(`Shared monorepo pull made an unexpected request: ${url}`);
       }) as typeof fetch;
 
       await pullCommand({
@@ -1328,6 +1465,16 @@ describe("pullCommand", () => {
 
       assertEquals(await Deno.readTextFile(join(tempDir, "alpha", "app.ts")), "alpha new\n");
       assertEquals(await Deno.readTextFile(join(tempDir, "beta", "app.ts")), "beta new\n");
+      assertEquals((await readProjectLink(join(tempDir, "alpha")))?.projectId, "proj_alpha");
+      assertEquals(
+        (await readProjectLink(join(tempDir, "alpha")))?.projectSlug,
+        "alpha-canonical",
+      );
+      assertEquals((await readProjectLink(join(tempDir, "beta")))?.projectId, "proj_beta");
+      assertEquals(
+        (await readProjectLink(join(tempDir, "beta")))?.projectSlug,
+        "beta-canonical",
+      );
     } finally {
       globalThis.fetch = originalFetch;
       restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
