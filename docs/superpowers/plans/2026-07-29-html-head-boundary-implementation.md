@@ -28,7 +28,7 @@
 - The import-map lane and end lane are independent. A caller requesting one lane is not rejected because the other is unavailable.
 - Output-boundary UTF-8 is explicit: rendered HTML responses and Veryfront static HTML responses use `Content-Type: text/html; charset=utf-8`, generated HTML artifacts are written as UTF-8, and external-host documentation states the same requirement.
 - Every production behavior change follows strict red-green-refactor: add a focused failing regression, run it and record the expected failure, implement the smallest behavior, then rerun focused and static-consumer gates.
-- Preserve all unrelated dirty CSS/artifact work already present in the reconciliation worktree. Stage exact files only; do not commit unresolved CSS hash migration work with this parser plan. The current three-line lockfile delta was independently reproduced by resolving parse5 alone and contains no Tailwind alias contribution; Task 2 rechecks that provenance from a clean checkout and commits the lock atomically with the extension manifest.
+- Preserve all unrelated dirty CSS/artifact work already present in the reconciliation worktree. Stage exact files only; do not commit unresolved CSS hash migration work with this parser plan. The recovered working lock contains the parse5 specifier plus two deterministic Browserslist normalizations, but it predates registration of the new workspace member and is therefore not the final authority. Task 2 regenerates from a clean post-Task-1 checkout with Deno 2.7.7, requires the corresponding `workspace.members.extensions/ext-parser-parse5.dependencies` record, proves there is no Tailwind contribution, and commits that complete generated lock atomically with the extension manifest.
 - Tasks 1–8 do not require a CSS checkpoint. Before Task 9 touches the mixed `html-injection` files, either finish and independently verify the CSS/compiler-identity batch in its own commit or implement the parser work in an isolated clean worktree and integrate only a reviewed parser patch after resolving the mixed hunks. Task 9 and Task 10 may not stage whole mixed files from the current dirty tree as parser-only evidence.
 
 ---
@@ -220,7 +220,7 @@ The first green implementation performs only bounded UTF-8 admission and returns
 
 - [ ] **Step 4: Reproduce the parser lock patch from a clean checkout**
 
-Stage only the Task 2 extension files and `deno.json`, not the working lock. Create a detached checkout of the post-Task-1 `HEAD`, apply that exact cached patch, and regenerate with Deno 2.7.7. Byte-compare its binary lock diff with the reconciliation worktree. This clean reproduction must show the direct `npm:parse5@7.3.0` specifier plus the two deterministic Browserslist normalizations and no Tailwind contribution or other dependency change.
+Stage only the Task 2 extension files and `deno.json`, not the working lock. Create a detached checkout of the post-Task-1 `HEAD`, apply that exact cached patch, and regenerate with Deno 2.7.7. The clean reproduction is authoritative: it must show the direct `npm:parse5@7.3.0` specifier, the two deterministic Browserslist normalizations, and an exact workspace-member dependency record containing `jsr:@std/assert@1.0.19`, `jsr:@std/testing@1.0.17`, and `npm:parse5@7.3.0`, with no Tailwind contribution or other dependency change. Replace the incomplete recovered working lock with this generated clean lock, then byte-compare the binary diffs before staging it; do not hand-edit lock structure.
 
 ```bash
 git add extensions/ext-parser-parse5 deno.json
@@ -236,6 +236,7 @@ trap cleanup_parser_lock_worktree EXIT
 git worktree add --detach "$parser_lock_worktree" HEAD
 git diff --cached --binary | git -C "$parser_lock_worktree" apply -
 (cd "$parser_lock_worktree" && deno install --lockfile-only)
+cp "$parser_lock_worktree/deno.lock" deno.lock
 diff -u <(git diff --binary HEAD -- deno.lock) <(git -C "$parser_lock_worktree" diff --binary HEAD -- deno.lock)
 cleanup_parser_lock_worktree
 trap - EXIT
