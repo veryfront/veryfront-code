@@ -1,4 +1,4 @@
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
 import type {
@@ -101,6 +101,7 @@ describe("agent/service/node-sentry", () => {
 
       assertEquals(reporter.captured.length, 1);
       const captured = reporter.captured[0];
+      assertExists(captured);
       assertEquals(captured.error instanceof Error ? captured.error.message : "", "boom");
       assertEquals(captured.context, {
         boundary: "agent.framework-log",

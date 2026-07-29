@@ -2,6 +2,7 @@ import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { bootstrapAgentService, runAgentServiceMain } from "./bootstrap.ts";
 import type { AbortRejectionProcessTarget } from "./abort-rejection-guard.ts";
+import type { AgentServiceTraceContextGetter } from "./bootstrap.ts";
 
 function createProcessTarget(): {
   target: AbortRejectionProcessTarget;
@@ -28,7 +29,7 @@ describe("agent/agent-service-bootstrap", () => {
   it("runs generic service startup steps in order", async () => {
     const events: string[] = [];
     const traceContext = { traceId: "trace-1", spanId: "span-1" };
-    let registeredTraceContext: (() => typeof traceContext) | undefined;
+    let registeredTraceContext: AgentServiceTraceContextGetter | undefined;
 
     await bootstrapAgentService({
       initializeApplicationErrors: () => {
