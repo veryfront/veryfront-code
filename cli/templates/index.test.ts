@@ -91,6 +91,20 @@ describe("cli/templates", () => {
 
     assertEquals(calculator.includes("execute: async"), false);
     assertEquals(calculator.includes("execute: ({ operation, a, b }) =>"), true);
+    assertEquals(
+      calculator.includes('v.enum(["add", "subtract", "multiply", "divide", "round"])'),
+      true,
+    );
+    assertEquals(
+      calculator.includes("const precision = Math.min(100, Math.max(0, Math.trunc(b)));"),
+      true,
+    );
+    assertEquals(
+      calculator.includes(
+        'if (operation === "round") return { result: Number(a.toFixed(precision)) };',
+      ),
+      true,
+    );
   });
 
   it("keeps the ai-agent starter slim, actionable, and viewport-bound", async () => {
@@ -114,6 +128,12 @@ describe("cli/templates", () => {
     );
     assertEquals(
       agent.includes(
+        "For currency splits, make rounded shares add exactly to the total and explain any remainder.",
+      ),
+      true,
+    );
+    assertEquals(
+      agent.includes(
         'prompt: "Turn this rough idea into a focused plan with the first three steps: "',
       ),
       true,
@@ -133,11 +153,34 @@ describe("cli/templates", () => {
       ),
       true,
     );
-    assertEquals(assistantEval.includes('metrics.answer.contains({ text: "15.21" }).gate()'), true);
+    assertEquals(
+      assistantEval.includes(
+        "metrics.answer.regex({ pattern: String.raw`(?<![-\\d.])\\$15\\.21(?![\\d.])` }).gate()",
+      ),
+      true,
+    );
     assertEquals(assistantEval.includes('metrics.agent.calledTool("calculator").gate()'), true);
     assertEquals(assistantEval.includes("metrics.agent.noFailedTools().gate()"), true);
-    assertEquals(assistantEval.includes('metrics.answer.contains({ text: "33.24" }).gate()'), true);
-    assertEquals(assistantEval.includes('metrics.answer.contains({ text: "33.23" }).gate()'), true);
+    assertEquals(
+      assistantEval.includes(
+        "metrics.answer.regex({ pattern: String.raw`(?<![-\\d.])\\$33\\.24(?![\\d.])` }).gate()",
+      ),
+      true,
+    );
+    assertEquals(
+      assistantEval.includes(
+        "metrics.answer.regex({ pattern: String.raw`(?<![-\\d.])\\$33\\.23(?![\\d.])` }).gate()",
+      ),
+      true,
+    );
+    assertEquals(assistantEval.includes("metrics.answer.contains("), false);
+    const moneyPattern = new RegExp(String.raw`(?<![-\d.])\$15\.21(?![\d.])`);
+    for (const valid of ["$15.21", String.raw`\$15.21`, "($15.21)", "**$15.21**"]) {
+      assertEquals(moneyPattern.test(valid), true);
+    }
+    for (const invalid of ["-15.21", "-$15.21", "115.21", "$15.210", "$15.21.0"]) {
+      assertEquals(moneyPattern.test(invalid), false);
+    }
     assertEquals(assistantEval.includes("judge: judges.llm.rubric()"), true);
     assertEquals(assistantEval.includes("metrics.judge.rubric({"), true);
     assertEquals(layout.includes("className="), false);
