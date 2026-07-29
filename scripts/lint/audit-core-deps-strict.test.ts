@@ -1383,6 +1383,215 @@ Deno.test("strict audit does not classify pure computed namespace writes as read
   }
 });
 
+Deno.test("strict audit distinguishes raw import promises from awaited namespaces", async (context) => {
+  await context.step("raw static import promises stay clean", async () => {
+    const root = await auditFixture();
+    const outputPath = `${root}/audit.json`;
+    try {
+      await writeSource(
+        root,
+        "src/index.ts",
+        [
+          "await Promise.all([",
+          '  import("node:module"),',
+          '  import("node:fs"),',
+          '  import("node:path"),',
+          "]);",
+        ].join("\n"),
+      );
+      const result = await runAudit(["--root", root, "--output", outputPath]);
+      const report = JSON.parse(await Deno.readTextFile(outputPath));
+      assertEquals(result.code, 0, result.stderr);
+      assertEquals(report.evidenceComplete, true);
+      assertEquals(report.operationalErrors, []);
+      assertEquals(report.issues, []);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  await context.step("computed import promise stays fail-closed", async () => {
+    const root = await auditFixture();
+    const outputPath = `${root}/audit.json`;
+    try {
+      await writeSource(
+        root,
+        "src/index.ts",
+        "await Promise.all([import(target)]);\n",
+      );
+      const result = await runAudit(["--root", root, "--output", outputPath]);
+      const report = JSON.parse(await Deno.readTextFile(outputPath));
+      assertEquals(result.code, 2, result.stderr);
+      assertEquals(
+        report.issues.map((issue: Record<string, unknown>) => ({
+          contextId: issue.contextId,
+          code: issue.code,
+          loader: issue.loader,
+        })),
+        [
+          {
+            contextId: "root-deno",
+            code: "unresolved-runtime-loader",
+            loader: "import",
+          },
+          {
+            contextId: "root-node",
+            code: "unresolved-runtime-loader",
+            loader: "import",
+          },
+        ],
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  await context.step(
+    "unawaited Promise.all destructuring stays a promise",
+    async () => {
+      const root = await auditFixture();
+      const outputPath = `${root}/audit.json`;
+      try {
+        await writeSource(
+          root,
+          "src/index.ts",
+          [
+            "const [{ createRequire }] = Promise.all([",
+            '  import("node:module"),',
+            "]);",
+            "const impossibleLoad = createRequire(import.meta.url);",
+            'impossibleLoad("npm:not-actually-callable@1");',
+          ].join("\n"),
+        );
+        const result = await runAudit(["--root", root, "--output", outputPath]);
+        const report = JSON.parse(await Deno.readTextFile(outputPath));
+        assertEquals(result.code, 0, result.stderr);
+        assertEquals(report.evidenceComplete, true);
+        assertEquals(report.operationalErrors, []);
+        assertEquals(report.issues, []);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    },
+  );
+
+  await context.step("awaited namespace keeps exact provenance", async () => {
+    const root = await auditFixture();
+    const outputPath = `${root}/audit.json`;
+    try {
+      await writeSource(
+        root,
+        "src/index.ts",
+        'const moduleApi = await import("node:module");\nmoduleApi.register("npm:awaited-register@1");\n',
+      );
+      const result = await runAudit(["--root", root, "--output", outputPath]);
+      const report = JSON.parse(await Deno.readTextFile(outputPath));
+      assertEquals(result.code, 2, result.stderr);
+      assertEquals(
+        report.issues.map((issue: Record<string, unknown>) => ({
+          contextId: issue.contextId,
+          code: issue.code,
+          loader: issue.loader,
+          specifier: issue.specifier,
+        })),
+        [
+          {
+            contextId: "root-deno",
+            code: "forbidden-external-dependency",
+            loader: "module.register",
+            specifier: "npm:awaited-register@1",
+          },
+          {
+            contextId: "root-node",
+            code: "forbidden-external-dependency",
+            loader: "module.register",
+            specifier: "npm:awaited-register@1",
+          },
+        ],
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+});
+
+Deno.test("strict audit walks transparent wrappers before classifying namespace writes", async (context) => {
+  await context.step("wrapped pure writes stay clean", async () => {
+    const root = await auditFixture();
+    const outputPath = `${root}/audit.json`;
+    try {
+      await writeSource(
+        root,
+        "src/index.ts",
+        [
+          "(globalThis[key] as any) = 1;",
+          "globalThis[key]! = 1;",
+          "delete (globalThis[key] as any);",
+        ].join("\n"),
+      );
+      const result = await runAudit(["--root", root, "--output", outputPath]);
+      const report = JSON.parse(await Deno.readTextFile(outputPath));
+      assertEquals(result.code, 0, result.stderr);
+      assertEquals(report.evidenceComplete, true);
+      assertEquals(report.operationalErrors, []);
+      assertEquals(report.issues, []);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  await context.step("wrapped reads stay fail-closed", async () => {
+    const root = await auditFixture();
+    const outputPath = `${root}/audit.json`;
+    try {
+      await writeSource(
+        root,
+        "src/index.ts",
+        "(globalThis[key] as any) += 1;\n(globalThis[key] as any) != null;\n",
+      );
+      const result = await runAudit(["--root", root, "--output", outputPath]);
+      const report = JSON.parse(await Deno.readTextFile(outputPath));
+      assertEquals(result.code, 2, result.stderr);
+      assertEquals(
+        report.issues.map((issue: Record<string, unknown>) => ({
+          contextId: issue.contextId,
+          code: issue.code,
+          line: issue.line,
+          loader: issue.loader,
+        })),
+        [
+          {
+            contextId: "root-deno",
+            code: "unresolved-runtime-loader",
+            line: 1,
+            loader: "runtime-loader-alias",
+          },
+          {
+            contextId: "root-deno",
+            code: "unresolved-runtime-loader",
+            line: 2,
+            loader: "runtime-loader-alias",
+          },
+          {
+            contextId: "root-node",
+            code: "unresolved-runtime-loader",
+            line: 1,
+            loader: "runtime-loader-alias",
+          },
+          {
+            contextId: "root-node",
+            code: "unresolved-runtime-loader",
+            line: 2,
+            loader: "runtime-loader-alias",
+          },
+        ],
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+});
+
 Deno.test("strict audit treats import-map expansion cycles as operational exit 3", async () => {
   const root = await auditFixture();
   const outputPath = `${root}/audit.json`;

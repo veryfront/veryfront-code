@@ -714,7 +714,6 @@ Deno.test("source collector follows production-shaped dynamic module API binding
     [
       { specifier: "node:worker_threads", loader: "import" },
       { specifier: "node:worker_threads", loader: "import" },
-      { specifier: undefined, loader: "runtime-loader-alias" },
       { specifier: "node:module", loader: "import" },
       { specifier: "react", loader: "require.resolve" },
       {
@@ -2189,6 +2188,151 @@ Deno.test("source collector distinguishes unknown namespace reads from pure writ
       specifier: undefined,
       loader: "require-alias",
       line: 4,
+    },
+  ]);
+});
+
+Deno.test("source collector treats raw dynamic imports as promises and awaited imports as namespaces", () => {
+  const rawDependencies = dependencySummary(collectSourceDependencies({
+    path: "src/raw-dynamic-import-promises.ts",
+    content: [
+      "const raw = Promise.all([",
+      '  import("node:module"),',
+      '  import("node:fs"),',
+      '  import("node:path"),',
+      "]);",
+      "void raw;",
+      "import(computedTarget);",
+    ].join("\n"),
+  }));
+
+  assertEquals(rawDependencies.filter(({ loader }) => loader === "import"), [
+    {
+      kind: "dynamic-import",
+      specifier: "node:module",
+      loader: "import",
+      line: 2,
+    },
+    {
+      kind: "dynamic-import",
+      specifier: "node:fs",
+      loader: "import",
+      line: 3,
+    },
+    {
+      kind: "dynamic-import",
+      specifier: "node:path",
+      loader: "import",
+      line: 4,
+    },
+    {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "import",
+      line: 7,
+    },
+  ]);
+  assertEquals(
+    rawDependencies.filter(({ loader }) => loader === "runtime-loader-alias"),
+    [],
+  );
+
+  const unawaitedDestructuring = dependencySummary(collectSourceDependencies({
+    path: "src/unawaited-promise-all-destructuring.ts",
+    content: [
+      "const [{ createRequire }] = Promise.all([",
+      '  import("node:module"),',
+      "]);",
+      "const impossibleLoad = createRequire(import.meta.url);",
+      'impossibleLoad("npm:not-actually-callable@1");',
+    ].join("\n"),
+  })).filter(({ loader }) => loader !== undefined);
+  assertEquals(unawaitedDestructuring, [{
+    kind: "dynamic-import",
+    specifier: "node:module",
+    loader: "import",
+    line: 2,
+  }]);
+
+  const awaitedDependencies = dependencySummary(collectSourceDependencies({
+    path: "src/awaited-dynamic-import-namespaces.ts",
+    content: [
+      'const moduleApi = await import("node:module");',
+      "moduleApi.register(registerTarget);",
+      'const workerApi = (await import("node:worker_threads"))!;',
+      "new workerApi.Worker(workerTarget);",
+      "const [{ createRequire }] = await Promise.all([",
+      '  import("node:module"),',
+      "]);",
+      "const load = createRequire(import.meta.url);",
+      'load("node:fs");',
+    ].join("\n"),
+  })).filter(({ loader }) => loader !== undefined);
+
+  assertEquals(awaitedDependencies, [
+    {
+      kind: "dynamic-import",
+      specifier: "node:module",
+      loader: "import",
+      line: 1,
+    },
+    {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "module.register",
+      line: 2,
+    },
+    {
+      kind: "dynamic-import",
+      specifier: "node:worker_threads",
+      loader: "import",
+      line: 3,
+    },
+    {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "node:worker_threads.Worker",
+      line: 4,
+    },
+    {
+      kind: "dynamic-import",
+      specifier: "node:module",
+      loader: "import",
+      line: 6,
+    },
+    {
+      kind: "runtime-loader",
+      specifier: "node:fs",
+      loader: "require",
+      line: 9,
+    },
+  ]);
+});
+
+Deno.test("source collector walks transparent wrappers before classifying namespace writes", () => {
+  const dependencies = dependencySummary(collectSourceDependencies({
+    path: "src/wrapped-computed-namespace-writes.ts",
+    content: [
+      "(globalThis[key] as any) = 1;",
+      "globalThis[key]! = 1;",
+      "delete (globalThis[key] as any);",
+      "(globalThis[key] as any) += 1;",
+      "(globalThis[key] as any) != null;",
+    ].join("\n"),
+  })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(dependencies, [
+    {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: 4,
+    },
+    {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: 5,
     },
   ]);
 });

@@ -602,27 +602,41 @@ function isImportMetaUrl(node: unknown): boolean {
     isImportMeta(node.object) && memberPropertyName(node) === "url";
 }
 
-function unwrapAwait(node: unknown): unknown {
+function transparentExpressionChild(node: AstNode): unknown {
+  return node.type === "TSAsExpression" ||
+      node.type === "TSTypeAssertion" ||
+      node.type === "TSNonNullExpression" ||
+      node.type === "TSSatisfiesExpression" ||
+      node.type === "TSInstantiationExpression" ||
+      node.type === "ParenthesizedExpression"
+    ? node.expression
+    : undefined;
+}
+
+function unwrapTransparentExpression(node: unknown): unknown {
   let current = node;
   while (isNode(current)) {
-    if (current.type === "AwaitExpression") {
-      current = current.argument;
-      continue;
-    }
-    if (
-      current.type === "TSAsExpression" ||
-      current.type === "TSTypeAssertion" ||
-      current.type === "TSNonNullExpression" ||
-      current.type === "TSSatisfiesExpression" ||
-      current.type === "TSInstantiationExpression" ||
-      current.type === "ParenthesizedExpression"
-    ) {
-      current = current.expression;
-      continue;
-    }
-    break;
+    const child = transparentExpressionChild(current);
+    if (child === undefined) break;
+    current = child;
   }
   return current;
+}
+
+function unwrapAwaitedExpression(
+  node: unknown,
+): { value: unknown; awaited: boolean } {
+  let value = unwrapTransparentExpression(node);
+  let awaited = false;
+  while (isNode(value) && value.type === "AwaitExpression") {
+    awaited = true;
+    value = unwrapTransparentExpression(value.argument);
+  }
+  return { value, awaited };
+}
+
+function unwrapAwait(node: unknown): unknown {
+  return unwrapAwaitedExpression(node).value;
 }
 
 function propertyKeyName(node: AstNode): string | undefined {
@@ -1295,11 +1309,11 @@ function collectModuleBindings(
     return moduleName === undefined ? undefined : resolveModuleName(moduleName);
   };
 
-  const importedModuleName = (
+  const rawImportedModuleName = (
     node: unknown,
     scope: LexicalScope,
   ): string | undefined => {
-    const unwrapped = unwrapAwait(node);
+    const unwrapped = unwrapTransparentExpression(node);
     if (!isNode(unwrapped)) return undefined;
     if (unwrapped.type === "ImportExpression") {
       const moduleName = evaluateString(unwrapped.source, scope);
@@ -1320,6 +1334,14 @@ function collectModuleBindings(
         : resolveModuleName(moduleName);
     }
     return undefined;
+  };
+
+  const importedModuleName = (
+    node: unknown,
+    scope: LexicalScope,
+  ): string | undefined => {
+    const { value, awaited } = unwrapAwaitedExpression(node);
+    return awaited ? rawImportedModuleName(value, scope) : undefined;
   };
 
   const arrayInvocationArguments = (
@@ -1448,7 +1470,7 @@ function collectModuleBindings(
       return assignedApi ? uncertainAlias(assignedApi) : undefined;
     }
     if (isImportMeta(unwrapped)) return "import-meta-namespace";
-    const loadedModule = importedModuleName(unwrapped, scope) ??
+    const loadedModule = importedModuleName(node, scope) ??
       requiredModuleName(unwrapped, scope);
     if (loadedModule === "node:module") return "node-module-namespace";
     if (loadedModule === "node:worker_threads") {
@@ -1929,9 +1951,11 @@ function collectModuleBindings(
         }
       }
 
-      const init = unwrapAwait(declaration.init);
+      const { value: init, awaited: initAwaited } = unwrapAwaitedExpression(
+        declaration.init,
+      );
       if (
-        declaration.id.type === "ArrayPattern" && isNode(init) &&
+        initAwaited && declaration.id.type === "ArrayPattern" && isNode(init) &&
         init.type === "CallExpression" && isNode(init.callee) &&
         init.callee.type === "MemberExpression" &&
         identifierName(init.callee.object) === "Promise" &&
@@ -1947,7 +1971,7 @@ function collectModuleBindings(
           : [];
         patterns.forEach((pattern, index) => {
           if (!isNode(pattern)) return;
-          const imported = importedModuleName(modules[index], scope);
+          const imported = rawImportedModuleName(modules[index], scope);
           if (imported) {
             changed = bindObjectPatternApis(
               pattern,
@@ -2083,6 +2107,17 @@ function collectModuleBindings(
   };
   markImmediatelyInvokedFunctions(ast);
 
+  const outermostTransparentExpression = (node: AstNode): AstNode => {
+    let current = node;
+    while (true) {
+      const parent = parentByNode.get(current);
+      if (!parent || transparentExpressionChild(parent) !== current) {
+        return current;
+      }
+      current = parent;
+    }
+  };
+
   const escapedApiInExpression = (
     value: unknown,
     scope: LexicalScope,
@@ -2091,7 +2126,8 @@ function collectModuleBindings(
     const pending = [value];
     let result: ApiBinding | undefined;
     while (pending.length > 0) {
-      const expression = unwrapAwait(pending.pop());
+      const candidate = pending.pop();
+      const expression = unwrapAwait(candidate);
       if (!isNode(expression)) continue;
       if (expression.type === "ObjectExpression") {
         for (
@@ -2127,7 +2163,7 @@ function collectModuleBindings(
           }
         }
       }
-      const api = apiForExpression(expression, scope);
+      const api = apiForExpression(candidate, scope);
       if (api && (includeNamespaces || unresolvedLoaderForApi(api))) {
         result = joinApiBinding(result, uncertainAlias(api));
       }
@@ -2140,11 +2176,13 @@ function collectModuleBindings(
     scope: LexicalScope,
   ): ApiBinding | undefined => {
     const parent = parentByNode.get(node);
-    const isWriteOnlyMember =
-      parent?.type === "AssignmentExpression" && parent.left === node &&
-        parent.operator === "=" ||
-      parent?.type === "UnaryExpression" && parent.argument === node &&
-        parent.operator === "delete";
+    const writeTarget = outermostTransparentExpression(node);
+    const writeParent = parentByNode.get(writeTarget);
+    const isWriteOnlyMember = writeParent?.type === "AssignmentExpression" &&
+        writeParent.left === writeTarget && writeParent.operator === "=" ||
+      writeParent?.type === "UnaryExpression" &&
+        writeParent.argument === writeTarget &&
+        writeParent.operator === "delete";
     if (
       (node.type === "MemberExpression" ||
         node.type === "OptionalMemberExpression") &&
