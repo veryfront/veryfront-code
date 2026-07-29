@@ -531,7 +531,8 @@ export async function bootstrapProd(
 function validateProductionEnvironment(): void {
   const nodeEnv = getEnv("NODE_ENV") ?? getEnv("DENO_ENV");
   const proxyMode = getEnv("PROXY_MODE");
-  const localCliProxyMode = getEnv(LOCAL_CLI_PROXY_MODE_ENV) === "1";
+  const localCliProxyMode = getHostEnv(LOCAL_CLI_PROXY_MODE_ENV) === "1" &&
+    getEnvSource(LOCAL_CLI_PROXY_MODE_ENV).source === "process";
   const controlPlanePublicKey = getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
 
   // In proxy mode (deployed pods), NODE_ENV must be explicitly set to production

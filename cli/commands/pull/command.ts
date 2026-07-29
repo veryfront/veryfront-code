@@ -38,6 +38,8 @@ import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { getProjectTarget } from "../../shared/deployment-provenance.ts";
 import {
   ensurePulledProjectBootstrap,
+  isPulledProjectBootstrapPath,
+  planPulledProjectBootstrap,
   preflightPulledProjectBootstrap,
 } from "./project-bootstrap.ts";
 
@@ -589,6 +591,7 @@ async function confirmPullWrite(
   projectDir: string,
   writeCount: number,
   deleteCount: number,
+  bootstrapWriteCount: number,
 ): Promise<boolean> {
   if (isInteractive() && !isTTY()) {
     throw INVALID_ARGUMENT.create({
@@ -599,8 +602,11 @@ async function confirmPullWrite(
   }
 
   const actions: string[] = [];
-  if (writeCount > 0) actions.push(`overwrite ${writeCount} local files`);
+  if (writeCount > 0) actions.push(`write ${writeCount} managed local files`);
   if (deleteCount > 0) actions.push(`delete ${deleteCount} managed local files`);
+  if (bootstrapWriteCount > 0) {
+    actions.push(`create or update ${bootstrapWriteCount} local project files`);
+  }
   const action = actions.join(" and ");
   return await confirmPrompt(`This will ${action} in ${projectDir}. Continue?`, false);
 }
@@ -670,7 +676,10 @@ async function pullSingleProject(
   if (prune) {
     const managedRemotePaths = new Set(writeOps.map((op) => op.relativePath));
     const localFiles = await listManagedLocalFiles(projectDir, ignoreChecker);
-    deleteOps = localFiles.filter((file) => !managedRemotePaths.has(file.relativePath));
+    deleteOps = localFiles.filter((file) =>
+      !managedRemotePaths.has(file.relativePath) &&
+      !isPulledProjectBootstrapPath(file.relativePath)
+    );
   }
 
   const project = await getProjectTarget(client, projectSlug);
@@ -678,22 +687,22 @@ async function pullSingleProject(
   const deletedPaths = new Set(deleteOps.map((op) => op.relativePath));
 
   await preflightPulledProjectBootstrap({ projectDir });
+  const bootstrapPlan = await planPulledProjectBootstrap({
+    projectDir,
+    config,
+    project,
+    pulledPaths,
+    deletedPaths,
+    dryRun,
+    quiet,
+  });
+  const hasFileOperations = writeOps.length > 0 || deleteOps.length > 0;
 
-  if (writeOps.length === 0 && deleteOps.length === 0) {
+  if (!hasFileOperations) {
     if (!quiet) logInfo(`No files to pull from ${projectSlug}.`);
-    await ensurePulledProjectBootstrap({
-      projectDir,
-      config,
-      project,
-      pulledPaths,
-      deletedPaths,
-      dryRun,
-      quiet,
-    });
-    return { written: 0, deleted: 0, cancelled: false };
   }
 
-  if (!quiet) {
+  if (!quiet && hasFileOperations) {
     const deleteSummary = deleteOps.length > 0 ? ` and ${deleteOps.length} to delete` : "";
     cliLogger.info(
       `\nFound ${writeOps.length} files to ${
@@ -702,12 +711,35 @@ async function pullSingleProject(
     );
   }
 
-  if (!force && !dryRun) {
-    const confirmed = await confirmPullWrite(projectDir, writeOps.length, deleteOps.length);
+  if (
+    !force &&
+    !dryRun &&
+    (hasFileOperations || bootstrapPlan.writeCount > 0)
+  ) {
+    const confirmed = await confirmPullWrite(
+      projectDir,
+      writeOps.length,
+      deleteOps.length,
+      bootstrapPlan.writeCount,
+    );
     if (!confirmed) {
       cliLogger.info("Pull cancelled.");
       return { written: 0, deleted: 0, cancelled: true };
     }
+  }
+
+  if (!hasFileOperations) {
+    await ensurePulledProjectBootstrap({
+      projectDir,
+      config,
+      project,
+      pulledPaths,
+      deletedPaths,
+      dryRun,
+      quiet,
+      plan: bootstrapPlan,
+    });
+    return { written: 0, deleted: 0, cancelled: false };
   }
 
   spinner = quiet ? createNoopSpinner() : createSpinner(`Writing files to ${projectDir}...`);
@@ -743,6 +775,7 @@ async function pullSingleProject(
     deletedPaths,
     dryRun,
     quiet,
+    plan: bootstrapPlan,
   });
 
   if (!quiet) {

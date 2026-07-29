@@ -18,6 +18,7 @@ import {
   __resetLogRecordEmitterForTests,
   logger,
 } from "#veryfront/utils/logger/index.ts";
+import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
 import type { TracingExporter } from "veryfront/extensions/observability";
 import {
   orchestrateOrDisposeFS,
@@ -186,6 +187,7 @@ describe("wireTracingShim()", () => {
 describe("validateProductionEnvironmentForTests()", () => {
   afterEach(() => {
     restoreValidationEnv();
+    __resetEnvLoaderForTests();
     __resetLoggerConfigForTests();
   });
 
@@ -199,6 +201,32 @@ describe("validateProductionEnvironmentForTests()", () => {
     const warnings = captureWarns(() => validateProductionEnvironmentForTests());
 
     assertEquals(warnings.length, 0);
+  });
+
+  it("does not trust local CLI proxy mode loaded from a project env file", async () => {
+    const tempDir = await Deno.makeTempDir();
+
+    try {
+      Deno.env.set("PROXY_MODE", "1");
+      Deno.env.delete("VERYFRONT_CLI_LOCAL_PROXY_MODE");
+      Deno.env.set("NODE_ENV", "development");
+      Deno.env.delete("DENO_ENV");
+      Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      await Deno.writeTextFile(
+        `${tempDir}/.env`,
+        "VERYFRONT_CLI_LOCAL_PROXY_MODE=1\n",
+      );
+      __resetEnvLoaderForTests();
+      await loadEnv({ cwd: tempDir });
+
+      assertThrows(
+        () => validateProductionEnvironmentForTests(),
+        Error,
+        "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set",
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
   });
 
   it("rejects hosted proxy mode when NODE_ENV is missing", () => {

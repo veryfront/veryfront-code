@@ -625,6 +625,61 @@ describe("pullCommand", () => {
     }
   });
 
+  it("preserves customized local config files during a pruning pull", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const localPackage = `{"name":"local-app","scripts":{"custom":"keep"}}\n`;
+    const localTsconfig = `{"compilerOptions":{"strict":false}}\n`;
+
+    try {
+      await Deno.mkdir(join(tempDir, "app"), { recursive: true });
+      await Deno.writeTextFile(join(tempDir, "app", "page.tsx"), "local\n");
+      await Deno.writeTextFile(join(tempDir, "package.json"), localPackage);
+      await Deno.writeTextFile(join(tempDir, "tsconfig.json"), localTsconfig);
+      await initializeCleanTestGit(tempDir);
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(
+            Response.json({
+              data: [{
+                path: "app/page.tsx",
+                content: "remote\n",
+                size: 7,
+                type: "file",
+              }],
+              page_info: {},
+            }),
+          );
+        }
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir,
+        projectSlug: "alpha",
+        prune: true,
+        force: true,
+        quiet: true,
+      });
+
+      assertEquals(await Deno.readTextFile(join(tempDir, "package.json")), localPackage);
+      assertEquals(await Deno.readTextFile(join(tempDir, "tsconfig.json")), localTsconfig);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("restores bootstrap artifacts when generated config creation fails", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;
@@ -764,6 +819,106 @@ describe("pullCommand", () => {
       _resetEnvironmentConfig();
       await Deno.remove(tempDir, { recursive: true });
       await Deno.remove(externalDir, { recursive: true });
+    }
+  });
+
+  it("rejects a symlinked bootstrap config before overwriting pulled files", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const tempDir = await Deno.makeTempDir();
+    const externalPackage = await Deno.makeTempFile({ suffix: ".json" });
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+    try {
+      await Deno.mkdir(join(tempDir, "app"), { recursive: true });
+      await Deno.writeTextFile(join(tempDir, "app", "page.tsx"), "local\n");
+      await Deno.writeTextFile(externalPackage, "external\n");
+      await Deno.symlink(externalPackage, join(tempDir, "package.json"));
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(
+            Response.json({
+              data: [{
+                path: "app/page.tsx",
+                content: "remote\n",
+                size: 7,
+                type: "file",
+              }],
+              page_info: {},
+            }),
+          );
+        }
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await assertRejects(
+        () =>
+          pullCommand({
+            projectDir: tempDir,
+            projectSlug: "alpha",
+            force: true,
+            quiet: true,
+          }),
+        Error,
+        "symbolic link",
+      );
+
+      assertEquals(await Deno.readTextFile(join(tempDir, "app", "page.tsx")), "local\n");
+      assertEquals(await Deno.readTextFile(externalPackage), "external\n");
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(externalPackage);
+    }
+  });
+
+  it("requires confirmation when an empty remote only needs local bootstrap files", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(Response.json({ data: [], page_info: {} }));
+        }
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      const error = await assertRejects(
+        () =>
+          pullCommand({
+            projectDir: tempDir,
+            projectSlug: "alpha",
+          }),
+        Error,
+      );
+
+      assertStringIncludes(describeTestError(error), "requires confirmation");
+      assertEquals(await readProjectLink(tempDir), null);
+      assertEquals(await exists(join(tempDir, "package.json")), false);
+      assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
     }
   });
 
