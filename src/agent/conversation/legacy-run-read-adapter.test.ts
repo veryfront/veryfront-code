@@ -294,7 +294,7 @@ describe("conversation run lifecycle read adapter", () => {
     );
   });
 
-  it("restores the provider start boundary before a marked durable result", () => {
+  it("rejects result-only provider tool history instead of repairing v2", () => {
     const result = readConversationRunLifecycleFrames({
       streamProtocolVersion: 2,
       events: [{
@@ -310,24 +310,42 @@ describe("conversation run lifecycle read adapter", () => {
       }],
     });
 
-    assertEquals(result.status, "ok");
-    if (result.status !== "ok") return;
-    assertEquals(result.frames.map((frame) => frame.event), [
-      {
-        type: "provider_tool_start",
-        toolCallId: "provider-1",
-        toolName: "web_search",
-        providerExecuted: true,
-      },
-      {
-        type: "provider_tool_result",
-        toolCallId: "provider-1",
-        toolName: "web_search",
-        output: { answer: 42 },
-        isError: false,
-        providerExecuted: true,
-      },
-    ]);
+    assertEquals(result.status, "invalid");
+    if (result.status === "invalid") {
+      assertEquals(result.code, "VERSION_2_LIFECYCLE_VIOLATION");
+    }
+  });
+
+  it("rejects provider-executed v2 tool results before the tool lifecycle completes", () => {
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 2,
+      events: [
+        {
+          type: "TOOL_CALL_START",
+          toolCallId: "provider-open",
+          toolName: "web_search",
+          stream_protocol_version: 2,
+          logical_sequence: 1,
+          idempotency_key: "tool:open:start",
+        },
+        {
+          type: "TOOL_CALL_RESULT",
+          toolCallId: "provider-open",
+          toolName: "web_search",
+          content: '{"answer":42}',
+          isError: false,
+          providerExecuted: true,
+          stream_protocol_version: 2,
+          logical_sequence: 2,
+          idempotency_key: "tool:open:result",
+        },
+      ],
+    });
+
+    assertEquals(result.status, "invalid");
+    if (result.status === "invalid") {
+      assertEquals(result.code, "VERSION_2_LIFECYCLE_VIOLATION");
+    }
   });
 
   it("round trips provider-executed error results through durable v2 as AG-UI tool errors", () => {

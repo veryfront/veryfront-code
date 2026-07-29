@@ -197,6 +197,7 @@ type Version2Validator = {
   openTools: Set<string>;
   toolNames: Map<string, string>;
   toolInputText: Map<string, string>;
+  completedToolNames: Map<string, string>;
 };
 
 function readVersion2(
@@ -211,6 +212,7 @@ function readVersion2(
     openTools: new Set(),
     toolNames: new Map(),
     toolInputText: new Map(),
+    completedToolNames: new Map(),
   };
   let sequence = 0;
 
@@ -382,6 +384,7 @@ function readVersion2(
         }
         validator.openTools.delete(toolCallId);
         const parsed = parseCanonicalToolInput(validator.toolInputText.get(toolCallId) ?? "");
+        validator.completedToolNames.set(toolCallId, toolName);
         validator.toolNames.delete(toolCallId);
         validator.toolInputText.delete(toolCallId);
         if (parsed.ok) {
@@ -405,6 +408,9 @@ function readVersion2(
         const toolCallId = readRequiredString(event.toolCallId);
         const toolName = readRequiredString(event.toolName);
         if (toolCallId === null || toolName === null) {
+          return invalid("VERSION_2_LIFECYCLE_VIOLATION");
+        }
+        if (validator.completedToolNames.get(toolCallId) !== toolName) {
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
         if (event.providerExecuted === true) {
