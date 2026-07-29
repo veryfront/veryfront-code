@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { RemoteToolSource } from "#veryfront/tool";
@@ -252,7 +252,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     assertEquals(explicitInput.taskContext.availableSkillIds, ["build"]);
   });
 
-  it("removes deleted explicit skill selections during refresh", async () => {
+  it("rejects deleted explicit skill selections during refresh without narrowing state", async () => {
     const refresh = createDefaultHostedProjectSteeringRefresh({
       fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
       fetchSkills: () => Promise.resolve([createSkill("new-skill")]),
@@ -264,12 +264,18 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     input.taskContext.skillSelectorPolicy = { kind: "allowlist", entries: ["build"] };
     input.taskContext.availableSkillIds = ["build"];
 
-    const system = await refresh(input);
+    const error = await assertRejects(
+      () => refresh(input),
+      Error,
+      "configured skills are not available",
+    );
 
-    assertStringIncludes(system, "Fresh instructions:");
-    assertEquals(system.includes("build"), false);
-    assertEquals(system.includes("new-skill"), false);
-    assertEquals(input.taskContext.availableSkillIds, []);
+    assertEquals(String(error).includes("build"), false);
+    assertEquals(input.taskContext.availableSkillIds, ["build"]);
+    assertEquals(input.taskContext.skillSelectorPolicy, {
+      kind: "allowlist",
+      entries: ["build"],
+    });
   });
 
   it("keeps provider-native tools in refreshed runtime inventory", async () => {

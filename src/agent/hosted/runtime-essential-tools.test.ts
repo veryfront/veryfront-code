@@ -106,7 +106,7 @@ describe("resolveHostedRuntimeAllowedToolNames", () => {
       assertEquals(result?.has("load_skill_reference"), true);
     });
 
-    it("removes execute_skill_script from model-visible tools for known empty skill manifests", () => {
+    it("removes only skill-loading and script infrastructure for known empty skill manifests", () => {
       const result = resolveHostedRuntimeAllowedToolNames({
         allowedToolNames: new Set(["execute_skill_script", "sleep"]),
         localToolNames: ["execute_skill_script", "load_skill", "invoke_agent", "sleep"],
@@ -117,6 +117,17 @@ describe("resolveHostedRuntimeAllowedToolNames", () => {
       assertEquals(result?.has("load_skill"), false);
       assertEquals(result?.has("invoke_agent"), false);
       assertEquals(result?.has("sleep"), true);
+    });
+
+    it("preserves explicitly allowed invoke_agent for known empty skill manifests", () => {
+      const result = resolveHostedRuntimeAllowedToolNames({
+        allowedToolNames: new Set(["invoke_agent", "load_skill"]),
+        localToolNames: ["invoke_agent", "load_skill"],
+        availableSkillIds: [],
+      });
+
+      assertEquals(result?.has("invoke_agent"), true);
+      assertEquals(result?.has("load_skill"), false);
     });
   });
 });

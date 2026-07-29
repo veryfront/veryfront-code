@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { join } from "node:path";
 import {
   createHostedProjectSteeringAdapter,
@@ -243,7 +243,7 @@ Body.`;
   });
 });
 
-Deno.test("refreshProjectSkillIds re-resolves authored allowlist entries without broadening", async () => {
+Deno.test("refreshProjectSkillIds rejects unresolved authored allowlist entries without narrowing", async () => {
   await withSkillsDir(async (skillsDir) => {
     const adapter = createHostedProjectSteeringAdapter({
       apiUrl: "https://api.example.test",
@@ -274,15 +274,18 @@ Body.`,
       skillSelectorPolicy: { kind: "allowlist" as const, entries: ["global", "deleted"] },
     };
 
-    await adapter.refreshProjectSkillIds(context);
+    const error = await assertRejects(
+      () => adapter.refreshProjectSkillIds(context),
+      Error,
+      "configured skills are not available",
+    );
 
-    assertEquals(context.availableSkillIds, ["global"]);
+    assertEquals(String(error).includes("deleted"), false);
+    assertEquals(context.availableSkillIds, ["global", "new-skill"]);
     assertEquals(context.skillSelectorPolicy, {
       kind: "allowlist",
       entries: ["global", "deleted"],
     });
-    assertEquals(context.skillSourcePaths, {
-      global: "skills/global/SKILL.md",
-    });
+    assertEquals(context.skillSourcePaths, undefined);
   });
 });

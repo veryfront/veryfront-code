@@ -288,6 +288,27 @@ Deno.test("hosted child project agents omit skill tools for an empty skill selec
   );
 });
 
+Deno.test("hosted child project agents keep delegation tools for an empty skill selector snapshot", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract an application",
+      instructions: "Extract the application.",
+      skills: [],
+      tools: [
+        "get_file",
+        "execute_skill_script",
+        "load_skill",
+        "load_skill_reference",
+      ],
+      providerTools: ["web_search"],
+      delegates: ["validation-agent"],
+    }, { allowedSkillIds: [] })?.toSorted(),
+    ["agent_validation-agent", "get_file", "web_search"],
+  );
+});
+
 Deno.test("hosted child project agents keep load_skill for a non-empty exact skill allowlist", () => {
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
@@ -666,6 +687,67 @@ Deno.test("hosted nested delegates inherit child scope and durable lineage", () 
   assertEquals(context.conversationId, "child-conversation");
   assertEquals(context.parentRunId, "child-run");
   assertEquals(context.parentMessageId, "child-message");
+});
+
+Deno.test("hosted nested delegates clear inherited skill catalog state for empty child selectors", () => {
+  const context = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+    {
+      authToken: "token-1",
+      projectId: "project-1",
+      branchId: "branch-1",
+      agentId: "orchestrator",
+      availableSkillIds: ["root-skill"],
+      skillSelectorPolicy: { kind: "allowlist", entries: ["root-skill"] },
+      skillSourcePaths: {
+        "root-skill": "skills/root/SKILL.md",
+      },
+      conversationId: "root-conversation",
+      parentRunId: "root-run",
+      parentMessageId: "root-message",
+    },
+    "extraction-agent",
+    {
+      system: "Extract applications.",
+      toolNames: ["get_file", "agent_validation-agent"],
+      availableSkillIds: [],
+      skillSelectorPolicy: { kind: "none" },
+      delegateIds: ["validation-agent"],
+      mcpServers: [],
+    },
+  );
+
+  assertEquals(context.agentId, "extraction-agent");
+  assertEquals(context.availableSkillIds, []);
+  assertEquals(context.skillSelectorPolicy, { kind: "none" });
+  assertEquals(context.skillSourcePaths, undefined);
+});
+
+Deno.test("hosted generic delegates preserve inherited skill catalog state", () => {
+  const context = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+    {
+      authToken: "token-1",
+      projectId: "project-1",
+      branchId: "branch-1",
+      agentId: "orchestrator",
+      availableSkillIds: ["root-skill"],
+      skillSelectorPolicy: { kind: "allowlist", entries: ["root-skill"] },
+      skillSourcePaths: {
+        "root-skill": "skills/root/SKILL.md",
+      },
+      conversationId: "root-conversation",
+      parentRunId: "root-run",
+      parentMessageId: "root-message",
+    },
+    "generic-agent",
+    undefined,
+  );
+
+  assertEquals(context.agentId, "generic-agent");
+  assertEquals(context.availableSkillIds, ["root-skill"]);
+  assertEquals(context.skillSelectorPolicy, { kind: "allowlist", entries: ["root-skill"] });
+  assertEquals(context.skillSourcePaths, {
+    "root-skill": "skills/root/SKILL.md",
+  });
 });
 
 Deno.test("hosted nested delegates preserve trusted root invocation context", () => {

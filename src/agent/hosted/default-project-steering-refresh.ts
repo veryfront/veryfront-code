@@ -18,6 +18,7 @@ import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-comp
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
 import type { HostedChatRuntimeInstructionsInput } from "./chat-preparation.ts";
 import {
+  assertResolvedSkillSelector,
   createNoneSkillSelectorSnapshot,
   type ResolvedSkillSelectorPolicy,
 } from "#veryfront/skill/selector.ts";
@@ -251,6 +252,7 @@ export function createDefaultHostedProjectSteeringRefresh(
       policy: input.taskContext.skillSelectorPolicy ??
         input.liveProjectSteering.skillSelectorPolicy,
     });
+    assertResolvedSkillSelector(skillSelectorSnapshot);
     input.taskContext.availableSkillIds = skillSelectorSnapshot.allowedSkillIds;
     input.taskContext.skillSelectorPolicy = skillSelectorSnapshot.policy;
     input.taskContext.skillSourcePaths =

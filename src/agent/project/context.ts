@@ -24,7 +24,6 @@ export function applyAgentProjectContextChange(
   context.runtimeTargetKind = "main_branch";
   context.runtimeTargetEnvironmentId = null;
   context.availableSkillIds = undefined;
-  delete context.skillSelectorPolicy;
   context.skillSourcePaths = undefined;
   return true;
 }

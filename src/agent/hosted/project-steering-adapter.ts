@@ -39,6 +39,7 @@ import type {
 } from "../runtime/skill-metadata.ts";
 import { resolveRuntimeSkillSelectorSnapshotForAgent } from "../runtime/skill-metadata.ts";
 import {
+  assertResolvedSkillSelector,
   createNoneSkillSelectorSnapshot,
   type ResolvedSkillSelectorPolicy,
 } from "#veryfront/skill/selector.ts";
@@ -222,6 +223,7 @@ export function createHostedProjectSteeringAdapter(
       });
 
       const snapshot = resolveRefreshedSkillSnapshot({ skills, context });
+      assertResolvedSkillSelector(snapshot);
       context.availableSkillIds = snapshot.allowedSkillIds;
       context.skillSelectorPolicy = snapshot.policy;
       context.skillSourcePaths = Object.keys(snapshot.skillSourcePaths).length > 0

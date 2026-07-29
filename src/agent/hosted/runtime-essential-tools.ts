@@ -18,7 +18,6 @@ const SKILL_DELEGATION_TOOL_NAMES = ["invoke_agent"] as const;
 const SKILL_SCRIPT_TOOL_NAMES = ["execute_skill_script"] as const;
 const EMPTY_SKILL_MANIFEST_TOOL_NAMES = [
   ...SKILL_RUNTIME_TOOL_NAMES,
-  ...SKILL_DELEGATION_TOOL_NAMES,
   ...SKILL_SCRIPT_TOOL_NAMES,
 ] as const;
 

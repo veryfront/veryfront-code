@@ -289,13 +289,13 @@ export function buildHostedChildToolContext(
   return {
     ...globalToolContext,
     agentId: childAgentId,
-    ...(childConfig?.availableSkillIds !== undefined
-      ? { availableSkillIds: childConfig.availableSkillIds }
+    ...(childConfig
+      ? {
+        availableSkillIds: childConfig.availableSkillIds,
+        skillSelectorPolicy: childConfig.skillSelectorPolicy,
+        skillSourcePaths: childConfig.skillSourcePaths,
+      }
       : {}),
-    ...(childConfig?.skillSelectorPolicy
-      ? { skillSelectorPolicy: childConfig.skillSelectorPolicy }
-      : {}),
-    ...(childConfig?.skillSourcePaths ? { skillSourcePaths: childConfig.skillSourcePaths } : {}),
     ...(childConfig?.toolNames ? { availableToolNames: childConfig.toolNames } : {}),
     loadedSkillResponses: {},
     loadedSkillReferenceResponses: {},
