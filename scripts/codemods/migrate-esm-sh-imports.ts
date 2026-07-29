@@ -169,8 +169,8 @@ function parseEsmShUrl(url: string): EsmShParsed | null {
 
   let path = parsedUrl.pathname.slice(1);
 
-  const buildPrefix = /^v\d+\//.exec(path);
-  if (buildPrefix) path = path.slice(buildPrefix[0].length);
+  const servedPrefix = /^(?:stable|v\d+)\//.exec(path);
+  if (servedPrefix) path = path.slice(servedPrefix[0].length);
 
   // esm.sh also serves built-in scripts, runtime shims, repository previews,
   // and other non-npm resources. They cannot be represented safely in

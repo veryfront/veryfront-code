@@ -147,6 +147,26 @@ Deno.test("esm-sh codemod handles esm.sh build-version prefix (v135/)", () => {
   assertEquals(result.pins, { zod: "3.22.4" });
 });
 
+Deno.test("esm-sh codemod handles esm.sh stable prefix", () => {
+  const source = 'import { x } from "https://esm.sh/stable/zod@3.22.4/lib/index.js";\n';
+  const result = migrateEsmShImports(source);
+
+  assert(result.changed);
+  assertStringIncludes(result.code, 'from "zod/lib/index.js"');
+  assertEquals(result.pins, { zod: "3.22.4" });
+  assertEquals(result.needsResolution, []);
+});
+
+Deno.test("esm-sh codemod skips stable-prefixed react imports", () => {
+  const source = 'import React from "https://esm.sh/stable/react@18.3.1/index.js";\n';
+  const result = migrateEsmShImports(source);
+
+  assertEquals(result.changed, false);
+  assertEquals(result.code, source);
+  assertEquals(result.pins, {});
+  assertEquals(result.needsResolution, []);
+});
+
 // ---------------------------------------------------------------------------
 // Unsafe URL forms
 // ---------------------------------------------------------------------------
