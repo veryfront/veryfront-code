@@ -133,8 +133,11 @@ describe("cli/templates", () => {
       ),
       true,
     );
+    assertEquals(assistantEval.includes('metrics.answer.contains({ text: "15.21" }).gate()'), true);
     assertEquals(assistantEval.includes('metrics.agent.calledTool("calculator").gate()'), true);
     assertEquals(assistantEval.includes("metrics.agent.noFailedTools().gate()"), true);
+    assertEquals(assistantEval.includes('metrics.answer.contains({ text: "33.24" }).gate()'), true);
+    assertEquals(assistantEval.includes('metrics.answer.contains({ text: "33.23" }).gate()'), true);
     assertEquals(assistantEval.includes("judge: judges.llm.rubric()"), true);
     assertEquals(assistantEval.includes("metrics.judge.rubric({"), true);
     assertEquals(layout.includes("className="), false);

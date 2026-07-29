@@ -12,7 +12,10 @@ export default evalAgent({
     },
   ]),
   metrics: [
+    metrics.answer.contains({ text: "15.21" }).gate(),
     metrics.answer.contains({ text: "99.71" }).gate(),
+    metrics.answer.contains({ text: "33.24" }).gate(),
+    metrics.answer.contains({ text: "33.23" }).gate(),
     metrics.agent.calledTool("calculator").gate(),
     metrics.agent.noFailedTools().gate(),
     metrics.judge.rubric({
