@@ -83,7 +83,6 @@
   "src/security/path-validation/index.test.ts",
   "src/server/build-service-worker.test.ts",
   "src/server/handlers/response/cors.test.ts",
-  "src/server/service-server.test.ts",
   "src/server/shared/renderer/adapter.test.ts",
   "src/tool/factory.test.ts",
   "src/transforms/import-rewriter/strategies/cross-project-strategy.test.ts",

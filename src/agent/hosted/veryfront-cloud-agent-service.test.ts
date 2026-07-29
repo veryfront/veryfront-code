@@ -1,12 +1,23 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
+import {
+  type ApplicationErrorContext,
+  type ApplicationErrorReporter,
+  setApplicationErrorReporter,
+} from "#veryfront/observability/application-errors.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
 import { tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
@@ -15,6 +26,7 @@ import { agentRegistry } from "../composition/index.ts";
 import {
   createNodeVeryfrontCloudAgentServiceRuntime,
   getDiscoveredHostTools,
+  startAgentService,
   startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
   veryfrontCloudAgentServiceInternals,
@@ -22,6 +34,105 @@ import {
 } from "./veryfront-cloud-agent-service.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
+import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
+
+type CaptureRecord = {
+  error: unknown;
+  context: ApplicationErrorContext;
+};
+
+type TestDenoRuntime = {
+  serve: typeof Deno.serve;
+  addSignalListener: typeof Deno.addSignalListener;
+  removeSignalListener: typeof Deno.removeSignalListener;
+  exit: typeof Deno.exit;
+};
+
+function createReporter(options: {
+  flush?: () => Promise<boolean>;
+} = {}): ApplicationErrorReporter & {
+  captured: CaptureRecord[];
+  flushTimeouts: Array<number | undefined>;
+} {
+  const reporter = {
+    captured: [] as CaptureRecord[],
+    flushTimeouts: [] as Array<number | undefined>,
+    capture(error: unknown, context: ApplicationErrorContext) {
+      reporter.captured.push({ error, context });
+      return "event-id";
+    },
+    async flush(timeoutMs?: number) {
+      reporter.flushTimeouts.push(timeoutMs);
+      return await (options.flush?.() ?? Promise.resolve(true));
+    },
+  };
+  return reporter;
+}
+
+async function withMockDenoServiceServer(
+  fn: (
+    input: {
+      events: string[];
+      signalHandlers: Map<string, () => void>;
+      waitForExit: () => Promise<number>;
+    },
+  ) => Promise<void>,
+): Promise<void> {
+  const denoRuntime = Deno as unknown as TestDenoRuntime;
+  const originalServe = denoRuntime.serve;
+  const originalAddSignalListener = denoRuntime.addSignalListener;
+  const originalRemoveSignalListener = denoRuntime.removeSignalListener;
+  const originalExit = denoRuntime.exit;
+  const events: string[] = [];
+  const signalHandlers = new Map<string, () => void>();
+  let resolveExit: ((code: number) => void) | undefined;
+  const exitPromise = new Promise<number>((resolveExitPromise) => {
+    resolveExit = resolveExitPromise;
+  });
+
+  denoRuntime.serve = ((options: Parameters<typeof Deno.serve>[0]) => {
+    events.push("serve");
+    return {
+      addr: { port: "port" in options && typeof options.port === "number" ? options.port : 0 },
+      shutdown: () => {
+        events.push("server-shutdown");
+      },
+    };
+  }) as typeof Deno.serve;
+  denoRuntime.addSignalListener = ((signal: string, handler: () => void) => {
+    signalHandlers.set(signal, handler);
+  }) as typeof Deno.addSignalListener;
+  denoRuntime.removeSignalListener = ((signal: string) => {
+    signalHandlers.delete(signal);
+  }) as typeof Deno.removeSignalListener;
+  denoRuntime.exit = ((code: number) => {
+    events.push(`exit:${code}`);
+    resolveExit?.(code);
+  }) as typeof Deno.exit;
+
+  try {
+    await fn({
+      events,
+      signalHandlers,
+      waitForExit: () => exitPromise,
+    });
+  } finally {
+    denoRuntime.serve = originalServe;
+    denoRuntime.addSignalListener = originalAddSignalListener;
+    denoRuntime.removeSignalListener = originalRemoveSignalListener;
+    denoRuntime.exit = originalExit;
+  }
+}
+
+function withMutedConsole<T>(fn: () => T): T {
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    return fn();
+  } finally {
+    console.error = originalError;
+  }
+}
 
 async function withTempDir(
   fn: (dir: string) => Promise<void> | void,
@@ -156,6 +267,270 @@ Deno.test("hosted child project agents request only materialized skill and deleg
     }),
     ["get_file", "load_skill", "web_search", "agent_validation-agent"],
   );
+});
+
+Deno.test("startAgentService keeps application-error reporting active after readiness and cleans up on graceful shutdown", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    const reporter = createReporter();
+    const events: string[] = [];
+    const restoreInitializeApplicationErrors = veryfrontCloudAgentServiceInternals
+      .setInitializeApplicationErrorsForTests(async () => {
+        const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
+          env: {
+            SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
+          },
+          flushTimeoutMs: 5,
+          loadExtension: () =>
+            Promise.resolve({
+              createNodeSentryApplicationErrorReporter: () => reporter,
+            }),
+        });
+        return {
+          ...lifecycle,
+          flush: async (timeoutMs?: number) => {
+            events.push(`flush:${timeoutMs ?? "default"}`);
+            return await lifecycle.flush(timeoutMs);
+          },
+          reset: () => {
+            events.push("reset");
+            lifecycle.reset();
+          },
+        };
+      });
+
+    try {
+      await withMockDenoServiceServer(async ({ signalHandlers, waitForExit }) => {
+        await startAgentService({
+          serviceName: "agent-application-errors-test",
+          agentId: "support",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+          signals: ["SIGTERM"],
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            VERYFRONT_AGENT_SERVICE_REGISTRATION: "disabled",
+            PORT: "0",
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        });
+
+        assertEquals(events, []);
+        withMutedConsole(() => {
+          agentLogger.error("framework error after readiness");
+        });
+        assertEquals(reporter.captured.length, 1);
+        assertEquals(reporter.captured[0]?.context.boundary, "agent.framework-log");
+
+        signalHandlers.get("SIGTERM")?.();
+        assertEquals(await waitForExit(), 0);
+      });
+
+      assertEquals(events, ["flush:default", "reset"]);
+      assertEquals(reporter.flushTimeouts, [5]);
+      withMutedConsole(() => {
+        agentLogger.error("framework error after shutdown");
+      });
+      assertEquals(reporter.captured.length, 1);
+    } finally {
+      restoreInitializeApplicationErrors();
+      __resetLogRecordEmitterForTests();
+      setApplicationErrorReporter(undefined);
+    }
+  });
+});
+
+Deno.test("startAgentService resets application-error reporting when shutdown flush fails", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    const events: string[] = [];
+    const restoreInitializeApplicationErrors = veryfrontCloudAgentServiceInternals
+      .setInitializeApplicationErrorsForTests(() => ({
+        enabled: true,
+        captureStartupError: () => {},
+        flush: () => {
+          events.push("flush");
+          return Promise.reject(new Error("flush failed"));
+        },
+        reset: () => {
+          events.push("reset");
+        },
+      }));
+
+    try {
+      await withMockDenoServiceServer(async ({ signalHandlers, waitForExit }) => {
+        await startAgentService({
+          serviceName: "agent-application-error-flush-failure-test",
+          agentId: "support",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+          signals: ["SIGTERM"],
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            VERYFRONT_AGENT_SERVICE_REGISTRATION: "disabled",
+            PORT: "0",
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        });
+
+        assertEquals(events, []);
+        signalHandlers.get("SIGTERM")?.();
+        assertEquals(await waitForExit(), 1);
+      });
+
+      assertEquals(events, ["flush", "reset"]);
+    } finally {
+      restoreInitializeApplicationErrors();
+      __resetLogRecordEmitterForTests();
+      setApplicationErrorReporter(undefined);
+    }
+  });
+});
+
+Deno.test("startAgentService captures, flushes, and resets terminal startup failures", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    const startupError = new Error("listen failed");
+    const reporter = createReporter();
+    const events: string[] = [];
+    const exitCodes: number[] = [];
+    const restoreInitializeApplicationErrors = veryfrontCloudAgentServiceInternals
+      .setInitializeApplicationErrorsForTests(async () => {
+        const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
+          env: {
+            SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
+          },
+          flushTimeoutMs: 5,
+          loadExtension: () =>
+            Promise.resolve({
+              createNodeSentryApplicationErrorReporter: () => reporter,
+            }),
+        });
+        return {
+          ...lifecycle,
+          captureStartupError: (error: unknown) => {
+            events.push("capture-startup");
+            lifecycle.captureStartupError(error);
+          },
+          flush: async (timeoutMs?: number) => {
+            events.push(`flush:${timeoutMs ?? "default"}`);
+            return await lifecycle.flush(timeoutMs);
+          },
+          reset: () => {
+            events.push("reset");
+            lifecycle.reset();
+          },
+        };
+      });
+
+    try {
+      const denoRuntime = Deno as unknown as TestDenoRuntime;
+      const originalServe = denoRuntime.serve;
+      denoRuntime.serve = (() => {
+        throw startupError;
+      }) as typeof Deno.serve;
+      try {
+        await startAgentService({
+          serviceName: "agent-startup-application-errors-test",
+          agentId: "support",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+          signals: [],
+          processTarget: {
+            env: {},
+            on: () => {},
+            off: () => {},
+            exit: (code) => {
+              exitCodes.push(code);
+            },
+          },
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            VERYFRONT_AGENT_SERVICE_REGISTRATION: "disabled",
+            PORT: "0",
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        });
+      } finally {
+        denoRuntime.serve = originalServe;
+      }
+
+      assertEquals(events, ["capture-startup", "flush:default", "reset"]);
+      assertEquals(reporter.captured, [
+        { error: startupError, context: { boundary: "agent.process.startup" } },
+      ]);
+      assertEquals(reporter.flushTimeouts, [5]);
+      assertEquals(exitCodes, [1]);
+    } finally {
+      restoreInitializeApplicationErrors();
+      __resetLogRecordEmitterForTests();
+      setApplicationErrorReporter(undefined);
+    }
+  });
+});
+
+Deno.test("startAgentService resets and exits when startup error flush rejects", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    const startupError = new Error("listen failed");
+    const events: string[] = [];
+    const exitCodes: number[] = [];
+    const restoreInitializeApplicationErrors = veryfrontCloudAgentServiceInternals
+      .setInitializeApplicationErrorsForTests(() => ({
+        enabled: true,
+        captureStartupError: (error: unknown) => {
+          assertStrictEquals(error, startupError);
+          events.push("capture-startup");
+        },
+        flush: () => {
+          events.push("flush");
+          return Promise.reject(new Error("flush failed"));
+        },
+        reset: () => {
+          events.push("reset");
+        },
+      }));
+
+    try {
+      const denoRuntime = Deno as unknown as TestDenoRuntime;
+      const originalServe = denoRuntime.serve;
+      denoRuntime.serve = (() => {
+        throw startupError;
+      }) as typeof Deno.serve;
+      try {
+        await startAgentService({
+          serviceName: "agent-startup-flush-failure-test",
+          agentId: "support",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+          signals: [],
+          processTarget: {
+            env: {},
+            on: () => {},
+            off: () => {},
+            exit: (code) => {
+              exitCodes.push(code);
+            },
+          },
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            VERYFRONT_AGENT_SERVICE_REGISTRATION: "disabled",
+            PORT: "0",
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        });
+      } finally {
+        denoRuntime.serve = originalServe;
+      }
+
+      assertEquals(events, ["capture-startup", "flush", "reset"]);
+      assertEquals(exitCodes, [1]);
+    } finally {
+      restoreInitializeApplicationErrors();
+      __resetLogRecordEmitterForTests();
+      setApplicationErrorReporter(undefined);
+    }
+  });
 });
 
 Deno.test("hosted generic invocation is only replaced by explicit delegates", () => {
@@ -632,6 +1007,79 @@ Deno.test("startNodeVeryfrontCloudAgentService registers the service with the co
     assertEquals(calls[0]?.url, "https://api.example.com/agent-runtimes/push-services");
     assertEquals(new Headers(calls[0]?.init?.headers).get("Authorization"), "Bearer token-1");
     assertEquals(JSON.parse(String(calls[0]?.init?.body)).scope_kind, "project");
+  });
+});
+
+Deno.test("startNodeVeryfrontCloudAgentService preserves startup error when registration rollback fails", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    const originalFetch = globalThis.fetch;
+    const originalClearInterval = globalThis.clearInterval;
+    const rollbackError = new Error("registration stop failed");
+    globalThis.fetch = () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            service: {
+              id: "22222222-2222-4222-a222-222222222222",
+              service_name: "registered-rollback-test",
+              service_key: "registered-rollback-test:key",
+              scope_kind: "project",
+              scope_key: "11111111-1111-4111-a111-111111111111",
+              project_id: "11111111-1111-4111-a111-111111111111",
+              agent_id: "support",
+              base_url: "https://agent.example.com",
+              invoke_url: "https://agent.example.com/api/runs",
+              status: "active",
+              capabilities: null,
+              metadata: null,
+              version: "0.1.0",
+              runtime: "node",
+              region: null,
+              last_heartbeat_at: "2026-05-13T00:00:00.000Z",
+              created_at: "2026-05-13T00:00:00.000Z",
+              updated_at: "2026-05-13T00:00:00.000Z",
+            },
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    globalThis.clearInterval = ((timerId) => {
+      originalClearInterval(timerId);
+      throw rollbackError;
+    }) as typeof globalThis.clearInterval;
+
+    try {
+      const rejected = await assertRejects(
+        () =>
+          startNodeVeryfrontCloudAgentService({
+            serviceName: "registered-rollback-test",
+            agentId: "support",
+            runtimeSource: { type: "release", releaseId: "release-42" },
+            entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+            signals: [],
+            env: {
+              NODE_ENV: "test",
+              VERYFRONT_API_URL: "https://api.example.com",
+              VERYFRONT_API_TOKEN: "token-1",
+              VERYFRONT_PROJECT_ID: "11111111-1111-4111-a111-111111111111",
+              VERYFRONT_AGENT_SERVICE_URL: "https://agent.example.com",
+              VERYFRONT_AGENT_SERVICE_KEY: "registered-rollback-test:key",
+              VERYFRONT_AGENT_SERVICE_REGISTRATION: "enabled",
+              VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: "60000",
+              PORT: "-1",
+              ALLOWED_ORIGINS: "https://studio.example.com",
+            },
+          }),
+        Error,
+      );
+
+      assertStrictEquals(rejected === rollbackError, false);
+      assertEquals(rejected instanceof Error && rejected.message.includes("options.port"), true);
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.clearInterval = originalClearInterval;
+    }
   });
 });
 
