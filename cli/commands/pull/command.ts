@@ -35,6 +35,8 @@ import {
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
+import { getProjectTarget } from "../../shared/deployment-provenance.ts";
+import { ensurePulledProjectBootstrap } from "./project-bootstrap.ts";
 
 /**
  * Schema factory for pull command arguments
@@ -667,8 +669,21 @@ async function pullSingleProject(
     deleteOps = localFiles.filter((file) => !managedRemotePaths.has(file.relativePath));
   }
 
+  const project = await getProjectTarget(client, projectSlug);
+  const pulledPaths = new Set(writeOps.map((op) => op.relativePath));
+  const deletedPaths = new Set(deleteOps.map((op) => op.relativePath));
+
   if (writeOps.length === 0 && deleteOps.length === 0) {
     if (!quiet) logInfo(`No files to pull from ${projectSlug}.`);
+    await ensurePulledProjectBootstrap({
+      projectDir,
+      config,
+      project,
+      pulledPaths,
+      deletedPaths,
+      dryRun,
+      quiet,
+    });
     return { written: 0, deleted: 0, cancelled: false };
   }
 
@@ -713,6 +728,16 @@ async function pullSingleProject(
       }. Some files may have changed. Review git status and restore a clean worktree before retrying.`,
     );
   }
+
+  await ensurePulledProjectBootstrap({
+    projectDir,
+    config,
+    project,
+    pulledPaths,
+    deletedPaths,
+    dryRun,
+    quiet,
+  });
 
   if (!quiet) {
     if (dryRun) {

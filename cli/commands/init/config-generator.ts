@@ -95,3 +95,26 @@ export async function createPackageJson(
 
   logger.debug('Created package.json with "type": "module"');
 }
+
+export async function createTypeScriptConfig(projectDir: string): Promise<void> {
+  const fs = createFileSystem();
+  const tsConfig = {
+    compilerOptions: {
+      target: "ES2022",
+      module: "ESNext",
+      moduleResolution: "bundler",
+      strict: true,
+      jsx: "react-jsx",
+      skipLibCheck: true,
+      esModuleInterop: true,
+      paths: { "@/*": ["./*"] },
+    },
+    include: ["**/*.ts", "**/*.tsx"],
+    exclude: ["node_modules"],
+  };
+
+  await fs.writeTextFile(
+    join(projectDir, "tsconfig.json"),
+    `${JSON.stringify(tsConfig, null, 2)}\n`,
+  );
+}

@@ -24,6 +24,7 @@ import {
   validateRemoteFilePath,
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
+import { readProjectLink } from "../../shared/project-link.ts";
 import { join } from "veryfront/platform/path";
 
 function createMockClient(overrides: {
@@ -81,6 +82,42 @@ async function exists(path: string): Promise<boolean> {
     throw error;
   }
 }
+
+const EXPECTED_BOOTSTRAP_TSCONFIG = {
+  compilerOptions: {
+    target: "ES2022",
+    module: "ESNext",
+    moduleResolution: "bundler",
+    strict: true,
+    jsx: "react-jsx",
+    skipLibCheck: true,
+    esModuleInterop: true,
+    paths: { "@/*": ["./*"] },
+  },
+  include: ["**/*.ts", "**/*.tsx"],
+  exclude: ["node_modules"],
+};
+
+const EXPECTED_BOOTSTRAP_PACKAGE = {
+  name: "pull-bootstrap",
+  version: "0.1.0",
+  type: "module",
+  scripts: {
+    dev: "veryfront dev",
+    build: "veryfront build",
+    start: "veryfront serve",
+    eval: "veryfront eval",
+    deploy: "veryfront deploy",
+  },
+  pnpm: {
+    onlyBuiltDependencies: ["esbuild"],
+  },
+  dependencies: {
+    react: "^19.2.4",
+    "react-dom": "^19.2.4",
+    veryfront: "^0.1.1175",
+  },
+};
 
 async function runTestGit(projectDir: string, ...args: string[]): Promise<string> {
   const result = await new Deno.Command("git", {
@@ -428,6 +465,248 @@ describe("getFileContent", () => {
 });
 
 describe("pullCommand", () => {
+  it("writes the canonical project link and starter configs after a successful pull", async () => {
+    const rootDir = await Deno.makeTempDir();
+    const tempDir = join(rootDir, "pull-bootstrap");
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+    try {
+      await Deno.mkdir(tempDir);
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(
+            Response.json({
+              data: [{
+                path: "app/page.tsx",
+                content: "export default function Page() { return null; }\n",
+                size: 47,
+                type: "file",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+              }],
+              page_info: {},
+            }),
+          );
+        }
+
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir,
+        projectSlug: "alpha",
+        force: true,
+        quiet: true,
+      });
+
+      assertEquals(await readProjectLink(tempDir), {
+        version: 1,
+        controlPlane: "https://api.veryfront.com",
+        projectId: "proj_alpha",
+        projectSlug: "alpha",
+      });
+      assertEquals(
+        JSON.parse(await Deno.readTextFile(join(tempDir, "package.json"))),
+        EXPECTED_BOOTSTRAP_PACKAGE,
+      );
+      assertEquals(
+        JSON.parse(await Deno.readTextFile(join(tempDir, "tsconfig.json"))),
+        EXPECTED_BOOTSTRAP_TSCONFIG,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(rootDir, { recursive: true });
+    }
+  });
+
+  it("does not overwrite existing local or remotely pulled config files", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const localPackage = `{"name":"local-app","scripts":{"custom":"keep"}}\n`;
+    const remoteTsconfig = `{"compilerOptions":{"strict":false},"include":["remote.ts"]}\n`;
+
+    try {
+      await Deno.writeTextFile(join(tempDir, "package.json"), localPackage);
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(
+            Response.json({
+              data: [{
+                path: "tsconfig.json",
+                content: remoteTsconfig,
+                size: remoteTsconfig.length,
+                type: "file",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+              }],
+              page_info: {},
+            }),
+          );
+        }
+
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir,
+        projectSlug: "alpha",
+        force: true,
+        quiet: true,
+      });
+
+      assertEquals(await Deno.readTextFile(join(tempDir, "package.json")), localPackage);
+      assertEquals(await Deno.readTextFile(join(tempDir, "tsconfig.json")), remoteTsconfig);
+      assertEquals((await readProjectLink(tempDir))?.projectId, "proj_alpha");
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not write bootstrap files during a dry-run pull", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(
+            Response.json({
+              data: [{
+                path: "app/page.tsx",
+                content: "export default null;\n",
+                size: 21,
+                type: "file",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+              }],
+              page_info: {},
+            }),
+          );
+        }
+
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir,
+        projectSlug: "alpha",
+        dryRun: true,
+        quiet: true,
+      });
+
+      assertEquals(await readProjectLink(tempDir), null);
+      assertEquals(await exists(join(tempDir, "package.json")), false);
+      assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
+      assertEquals(await exists(join(tempDir, "app", "page.tsx")), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("writes distinct canonical project links for multi-project pulls", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        const project = url.pathname.includes("/projects/beta") ? "beta" : "alpha";
+
+        if (url.pathname === `/projects/${project}`) {
+          return Promise.resolve(
+            Response.json({ id: `proj_${project}`, slug: `${project}-canonical` }),
+          );
+        }
+
+        if (url.pathname === `/projects/${project}/files`) {
+          return Promise.resolve(
+            Response.json({
+              data: [{
+                path: "app/page.tsx",
+                content: `export const project = "${project}";\n`,
+                size: 31,
+                type: "file",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+              }],
+              page_info: {},
+            }),
+          );
+        }
+
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir,
+        projects: ["alpha", "beta"],
+        force: true,
+        quiet: true,
+      });
+
+      assertEquals((await readProjectLink(join(tempDir, "alpha")))?.projectId, "proj_alpha");
+      assertEquals(
+        (await readProjectLink(join(tempDir, "alpha")))?.projectSlug,
+        "alpha-canonical",
+      );
+      assertEquals((await readProjectLink(join(tempDir, "beta")))?.projectId, "proj_beta");
+      assertEquals(
+        (await readProjectLink(join(tempDir, "beta")))?.projectSlug,
+        "beta-canonical",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      restoreEnv("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("writes listed content after every page loads without per-file requests", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;
@@ -440,6 +719,11 @@ describe("pullCommand", () => {
 
       globalThis.fetch = (async (input: string | URL | Request) => {
         const url = new URL(String(input));
+
+        if (url.pathname === "/projects/alpha") {
+          return Response.json({ id: "proj_alpha", slug: "alpha" });
+        }
+
         requestCount++;
 
         assertEquals(url.pathname, "/projects/alpha/files");
@@ -521,8 +805,14 @@ describe("pullCommand", () => {
       _resetEnvironmentConfig();
 
       globalThis.fetch = ((input: string | URL | Request) => {
-        const url = String(input);
-        if (url.includes("/files?branch=studio-change")) {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (
+          url.pathname === "/projects/alpha/files" &&
+          url.searchParams.get("branch") === "studio-change"
+        ) {
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -580,8 +870,14 @@ describe("pullCommand", () => {
       _resetEnvironmentConfig();
 
       globalThis.fetch = ((input: string | URL | Request) => {
-        const url = String(input);
-        if (url.includes("/files?branch=studio-change")) {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (
+          url.pathname === "/projects/alpha/files" &&
+          url.searchParams.get("branch") === "studio-change"
+        ) {
           return Promise.resolve(
             Response.json({
               data: [
@@ -746,8 +1042,14 @@ describe("pullCommand", () => {
       _resetEnvironmentConfig();
 
       globalThis.fetch = ((input: string | URL | Request) => {
-        const url = String(input);
-        if (url.includes("/files?branch=studio-change")) {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (
+          url.pathname === "/projects/alpha/files" &&
+          url.searchParams.get("branch") === "studio-change"
+        ) {
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -1153,8 +1455,11 @@ describe("pullCommand", () => {
       _resetEnvironmentConfig();
 
       globalThis.fetch = ((input: string | URL | Request) => {
-        const url = String(input);
-        if (url.includes("/files?")) {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (url.pathname === "/projects/alpha/files") {
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -1293,8 +1598,11 @@ describe("pullCommand", () => {
       _resetEnvironmentConfig();
 
       globalThis.fetch = ((input: string | URL | Request) => {
-        const url = String(input);
-        if (url.includes("/projects/alpha/files") && !url.includes("app%2Fpage.tsx")) {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (url.pathname === "/projects/alpha/files") {
           return Promise.resolve(
             new Response(
               JSON.stringify({
