@@ -222,10 +222,11 @@ export interface AgentConfig {
    */
   onToolResult?: ToolExecutionResultHandler;
   /**
-   * Select the skills advertised in this agent's system prompt and authorized
-   * for `load_skill`.
+   * Select visible skill IDs or this agent's own skill short names advertised
+   * in this agent's system prompt and authorized for `load_skill`.
    * - omitted or true: include every discovered skill visible to this agent
-   * - string[]: include and authorize only the listed visible skill IDs
+   * - string[]: include and authorize only listed visible skill IDs or this
+   *   agent's own skill short names
    * - [] or false: advertise no skills and do not authorize project or
    *   configured skills for `load_skill`
    *
