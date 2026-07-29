@@ -13,13 +13,11 @@ import type {
 } from "#veryfront/platform/adapters/base.ts";
 import { readBoundedFileHandlePrefix } from "#veryfront/platform/adapters/bounded-file-read.ts";
 import { isNativeFileSystemAdapter } from "#veryfront/platform/adapters/native-file-system-provenance.ts";
-import { isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 
 const MAX_DISCOVERY_DEPTH = 64;
 export const MAX_PROJECT_DISCOVERY_ENTRIES = 100_000;
 const DISCOVERY_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
-const DISCOVERY_UTF8_ENCODER = new TextEncoder();
 const COMMON_DISCOVERY_IGNORE_PATTERNS = [
   "node_modules",
   ".git",
@@ -311,6 +309,12 @@ async function readBoundedAdapterDiscoveryText(
   fsAdapter: FileSystemAdapter,
   maxBytes: number,
 ): Promise<string> {
+  const boundedReader = fsAdapter.readFileBytesBounded;
+  if (typeof boundedReader !== "function") {
+    throw new TypeError(
+      "Bounded discovery requires the filesystem adapter to implement readFileBytesBounded()",
+    );
+  }
   const readInfo = async (): Promise<DiscoveryFileInfo> => {
     const info = fsAdapter.lstat ? await fsAdapter.lstat(path) : await fsAdapter.stat(path);
     assertBoundedDiscoveryFileInfo(
@@ -332,71 +336,34 @@ async function readBoundedAdapterDiscoveryText(
   };
 
   const before = await readInfo();
-  const boundedReader = fsAdapter.readFileBytesBounded;
-  if (typeof boundedReader === "function") {
-    const readSnapshot = async (): Promise<Uint8Array> => {
-      const bytes = await boundedReader.call(
-        fsAdapter,
-        path,
-        maxBytes + 1,
-      );
-      if (!(bytes instanceof Uint8Array)) {
-        throw new TypeError(
-          `Discovery filesystem adapter returned invalid bytes for "${path}"`,
-        );
-      }
-      if (bytes.byteLength > maxBytes) {
-        throw new RangeError(`Discovery file "${file}" exceeds ${maxBytes} bytes`);
-      }
-      if (bytes.byteLength !== before.size) {
-        throw new TypeError(`Discovery file changed during reading: "${file}"`);
-      }
-      return bytes;
-    };
-
-    const first = await readSnapshot();
-    assertUnchangedSize(before, await readInfo());
-    const confirmation = await readSnapshot();
-    assertUnchangedSize(before, await readInfo());
-    if (!discoveryBytesEqual(first, confirmation)) {
-      throw new TypeError(`Discovery file changed during reading: "${file}"`);
-    }
-    return decodeDiscoveryUtf8(file, first);
-  }
-
-  // Compatibility path for adapters that predate allocation-bounded reads.
-  // The second snapshot catches an ordinary swap-back, but the adapter can
-  // still allocate an oversized object before this caller validates it.
-  const readLegacySnapshot = async (): Promise<string> => {
-    const content = await fsAdapter.readFile(path);
-    if (typeof content !== "string") {
+  const readSnapshot = async (): Promise<Uint8Array> => {
+    const bytes = await boundedReader.call(
+      fsAdapter,
+      path,
+      maxBytes + 1,
+    );
+    if (!(bytes instanceof Uint8Array)) {
       throw new TypeError(
-        `Discovery filesystem adapter returned non-text content for "${path}"`,
+        `Discovery filesystem adapter returned invalid bytes for "${path}"`,
       );
     }
-    if (!isWellFormedUtf16(content)) {
-      throw new TypeError(
-        `Discovery file "${file}" must contain valid Unicode text`,
-      );
-    }
-    const byteLength = DISCOVERY_UTF8_ENCODER.encode(content).byteLength;
-    if (byteLength > maxBytes) {
+    if (bytes.byteLength > maxBytes) {
       throw new RangeError(`Discovery file "${file}" exceeds ${maxBytes} bytes`);
     }
-    if (byteLength !== before.size) {
+    if (bytes.byteLength !== before.size) {
       throw new TypeError(`Discovery file changed during reading: "${file}"`);
     }
-    return content;
+    return bytes;
   };
 
-  const first = await readLegacySnapshot();
+  const first = await readSnapshot();
   assertUnchangedSize(before, await readInfo());
-  const confirmation = await readLegacySnapshot();
+  const confirmation = await readSnapshot();
   assertUnchangedSize(before, await readInfo());
-  if (confirmation !== first) {
+  if (!discoveryBytesEqual(first, confirmation)) {
     throw new TypeError(`Discovery file changed during reading: "${file}"`);
   }
-  return first;
+  return decodeDiscoveryUtf8(file, first);
 }
 
 interface NativeDiscoveryFileInfo {

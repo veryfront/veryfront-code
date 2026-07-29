@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import { basename } from "#veryfront/compat/path";
 import {
   DEFAULT_PROJECT_STEERING_PATHS,
   type ProjectSteeringPaths,
@@ -33,6 +33,7 @@ import {
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
 import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
+import { SkillIdAdmission } from "#veryfront/skill/id-admission.ts";
 
 const PROJECT_SKILL_FETCH_CONCURRENCY = 16;
 
@@ -225,43 +226,35 @@ export function loadRuntimeBuiltinSkillCatalog(input: {
     return [];
   }
 
-  return sortSkillsById(
-    entriesResult.entries.flatMap((entry) => {
-      if (entry.isFile() && entry.name.endsWith(".md")) {
-        const id = basename(entry.name, ".md");
-        const content = readRuntimeBuiltinFlatSkill(input.skillsDir, id);
-        if (content === null) {
-          return [];
-        }
+  const definitionsById = new Map<string, RuntimeSkillDefinition>();
+  for (const entry of entriesResult.entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const id = basename(entry.name, ".md");
+    const content = readRuntimeBuiltinFlatSkill(input.skillsDir, id);
+    if (content === null) continue;
+    const definition = buildLegacyRuntimeFlatSkillDefinition({
+      id,
+      content,
+      logger: input.logger,
+    });
+    if (definition) definitionsById.set(id, definition);
+  }
 
-        const definition = buildLegacyRuntimeFlatSkillDefinition({
-          id,
-          content,
-          logger: input.logger,
-        });
+  for (const entry of entriesResult.entries) {
+    if (!entry.isDirectory()) continue;
+    const content = readRuntimeBuiltinDirectorySkill(input.skillsDir, entry.name);
+    if (content === null) continue;
+    definitionsById.delete(entry.name);
+    const definition = buildRuntimeDirectorySkillDefinition({
+      id: entry.name,
+      content,
+      references: listRuntimeBuiltinSkillReferences(input.skillsDir, entry.name),
+      logger: input.logger,
+    });
+    if (definition) definitionsById.set(entry.name, definition);
+  }
 
-        return definition ? [definition] : [];
-      }
-
-      if (entry.isDirectory()) {
-        const content = readRuntimeBuiltinDirectorySkill(input.skillsDir, entry.name);
-        if (content === null) {
-          return [];
-        }
-
-        const definition = buildRuntimeDirectorySkillDefinition({
-          id: entry.name,
-          content,
-          references: listRuntimeBuiltinSkillReferences(input.skillsDir, entry.name),
-          logger: input.logger,
-        });
-
-        return definition ? [definition] : [];
-      }
-
-      return [];
-    }),
-  );
+  return sortSkillsById(definitionsById.values());
 }
 
 /** Return runtime project instructions. */
@@ -404,6 +397,11 @@ export async function getRuntimeProjectSkillCatalog(
     }
   }
 
+  const skillIdAdmission = new SkillIdAdmission();
+  for (const id of claimedProjectSkillIds) {
+    skillIdAdmission.claim({ id, source: "project-global skill" });
+  }
+
   // Colocated (agent-owned) skills: agents/{id}/SKILL.md (the agent's own
   // skill) and agents/{id}/skills/{sub}/SKILL.md. Registered with owner
   // metadata so per-run filtering and the source-path loader can apply the
@@ -421,8 +419,23 @@ export async function getRuntimeProjectSkillCatalog(
     )
     .sort((left, right) => left.path.localeCompare(right.path))
     .filter((candidate) => {
+      const admission = skillIdAdmission.claim({
+        id: candidate.identity.id,
+        source: `agent-owned skill for agent "${candidate.identity.ownerAgentId}"`,
+        ownerAgentId: candidate.identity.ownerAgentId,
+      });
+      if (!admission.accepted) {
+        projectSkillsById.delete(candidate.identity.id);
+        input.logger?.error?.(admission.error.message, {
+          skillId: candidate.identity.id,
+          existingOwnerAgentId: admission.error.existing.ownerAgentId,
+          incomingOwnerAgentId: admission.error.incoming.ownerAgentId,
+        });
+        return false;
+      }
       return claimProjectSkillId(claimedProjectSkillIds, candidate.identity.id);
-    });
+    })
+    .filter((candidate) => !skillIdAdmission.isRejected(candidate.identity.id));
 
   if (colocatedCandidates.length > 0) {
     const colocatedFiles = await mapWithConcurrency(

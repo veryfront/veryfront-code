@@ -701,26 +701,36 @@ export class LocalScriptExecutor implements SkillScriptExecutor {
   async execute(input: SkillScriptExecutorInput): Promise<SkillScriptResult> {
     const normalized = normalizeExecutorInput(input);
     if (normalized.abortSignal?.aborted) return abortedResult();
+    const budget = createExecutionBudget(normalized.timeoutMs);
 
     if (normalized.validatedSourceRoot === undefined) {
-      return await executeLocalScriptAtPath(normalized, normalized.scriptPath);
+      return await executeLocalScriptAtPath(normalized, normalized.scriptPath, budget);
     }
 
-    const validatedScript = await prepareValidatedLocalScript(normalized);
-    if (normalized.abortSignal?.aborted) return abortedResult();
+    const preparation = await runWithinBudget(
+      budget,
+      normalized.abortSignal,
+      () => prepareValidatedLocalScript(normalized),
+    );
+    if (preparation === ABORT_SENTINEL || preparation === TIMEOUT_SENTINEL) {
+      return terminationResult(preparation, budget.timeoutMs);
+    }
 
     // The final containment, content, and identity checks above happen before
     // the interpreter opens the validated path. Local skills are trusted
     // development code: a same-user writer can still race that later open, and
     // imported dependencies are resolved from the live source tree.
-    return await executeLocalScriptAtPath(normalized, validatedScript.scriptPath);
+    return await executeLocalScriptAtPath(normalized, preparation.scriptPath, budget);
   }
 }
 
 async function executeLocalScriptAtPath(
   normalized: NormalizedSkillScriptExecutorInput,
   executableScriptPath: string,
+  budget: ExecutionBudget,
 ): Promise<SkillScriptResult> {
+  const termination = currentTermination(budget, normalized.abortSignal);
+  if (termination) return terminationResult(termination, budget.timeoutMs);
   const { command, args: runtimeArgs } = detectRuntime(executableScriptPath);
   const allArgs = [...runtimeArgs, ...normalized.args];
 
@@ -732,7 +742,7 @@ async function executeLocalScriptAtPath(
     cwd: normalized.cwd,
     env: normalized.env,
     capture: true,
-    timeoutMs: normalized.timeoutMs,
+    timeoutMs: budget.remainingMs(),
     signal: normalized.abortSignal,
     ...(normalized.validatedSourceRoot === undefined ? {} : {
       maxOutputBytes: SKILL_SCRIPT_MAX_OUTPUT_BYTES,

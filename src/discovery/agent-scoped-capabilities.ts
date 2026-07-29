@@ -25,6 +25,10 @@ import { parseSkillFileFrontmatter, validateSkillFileMetadata } from "#veryfront
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { SKILL_MD_FILENAME } from "#veryfront/skill/types.ts";
 import { SKILL_TEXT_FILE_MAX_BYTES } from "#veryfront/skill/limits.ts";
+import {
+  getObjectScopedSkillIdAdmission,
+  SkillIdAdmission,
+} from "#veryfront/skill/id-admission.ts";
 import { registerTool } from "#veryfront/mcp";
 import { ensureError } from "#veryfront/errors";
 import { filenameToId } from "./discovery-utils.ts";
@@ -270,6 +274,9 @@ async function buildSkillFromDir(input: {
 export async function registerAgentColocatedSkills(
   input: RegisterAgentColocatedCapabilitiesInput,
 ): Promise<string[]> {
+  const skillIdAdmission = input.result
+    ? getObjectScopedSkillIdAdmission(input.result)
+    : new SkillIdAdmission();
   const candidates: Array<{ id: string; shortName: string; skillDir: string }> = [];
 
   if (await discoveryFileExists(`${input.rootPath}/${SKILL_MD_FILENAME}`, input.context)) {
@@ -294,6 +301,44 @@ export async function registerAgentColocatedSkills(
   const registeredIds: string[] = [];
   for (const candidate of candidates) {
     try {
+      const skillFile = `${candidate.skillDir}/${SKILL_MD_FILENAME}`;
+      if (!(await discoveryFileExists(skillFile, input.context))) {
+        continue;
+      }
+      if (!skillIdAdmission.hasClaim(candidate.id)) {
+        const existing = input.result?.skills.get(candidate.id) ??
+          skillRegistryInternal.get(candidate.id);
+        if (existing) {
+          skillIdAdmission.claim({
+            id: candidate.id,
+            source: existing.ownerAgentId === undefined
+              ? "project-global skill"
+              : `agent-owned skill for agent "${existing.ownerAgentId}"`,
+            ...(existing.ownerAgentId ? { ownerAgentId: existing.ownerAgentId } : {}),
+          });
+        }
+      }
+      const admission = skillIdAdmission.claim({
+        id: candidate.id,
+        source: `agent-owned skill for agent "${input.agentId}"`,
+        ownerAgentId: input.agentId,
+      });
+      if (!admission.accepted) {
+        skillRegistryInternal.delete(candidate.id);
+        input.result?.skills.delete(candidate.id);
+        if (!input.result) {
+          throw admission.error;
+        }
+        input.result.errors.push({
+          file: skillFile,
+          error: admission.error,
+          code: "duplicate_id",
+          sourceKind: "skill",
+          sourceId: candidate.id,
+        });
+        continue;
+      }
+
       const skill = await buildSkillFromDir({
         id: candidate.id,
         skillDir: candidate.skillDir,
@@ -319,6 +364,9 @@ export async function registerAgentColocatedSkills(
       input.result?.skills.set(skill.id, skill);
       registeredIds.push(skill.id);
     } catch (error) {
+      if (!input.result) {
+        throw error;
+      }
       input.result?.errors.push({
         file: `${candidate.skillDir}/${SKILL_MD_FILENAME}`,
         error: ensureError(error),

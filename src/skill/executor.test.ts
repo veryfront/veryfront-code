@@ -94,6 +94,23 @@ async function waitForFetchCallCount(expected: number, timeoutMs = 1_000): Promi
   }
 }
 
+async function settleExecutorWithin(
+  execution: Promise<{ exitCode: number }>,
+  timeoutMs = 50,
+): Promise<{ exitCode: number } | null> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      execution,
+      new Promise<null>((resolve) => {
+        timeoutId = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
+}
+
 describe("src/skill/executor", () => {
   beforeEach(() => {
     fetchCalls = [];
@@ -488,6 +505,43 @@ describe("src/skill/executor", () => {
 
       assertEquals(result.exitCode, 130);
       assertStringIncludes(result.stderr, "aborted");
+    });
+
+    it("applies caller cancellation while validating a local script source", async () => {
+      const originalLstat = Deno.lstat;
+      Deno.lstat = () => new Promise<Deno.FileInfo>(() => {});
+      const controller = new AbortController();
+      try {
+        const execution = new LocalScriptExecutor().execute({
+          scriptPath: "/project/skills/writer/scripts/run.sh",
+          validatedSourceRoot: "/project/skills/writer",
+          timeoutMs: 5_000,
+          abortSignal: controller.signal,
+        });
+        controller.abort(new Error("cancel local validation"));
+
+        const result = await settleExecutorWithin(execution);
+        assertEquals(result?.exitCode, 130);
+      } finally {
+        Deno.lstat = originalLstat;
+      }
+    });
+
+    it("applies the script timeout while validating a local script source", async () => {
+      const originalLstat = Deno.lstat;
+      Deno.lstat = () => new Promise<Deno.FileInfo>(() => {});
+      try {
+        const result = await settleExecutorWithin(
+          new LocalScriptExecutor().execute({
+            scriptPath: "/project/skills/writer/scripts/run.sh",
+            validatedSourceRoot: "/project/skills/writer",
+            timeoutMs: 10,
+          }),
+        );
+        assertEquals(result?.exitCode, 124);
+      } finally {
+        Deno.lstat = originalLstat;
+      }
     });
 
     it("keeps ordinary public args and env shapes outside tool-schema caps compatible", async () => {

@@ -10,10 +10,10 @@
  *
  * @example
  * ```ts
- * import { parseSkillFrontmatter, validateSkillMetadata } from "veryfront/skill";
+ * import { parseSkillFrontmatter, validateSkillFileMetadata } from "veryfront/skill";
  *
  * const parsed = await parseSkillFrontmatter("---\nname: review\ndescription: Review code\n---\n");
- * validateSkillMetadata(parsed.frontmatter, "review");
+ * validateSkillFileMetadata(parsed.frontmatter, "review");
  * ```
  */
 
@@ -61,6 +61,7 @@ export {
 export {
   parseSkillFileFrontmatter,
   parseSkillFrontmatter,
+  parseUnsafeLegacySkillFrontmatter,
   validateSkillFileMetadata,
   validateSkillMetadata,
 } from "./parser.ts";
@@ -87,7 +88,10 @@ export {
 export { getSkillScriptExecutor } from "./executor.ts";
 
 // Prompt
-export { buildSkillManifestPrompt } from "./prompt-augmentation.ts";
+export {
+  buildSkillManifestPrompt,
+  buildUnsafeLegacySkillManifestPrompt,
+} from "./prompt-augmentation.ts";
 
 // Allowed-Tools
 export {

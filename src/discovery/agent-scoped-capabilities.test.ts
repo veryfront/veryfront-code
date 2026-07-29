@@ -369,6 +369,117 @@ Deno.test("discoverAll preserves directory-agent colocated skills through the sk
   }
 });
 
+Deno.test("discoverAll quarantines an exact global and agent-owned skill id collision", async () => {
+  const root = await Deno.makeTempDir();
+  skillRegistryInternal.clearAll();
+  try {
+    await Deno.mkdir(`${root}/skills/researcher`, { recursive: true });
+    await Deno.mkdir(`${root}/agents/researcher`, { recursive: true });
+    await Deno.writeTextFile(
+      `${root}/skills/researcher/SKILL.md`,
+      `---\nname: researcher\ndescription: Global researcher\n---\nGlobal policy.\n`,
+    );
+    await Deno.writeTextFile(
+      `${root}/agents/researcher/AGENT.md`,
+      `---\nname: Researcher\nskills: true\n---\nResearch.\n`,
+    );
+    await Deno.writeTextFile(
+      `${root}/agents/researcher/SKILL.md`,
+      `---\nname: researcher\ndescription: Owned researcher\n---\nOwned policy.\n`,
+    );
+
+    const result = await discoverAll({ baseDir: root });
+
+    assertEquals(result.skills.has("researcher"), false);
+    assertEquals(skillRegistry.get("researcher"), undefined);
+    assertEquals(
+      result.errors.some((entry) =>
+        entry.code === "duplicate_id" &&
+        String(entry.error).includes('skill id "researcher"')
+      ),
+      true,
+    );
+  } finally {
+    skillRegistryInternal.clearAll();
+    cleanupAgents(["researcher"]);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("discoverAll quarantines an exact collision before parsing a malformed owned skill", async () => {
+  const root = await Deno.makeTempDir();
+  skillRegistryInternal.clearAll();
+  try {
+    await Deno.mkdir(`${root}/skills/researcher`, { recursive: true });
+    await Deno.mkdir(`${root}/agents/researcher`, { recursive: true });
+    await Deno.writeTextFile(
+      `${root}/skills/researcher/SKILL.md`,
+      `---\nname: researcher\ndescription: Global researcher\n---\nGlobal policy.\n`,
+    );
+    await Deno.writeTextFile(
+      `${root}/agents/researcher/AGENT.md`,
+      `---\nname: Researcher\nskills: true\n---\nResearch.\n`,
+    );
+    await Deno.writeTextFile(
+      `${root}/agents/researcher/SKILL.md`,
+      `---\nname: researcher\n---\nMissing required description.\n`,
+    );
+
+    const result = await discoverAll({ baseDir: root });
+
+    assertEquals(result.skills.has("researcher"), false);
+    assertEquals(skillRegistry.get("researcher"), undefined);
+    assertEquals(
+      result.errors.some((entry) =>
+        entry.code === "duplicate_id" &&
+        String(entry.error).includes('skill id "researcher"')
+      ),
+      true,
+    );
+  } finally {
+    skillRegistryInternal.clearAll();
+    cleanupAgents(["researcher"]);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("discoverAll reserves a malformed global id against an owned skill", async () => {
+  const root = await Deno.makeTempDir();
+  skillRegistryInternal.clearAll();
+  try {
+    await Deno.mkdir(`${root}/skills/researcher`, { recursive: true });
+    await Deno.mkdir(`${root}/agents/researcher`, { recursive: true });
+    await Deno.writeTextFile(
+      `${root}/skills/researcher/SKILL.md`,
+      `---\nname: researcher\n---\nMissing required description.\n`,
+    );
+    await Deno.writeTextFile(
+      `${root}/agents/researcher/AGENT.md`,
+      `---\nname: Researcher\nskills: true\n---\nResearch.\n`,
+    );
+    await Deno.writeTextFile(
+      `${root}/agents/researcher/SKILL.md`,
+      `---\nname: researcher\ndescription: Owned researcher\n---\nOwned policy.\n`,
+    );
+
+    const result = await discoverAll({ baseDir: root });
+
+    assertEquals(result.skills.has("researcher"), false);
+    assertEquals(skillRegistry.get("researcher"), undefined);
+    assertEquals(
+      result.errors.some((entry) =>
+        entry.code === "duplicate_id" &&
+        String(entry.error).includes('skill id "researcher"')
+      ),
+      true,
+    );
+  } finally {
+    skillRegistryInternal.clearAll();
+    cleanupAgents(["researcher"]);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 // ── Colocated tool loading through the real transpiler (esbuild) ─────────
 
 import { clearMCPRegistry } from "#veryfront/mcp";

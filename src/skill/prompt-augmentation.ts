@@ -23,15 +23,12 @@ function quoteCatalogValue(value: unknown, field: string, maxLength: number): st
 }
 
 /**
- * Build the skill manifest prompt section for an agent's system prompt.
+ * Reproduce the historical raw Markdown manifest format.
  *
- * Lists up to the prompt entry limit with descriptions and instructions on
- * how to use the skill tools (load_skill, load_skill_reference, execute_skill_script).
- *
- * @param skills - Map of resolved skills for the agent
- * @returns Prompt section string, or empty string if no skills
+ * @deprecated This helper does not encode untrusted skill metadata and must
+ * not be used in system prompts. Use {@link buildSkillManifestPrompt}.
  */
-export function buildSkillManifestPrompt(skills: Map<string, Skill>): string {
+export function buildUnsafeLegacySkillManifestPrompt(skills: Map<string, Skill>): string {
   if (skills.size === 0) return "";
 
   const lines: string[] = [
@@ -125,4 +122,13 @@ export function buildStrictSkillManifestPrompt(skills: Map<string, Skill>): stri
   );
 
   return lines.join("\n");
+}
+
+/**
+ * Build a bounded, injection-safe skill manifest for an agent system prompt.
+ * Catalog IDs and descriptions are JSON-quoted and explicitly labeled as
+ * untrusted metadata.
+ */
+export function buildSkillManifestPrompt(skills: Map<string, Skill>): string {
+  return buildStrictSkillManifestPrompt(skills);
 }

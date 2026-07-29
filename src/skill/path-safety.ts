@@ -20,7 +20,12 @@ import {
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "./limits.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "./string-safety.ts";
+import type { SkillOperationBudget } from "./operation-budget.ts";
 const SAFE_SKILL_PATH_SEGMENT_REGEX = /^[A-Za-z0-9._-]+$/;
+
+export interface SkillPathOperationOptions {
+  budget?: SkillOperationBudget;
+}
 
 function isInsideDir(baseDir: string, targetPath: string): boolean {
   const rel = relative(baseDir, targetPath);
@@ -404,7 +409,18 @@ export async function validateStrictSkillPath(
   requestedPath: string,
   allowedSubdirs: readonly string[],
   fsAdapter?: FileSystemAdapter,
+  options: SkillPathOperationOptions = {},
 ): Promise<string> {
+  if (options.budget) {
+    return await options.budget.run(() =>
+      validateStrictSkillPath(
+        skillRoot,
+        requestedPath,
+        allowedSubdirs,
+        fsAdapter,
+      )
+    );
+  }
   const boundedRoot = requireBoundedPath(
     skillRoot,
     "root",
@@ -551,7 +567,11 @@ export async function listStrictSkillSubdir(
   skillRoot: string,
   subdir: string,
   fsAdapter?: FileSystemAdapter,
+  options: SkillPathOperationOptions = {},
 ): Promise<string[]> {
+  if (options.budget) {
+    return await options.budget.run(() => listStrictSkillSubdir(skillRoot, subdir, fsAdapter));
+  }
   const boundedRoot = requireBoundedPath(
     skillRoot,
     "root",

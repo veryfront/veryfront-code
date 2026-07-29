@@ -7,6 +7,7 @@ import {
   validateSkillFileMetadata,
   validateSkillMetadata,
 } from "./parser.ts";
+import * as skillParser from "./parser.ts";
 import { SKILL_NAME_REGEX } from "./types.ts";
 
 describe("src/skill/parser", () => {
@@ -54,8 +55,24 @@ Body text.`;
       assertEquals(result.body, "");
     });
 
-    it("preserves legacy fallback parsing for malformed YAML", async () => {
-      const result = await parseSkillFrontmatter(`---
+    it("fails closed on malformed YAML through the public parser", async () => {
+      await assertRejects(
+        () =>
+          parseSkillFrontmatter(`---
+name: malformed
+description: [unterminated
+---
+Body`),
+        Error,
+      );
+
+      const unsafeParser = (
+        skillParser as typeof skillParser & {
+          parseUnsafeLegacySkillFrontmatter?: typeof parseSkillFrontmatter;
+        }
+      ).parseUnsafeLegacySkillFrontmatter;
+      assertEquals(typeof unsafeParser, "function");
+      const result = await unsafeParser!(`---
 name: malformed
 description: [unterminated
 ---
@@ -67,9 +84,20 @@ Body`);
       assertEquals(result.body, "Body");
     });
 
-    it("preserves legacy unbounded document parsing", async () => {
+    it("bounds public documents while retaining an explicitly unsafe compatibility parser", async () => {
       const content = "x".repeat(1_048_577);
-      assertEquals((await parseSkillFrontmatter(content)).body, content);
+      await assertRejects(
+        () => parseSkillFrontmatter(content),
+        RangeError,
+        "exceeds",
+      );
+      const unsafeParser = (
+        skillParser as typeof skillParser & {
+          parseUnsafeLegacySkillFrontmatter?: typeof parseSkillFrontmatter;
+        }
+      ).parseUnsafeLegacySkillFrontmatter;
+      assertEquals(typeof unsafeParser, "function");
+      assertEquals((await unsafeParser!(content)).body, content);
     });
 
     it("strict file parsing rejects malformed and oversized documents", async () => {
@@ -445,6 +473,33 @@ Body`),
           "Invalid skill name",
         );
       }
+    });
+
+    it("rejects accessor-backed allowed-tools without invoking getters", () => {
+      let getterReads = 0;
+      const allowedTools: string[] = [];
+      Object.defineProperty(allowedTools, 0, {
+        enumerable: true,
+        get() {
+          getterReads += 1;
+          return "read_file";
+        },
+      });
+
+      assertThrows(
+        () =>
+          validateSkillFileMetadata(
+            {
+              name: "test",
+              description: "desc",
+              "allowed-tools": allowedTools,
+            },
+            "test",
+          ),
+        TypeError,
+        "data property",
+      );
+      assertEquals(getterReads, 0);
     });
   });
 });

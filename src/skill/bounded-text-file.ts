@@ -6,6 +6,7 @@ import type {
 } from "#veryfront/platform/adapters/base.ts";
 import { isNativeFileSystemAdapter } from "#veryfront/platform/adapters/native-file-system-provenance.ts";
 import { SKILL_ROOT_PATH_MAX_LENGTH, SKILL_TEXT_FILE_MAX_BYTES } from "./limits.ts";
+import type { SkillOperationBudget } from "./operation-budget.ts";
 import { validateStrictSkillPath } from "./path-safety.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "./string-safety.ts";
 
@@ -179,11 +180,17 @@ async function readAdapterTextFile(
   path: string,
   fsAdapter: FileSystemAdapter,
   maxBytes: number,
+  requireBoundedRead = false,
 ): Promise<string> {
   const info = fsAdapter.lstat ? await fsAdapter.lstat(path) : await fsAdapter.stat(path);
   assertFileInfo(path, info, maxBytes);
 
   const boundedReader = getBoundedAdapterReader(fsAdapter);
+  if (requireBoundedRead && boundedReader === undefined) {
+    throw new TypeError(
+      "Untrusted skill files require an adapter with a genuinely bounded byte reader",
+    );
+  }
   let boundedBytes: Uint8Array | undefined;
   let content: string;
   if (boundedReader) {
@@ -636,7 +643,9 @@ export async function readBoundedSkillTextFile(
  *
  * FileSystemAdapter remains a compatibility boundary: validation is repeated
  * around the read, but the adapter must provide its own atomic snapshot
- * semantics if its namespace is concurrently mutable.
+ * semantics if its namespace is concurrently mutable. Unlike the generic
+ * readBoundedSkillTextFile helper, this untrusted validated-read path requires
+ * a genuine readFileBytesBounded implementation from non-native adapters.
  */
 export async function readValidatedSkillTextFile(
   skillRoot: string,
@@ -644,54 +653,79 @@ export async function readValidatedSkillTextFile(
   allowedSubdirs: readonly string[],
   fsAdapter?: FileSystemAdapter,
   maxBytes: number = SKILL_TEXT_FILE_MAX_BYTES,
+  options: { budget?: SkillOperationBudget } = {},
 ): Promise<{ content: string; path: string }> {
-  const boundedMaxBytes = requireMaxBytes(maxBytes);
-  const validatedPath = await validateStrictSkillPath(
-    skillRoot,
-    requestedPath,
-    allowedSubdirs,
-    fsAdapter,
-  );
-
-  if (fsAdapter && !isNativeFileSystemAdapter(fsAdapter)) {
-    const content = await readAdapterTextFile(
-      validatedPath,
-      fsAdapter,
-      boundedMaxBytes,
-    );
-    const revalidatedPath = await validateStrictSkillPath(
+  const read = async (): Promise<{ content: string; path: string }> => {
+    const boundedMaxBytes = requireMaxBytes(maxBytes);
+    const validatedPath = await validateStrictSkillPath(
       skillRoot,
       requestedPath,
       allowedSubdirs,
       fsAdapter,
+      options.budget ? { budget: options.budget } : {},
     );
-    if (resolve(revalidatedPath) !== resolve(validatedPath)) {
-      throw new TypeError(`Skill file changed during validation: "${requestedPath}"`);
-    }
-    return { content, path: validatedPath };
-  }
 
-  const validatedInfo = await lstatLocal(validatedPath);
-  const expected = assertOpenedRegularFile(
-    validatedPath,
-    validatedInfo,
-    boundedMaxBytes,
-  );
-  const content = await readLocalTextFile(
-    validatedPath,
-    boundedMaxBytes,
-    {
-      ...(expected.identity === undefined ? {} : { expectedIdentity: expected.identity }),
-      expectedSize: expected.size,
-      revalidate: () =>
-        validateStrictSkillPath(
-          skillRoot,
-          requestedPath,
-          allowedSubdirs,
-          fsAdapter,
-        ),
+    if (fsAdapter && !isNativeFileSystemAdapter(fsAdapter)) {
+      const content = await readAdapterTextFile(
+        validatedPath,
+        fsAdapter,
+        boundedMaxBytes,
+        true,
+      );
+      const revalidatedPath = await validateStrictSkillPath(
+        skillRoot,
+        requestedPath,
+        allowedSubdirs,
+        fsAdapter,
+        options.budget ? { budget: options.budget } : {},
+      );
+      if (resolve(revalidatedPath) !== resolve(validatedPath)) {
+        throw new TypeError(`Skill file changed during validation: "${requestedPath}"`);
+      }
+      return { content, path: validatedPath };
+    }
+
+    const validatedInfo = await lstatLocal(validatedPath);
+    const expected = assertOpenedRegularFile(
       validatedPath,
-    },
-  );
-  return { content, path: validatedPath };
+      validatedInfo,
+      boundedMaxBytes,
+    );
+    const content = await readLocalTextFile(
+      validatedPath,
+      boundedMaxBytes,
+      {
+        ...(expected.identity === undefined ? {} : { expectedIdentity: expected.identity }),
+        expectedSize: expected.size,
+        revalidate: () =>
+          validateStrictSkillPath(
+            skillRoot,
+            requestedPath,
+            allowedSubdirs,
+            fsAdapter,
+            options.budget ? { budget: options.budget } : {},
+          ),
+        validatedPath,
+      },
+    );
+    return { content, path: validatedPath };
+  };
+
+  try {
+    return options.budget ? await options.budget.run(() => read()) : await read();
+  } catch (error) {
+    if (
+      options.budget?.abortSignal?.aborted &&
+      error === options.budget.abortSignal.reason
+    ) {
+      throw error;
+    }
+    if (!(error instanceof Error) || !error.message.includes(skillRoot)) {
+      throw error;
+    }
+    const message = error.message.replaceAll(skillRoot, "<skill-root>");
+    if (error instanceof TypeError) throw new TypeError(message);
+    if (error instanceof RangeError) throw new RangeError(message);
+    throw new Error(message);
+  }
 }

@@ -18,6 +18,9 @@ export const SKILL_SUBDIR_MAX_ENTRIES = 1_000;
 // load_skill merges references/, resources/, and assets/ into one read-only
 // capability list, so its aggregate budget is three bounded subdirectories.
 export const SKILL_LOADABLE_REFERENCE_MAX_ENTRIES = SKILL_SUBDIR_MAX_ENTRIES * 3;
+export const SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES = SKILL_SUBDIR_MAX_ENTRIES;
+export const SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES =
+  SKILL_LOADABLE_REFERENCE_MAX_ENTRIES;
 export const SKILL_ALLOWED_SUBDIR_MAX_ENTRIES = 16;
 export const SKILL_STEERING_PATH_MAX_ENTRIES = 16;
 export const SKILL_PATH_SEGMENT_MAX_LENGTH = 255;

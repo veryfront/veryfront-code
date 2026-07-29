@@ -96,6 +96,28 @@ Deno.test("loadRuntimeBuiltinSkillCatalog loads flat and directory skills with r
   });
 });
 
+Deno.test("builtin directory skills take precedence over flat files with the same id", () => {
+  withTempDir((rootDir) => {
+    Deno.writeTextFileSync(
+      resolve(rootDir, "writer.md"),
+      "---\ndescription: Flat writer\nallowed-tools: shell\n---\n\n# Flat writer",
+    );
+    Deno.mkdirSync(resolve(rootDir, "writer"), { recursive: true });
+    Deno.writeTextFileSync(
+      resolve(rootDir, "writer", "SKILL.md"),
+      "---\nname: writer\ndescription: Directory writer\nallowed-tools: read_file\n---\n\n# Directory writer",
+    );
+
+    const catalog = loadRuntimeBuiltinSkillCatalog({ skillsDir: rootDir });
+
+    assertEquals(catalog.length, 1);
+    assertEquals(catalog[0]?.id, "writer");
+    assertEquals(catalog[0]?.description, "Directory writer");
+    assertEquals(catalog[0]?.allowedTools, ["read_file"]);
+    assertEquals(catalog[0]?.instructions.includes("# Directory writer"), true);
+  });
+});
+
 Deno.test("getRuntimeProjectInstructions returns the first available instruction file", async () => {
   const fileCalls: RuntimeGetProjectFileOptions[] = [];
 
@@ -366,6 +388,37 @@ Deno.test("catalog includes colocated skills with owner metadata and source path
   const own = skills.find((skill) => skill.id === "researcher");
   assertEquals(own?.ownerAgentId, "researcher");
   assertEquals(own?.sourcePath, "agents/researcher/SKILL.md");
+});
+
+Deno.test("catalog quarantines an exact global and agent-owned skill id collision", async () => {
+  const errors: string[] = [];
+  const skills = await getRuntimeProjectSkillCatalog({
+    ...PROJECT_CONTEXT,
+    builtinSkills: [],
+    getProjectFiles: async () => [
+      { path: "skills/researcher/SKILL.md" },
+      { path: "agents/researcher/AGENT.md" },
+      { path: "agents/researcher/SKILL.md" },
+    ],
+    getProjectFile: async ({ path }) => {
+      if (path === "skills/researcher/SKILL.md") {
+        return {
+          path,
+          content: "---\nname: researcher\ndescription: Global researcher\n---\nGlobal policy.",
+        };
+      }
+      if (path === "agents/researcher/SKILL.md") {
+        return { path, content: RESEARCHER_SKILL_MD };
+      }
+      return null;
+    },
+    logger: {
+      error: (message) => errors.push(message),
+    },
+  });
+
+  assertEquals(skills.some((skill) => skill.id === "researcher"), false);
+  assertEquals(errors.some((message) => message.includes('skill id "researcher"')), true);
 });
 
 Deno.test("catalog ignores colocated skills without an owning AGENT.md", async () => {

@@ -6,12 +6,49 @@ import {
   filterToolsForSkill,
   isToolAllowedBySkill,
   matchesAllowedTool,
+  snapshotAllowedToolPatterns,
   validateAllowedToolPatterns,
   validateStrictAllowedToolPatterns,
 } from "./allowed-tools.ts";
 import { SKILL_TOOL_IDS } from "./types.ts";
 
 describe("src/skill/allowed-tools", () => {
+  describe("snapshotAllowedToolPatterns", () => {
+    it("should snapshot array data properties without invoking an overridden iterator", () => {
+      let iteratorGetterReads = 0;
+      const patterns = ["read_file"];
+      Object.defineProperty(patterns, Symbol.iterator, {
+        configurable: true,
+        get() {
+          iteratorGetterReads += 1;
+          throw new Error("allowed-tools iterator getter must not run");
+        },
+      });
+
+      assertEquals(snapshotAllowedToolPatterns(patterns), ["read_file"]);
+      assertEquals(iteratorGetterReads, 0);
+    });
+
+    it("should reject element accessors without invoking them", () => {
+      let elementGetterReads = 0;
+      const patterns: string[] = [];
+      Object.defineProperty(patterns, 0, {
+        enumerable: true,
+        get() {
+          elementGetterReads += 1;
+          return "read_file";
+        },
+      });
+
+      assertThrows(
+        () => snapshotAllowedToolPatterns(patterns),
+        TypeError,
+        "data property",
+      );
+      assertEquals(elementGetterReads, 0);
+    });
+  });
+
   describe("matchesAllowedTool", () => {
     it("should match exact tool name", () => {
       assertEquals(matchesAllowedTool("Read", "Read"), true);

@@ -18,6 +18,24 @@ import {
 } from "./path-safety.ts";
 import { createSkillTestAdapter } from "./testing.ts";
 import { SKILL_ALLOWED_SUBDIR_MAX_ENTRIES, SKILL_SUBDIR_MAX_ENTRIES } from "./limits.ts";
+import { createSkillOperationBudget } from "./operation-budget.ts";
+
+async function settlesWithin(promise: Promise<unknown>, timeoutMs = 50): Promise<boolean> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((resolve) => {
+        timeoutId = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
+}
 
 describe("src/skill/path-safety", () => {
   describe("validateSkillPath", () => {
@@ -159,6 +177,33 @@ describe("src/skill/path-safety", () => {
         RangeError,
         `${SKILL_SUBDIR_MAX_ENTRIES}`,
       );
+    });
+
+    it("honors a shared cancellation budget during strict validation", async () => {
+      const adapter = {
+        ...createSkillTestAdapter({}),
+        exists: () => new Promise<boolean>(() => {}),
+      };
+      const controller = new AbortController();
+      const budget = createSkillOperationBudget({ abortSignal: controller.signal });
+      const validateWithBudget = validateStrictSkillPath as unknown as (
+        root: string,
+        requestedPath: string,
+        allowedSubdirs: readonly string[],
+        fsAdapter: typeof adapter,
+        options: { budget: typeof budget },
+      ) => Promise<string>;
+
+      const validation = validateWithBudget(
+        "/project/skills/test",
+        "references/guide.md",
+        ["references"],
+        adapter,
+        { budget },
+      );
+      controller.abort(new Error("cancel strict validation"));
+
+      assertEquals(await settlesWithin(validation), true);
     });
 
     it("should reject symlinked files in local skills", async () => {
@@ -345,6 +390,31 @@ describe("src/skill/path-safety", () => {
         RangeError,
         "at most 1000",
       );
+    });
+
+    it("honors a shared cancellation budget during strict listing", async () => {
+      const adapter = {
+        ...createSkillTestAdapter({}),
+        exists: () => new Promise<boolean>(() => {}),
+      };
+      const controller = new AbortController();
+      const budget = createSkillOperationBudget({ abortSignal: controller.signal });
+      const listWithBudget = listStrictSkillSubdir as unknown as (
+        root: string,
+        subdir: string,
+        fsAdapter: typeof adapter,
+        options: { budget: typeof budget },
+      ) => Promise<string[]>;
+
+      const listing = listWithBudget(
+        "/project/skills/test",
+        "references",
+        adapter,
+        { budget },
+      );
+      controller.abort(new Error("cancel strict listing"));
+
+      assertEquals(await settlesWithin(listing), true);
     });
 
     it("rejects symlinked local subdirectories instead of listing their targets", async () => {

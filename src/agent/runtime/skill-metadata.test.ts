@@ -14,17 +14,23 @@ import {
   buildRuntimeLoadedSkillResponse,
   buildRuntimeSkillDefinition,
   buildStrictRuntimeLoadedSkillResponse,
+  buildUnsafeLegacyRuntimeLoadedSkillResponse,
+  buildUnsafeLegacyRuntimeSkillDefinition,
+  getRuntimeSkillFrontmatterSchema,
   hasRuntimeSkillAllowedToolsPolicy,
   MAX_RUNTIME_SKILL_MODEL_LENGTH,
   MAX_RUNTIME_SKILL_STEPS,
   MAX_RUNTIME_SKILL_THINKING_TOKENS,
   normalizeRuntimeSkillReferencePath,
   normalizeStrictRuntimeSkillReferencePath,
+  normalizeUnsafeLegacyRuntimeSkillReferencePath,
   parseRuntimeSkillMetadata,
   parseStrictRuntimeSkillMetadata,
+  parseUnsafeLegacyRuntimeSkillMetadata,
   resolveRuntimeSkillsForAgent,
 } from "./skill-metadata.ts";
 import { buildStrictRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
+import * as runtimeSkillMetadata from "./skill-metadata.ts";
 
 Deno.test("parseRuntimeSkillMetadata parses valid frontmatter", () => {
   const content = `---
@@ -67,14 +73,17 @@ Review the code for quality issues.`;
   assertEquals(skill.instructions, content);
 });
 
-Deno.test("buildRuntimeSkillDefinition preserves its complete historical public contract", () => {
-  const skill = buildRuntimeSkillDefinition({
+Deno.test("generic runtime definition is strict while the unsafe legacy builder is compatible", () => {
+  const input = {
     id: "Legacy Public / ID",
     content: "# Public fallback description\nBody",
     references: ["z.md", "a.md", "z.md"],
     ownerAgentId: "owner-only",
     sourcePath: "../raw\\source.md",
-  });
+  };
+
+  assertEquals(buildRuntimeSkillDefinition(input), null);
+  const skill = buildUnsafeLegacyRuntimeSkillDefinition(input);
   assertExists(skill);
 
   const allowedTools: string[] = skill.allowedTools;
@@ -173,8 +182,8 @@ Body`;
   assertEquals(skill?.allowedTools, ["bash", "readFile"]);
 });
 
-Deno.test("parseRuntimeSkillMetadata preserves unbounded legacy overrides through its mutable public contract", () => {
-  const metadata = parseRuntimeSkillMetadata(
+Deno.test("unsafe legacy runtime parser preserves unbounded mutable overrides", () => {
+  const metadata = parseUnsafeLegacyRuntimeSkillMetadata(
     `---\nmodel: ${"m".repeat(MAX_RUNTIME_SKILL_MODEL_LENGTH + 1)}\nthinking: ${
       MAX_RUNTIME_SKILL_THINKING_TOKENS + 1
     }\nmax-steps: ${MAX_RUNTIME_SKILL_STEPS + 1}\n---\nBody`,
@@ -285,6 +294,27 @@ description: Desc
 Body`;
   const skill = buildRuntimeSkillDefinition({ id: "s1", content, references: [] });
   assertEquals(skill?.references, undefined);
+});
+
+Deno.test("buildRuntimeSkillDefinition rejects direct input accessors without invoking them", () => {
+  let getterReads = 0;
+  const input = {
+    content: "---\nname: safe\ndescription: Safe\n---\nBody",
+  } as Parameters<typeof buildRuntimeSkillDefinition>[0];
+  Object.defineProperty(input, "id", {
+    enumerable: true,
+    get() {
+      getterReads += 1;
+      return "safe";
+    },
+  });
+
+  assertThrows(
+    () => buildRuntimeSkillDefinition(input),
+    TypeError,
+    "data property",
+  );
+  assertEquals(getterReads, 0);
 });
 
 Deno.test("buildRuntimeSkillDefinition returns null and logs invalid metadata", () => {
@@ -407,15 +437,16 @@ Deno.test("strict directory catalog preserves omitted versus explicit-empty poli
   assertStringIncludes(noToolsLine, '"allowedTools":[]');
 });
 
-Deno.test("parseRuntimeSkillMetadata preserves canonical precedence and legacy pattern acceptance", () => {
+Deno.test("unsafe legacy runtime parser preserves canonical precedence and pattern acceptance", () => {
   assertEquals(
-    parseRuntimeSkillMetadata(
+    parseUnsafeLegacyRuntimeSkillMetadata(
       "---\nallowed-tools: read_file\nallowed_tools: write_file\n---\nBody",
     )?.allowedTools,
     ["read_file"],
   );
   assertEquals(
-    parseRuntimeSkillMetadata("---\nallowed-tools: Bash(git:*)\n---\nBody")?.allowedTools,
+    parseUnsafeLegacyRuntimeSkillMetadata("---\nallowed-tools: Bash(git:*)\n---\nBody")
+      ?.allowedTools,
     ["Bash(git:*)"],
   );
 
@@ -424,12 +455,13 @@ Deno.test("parseRuntimeSkillMetadata preserves canonical precedence and legacy p
     (_, index) => `tool_${index}`,
   ).join(" ");
   assertEquals(
-    parseRuntimeSkillMetadata(`---\nallowed-tools: ${tooManyPatterns}\n---\nBody`)?.allowedTools
-      .length,
+    parseUnsafeLegacyRuntimeSkillMetadata(
+      `---\nallowed-tools: ${tooManyPatterns}\n---\nBody`,
+    )?.allowedTools.length,
     SKILL_ALLOWED_TOOL_MAX_PATTERNS + 1,
   );
   assertEquals(
-    parseRuntimeSkillMetadata(
+    parseUnsafeLegacyRuntimeSkillMetadata(
       `---\nallowed-tools: a${"x".repeat(SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH)}\n---\nBody`,
     )?.allowedTools,
     [`a${"x".repeat(SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH)}`],
@@ -464,12 +496,23 @@ Deno.test("parseStrictRuntimeSkillMetadata rejects ambiguous and invalid allowed
   );
 });
 
-Deno.test("strict parsing bounds documents without tightening the public parser", () => {
+Deno.test("generic runtime parsing is strict while unsafe legacy parsing remains compatible", () => {
   const oversized = "x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1);
-  assertExists(parseRuntimeSkillMetadata(oversized));
+  assertExists(parseUnsafeLegacyRuntimeSkillMetadata(oversized));
+  assertEquals(parseRuntimeSkillMetadata(oversized), null);
   assertEquals(
     parseStrictRuntimeSkillMetadata(oversized),
     null,
+  );
+});
+
+Deno.test("getRuntimeSkillFrontmatterSchema exposes the strict frontmatter contract", () => {
+  assertEquals(
+    getRuntimeSkillFrontmatterSchema().safeParse({
+      model: "model\u0000escape",
+      "max-steps": MAX_RUNTIME_SKILL_STEPS + 1,
+    }).success,
+    false,
   );
 });
 
@@ -485,13 +528,16 @@ Deno.test("normalizeRuntimeSkillReferencePath trims whitespace", () => {
   assertEquals(normalizeRuntimeSkillReferencePath("  docs/guide.md  "), "docs/guide.md");
 });
 
-Deno.test("normalizeRuntimeSkillReferencePath preserves its legacy absolute-path behavior", () => {
-  assertEquals(normalizeRuntimeSkillReferencePath("/etc/passwd"), null);
+Deno.test("unsafe legacy runtime path normalizer preserves drive-path behavior", () => {
+  assertEquals(normalizeUnsafeLegacyRuntimeSkillReferencePath("/etc/passwd"), null);
   assertEquals(
-    normalizeRuntimeSkillReferencePath("C:\\Windows\\system.ini"),
+    normalizeUnsafeLegacyRuntimeSkillReferencePath("C:\\Windows\\system.ini"),
     "C:/Windows/system.ini",
   );
-  assertEquals(normalizeRuntimeSkillReferencePath("\\\\server\\share\\secret.md"), null);
+  assertEquals(
+    normalizeUnsafeLegacyRuntimeSkillReferencePath("\\\\server\\share\\secret.md"),
+    null,
+  );
 });
 
 Deno.test("normalizeRuntimeSkillReferencePath rejects parent traversal", () => {
@@ -511,21 +557,23 @@ Deno.test("normalizeRuntimeSkillReferencePath rejects empty segments", () => {
   assertEquals(normalizeRuntimeSkillReferencePath("docs//guide.md"), null);
 });
 
-Deno.test("normalizeRuntimeSkillReferencePath preserves legacy unbounded path acceptance", () => {
+Deno.test("unsafe legacy runtime path normalizer preserves unbounded path acceptance", () => {
   assertEquals(
-    normalizeRuntimeSkillReferencePath("references/secret\u0000.md"),
+    normalizeUnsafeLegacyRuntimeSkillReferencePath("references/secret\u0000.md"),
     "references/secret\u0000.md",
   );
   assertEquals(
-    normalizeRuntimeSkillReferencePath("references/secret\u009b.md"),
+    normalizeUnsafeLegacyRuntimeSkillReferencePath("references/secret\u009b.md"),
     "references/secret\u009b.md",
   );
   assertEquals(
-    normalizeRuntimeSkillReferencePath(`references/${String.fromCharCode(0xd800)}.md`),
+    normalizeUnsafeLegacyRuntimeSkillReferencePath(
+      `references/${String.fromCharCode(0xd800)}.md`,
+    ),
     `references/${String.fromCharCode(0xd800)}.md`,
   );
   assertEquals(
-    normalizeRuntimeSkillReferencePath(`references/${"x".repeat(256)}.md`),
+    normalizeUnsafeLegacyRuntimeSkillReferencePath(`references/${"x".repeat(256)}.md`),
     `references/${"x".repeat(256)}.md`,
   );
 });
@@ -545,6 +593,35 @@ Deno.test("normalizeStrictRuntimeSkillReferencePath rejects unsafe bounded paths
   assertEquals(
     normalizeStrictRuntimeSkillReferencePath(`references/${"x".repeat(256)}.md`),
     null,
+  );
+});
+
+Deno.test("generic runtime parser and path helpers fail closed", () => {
+  assertEquals(
+    parseRuntimeSkillMetadata("x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1)),
+    null,
+  );
+  assertEquals(normalizeRuntimeSkillReferencePath("C:\\private\\secret.md"), null);
+  assertEquals(normalizeRuntimeSkillReferencePath("references/secret\u0000.md"), null);
+});
+
+Deno.test("unsafe legacy runtime parser and path compatibility is explicitly named", () => {
+  const legacyParser = Reflect.get(
+    runtimeSkillMetadata,
+    "parseUnsafeLegacyRuntimeSkillMetadata",
+  );
+  const legacyNormalizer = Reflect.get(
+    runtimeSkillMetadata,
+    "normalizeUnsafeLegacyRuntimeSkillReferencePath",
+  );
+  assertEquals(typeof legacyParser, "function");
+  assertEquals(typeof legacyNormalizer, "function");
+  if (typeof legacyParser !== "function" || typeof legacyNormalizer !== "function") return;
+
+  assertExists(legacyParser("x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1)));
+  assertEquals(
+    legacyNormalizer("C:\\private\\secret.md"),
+    "C:/private/secret.md",
   );
 });
 
@@ -587,11 +664,11 @@ Write carefully.`,
   assertEquals(response.delegationTools, ["read_file", "write_file", "shell"]);
   assertEquals(response.unavailableCurrentRunTools, ["shell"]);
   assertEquals(response.note, "Use only allowed tools.");
-  assertEquals(response.delegationNote, "Delegate unavailable tools.");
+  assertEquals(response.delegationNote, undefined);
 });
 
-Deno.test("buildRuntimeLoadedSkillResponse preserves legacy exact-name tool intersection", () => {
-  const response = buildRuntimeLoadedSkillResponse({
+Deno.test("unsafe legacy loaded response preserves exact-name tool intersection", () => {
+  const response = buildUnsafeLegacyRuntimeLoadedSkillResponse({
     skillId: "api-reader",
     instructions: "---\nallowed-tools: api:*\n---\nRead API data.",
     nextStep: "Continue after loading.",
@@ -606,6 +683,20 @@ Deno.test("buildRuntimeLoadedSkillResponse preserves legacy exact-name tool inte
 
 Deno.test("buildStrictRuntimeLoadedSkillResponse intersects prefix policies by match semantics", () => {
   const response = buildStrictRuntimeLoadedSkillResponse({
+    skillId: "api-reader",
+    instructions: "---\nallowed-tools: api:*\n---\nRead API data.",
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+    availableToolNames: ["api:list", "read_file"],
+  });
+
+  assertEquals(response.allowedTools, ["api:*"]);
+  assertEquals(response.unavailableCurrentRunTools, undefined);
+  assertEquals(response.note, "Use only allowed tools.");
+});
+
+Deno.test("buildRuntimeLoadedSkillResponse uses strict prefix policy matching", () => {
+  const response = buildRuntimeLoadedSkillResponse({
     skillId: "api-reader",
     instructions: "---\nallowed-tools: api:*\n---\nRead API data.",
     nextStep: "Continue after loading.",
@@ -663,7 +754,7 @@ Research carefully.`,
   assertEquals(response.overrideNote, undefined);
 });
 
-Deno.test("buildRuntimeLoadedSkillResponse keeps delegation note for scoped delegate tools", () => {
+Deno.test("buildRuntimeLoadedSkillResponse omits delegation notes for policy-blocked delegates", () => {
   const response = buildRuntimeLoadedSkillResponse({
     skillId: "write",
     instructions: `---
@@ -678,10 +769,29 @@ Write carefully.`,
 
   assertEquals(response.allowedTools, []);
   assertEquals(response.unavailableCurrentRunTools, ["shell"]);
+  assertEquals(response.delegationNote, undefined);
+});
+
+Deno.test("buildStrictRuntimeLoadedSkillResponse keeps delegation notes only for policy-allowed delegates", () => {
+  const response = buildStrictRuntimeLoadedSkillResponse({
+    skillId: "write",
+    instructions: `---
+allowed-tools:
+  - agent_writer
+  - shell
+---
+Write carefully.`,
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+    availableToolNames: ["agent_writer", "agent_admin", "read_file"],
+  });
+
+  assertEquals(response.allowedTools, ["agent_writer"]);
+  assertEquals(response.unavailableCurrentRunTools, ["shell"]);
   assertEquals(response.delegationNote, "Delegate unavailable tools.");
 });
 
-Deno.test("buildRuntimeLoadedSkillResponse preserves runtime overrides and references", () => {
+Deno.test("buildRuntimeLoadedSkillResponse omits override forwarding when inventory is unknown", () => {
   const response = buildRuntimeLoadedSkillResponse({
     skillId: "research",
     instructions: `---
@@ -698,7 +808,7 @@ Research carefully.`,
   assertEquals(response.model, "sonnet");
   assertEquals(response.thinking, 2000);
   assertEquals(response.maxSteps, 8);
-  assertEquals(response.overrideNote, "Forward overrides.");
+  assertEquals(response.overrideNote, undefined);
   assertEquals(response.references, ["references/guide.md"]);
   assertEquals(response.referenceNote, "Load references separately.");
 });
@@ -721,7 +831,32 @@ Research carefully.`,
   assertEquals(response.overrideNote, undefined);
 });
 
-Deno.test("buildRuntimeLoadedSkillResponse preserves the legacy base response for invalid metadata", () => {
+Deno.test("unsafe legacy loaded responses preserve historical delegation and override notes", () => {
+  const response = buildUnsafeLegacyRuntimeLoadedSkillResponse({
+    skillId: "legacy",
+    instructions:
+      "---\nallowed-tools: read_file\nmodel: sonnet\n---\nUse the legacy response contract.",
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+    availableToolNames: ["agent_writer", "invoke_agent"],
+  });
+
+  assertEquals(
+    response.delegationNote,
+    loadedSkillMessages.unavailableCurrentRunToolsDelegationNote,
+  );
+  assertEquals(response.overrideNote, loadedSkillMessages.overrideNote);
+
+  const unknownInventory = buildUnsafeLegacyRuntimeLoadedSkillResponse({
+    skillId: "legacy",
+    instructions: "---\nmodel: sonnet\n---\nUse the legacy response contract.",
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+  });
+  assertEquals(unknownInventory.overrideNote, loadedSkillMessages.overrideNote);
+});
+
+Deno.test("unsafe legacy loaded response preserves the base response for invalid metadata", () => {
   const instructions = `---
 allowed-tools:
   - shell
@@ -729,7 +864,7 @@ allowed-tools:
 ---
 Body`;
   const errors: Array<Record<string, unknown> | undefined> = [];
-  const response = buildRuntimeLoadedSkillResponse({
+  const response = buildUnsafeLegacyRuntimeLoadedSkillResponse({
     skillId: "invalid",
     instructions,
     nextStep: "Continue after loading.",
@@ -776,8 +911,32 @@ Body`;
   assertEquals(errors.length, 1);
 });
 
-Deno.test("buildRuntimeLoadedSkillResponse preserves legacy explicit-empty policy behavior", () => {
+Deno.test("buildRuntimeLoadedSkillResponse fails closed when metadata is invalid", () => {
+  const instructions = `---
+allowed-tools:
+  - shell
+  - 123
+---
+Body`;
   const response = buildRuntimeLoadedSkillResponse({
+    skillId: "invalid",
+    instructions,
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+  });
+
+  assertEquals(response, {
+    skillId: "invalid",
+    instructions,
+    nextStep: "Continue after loading.",
+    allowedTools: [],
+    delegationTools: [],
+    note: "No direct tools are available.",
+  });
+});
+
+Deno.test("unsafe legacy loaded response preserves explicit-empty policy behavior", () => {
+  const response = buildUnsafeLegacyRuntimeLoadedSkillResponse({
     skillId: "read-only",
     instructions: "---\nallowed-tools: []\n---\nRead without tools.",
     nextStep: "Continue after loading.",
@@ -804,7 +963,21 @@ Deno.test("buildStrictRuntimeLoadedSkillResponse enforces an explicit empty allo
   assertEquals(response.note, "No direct tools are available.");
 });
 
-Deno.test("buildRuntimeLoadedSkillResponse preserves legacy unbounded direct inputs", () => {
+Deno.test("buildRuntimeLoadedSkillResponse enforces an explicit empty allowed-tools policy", () => {
+  const response = buildRuntimeLoadedSkillResponse({
+    skillId: "read-only",
+    instructions: "---\nallowed-tools: []\n---\nRead without tools.",
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+    availableToolNames: ["read_file"],
+  });
+
+  assertEquals(response.allowedTools, []);
+  assertEquals(response.delegationTools, []);
+  assertEquals(response.note, "No direct tools are available.");
+});
+
+Deno.test("unsafe legacy loaded response preserves unbounded direct inputs", () => {
   const instructions = "x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1);
   const references = Array.from(
     { length: SKILL_LOADABLE_REFERENCE_MAX_ENTRIES + 1 },
@@ -815,7 +988,7 @@ Deno.test("buildRuntimeLoadedSkillResponse preserves legacy unbounded direct inp
     (_unused, index) => index === 0 ? `tool\u0000${index}` : `tool_${index}`,
   );
 
-  const response = buildRuntimeLoadedSkillResponse({
+  const response = buildUnsafeLegacyRuntimeLoadedSkillResponse({
     skillId: "Legacy Public / ID",
     instructions,
     nextStep: "Continue after loading.",
@@ -827,6 +1000,31 @@ Deno.test("buildRuntimeLoadedSkillResponse preserves legacy unbounded direct inp
   assertEquals(response.skillId, "Legacy Public / ID");
   assertEquals(response.instructions, instructions);
   assertEquals(response.references, references);
+});
+
+Deno.test("buildRuntimeLoadedSkillResponse bounds direct inputs", () => {
+  assertThrows(
+    () =>
+      buildRuntimeLoadedSkillResponse({
+        skillId: "Legacy Public / ID",
+        instructions: "Body",
+        nextStep: "Continue after loading.",
+        messages: loadedSkillMessages,
+      }),
+    TypeError,
+    "skillId",
+  );
+  assertThrows(
+    () =>
+      buildRuntimeLoadedSkillResponse({
+        skillId: "bounded",
+        instructions: "x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1),
+        nextStep: "Continue after loading.",
+        messages: loadedSkillMessages,
+      }),
+    RangeError,
+    `${SKILL_DOCUMENT_MAX_CHARACTERS}`,
+  );
 });
 
 Deno.test("buildStrictRuntimeLoadedSkillResponse bounds direct response inputs", () => {
@@ -884,4 +1082,149 @@ Deno.test("buildStrictRuntimeLoadedSkillResponse bounds direct response inputs",
     TypeError,
     "references",
   );
+});
+
+Deno.test("strict loaded responses bound nextStep and every message", () => {
+  const base = {
+    skillId: "bounded",
+    instructions: "Body",
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+  };
+  assertThrows(
+    () =>
+      buildStrictRuntimeLoadedSkillResponse({
+        ...base,
+        nextStep: "x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1),
+      }),
+    RangeError,
+    `${SKILL_DOCUMENT_MAX_CHARACTERS}`,
+  );
+
+  for (
+    const field of Object.keys(loadedSkillMessages) as Array<
+      keyof typeof loadedSkillMessages
+    >
+  ) {
+    assertThrows(
+      () =>
+        buildStrictRuntimeLoadedSkillResponse({
+          ...base,
+          messages: {
+            ...loadedSkillMessages,
+            [field]: "x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1),
+          },
+        }),
+      RangeError,
+      `${SKILL_DOCUMENT_MAX_CHARACTERS}`,
+    );
+  }
+});
+
+Deno.test("strict loaded responses reject direct accessors without invoking them", () => {
+  let inputGetterReads = 0;
+  const input = {
+    instructions: "Body",
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+  } as Parameters<typeof buildStrictRuntimeLoadedSkillResponse>[0];
+  Object.defineProperty(input, "skillId", {
+    enumerable: true,
+    get() {
+      inputGetterReads += 1;
+      return "bounded";
+    },
+  });
+
+  assertThrows(
+    () => buildStrictRuntimeLoadedSkillResponse(input),
+    TypeError,
+    "data property",
+  );
+  assertEquals(inputGetterReads, 0);
+
+  let messageGetterReads = 0;
+  const messages = { ...loadedSkillMessages };
+  Object.defineProperty(messages, "referenceNote", {
+    enumerable: true,
+    get() {
+      messageGetterReads += 1;
+      return "References";
+    },
+  });
+  assertThrows(
+    () =>
+      buildStrictRuntimeLoadedSkillResponse({
+        skillId: "bounded",
+        instructions: "Body",
+        nextStep: "Continue after loading.",
+        messages,
+      }),
+    TypeError,
+    "data property",
+  );
+  assertEquals(messageGetterReads, 0);
+});
+
+Deno.test("strict loaded responses reject reference accessors without invoking them", () => {
+  let getterReads = 0;
+  const references: string[] = [];
+  Object.defineProperty(references, 0, {
+    enumerable: true,
+    get() {
+      getterReads += 1;
+      return "references/guide.md";
+    },
+  });
+
+  assertThrows(
+    () =>
+      buildStrictRuntimeLoadedSkillResponse({
+        skillId: "bounded",
+        instructions: "Body",
+        nextStep: "Continue after loading.",
+        messages: loadedSkillMessages,
+        references,
+      }),
+    TypeError,
+    "data property",
+  );
+  assertEquals(getterReads, 0);
+});
+
+Deno.test("strict loaded responses snapshot array lengths by descriptor", () => {
+  let referenceLengthReads = 0;
+  let toolLengthReads = 0;
+  const references = new Proxy(["references/guide.md"], {
+    get(target, key, receiver) {
+      if (key === "length") {
+        referenceLengthReads += 1;
+        throw new Error("reference length getter must not run");
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const availableToolNames = new Proxy(["read_file"], {
+    get(target, key, receiver) {
+      if (key === "length") {
+        toolLengthReads += 1;
+        throw new Error("tool length getter must not run");
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  });
+
+  const response = buildStrictRuntimeLoadedSkillResponse({
+    skillId: "bounded",
+    instructions: "---\nallowed-tools: read_file\n---\nBody",
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+    references,
+    availableToolNames,
+  });
+
+  assertEquals(response.references, ["references/guide.md"]);
+  assertEquals(response.allowedTools, ["read_file"]);
+  assertEquals(referenceLengthReads, 0);
+  assertEquals(toolLengthReads, 0);
 });

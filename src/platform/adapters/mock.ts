@@ -1,6 +1,7 @@
 import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { validateTempDirectoryPrefix } from "#veryfront/platform/compat/temp-directory-prefix.ts";
+import { requireBoundedFileReadLimit } from "#veryfront/platform/adapters/bounded-file-read.ts";
 import type { FileChangeEvent, FileWatcher, RuntimeAdapter, WatchOptions } from "./base.ts";
 
 export interface MockRuntimeAdapter extends RuntimeAdapter {
@@ -37,6 +38,85 @@ function isDescendantPath(candidate: string, path: string): boolean {
   const normalizedPath = normalizeMockPath(path);
   if (normalizedCandidate === normalizedPath) return false;
   return normalizedCandidate.startsWith(descendantPrefix(normalizedPath));
+}
+
+function getMockUtf8CodePoint(
+  content: string,
+  index: number,
+): { codePoint: number; codeUnits: number } {
+  const value = content.codePointAt(index) ?? 0xfffd;
+  if (value >= 0xd800 && value <= 0xdfff) {
+    return { codePoint: 0xfffd, codeUnits: 1 };
+  }
+  return { codePoint: value, codeUnits: value > 0xffff ? 2 : 1 };
+}
+
+function getMockUtf8ByteLength(content: string): number {
+  let byteLength = 0;
+  for (let index = 0; index < content.length;) {
+    const { codePoint, codeUnits } = getMockUtf8CodePoint(content, index);
+    byteLength += codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
+    index += codeUnits;
+  }
+  return byteLength;
+}
+
+const MOCK_BOUNDED_UTF8_CHUNK_BYTES = 64 * 1024;
+
+function encodeMockUtf8Prefix(content: string, byteLimit: number): Uint8Array {
+  const chunks: Uint8Array[] = [];
+  let output = new Uint8Array(Math.min(byteLimit, MOCK_BOUNDED_UTF8_CHUNK_BYTES));
+  let outputLength = 0;
+  let byteLength = 0;
+  const writeByte = (value: number): boolean => {
+    if (byteLength >= byteLimit) return false;
+    if (outputLength === output.byteLength) {
+      chunks.push(output);
+      output = new Uint8Array(
+        Math.min(byteLimit - byteLength, MOCK_BOUNDED_UTF8_CHUNK_BYTES),
+      );
+      outputLength = 0;
+    }
+    output[outputLength++] = value;
+    byteLength += 1;
+    return true;
+  };
+
+  for (let index = 0; index < content.length && byteLength < byteLimit;) {
+    const { codePoint, codeUnits } = getMockUtf8CodePoint(content, index);
+    index += codeUnits;
+    if (codePoint <= 0x7f) {
+      writeByte(codePoint);
+      continue;
+    }
+    if (codePoint <= 0x7ff) {
+      if (!writeByte(0xc0 | (codePoint >> 6))) break;
+      writeByte(0x80 | (codePoint & 0x3f));
+      continue;
+    }
+    if (codePoint <= 0xffff) {
+      if (!writeByte(0xe0 | (codePoint >> 12))) break;
+      if (!writeByte(0x80 | ((codePoint >> 6) & 0x3f))) break;
+      writeByte(0x80 | (codePoint & 0x3f));
+      continue;
+    }
+    if (!writeByte(0xf0 | (codePoint >> 18))) break;
+    if (!writeByte(0x80 | ((codePoint >> 12) & 0x3f))) break;
+    if (!writeByte(0x80 | ((codePoint >> 6) & 0x3f))) break;
+    writeByte(0x80 | (codePoint & 0x3f));
+  }
+  if (outputLength > 0) {
+    chunks.push(outputLength === output.byteLength ? output : output.slice(0, outputLength));
+  }
+  if (chunks.length === 0) return new Uint8Array();
+  if (chunks.length === 1) return chunks[0]!;
+  const result = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
 }
 
 export function createMockAdapter(): MockRuntimeAdapter {
@@ -158,6 +238,19 @@ export function createMockAdapter(): MockRuntimeAdapter {
         if (content != null) return Promise.resolve(new TextEncoder().encode(content));
         return Promise.reject(fileNotFoundError(path));
       },
+      readFileBytesBounded: async (path: string, byteLimit: number) => {
+        const boundedLimit = requireBoundedFileReadLimit(byteLimit);
+        const normalizedPath = normalizeMockPath(path);
+        const bytes = byteFiles.get(normalizedPath);
+        if (bytes != null) {
+          return bytes.slice(0, boundedLimit);
+        }
+        const content = files.get(normalizedPath);
+        if (content != null) {
+          return encodeMockUtf8Prefix(content, boundedLimit);
+        }
+        throw fileNotFoundError(path);
+      },
       writeFile: (path: string, content: string) => {
         const normalizedPath = normalizeMockPath(path);
         files.set(normalizedPath, content);
@@ -201,7 +294,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
         const content = files.get(normalizedPath);
         if (content != null) {
           return Promise.resolve({
-            size: new TextEncoder().encode(content).byteLength,
+            size: getMockUtf8ByteLength(content),
             isFile: true,
             isDirectory: false,
             isSymlink: false,

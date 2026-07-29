@@ -5,8 +5,10 @@ import {
   RUNTIME_LOAD_SKILL_CONTINUATION_NOTE,
   type RuntimeLoadSkillBuiltinStore,
   type RuntimeLoadSkillToolContext,
+  type RuntimeLoadSkillToolOptions,
 } from "./load-skill-tool.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
+import { SKILL_DOCUMENT_MAX_CHARACTERS } from "#veryfront/skill/limits.ts";
 import type {
   RuntimeLoadedProjectSkill,
   RuntimeProjectSkillContext,
@@ -100,6 +102,30 @@ Deno.test("createRuntimeLoadSkillTool loads project skills before builtin skills
     referenceNote:
       "After this skill is loaded, use load_skill with the `file` parameter only for one of these listed reference files.",
   });
+});
+
+Deno.test("createRuntimeLoadSkillTool omits delegation advice when tool inventory is unknown", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([[
+        "plan",
+        {
+          instructions: "---\nmodel: sonnet\n---\n# Project plan",
+          references: [],
+        },
+      ]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
+
+  assertEquals(result.nextStep.includes("invoke_agent"), false);
+  assertEquals(result.nextStep.includes("multi-step or isolated work"), false);
+  assertEquals(result.delegationNote, undefined);
+  assertEquals(result.overrideNote, undefined);
 });
 
 Deno.test("createRuntimeLoadSkillTool forwards the exact execution cancellation to project reads", async () => {
@@ -469,7 +495,7 @@ Read without direct tools.`,
   assertStringIncludes(result.note ?? "", "intentionally empty");
 });
 
-Deno.test("createRuntimeLoadSkillTool names scoped delegates and omits override forwarding", async () => {
+Deno.test("createRuntimeLoadSkillTool omits scoped delegates blocked by the effective policy", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext({
       availableToolNames: ["read_file", "agent_writer", "load_skill"],
@@ -497,13 +523,42 @@ Write carefully.`,
 
   assertEquals(result.allowedTools, ["read_file"]);
   assertEquals(result.unavailableCurrentRunTools, ["write_file"]);
-  assertStringIncludes(
-    result.nextStep,
-    "use only these available scoped delegation tools: `agent_writer`",
-  );
-  assertStringIncludes(result.delegationNote ?? "", "`agent_writer`");
+  assertEquals(result.nextStep.includes("agent_writer"), false);
+  assertEquals(result.delegationNote, undefined);
   assertEquals(JSON.stringify(result).includes("invoke_agent"), false);
   assertEquals(result.overrideNote, undefined);
+});
+
+Deno.test("createRuntimeLoadSkillTool names only delegates allowed by the effective policy", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({
+      availableToolNames: ["agent_admin", "agent_writer", "load_skill"],
+    }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({
+      skills: new Map([
+        [
+          "write",
+          `---
+allowed-tools:
+  - agent_writer
+  - write_file
+---
+Write carefully.`,
+        ],
+      ]),
+    }),
+  });
+
+  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "write" }));
+
+  assertEquals(result.allowedTools, ["agent_writer"]);
+  assertEquals(result.unavailableCurrentRunTools, ["write_file"]);
+  assertStringIncludes(result.nextStep, "`agent_writer`");
+  assertEquals(result.nextStep.includes("agent_admin"), false);
+  assertStringIncludes(result.delegationNote ?? "", "`agent_writer`");
+  assertEquals((result.delegationNote ?? "").includes("agent_admin"), false);
 });
 
 Deno.test("createRuntimeLoadSkillTool omits delegation advice without delegate tools", async () => {
@@ -576,6 +631,1464 @@ Use form_input once, then produce the plan.`,
   assertEquals(secondResult.unavailableCurrentRunTools, ["write_file"]);
   assertEquals(secondResult.maxSteps, 8);
   assertEquals(secondResult.references, ["references/write.md"]);
+});
+
+Deno.test("createRuntimeLoadSkillTool retains compact skill markers instead of full instructions", async () => {
+  const context = createProjectContext();
+  const instructions = `# Sensitive body\n\n${"retain-never ".repeat(4_000)}`;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({
+      skills: new Map([["large", instructions]]),
+      referenceLists: new Map([["large", ["references/guide.md"]]]),
+    }),
+  });
+
+  const first = expectLoadedSkillResponse(await tool.execute({ skillId: "large" }));
+  const [cached] = Object.values(context.loadedSkillResponses ?? {});
+
+  assertEquals(first.instructions, instructions);
+  assertEquals(cached?.instructions.includes("retain-never"), false);
+  assertEquals(cached?.references, ["references/guide.md"]);
+  assertStringIncludes(
+    expectLoadedSkillResponse(await tool.execute({ skillId: "large" })).instructions,
+    "already loaded",
+  );
+});
+
+Deno.test("returned references cannot escalate cached reference authorization", async () => {
+  const context = createProjectContext();
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({
+      skills: new Map([["writer", "# Writer"]]),
+      references: new Map([
+        ["writer/references/public.md", "public"],
+        ["writer/references/secret.md", "secret"],
+      ]),
+      referenceLists: new Map([["writer", ["references/public.md"]]]),
+    }),
+  });
+
+  const first = expectLoadedSkillResponse(await tool.execute({ skillId: "writer" }));
+  first.references?.push("references/secret.md");
+
+  const second = expectLoadedSkillResponse(await tool.execute({ skillId: "writer" }));
+  assertEquals(second.references, ["references/public.md"]);
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/secret.md. Available references: references/public.md',
+    },
+  );
+});
+
+Deno.test("tool recreation keeps reference authorization detached from replaced cache responses", async () => {
+  const context = createProjectContext({ availableSkillIds: ["writer"] });
+  const projectSkillLoader = createProjectSkillLoader({});
+  const builtinStore = createBuiltinStore({
+    skills: new Map([["writer", "# Writer"]]),
+    references: new Map([
+      ["writer/references/public.md", "public"],
+      ["writer/references/extra.md", "extra"],
+    ]),
+    referenceLists: new Map([["writer", ["references/public.md"]]]),
+  });
+  const initialTool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader,
+    builtinStore,
+  });
+
+  await initialTool.execute({ skillId: "writer" });
+  const loadedSkillResponses = context.loadedSkillResponses ?? {};
+  const [cacheKey] = Object.keys(loadedSkillResponses);
+  const cached = cacheKey === undefined ? undefined : loadedSkillResponses[cacheKey];
+  if (!cacheKey || !cached) throw new Error("Expected a loaded skill cache entry");
+  loadedSkillResponses[cacheKey] = {
+    ...cached,
+    references: ["references/public.md", "references/extra.md"],
+  };
+
+  const recreatedTool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader,
+    builtinStore,
+  });
+  assertEquals(
+    await recreatedTool.execute({ skillId: "writer", file: "references/extra.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/extra.md. Available references: references/public.md',
+    },
+  );
+});
+
+Deno.test("hydrated reference caches are authorized only after authoritative revalidation", async () => {
+  const context = createProjectContext({
+    availableSkillIds: ["writer"],
+    loadedSkillResponses: {
+      '["writer",null,"project-1","branch-1",null]': {
+        skillId: "writer",
+        instructions: "",
+        nextStep: "",
+        references: ["references/extra.md"],
+      },
+    },
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([
+        ["writer", { instructions: "# Writer", references: ["references/public.md"] }],
+      ]),
+      references: new Map([["writer/references/extra.md", "extra"]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(await tool.execute({ skillId: "writer", file: "references/extra.md" }), {
+    error:
+      'Reference file not advertised by loaded skill "writer": references/extra.md. Available references: references/public.md',
+  });
+});
+
+Deno.test("reference authorization is revalidated after the credential changes", async () => {
+  const context = createProjectContext({
+    availableSkillIds: ["writer"],
+  });
+  let bodyReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: (activeContext) => {
+        bodyReads += 1;
+        return Promise.resolve({
+          instructions: "# Writer",
+          references: activeContext.authToken === "credential-a"
+            ? ["references/secret.md"]
+            : ["references/public.md"],
+        });
+      },
+      loadProjectSkillReference: () => Promise.resolve("secret"),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  context.authToken = "credential-a";
+  await tool.execute({ skillId: "writer" });
+  assertEquals(
+    Object.keys(context.loadedSkillResponses ?? {}).some((key) => key.includes("credential-a")),
+    false,
+  );
+  context.authToken = "credential-b";
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/secret.md. Available references: references/public.md',
+    },
+  );
+  assertEquals(bodyReads, 2);
+});
+
+Deno.test("reference authorization restarts when the credential changes inside body revalidation", async () => {
+  const context = createProjectContext({
+    authToken: "credential-a",
+    availableSkillIds: ["writer"],
+  });
+  let bodyReads = 0;
+  let referenceReads = 0;
+  let mutateDuringNextBodyRead = false;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: (activeContext) => {
+        bodyReads += 1;
+        const credential = activeContext.authToken;
+        if (mutateDuringNextBodyRead) {
+          mutateDuringNextBodyRead = false;
+          context.authToken = "credential-c";
+        }
+        return Promise.resolve({
+          instructions: `# Writer for ${credential}`,
+          references: credential === "credential-c"
+            ? ["references/public.md"]
+            : ["references/secret.md"],
+        });
+      },
+      loadProjectSkillReference: (activeContext, _skillId, normalizedFile) => {
+        referenceReads += 1;
+        return Promise.resolve(`${activeContext.authToken}:${normalizedFile}`);
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  context.authToken = "credential-b";
+  mutateDuringNextBodyRead = true;
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/secret.md. Available references: references/public.md',
+    },
+  );
+  assertEquals(context.authToken, "credential-c");
+  assertEquals(bodyReads, 3);
+  assertEquals(referenceReads, 0);
+});
+
+Deno.test("reference authorization fails closed when the credential keeps rotating", async () => {
+  const context = createProjectContext({
+    authToken: "credential-a",
+    availableSkillIds: ["writer"],
+  });
+  let bodyReads = 0;
+  let referenceReads = 0;
+  let rotateCredentials = false;
+  let credentialSequence = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        bodyReads += 1;
+        if (rotateCredentials) {
+          credentialSequence += 1;
+          context.authToken = `rotated-${credentialSequence}`;
+        }
+        return Promise.resolve({
+          instructions: "# Writer",
+          references: ["references/secret.md"],
+        });
+      },
+      loadProjectSkillReference: () => {
+        referenceReads += 1;
+        return Promise.resolve("secret");
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  context.authToken = "credential-b";
+  rotateCredentials = true;
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Skill authorization context changed repeatedly while loading "writer". Request was not completed.',
+    },
+  );
+  assertEquals(bodyReads, 4);
+  assertEquals(referenceReads, 0);
+});
+
+Deno.test("concurrent authority generations cannot publish a stale reference result", async () => {
+  const context = createProjectContext({
+    authToken: "credential-a",
+    availableSkillIds: ["writer"],
+  });
+  let bodyReads = 0;
+  let referenceReads = 0;
+  let resolveFirstReference: (value: string | null) => void = () => {};
+  const firstReference = new Promise<string | null>((resolve) => {
+    resolveFirstReference = resolve;
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: (activeContext) => {
+        bodyReads += 1;
+        return Promise.resolve({
+          instructions: `# Writer for ${activeContext.authToken}`,
+          references: ["references/guide.md"],
+        });
+      },
+      loadProjectSkillReference: (activeContext) => {
+        referenceReads += 1;
+        if (referenceReads === 1) return firstReference;
+        return Promise.resolve(`fresh guide for ${activeContext.authToken}`);
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  const credentialAReference = tool.execute({
+    skillId: "writer",
+    file: "references/guide.md",
+  });
+  assertEquals(referenceReads, 1);
+
+  context.authToken = "credential-b";
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/guide.md" }),
+    {
+      skillId: "writer",
+      file: "references/guide.md",
+      content: "fresh guide for credential-b",
+    },
+  );
+  context.authToken = "credential-a";
+  resolveFirstReference("stale guide for credential-a");
+
+  assertEquals(await credentialAReference, {
+    skillId: "writer",
+    file: "references/guide.md",
+    content: "fresh guide for credential-a",
+  });
+  assertEquals(bodyReads, 3);
+  assertEquals(referenceReads, 3);
+});
+
+Deno.test("a late credential-A body cannot overwrite credential-B authorization", async () => {
+  const context = createProjectContext({
+    authToken: "credential-a",
+    availableSkillIds: ["writer"],
+  });
+  let bodyReads = 0;
+  let referenceReads = 0;
+  let resolveCredentialABody: (value: RuntimeLoadedProjectSkill | null) => void = () => {};
+  const credentialABody = new Promise<RuntimeLoadedProjectSkill | null>((resolve) => {
+    resolveCredentialABody = resolve;
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: (activeContext) => {
+        bodyReads += 1;
+        if (bodyReads === 1) return credentialABody;
+        return Promise.resolve({
+          instructions: `# Writer for ${activeContext.authToken}`,
+          references: ["references/public.md"],
+        });
+      },
+      loadProjectSkillReference: (activeContext, _skillId, normalizedFile) => {
+        referenceReads += 1;
+        return Promise.resolve(`${activeContext.authToken}:${normalizedFile}`);
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const credentialALoad = tool.execute({ skillId: "writer" });
+  assertEquals(bodyReads, 1);
+  context.authToken = "credential-b";
+  const credentialBLoad = expectLoadedSkillResponse(
+    await tool.execute({ skillId: "writer" }),
+  );
+  assertEquals(credentialBLoad.references, ["references/public.md"]);
+
+  resolveCredentialABody({
+    instructions: "# Writer for credential-a",
+    references: ["references/secret.md"],
+  });
+  const lateCredentialALoad = expectLoadedSkillResponse(await credentialALoad);
+  assertEquals(lateCredentialALoad.references, ["references/public.md"]);
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/secret.md. Available references: references/public.md',
+    },
+  );
+  assertEquals(bodyReads, 2);
+  assertEquals(referenceReads, 0);
+});
+
+Deno.test("concurrent stable body loads settle without retry livelock", async () => {
+  const context = createProjectContext({ availableSkillIds: ["writer"] });
+  let bodyReads = 0;
+  const bodyResolvers: Array<(value: RuntimeLoadedProjectSkill | null) => void> = [];
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        bodyReads += 1;
+        return new Promise<RuntimeLoadedProjectSkill | null>((resolve) => {
+          bodyResolvers.push(resolve);
+        });
+      },
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const firstLoad = tool.execute({ skillId: "writer" });
+  const secondLoad = tool.execute({ skillId: "writer" });
+  assertEquals(bodyReads, 2);
+  bodyResolvers[0]?.({
+    instructions: "# Writer",
+    references: ["references/guide.md"],
+  });
+  bodyResolvers[1]?.({
+    instructions: "# Writer",
+    references: ["references/guide.md"],
+  });
+
+  const [firstResult, secondResult] = await Promise.all([firstLoad, secondLoad]);
+  assertEquals(expectLoadedSkillResponse(firstResult).references, ["references/guide.md"]);
+  assertEquals(expectLoadedSkillResponse(secondResult).references, ["references/guide.md"]);
+  assertEquals(bodyReads, 2);
+});
+
+Deno.test("concurrent stable loads for distinct skills do not consume each other's retries", async () => {
+  const skillIds = Array.from({ length: 8 }, (_, index) => `skill-${index}`);
+  const context = createProjectContext({ availableSkillIds: skillIds });
+  const bodyReads = new Map<string, number>();
+  const bodyResolvers = new Map<
+    string,
+    (value: RuntimeLoadedProjectSkill | null) => void
+  >();
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: (_activeContext, skillId) => {
+        bodyReads.set(skillId, (bodyReads.get(skillId) ?? 0) + 1);
+        return new Promise<RuntimeLoadedProjectSkill | null>((resolve) => {
+          bodyResolvers.set(skillId, resolve);
+        });
+      },
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const loads = skillIds.map((skillId) => tool.execute({ skillId }));
+  assertEquals(bodyResolvers.size, skillIds.length);
+  for (const skillId of skillIds) {
+    bodyResolvers.get(skillId)?.({
+      instructions: `# ${skillId}`,
+      references: [],
+    });
+  }
+
+  const results = await Promise.all(loads);
+  assertEquals(
+    results.map((result) => expectLoadedSkillResponse(result).instructions),
+    skillIds.map((skillId) => `# ${skillId}`),
+  );
+  assertEquals(
+    skillIds.map((skillId) => bodyReads.get(skillId)),
+    skillIds.map(() => 1),
+  );
+});
+
+Deno.test("one scope rotation invalidates every old-key publication once", async () => {
+  const skillIds = ["writer-a", "writer-b", "writer-c"];
+  const context = createProjectContext({
+    authToken: "credential-a",
+    availableSkillIds: skillIds,
+  });
+  const bodyReads = new Map<string, number>();
+  const credentialAResolvers = new Map<
+    string,
+    (value: RuntimeLoadedProjectSkill | null) => void
+  >();
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: (activeContext, skillId) => {
+        const read = (bodyReads.get(skillId) ?? 0) + 1;
+        bodyReads.set(skillId, read);
+        if (activeContext.authToken === "credential-a" && skillId !== "writer-c") {
+          return new Promise<RuntimeLoadedProjectSkill | null>((resolve) => {
+            credentialAResolvers.set(skillId, resolve);
+          });
+        }
+        return Promise.resolve({
+          instructions: `# ${skillId} for ${activeContext.authToken}`,
+          references: [],
+        });
+      },
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const staleLoads = ["writer-a", "writer-b"].map((skillId) => tool.execute({ skillId }));
+  assertEquals(credentialAResolvers.size, 2);
+
+  context.authToken = "credential-b";
+  assertEquals(
+    expectLoadedSkillResponse(await tool.execute({ skillId: "writer-c" })).instructions,
+    "# writer-c for credential-b",
+  );
+  for (const skillId of ["writer-a", "writer-b"]) {
+    credentialAResolvers.get(skillId)?.({
+      instructions: `# ${skillId} for credential-a`,
+      references: ["references/secret.md"],
+    });
+  }
+
+  const retriedResults = await Promise.all(staleLoads);
+  assertEquals(
+    retriedResults.map((result) => expectLoadedSkillResponse(result).instructions),
+    ["# writer-a for credential-b", "# writer-b for credential-b"],
+  );
+  assertEquals(
+    skillIds.map((skillId) => bodyReads.get(skillId)),
+    [2, 2, 1],
+  );
+});
+
+Deno.test("body payloads are reloaded after the credential changes", async () => {
+  const context = createProjectContext({ authToken: "credential-a" });
+  let bodyReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: (activeContext) => {
+        bodyReads += 1;
+        return Promise.resolve({
+          instructions: `# ${activeContext.authToken}`,
+          references: [],
+        });
+      },
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  context.authToken = "credential-b";
+
+  assertEquals(
+    expectLoadedSkillResponse(await tool.execute({ skillId: "writer" })).instructions,
+    "# credential-b",
+  );
+  assertEquals(bodyReads, 2);
+});
+
+Deno.test("reference payloads are reloaded after the credential changes", async () => {
+  const context = createProjectContext({ authToken: "credential-a" });
+  let bodyReads = 0;
+  let referenceReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        bodyReads += 1;
+        return Promise.resolve({
+          instructions: "# Writer",
+          references: ["references/guide.md"],
+        });
+      },
+      loadProjectSkillReference: (activeContext) => {
+        referenceReads += 1;
+        return Promise.resolve(`guide for ${activeContext.authToken}`);
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/guide.md" }),
+    {
+      skillId: "writer",
+      file: "references/guide.md",
+      content: "guide for credential-a",
+    },
+  );
+  context.authToken = "credential-b";
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/guide.md" }),
+    {
+      skillId: "writer",
+      file: "references/guide.md",
+      content: "guide for credential-b",
+    },
+  );
+  assertEquals(bodyReads, 2);
+  assertEquals(referenceReads, 2);
+});
+
+Deno.test("an agent owner change uses a distinct public body marker", async () => {
+  const context = createProjectContext({
+    agentId: "writer-a",
+    availableSkillIds: ["writer"],
+  });
+  let bodyReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: (activeContext) => {
+        bodyReads += 1;
+        const owner = (activeContext as RuntimeLoadSkillToolContext).agentId;
+        return Promise.resolve({
+          instructions: `# ${owner}`,
+          references: [],
+        });
+      },
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(
+    expectLoadedSkillResponse(await tool.execute({ skillId: "writer" })).instructions,
+    "# writer-a",
+  );
+  context.agentId = "writer-b";
+  assertEquals(
+    expectLoadedSkillResponse(await tool.execute({ skillId: "writer" })).instructions,
+    "# writer-b",
+  );
+  assertEquals(bodyReads, 2);
+});
+
+Deno.test("reference authorization is revalidated after the agent owner changes", async () => {
+  const context = createProjectContext({
+    agentId: "writer-a",
+    availableSkillIds: ["writer"],
+  });
+  let bodyReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: (activeContext) => {
+        bodyReads += 1;
+        const owner = (activeContext as RuntimeLoadSkillToolContext).agentId;
+        return Promise.resolve({
+          instructions: "# Writer",
+          references: owner === "writer-a" ? ["references/secret.md"] : ["references/public.md"],
+        });
+      },
+      loadProjectSkillReference: () => Promise.resolve("secret"),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  context.agentId = "writer-b";
+  await tool.execute({ skillId: "writer" });
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/secret.md. Available references: references/public.md',
+    },
+  );
+  assertEquals(bodyReads, 2);
+});
+
+Deno.test("tool recreation revalidates authorization against the replacement builtin store", async () => {
+  const context = createProjectContext({ availableSkillIds: ["writer"] });
+  const projectSkillLoader = createProjectSkillLoader({});
+  const initialTool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader,
+    builtinStore: createBuiltinStore({
+      skills: new Map([["writer", "# Writer"]]),
+      references: new Map([["writer/references/secret.md", "old secret"]]),
+      referenceLists: new Map([["writer", ["references/secret.md"]]]),
+    }),
+  });
+  await initialTool.execute({ skillId: "writer" });
+
+  const replacementTool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader,
+    builtinStore: createBuiltinStore({
+      skills: new Map([["writer", "# Writer"]]),
+      references: new Map([["writer/references/secret.md", "replacement secret"]]),
+      referenceLists: new Map([["writer", ["references/public.md"]]]),
+    }),
+  });
+
+  assertEquals(
+    await replacementTool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/secret.md. Available references: references/public.md',
+    },
+  );
+});
+
+Deno.test("cache record replacement invalidates private reference authorization", async () => {
+  const context = createProjectContext({ availableSkillIds: ["writer"] });
+  let bodyReads = 0;
+  let references = ["references/secret.md"];
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        bodyReads += 1;
+        return Promise.resolve({ instructions: "# Writer", references });
+      },
+      loadProjectSkillReference: () => Promise.resolve("secret"),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  references = ["references/public.md"];
+  context.loadedSkillResponses = { ...context.loadedSkillResponses };
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/secret.md. Available references: references/public.md',
+    },
+  );
+  assertEquals(bodyReads, 2);
+});
+
+Deno.test("cache record replacement invalidates private duplicate payload state", async () => {
+  const context = createProjectContext();
+  let version = "a";
+  let bodyReads = 0;
+  let referenceReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        bodyReads += 1;
+        return Promise.resolve({
+          instructions: `# Writer ${version}`,
+          references: ["references/guide.md"],
+        });
+      },
+      loadProjectSkillReference: () => {
+        referenceReads += 1;
+        return Promise.resolve(`guide ${version}`);
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  await tool.execute({ skillId: "writer", file: "references/guide.md" });
+  version = "b";
+  context.loadedSkillResponses = { ...context.loadedSkillResponses };
+  context.loadedSkillReferenceResponses = { ...context.loadedSkillReferenceResponses };
+
+  assertEquals(
+    expectLoadedSkillResponse(await tool.execute({ skillId: "writer" })).instructions,
+    "# Writer b",
+  );
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/guide.md" }),
+    { skillId: "writer", file: "references/guide.md", content: "guide b" },
+  );
+  assertEquals(bodyReads, 2);
+  assertEquals(referenceReads, 2);
+});
+
+Deno.test("duplicate body loads use private trusted policy instead of mutable cache values", async () => {
+  const context = createProjectContext({
+    availableToolNames: ["read_file"],
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({
+      skills: new Map([[
+        "writer",
+        "---\nallowed-tools:\n  - read_file\nmax-steps: 8\n---\n# Writer",
+      ]]),
+    }),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  const [cached] = Object.values(context.loadedSkillResponses ?? {});
+  if (!cached) throw new Error("Expected a loaded skill cache entry");
+  assertEquals(Object.hasOwn(cached, "allowedTools"), false);
+  assertEquals(Object.hasOwn(cached, "maxSteps"), false);
+  cached.allowedTools = undefined;
+  cached.maxSteps = 999;
+
+  const duplicate = expectLoadedSkillResponse(await tool.execute({ skillId: "writer" }));
+  assertEquals(duplicate.allowedTools, ["read_file"]);
+  assertEquals(duplicate.maxSteps, 8);
+});
+
+Deno.test("public markers cannot fabricate current-scope duplicate payloads", async () => {
+  const context = createProjectContext({
+    loadedSkillResponses: {
+      '["writer",null,"project-1","branch-1",null]': {
+        skillId: "writer",
+        instructions: "",
+        nextStep: "",
+        references: ["references/guide.md"],
+      },
+    },
+    loadedSkillReferenceResponses: {
+      '["[\\"writer\\",null,\\"project-1\\",\\"branch-1\\",null]","references/guide.md"]': true,
+    },
+  });
+  let bodyReads = 0;
+  let referenceReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        bodyReads += 1;
+        return Promise.resolve({
+          instructions: "# Authoritative writer",
+          references: ["references/guide.md"],
+        });
+      },
+      loadProjectSkillReference: () => {
+        referenceReads += 1;
+        return Promise.resolve("authoritative guide");
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(
+    expectLoadedSkillResponse(await tool.execute({ skillId: "writer" })).instructions,
+    "# Authoritative writer",
+  );
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/guide.md" }),
+    {
+      skillId: "writer",
+      file: "references/guide.md",
+      content: "authoritative guide",
+    },
+  );
+  assertEquals(bodyReads, 1);
+  assertEquals(referenceReads, 1);
+});
+
+Deno.test("public marker deletion cannot revoke current-scope private authorization", async () => {
+  const context = createProjectContext();
+  let bodyReads = 0;
+  let referenceReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        bodyReads += 1;
+        return Promise.resolve({
+          instructions: "# Writer",
+          references: ["references/guide.md"],
+        });
+      },
+      loadProjectSkillReference: () => {
+        referenceReads += 1;
+        return Promise.resolve("guide");
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  for (const key of Object.keys(context.loadedSkillResponses ?? {})) {
+    delete context.loadedSkillResponses?.[key];
+  }
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/guide.md" }),
+    { skillId: "writer", file: "references/guide.md", content: "guide" },
+  );
+  assertEquals(bodyReads, 1);
+  assertEquals(referenceReads, 1);
+});
+
+Deno.test("duplicate body policy is revalidated after in-place tool inventory narrowing", async () => {
+  const availableToolNames = ["read_file", "write_file"];
+  const context = createProjectContext({ availableToolNames });
+  let bodyReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        bodyReads += 1;
+        return Promise.resolve({
+          instructions: "---\nallowed-tools:\n  - read_file\n  - write_file\n---\n# Writer",
+          references: [],
+        });
+      },
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(
+    expectLoadedSkillResponse(await tool.execute({ skillId: "writer" })).allowedTools,
+    ["read_file", "write_file"],
+  );
+  availableToolNames.splice(1, 1);
+
+  assertEquals(
+    expectLoadedSkillResponse(await tool.execute({ skillId: "writer" })).allowedTools,
+    ["read_file"],
+  );
+  assertEquals(bodyReads, 2);
+});
+
+Deno.test("in-place skill source path cycles invalidate private authorization", async () => {
+  const skillSourcePaths = { writer: "skills/a/SKILL.md" };
+  const context = createProjectContext({
+    availableSkillIds: ["writer"],
+    skillSourcePaths,
+  });
+  let bodyReads = 0;
+  let referenceReads = 0;
+  let secretAllowed = true;
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        bodyReads += 1;
+        return Promise.resolve({
+          instructions: "# Writer",
+          references: secretAllowed ? ["references/secret.md"] : ["references/public.md"],
+        });
+      },
+      loadProjectSkillReference: () => {
+        referenceReads += 1;
+        return Promise.resolve("secret");
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  secretAllowed = false;
+  skillSourcePaths.writer = "skills/b/SKILL.md";
+  await tool.execute({ skillId: "writer" });
+  skillSourcePaths.writer = "skills/a/SKILL.md";
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/secret.md. Available references: references/public.md',
+    },
+  );
+  assertEquals(bodyReads, 3);
+  assertEquals(referenceReads, 0);
+});
+
+Deno.test("project skill loader replacement invalidates private authorization", async () => {
+  let loaderABodyReads = 0;
+  let loaderAReferenceReads = 0;
+  const loaderA: RuntimeProjectSkillLoader = {
+    listProjectSkillReferences: () => Promise.resolve([]),
+    loadProjectSkill: () => {
+      loaderABodyReads += 1;
+      return Promise.resolve({
+        instructions: "# Writer A",
+        references: ["references/secret.md"],
+      });
+    },
+    loadProjectSkillReference: () => {
+      loaderAReferenceReads += 1;
+      return Promise.resolve("secret A");
+    },
+  };
+  let loaderBBodyReads = 0;
+  let loaderBReferenceReads = 0;
+  const loaderB: RuntimeProjectSkillLoader = {
+    listProjectSkillReferences: () => Promise.resolve([]),
+    loadProjectSkill: () => {
+      loaderBBodyReads += 1;
+      return Promise.resolve({
+        instructions: "# Writer B",
+        references: ["references/public.md"],
+      });
+    },
+    loadProjectSkillReference: () => {
+      loaderBReferenceReads += 1;
+      return Promise.resolve("secret B");
+    },
+  };
+  const options: RuntimeLoadSkillToolOptions = {
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: loaderA,
+    builtinStore: createBuiltinStore({}),
+  };
+  const tool = createRuntimeLoadSkillTool(options);
+
+  await tool.execute({ skillId: "writer" });
+  options.projectSkillLoader = loaderB;
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/secret.md. Available references: references/public.md',
+    },
+  );
+  assertEquals(loaderABodyReads, 1);
+  assertEquals(loaderAReferenceReads, 0);
+  assertEquals(loaderBBodyReads, 1);
+  assertEquals(loaderBReferenceReads, 0);
+});
+
+Deno.test("in-place project skill loader method changes invalidate private authorization", async () => {
+  let version = "a";
+  let bodyReads = 0;
+  let referenceReads = 0;
+  const loader: RuntimeProjectSkillLoader = {
+    listProjectSkillReferences: () => Promise.resolve([]),
+    loadProjectSkill: () => {
+      bodyReads += 1;
+      return Promise.resolve({
+        instructions: `# Writer ${version}`,
+        references: ["references/secret.md"],
+      });
+    },
+    loadProjectSkillReference: () => {
+      referenceReads += 1;
+      return Promise.resolve("secret A");
+    },
+  };
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: loader,
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  version = "b";
+  loader.loadProjectSkill = () => {
+    bodyReads += 1;
+    return Promise.resolve({
+      instructions: "# Writer B",
+      references: ["references/public.md"],
+    });
+  };
+  loader.loadProjectSkillReference = () => {
+    referenceReads += 1;
+    return Promise.resolve("secret B");
+  };
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/secret.md. Available references: references/public.md',
+    },
+  );
+  assertEquals(bodyReads, 2);
+  assertEquals(referenceReads, 0);
+});
+
+Deno.test("skillsDir changes invalidate private builtin authorization", async () => {
+  const options: RuntimeLoadSkillToolOptions = {
+    context: createProjectContext(),
+    skillsDir: "/skills-a",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: {
+      readSkill: (skillsDir) => `# Writer from ${skillsDir}`,
+      listReferences: (skillsDir) =>
+        skillsDir === "/skills-a" ? ["references/secret.md"] : ["references/public.md"],
+      readReferenceFile: (_skillsDir, _skillId, normalizedFile) =>
+        normalizedFile === "references/secret.md" ? "secret" : null,
+    },
+  };
+  const tool = createRuntimeLoadSkillTool(options);
+
+  await tool.execute({ skillId: "writer" });
+  options.skillsDir = "/skills-b";
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/secret.md. Available references: references/public.md',
+    },
+  );
+});
+
+Deno.test("accessor-backed scalar scopes are never reusable authority", async () => {
+  let credential = "credential-a";
+  let authTokenGetterReads = 0;
+  let bodyReads = 0;
+  let referenceReads = 0;
+  const context = createProjectContext();
+  Object.defineProperty(context, "authToken", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      authTokenGetterReads += 1;
+      return credential;
+    },
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        bodyReads += 1;
+        return Promise.resolve({
+          instructions: "# Writer",
+          references: credential === "credential-a"
+            ? ["references/secret.md"]
+            : ["references/public.md"],
+        });
+      },
+      loadProjectSkillReference: () => {
+        referenceReads += 1;
+        return Promise.resolve("secret");
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  credential = "credential-b";
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/secret.md. Available references: references/public.md',
+    },
+  );
+  assertEquals(bodyReads, 2);
+  assertEquals(referenceReads, 0);
+  assertEquals(authTokenGetterReads, 0);
+});
+
+Deno.test("inherited scalar accessors are never reusable authority", async () => {
+  let credential = "credential-a";
+  let authTokenGetterReads = 0;
+  let bodyReads = 0;
+  let referenceReads = 0;
+  const context = createProjectContext();
+  delete context.authToken;
+  const contextPrototype = {};
+  Object.defineProperty(contextPrototype, "authToken", {
+    configurable: true,
+    get() {
+      authTokenGetterReads += 1;
+      return credential;
+    },
+  });
+  Object.setPrototypeOf(context, contextPrototype);
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        bodyReads += 1;
+        return Promise.resolve({
+          instructions: "# Writer",
+          references: credential === "credential-a"
+            ? ["references/secret.md"]
+            : ["references/public.md"],
+        });
+      },
+      loadProjectSkillReference: () => {
+        referenceReads += 1;
+        return Promise.resolve("secret");
+      },
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await tool.execute({ skillId: "writer" });
+  credential = "credential-b";
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      error:
+        'Reference file not advertised by loaded skill "writer": references/secret.md. Available references: references/public.md',
+    },
+  );
+  assertEquals(bodyReads, 2);
+  assertEquals(referenceReads, 0);
+  assertEquals(authTokenGetterReads, 0);
+});
+
+Deno.test("body execution ignores accessor-backed cache entries", async () => {
+  const context = createProjectContext({ loadedSkillResponses: {} });
+  let getterReads = 0;
+  let setterWrites = 0;
+  Object.defineProperty(
+    context.loadedSkillResponses,
+    '["writer",null,"project-1","branch-1",null]',
+    {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        throw new Error("body cache getter must not run");
+      },
+      set(_value) {
+        setterWrites += 1;
+        throw new Error("body cache setter must not run");
+      },
+    },
+  );
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({
+      skills: new Map([["writer", "# Writer"]]),
+    }),
+  });
+
+  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "writer" }));
+
+  assertEquals(result.instructions, "# Writer");
+  assertEquals(getterReads, 0);
+  assertEquals(setterWrites, 0);
+});
+
+Deno.test("reference execution ignores accessor-backed duplicate markers", async () => {
+  const context = createProjectContext();
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({
+      skills: new Map([["writer", "# Writer"]]),
+      references: new Map([["writer/references/guide.md", "guide"]]),
+      referenceLists: new Map([["writer", ["references/guide.md"]]]),
+    }),
+  });
+  await tool.execute({ skillId: "writer" });
+  const [loadedSkillKey] = Object.keys(context.loadedSkillResponses ?? {});
+  if (!loadedSkillKey) throw new Error("Expected a loaded skill cache key");
+  const referenceKey = JSON.stringify([loadedSkillKey, "references/guide.md"]);
+  const referenceResponses = context.loadedSkillReferenceResponses ??= {};
+  let getterReads = 0;
+  Object.defineProperty(referenceResponses, referenceKey, {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterReads += 1;
+      throw new Error("reference cache getter must not run");
+    },
+  });
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/guide.md" }),
+    { skillId: "writer", file: "references/guide.md", content: "guide" },
+  );
+  assertEquals(getterReads, 0);
+});
+
+Deno.test("cache keys ignore accessor-backed source-path values", async () => {
+  let sourcePathGetterReads = 0;
+  const skillSourcePaths: Record<string, string> = {};
+  Object.defineProperty(skillSourcePaths, "writer", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      sourcePathGetterReads += 1;
+      throw new Error("source-path getter must not run");
+    },
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ skillSourcePaths }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([["writer", { instructions: "# Writer", references: [] }]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(
+    expectLoadedSkillResponse(await tool.execute({ skillId: "writer" })).instructions,
+    "# Writer",
+  );
+  assertEquals(sourcePathGetterReads, 0);
+});
+
+Deno.test("project-claim checks fail closed without invoking a skillSourcePaths accessor", async () => {
+  let sourcePathsGetterReads = 0;
+  let builtinReads = 0;
+  const context = createProjectContext({ availableSkillIds: ["writer"] });
+  Object.defineProperty(context, "skillSourcePaths", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      sourcePathsGetterReads += 1;
+      return {};
+    },
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: {
+      readSkill: () => {
+        builtinReads += 1;
+        return "# Builtin writer";
+      },
+      readReferenceFile: () => null,
+      listReferences: () => [],
+    },
+  });
+
+  assertEquals(await tool.execute({ skillId: "writer" }), {
+    error:
+      'Project skill "writer" is unavailable or no longer satisfies its validated catalog contract.',
+  });
+  assertEquals(sourcePathsGetterReads, 0);
+  assertEquals(builtinReads, 0);
+});
+
+Deno.test("runtime skill availability snapshots do not invoke cache accessors", () => {
+  let recordGetterCalls = 0;
+  let responseGetterCalls = 0;
+  const loadedSkillResponses: Record<string, RuntimeLoadedSkillResponse> = {};
+  Object.defineProperty(loadedSkillResponses, "accessor-entry", {
+    enumerable: true,
+    get() {
+      recordGetterCalls += 1;
+      throw new Error("cache entry getter must not run");
+    },
+  });
+  const accessorResponse = {
+    instructions: "",
+    nextStep: "",
+  } as RuntimeLoadedSkillResponse;
+  Object.defineProperties(accessorResponse, {
+    skillId: {
+      enumerable: true,
+      get() {
+        responseGetterCalls += 1;
+        throw new Error("skillId getter must not run");
+      },
+    },
+    references: {
+      enumerable: true,
+      get() {
+        responseGetterCalls += 1;
+        throw new Error("references getter must not run");
+      },
+    },
+  });
+  Object.defineProperty(loadedSkillResponses, "data-entry", {
+    enumerable: true,
+    value: accessorResponse,
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({
+      availableSkillIds: ["writer"],
+      loadedSkillResponses,
+    }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(tool.inputSchemaJson, {
+    type: "object",
+    properties: {
+      skillId: {
+        type: "string",
+        enum: ["writer", "writer.md"],
+        description: "Unloaded skill ID to load. Available unloaded skill IDs: writer, writer.md",
+      },
+      file: {
+        type: "string",
+        description:
+          "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+      },
+    },
+    required: ["skillId"],
+  });
+  assertEquals(recordGetterCalls, 0);
+  assertEquals(responseGetterCalls, 0);
+});
+
+Deno.test("createRuntimeLoadSkillTool stores bounded reference markers without retaining content", async () => {
+  const context = createProjectContext();
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({
+      skills: new Map([["large", "# Large"]]),
+      references: new Map([["large/references/guide.md", "reference-secret"]]),
+      referenceLists: new Map([["large", ["references/guide.md"]]]),
+    }),
+  });
+  await tool.execute({ skillId: "large" });
+  const loadedSkillReferenceResponses = context.loadedSkillReferenceResponses ??= {};
+  Object.assign(
+    loadedSkillReferenceResponses,
+    Object.fromEntries(
+      Array.from({ length: 3_002 }, (_unused, index) => [`old-${index}`, true]),
+    ),
+  );
+
+  const result = await tool.execute({
+    skillId: "large",
+    file: "references/guide.md",
+  });
+
+  assertEquals(result, {
+    skillId: "large",
+    file: "references/guide.md",
+    content: "reference-secret",
+  });
+  assertEquals(Object.keys(loadedSkillReferenceResponses).length, 3_000);
+  assertEquals(Object.hasOwn(loadedSkillReferenceResponses, "old-0"), false);
+  assertEquals(Object.values(loadedSkillReferenceResponses).at(-1) as unknown, true);
+  assertEquals(JSON.stringify(loadedSkillReferenceResponses).includes("reference-secret"), false);
 });
 
 Deno.test("createRuntimeLoadSkillTool schema disallows body reloads for already-loaded skills", async () => {
@@ -1382,6 +2895,145 @@ Deno.test("createRuntimeLoadSkillTool advertises the runtime skill manifest inst
   assertStringIncludes(tool.description, "Do not invent skill IDs");
 });
 
+Deno.test("createRuntimeLoadSkillTool snapshots skill inventories without invoking iterators", () => {
+  let availableIteratorCalls = 0;
+  let builtinIteratorCalls = 0;
+  const availableSkillIds = ["daily-briefing"];
+  const builtinSkillIds = ["builtin-writer"];
+  Object.defineProperty(availableSkillIds, Symbol.iterator, {
+    configurable: true,
+    value: function* () {
+      availableIteratorCalls += 1;
+      for (let index = 0; index < 100_001; index += 1) {
+        yield `fabricated-${index}`;
+      }
+    },
+  });
+  Object.defineProperty(builtinSkillIds, Symbol.iterator, {
+    configurable: true,
+    value: function* () {
+      builtinIteratorCalls += 1;
+      for (let index = 0; index < 100_001; index += 1) {
+        yield `fabricated-${index}`;
+      }
+    },
+  });
+
+  const projectTool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinSkillIds,
+    builtinStore: createBuiltinStore({}),
+  });
+  const builtinTool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinSkillIds,
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertStringIncludes(projectTool.description, "Available skill IDs: daily-briefing.");
+  assertStringIncludes(builtinTool.description, "Available skill IDs: builtin-writer.");
+  assertEquals(availableIteratorCalls, 0);
+  assertEquals(builtinIteratorCalls, 0);
+  assertEquals(projectTool.description.length < 2_000, true);
+  assertEquals(builtinTool.description.length < 2_000, true);
+});
+
+Deno.test("createRuntimeLoadSkillTool rejects skill inventory element accessors without invoking them", async () => {
+  let getterReads = 0;
+  const availableSkillIds = ["daily-briefing"];
+  Object.defineProperty(availableSkillIds, 0, {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterReads += 1;
+      return "fabricated";
+    },
+  });
+
+  await assertRejects(
+    async () => {
+      createRuntimeLoadSkillTool({
+        context: createProjectContext({ availableSkillIds }),
+        skillsDir: "/skills",
+        projectSkillLoader: createProjectSkillLoader({}),
+        builtinStore: createBuiltinStore({}),
+      });
+    },
+    TypeError,
+    "availableSkillIds entry 0 must be a data property",
+  );
+  assertEquals(getterReads, 0);
+});
+
+Deno.test("createRuntimeLoadSkillTool bounds skill inventory entries and IDs", async () => {
+  await assertRejects(
+    async () => {
+      createRuntimeLoadSkillTool({
+        context: createProjectContext({
+          availableSkillIds: Array.from({ length: 1_001 }, (_, index) => `skill-${index}`),
+        }),
+        skillsDir: "/skills",
+        projectSkillLoader: createProjectSkillLoader({}),
+        builtinStore: createBuiltinStore({}),
+      });
+    },
+    RangeError,
+    "at most 1000 availableSkillIds entries",
+  );
+  await assertRejects(
+    async () => {
+      createRuntimeLoadSkillTool({
+        context: createProjectContext(),
+        skillsDir: "/skills",
+        projectSkillLoader: createProjectSkillLoader({}),
+        builtinSkillIds: ["x".repeat(257)],
+        builtinStore: createBuiltinStore({}),
+      });
+    },
+    TypeError,
+    "builtinSkillIds entry 0 must be a valid bounded skill ID",
+  );
+});
+
+Deno.test("builtin skill inventory cycles invalidate private reference authorization", async () => {
+  const builtinSkillIds = ["writer"];
+  let bodyReads = 0;
+  const builtinStore: RuntimeLoadSkillBuiltinStore = {
+    readSkill: () => {
+      bodyReads += 1;
+      return "# Writer";
+    },
+    readReferenceFile: () => "secret",
+    listReferences: () => ["references/secret.md"],
+  };
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinSkillIds,
+    builtinStore,
+  });
+
+  await tool.execute({ skillId: "writer" });
+  builtinSkillIds[0] = "other";
+  void tool.inputSchemaJson;
+  builtinSkillIds[0] = "writer";
+
+  assertEquals(
+    await tool.execute({ skillId: "writer", file: "references/secret.md" }),
+    {
+      skillId: "writer",
+      file: "references/secret.md",
+      content: "secret",
+    },
+  );
+  assertEquals(bodyReads, 2);
+});
+
 Deno.test("createRuntimeLoadSkillTool rejects invented skill IDs before tool execution when manifest is known", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext({
@@ -1419,4 +3071,83 @@ Deno.test("createRuntimeLoadSkillTool allows host copy overrides", async () => {
   const result = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
   assertEquals(result.nextStep, "Custom next step.");
   assertStringIncludes(JSON.stringify(result), "Custom next step.");
+});
+
+Deno.test("createRuntimeLoadSkillTool validates the final configured next step", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({
+      skills: new Map([["writer", "# Writer"]]),
+    }),
+    nextStep: "x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1),
+  });
+
+  await assertRejects(
+    () => tool.execute({ skillId: "writer" }),
+    RangeError,
+    `${SKILL_DOCUMENT_MAX_CHARACTERS}`,
+  );
+});
+
+Deno.test("createRuntimeLoadSkillTool snapshots tool inventory without invoking iterators", async () => {
+  let iteratorCalls = 0;
+  const availableToolNames = ["agent_writer"];
+  Object.defineProperty(availableToolNames, Symbol.iterator, {
+    configurable: true,
+    value: function* () {
+      iteratorCalls += 1;
+      yield `agent_${"x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1)}`;
+    },
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableToolNames }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([["writer", { instructions: "# Writer", references: [] }]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const response = expectLoadedSkillResponse(await tool.execute({ skillId: "writer" }));
+
+  assertStringIncludes(response.nextStep, "agent_writer");
+  assertEquals(response.nextStep.length <= SKILL_DOCUMENT_MAX_CHARACTERS, true);
+  assertEquals(iteratorCalls, 0);
+});
+
+Deno.test("createRuntimeLoadSkillTool rejects message accessors without invoking them", async () => {
+  let getterReads = 0;
+  const messages = {};
+  Object.defineProperty(messages, "unavailableCurrentRunToolsDelegationNote", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterReads += 1;
+      return getterReads === 1 ? "safe note" : "x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1);
+    },
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableToolNames: ["agent_writer"] }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([[
+        "writer",
+        {
+          instructions: "---\nallowed-tools:\n  - read_file\n  - agent_writer\n---\n# Writer",
+          references: [],
+        },
+      ]]),
+    }),
+    builtinStore: createBuiltinStore({}),
+    messages,
+  });
+
+  await assertRejects(
+    () => tool.execute({ skillId: "writer" }),
+    TypeError,
+    "data property",
+  );
+  assertEquals(getterReads, 0);
 });

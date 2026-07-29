@@ -82,7 +82,7 @@ export interface RuntimeSkillFrontmatter {
   maxSteps: number | undefined;
 }
 
-export const getRuntimeSkillFrontmatterSchema = defineSchema((v) =>
+const getUnsafeLegacyRuntimeSkillFrontmatterSchema = defineSchema((v) =>
   v
     .object({
       name: v.string().optional(),
@@ -110,7 +110,8 @@ export const getRuntimeSkillFrontmatterSchema = defineSchema((v) =>
     })
 );
 
-const getStrictRuntimeSkillFrontmatterSchema = defineSchema((v) => {
+/** Strict schema factory for bounded runtime skill frontmatter. */
+export const getRuntimeSkillFrontmatterSchema = defineSchema((v) => {
   const allowedToolsValue = v.union([
     v.string().max(RUNTIME_SKILL_ALLOWED_TOOLS_STRING_MAX_LENGTH),
     v.array(v.string().min(1).max(SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH)).max(
@@ -183,9 +184,11 @@ const getStrictRuntimeSkillFrontmatterSchema = defineSchema((v) => {
 });
 
 /** Schema for runtime skill frontmatter.
- * @deprecated Use getRuntimeSkillFrontmatterSchema()
+ * @deprecated Use {@link getRuntimeSkillFrontmatterSchema}.
  */
-export const RuntimeSkillFrontmatterSchema = lazySchema(getRuntimeSkillFrontmatterSchema);
+export const RuntimeSkillFrontmatterSchema = lazySchema(
+  getUnsafeLegacyRuntimeSkillFrontmatterSchema,
+);
 
 /** Definition for runtime skill. */
 export type RuntimeSkillDefinition = {
@@ -317,23 +320,58 @@ export type RuntimeSkillMetadataLogger = {
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
-function getAvailableScopedDelegateToolNames(
-  availableToolNameSet: ReadonlySet<string> | null,
-): string[] {
-  if (!availableToolNameSet) {
-    return [];
-  }
-
-  return [...availableToolNameSet].filter((toolName) => toolName.startsWith("agent_")).sort();
+function canUseLegacyInvokeAgent(availableToolNameSet: ReadonlySet<string> | null): boolean {
+  return availableToolNameSet?.has("invoke_agent") === true;
 }
 
-function canUseLegacyInvokeAgent(availableToolNameSet: ReadonlySet<string> | null): boolean {
+function canUnsafeLegacyUseInvokeAgent(
+  availableToolNameSet: ReadonlySet<string> | null,
+): boolean {
   return availableToolNameSet === null || availableToolNameSet.has("invoke_agent");
 }
 
-function hasAvailableDelegationTool(availableToolNameSet: ReadonlySet<string> | null): boolean {
-  return availableToolNameSet === null || canUseLegacyInvokeAgent(availableToolNameSet) ||
-    getAvailableScopedDelegateToolNames(availableToolNameSet).length > 0;
+function hasUnsafeLegacyAvailableDelegationTool(
+  availableToolNameSet: ReadonlySet<string> | null,
+): boolean {
+  if (availableToolNameSet === null || availableToolNameSet.has("invoke_agent")) return true;
+  for (const toolName of availableToolNameSet) {
+    if (toolName.startsWith("agent_")) return true;
+  }
+  return false;
+}
+
+function isDelegationToolName(toolName: string): boolean {
+  return toolName === "invoke_agent" || toolName.startsWith("agent_");
+}
+
+function isToolAllowedByResolvedPolicy(
+  toolName: string,
+  declaredAllowedTools: readonly string[],
+  hasDeclaredAllowedTools: boolean,
+): boolean {
+  return !hasDeclaredAllowedTools ||
+    declaredAllowedTools.some((pattern) => matchesAllowedTool(toolName, pattern));
+}
+
+function hasAllowedAvailableDelegationTool(
+  availableToolNameSet: ReadonlySet<string> | null,
+  declaredAllowedTools: readonly string[],
+  hasDeclaredAllowedTools: boolean,
+): boolean {
+  if (availableToolNameSet === null) return false;
+  for (const toolName of availableToolNameSet) {
+    if (
+      isDelegationToolName(toolName) &&
+      isToolAllowedByResolvedPolicy(
+        toolName,
+        declaredAllowedTools,
+        hasDeclaredAllowedTools,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function snapshotAvailableRuntimeToolNames(
@@ -343,14 +381,26 @@ function snapshotAvailableRuntimeToolNames(
   if (!Array.isArray(value)) {
     throw new TypeError("Runtime availableToolNames must be an array");
   }
-  if (value.length > SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES) {
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  } catch {
+    throw new TypeError("Runtime availableToolNames length must be a data property");
+  }
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (!Number.isSafeInteger(length) || length < 0) {
+    throw new TypeError("Runtime availableToolNames length must be a data property");
+  }
+  if (length > SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES) {
     throw new RangeError(
       `Runtime availableToolNames accepts at most ${SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES} entries`,
     );
   }
 
   const snapshot = new Set<string>();
-  for (let index = 0; index < value.length; index += 1) {
+  for (let index = 0; index < length; index += 1) {
     const descriptor = Object.getOwnPropertyDescriptor(value, index);
     if (
       !descriptor ||
@@ -413,7 +463,7 @@ function parseLegacyRuntimeSkillSource(
 ): ParsedRuntimeSkillSource | null {
   try {
     const parsed = extract<Record<string, unknown>>(content);
-    const result = getRuntimeSkillFrontmatterSchema().safeParse(parsed.attrs);
+    const result = getUnsafeLegacyRuntimeSkillFrontmatterSchema().safeParse(parsed.attrs);
 
     if (!result.success) {
       options.logger?.error?.("Invalid skill frontmatter; skipping skill", {
@@ -456,7 +506,7 @@ function parseStrictRuntimeSkillSource(
     }
 
     const parsed = extract<Record<string, unknown>>(content);
-    const result = getStrictRuntimeSkillFrontmatterSchema().safeParse(parsed.attrs);
+    const result = getRuntimeSkillFrontmatterSchema().safeParse(parsed.attrs);
     if (!result.success) {
       options.logger?.error?.("Invalid skill frontmatter; skipping skill", {
         error: result.issues?.map((i) => i.message).join("; ") ?? "validation failed",
@@ -480,20 +530,36 @@ function parseStrictRuntimeSkillSource(
   }
 }
 
-/** Parses runtime skill document. */
-export function parseRuntimeSkillDocument(
+/**
+ * Parses runtime skill document through the historical permissive contract.
+ *
+ * @deprecated Use {@link parseRuntimeSkillDocument}.
+ */
+export function parseUnsafeLegacyRuntimeSkillDocument(
   content: string,
   options: { logger?: RuntimeSkillMetadataLogger } = {},
 ): ParsedRuntimeSkillDocument | null {
   return parseLegacyRuntimeSkillSource(content, options)?.document ?? null;
 }
 
-/** Parses runtime skill metadata. */
-export function parseRuntimeSkillMetadata(
+/**
+ * Parses runtime skill metadata through the historical permissive contract.
+ *
+ * @deprecated Use {@link parseRuntimeSkillMetadata}.
+ */
+export function parseUnsafeLegacyRuntimeSkillMetadata(
   content: string,
   options: { logger?: RuntimeSkillMetadataLogger } = {},
 ): RuntimeSkillFrontmatter | null {
-  return parseRuntimeSkillDocument(content, options)?.metadata ?? null;
+  return parseUnsafeLegacyRuntimeSkillDocument(content, options)?.metadata ?? null;
+}
+
+/** Parses a bounded runtime skill document and fails closed on invalid input. */
+export function parseStrictRuntimeSkillDocument(
+  content: string,
+  options: { logger?: RuntimeSkillMetadataLogger } = {},
+): ParsedRuntimeSkillDocument | null {
+  return parseStrictRuntimeSkillSource(content, options)?.document ?? null;
 }
 
 /** Strict runtime-boundary parser for hosted and filesystem skill metadata. */
@@ -501,7 +567,23 @@ export function parseStrictRuntimeSkillMetadata(
   content: string,
   options: { logger?: RuntimeSkillMetadataLogger } = {},
 ): RuntimeSkillFrontmatter | null {
-  return parseStrictRuntimeSkillSource(content, options)?.document.metadata ?? null;
+  return parseStrictRuntimeSkillDocument(content, options)?.metadata ?? null;
+}
+
+/** Parses a bounded runtime skill document and fails closed on invalid input. */
+export function parseRuntimeSkillDocument(
+  content: string,
+  options: { logger?: RuntimeSkillMetadataLogger } = {},
+): ParsedRuntimeSkillDocument | null {
+  return parseStrictRuntimeSkillDocument(content, options);
+}
+
+/** Parses bounded runtime skill metadata and fails closed on invalid input. */
+export function parseRuntimeSkillMetadata(
+  content: string,
+  options: { logger?: RuntimeSkillMetadataLogger } = {},
+): RuntimeSkillFrontmatter | null {
+  return parseStrictRuntimeSkillMetadata(content, options);
 }
 
 type BuildRuntimeSkillDefinitionInput = {
@@ -513,6 +595,77 @@ type BuildRuntimeSkillDefinitionInput = {
   sourcePath?: string;
   logger?: RuntimeSkillMetadataLogger;
 };
+
+function readOwnDataInputProperty(
+  input: unknown,
+  key: PropertyKey,
+  label: string,
+  required: boolean,
+): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(input, key);
+  } catch {
+    throw new TypeError(`${label}.${String(key)} must be a data property`);
+  }
+  if (descriptor === undefined) {
+    if (required) {
+      throw new TypeError(`${label}.${String(key)} must be a data property`);
+    }
+    return undefined;
+  }
+  if (!("value" in descriptor)) {
+    throw new TypeError(`${label}.${String(key)} must be a data property`);
+  }
+  return descriptor.value;
+}
+
+function snapshotRuntimeSkillDefinitionInput(
+  input: BuildRuntimeSkillDefinitionInput,
+): BuildRuntimeSkillDefinitionInput {
+  return Object.freeze({
+    id: readOwnDataInputProperty(input, "id", "Runtime skill definition", true) as string,
+    content: readOwnDataInputProperty(
+      input,
+      "content",
+      "Runtime skill definition",
+      true,
+    ) as string,
+    references: readOwnDataInputProperty(
+      input,
+      "references",
+      "Runtime skill definition",
+      false,
+    ) as readonly string[] | undefined,
+    ownerAgentId: readOwnDataInputProperty(
+      input,
+      "ownerAgentId",
+      "Runtime skill definition",
+      false,
+    ) as string | undefined,
+    shortName: readOwnDataInputProperty(
+      input,
+      "shortName",
+      "Runtime skill definition",
+      false,
+    ) as string | undefined,
+    sourcePath: readOwnDataInputProperty(
+      input,
+      "sourcePath",
+      "Runtime skill definition",
+      false,
+    ) as string | undefined,
+    logger: readOwnDataInputProperty(
+      input,
+      "logger",
+      "Runtime skill definition",
+      false,
+    ) as RuntimeSkillMetadataLogger | undefined,
+  });
+}
 
 function isBoundedRuntimeIdentity(value: unknown): value is string {
   return typeof value === "string" &&
@@ -558,16 +711,31 @@ function snapshotRuntimeSkillReferences(
   references: readonly string[] | undefined,
 ): string[] | null | undefined {
   if (references === undefined) return undefined;
-  if (
-    !Array.isArray(references) ||
-    references.length > SKILL_LOADABLE_REFERENCE_MAX_ENTRIES
-  ) {
+  if (!Array.isArray(references)) {
     return null;
   }
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    lengthDescriptor = Object.getOwnPropertyDescriptor(references, "length");
+  } catch {
+    return null;
+  }
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (
+    !Number.isSafeInteger(length) ||
+    length < 0 ||
+    length > SKILL_LOADABLE_REFERENCE_MAX_ENTRIES
+  ) return null;
 
   const normalized = new Set<string>();
-  for (const reference of references) {
-    const value = normalizeStrictRuntimeSkillReferencePath(reference);
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(references, index);
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError(`Runtime skill reference ${index} must be a data property`);
+    }
+    const value = normalizeStrictRuntimeSkillReferencePath(descriptor.value);
     if (value === null) return null;
     normalized.add(value);
   }
@@ -686,14 +854,24 @@ function parseRuntimeSkillBuildDocument(
     : null;
 }
 
-/**
- * Build a runtime skill definition through the historical public contract.
- *
- * Programmatic callers may omit file-only metadata such as `name` and
- * `description`; those values retain their documented fallbacks. Filesystem
- * discovery uses `buildRuntimeDirectorySkillDefinition` below instead.
- */
+/** Build a bounded, immutable runtime skill definition. */
 export function buildRuntimeSkillDefinition(
+  input: BuildRuntimeSkillDefinitionInput,
+): RuntimeSkillDefinition | null {
+  const snapshot = snapshotRuntimeSkillDefinitionInput(input);
+  return buildRuntimeSkillDefinitionFromDocument(
+    snapshot,
+    parseRuntimeSkillBuildDocument(snapshot.content, snapshot.logger),
+  );
+}
+
+/**
+ * Build a runtime skill definition through the historical permissive contract.
+ *
+ * @deprecated This builder accepts unbounded mutable programmatic inputs. Use
+ * {@link buildRuntimeSkillDefinition}.
+ */
+export function buildUnsafeLegacyRuntimeSkillDefinition(
   input: BuildRuntimeSkillDefinitionInput,
 ): RuntimeSkillDefinition | null {
   const source = parseLegacyRuntimeSkillSource(input.content, { logger: input.logger });
@@ -722,10 +900,11 @@ export function buildRuntimeSkillDefinition(
 export function buildRuntimeDirectorySkillDefinition(
   input: BuildRuntimeSkillDefinitionInput,
 ): RuntimeSkillDefinition | null {
-  const directoryName = input.shortName ?? input.id;
+  const snapshot = snapshotRuntimeSkillDefinitionInput(input);
+  const directoryName = snapshot.shortName ?? snapshot.id;
   return buildRuntimeSkillDefinitionFromDocument(
-    input,
-    parseRuntimeSkillDirectoryDocument(input.content, directoryName, input.logger),
+    snapshot,
+    parseRuntimeSkillDirectoryDocument(snapshot.content, directoryName, snapshot.logger),
   );
 }
 
@@ -740,14 +919,19 @@ export function buildRuntimeDirectorySkillDefinition(
 export function buildLegacyRuntimeFlatSkillDefinition(
   input: BuildRuntimeSkillDefinitionInput,
 ): RuntimeSkillDefinition | null {
+  const snapshot = snapshotRuntimeSkillDefinitionInput(input);
   return buildRuntimeSkillDefinitionFromDocument(
-    input,
-    parseRuntimeSkillBuildDocument(input.content, input.logger),
+    snapshot,
+    parseRuntimeSkillBuildDocument(snapshot.content, snapshot.logger),
   );
 }
 
-/** Normalizes runtime skill reference path. */
-export function normalizeRuntimeSkillReferencePath(path: string): string | null {
+/**
+ * Normalizes a runtime skill reference path through the historical contract.
+ *
+ * @deprecated Use {@link normalizeRuntimeSkillReferencePath}.
+ */
+export function normalizeUnsafeLegacyRuntimeSkillReferencePath(path: string): string | null {
   const normalized = path.trim().replaceAll("\\", "/");
 
   if (normalized.length === 0 || normalized.startsWith("/")) {
@@ -774,7 +958,7 @@ export function normalizeStrictRuntimeSkillReferencePath(path: string): string |
   ) {
     return null;
   }
-  const normalized = normalizeRuntimeSkillReferencePath(path);
+  const normalized = normalizeUnsafeLegacyRuntimeSkillReferencePath(path);
 
   if (
     normalized === null ||
@@ -796,6 +980,11 @@ export function normalizeStrictRuntimeSkillReferencePath(path: string): string |
   return segments.join("/");
 }
 
+/** Normalizes and bounds a portable runtime skill reference path. */
+export function normalizeRuntimeSkillReferencePath(path: string): string | null {
+  return normalizeStrictRuntimeSkillReferencePath(path);
+}
+
 type BuildRuntimeLoadedSkillResponseInput = {
   skillId: string;
   instructions: string;
@@ -806,16 +995,105 @@ type BuildRuntimeLoadedSkillResponseInput = {
   logger?: RuntimeSkillMetadataLogger;
 };
 
+const RUNTIME_LOADED_SKILL_MESSAGE_FIELDS = [
+  "allowedToolsNote",
+  "noCurrentRunToolsNote",
+  "unavailableCurrentRunToolsDelegationNote",
+  "overrideNote",
+  "referenceNote",
+] as const satisfies readonly (keyof RuntimeLoadedSkillResponseMessages)[];
+
+function requireBoundedRuntimeLoadedSkillText(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw new TypeError(`Runtime loaded skill ${label} must be a string`);
+  }
+  if (value.length > SKILL_DOCUMENT_MAX_CHARACTERS) {
+    throw new RangeError(
+      `Runtime loaded skill ${label} must be at most ${SKILL_DOCUMENT_MAX_CHARACTERS} characters`,
+    );
+  }
+  return value;
+}
+
+function snapshotRuntimeLoadedSkillResponseMessages(
+  input: unknown,
+): RuntimeLoadedSkillResponseMessages {
+  const snapshot = {} as RuntimeLoadedSkillResponseMessages;
+  for (const field of RUNTIME_LOADED_SKILL_MESSAGE_FIELDS) {
+    snapshot[field] = requireBoundedRuntimeLoadedSkillText(
+      readOwnDataInputProperty(input, field, "Runtime loaded skill messages", true),
+      `messages.${field}`,
+    );
+  }
+  return Object.freeze(snapshot);
+}
+
+function snapshotRuntimeLoadedSkillResponseInput(
+  input: BuildRuntimeLoadedSkillResponseInput,
+): BuildRuntimeLoadedSkillResponseInput {
+  return Object.freeze({
+    skillId: readOwnDataInputProperty(
+      input,
+      "skillId",
+      "Runtime loaded skill response",
+      true,
+    ) as string,
+    instructions: readOwnDataInputProperty(
+      input,
+      "instructions",
+      "Runtime loaded skill response",
+      true,
+    ) as string,
+    nextStep: requireBoundedRuntimeLoadedSkillText(
+      readOwnDataInputProperty(
+        input,
+        "nextStep",
+        "Runtime loaded skill response",
+        true,
+      ),
+      "nextStep",
+    ),
+    messages: snapshotRuntimeLoadedSkillResponseMessages(
+      readOwnDataInputProperty(
+        input,
+        "messages",
+        "Runtime loaded skill response",
+        true,
+      ),
+    ),
+    references: readOwnDataInputProperty(
+      input,
+      "references",
+      "Runtime loaded skill response",
+      false,
+    ) as readonly string[] | undefined,
+    availableToolNames: readOwnDataInputProperty(
+      input,
+      "availableToolNames",
+      "Runtime loaded skill response",
+      false,
+    ) as readonly string[] | undefined,
+    logger: readOwnDataInputProperty(
+      input,
+      "logger",
+      "Runtime loaded skill response",
+      false,
+    ) as RuntimeSkillMetadataLogger | undefined,
+  });
+}
+
 /**
- * Build a loaded-skill response through the historical public contract.
+ * Build a loaded-skill response through the historical permissive contract.
  *
- * Runtime loading of untrusted hosted or filesystem content uses
- * `buildStrictRuntimeLoadedSkillResponse` below.
+ * @deprecated This builder accepts unbounded mutable programmatic inputs. Use
+ * {@link buildRuntimeLoadedSkillResponse}.
  */
-export function buildRuntimeLoadedSkillResponse(
+export function buildUnsafeLegacyRuntimeLoadedSkillResponse(
   input: BuildRuntimeLoadedSkillResponseInput,
 ): RuntimeLoadedSkillResponse {
-  const metadata = parseRuntimeSkillMetadata(input.instructions, { logger: input.logger });
+  const metadata = parseUnsafeLegacyRuntimeSkillMetadata(input.instructions, {
+    logger: input.logger,
+  });
   const declaredAllowedTools = metadata?.allowedTools ?? [];
   const availableToolNameSet = input.availableToolNames !== undefined
     ? new Set(input.availableToolNames)
@@ -846,7 +1124,7 @@ export function buildRuntimeLoadedSkillResponse(
     ...(unavailableCurrentRunTools.length > 0
       ? {
         unavailableCurrentRunTools,
-        ...(hasAvailableDelegationTool(availableToolNameSet)
+        ...(hasUnsafeLegacyAvailableDelegationTool(availableToolNameSet)
           ? { delegationNote: input.messages.unavailableCurrentRunToolsDelegationNote }
           : {}),
       }
@@ -854,7 +1132,7 @@ export function buildRuntimeLoadedSkillResponse(
     ...(metadata?.model ? { model: metadata.model } : {}),
     ...(metadata?.thinking !== undefined ? { thinking: metadata.thinking } : {}),
     ...(metadata?.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
-    ...(hasOverrides && canUseLegacyInvokeAgent(availableToolNameSet)
+    ...(hasOverrides && canUnsafeLegacyUseInvokeAgent(availableToolNameSet)
       ? {
         overrideNote: input.messages.overrideNote,
       }
@@ -872,26 +1150,29 @@ export function buildRuntimeLoadedSkillResponse(
 export function buildStrictRuntimeLoadedSkillResponse(
   input: BuildRuntimeLoadedSkillResponseInput,
 ): RuntimeLoadedSkillResponse {
-  if (!isBoundedRuntimeIdentity(input.skillId)) {
+  const snapshot = snapshotRuntimeLoadedSkillResponseInput(input);
+  if (!isBoundedRuntimeIdentity(snapshot.skillId)) {
     throw new TypeError("Runtime loaded skill response skillId is invalid");
   }
   if (
-    typeof input.instructions !== "string" ||
-    input.instructions.length > SKILL_DOCUMENT_MAX_CHARACTERS
+    typeof snapshot.instructions !== "string" ||
+    snapshot.instructions.length > SKILL_DOCUMENT_MAX_CHARACTERS
   ) {
     throw new RangeError(
       `Runtime loaded skill instructions must be at most ${SKILL_DOCUMENT_MAX_CHARACTERS} characters`,
     );
   }
-  const references = snapshotRuntimeSkillReferences(input.references);
+  const references = snapshotRuntimeSkillReferences(snapshot.references);
   if (references === null) {
     throw new TypeError("Runtime loaded skill references are invalid");
   }
-  const parsedSource = parseStrictRuntimeSkillSource(input.instructions, { logger: input.logger });
+  const parsedSource = parseStrictRuntimeSkillSource(snapshot.instructions, {
+    logger: snapshot.logger,
+  });
   const metadata = parsedSource?.document.metadata ?? null;
   const invalidMetadata = parsedSource === null;
   const declaredAllowedTools = metadata?.allowedTools ?? [];
-  const availableToolNameSet = snapshotAvailableRuntimeToolNames(input.availableToolNames);
+  const availableToolNameSet = snapshotAvailableRuntimeToolNames(snapshot.availableToolNames);
   const isAvailableAllowedToolPattern = (pattern: string): boolean => {
     if (availableToolNameSet === null) return false;
     for (const toolName of availableToolNameSet) {
@@ -910,39 +1191,55 @@ export function buildStrictRuntimeLoadedSkillResponse(
   const hasDeclaredAllowedTools = invalidMetadata || parsedSource.allowedToolsDeclared;
 
   return {
-    skillId: input.skillId,
-    instructions: input.instructions,
-    nextStep: input.nextStep,
+    skillId: snapshot.skillId,
+    instructions: snapshot.instructions,
+    nextStep: snapshot.nextStep,
     ...(hasDeclaredAllowedTools
       ? {
         allowedTools: currentRunAllowedTools,
         note: currentRunAllowedTools.length > 0
-          ? input.messages.allowedToolsNote
-          : input.messages.noCurrentRunToolsNote,
+          ? snapshot.messages.allowedToolsNote
+          : snapshot.messages.noCurrentRunToolsNote,
       }
       : {}),
     ...(hasDeclaredAllowedTools ? { delegationTools: declaredAllowedTools } : {}),
     ...(unavailableCurrentRunTools.length > 0
       ? {
         unavailableCurrentRunTools,
-        ...(hasAvailableDelegationTool(availableToolNameSet)
-          ? { delegationNote: input.messages.unavailableCurrentRunToolsDelegationNote }
+        ...(hasAllowedAvailableDelegationTool(
+            availableToolNameSet,
+            declaredAllowedTools,
+            hasDeclaredAllowedTools,
+          )
+          ? { delegationNote: snapshot.messages.unavailableCurrentRunToolsDelegationNote }
           : {}),
       }
       : {}),
     ...(metadata?.model ? { model: metadata.model } : {}),
     ...(metadata?.thinking !== undefined ? { thinking: metadata.thinking } : {}),
     ...(metadata?.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
-    ...(hasOverrides && canUseLegacyInvokeAgent(availableToolNameSet)
+    ...(hasOverrides && canUseLegacyInvokeAgent(availableToolNameSet) &&
+        isToolAllowedByResolvedPolicy(
+          "invoke_agent",
+          declaredAllowedTools,
+          hasDeclaredAllowedTools,
+        )
       ? {
-        overrideNote: input.messages.overrideNote,
+        overrideNote: snapshot.messages.overrideNote,
       }
       : {}),
     ...(references && references.length > 0
       ? {
         references: [...references],
-        referenceNote: input.messages.referenceNote,
+        referenceNote: snapshot.messages.referenceNote,
       }
       : {}),
   };
+}
+
+/** Build a bounded loaded-skill response and fail closed on invalid metadata. */
+export function buildRuntimeLoadedSkillResponse(
+  input: BuildRuntimeLoadedSkillResponseInput,
+): RuntimeLoadedSkillResponse {
+  return buildStrictRuntimeLoadedSkillResponse(input);
 }

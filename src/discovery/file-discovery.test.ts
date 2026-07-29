@@ -148,17 +148,21 @@ Deno.test("bounded adapter discovery rejects malformed UTF-8", async () => {
   );
 });
 
-Deno.test("legacy adapter discovery rejects malformed UTF-16 before byte counting", async () => {
+Deno.test("bounded adapter discovery requires an allocation-bounded byte reader", async () => {
   const path = "resources/invalid.ts";
+  let legacyReadCalled = false;
   const fsAdapter = {
     ...fakeFsAdapter({}, new Set([path])),
-    readFile: () => Promise.resolve("\ud800"),
+    readFile: () => {
+      legacyReadCalled = true;
+      return Promise.resolve("safe");
+    },
     stat: () =>
       Promise.resolve({
         isFile: true,
         isDirectory: false,
         isSymlink: false,
-        size: 3,
+        size: 4,
         mtime: null,
       }),
   } as FileSystemAdapter;
@@ -168,11 +172,12 @@ Deno.test("legacy adapter discovery rejects malformed UTF-16 before byte countin
       readDiscoveryTextFile(
         path,
         { platform: "node", fsAdapter },
-        { maxBytes: 3 },
+        { maxBytes: 4 },
       ),
     TypeError,
-    "valid Unicode text",
+    "readFileBytesBounded",
   );
+  assertEquals(legacyReadCalled, false);
 });
 
 Deno.test("bounded adapter discovery rejects terminal symlinks before reading", async () => {

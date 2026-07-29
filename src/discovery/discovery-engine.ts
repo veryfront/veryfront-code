@@ -9,6 +9,7 @@ import { detectPlatform } from "#veryfront/platform/core-platform.ts";
 import { agentLogger } from "#veryfront/utils";
 import { ensureError } from "#veryfront/errors";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import { getObjectScopedSkillIdAdmission } from "#veryfront/skill/id-admission.ts";
 import { join } from "#veryfront/compat/path";
 import { agentRegistry } from "#veryfront/agent/composition/composition.ts";
 import { promptRegistry } from "#veryfront/prompt/registry.ts";
@@ -265,6 +266,8 @@ async function discoverSnapshot(snapshot: ProjectDiscoveryConfig): Promise<Disco
     evals: new Map(),
     errors: [],
   };
+  const skillIdAdmission = getObjectScopedSkillIdAdmission(result);
+  const claimedGlobalSkillIds = new Set<string>();
 
   // Every generation replaces one complete project scope. These mutations are
   // staged by discoverAll's registry transaction, so concurrent readers retain
@@ -295,27 +298,59 @@ async function discoverSnapshot(snapshot: ProjectDiscoveryConfig): Promise<Disco
       snapshot.verbose,
     );
     for (const [id, skill] of skillResult.skills) {
-      if (result.skills.has(id)) {
+      if (claimedGlobalSkillIds.has(id)) {
         result.errors.push({
           file: skill.rootPath,
           error: new Error(
-            `Duplicate skill "${id}" across discovery roots; keeping first registration`,
+            `Duplicate skill "${id}" across discovery roots; a higher-precedence declaration already claims this id`,
           ),
           code: "duplicate_id",
           sourceKind: "skill",
           sourceId: id,
         });
         if (snapshot.verbose) {
-          logger.warn(`Duplicate skill "${id}" across discovery roots; keeping first registration`);
+          logger.warn(
+            `Duplicate skill "${id}" across discovery roots; a higher-precedence declaration already claims this id`,
+          );
         }
         continue;
       }
+      const admission = skillIdAdmission.claim({
+        id,
+        source: "project-global skill",
+      });
+      if (!admission.accepted) {
+        skillRegistryInternal.delete(id);
+        result.skills.delete(id);
+        result.errors.push({
+          file: skill.rootPath,
+          error: admission.error,
+          code: "duplicate_id",
+          sourceKind: "skill",
+          sourceId: id,
+        });
+        continue;
+      }
+      claimedGlobalSkillIds.add(id);
       skillRegistryInternal.register(id, skill);
       const registeredSkill = skillRegistryInternal.get(id);
       if (registeredSkill === undefined) {
         throw new Error(`Skill "${id}" was not available after registration`);
       }
       result.skills.set(id, skill);
+    }
+    for (const error of skillResult.errors) {
+      const id = error.sourceKind === "skill" ? error.sourceId : undefined;
+      if (!id || claimedGlobalSkillIds.has(id)) continue;
+      claimedGlobalSkillIds.add(id);
+      const admission = skillIdAdmission.claim({
+        id,
+        source: "project-global skill",
+      });
+      if (!admission.accepted) {
+        skillRegistryInternal.delete(id);
+        result.skills.delete(id);
+      }
     }
     result.errors.push(...skillResult.errors);
   }

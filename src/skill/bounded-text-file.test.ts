@@ -12,6 +12,24 @@ import type { BoundedFileSystemAdapter } from "#veryfront/platform/adapters/base
 import { DenoFileSystemAdapter } from "#veryfront/platform/adapters/runtime/deno/filesystem-adapter.ts";
 import { createSkillTestAdapter } from "./testing.ts";
 import { readBoundedSkillTextFile, readValidatedSkillTextFile } from "./bounded-text-file.ts";
+import { createSkillOperationBudget } from "./operation-budget.ts";
+
+async function settlesWithin<T>(promise: Promise<T>, timeoutMs = 50): Promise<boolean> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((resolve) => {
+        timeoutId = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
+}
 
 Deno.test("readBoundedSkillTextFile reads bounded local and adapter text", async () => {
   const tempDir = await makeTempDir({ prefix: "vf-skill-bounded-read-" });
@@ -82,6 +100,7 @@ Deno.test("readBoundedSkillTextFile rejects terminal symlinks and malformed adap
       () =>
         readBoundedSkillTextFile(adapterPath, {
           ...adapter,
+          readFileBytesBounded: undefined,
           readFileBytes: undefined,
           async readFile() {
             return "\ud800";
@@ -384,4 +403,72 @@ Deno.test("readBoundedSkillTextFile preserves overridden namespaces on built-in 
     "virtual",
   );
   assertEquals(adapter.boundedReads, 2);
+});
+
+Deno.test("readValidatedSkillTextFile requires a genuinely bounded adapter read", async () => {
+  const root = "/project/skills/writer";
+  const path = `${root}/SKILL.md`;
+  const boundedAdapter = createSkillTestAdapter({ [path]: "safe" });
+  const adapter = { ...boundedAdapter, readFileBytesBounded: undefined };
+
+  await assertRejects(
+    () => readValidatedSkillTextFile(root, "SKILL.md", [], adapter),
+    TypeError,
+    "bounded",
+  );
+});
+
+Deno.test("readValidatedSkillTextFile redacts the absolute skill root from diagnostics", async () => {
+  const root = "/private/workspaces/customer/skills/writer";
+  const adapter = {
+    ...createSkillTestAdapter({}),
+    async exists() {
+      throw new Error(`Storage failed below ${root}/references`);
+    },
+  };
+
+  try {
+    await readValidatedSkillTextFile(
+      root,
+      "references/guide.md",
+      ["references"],
+      adapter,
+    );
+    throw new Error("Expected the read to fail");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    assertEquals(message.includes(root), false);
+    assertEquals(message.includes("<skill-root>"), true);
+    assertEquals(error instanceof Error ? error.cause : undefined, undefined);
+  }
+});
+
+Deno.test("readValidatedSkillTextFile honors a shared cancellation budget", async () => {
+  const root = "/project/skills/writer";
+  const adapter = {
+    ...createSkillTestAdapter({}),
+    exists: () => new Promise<boolean>(() => {}),
+  };
+  const controller = new AbortController();
+  const budget = createSkillOperationBudget({ abortSignal: controller.signal });
+  const readWithOptions = readValidatedSkillTextFile as unknown as (
+    skillRoot: string,
+    requestedPath: string,
+    allowedSubdirs: readonly string[],
+    fsAdapter: typeof adapter,
+    maxBytes: number | undefined,
+    options: { budget: typeof budget },
+  ) => Promise<{ content: string; path: string }>;
+
+  const read = readWithOptions(
+    root,
+    "SKILL.md",
+    [],
+    adapter,
+    undefined,
+    { budget },
+  );
+  controller.abort(new Error("cancel strict skill read"));
+
+  assertEquals(await settlesWithin(read), true);
 });

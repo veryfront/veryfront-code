@@ -29,9 +29,22 @@ interface ParsedSkillContent {
 }
 
 /**
- * Parse SKILL.md content into frontmatter + body.
+ * Parse SKILL.md content through the bounded, fail-closed format.
+ * Malformed YAML, invalid Unicode, and oversized documents are rejected.
  */
 export async function parseSkillFrontmatter(content: string): Promise<ParsedSkillContent> {
+  return await parseSkillFileFrontmatter(content);
+}
+
+/**
+ * Parse using the historical unbounded, lossy YAML fallback.
+ *
+ * @deprecated This parser can reinterpret malformed YAML. Use
+ * {@link parseSkillFrontmatter} or {@link parseSkillFileFrontmatter}.
+ */
+export async function parseUnsafeLegacySkillFrontmatter(
+  content: string,
+): Promise<ParsedSkillContent> {
   try {
     const { extract } = await import("#std/front-matter/yaml.ts");
     const result = extract<Record<string, unknown>>(content);
@@ -368,7 +381,14 @@ function parseStrictAllowedTools(
     patterns = value.split(/\s+/).filter(Boolean);
   } else if (Array.isArray(value)) {
     patterns = [];
-    for (const rawPattern of value) {
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, index);
+      if (!descriptor || !("value" in descriptor)) {
+        throw new TypeError(
+          `Skill "${skillName}" allowed-tools entry ${index} must be a data property`,
+        );
+      }
+      const rawPattern = descriptor.value;
       if (typeof rawPattern !== "string") {
         throw toError(
           createError({

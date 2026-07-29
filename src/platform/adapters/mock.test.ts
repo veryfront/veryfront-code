@@ -88,6 +88,74 @@ describe("MockAdapter", () => {
     });
   });
 
+  describe("fs.readFileBytesBounded", () => {
+    it("reads only the requested UTF-8 byte prefix", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/test.txt", "A€B");
+      const readFileBytesBounded = adapter.fs.readFileBytesBounded;
+      assertExists(readFileBytesBounded);
+
+      assertEquals(
+        [...await readFileBytesBounded("/test.txt", 3)],
+        [65, 226, 130],
+      );
+    });
+
+    it("reads bounded binary prefixes without exposing stored bytes", async () => {
+      const adapter = createMockAdapter();
+      const stored = new Uint8Array([0, 255, 1, 128]);
+      adapter.fs.byteFiles.set("/test.bin", stored);
+      const readFileBytesBounded = adapter.fs.readFileBytesBounded;
+      assertExists(readFileBytesBounded);
+
+      const prefix = await readFileBytesBounded("/test.bin", 2);
+      assertEquals([...prefix], [0, 255]);
+      prefix[0] = 99;
+      assertEquals([...stored], [0, 255, 1, 128]);
+    });
+
+    it("does not inspect text beyond the requested byte prefix", async () => {
+      const adapter = createMockAdapter();
+      const source = "a".repeat(1_000_000);
+      let codePointReads = 0;
+      const observedSource = new Proxy(new String(source), {
+        get(target, key) {
+          if (key === "length") return source.length;
+          if (key === "codePointAt") {
+            return (index: number) => {
+              codePointReads += 1;
+              return source.codePointAt(index);
+            };
+          }
+          return Reflect.get(target, key, target);
+        },
+      }) as unknown as string;
+      adapter.fs.files.set("/large.txt", observedSource);
+      const readFileBytesBounded = adapter.fs.readFileBytesBounded;
+      assertExists(readFileBytesBounded);
+
+      assertEquals([...await readFileBytesBounded("/large.txt", 1)], [97]);
+      assertEquals(codePointReads, 1);
+    });
+
+    it("preserves missing-file and invalid-limit failures", async () => {
+      const adapter = createMockAdapter();
+      const readFileBytesBounded = adapter.fs.readFileBytesBounded;
+      assertExists(readFileBytesBounded);
+
+      await assertRejects(
+        () => readFileBytesBounded("/missing.txt", 4),
+        Error,
+        "File not found: /missing.txt",
+      );
+      await assertRejects(
+        () => readFileBytesBounded("/missing.txt", 0),
+        RangeError,
+        "positive safe integer",
+      );
+    });
+  });
+
   describe("fs.writeFile", () => {
     it("should write file", async () => {
       const adapter = createMockAdapter();

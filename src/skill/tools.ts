@@ -30,6 +30,7 @@ import {
 import {
   SKILL_ID_MAX_LENGTH,
   SKILL_RELATIVE_PATH_MAX_LENGTH,
+  SKILL_SCRIPT_DEFAULT_TIMEOUT_MS,
   SKILL_SCRIPT_ENV_KEY_REGEX,
   SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL,
   SKILL_SCRIPT_MAX_ARG_LENGTH,
@@ -43,9 +44,56 @@ import {
   SKILL_VISIBLE_ERROR_MAX_IDS,
 } from "./limits.ts";
 import { readValidatedSkillTextFile } from "./bounded-text-file.ts";
+import { createSkillOperationBudget, SkillOperationTimeoutError } from "./operation-budget.ts";
 
 type SkillFileKind = "reference" | "script";
 const UTF8_ENCODER = new TextEncoder();
+
+function redactSkillRoot(text: string, skillRoot: string): string {
+  const roots = [
+    ...new Set([
+      skillRoot,
+      skillRoot.replaceAll("\\", "/"),
+      skillRoot.replaceAll("/", "\\"),
+    ]),
+  ].filter((root) => root.length > 0).sort((left, right) => right.length - left.length);
+  return roots.reduce(
+    (redacted, root) => redacted.replaceAll(root, "<skill-root>"),
+    text,
+  );
+}
+
+function sanitizeSkillToolFailure(
+  error: unknown,
+  skillRoot: string | undefined,
+  context?: ToolExecutionContext,
+): unknown {
+  if (
+    context?.abortSignal?.aborted &&
+    context.abortSignal.reason !== undefined &&
+    error === context.abortSignal.reason
+  ) {
+    return error;
+  }
+  if (!skillRoot) return error;
+  if (typeof error === "string") {
+    const message = redactSkillRoot(error, skillRoot);
+    return message === error ? error : new Error(message);
+  }
+  if (!(error instanceof Error)) return error;
+  const message = redactSkillRoot(error.message, skillRoot);
+  if (message === error.message) return error;
+
+  const sanitized = error instanceof TypeError
+    ? new TypeError(message)
+    : error instanceof RangeError
+    ? new RangeError(message)
+    : error instanceof DOMException
+    ? new DOMException(message, error.name)
+    : new Error(message);
+  if (!(sanitized instanceof DOMException)) sanitized.name = error.name;
+  return sanitized;
+}
 
 function scriptArgsFitByteBudget(value: readonly string[] | undefined): boolean {
   if (value === undefined) return true;
@@ -226,56 +274,70 @@ export function createLoadSkillTool(): Tool {
       "allowed tools policy, and lists of available reference files and scripts.",
     inputSchema: getLoadSkillInputSchema(),
     execute: async (input, context): Promise<SkillContent> => {
-      const skill = resolveVisibleSkillOrThrow(input.skillId, context);
+      const budget = createSkillOperationBudget({ abortSignal: context?.abortSignal });
+      let skillRoot: string | undefined;
+      try {
+        return await budget.run(async () => {
+          const skill = resolveVisibleSkillOrThrow(input.skillId, context);
+          skillRoot = skill.rootPath;
 
-      // Read SKILL.md
-      const skillDocument = await readValidatedSkillTextFile(
-        skill.rootPath,
-        SKILL_MD_FILENAME,
-        [],
-        skill.fsAdapter,
-        SKILL_TEXT_FILE_MAX_BYTES,
-      );
+          // Read SKILL.md
+          const skillDocument = await readValidatedSkillTextFile(
+            skill.rootPath,
+            SKILL_MD_FILENAME,
+            [],
+            skill.fsAdapter,
+            SKILL_TEXT_FILE_MAX_BYTES,
+            { budget },
+          );
 
-      // Parse frontmatter to get instructions
-      const parsed = await parseSkillFileFrontmatter(skillDocument.content);
-      const currentMetadata = validateSkillFileMetadata(
-        parsed.frontmatter,
-        basename(skill.rootPath),
-      );
+          // Parse frontmatter to get instructions
+          const parsed = await parseSkillFileFrontmatter(skillDocument.content);
+          const currentMetadata = validateSkillFileMetadata(
+            parsed.frontmatter,
+            basename(skill.rootPath),
+          );
 
-      // List available files the agent can load through load_skill_reference.
-      const [references, resources, assets, scripts] = await Promise.all([
-        listStrictSkillSubdir(
-          skill.rootPath,
-          SKILL_REFERENCES_DIR,
-          skill.fsAdapter,
-        ),
-        listStrictSkillSubdir(
-          skill.rootPath,
-          SKILL_RESOURCES_DIR,
-          skill.fsAdapter,
-        ),
-        listStrictSkillSubdir(
-          skill.rootPath,
-          SKILL_ASSETS_DIR,
-          skill.fsAdapter,
-        ),
-        listStrictSkillSubdir(
-          skill.rootPath,
-          SKILL_SCRIPTS_DIR,
-          skill.fsAdapter,
-        ),
-      ]);
-      const loadableReferences = [...references, ...resources, ...assets];
+          // List available files the agent can load through load_skill_reference.
+          const [references, resources, assets, scripts] = await Promise.all([
+            listStrictSkillSubdir(
+              skill.rootPath,
+              SKILL_REFERENCES_DIR,
+              skill.fsAdapter,
+              { budget },
+            ),
+            listStrictSkillSubdir(
+              skill.rootPath,
+              SKILL_RESOURCES_DIR,
+              skill.fsAdapter,
+              { budget },
+            ),
+            listStrictSkillSubdir(
+              skill.rootPath,
+              SKILL_ASSETS_DIR,
+              skill.fsAdapter,
+              { budget },
+            ),
+            listStrictSkillSubdir(
+              skill.rootPath,
+              SKILL_SCRIPTS_DIR,
+              skill.fsAdapter,
+              { budget },
+            ),
+          ]);
+          const loadableReferences = [...references, ...resources, ...assets];
 
-      return {
-        skillId: skill.id,
-        instructions: parsed.body,
-        allowedTools: currentMetadata.allowedTools,
-        references: loadableReferences,
-        scripts,
-      };
+          return {
+            skillId: skill.id,
+            instructions: parsed.body,
+            allowedTools: currentMetadata.allowedTools,
+            references: loadableReferences,
+            scripts,
+          };
+        });
+      } catch (error) {
+        throw sanitizeSkillToolFailure(error, skillRoot, context);
+      }
     },
   });
 }
@@ -291,30 +353,56 @@ export function createLoadSkillReferenceTool(): Tool {
       "references/, resources/, and assets/ directories are accessible.",
     inputSchema: getLoadSkillReferenceInputSchema(),
     execute: async (input, context): Promise<{ content: string; path: string }> => {
-      const skill = resolveVisibleSkillOrThrow(input.skillId, context);
-      assertActiveSkillFileAvailable(
-        {
-          toolName: "load_skill_reference",
-          skillId: skill.id,
-          requestedSkillId: input.skillId,
-          path: input.reference,
-          kind: "reference",
-        },
-        context,
-      );
+      const budget = createSkillOperationBudget({ abortSignal: context?.abortSignal });
+      let skillRoot: string | undefined;
+      try {
+        return await budget.run(async () => {
+          const skill = resolveVisibleSkillOrThrow(input.skillId, context);
+          skillRoot = skill.rootPath;
+          assertActiveSkillFileAvailable(
+            {
+              toolName: "load_skill_reference",
+              skillId: skill.id,
+              requestedSkillId: input.skillId,
+              path: input.reference,
+              kind: "reference",
+            },
+            context,
+          );
 
-      // Validate path safety before reading skill-provided context.
-      const referenceFile = await readValidatedSkillTextFile(
-        skill.rootPath,
-        input.reference,
-        SKILL_READABLE_DIRS,
-        skill.fsAdapter,
-        SKILL_TEXT_FILE_MAX_BYTES,
-      );
+          // Validate path safety before reading skill-provided context.
+          const referenceFile = await readValidatedSkillTextFile(
+            skill.rootPath,
+            input.reference,
+            SKILL_READABLE_DIRS,
+            skill.fsAdapter,
+            SKILL_TEXT_FILE_MAX_BYTES,
+            { budget },
+          );
 
-      return { content: referenceFile.content, path: input.reference };
+          return { content: referenceFile.content, path: input.reference };
+        });
+      } catch (error) {
+        throw sanitizeSkillToolFailure(error, skillRoot, context);
+      }
     },
   });
+}
+
+function timedOutScriptResult(timeoutMs: number) {
+  return {
+    stdout: "",
+    stderr: `Script execution timed out after ${timeoutMs}ms`,
+    exitCode: 124,
+  };
+}
+
+function abortedScriptResult() {
+  return {
+    stdout: "",
+    stderr: "Script execution aborted",
+    exitCode: 130,
+  };
 }
 
 /**
@@ -330,38 +418,59 @@ export function createExecuteSkillScriptTool(
       "Execute a script from a skill's scripts/ directory. Returns stdout, stderr, and exit code.",
     inputSchema: getExecuteSkillScriptInputSchema(),
     execute: async (input, context) => {
-      const skill = resolveVisibleSkillOrThrow(input.skillId, context);
-      assertActiveSkillFileAvailable(
-        {
-          toolName: "execute_skill_script",
-          skillId: skill.id,
-          requestedSkillId: input.skillId,
-          path: input.script,
-          kind: "script",
-        },
-        context,
-      );
-
-      // Validate path safety (only scripts/ allowed)
-      const scriptFile = await readValidatedSkillTextFile(
-        skill.rootPath,
-        input.script,
-        [SKILL_SCRIPTS_DIR],
-        skill.fsAdapter,
-        SKILL_TEXT_FILE_MAX_BYTES,
-      );
-
-      const executor = options.executor ?? getSkillScriptExecutor();
-      return await executor.execute({
-        scriptPath: scriptFile.path,
-        scriptContent: scriptFile.content,
-        args: input.args,
-        env: input.env,
-        cwd: skill.rootPath,
-        validatedSourceRoot: skill.rootPath,
-        timeoutMs: input.timeoutMs,
+      const timeoutMs = input.timeoutMs ?? SKILL_SCRIPT_DEFAULT_TIMEOUT_MS;
+      let skillRoot: string | undefined;
+      const budget = createSkillOperationBudget({
         abortSignal: context?.abortSignal,
+        timeoutMs,
       });
+      try {
+        return await budget.run(async () => {
+          const skill = resolveVisibleSkillOrThrow(input.skillId, context);
+          skillRoot = skill.rootPath;
+          assertActiveSkillFileAvailable(
+            {
+              toolName: "execute_skill_script",
+              skillId: skill.id,
+              requestedSkillId: input.skillId,
+              path: input.script,
+              kind: "script",
+            },
+            context,
+          );
+
+          // Validate path safety (only scripts/ allowed)
+          const scriptFile = await readValidatedSkillTextFile(
+            skill.rootPath,
+            input.script,
+            [SKILL_SCRIPTS_DIR],
+            skill.fsAdapter,
+            SKILL_TEXT_FILE_MAX_BYTES,
+            { budget },
+          );
+          budget.throwIfTerminated();
+
+          const executor = options.executor ?? getSkillScriptExecutor();
+          return await executor.execute({
+            scriptPath: scriptFile.path,
+            scriptContent: scriptFile.content,
+            args: input.args,
+            env: input.env,
+            cwd: skill.rootPath,
+            validatedSourceRoot: skill.rootPath,
+            timeoutMs: budget.remainingMs() ?? timeoutMs,
+            abortSignal: context?.abortSignal,
+          });
+        });
+      } catch (error) {
+        if (context?.abortSignal?.aborted) {
+          return abortedScriptResult();
+        }
+        if (error instanceof SkillOperationTimeoutError) {
+          return timedOutScriptResult(timeoutMs);
+        }
+        throw sanitizeSkillToolFailure(error, skillRoot, context);
+      }
     },
   });
 }

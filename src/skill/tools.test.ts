@@ -12,6 +12,28 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSkillTestAdapter } from "./testing.ts";
 import { LocalScriptExecutor } from "./executor.ts";
 
+type Settlement<T> =
+  | { kind: "fulfilled"; value: T }
+  | { kind: "rejected"; error: unknown }
+  | { kind: "pending" };
+
+async function settleWithin<T>(promise: Promise<T>, timeoutMs = 50): Promise<Settlement<T>> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(
+        (value): Settlement<T> => ({ kind: "fulfilled", value }),
+        (error: unknown): Settlement<T> => ({ kind: "rejected", error }),
+      ),
+      new Promise<Settlement<T>>((resolve) => {
+        timeoutId = setTimeout(() => resolve({ kind: "pending" }), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
+}
+
 function createTestSkill(fsAdapter: FileSystemAdapter): Skill {
   return {
     id: "my-skill",
@@ -75,6 +97,60 @@ Do work.`,
     assertEquals(result.allowedTools, ["Read", "api:*"]);
     assertEquals(result.references, ["references/guide.md"]);
     assertEquals(result.scripts, ["scripts/run.sh"]);
+  });
+
+  it("load_skill redacts its root when optional subdirectory stat fails", async () => {
+    const root = "/project/skills/my-skill";
+    const fsAdapter = createSkillTestAdapter({
+      [`${root}/SKILL.md`]: `---
+name: my-skill
+description: Skill from adapter
+---
+Do work.`,
+      [`${root}/references`]: "not a directory",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+
+    let message = "";
+    try {
+      await createLoadSkillTool().execute({ skillId: "my-skill" });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    assertEquals(message.includes(root), false);
+    assertEquals(message.includes("<skill-root>/references"), true);
+  });
+
+  it("load_skill redacts its root from adapter listing failures", async () => {
+    const root = "/project/skills/my-skill";
+    const baseAdapter = createSkillTestAdapter({
+      [`${root}/SKILL.md`]: `---
+name: my-skill
+description: Skill from adapter
+---
+Do work.`,
+    });
+    const fsAdapter = {
+      ...baseAdapter,
+      async exists(path: string) {
+        if (path === `${root}/references`) {
+          throw new Error(`Storage listing failed below ${root}/references`);
+        }
+        return await baseAdapter.exists(path);
+      },
+    };
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+
+    let message = "";
+    try {
+      await createLoadSkillTool().execute({ skillId: "my-skill" });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    assertEquals(message.includes(root), false);
+    assertEquals(message.includes("<skill-root>/references"), true);
   });
 
   it("load_skill derives the active policy from the same current document as its instructions", async () => {
@@ -737,7 +813,6 @@ Do work.`,
     const adapter = createSkillTestAdapter({ [scriptPath]: "echo run" });
     registerSkill("my-skill", createTestSkill(adapter));
     const controller = new AbortController();
-    controller.abort();
     let observedSignal: AbortSignal | undefined;
 
     const tool = createExecuteSkillScriptTool({
@@ -754,5 +829,168 @@ Do work.`,
     );
 
     assertEquals(observedSignal, controller.signal);
+  });
+
+  it("execute_skill_script redacts its root from executor failures", async () => {
+    const root = "/project/skills/my-skill";
+    const scriptPath = `${root}/scripts/run.sh`;
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo run" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        execute() {
+          throw new Error(`Runner failed below ${root}/scripts`);
+        },
+      },
+    });
+
+    let message = "";
+    try {
+      await tool.execute({ skillId: "my-skill", script: "scripts/run.sh" });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    assertEquals(message.includes(root), false);
+    assertEquals(message.includes("<skill-root>/scripts"), true);
+  });
+
+  it("execute_skill_script settles when cancellation interrupts filesystem preflight", async () => {
+    const pending = new Promise<boolean>(() => {});
+    const adapter = {
+      ...createSkillTestAdapter({}),
+      exists: () => pending,
+    };
+    registerSkill("my-skill", createTestSkill(adapter));
+    const controller = new AbortController();
+    let executorCalled = false;
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        async execute() {
+          executorCalled = true;
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+      },
+    });
+
+    const execution = tool.execute(
+      { skillId: "my-skill", script: "scripts/run.sh" },
+      { abortSignal: controller.signal },
+    );
+    controller.abort(new Error("cancel script preflight"));
+    const settlement = await settleWithin(execution);
+
+    assertEquals(settlement.kind, "fulfilled");
+    if (settlement.kind === "fulfilled") {
+      assertEquals(settlement.value.exitCode, 130);
+    }
+    assertEquals(executorCalled, false);
+  });
+
+  it("load_skill settles when cancellation interrupts filesystem preflight", async () => {
+    const pending = new Promise<boolean>(() => {});
+    const adapter = {
+      ...createSkillTestAdapter({}),
+      exists: () => pending,
+    };
+    registerSkill("my-skill", createTestSkill(adapter));
+    const controller = new AbortController();
+    const cancellation = new Error("cancel load_skill preflight");
+
+    const execution = createLoadSkillTool().execute(
+      { skillId: "my-skill" },
+      { abortSignal: controller.signal },
+    );
+    controller.abort(cancellation);
+
+    const settlement = await settleWithin(execution);
+    assertEquals(settlement.kind, "rejected");
+    if (settlement.kind === "rejected") {
+      assertEquals(settlement.error, cancellation);
+    }
+  });
+
+  it("load_skill_reference settles when cancellation interrupts filesystem preflight", async () => {
+    const pending = new Promise<boolean>(() => {});
+    const adapter = {
+      ...createSkillTestAdapter({}),
+      exists: () => pending,
+    };
+    registerSkill("my-skill", createTestSkill(adapter));
+    const controller = new AbortController();
+    const cancellation = new Error("cancel reference preflight");
+
+    const execution = createLoadSkillReferenceTool().execute(
+      { skillId: "my-skill", reference: "references/guide.md" },
+      { abortSignal: controller.signal },
+    );
+    controller.abort(cancellation);
+
+    const settlement = await settleWithin(execution);
+    assertEquals(settlement.kind, "rejected");
+    if (settlement.kind === "rejected") {
+      assertEquals(settlement.error, cancellation);
+    }
+  });
+
+  it("execute_skill_script applies its timeout to filesystem preflight", async () => {
+    const pending = new Promise<boolean>(() => {});
+    const adapter = {
+      ...createSkillTestAdapter({}),
+      exists: () => pending,
+    };
+    registerSkill("my-skill", createTestSkill(adapter));
+    let executorCalled = false;
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        async execute() {
+          executorCalled = true;
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+      },
+    });
+
+    const settlement = await settleWithin(
+      tool.execute({
+        skillId: "my-skill",
+        script: "scripts/run.sh",
+        timeoutMs: 10,
+      }),
+    );
+
+    assertEquals(settlement.kind, "fulfilled");
+    if (settlement.kind === "fulfilled") {
+      assertEquals(settlement.value.exitCode, 124);
+    }
+    assertEquals(executorCalled, false);
+  });
+
+  it("execute_skill_script rejects executor success after the total timeout", async () => {
+    const scriptPath = "/project/skills/my-skill/scripts/run.sh";
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo run" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    let executorCalled = false;
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        async execute() {
+          executorCalled = true;
+          const startedAt = performance.now();
+          while (performance.now() - startedAt < 100) {
+            // Deliberately block past the public tool's total deadline.
+          }
+          return { stdout: "late success", stderr: "", exitCode: 0 };
+        },
+      },
+    });
+
+    const result = await tool.execute({
+      skillId: "my-skill",
+      script: "scripts/run.sh",
+      timeoutMs: 50,
+    });
+
+    assertEquals(executorCalled, true);
+    assertEquals(result.exitCode, 124);
+    assertEquals(result.stdout, "");
   });
 });

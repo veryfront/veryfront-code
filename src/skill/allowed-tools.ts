@@ -197,7 +197,30 @@ export function validateStrictAllowedToolPatterns(patterns: string[]): string[] 
 
 /** Validate, detach, and freeze an active authorization policy. */
 export function snapshotAllowedToolPatterns(patterns: readonly string[]): string[] {
-  const snapshot = [...patterns];
+  if (!Array.isArray(patterns)) {
+    throw new TypeError("Allowed-tools patterns must be an array");
+  }
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(patterns, "length");
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (!Number.isSafeInteger(length) || length < 0) {
+    throw new TypeError("Allowed-tools length must be a data property");
+  }
+  if (length > SKILL_ALLOWED_TOOL_MAX_PATTERNS) {
+    throw new RangeError(
+      `Allowed-tools accepts at most ${SKILL_ALLOWED_TOOL_MAX_PATTERNS} patterns`,
+    );
+  }
+
+  const snapshot: string[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(patterns, index);
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError(`Allowed-tools pattern ${index} must be a data property`);
+    }
+    snapshot.push(descriptor.value);
+  }
   validateStrictAllowedToolPatterns(snapshot);
   return Object.freeze(snapshot) as string[];
 }

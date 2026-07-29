@@ -96,13 +96,46 @@ The `name` in each `SKILL.md` must exactly match its parent directory. Invalid
 or malformed YAML is reported as a discovery error; it is not partially
 reinterpreted.
 
+`parseSkillFrontmatter` and `parseSkillFileFrontmatter` expose the same
+bounded, fail-closed parser. The explicitly named
+`parseUnsafeLegacySkillFrontmatter` helper preserves the historical lossy
+fallback only for migration and is deprecated. Likewise,
+`buildSkillManifestPrompt` JSON-quotes bounded IDs and descriptions before
+placing this untrusted metadata in a system prompt;
+`buildUnsafeLegacySkillManifestPrompt` is deprecated and unsafe for prompts.
+The public Agent runtime helpers follow the same rule:
+`buildRuntimeAvailableSkillsPromptBlock`, `formatRuntimeSkillMetadata`,
+`parseRuntimeSkillDocument`, `parseRuntimeSkillMetadata`, and
+`normalizeRuntimeSkillReferencePath` are bounded, fail-closed defaults.
+`buildRuntimeSkillDefinition` and `buildRuntimeLoadedSkillResponse` likewise
+validate and snapshot their direct programmatic inputs. Their historical
+permissive behavior is available only through the deprecated
+`buildUnsafeLegacyRuntimeAvailableSkillsPromptBlock`,
+`buildUnsafeLegacyRuntimeSkillDefinition`,
+`buildUnsafeLegacyRuntimeLoadedSkillResponse`,
+`formatUnsafeLegacyRuntimeSkillMetadata`,
+`parseUnsafeLegacyRuntimeSkillDocument`,
+`parseUnsafeLegacyRuntimeSkillMetadata`, and
+`normalizeUnsafeLegacyRuntimeSkillReferencePath` compatibility helpers.
+
+If a project-global skill and an agent-owned skill claim the same exact ID,
+discovery quarantines both definitions and reports a `duplicate_id` error.
+Directory-form project skills still take precedence over legacy flat files,
+and valid project skills still take precedence over built-ins.
+
 Path-safety helpers preserve adapter iteration order and accept canonical
 relative paths up to the general 4096-character path budget. Traversal,
 symlinked directories or entries, and malformed adapter entry names are
 rejected even if an older release happened to enumerate them; those cases are
 intentional security corrections, not supported compatibility behavior.
+Errors returned from strict Skill reads redact the configured root as
+`<skill-root>` so host filesystem layout is not exposed to callers.
 Framework discovery and tool execution additionally apply tighter resource
 ceilings and deterministic sorting at their filesystem boundaries.
+Non-native filesystem adapters used at these bounded Skill boundaries must
+implement a genuine `readFileBytesBounded(path, byteLimit)` operation. Reading
+the complete object and slicing afterward is not bounded; adapters without the
+capability fail closed before `readFile()` is called.
 
 ## Agent tools
 
@@ -113,7 +146,7 @@ supporting skill tools:
 | ---------------------- | -------------------------- | ---------------------------------------------------------- |
 | `load_skill`           | Every runtime              | Load a skill's full instructions by ID                     |
 | `load_skill_reference` | Local and project runtimes | Read a file from `references/`, `resources/`, or `assets/` |
-| `execute_skill_script` | Local and project runtimes | Execute a script from a skill (5-minute timeout)           |
+| `execute_skill_script` | Local and project runtimes | Execute a script with a total deadline of up to 5 minutes  |
 
 Hosted chat reads an advertised reference through
 `load_skill({ skillId, file })`. It does not execute skill scripts directly.
@@ -177,6 +210,12 @@ from planning. It also prevents skill-body switches and advertises
 paths. Delegation and other tools still follow the active `allowed-tools`
 policy.
 
+Continuation and delegation advice is derived from the intersection of the
+runtime's available tools and the active `allowed-tools` policy. Veryfront does
+not suggest a delegate tool that the active skill cannot call. Runtime
+duplicate-load tracking is aggregate-bounded: it stores compact skill metadata
+and reference markers, not loaded instruction bodies or reference contents.
+
 ## CLI commands
 
 ```bash
@@ -201,6 +240,10 @@ veryfront skills validate skills/my-skill
 ## Script execution limits
 
 Skill scripts default to a 60-second timeout and may request up to 5 minutes.
+The requested timeout is one total deadline measured from tool entry; path
+validation, bounded reads, executor preparation, launch, and process execution
+all consume the same remaining budget. Cancellation can settle the operation
+during any of those preflight stages.
 Local tool execution preserves the original validated script path, filename,
 working directory, script-relative imports, and ancestor package resolution.
 It does not write staging files into the skill tree, so skills may be installed

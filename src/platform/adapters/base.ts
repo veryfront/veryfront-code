@@ -227,7 +227,8 @@ export interface FileSystemAdapter {
    * store and continue until EOF or `byteLimit`; reading the complete object
    * and slicing afterward does not satisfy this capability. Callers can
    * request their accepted maximum plus one byte to distinguish an exact-size
-   * file from an oversized file.
+   * file from an oversized file. Non-native adapters used for bounded Skill
+   * discovery or strict Skill runtime reads must implement this capability.
    */
   readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
   writeFile(path: string, content: string): Promise<void>;
