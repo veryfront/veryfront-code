@@ -320,6 +320,13 @@ behavior differs from metadata elements. Probe markers are selected locally and
 proven absent from the input. They are never included in returned HTML. Failure
 marks only the affected lane unavailable.
 
+Marker selection is itself resource-bounded. A single finite-state pass records
+complete canonical `vf-head-probe-<decimal>-x` occurrences in a fixed
+1,024-entry bitmap, then selects the first gap. It does not increment a suffix
+and rescan the document. If all slots are occupied, the affected lane becomes
+`unsafe-insertion-state`. Prefix decoys, the exact final slot, and first-over
+slot exhaustion are conformance and subprocess resource cases.
+
 Probe parses enforce the authored-input caps plus a fixed, test-asserted budget
 for the exact synthetic sequence and any bounded text-node split it can cause.
 Counters distinguish the collision-free synthetic source range, so the probe's
@@ -555,21 +562,45 @@ shell whose head boundaries the framework already owns structurally.
 The existing streaming nonce and Studio selector rewriters are separate
 consumers with incremental-tokenization requirements. This change removes the
 head scanner's false authority but does not declare those streaming consumers
-fixed; their script-state behavior remains a required follow-up in the HTML
-hardening batch.
+fixed. The hardening ledger must explicitly reopen and supersede both its HTML
+closure and its Studio closure until the following independent acceptance gates
+pass:
+
+- the nonce rewriter preserves HTML script-tokenizer state across every
+  relevant chunk split, including script data, escaped, double-escaped,
+  end-tag-open/name, comment-like, UTF-8, and multi-byte boundaries, without
+  treating script text as markup; and
+- the Studio selector rewriter handles escaped and double-escaped script states
+  without injecting into script text or lookalike markup, while preserving
+  every decoded source code unit outside intended attribute insertions.
+
+Both require adversarial state fixtures and tests through their production
+consumer paths before either module can close again.
 
 ## Dependency and performance controls
 
+- Apply the framework-wide dependency rule literally: production core may use
+  first-party modules and runtime built-ins, but it may not own third-party
+  implementation code, package declarations, or vendor types. The exact
+  first-party parser-only package edge below is the extension boundary;
+  `parse5` and its transitives stay declared and executed by that extension.
 - Declare exact `npm:parse5@7.3.0` only in
   `extensions/ext-parser-parse5/deno.json`; do not add a root import-map alias or
   a direct import from `src/` or `cli/`.
-- Keep `audit-core-deps` unchanged with no exception. Add reverse regression
-  tests proving the parser specifier is rejected from every core path.
+- Add no parser exception to the general core-dependency policy. Because the
+  existing `audit-core-deps` executable currently traverses zero production
+  files, give this change a dedicated syntax-aware parser-extension boundary
+  gate that walks `src/` and `cli/` explicitly and fails on a zero-file scan.
+  Correcting the general audit and removing its pre-existing CSS, Redis,
+  WebSocket, S3, YAML, `@std`, React-workspace, opaque-loader, and generated
+  artifact violations is a separate repository-wide dependency-remediation
+  workstream; a false-green result from that task is not parser evidence.
 - Extend the first-party import policy with exactly one production edge from
   `src/html/head-boundary.ts` to
   `@veryfront/ext-parser-parse5/parser-only`. Its reverse tests reject the
-  package root, other subpaths, and the parser-only subpath from every other
-  `src/` or `cli/` file.
+  package root, other subpaths, versioned/unversioned `npm:` spellings,
+  relative paths resolving into the extension, CommonJS/TypeScript import
+  forms, and the parser-only subpath from every other `src/` or `cli/` file.
 - Add `parse5` to the extension-owned dependency classification. Generated
   root npm metadata must contain `@veryfront/ext-parser-parse5` at the root
   package version and must not declare `parse5` directly; generated extension
@@ -578,9 +609,20 @@ hardening batch.
   includes, extension documentation, root npm co-version dependencies, and npm
   pack/install smoke tests. Add an explicit DNT mapping for the `parser-only`
   package subpath so emitted core code never points into workspace extension
-  source.
-- Add an enforced `verify:extensions` task or an explicit
-  `ext-parser-parse5` CI job. With a frozen lock it runs `deno check` on both
+  source. Because DNT rejects unused package mappings, add the first core source
+  edge and its mapping in one atomic checkpoint after metadata ownership exists.
+- After all extension artifacts are built, the root artifact's own import
+  lifecycle check installs the complete set of first-party extension
+  dependencies from their emitted local directories in one no-save/no-lockfile
+  operation. Derive that set from final root metadata and validate exact
+  names/versions; do not maintain a second hard-coded list or install only the
+  parser extension. Route the `@veryfront` scope to a loopback rejection trap
+  for this operation and require zero requests, proving the build never fetches
+  unpublished first-party packages while third-party extension dependencies
+  remain independently resolvable.
+- Add enforced `verify:html-parser` and `verify:html-parser-packaging` tasks with
+  explicit extension and package-boundary CI jobs. With a frozen lock, the
+  extension job runs `deno check` on both
   package entries and every test, `deno fmt --check`, `deno lint`, the locator
   conformance suite, and focused extension tests without `--no-check`. Both
   prerelease and release publication jobs must depend on it; verification must
@@ -594,10 +636,12 @@ hardening batch.
   it imports the emitted root head path and asserts the resolved extension path.
   The second declares only the packed extension tarball, resolves its exact
   `parse5` dependency, imports `parser-only`, and asserts its resolved paths. If
-  the generated extension manifest requires a `veryfront` peer for its normal
-  factory, an isolated local registry supplies the packed root as a transitive
-  peer without adding it to the application's declared dependencies; the
-  parser-only resolved runtime graph must still prove that peer is not loaded.
+  the generated extension manifest declares a `veryfront` peer for its normal
+  factory, the loopback registry serves the exact packed root while proxying
+  only bounded read-only third-party metadata to a fixed upstream. Strict peer
+  resolution installs that root solely as the peer without adding it to the
+  application's declared dependencies; the parser-only runtime graph must prove
+  the root is not evaluated.
   Installing root and extension tarballs together as sibling application
   dependencies is not sufficient. Prerelease and release publication jobs must
   depend on this job.
@@ -627,9 +671,12 @@ hardening batch.
   `parse5`; browser bundles must not contain it.
 - Define browser absence over the resolved source and built-artifact graphs for
   every `BROWSER_SAFE_EXPORTS` entry plus `index.client` and `react/public`.
-  Bundler metafiles or equivalent resolved graphs reject `head-boundary`,
-  `ext-parser-parse5`, `parse5`, and its `entities` dependency; maintained path
-  lists and substring-only checks are insufficient.
+  Bundler metafiles or equivalent resolved graphs reject the exact core
+  `head-boundary` module identities, the exact
+  `@veryfront/ext-parser-parse5` package/subpath identities, and exact npm
+  packages `parse5` and `entities`; maintained path lists and substring-only
+  checks are insufficient and must not reject unrelated packages such as
+  `character-entities`.
 - Parse each document once per composite insertion operation. One isolated
   probe-only parse is permitted per distinct otherwise ambiguous candidate
   boundary. Because the contract has two insertion lanes, a malformed document
@@ -661,7 +708,9 @@ hardening batch.
   deep-tree cases there as well. A future parse5 update must not pass if any
   tokenizer hook or capped-adapter bound becomes inactive. Repeat
   ambiguous-candidate probes at every exact authored limit to prove their
-  synthetic overhead is excluded and bounded independently.
+  synthetic overhead is excluded and bounded independently. Include dense
+  marker-prefix input, the final free marker slot, and all-slot exhaustion to
+  prove selection remains one bounded linear scan.
 - Benchmark import-map JSON immediately below and reject immediately above the
   per-map bytes, aggregate bytes, map-count, nesting, and aggregate member/item
   caps. Include flat many-key, deeply nested, duplicate-key, and many-map cases
@@ -780,9 +829,9 @@ Split verification by boundary:
   missing structural body handling remains independently tested.
 - Packaging tests verify workspace discovery, exact extension dependency,
   parser-only DNT mapping, co-version root dependency, compiled-binary
-  inclusion, strict-layout install smoke, SBOM ownership, absence from the core
-  direct dependency graph, and absence from browser bundles. CI graph tests
-  verify that extension and prepublication package-boundary jobs gate both
+  inclusion, strict-layout install smoke, SBOM ownership, the dedicated
+  syntax-aware parser-edge policy, and absence from browser bundles. CI graph
+  tests verify that extension and prepublication package-boundary jobs gate both
   publication paths.
 
 Focused HTML/rendering tests, formatting, lint, typecheck, the specified
