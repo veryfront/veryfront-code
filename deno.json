@@ -64,6 +64,8 @@
     "dist/",
     "coverage/",
     "scripts/",
+    "!scripts/lint/audit-parser-extension-boundary.ts",
+    "!scripts/lint/audit-parser-extension-boundary.test.ts",
     "storybook/",
     "examples/",
     "data/",
@@ -460,6 +462,7 @@
     "docs:check-links": "deno run -A scripts/lint/check-doc-links.ts",
     "lint:ban-zod": "deno run --allow-read scripts/lint/ban-zod-imports.ts",
     "lint:core-deps": "deno run --allow-read scripts/lint/audit-core-deps.ts",
+    "lint:parser-extension-boundary": "deno run --frozen --allow-read scripts/lint/audit-parser-extension-boundary.ts",
     "lint:dependency-boundaries": "deno run --allow-read scripts/lint/audit-dependency-boundaries.ts",
     "lint:module-boundaries": "DENO_NO_PACKAGE_JSON=1 deno run --frozen --allow-read scripts/lint/check-module-boundaries.ts",
     "lint:extension-contracts": "deno run --allow-read scripts/lint/audit-extension-contracts.ts",
@@ -482,7 +485,8 @@
     "lint:sanitizer-baseline": "deno run --allow-read scripts/lint/check-sanitizer-baseline.ts",
     "lint:skipped-tests": "deno run --allow-read scripts/lint/check-skipped-tests-baseline.ts",
     "check:scripts:framework-candidates": "deno check --config=scripts/test.deno.json --frozen scripts/build/framework-candidates.ts scripts/build/framework-candidates.test.ts",
-    "test:scripts": "deno task check:scripts:framework-candidates && deno test --config=scripts/test.deno.json --frozen --no-check --allow-read --allow-write --allow-run scripts/test-config-lock.test.ts scripts/ci/publish-npm-packages.test.ts scripts/build/browser-safe-exports.test.ts scripts/build/dnt-polyfill.test.ts scripts/build/framework-candidates.test.ts scripts/build/generate-sbom.test.ts scripts/build/npm-dependency-sources.test.ts scripts/build/npm-extension-package-metadata.test.ts scripts/build/npm-package-metadata.test.ts scripts/build/npm-react-shims.test.ts scripts/docs/docs-coverage.test.ts scripts/docs/generate-api-reference.test.ts scripts/docs/guide-validation.test.ts scripts/lint/audit-core-deps.test.ts scripts/lint/audit-dependency-boundaries.test.ts scripts/lint/audit-extension-capabilities.test.ts scripts/lint/audit-extension-contracts.test.ts scripts/lint/audit-deps.test.ts scripts/lint/check-module-boundaries.test.ts scripts/lint/enforce-cli-boundary.test.ts scripts/lint/ban-test-only.test.ts scripts/lint/check-sanitizer-baseline.test.ts scripts/lint/check-skipped-tests-baseline.test.ts scripts/lint/check-coverage.test.ts scripts/security/audit-npm.test.ts scripts/security/submit-dependency-snapshot.test.ts",
+    "test:scripts:parser-extension-boundary": "deno test -A --frozen scripts/lint/audit-parser-extension-boundary.test.ts",
+    "test:scripts": "deno task test:scripts:parser-extension-boundary && deno task check:scripts:framework-candidates && deno test --config=scripts/test.deno.json --frozen --no-check --allow-read --allow-write --allow-run scripts/test-config-lock.test.ts scripts/ci/publish-npm-packages.test.ts scripts/build/browser-safe-exports.test.ts scripts/build/dnt-polyfill.test.ts scripts/build/framework-candidates.test.ts scripts/build/generate-sbom.test.ts scripts/build/npm-dependency-sources.test.ts scripts/build/npm-extension-package-metadata.test.ts scripts/build/npm-package-metadata.test.ts scripts/build/npm-react-shims.test.ts scripts/docs/docs-coverage.test.ts scripts/docs/generate-api-reference.test.ts scripts/docs/guide-validation.test.ts scripts/lint/audit-core-deps.test.ts scripts/lint/audit-dependency-boundaries.test.ts scripts/lint/audit-extension-capabilities.test.ts scripts/lint/audit-extension-contracts.test.ts scripts/lint/audit-deps.test.ts scripts/lint/check-module-boundaries.test.ts scripts/lint/enforce-cli-boundary.test.ts scripts/lint/ban-test-only.test.ts scripts/lint/check-sanitizer-baseline.test.ts scripts/lint/check-skipped-tests-baseline.test.ts scripts/lint/check-coverage.test.ts scripts/security/audit-npm.test.ts scripts/security/submit-dependency-snapshot.test.ts",
     "test:cross-runtime": "deno run --allow-all src/platform/compat/cross-runtime.test.ts",
     "test:node": "node ./tests/node/run-tests.mjs 'src/**/*.test.ts'",
     "test:bun:config": "deno check --frozen ./tests/bun/config-loader-smoke.ts && bun run --preload ./tests/bun/preload.ts ./tests/bun/config-loader-smoke.ts",
@@ -505,6 +509,14 @@
     "sbom:all": "deno run --allow-read --allow-write scripts/build/generate-sbom.ts --all-manifests",
     "submit-deps": "deno run --allow-read --allow-env --allow-net=api.github.com scripts/security/submit-dependency-snapshot.ts",
     "audit": "deno run --allow-read --allow-run --allow-write scripts/security/audit-npm.ts"
+  },
+  "test": {
+    "include": [
+      "src/",
+      "cli/",
+      "react/",
+      "tests/"
+    ]
   },
   "lint": {
     "include": [
