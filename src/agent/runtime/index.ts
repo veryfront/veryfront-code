@@ -1596,23 +1596,6 @@ export class AgentRuntime {
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
 
-      if (state.suppressedToolCalls.length > 0) {
-        const unavailableNames = [
-          ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
-        ];
-        currentMessages.push({
-          id: `runtime_note_${Date.now()}_${step}`,
-          role: "user",
-          parts: [{
-            type: "text",
-            text: `Runtime recovery: ignored unavailable tool call(s): ${
-              unavailableNames.join(", ")
-            }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
-          }],
-          timestamp: Date.now(),
-        });
-      }
-
       const finalToolResults = collectFinalStreamToolResults(state);
 
       const persistToolResult = async (toolResult: StreamingToolResult): Promise<void> => {
@@ -1937,6 +1920,23 @@ export class AgentRuntime {
 
       for (const toolResult of finalToolResults.values()) {
         await persistToolResult(toolResult);
+      }
+
+      if (state.suppressedToolCalls.length > 0) {
+        const unavailableNames = [
+          ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
+        ];
+        currentMessages.push({
+          id: `runtime_note_${Date.now()}_${step}`,
+          role: "user",
+          parts: [{
+            type: "text",
+            text: `Runtime recovery: ignored unavailable tool call(s): ${
+              unavailableNames.join(", ")
+            }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
+          }],
+          timestamp: Date.now(),
+        });
       }
 
       throwIfAborted(abortSignal);
