@@ -56,6 +56,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"@opentelemetry/semantic-conventions",
 	"@sentry/deno",
 	"@sentry/node",
+	"ai",
 	"bash-tool",
 	"brace-expansion",
 	"es-module-lexer",
@@ -87,10 +88,6 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"vfile",
 ] as const;
 
-const STALE_DIRECT_DEPENDENCIES = [
-	"ai",
-] as const;
-
 const STALE_DEV_DEPENDENCIES = [
 	"@types/better-sqlite3",
 	"@types/mime-types",
@@ -111,11 +108,6 @@ export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
 	}
 
 	for (const name of EXTENSION_OWNED_DEPENDENCIES) {
-		delete pkg.dependencies?.[name];
-		delete pkg.optionalDependencies?.[name];
-	}
-
-	for (const name of STALE_DIRECT_DEPENDENCIES) {
 		delete pkg.dependencies?.[name];
 		delete pkg.optionalDependencies?.[name];
 	}

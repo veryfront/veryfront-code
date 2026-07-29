@@ -60,6 +60,7 @@
     "npm:@types/mdast@4.0.3": "4.0.3",
     "npm:@types/node@*": "24.2.0",
     "npm:@types/unist@3.0.2": "3.0.2",
+    "npm:ai@6.0.235": "6.0.235_zod@4.3.6",
     "npm:bash-tool@1.3.16": "1.3.16_ai@6.0.235__zod@3.25.76_just-bash@2.14.5",
     "npm:better-sqlite3@9.6.0": "9.6.0",
     "npm:brace-expansion@5.0.8": "5.0.8",
@@ -205,9 +206,18 @@
       "integrity": "sha512-jO0LUsIQC+FeJRQI1KFiNcfTGp6a0lXrymekaXfBIvhVEOyt0NUyc9wiVi/dYGHQmWFXUo8QgmghgGAGLOPTAA==",
       "dependencies": [
         "@ai-sdk/provider",
-        "@ai-sdk/provider-utils",
+        "@ai-sdk/provider-utils@4.0.40_zod@3.25.76",
         "@vercel/oidc",
         "zod@3.25.76"
+      ]
+    },
+    "@ai-sdk/gateway@3.0.157_zod@4.3.6": {
+      "integrity": "sha512-jO0LUsIQC+FeJRQI1KFiNcfTGp6a0lXrymekaXfBIvhVEOyt0NUyc9wiVi/dYGHQmWFXUo8QgmghgGAGLOPTAA==",
+      "dependencies": [
+        "@ai-sdk/provider",
+        "@ai-sdk/provider-utils@4.0.40_zod@4.3.6",
+        "@vercel/oidc",
+        "zod@4.3.6"
       ]
     },
     "@ai-sdk/provider-utils@4.0.40_zod@3.25.76": {
@@ -217,6 +227,15 @@
         "@standard-schema/spec",
         "eventsource-parser",
         "zod@3.25.76"
+      ]
+    },
+    "@ai-sdk/provider-utils@4.0.40_zod@4.3.6": {
+      "integrity": "sha512-OL5IrpUm9Y8Dwy+w/vvFwPotS6m52O9W0op2oXgXdCROMJIBalBI0oro6OIBYkPxvm5Xg02GSkoQN25RlR0bnw==",
+      "dependencies": [
+        "@ai-sdk/provider",
+        "@standard-schema/spec",
+        "eventsource-parser",
+        "zod@4.3.6"
       ]
     },
     "@ai-sdk/provider@3.0.14": {
@@ -1980,11 +1999,21 @@
     "ai@6.0.235_zod@3.25.76": {
       "integrity": "sha512-Uyeuvowo20XChpFC0lUaQq8xf0Kg7OElA56fEjUYoeWMJIzqshDTz4S57KXobcJ4m+iDQxMeJoUj06CIxSLx7A==",
       "dependencies": [
-        "@ai-sdk/gateway",
+        "@ai-sdk/gateway@3.0.157_zod@3.25.76",
         "@ai-sdk/provider",
-        "@ai-sdk/provider-utils",
+        "@ai-sdk/provider-utils@4.0.40_zod@3.25.76",
         "@opentelemetry/api",
         "zod@3.25.76"
+      ]
+    },
+    "ai@6.0.235_zod@4.3.6": {
+      "integrity": "sha512-Uyeuvowo20XChpFC0lUaQq8xf0Kg7OElA56fEjUYoeWMJIzqshDTz4S57KXobcJ4m+iDQxMeJoUj06CIxSLx7A==",
+      "dependencies": [
+        "@ai-sdk/gateway@3.0.157_zod@4.3.6",
+        "@ai-sdk/provider",
+        "@ai-sdk/provider-utils@4.0.40_zod@4.3.6",
+        "@opentelemetry/api",
+        "zod@4.3.6"
       ]
     },
     "ansi-regex@5.0.1": {
@@ -2015,7 +2044,7 @@
     "bash-tool@1.3.16_ai@6.0.235__zod@3.25.76_just-bash@2.14.5": {
       "integrity": "sha512-2xuprVBzUOYw4+QCpeSwvkuXuHkjKRtMzh+nTpEidROsNnglr5xRs3mdeOmwFVkjB4JhE/uZqIXE+tabbJI7QQ==",
       "dependencies": [
-        "ai",
+        "ai@6.0.235_zod@3.25.76",
         "fast-glob",
         "just-bash",
         "yaml",
@@ -5326,6 +5355,7 @@
         "dependencies": [
           "jsr:@std/assert@1.0.19",
           "jsr:@std/testing@1.0.17",
+          "npm:ai@6.0.235",
           "npm:bash-tool@1.3.16",
           "npm:brace-expansion@5.0.8",
           "npm:just-bash@2.14.5"

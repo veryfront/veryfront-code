@@ -38,6 +38,16 @@ describe("firstPartyExtensionManifestPaths", () => {
 });
 
 describe("manifestDependencies", () => {
+  it("pins bash-tool's required AI SDK peer in the sandbox extension", async () => {
+    const manifest = JSON.parse(
+      await Deno.readTextFile(
+        "extensions/ext-sandbox-shell-tools/deno.json",
+      ),
+    ) as ExtensionManifest;
+
+    assertEquals(manifestDependencies(manifest).ai, "6.0.235");
+  });
+
   it("derives npm dependencies from extension imports", () => {
     const manifest: ExtensionManifest = {
       name: "@veryfront/ext-sandbox-shell-tools",
