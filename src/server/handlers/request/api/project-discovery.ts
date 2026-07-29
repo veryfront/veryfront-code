@@ -174,6 +174,9 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
 
         const discoveryOptions = createProjectDiscoveryConfig({
           projectDir: ctx.projectDir,
+          cacheNamespace: sourceSnapshotVersion === undefined
+            ? key
+            : `${key}:snapshot:${sourceSnapshotVersion}`,
           config: ctx.config,
           fsAdapter: ctx.adapter.fs,
         });
