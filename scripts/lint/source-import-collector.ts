@@ -73,6 +73,7 @@ interface AstNode {
 interface NormalizedInvocation {
   target: unknown;
   arguments: unknown[];
+  explicitThisArgument?: unknown;
   kind: "direct" | "call" | "apply" | "construct";
   argumentsKnown: boolean;
 }
@@ -123,6 +124,7 @@ const REQUIRE_FAMILY_APIS: ReadonlySet<ApiBinding> = new Set([
 
 type ScopedValues<T> = WeakMap<LexicalScope, Map<string, T>>;
 type ScopedMemberValues<T> = WeakMap<LexicalScope, Map<string, Map<string, T>>>;
+type PromiseOrigins = ReadonlySet<AstNode>;
 
 const SOURCE_EXTENSIONS = [
   ".ts",
@@ -706,6 +708,59 @@ function setScopedMemberValue<T>(
   return true;
 }
 
+function getScopedMemberValues<T>(
+  values: ScopedMemberValues<T>,
+  scope: LexicalScope,
+  ownerName: string,
+): ReadonlyMap<string, T> | undefined {
+  const bindingScope = closestBindingScope(scope, ownerName);
+  return bindingScope ? values.get(bindingScope)?.get(ownerName) : undefined;
+}
+
+function joinPromiseOrigins(
+  current: PromiseOrigins | undefined,
+  incoming: PromiseOrigins,
+): PromiseOrigins {
+  if (current === undefined) return new Set(incoming);
+  if ([...incoming].every((origin) => current.has(origin))) return current;
+  return new Set([...current, ...incoming]);
+}
+
+function setScopedPromiseOrigins(
+  values: ScopedValues<PromiseOrigins>,
+  scope: LexicalScope,
+  name: string,
+  incoming: PromiseOrigins,
+): boolean {
+  if (incoming.size === 0) return false;
+  return setScopedValue(
+    values,
+    scope,
+    name,
+    joinPromiseOrigins(getScopedValue(values, scope, name), incoming),
+  );
+}
+
+function setScopedMemberPromiseOrigins(
+  values: ScopedMemberValues<PromiseOrigins>,
+  scope: LexicalScope,
+  ownerName: string,
+  property: string,
+  incoming: PromiseOrigins,
+): boolean {
+  if (incoming.size === 0) return false;
+  return setScopedMemberValue(
+    values,
+    scope,
+    ownerName,
+    property,
+    joinPromiseOrigins(
+      getScopedMemberValue(values, scope, ownerName, property),
+      incoming,
+    ),
+  );
+}
+
 function uncertainAlias(api: ApiBinding): ApiBinding {
   return api === "require" || api === "require-alias" ||
       api === "require-resolve" || api === "create-require"
@@ -943,8 +998,24 @@ function bindObjectPatternFromOwner(
       ? pattern.properties
       : []
   ) {
-    if (!isNode(property) || property.type !== "ObjectProperty") continue;
-    const api = memberApi(owner, resolvePropertyName(property));
+    if (!isNode(property)) continue;
+    if (property.type === "RestElement") {
+      const local = identifierName(property.argument);
+      if (local && owner) {
+        changed = setScopedApiValue(
+          apiBindings,
+          scope,
+          local,
+          transform(uncertainAlias(owner)),
+        ) || changed;
+      }
+      continue;
+    }
+    if (property.type !== "ObjectProperty") continue;
+    const propertyName = resolvePropertyName(property);
+    const api = propertyName === undefined && owner
+      ? uncertainAlias(owner)
+      : memberApi(owner, propertyName);
     if (isNode(property.value) && property.value.type === "ObjectPattern") {
       changed = bindObjectPatternFromOwner(
         property.value,
@@ -1026,6 +1097,11 @@ function collectModuleBindings(
   const stringValues: ScopedValues<string> = new WeakMap();
   const apiBindings: ScopedValues<ApiBinding> = new WeakMap();
   const memberBindings: ScopedMemberValues<ApiBinding> = new WeakMap();
+  const promiseBindings: ScopedValues<PromiseOrigins> = new WeakMap();
+  const promiseMemberBindings: ScopedMemberValues<PromiseOrigins> =
+    new WeakMap();
+  const locallyOwnedContainers: WeakMap<LexicalScope, Set<string>> =
+    new WeakMap();
   const parentByNode = new WeakMap<AstNode, AstNode>();
   const functionByScope = new WeakMap<LexicalScope, AstNode>();
   const immediatelyInvokedFunctions = new WeakSet<AstNode>();
@@ -1045,6 +1121,7 @@ function collectModuleBindings(
   const assignmentPatterns: Array<{ node: AstNode; scope: LexicalScope }> = [];
   const assignments: Array<{ node: AstNode; scope: LexicalScope }> = [];
   let visitedNodeCount = 0;
+  let promiseProducerNodeCount = 0;
   const resolveModuleName = (specifier: string): string =>
     options.resolveModuleSpecifier?.(specifier, filePath) ?? specifier;
 
@@ -1074,6 +1151,10 @@ function collectModuleBindings(
 
   const visit = (node: AstNode): void => {
     visitedNodeCount++;
+    if (
+      node.type === "ImportExpression" || node.type === "CallExpression" ||
+      node.type === "OptionalCallExpression"
+    ) promiseProducerNodeCount++;
     const scope = scopeByNode.get(node);
     if (!scope) throw new Error(`missing lexical scope for ${node.type}`);
     if (isFunctionNode(node)) {
@@ -1207,6 +1288,37 @@ function collectModuleBindings(
   };
   visit(ast);
 
+  for (const { node: declaration, scope, kind } of declarations) {
+    if (kind !== "const") continue;
+    const variableDeclaration = parentByNode.get(declaration);
+    const declarationOwner = variableDeclaration
+      ? parentByNode.get(variableDeclaration)
+      : undefined;
+    if (
+      declarationOwner?.type === "ExportNamedDeclaration" ||
+      declarationOwner?.type === "ExportDefaultDeclaration"
+    ) {
+      continue;
+    }
+    const name = identifierName(declaration.id);
+    const initializer = unwrapTransparentExpression(declaration.init);
+    if (
+      !name || !isNode(initializer) ||
+      (initializer.type !== "ObjectExpression" &&
+        initializer.type !== "ArrayExpression")
+    ) {
+      continue;
+    }
+    const bindingScope = closestBindingScope(scope, name);
+    if (!bindingScope) continue;
+    let bindings = locallyOwnedContainers.get(bindingScope);
+    if (!bindings) {
+      bindings = new Set();
+      locallyOwnedContainers.set(bindingScope, bindings);
+    }
+    bindings.add(name);
+  }
+
   const evaluateString = (
     node: unknown,
     scope: LexicalScope,
@@ -1284,7 +1396,12 @@ function collectModuleBindings(
     scope: LexicalScope,
   ): string | undefined => {
     if (node.computed !== true) {
-      return identifierName(node.key) ?? literalString(node.key);
+      const direct = identifierName(node.key) ?? literalString(node.key);
+      if (direct !== undefined) return direct;
+      return isNode(node.key) && node.key.type === "NumericLiteral" &&
+          typeof node.key.value === "number"
+        ? String(node.key.value)
+        : undefined;
     }
     const computed = evaluateString(node.key, scope);
     if (computed !== undefined) return computed;
@@ -1409,6 +1526,7 @@ function collectModuleBindings(
       return {
         target: rawArguments[0],
         arguments: forwarded.values,
+        explicitThisArgument: method === "apply" ? rawArguments[1] : undefined,
         kind: method,
         argumentsKnown: forwarded.known,
       };
@@ -1418,6 +1536,7 @@ function collectModuleBindings(
       return {
         target: node.callee.object,
         arguments: effectiveArguments,
+        explicitThisArgument: rawArguments[0],
         kind: "call",
         argumentsKnown: effectiveArguments.every((argument) =>
           !isNode(argument) || argument.type !== "SpreadElement"
@@ -1429,6 +1548,7 @@ function collectModuleBindings(
       return {
         target: node.callee.object,
         arguments: forwarded.values,
+        explicitThisArgument: rawArguments[0],
         kind: "apply",
         argumentsKnown: forwarded.known,
       };
@@ -1443,19 +1563,152 @@ function collectModuleBindings(
     };
   };
 
-  const apiForExpression = (
+  const isRawDynamicImport = (node: unknown): boolean => {
+    const unwrapped = unwrapTransparentExpression(node);
+    return isNode(unwrapped) &&
+      (unwrapped.type === "ImportExpression" ||
+        (unwrapped.type === "CallExpression" && isNode(unwrapped.callee) &&
+          unwrapped.callee.type === "Import"));
+  };
+
+  const promiseAllInputs = (
     node: unknown,
     scope: LexicalScope,
-  ): ApiBinding | undefined => {
-    const unwrapped = unwrapAwait(node);
-    if (!isNode(unwrapped)) return undefined;
+  ): unknown[] | undefined => {
+    const unwrapped = unwrapTransparentExpression(node);
     if (
-      unwrapped.type === "TSAsExpression" ||
-      unwrapped.type === "TSTypeAssertion" ||
-      unwrapped.type === "TSNonNullExpression" ||
-      unwrapped.type === "ParenthesizedExpression"
+      !isNode(unwrapped) || unwrapped.type !== "CallExpression" ||
+      !isNode(unwrapped.callee) ||
+      unwrapped.callee.type !== "MemberExpression" ||
+      identifierName(unwrapped.callee.object) !== "Promise" ||
+      !isUnbound(scope, "Promise") ||
+      resolvedMemberProperty(unwrapped.callee, scope) !== "all"
+    ) return undefined;
+    const args = Array.isArray(unwrapped.arguments) ? unwrapped.arguments : [];
+    const input = unwrapTransparentExpression(args[0]);
+    if (!isNode(input) || input.type !== "ArrayExpression") return undefined;
+    const elements = Array.isArray(input.elements) ? input.elements : [];
+    if (
+      elements.some((element) =>
+        isNode(element) && element.type === "SpreadElement"
+      )
+    ) return undefined;
+    return elements;
+  };
+
+  const isPromiseAll = (
+    node: unknown,
+    scope: LexicalScope,
+  ): boolean => {
+    const unwrapped = unwrapTransparentExpression(node);
+    if (!isNode(unwrapped) || unwrapped.type !== "CallExpression") {
+      return false;
+    }
+    if (!isNode(unwrapped.callee)) return false;
+    return unwrapped.callee.type === "MemberExpression" &&
+      identifierName(unwrapped.callee.object) === "Promise" &&
+      isUnbound(scope, "Promise") &&
+      resolvedMemberProperty(unwrapped.callee, scope) === "all";
+  };
+
+  const promiseOriginsForExpression = (
+    node: unknown,
+    scope: LexicalScope,
+  ): PromiseOrigins => {
+    const unwrapped = unwrapTransparentExpression(node);
+    if (!isNode(unwrapped)) return new Set();
+    if (isRawDynamicImport(unwrapped) || isPromiseAll(unwrapped, scope)) {
+      return new Set([unwrapped]);
+    }
+    if (unwrapped.type === "SequenceExpression") {
+      const expressions = Array.isArray(unwrapped.expressions)
+        ? unwrapped.expressions
+        : [];
+      return promiseOriginsForExpression(expressions.at(-1), scope);
+    }
+    if (
+      unwrapped.type === "AssignmentExpression" && unwrapped.operator === "="
     ) {
-      return apiForExpression(unwrapped.expression, scope);
+      return promiseOriginsForExpression(unwrapped.right, scope);
+    }
+    if (
+      unwrapped.type === "ConditionalExpression" ||
+      unwrapped.type === "LogicalExpression"
+    ) {
+      const branches = unwrapped.type === "ConditionalExpression"
+        ? [unwrapped.consequent, unwrapped.alternate]
+        : [unwrapped.left, unwrapped.right];
+      return branches.reduce<PromiseOrigins>(
+        (origins, branch) =>
+          joinPromiseOrigins(
+            origins,
+            promiseOriginsForExpression(branch, scope),
+          ),
+        new Set<AstNode>(),
+      );
+    }
+    const name = identifierName(unwrapped);
+    if (name) return getScopedValue(promiseBindings, scope, name) ?? new Set();
+    if (
+      unwrapped.type === "MemberExpression" ||
+      unwrapped.type === "OptionalMemberExpression"
+    ) {
+      const ownerName = identifierName(unwrapped.object);
+      const property = resolvedMemberProperty(unwrapped, scope);
+      if (ownerName && property) {
+        return getScopedMemberValue(
+          promiseMemberBindings,
+          scope,
+          ownerName,
+          property,
+        ) ?? new Set();
+      }
+    }
+    return new Set();
+  };
+
+  const awaitedApiForPromiseOrigins = (
+    origins: PromiseOrigins,
+  ): ApiBinding | undefined => {
+    let result: ApiBinding | undefined;
+    let sawNonApiResult = false;
+    for (const origin of origins) {
+      const originScope = scopeByNode.get(origin);
+      if (!originScope) {
+        sawNonApiResult = true;
+        continue;
+      }
+      if (isRawDynamicImport(origin)) {
+        const moduleName = rawImportedModuleName(origin, originScope);
+        const api = moduleName === "node:module"
+          ? "node-module-namespace" as const
+          : moduleName === "node:worker_threads"
+          ? "worker-threads-namespace" as const
+          : undefined;
+        if (api) result = joinApiBinding(result, api);
+        else sawNonApiResult = true;
+      } else {
+        sawNonApiResult = true;
+      }
+    }
+    return result && sawNonApiResult ? uncertainAlias(result) : result;
+  };
+
+  const awaitedApiForPromiseExpression = (
+    node: unknown,
+    scope: LexicalScope,
+  ): ApiBinding | undefined =>
+    awaitedApiForPromiseOrigins(promiseOriginsForExpression(node, scope));
+
+  function apiForExpression(
+    node: unknown,
+    scope: LexicalScope,
+  ): ApiBinding | undefined {
+    const unwrapped = unwrapTransparentExpression(node);
+    if (!isNode(unwrapped)) return undefined;
+    if (unwrapped.type === "AwaitExpression") {
+      return awaitedApiForPromiseExpression(unwrapped.argument, scope) ??
+        apiForExpression(unwrapped.argument, scope);
     }
     if (unwrapped.type === "SequenceExpression") {
       const expressions = Array.isArray(unwrapped.expressions)
@@ -1470,8 +1723,7 @@ function collectModuleBindings(
       return assignedApi ? uncertainAlias(assignedApi) : undefined;
     }
     if (isImportMeta(unwrapped)) return "import-meta-namespace";
-    const loadedModule = importedModuleName(node, scope) ??
-      requiredModuleName(unwrapped, scope);
+    const loadedModule = requiredModuleName(unwrapped, scope);
     if (loadedModule === "node:module") return "node-module-namespace";
     if (loadedModule === "node:worker_threads") {
       return "worker-threads-namespace";
@@ -1584,6 +1836,24 @@ function collectModuleBindings(
       return undefined;
     }
     const property = resolvedMemberProperty(unwrapped, scope);
+    const memberOwner = unwrapTransparentExpression(unwrapped.object);
+    if (isNode(memberOwner) && memberOwner.type === "AwaitExpression") {
+      const awaitedMembers = awaitedPromiseMemberApis(
+        memberOwner.argument,
+        scope,
+      );
+      const awaitedMember = property === undefined
+        ? undefined
+        : awaitedMembers.get(property);
+      if (awaitedMember) return awaitedMember;
+      if (property === undefined) {
+        let uncertainMember: ApiBinding | undefined;
+        for (const member of awaitedMembers.values()) {
+          uncertainMember = joinApiBinding(uncertainMember, member);
+        }
+        if (uncertainMember) return uncertainAlias(uncertainMember);
+      }
+    }
     if (isImportMeta(unwrapped.object) && property === "resolve") {
       return "import-meta-resolve";
     }
@@ -1614,6 +1884,292 @@ function collectModuleBindings(
       if (boundMember) return boundMember;
     }
     return memberApi(apiForExpression(unwrapped.object, scope), property);
+  }
+
+  const awaitedPromiseMemberApisForOrigins = (
+    origins: PromiseOrigins,
+  ): ReadonlyMap<string, ApiBinding> => {
+    const perOrigin: Array<ReadonlyMap<string, ApiBinding>> = [];
+    let nonArrayOriginCount = 0;
+    for (const origin of origins) {
+      const originScope = scopeByNode.get(origin);
+      if (!originScope || !isPromiseAll(origin, originScope)) {
+        nonArrayOriginCount++;
+        continue;
+      }
+      const members = new Map<string, ApiBinding>();
+      const inputs = promiseAllInputs(origin, originScope);
+      if (inputs) {
+        inputs.forEach((input, index) => {
+          const api = awaitedApiForPromiseExpression(input, originScope) ??
+            apiForExpression(input, originScope);
+          if (api) members.set(String(index), api);
+        });
+      } else {
+        const args = Array.isArray(origin.arguments) ? origin.arguments : [];
+        const inputName = identifierName(
+          unwrapTransparentExpression(args[0]),
+        );
+        if (inputName) {
+          const promiseMembers = getScopedMemberValues(
+            promiseMemberBindings,
+            originScope,
+            inputName,
+          ) ?? new Map();
+          const apiMembers = getScopedMemberValues(
+            memberBindings,
+            originScope,
+            inputName,
+          ) ?? new Map();
+          const keys = new Set([
+            ...promiseMembers.keys(),
+            ...apiMembers.keys(),
+          ]);
+          for (const key of keys) {
+            const promiseApi = promiseMembers.has(key)
+              ? awaitedApiForPromiseOrigins(promiseMembers.get(key)!)
+              : undefined;
+            const api = promiseApi ?? apiMembers.get(key);
+            if (api) members.set(key, api);
+          }
+        }
+      }
+      perOrigin.push(members);
+    }
+    const keys = new Set(perOrigin.flatMap((members) => [...members.keys()]));
+    const result = new Map<string, ApiBinding>();
+    for (const key of keys) {
+      let api: ApiBinding | undefined;
+      let missing = nonArrayOriginCount > 0;
+      for (const members of perOrigin) {
+        const member = members.get(key);
+        if (member) api = joinApiBinding(api, member);
+        else missing = true;
+      }
+      if (api) result.set(key, missing ? uncertainAlias(api) : api);
+    }
+    return result;
+  };
+
+  const awaitedPromiseMemberApis = (
+    node: unknown,
+    scope: LexicalScope,
+  ): ReadonlyMap<string, ApiBinding> =>
+    awaitedPromiseMemberApisForOrigins(
+      promiseOriginsForExpression(node, scope),
+    );
+
+  const promiseCapabilityForOrigins = (
+    origins: PromiseOrigins,
+    seen = new Set<AstNode>(),
+  ): ApiBinding | undefined => {
+    let result = awaitedApiForPromiseOrigins(origins);
+    for (const origin of origins) {
+      if (seen.has(origin)) continue;
+      const originScope = scopeByNode.get(origin);
+      if (!originScope || !isPromiseAll(origin, originScope)) continue;
+      const nextSeen = new Set(seen).add(origin);
+      const inputs = promiseAllInputs(origin, originScope);
+      if (inputs) {
+        for (const input of inputs) {
+          const inputOrigins = promiseOriginsForExpression(input, originScope);
+          const promiseApi = promiseCapabilityForOrigins(
+            inputOrigins,
+            nextSeen,
+          );
+          const api = promiseApi ?? apiForExpression(input, originScope);
+          if (api) result = joinApiBinding(result, api);
+        }
+        continue;
+      }
+      const args = Array.isArray(origin.arguments) ? origin.arguments : [];
+      const inputName = identifierName(unwrapTransparentExpression(args[0]));
+      if (!inputName) continue;
+      const promiseMembers = getScopedMemberValues(
+        promiseMemberBindings,
+        originScope,
+        inputName,
+      ) ?? new Map();
+      for (const memberOrigins of promiseMembers.values()) {
+        const api = promiseCapabilityForOrigins(memberOrigins, nextSeen);
+        if (api) result = joinApiBinding(result, api);
+      }
+      const apiMembers = getScopedMemberValues(
+        memberBindings,
+        originScope,
+        inputName,
+      ) ?? new Map();
+      for (const api of apiMembers.values()) {
+        result = joinApiBinding(result, api);
+      }
+    }
+    return result;
+  };
+
+  const bindPromiseAllPatternApis = (
+    pattern: AstNode,
+    members: ReadonlyMap<string, ApiBinding>,
+    scope: LexicalScope,
+    transform: (api: ApiBinding) => ApiBinding = (api) => api,
+  ): boolean => {
+    let changed = false;
+    let unknownMember: ApiBinding | undefined;
+    for (const api of members.values()) {
+      unknownMember = joinApiBinding(unknownMember, api);
+    }
+    if (unknownMember) unknownMember = uncertainAlias(unknownMember);
+    const bindTarget = (target: AstNode, api: ApiBinding): void => {
+      if (target.type === "ObjectPattern") {
+        changed = bindObjectPatternFromOwner(
+          target,
+          api,
+          scope,
+          apiBindings,
+          (property) => resolvedPropertyKey(property, scope),
+          transform,
+        ) || changed;
+        return;
+      }
+      const local = identifierName(target) ||
+        (target.type === "AssignmentPattern"
+          ? identifierName(target.left)
+          : undefined);
+      if (local) {
+        changed = setScopedApiValue(
+          apiBindings,
+          scope,
+          local,
+          transform(api),
+        ) || changed;
+      }
+    };
+    if (pattern.type === "ArrayPattern") {
+      const elements = Array.isArray(pattern.elements) ? pattern.elements : [];
+      elements.forEach((element, index) => {
+        if (!isNode(element)) return;
+        if (element.type === "RestElement") {
+          if (unknownMember && isNode(element.argument)) {
+            bindTarget(element.argument, unknownMember);
+          }
+          return;
+        }
+        const api = members.get(String(index));
+        if (api) bindTarget(element, api);
+      });
+    } else if (pattern.type === "ObjectPattern") {
+      for (
+        const property of Array.isArray(pattern.properties)
+          ? pattern.properties
+          : []
+      ) {
+        if (!isNode(property)) continue;
+        if (property.type === "RestElement") {
+          if (unknownMember && isNode(property.argument)) {
+            bindTarget(property.argument, unknownMember);
+          }
+          continue;
+        }
+        if (property.type !== "ObjectProperty") continue;
+        const key = resolvedPropertyKey(property, scope);
+        const api = key === undefined ? unknownMember : members.get(key);
+        if (api && isNode(property.value)) bindTarget(property.value, api);
+      }
+    } else {
+      return false;
+    }
+    return changed;
+  };
+
+  const promiseMembersForContainer = (
+    node: unknown,
+    scope: LexicalScope,
+  ): ReadonlyMap<string, PromiseOrigins> => {
+    const unwrapped = unwrapTransparentExpression(node);
+    if (!isNode(unwrapped) || unwrapped.type === "AwaitExpression") {
+      return new Map();
+    }
+    const ownerName = identifierName(unwrapped);
+    if (ownerName) {
+      return getScopedMemberValues(
+        promiseMemberBindings,
+        scope,
+        ownerName,
+      ) ?? new Map();
+    }
+    const members = new Map<string, PromiseOrigins>();
+    if (unwrapped.type === "ObjectExpression") {
+      for (
+        const property of Array.isArray(unwrapped.properties)
+          ? unwrapped.properties
+          : []
+      ) {
+        if (!isNode(property) || property.type !== "ObjectProperty") continue;
+        const key = resolvedPropertyKey(property, scope);
+        const origins = promiseOriginsForExpression(property.value, scope);
+        if (key && origins.size > 0) members.set(key, origins);
+      }
+    } else if (unwrapped.type === "ArrayExpression") {
+      for (
+        const [index, value]
+          of (Array.isArray(unwrapped.elements) ? unwrapped.elements : [])
+            .entries()
+      ) {
+        const origins = promiseOriginsForExpression(value, scope);
+        if (origins.size > 0) members.set(String(index), origins);
+      }
+    }
+    return members;
+  };
+
+  const bindPromisePatternFromContainer = (
+    pattern: AstNode,
+    value: unknown,
+    scope: LexicalScope,
+  ): boolean => {
+    const members = promiseMembersForContainer(value, scope);
+    let changed = false;
+    if (pattern.type === "ObjectPattern") {
+      for (
+        const property of Array.isArray(pattern.properties)
+          ? pattern.properties
+          : []
+      ) {
+        if (!isNode(property) || property.type !== "ObjectProperty") continue;
+        const key = resolvedPropertyKey(property, scope);
+        const origins = key ? members.get(key) : undefined;
+        const local = identifierName(property.value) ||
+          (isNode(property.value) && property.value.type === "AssignmentPattern"
+            ? identifierName(property.value.left)
+            : undefined);
+        if (local && origins) {
+          changed = setScopedPromiseOrigins(
+            promiseBindings,
+            scope,
+            local,
+            origins,
+          ) || changed;
+        }
+      }
+    } else if (pattern.type === "ArrayPattern") {
+      const elements = Array.isArray(pattern.elements) ? pattern.elements : [];
+      elements.forEach((element, index) => {
+        if (!isNode(element)) return;
+        const local = identifierName(element) ||
+          (element.type === "AssignmentPattern"
+            ? identifierName(element.left)
+            : undefined);
+        const origins = members.get(String(index));
+        if (local && origins) {
+          changed = setScopedPromiseOrigins(
+            promiseBindings,
+            scope,
+            local,
+            origins,
+          ) || changed;
+        }
+      });
+    }
+    return changed;
   };
 
   interface BindingIdentity {
@@ -1713,13 +2269,13 @@ function collectModuleBindings(
     if (origin) unsafeUrlOrigins.add(origin);
   }
 
-  // Binding facts are addressed only by finite AST nodes. Two API refinements
-  // per node plus each declaration/assignment edge bounds useful progress;
-  // exceeding that capacity means state is cycling and evidence is incomplete.
+  // API facts and promise origins are addressed only by finite AST nodes.
+  // Promise provenance joins can add each producer site to each binding site at
+  // most once, so this structural product bounds all useful monotone progress.
   const structuralBindingStateCapacity = Math.max(
     1,
-    visitedNodeCount * 2 + declarations.length + assignments.length +
-      assignmentPatterns.length,
+    visitedNodeCount * (2 + promiseProducerNodeCount) + declarations.length +
+      assignments.length + assignmentPatterns.length,
   );
   const maximumBindingPasses = options.maximumBindingPasses ??
     structuralBindingStateCapacity;
@@ -1739,6 +2295,15 @@ function collectModuleBindings(
     for (const { node: pattern, scope } of assignmentPatterns) {
       const name = identifierName(pattern.left);
       const api = apiForExpression(pattern.right, scope);
+      const promiseOrigins = promiseOriginsForExpression(pattern.right, scope);
+      if (name && promiseOrigins.size > 0) {
+        changed = setScopedPromiseOrigins(
+          promiseBindings,
+          scope,
+          name,
+          promiseOrigins,
+        ) || changed;
+      }
       if (name && api) {
         changed = setScopedApiValue(
           apiBindings,
@@ -1750,6 +2315,45 @@ function collectModuleBindings(
     }
     for (const { node: declaration, scope, kind } of declarations) {
       if (!isNode(declaration.id)) continue;
+      const promiseName = identifierName(declaration.id);
+      const promiseOrigins = promiseOriginsForExpression(
+        declaration.init,
+        scope,
+      );
+      if (promiseName && promiseOrigins.size > 0) {
+        changed = setScopedPromiseOrigins(
+          promiseBindings,
+          scope,
+          promiseName,
+          promiseOrigins,
+        ) || changed;
+      }
+      if (
+        declaration.id.type === "ObjectPattern" ||
+        declaration.id.type === "ArrayPattern"
+      ) {
+        changed = bindPromisePatternFromContainer(
+          declaration.id,
+          declaration.init,
+          scope,
+        ) || changed;
+      }
+      if (promiseName) {
+        for (
+          const [property, origins] of promiseMembersForContainer(
+            declaration.init,
+            scope,
+          )
+        ) {
+          changed = setScopedMemberPromiseOrigins(
+            promiseMemberBindings,
+            scope,
+            promiseName,
+            property,
+            origins,
+          ) || changed;
+        }
+      }
       const moduleName = importedModuleName(declaration.init, scope) ??
         requiredModuleName(declaration.init, scope);
       if (moduleName && declaration.id.type === "ObjectPattern") {
@@ -1954,34 +2558,29 @@ function collectModuleBindings(
       const { value: init, awaited: initAwaited } = unwrapAwaitedExpression(
         declaration.init,
       );
-      if (
-        initAwaited && declaration.id.type === "ArrayPattern" && isNode(init) &&
-        init.type === "CallExpression" && isNode(init.callee) &&
-        init.callee.type === "MemberExpression" &&
-        identifierName(init.callee.object) === "Promise" &&
-        isUnbound(scope, "Promise") && memberPropertyName(init.callee) === "all"
-      ) {
-        const callArgs = Array.isArray(init.arguments) ? init.arguments : [];
-        const modules =
-          isNode(callArgs[0]) && callArgs[0].type === "ArrayExpression"
-            ? (Array.isArray(callArgs[0].elements) ? callArgs[0].elements : [])
-            : [];
-        const patterns = Array.isArray(declaration.id.elements)
-          ? declaration.id.elements
-          : [];
-        patterns.forEach((pattern, index) => {
-          if (!isNode(pattern)) return;
-          const imported = rawImportedModuleName(modules[index], scope);
-          if (imported) {
-            changed = bindObjectPatternApis(
-              pattern,
-              imported,
+      if (initAwaited) {
+        const members = awaitedPromiseMemberApis(init, scope);
+        if (
+          declaration.id.type === "ArrayPattern" ||
+          declaration.id.type === "ObjectPattern"
+        ) {
+          changed = bindPromiseAllPatternApis(
+            declaration.id,
+            members,
+            scope,
+            kind === "const" ? (api) => api : uncertainAlias,
+          ) || changed;
+        } else if (promiseName) {
+          for (const [property, api] of members) {
+            changed = setScopedMemberApiValue(
+              memberBindings,
               scope,
-              apiBindings,
-              (property) => resolvedPropertyKey(property, scope),
+              promiseName,
+              property,
+              kind === "const" ? api : uncertainAlias(api),
             ) || changed;
           }
-        });
+        }
       }
 
       const name = identifierName(declaration.id);
@@ -2019,6 +2618,90 @@ function collectModuleBindings(
     for (const { node: assignment, scope } of assignments) {
       const api = apiForExpression(assignment.right, scope);
       const assignedName = identifierName(assignment.left);
+      const assignedPromiseOrigins = promiseOriginsForExpression(
+        assignment.right,
+        scope,
+      );
+      if (assignedName && assignedPromiseOrigins.size > 0) {
+        changed = setScopedPromiseOrigins(
+          promiseBindings,
+          scope,
+          assignedName,
+          assignedPromiseOrigins,
+        ) || changed;
+      }
+      if (
+        isNode(assignment.left) &&
+        (assignment.left.type === "ObjectPattern" ||
+          assignment.left.type === "ArrayPattern")
+      ) {
+        changed = bindPromisePatternFromContainer(
+          assignment.left,
+          assignment.right,
+          scope,
+        ) || changed;
+      }
+      if (
+        isNode(assignment.left) &&
+        (assignment.left.type === "MemberExpression" ||
+          assignment.left.type === "OptionalMemberExpression") &&
+        assignedPromiseOrigins.size > 0
+      ) {
+        const ownerName = identifierName(assignment.left.object);
+        const property = resolvedMemberProperty(assignment.left, scope);
+        if (ownerName && property) {
+          changed = setScopedMemberPromiseOrigins(
+            promiseMemberBindings,
+            scope,
+            ownerName,
+            property,
+            assignedPromiseOrigins,
+          ) || changed;
+        }
+      }
+      if (assignedName) {
+        for (
+          const [property, origins] of promiseMembersForContainer(
+            assignment.right,
+            scope,
+          )
+        ) {
+          changed = setScopedMemberPromiseOrigins(
+            promiseMemberBindings,
+            scope,
+            assignedName,
+            property,
+            origins,
+          ) || changed;
+        }
+      }
+      const { value: assignedValue, awaited: assignmentAwaited } =
+        unwrapAwaitedExpression(assignment.right);
+      if (assignmentAwaited) {
+        const members = awaitedPromiseMemberApis(assignedValue, scope);
+        if (
+          isNode(assignment.left) &&
+          (assignment.left.type === "ArrayPattern" ||
+            assignment.left.type === "ObjectPattern")
+        ) {
+          changed = bindPromiseAllPatternApis(
+            assignment.left,
+            members,
+            scope,
+            uncertainAlias,
+          ) || changed;
+        } else if (assignedName) {
+          for (const [property, memberApiBinding] of members) {
+            changed = setScopedMemberApiValue(
+              memberBindings,
+              scope,
+              assignedName,
+              property,
+              uncertainAlias(memberApiBinding),
+            ) || changed;
+          }
+        }
+      }
       const aliasedContainerName = identifierName(
         unwrapAwait(assignment.right),
       );
@@ -2118,10 +2801,69 @@ function collectModuleBindings(
     }
   };
 
+  const containedPromiseCapability = (
+    value: unknown,
+    scope: LexicalScope,
+  ): ApiBinding | undefined => {
+    const pending = [value];
+    let result: ApiBinding | undefined;
+    while (pending.length > 0) {
+      const expression = unwrapAwait(pending.pop());
+      if (!isNode(expression)) continue;
+      if (expression.type === "ObjectExpression") {
+        for (
+          const property of Array.isArray(expression.properties)
+            ? expression.properties
+            : []
+        ) {
+          if (!isNode(property)) continue;
+          if (property.type === "ObjectProperty") pending.push(property.value);
+          else if (property.type === "SpreadElement") {
+            pending.push(property.argument);
+          }
+        }
+        continue;
+      }
+      if (expression.type === "ArrayExpression") {
+        pending.push(
+          ...(Array.isArray(expression.elements) ? expression.elements : []),
+        );
+        continue;
+      }
+      const containerName = identifierName(expression);
+      const containerScope = containerName
+        ? closestBindingScope(scope, containerName)
+        : undefined;
+      const memberPromises = containerName && containerScope
+        ? promiseMemberBindings.get(containerScope)?.get(containerName)
+        : undefined;
+      if (memberPromises) {
+        for (const origins of memberPromises.values()) {
+          const api = promiseCapabilityForOrigins(origins);
+          if (api) result = joinApiBinding(result, uncertainAlias(api));
+        }
+      }
+      const origins = promiseOriginsForExpression(expression, scope);
+      const promiseApi = promiseCapabilityForOrigins(origins);
+      if (promiseApi) {
+        result = joinApiBinding(result, uncertainAlias(promiseApi));
+      }
+      if (
+        (expression.type === "MemberExpression" ||
+          expression.type === "OptionalMemberExpression") &&
+        resolvedMemberProperty(expression, scope) === undefined
+      ) {
+        pending.push(expression.object);
+      }
+    }
+    return result;
+  };
+
   const escapedApiInExpression = (
     value: unknown,
     scope: LexicalScope,
     includeNamespaces = false,
+    includePromiseCapabilities = false,
   ): ApiBinding | undefined => {
     const pending = [value];
     let result: ApiBinding | undefined;
@@ -2163,12 +2905,73 @@ function collectModuleBindings(
           }
         }
       }
+      if (includePromiseCapabilities) {
+        const promiseApi = containedPromiseCapability(expression, scope);
+        if (promiseApi) {
+          result = joinApiBinding(result, promiseApi);
+        }
+      }
       const api = apiForExpression(candidate, scope);
       if (api && (includeNamespaces || unresolvedLoaderForApi(api))) {
         result = joinApiBinding(result, uncertainAlias(api));
       }
     }
     return result;
+  };
+
+  const patternContainsMemberTarget = (pattern: unknown): boolean => {
+    const target = unwrapTransparentExpression(pattern);
+    if (!isNode(target)) return false;
+    if (
+      target.type === "MemberExpression" ||
+      target.type === "OptionalMemberExpression"
+    ) {
+      return true;
+    }
+    if (target.type === "AssignmentPattern") {
+      return patternContainsMemberTarget(target.left);
+    }
+    if (target.type === "RestElement") {
+      return patternContainsMemberTarget(target.argument);
+    }
+    if (target.type === "ArrayPattern") {
+      return (Array.isArray(target.elements) ? target.elements : []).some(
+        patternContainsMemberTarget,
+      );
+    }
+    if (target.type === "ObjectPattern") {
+      return (Array.isArray(target.properties) ? target.properties : []).some(
+        (property) => {
+          if (!isNode(property)) return false;
+          return property.type === "RestElement"
+            ? patternContainsMemberTarget(property.argument)
+            : property.type === "ObjectProperty" &&
+              patternContainsMemberTarget(property.value);
+        },
+      );
+    }
+    return false;
+  };
+
+  const isTrackableLocalPromiseMemberStore = (
+    assignment: AstNode,
+    scope: LexicalScope,
+  ): boolean => {
+    if (
+      assignment.type !== "AssignmentExpression" ||
+      !isNode(assignment.left) ||
+      (assignment.left.type !== "MemberExpression" &&
+        assignment.left.type !== "OptionalMemberExpression")
+    ) {
+      return false;
+    }
+    const ownerName = identifierName(assignment.left.object);
+    const property = resolvedMemberProperty(assignment.left, scope);
+    if (ownerName === undefined || property === undefined) return false;
+    const bindingScope = closestBindingScope(scope, ownerName);
+    return bindingScope !== undefined &&
+      locallyOwnedContainers.get(bindingScope)?.has(ownerName) === true &&
+      promiseOriginsForExpression(assignment.right, scope).size > 0;
   };
 
   const loaderEscapeForNode = (
@@ -2213,25 +3016,26 @@ function collectModuleBindings(
     }
     if (node.type === "ReturnStatement") {
       const localFunction = functionByScope.get(nearestFunctionScope(scope));
-      if (
-        !localFunction || immediatelyInvokedFunctions.has(localFunction)
-      ) {
-        return undefined;
+      if (!localFunction) return undefined;
+      if (immediatelyInvokedFunctions.has(localFunction)) {
+        return containedPromiseCapability(node.argument, scope);
       }
-      const api = escapedApiInExpression(node.argument, scope, true);
+      const api = escapedApiInExpression(node.argument, scope, true, true);
       return api ? uncertainAlias(api) : undefined;
     }
     if (
       node.type === "ArrowFunctionExpression" &&
-      isNode(node.body) && node.body.type !== "BlockStatement" &&
-      !immediatelyInvokedFunctions.has(node)
+      isNode(node.body) && node.body.type !== "BlockStatement"
     ) {
       const bodyScope = scopeByNode.get(node.body) ?? scope;
-      const api = escapedApiInExpression(node.body, bodyScope, true);
+      if (immediatelyInvokedFunctions.has(node)) {
+        return containedPromiseCapability(node.body, bodyScope);
+      }
+      const api = escapedApiInExpression(node.body, bodyScope, true, true);
       return api ? uncertainAlias(api) : undefined;
     }
     if (node.type === "YieldExpression") {
-      const api = escapedApiInExpression(node.argument, scope, true);
+      const api = escapedApiInExpression(node.argument, scope, true, true);
       return api ? uncertainAlias(api) : undefined;
     }
     if (
@@ -2264,39 +3068,58 @@ function collectModuleBindings(
       }
       let exportedApi: ApiBinding | undefined;
       for (const value of values) {
-        const api = escapedApiInExpression(value, scope, true);
+        const api = escapedApiInExpression(value, scope, true, true);
         if (api) exportedApi = joinApiBinding(exportedApi, api);
       }
       if (exportedApi) return exportedApi;
     }
-    if (
-      node.type === "AssignmentExpression" && isNode(node.left) &&
-      (node.left.type === "MemberExpression" ||
-        node.left.type === "OptionalMemberExpression")
-    ) {
-      const api = escapedApiInExpression(node.right, scope, true);
-      return api ? uncertainAlias(api) : undefined;
+    if (node.type === "AssignmentExpression") {
+      const assignmentTarget = unwrapTransparentExpression(node.left);
+      if (!isNode(assignmentTarget)) return undefined;
+      if (
+        (assignmentTarget.type === "ArrayPattern" ||
+          assignmentTarget.type === "ObjectPattern") &&
+        patternContainsMemberTarget(assignmentTarget)
+      ) {
+        const api = escapedApiInExpression(node.right, scope, true, true);
+        return api ? uncertainAlias(api) : undefined;
+      }
+      if (
+        assignmentTarget.type === "MemberExpression" ||
+        assignmentTarget.type === "OptionalMemberExpression"
+      ) {
+        const api = escapedApiInExpression(node.right, scope, true);
+        if (api) return uncertainAlias(api);
+        const promiseApi = containedPromiseCapability(node.right, scope);
+        return promiseApi && !isTrackableLocalPromiseMemberStore(node, scope)
+          ? uncertainAlias(promiseApi)
+          : undefined;
+      }
     }
     if (
       (node.type === "ClassProperty" ||
         node.type === "ClassPrivateProperty" ||
         node.type === "PropertyDefinition")
     ) {
-      const api = escapedApiInExpression(node.value, scope, true);
+      const api = escapedApiInExpression(node.value, scope, true, true);
       return api ? uncertainAlias(api) : undefined;
     }
     if (
       node.type === "ObjectProperty" && parent?.type === "ObjectExpression"
     ) {
       const api = escapedApiInExpression(node.value, scope, true);
-      return api ? uncertainAlias(api) : undefined;
+      if (api) return uncertainAlias(api);
+      if (promiseOriginsForExpression(node.value, scope).size === 0) {
+        return containedPromiseCapability(node.value, scope);
+      }
+      return undefined;
     }
     if (
       node.type === "SpreadElement" &&
       (parent?.type === "ObjectExpression" ||
         parent?.type === "ArrayExpression")
     ) {
-      const api = escapedApiInExpression(node.argument, scope, true);
+      const api = escapedApiInExpression(node.argument, scope, true, true);
       return api ? uncertainAlias(api) : undefined;
     }
     if (node.type === "ArrayExpression") {
@@ -2307,6 +3130,12 @@ function collectModuleBindings(
         if (!isNode(element) || element.type === "SpreadElement") continue;
         const api = escapedApiInExpression(element, scope, true);
         if (api) storedApi = joinApiBinding(storedApi, uncertainAlias(api));
+        if (promiseOriginsForExpression(element, scope).size === 0) {
+          const nestedPromiseApi = containedPromiseCapability(element, scope);
+          if (nestedPromiseApi) {
+            storedApi = joinApiBinding(storedApi, nestedPromiseApi);
+          }
+        }
       }
       if (storedApi) return storedApi;
     }
@@ -2316,6 +3145,22 @@ function collectModuleBindings(
       node.type !== "NewExpression"
     ) {
       return undefined;
+    }
+    if (isPromiseAll(node, scope)) {
+      let unmodeledInputApi: ApiBinding | undefined;
+      for (const input of promiseAllInputs(node, scope) ?? []) {
+        const projectedApi = awaitedApiForPromiseExpression(input, scope) ??
+          apiForExpression(input, scope);
+        if (projectedApi) continue;
+        const nestedPromiseApi = containedPromiseCapability(input, scope);
+        if (nestedPromiseApi) {
+          unmodeledInputApi = joinApiBinding(
+            unmodeledInputApi,
+            nestedPromiseApi,
+          );
+        }
+      }
+      return unmodeledInputApi;
     }
     const invocation = normalizeInvocation(node, scope);
     const target = invocation.target;
@@ -2330,12 +3175,50 @@ function collectModuleBindings(
       return undefined;
     }
     let escapedApi: ApiBinding | undefined;
+    if (invocation.explicitThisArgument !== undefined) {
+      const receiverApi = escapedApiInExpression(
+        invocation.explicitThisArgument,
+        scope,
+        true,
+        true,
+      );
+      if (receiverApi) escapedApi = joinApiBinding(escapedApi, receiverApi);
+    }
+    if (
+      isNode(node.callee) &&
+      (node.callee.type === "MemberExpression" ||
+        node.callee.type === "OptionalMemberExpression")
+    ) {
+      const receiverOrigins = promiseOriginsForExpression(
+        node.callee.object,
+        scope,
+      );
+      const resolvedReceiverApi = awaitedApiForPromiseOrigins(receiverOrigins);
+      const resolvedMember = resolvedReceiverApi &&
+          resolvedReceiverApi !== "uncertain-runtime-loader"
+        ? memberApi(
+          resolvedReceiverApi,
+          resolvedMemberProperty(node.callee, scope),
+        )
+        : undefined;
+      if (!resolvedMember) {
+        const receiverCapability = containedPromiseCapability(
+          node.callee.object,
+          scope,
+        );
+        if (receiverCapability) {
+          escapedApi = joinApiBinding(escapedApi, receiverCapability);
+        }
+      }
+    }
     for (const argument of invocation.arguments) {
       const api = escapedApiInExpression(
         isNode(argument) && argument.type === "SpreadElement"
           ? argument.argument
           : argument,
         scope,
+        false,
+        true,
       );
       if (api) escapedApi = joinApiBinding(escapedApi, api);
     }

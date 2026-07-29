@@ -19,6 +19,7 @@ import {
   loadCoreProductionRegistry,
   resolveConfigRelativePath,
   resolveImportMapSpecifier,
+  resolveImportMapSpecifierWithTrace,
   validateCoreProductionRegistry,
 } from "./core-production-roots.ts";
 import {
@@ -229,102 +230,167 @@ function issue(
   };
 }
 
+const MAX_MANIFEST_PACKAGE_NAME_LENGTH = 214;
+const MANIFEST_PACKAGE_NAME_COMPONENT = /^[a-z0-9][a-z0-9._-]*$/;
+const SCOPED_MANIFEST_PACKAGE_NAME_COMPONENT = /^[a-z0-9_-][a-z0-9._-]*$/;
+
+/**
+ * Validate the conservative npm-compatible grammar used only to derive
+ * manifest-owned package identities. Names contain lowercase ASCII letters,
+ * digits, dots, underscores, and hyphens, with at most 214 characters total.
+ * An optional scope uses exactly one slash and starts with an alphanumeric
+ * character. The scoped package segment may additionally start with `_` or
+ * `-` (for example, `@fixture/_cli`), but never `.`. Unscoped names start with
+ * an alphanumeric character. This syntax check does not allow or deny package
+ * spellings and does not consult dependency declarations or a registry.
+ */
+function isManifestPackageName(value: unknown): value is string {
+  if (
+    typeof value !== "string" || value.length === 0 ||
+    value.length > MAX_MANIFEST_PACKAGE_NAME_LENGTH
+  ) {
+    return false;
+  }
+  if (!value.startsWith("@")) {
+    return MANIFEST_PACKAGE_NAME_COMPONENT.test(value);
+  }
+  const separatorIndex = value.indexOf("/");
+  if (
+    separatorIndex < 2 || separatorIndex !== value.lastIndexOf("/")
+  ) {
+    return false;
+  }
+  return MANIFEST_PACKAGE_NAME_COMPONENT.test(
+    value.slice(1, separatorIndex),
+  ) && SCOPED_MANIFEST_PACKAGE_NAME_COMPONENT.test(
+    value.slice(separatorIndex + 1),
+  );
+}
+
+function isOwnedPackageIdentity(
+  specifier: string,
+  ownedPackageNames: ReadonlySet<string>,
+): boolean {
+  for (const name of ownedPackageNames) {
+    if (specifier === name) return true;
+    if (specifier.startsWith(`${name}/`)) {
+      const subpath = specifier.slice(name.length + 1);
+      return !subpath.includes("\\") &&
+        subpath.split("/").every((segment) =>
+          segment !== "" && segment !== "." && segment !== ".."
+        );
+    }
+  }
+  return false;
+}
+
+function identityPolicyIssue(
+  repositoryRoot: string,
+  context: CoreProductionContext,
+  dependency: SourceDependency,
+  identity: string,
+  ownedPackageNames: ReadonlySet<string>,
+): StrictAuditIssue | undefined {
+  if (identity.startsWith("@veryfront/ext-")) {
+    return issue(
+      context,
+      dependency,
+      "forbidden-extension-dependency",
+      identity,
+    );
+  }
+  if (hasInvalidPathEncoding(identity)) {
+    return issue(context, dependency, "source-target-escapes-core", identity);
+  }
+  const pathCandidate = sourceCandidate(
+    repositoryRoot,
+    dependency.path,
+    dependency.specifier!,
+    identity,
+  );
+  if (identity.startsWith("file:") && pathCandidate === undefined) {
+    return issue(context, dependency, "source-target-escapes-core", identity);
+  }
+  if (
+    pathCandidate !== undefined &&
+    (pathCandidate === ".." || pathCandidate.startsWith("../") ||
+      pathCandidate.startsWith("extensions/") ||
+      (!pathCandidate.startsWith("src/") &&
+        !pathCandidate.startsWith("cli/")))
+  ) {
+    return issue(
+      context,
+      dependency,
+      "source-target-escapes-core",
+      pathCandidate,
+    );
+  }
+  if (identity.startsWith("/")) {
+    return issue(context, dependency, "source-target-escapes-core", identity);
+  }
+  if (identity.startsWith("node:")) {
+    return isImportableBuiltin(identity, context.target) ? undefined : issue(
+      context,
+      dependency,
+      "unsupported-or-invalid-builtin",
+      identity,
+    );
+  }
+  if (
+    /^(?:jsr|npm|https?|data|blob|deno|ext):/i.test(identity) ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(identity) &&
+      !identity.startsWith("file:")
+  ) {
+    return issue(
+      context,
+      dependency,
+      "forbidden-external-dependency",
+      identity,
+    );
+  }
+  if (
+    pathCandidate === undefined && !identity.startsWith("#") &&
+    !isOwnedPackageIdentity(identity, ownedPackageNames)
+  ) {
+    return issue(
+      context,
+      dependency,
+      "forbidden-bare-dependency",
+      identity,
+    );
+  }
+  return undefined;
+}
+
 function classifyDependency(
   repositoryRoot: string,
   context: CoreProductionContext,
   dependency: SourceDependency,
   layers: ImportMapLayer[],
   files: ReadonlyMap<string, CoreProductionSourceFile>,
+  ownedPackageNames: ReadonlySet<string>,
 ): { issue?: StrictAuditIssue; sourcePath?: string } {
   if (
     dependency.kind === "unresolved-runtime-loader" || !dependency.specifier
   ) {
     return { issue: issue(context, dependency, "unresolved-runtime-loader") };
   }
-  if (dependency.specifier.startsWith("@veryfront/ext-")) {
-    return {
-      issue: issue(
-        context,
-        dependency,
-        "forbidden-extension-dependency",
-        dependency.specifier,
-      ),
-    };
-  }
-  if (hasInvalidPathEncoding(dependency.specifier)) {
-    return {
-      issue: issue(
-        context,
-        dependency,
-        "source-target-escapes-core",
-        dependency.specifier,
-      ),
-    };
-  }
-  if (dependency.specifier.startsWith("file:")) {
-    const rawFileCandidate = sourceCandidate(
-      repositoryRoot,
-      dependency.path,
-      dependency.specifier,
-      dependency.specifier,
-    );
-    if (
-      rawFileCandidate === undefined || rawFileCandidate === ".." ||
-      rawFileCandidate.startsWith("../") ||
-      rawFileCandidate.startsWith("extensions/") ||
-      (!rawFileCandidate.startsWith("src/") &&
-        !rawFileCandidate.startsWith("cli/"))
-    ) {
-      return {
-        issue: issue(
-          context,
-          dependency,
-          "source-target-escapes-core",
-          dependency.specifier,
-        ),
-      };
-    }
-  }
-  if (dependency.specifier.startsWith("/")) {
-    return {
-      issue: issue(
-        context,
-        dependency,
-        "source-target-escapes-core",
-        dependency.specifier,
-      ),
-    };
-  }
-  if (dependency.specifier.startsWith("node:")) {
-    if (!isImportableBuiltin(dependency.specifier, context.target)) {
-      return {
-        issue: issue(
-          context,
-          dependency,
-          "unsupported-or-invalid-builtin",
-          dependency.specifier,
-        ),
-      };
-    }
-  } else if (
-    /^(?:jsr|npm|https?|data|blob|deno|ext):/i.test(dependency.specifier) ||
-    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(dependency.specifier) &&
-      !dependency.specifier.startsWith("file:")
-  ) {
-    return {
-      issue: issue(
-        context,
-        dependency,
-        "forbidden-external-dependency",
-        dependency.specifier,
-      ),
-    };
-  }
-  const mapped = resolveImportMapSpecifier(
+  const resolution = resolveImportMapSpecifierWithTrace(
     dependency.specifier,
     layers,
     dependency.path,
   );
+  for (const identity of resolution.trace) {
+    const policyIssue = identityPolicyIssue(
+      repositoryRoot,
+      context,
+      dependency,
+      identity,
+      ownedPackageNames,
+    );
+    if (policyIssue) return { issue: policyIssue };
+  }
+  const mapped = resolution.resolved;
   if (hasInvalidPathEncoding(mapped)) {
     return {
       issue: issue(context, dependency, "source-target-escapes-core", mapped),
@@ -655,13 +721,19 @@ export async function runStrictCoreDependencyAudit(
       layers: context.configPaths.map((configPath) =>
         configImportMapLayer(configPath, registry.configs.get(configPath)!)
       ),
+      ownedPackageNames: new Set(
+        context.manifestPaths.flatMap((manifestPath) => {
+          const name = registry.configs.get(manifestPath)?.name;
+          return isManifestPackageName(name) ? [name] : [];
+        }),
+      ),
       queued: new Set(context.entrypoints.map((entrypoint) => entrypoint.path)),
       visited: new Set<string>(),
       dependencies: new Map<string, SourceDependency[]>(),
     }));
 
     for (const state of states) {
-      const { context, layers, queued } = state;
+      const { context, layers, ownedPackageNames, queued } = state;
       for (const configPath of context.configPaths) {
         for (const edge of configurationEdges.get(configPath) ?? []) {
           if (
@@ -711,6 +783,7 @@ export async function runStrictCoreDependencyAudit(
             synthetic,
             layers,
             files,
+            ownedPackageNames,
           );
           if (classified.issue) {
             report.issues.push({
@@ -727,7 +800,7 @@ export async function runStrictCoreDependencyAudit(
     }
 
     const traverse = (state: (typeof states)[number]): void => {
-      const { context, layers, queued, visited } = state;
+      const { context, layers, ownedPackageNames, queued, visited } = state;
       while (queued.size > 0) {
         const path = [...queued].sort()[0];
         queued.delete(path);
@@ -759,6 +832,7 @@ export async function runStrictCoreDependencyAudit(
             synthetic.dependency,
             layers,
             files,
+            ownedPackageNames,
           );
           if (result.issue) {
             report.issues.push({
@@ -777,6 +851,7 @@ export async function runStrictCoreDependencyAudit(
             dependency,
             layers,
             files,
+            ownedPackageNames,
           );
           if (result.issue) report.issues.push(result.issue);
           if (result.sourcePath && !visited.has(result.sourcePath)) {

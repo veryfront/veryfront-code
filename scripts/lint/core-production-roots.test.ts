@@ -9,6 +9,7 @@ import {
   loadCoreProductionRegistry,
   resolveConfigRelativePath,
   resolveImportMapSpecifier,
+  resolveImportMapSpecifierWithTrace,
   validateCoreProductionRegistry,
 } from "./core-production-roots.ts";
 
@@ -819,6 +820,35 @@ Deno.test("import maps use scoped longest matches and reject cycles or equal-pre
       resolveConfigRelativePath("/repo", "deno.json", "file:///tmp/outside.ts"),
     Error,
     "file URL escapes repository root",
+  );
+});
+
+Deno.test("import-map resolution preserves every reachable identity in order", () => {
+  const resolution = resolveImportMapSpecifierWithTrace(
+    "#facade",
+    [{
+      path: "deno.json",
+      imports: {
+        "#facade": "npm:vendor@1",
+        "npm:vendor@1": "./src/shim.ts",
+      },
+    }],
+    "src/index.ts",
+  );
+
+  assertEquals(resolution, {
+    resolved: "./src/shim.ts",
+    trace: ["#facade", "npm:vendor@1", "./src/shim.ts"],
+  });
+  assertEquals(
+    resolveImportMapSpecifier("#facade", [{
+      path: "deno.json",
+      imports: {
+        "#facade": "npm:vendor@1",
+        "npm:vendor@1": "./src/shim.ts",
+      },
+    }], "src/index.ts"),
+    resolution.resolved,
   );
 });
 

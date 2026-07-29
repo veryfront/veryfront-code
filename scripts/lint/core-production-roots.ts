@@ -60,6 +60,11 @@ export interface ImportMapLayer {
   scopes?: Record<string, Record<string, string>>;
 }
 
+export interface ImportMapResolution {
+  resolved: string;
+  trace: string[];
+}
+
 export class CoreProductionRegistryError extends Error {
   readonly code: string;
   readonly path?: string;
@@ -1249,11 +1254,11 @@ function candidatesForSpecifier(
   );
 }
 
-export function resolveImportMapSpecifier(
+export function resolveImportMapSpecifierWithTrace(
   specifier: string,
   layers: ImportMapLayer[],
   importer?: string,
-): string {
+): ImportMapResolution {
   const chain: string[] = [];
   const mappings = new Set<string>();
   let current = specifier;
@@ -1265,7 +1270,9 @@ export function resolveImportMapSpecifier(
     }
     chain.push(current);
     const candidates = candidatesForSpecifier(current, layers, importer);
-    if (candidates.length === 0) return current;
+    if (candidates.length === 0) {
+      return { resolved: current, trace: chain };
+    }
     const longest = Math.max(
       ...candidates.map((candidate) => candidate.key.length),
     );
@@ -1294,6 +1301,15 @@ export function resolveImportMapSpecifier(
     current = targets[0];
   }
   throw new Error(`import-map resolution exceeded 256 hops: ${specifier}`);
+}
+
+export function resolveImportMapSpecifier(
+  specifier: string,
+  layers: ImportMapLayer[],
+  importer?: string,
+): string {
+  return resolveImportMapSpecifierWithTrace(specifier, layers, importer)
+    .resolved;
 }
 
 export function configImportMapLayer(
