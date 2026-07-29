@@ -186,7 +186,14 @@ function buildScopeMap(ast: ASTNode): WeakMap<ASTNode, LexicalScope> {
           addPatternBindings(specifier.local, scope.bindings);
         }
       }
-    } else if (node.type === "TSImportEqualsDeclaration") {
+    } else if (
+      node.type === "TSImportEqualsDeclaration" && node.importKind !== "type"
+    ) {
+      addPatternBindings(node.id, scope.bindings);
+    } else if (
+      (node.type === "TSEnumDeclaration" ||
+        node.type === "TSModuleDeclaration") && node.declare !== true
+    ) {
       addPatternBindings(node.id, scope.bindings);
     }
 

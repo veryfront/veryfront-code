@@ -308,6 +308,74 @@ Deno.test("parser extension boundary ignores erased TypeScript require bindings"
   ]);
 });
 
+Deno.test("parser extension boundary treats type-only import-equals and ambient declarations as erased", async () => {
+  const issues = await findUnauthorizedParserExtensionImports([
+    {
+      path: "src/type-import-equals.ts",
+      content: [
+        'import type require = require("node:module");',
+        `require("${PARSER_ONLY}");`,
+      ].join("\n"),
+    },
+    {
+      path: "src/ambient-enum.ts",
+      content: [
+        "declare enum require { One }",
+        `require("${PARSER_ONLY}");`,
+      ].join("\n"),
+    },
+    {
+      path: "src/ambient-namespace.ts",
+      content: [
+        "declare namespace require {}",
+        `require("${PARSER_ONLY}");`,
+      ].join("\n"),
+    },
+    {
+      path: "src/ambient-module.ts",
+      content: [
+        "declare module require {}",
+        `require("${PARSER_ONLY}");`,
+      ].join("\n"),
+    },
+  ]);
+
+  assertEquals(issues, [
+    { path: "src/type-import-equals.ts", line: 2, specifier: PARSER_ONLY },
+    { path: "src/ambient-enum.ts", line: 2, specifier: PARSER_ONLY },
+    { path: "src/ambient-namespace.ts", line: 2, specifier: PARSER_ONLY },
+    { path: "src/ambient-module.ts", line: 2, specifier: PARSER_ONLY },
+  ]);
+});
+
+Deno.test("parser extension boundary recognizes runtime enum and namespace bindings", async () => {
+  const issues = await findUnauthorizedParserExtensionImports([
+    {
+      path: "src/runtime-enum.ts",
+      content: [
+        "enum require { One }",
+        `require("${PARSER_ONLY}");`,
+      ].join("\n"),
+    },
+    {
+      path: "src/runtime-namespace.ts",
+      content: [
+        "namespace require { export const one = 1; }",
+        `require("${PARSER_ONLY}");`,
+      ].join("\n"),
+    },
+    {
+      path: "src/runtime-module.ts",
+      content: [
+        "module require { export const one = 1; }",
+        `require("${PARSER_ONLY}");`,
+      ].join("\n"),
+    },
+  ]);
+
+  assertEquals(issues, []);
+});
+
 Deno.test("parser extension boundary reports every ECMAScript line terminator", async () => {
   const issues = await findUnauthorizedParserExtensionImports([
     {
