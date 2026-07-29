@@ -6,8 +6,14 @@ import {
 } from "#std/assert";
 import { toFileUrl } from "#std/path";
 import { CORE_RUNTIME_ENTRYPOINTS } from "./core-production-roots.ts";
-import { runStrictCoreDependencyAuditCli } from "./audit-core-deps-strict.ts";
-import { collectCoreProductionFiles } from "./source-import-collector.ts";
+import {
+  runStrictCoreDependencyAudit,
+  runStrictCoreDependencyAuditCli,
+} from "./audit-core-deps-strict.ts";
+import {
+  collectCoreProductionFiles,
+  collectSourceDependencies,
+} from "./source-import-collector.ts";
 
 Deno.test("core dependency collection visits a production file below a real root", async () => {
   const root = await Deno.makeTempDir();
@@ -69,6 +75,19 @@ async function auditFixture(): Promise<string> {
       name: "@fixture/cli",
       exports: { ".": "./main.ts" },
       imports: {},
+    }),
+  );
+  await writeSource(root, "react/react.ts");
+  await Deno.writeTextFile(
+    `${root}/react/deno.json`,
+    JSON.stringify({ name: "@fixture/react", exports: "./react.ts" }),
+  );
+  await writeSource(root, "browser/studio-bridge/entry.ts");
+  await Deno.writeTextFile(
+    `${root}/browser/studio-bridge/deno.json`,
+    JSON.stringify({
+      name: "@fixture/studio-bridge",
+      exports: "./entry.ts",
     }),
   );
   return root;
@@ -205,6 +224,43 @@ Deno.test("strict audit reports config-only and reachable mapped vendor provenan
   }
 });
 
+Deno.test("strict audit traverses mappings from a Deno loose config", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    await Deno.writeTextFile(
+      `${root}/deno.json`,
+      `{
+        name: 'fixture',
+        exports: {
+          '.': './src/index.ts',
+          './cli': './cli/main.ts',
+        },
+        imports: {
+          '#mapped': './src/mapped.ts',
+        },
+      }`,
+    );
+    await writeSource(root, "src/index.ts", 'import "#mapped";\n');
+    await writeSource(root, "src/mapped.ts", 'import "npm:loose-vendor@1";\n');
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 2, result.stderr);
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    assertEquals(
+      report.issues.some((entry: Record<string, unknown>) =>
+        entry.path === "src/mapped.ts" &&
+        entry.specifier === "npm:loose-vendor@1"
+      ),
+      true,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("strict audit rejects intrinsically forbidden originals before import-map aliases", async () => {
   const root = await auditFixture();
   const outputPath = `${root}/audit.json`;
@@ -251,7 +307,7 @@ Deno.test("strict audit rejects intrinsically forbidden originals before import-
   }
 });
 
-Deno.test("strict audit rejects every forbidden identity in an import-map chain", async (context) => {
+Deno.test("strict audit rejects every forbidden requested or selected import-map identity", async (context) => {
   const cases = [
     ["npm:evil@1", "forbidden-external-dependency"],
     ["jsr:@evil/pkg@1", "forbidden-external-dependency"],
@@ -268,11 +324,22 @@ Deno.test("strict audit rejects every forbidden identity in an import-map chain"
       const outputPath = `${root}/audit.json`;
       try {
         const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
-        config.imports["#facade"] = intermediate;
-        config.imports[intermediate] = "./src/shim.ts";
+        const selectedAddress = /^[A-Za-z][A-Za-z0-9+.-]*:/.test(
+          intermediate,
+        );
+        const requested = selectedAddress ? "#facade" : intermediate;
+        if (selectedAddress) {
+          config.imports[requested] = intermediate;
+        } else {
+          config.imports[requested] = "./src/shim.ts";
+        }
         await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
         await writeSource(root, "src/shim.ts");
-        await writeSource(root, "src/index.ts", 'import "#facade";\n');
+        await writeSource(
+          root,
+          "src/index.ts",
+          `import ${JSON.stringify(requested)};\n`,
+        );
 
         const result = await runAudit(["--root", root, "--output", outputPath]);
         const report = JSON.parse(await Deno.readTextFile(outputPath));
@@ -290,13 +357,13 @@ Deno.test("strict audit rejects every forbidden identity in an import-map chain"
             {
               contextId: "root-deno",
               code: expectedCode,
-              specifier: "#facade",
+              specifier: requested,
               resolved: intermediate,
             },
             {
               contextId: "root-node",
               code: expectedCode,
-              specifier: "#facade",
+              specifier: requested,
               resolved: intermediate,
             },
           ],
@@ -313,11 +380,10 @@ Deno.test("strict audit derives allowed bare self identities from owned manifest
   const outputPath = `${root}/audit.json`;
   try {
     const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
-    config.imports["#facade"] = "fixture/internal";
     config.imports["fixture/internal"] = "./src/shim.ts";
     await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
     await writeSource(root, "src/shim.ts");
-    await writeSource(root, "src/index.ts", 'import "#facade";\n');
+    await writeSource(root, "src/index.ts", 'import "fixture/internal";\n');
 
     const result = await runAudit(["--root", root, "--output", outputPath]);
     const report = JSON.parse(await Deno.readTextFile(outputPath));
@@ -348,11 +414,20 @@ Deno.test("strict audit accepts npm-compatible manifest package names as self id
       try {
         const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
         config.name = testCase.name;
-        config.imports["#self"] = testCase.name;
-        config.imports[testCase.name] = "./src/shim.ts";
+        const shimPath = testCase.name.endsWith("/")
+          ? "./src/shim/"
+          : "./src/shim.ts";
+        config.imports[testCase.name] = shimPath;
         await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
-        await writeSource(root, "src/shim.ts");
-        await writeSource(root, "src/index.ts", 'import "#self";\n');
+        await writeSource(
+          root,
+          testCase.name.endsWith("/") ? "src/shim/index.ts" : "src/shim.ts",
+        );
+        await writeSource(
+          root,
+          "src/index.ts",
+          `import ${JSON.stringify(testCase.name)};\n`,
+        );
 
         const result = await runAudit(["--root", root, "--output", outputPath]);
         const report = JSON.parse(await Deno.readTextFile(outputPath));
@@ -396,15 +471,28 @@ Deno.test("strict audit rejects malformed manifest package names as self identit
       try {
         const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
         config.name = testCase.name;
-        config.imports["#self"] = testCase.name;
-        config.imports[testCase.name] = "./src/shim.ts";
+        const shimPath = testCase.name.endsWith("/")
+          ? "./src/shim/"
+          : "./src/shim.ts";
+        config.imports[testCase.name] = shimPath;
         await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
-        await writeSource(root, "src/shim.ts");
-        await writeSource(root, "src/index.ts", 'import "#self";\n');
+        await writeSource(
+          root,
+          testCase.name.endsWith("/") ? "src/shim/index.ts" : "src/shim.ts",
+        );
+        await writeSource(
+          root,
+          "src/index.ts",
+          `import ${JSON.stringify(testCase.name)};\n`,
+        );
 
         const result = await runAudit(["--root", root, "--output", outputPath]);
         const report = JSON.parse(await Deno.readTextFile(outputPath));
-        assertEquals(result.code, 2, result.stderr);
+        assertEquals(
+          result.code,
+          2,
+          `${result.stderr}\n${JSON.stringify(report, null, 2)}`,
+        );
         assertEquals(report.evidenceComplete, true);
         assertEquals(report.operationalErrors, []);
         assertEquals(
@@ -418,13 +506,13 @@ Deno.test("strict audit rejects malformed manifest package names as self identit
             {
               contextId: "root-deno",
               code: "forbidden-bare-dependency",
-              specifier: "#self",
+              specifier: testCase.name,
               resolved: testCase.name,
             },
             {
               contextId: "root-node",
               code: "forbidden-bare-dependency",
-              specifier: "#self",
+              specifier: testCase.name,
               resolved: testCase.name,
             },
           ],
@@ -448,7 +536,11 @@ Deno.test("strict audit rejects a bare third-party identity even when mapped dir
 
     const result = await runAudit(["--root", root, "--output", outputPath]);
     const report = JSON.parse(await Deno.readTextFile(outputPath));
-    assertEquals(result.code, 2, result.stderr);
+    assertEquals(
+      result.code,
+      2,
+      `${result.stderr}\n${JSON.stringify(report, null, 2)}`,
+    );
     assertEquals(
       report.issues.map((issue: Record<string, unknown>) => ({
         contextId: issue.contextId,
@@ -508,6 +600,66 @@ Deno.test("strict audit rejects an outside file URL before import-map aliasing",
   }
 });
 
+Deno.test("strict audit treats mixed-case outside file URLs as file identities", async (context) => {
+  for (const mode of ["direct", "mapped"] as const) {
+    await context.step(mode, async () => {
+      const root = await auditFixture();
+      const outside = await Deno.makeTempFile({ suffix: ".ts" });
+      const outputPath = `${root}/audit.json`;
+      try {
+        const outsideUrl = toFileUrl(outside).href.replace(/^file:/, "FiLe:") +
+          "?flavor=%31#piece-%32";
+        const requested = mode === "direct" ? outsideUrl : "#mixed-outside";
+        if (mode === "mapped") {
+          const config = JSON.parse(
+            await Deno.readTextFile(`${root}/deno.json`),
+          );
+          config.imports[requested] = outsideUrl;
+          await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+        }
+        await writeSource(
+          root,
+          "src/index.ts",
+          `import ${JSON.stringify(requested)};\n`,
+        );
+
+        const result = await runAudit([
+          "--root",
+          root,
+          "--output",
+          outputPath,
+        ]);
+        const report = JSON.parse(await Deno.readTextFile(outputPath));
+        assertEquals(
+          result.code,
+          2,
+          `${result.stderr}\n${JSON.stringify(report, null, 2)}`,
+        );
+        assertEquals(report.evidenceComplete, true);
+        assertEquals(report.operationalErrors, []);
+        const issues = report.issues.filter(
+          (entry: Record<string, unknown>) =>
+            entry.path === "src/index.ts" && entry.specifier === requested,
+        );
+        assertEquals(
+          issues.map((entry: Record<string, unknown>) => ({
+            contextId: entry.contextId,
+            code: entry.code,
+          })),
+          [
+            { contextId: "root-deno", code: "source-target-escapes-core" },
+            { contextId: "root-node", code: "source-target-escapes-core" },
+          ],
+          JSON.stringify(report.issues, null, 2),
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+        await Deno.remove(outside);
+      }
+    });
+  }
+});
+
 Deno.test("strict audit rejects raw and mapped absolute filesystem imports", async () => {
   for (const mode of ["raw", "mapped"] as const) {
     const root = await auditFixture();
@@ -527,11 +679,17 @@ Deno.test("strict audit rejects raw and mapped absolute filesystem imports", asy
       const result = await runAudit(["--root", root, "--output", outputPath]);
       assertEquals(result.code, 2, `${mode}: ${result.stderr}`);
       const report = JSON.parse(await Deno.readTextFile(outputPath));
+      const expectedResolved = mode === "raw"
+        ? "/src/evil.ts"
+        : "file:///src/evil.ts";
       assertEquals(
         report.issues.some((entry: Record<string, unknown>) =>
           entry.path === "src/index.ts" && entry.specifier === requested &&
           entry.code === "source-target-escapes-core" &&
-          entry.resolved === "/src/evil.ts"
+          entry.resolved === expectedResolved &&
+          (mode === "raw" ||
+            (entry.mapping as Record<string, unknown>)?.selectedAddress ===
+              "/src/evil.ts")
         ),
         true,
         mode,
@@ -578,7 +736,10 @@ Deno.test("strict audit rejects URL-encoded traversal in source, import-map, and
       const report = JSON.parse(await Deno.readTextFile(outputPath));
       assertEquals(
         report.issues.some((entry: Record<string, unknown>) =>
-          entry.code === "source-target-escapes-core" &&
+          entry.code ===
+            (mode === "configuration"
+              ? "forbidden-bare-dependency"
+              : "source-target-escapes-core") &&
           entry.specifier === expectedSpecifier &&
           (mode !== "configuration" ||
             entry.field === "compilerOptions.types")
@@ -597,13 +758,13 @@ Deno.test("strict audit rejects arbitrary percent-encoded source, import-map, an
     const root = await auditFixture();
     const outputPath = `${root}/audit.json`;
     const encoded = mode === "configuration"
-      ? "src/%65vil.ts"
-      : "./src/%65vil.ts";
+      ? "src/%65vil.test.ts"
+      : "./src/%65vil.test.ts";
     try {
       const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
       let expectedSpecifier = encoded;
       if (mode === "source") {
-        expectedSpecifier = "./%65vil.ts";
+        expectedSpecifier = "./%65vil.test.ts";
         await writeSource(
           root,
           "src/index.ts",
@@ -621,14 +782,25 @@ Deno.test("strict audit rejects arbitrary percent-encoded source, import-map, an
         config.compilerOptions = { types: [encoded] };
       }
       await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
-      await writeSource(root, "src/%65vil.ts");
+      if (mode === "configuration") {
+        await writeSource(root, "src/%65vil.test.ts");
+      } else {
+        await writeSource(
+          root,
+          "src/evil.test.ts",
+          'import "npm:canonical-encoded-edge@1";\n',
+        );
+      }
 
       const result = await runAudit(["--root", root, "--output", outputPath]);
       assertEquals(result.code, 2, `${mode}: ${result.stderr}`);
       const report = JSON.parse(await Deno.readTextFile(outputPath));
       assertEquals(
         report.issues.some((entry: Record<string, unknown>) =>
-          entry.code === "source-target-escapes-core" &&
+          entry.code ===
+            (mode === "configuration"
+              ? "forbidden-bare-dependency"
+              : "source-target-escapes-core") &&
           entry.specifier === expectedSpecifier &&
           (mode !== "configuration" ||
             entry.field === "compilerOptions.types")
@@ -636,6 +808,16 @@ Deno.test("strict audit rejects arbitrary percent-encoded source, import-map, an
         true,
         mode,
       );
+      if (mode !== "configuration") {
+        assertEquals(
+          report.issues.some((entry: Record<string, unknown>) =>
+            entry.path === "src/evil.test.ts" &&
+            entry.specifier === "npm:canonical-encoded-edge@1"
+          ),
+          true,
+          `${mode}: ${JSON.stringify(report.issues, null, 2)}`,
+        );
+      }
     } finally {
       await Deno.remove(root, { recursive: true });
     }
@@ -813,9 +995,14 @@ Deno.test("strict audit unions runtime claims with type-target ownership for mix
 Deno.test("strict audit follows local configuration targets in applicable contexts", async () => {
   const cases = [
     {
-      path: "src/jsx-runtime.ts",
+      path: "src/jsx/jsx-runtime.ts",
       configure: (config: Record<string, unknown>) => {
-        config.compilerOptions = { jsxImportSource: "./src/jsx-runtime.ts" };
+        config.compilerOptions = {
+          jsx: "react-jsx",
+          jsxImportSource: "#jsx",
+        };
+        (config.imports as Record<string, string>)["#jsx/jsx-runtime"] =
+          "./src/jsx/jsx-runtime.ts";
       },
       builtin: "node:fs",
       expectedContext: "browser-runtime",
@@ -858,6 +1045,18 @@ Deno.test("strict audit follows local configuration targets in applicable contex
         testCase.path,
         `import ${JSON.stringify(testCase.builtin)};\n`,
       );
+      if (testCase.path === "src/jsx/jsx-runtime.ts") {
+        await writeSource(
+          root,
+          "src/index.client.ts",
+          'import "./jsx-consumer.tsx";\n',
+        );
+        await writeSource(
+          root,
+          "src/jsx-consumer.tsx",
+          "// @ts-nocheck\nexport const view = <div />;\n",
+        );
+      }
 
       const result = await runAudit(["--root", root, "--output", outputPath]);
       assertEquals(result.code, 2, `${testCase.path}: ${result.stderr}`);
@@ -888,18 +1087,189 @@ Deno.test("strict audit follows local configuration targets in applicable contex
   }
 });
 
+Deno.test("strict audit force-includes an excluded local configuration code root", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.compilerOptions = { types: ["./src/hidden-config.test.ts"] };
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(
+      root,
+      "src/hidden-config.test.ts",
+      'import "npm:hidden-config-terminal@1";\n',
+    );
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(
+      result.code,
+      2,
+      `${result.stderr}\n${JSON.stringify(report, null, 2)}`,
+    );
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    assertEquals(
+      report.issues
+        .filter((entry: Record<string, unknown>) =>
+          entry.path === "src/hidden-config.test.ts" &&
+          entry.specifier === "npm:hidden-config-terminal@1"
+        )
+        .map((entry: Record<string, unknown>) => entry.contextId),
+      [
+        "browser-runtime",
+        "cli-deno",
+        "cli-node",
+        "root-deno",
+        "root-node",
+      ],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit follows decorated configuration code targets with Deno-correlated physical traversal", async (context) => {
+  const directCases = [
+    ["plain control", ""],
+    ["query", "?flavor=1"],
+    ["hash", "#piece"],
+    ["encoded query", "?flavor=%31"],
+    ["encoded hash", "#piece-%31"],
+    ["empty query", "?"],
+    ["empty hash", "#"],
+  ] as const;
+  const indirectCases = [
+    {
+      label: "exact decorated bare key",
+      target: "#configured?flavor=%31#piece-%32",
+      imports: {
+        "#configured?flavor=%31#piece-%32": "./src/configured-types.test.ts",
+      },
+    },
+    {
+      label: "decorated bare prefix suffix",
+      target: "#configured/configured-types.test.ts?flavor=%31#piece-%32",
+      imports: { "#configured/": "./src/" },
+    },
+    {
+      label: "decorated selected address",
+      target: "#configured",
+      imports: {
+        "#configured": "./src/configured-types.test.ts?flavor=%31#piece-%32",
+      },
+    },
+    {
+      label: "empty selected address decoration",
+      target: "#configured-empty",
+      imports: { "#configured-empty": "./src/configured-types.test.ts?" },
+    },
+  ] as const;
+  const cases = [
+    ...directCases.map(([label, decoration]) => ({
+      label,
+      target: `./src/configured-types.test.ts${decoration}`,
+      imports: {},
+    })),
+    ...indirectCases,
+  ];
+  for (const testCase of cases) {
+    await context.step(testCase.label, async () => {
+      const root = await auditFixture();
+      const outputPath = `${root}/audit.json`;
+      try {
+        const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+        Object.assign(config.imports, testCase.imports);
+        config.compilerOptions = { types: [testCase.target] };
+        await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+        await writeSource(
+          root,
+          "src/index.ts",
+          "console.log(configuredValue);\n",
+        );
+        await writeSource(
+          root,
+          "src/configured-types.test.ts",
+          "import \"data:text/javascript,export default 'configured-types'\";\n" +
+            "declare global { const configuredValue: string; }\n" +
+            "export {};\n",
+        );
+
+        const runtime = await new Deno.Command(Deno.execPath(), {
+          args: [
+            "check",
+            "--config",
+            `${root}/deno.json`,
+            `${root}/src/index.ts`,
+          ],
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        const runtimeError = new TextDecoder().decode(runtime.stderr);
+        assertEquals(runtime.code, 0, runtimeError);
+        assertEquals(
+          runtimeError.includes("Cannot find name 'configuredValue'"),
+          false,
+          runtimeError,
+        );
+
+        const result = await runAudit([
+          "--root",
+          root,
+          "--output",
+          outputPath,
+        ]);
+        const report = JSON.parse(await Deno.readTextFile(outputPath));
+        assertEquals(
+          result.code,
+          2,
+          `${result.stderr}\n${JSON.stringify(report, null, 2)}`,
+        );
+        assertEquals(report.evidenceComplete, true);
+        assertEquals(report.operationalErrors, []);
+        assertEquals(
+          report.issues
+            .filter((entry: Record<string, unknown>) =>
+              entry.path === "src/configured-types.test.ts" &&
+              entry.specifier ===
+                "data:text/javascript,export default 'configured-types'"
+            )
+            .map((entry: Record<string, unknown>) => entry.contextId),
+          [
+            "browser-runtime",
+            "cli-deno",
+            "cli-node",
+            "root-deno",
+            "root-node",
+          ],
+          JSON.stringify(report.issues, null, 2),
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+  }
+});
+
 Deno.test("strict audit follows generated JSX runtime configuration subpaths", async () => {
   const root = await auditFixture();
   const outputPath = `${root}/audit.json`;
   try {
     const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
-    config.compilerOptions = { jsxImportSource: "#jsx" };
-    config.imports["#jsx"] = "./src/jsx-base.ts";
-    config.imports["#jsx/"] = "./src/jsx/";
+    config.compilerOptions = { jsx: "react-jsx", jsxImportSource: "#jsx" };
+    config.imports["#jsx/jsx-runtime"] = "./src/jsx/jsx-runtime.ts";
     await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
-    await writeSource(root, "src/jsx-base.ts");
+    await writeSource(
+      root,
+      "src/index.client.ts",
+      'import "./jsx-consumer.tsx";\n',
+    );
+    await writeSource(
+      root,
+      "src/jsx-consumer.tsx",
+      "// @ts-nocheck\nexport const view = <div />;\n",
+    );
     await writeSource(root, "src/jsx/jsx-runtime.ts", 'import "node:fs";\n');
-    await writeSource(root, "src/jsx/jsx-dev-runtime.ts");
 
     const result = await runAudit(["--root", root, "--output", outputPath]);
     assertEquals(result.code, 2, result.stderr);
@@ -928,7 +1298,7 @@ Deno.test("strict audit resolves configured JSX runtimes from each reachable JSX
     config.imports["#jsx"] = "./src/jsx-base.ts";
     config.imports["#jsx/"] = "./src/jsx/";
     config.scopes = {
-      "./src/scoped/": { "#jsx/": "npm:scoped-jsx@1/" },
+      "./src/scoped/": { "#jsx/": "https://scoped-jsx.test/" },
     };
     await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
     await writeSource(root, "src/jsx-base.ts");
@@ -953,10 +1323,73 @@ Deno.test("strict audit resolves configured JSX runtimes from each reachable JSX
         entry.path === "src/scoped/component.tsx" &&
         entry.field === "compilerOptions.jsxImportSource.runtime" &&
         entry.specifier === "#jsx/jsx-runtime" &&
-        entry.resolved === "npm:scoped-jsx@1/jsx-runtime"
+        entry.resolved === "https://scoped-jsx.test/jsx-runtime"
       ),
       true,
     );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit does not resolve generated JSX runtimes outside reachable importer scopes", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.compilerOptions = {
+      jsx: "react-jsx",
+      jsxImportSource: "#jsx",
+    };
+    config.imports["#jsx/jsx-runtime"] =
+      "https://unused-global-jsx.invalid/runtime.ts";
+    config.scopes = {
+      "./src/": {
+        "#jsx/jsx-runtime": "./src/jsx/jsx-runtime.ts",
+      },
+    };
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(
+      root,
+      "src/index.ts",
+      'import "./component.tsx";\n',
+    );
+    await writeSource(
+      root,
+      "src/component.tsx",
+      "// @ts-nocheck\nexport const component = <div />;\n",
+    );
+    await writeSource(
+      root,
+      "src/jsx/jsx-runtime.ts",
+      "export function jsx(type: unknown, props: unknown) { " +
+        "return { type, props }; }\n" +
+        "export const jsxs = jsx;\n" +
+        "export const Fragment = Symbol();\n",
+    );
+
+    const runtime = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "check",
+        "--config",
+        `${root}/deno.json`,
+        `${root}/src/index.ts`,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(runtime.code, 0, new TextDecoder().decode(runtime.stderr));
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(
+      result.code,
+      0,
+      `${result.stderr}\n${JSON.stringify(report, null, 2)}`,
+    );
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    assertEquals(report.issues, []);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -976,7 +1409,7 @@ Deno.test("strict audit uses a file-level JSX import-source override at the prag
     config.imports["#pragma"] = "./src/pragma-base.ts";
     config.imports["#pragma/"] = "./src/pragma/";
     config.scopes = {
-      "./src/scoped/": { "#pragma/": "npm:pragma-jsx@1/" },
+      "./src/scoped/": { "#pragma/": "https://pragma-jsx.test/" },
     };
     await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
     for (
@@ -1010,7 +1443,7 @@ Deno.test("strict audit uses a file-level JSX import-source override at the prag
         entry.path === "src/scoped/component.tsx" && entry.line === 1 &&
         entry.loader === "@jsxImportSource.runtime" &&
         entry.specifier === "#pragma/jsx-runtime" &&
-        entry.resolved === "npm:pragma-jsx@1/jsx-runtime"
+        entry.resolved === "https://pragma-jsx.test/jsx-runtime"
       ),
       true,
     );
@@ -1085,6 +1518,64 @@ Deno.test("strict audit keeps conditional target closure separate and audits onl
         entry.specifier === "node:trace_events"
       ),
       true,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit parses the baseline once and context-scans target-only closure on demand", async () => {
+  const root = await auditFixture();
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.exports["."] = {
+      node: "./src/node-only.ts",
+      default: "./src/index.ts",
+    };
+    config.imports["#unused-local"] = "./src/unused-mapping.test.ts";
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(
+      root,
+      "src/node-only.ts",
+      'import "./node-transitive.ts";\n',
+    );
+    await writeSource(root, "src/node-transitive.ts");
+    await writeSource(root, "src/orphan.ts");
+    await writeSource(
+      root,
+      "src/unused-mapping.test.ts",
+      'import "npm:unused-mapping-terminal@1";\n',
+    );
+
+    const rawScans = new Map<string, number>();
+    const contextualScans = new Map<string, number>();
+    const wrappedCollector = (
+      ...args: Parameters<typeof collectSourceDependencies>
+    ) => {
+      const [file, options] = args;
+      const scans = options?.resolveModuleSpecifier
+        ? contextualScans
+        : rawScans;
+      scans.set(file.path, (scans.get(file.path) ?? 0) + 1);
+      return collectSourceDependencies(...args);
+    };
+
+    const report = await runStrictCoreDependencyAudit(root, {
+      collectSourceDependencies: wrappedCollector,
+    });
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    assertEquals(rawScans.get("src/node-only.ts"), 1);
+    assertEquals(rawScans.get("src/node-transitive.ts"), 1);
+    assertEquals(rawScans.get("src/orphan.ts"), 1);
+    assertEquals(contextualScans.get("src/node-only.ts"), 1);
+    assertEquals(contextualScans.get("src/node-transitive.ts"), 1);
+    assertEquals(contextualScans.get("src/orphan.ts"), 2);
+    assertEquals(rawScans.has("src/unused-mapping.test.ts"), false);
+    assertEquals(contextualScans.has("src/unused-mapping.test.ts"), false);
+    assert(
+      [...contextualScans.values()].every((count) => count <= 3),
+      JSON.stringify([...contextualScans]),
     );
   } finally {
     await Deno.remove(root, { recursive: true });
@@ -1430,7 +1921,7 @@ Deno.test("strict audit fails closed for generic loader provenance escapes", asy
       expected: {
         code: "unresolved-runtime-loader",
         loader: "require-alias",
-        line: 3,
+        line: 4,
       },
     },
     {
@@ -1444,31 +1935,7 @@ Deno.test("strict audit fails closed for generic loader provenance escapes", asy
       expected: {
         code: "unresolved-runtime-loader",
         loader: "require-alias",
-        line: 3,
-      },
-    },
-    {
-      name: "object spread",
-      content: [
-        "const original = { load: require };",
-        "const copy = { ...original };",
-      ].join("\n"),
-      expected: {
-        code: "unresolved-runtime-loader",
-        loader: "require-alias",
-        line: 2,
-      },
-    },
-    {
-      name: "array spread",
-      content: [
-        "const original = [require];",
-        "const copy = [...original];",
-      ].join("\n"),
-      expected: {
-        code: "unresolved-runtime-loader",
-        loader: "require-alias",
-        line: 2,
+        line: 4,
       },
     },
     {
@@ -1530,6 +1997,73 @@ Deno.test("strict audit fails closed for generic loader provenance escapes", asy
               entry.line === testCase.expected.line) &&
             (!("specifier" in testCase.expected) ||
               entry.specifier === testCase.expected.specifier)
+          ),
+          true,
+          JSON.stringify(report.issues, null, 2),
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+  }
+});
+
+Deno.test("strict audit treats unused local container spreads as containment", async (context) => {
+  for (
+    const [name, content] of [
+      [
+        "object spread",
+        "const original = { load: require };\nconst copy = { ...original };\nvoid copy;\n",
+      ],
+      [
+        "array spread",
+        "const original = [require];\nconst copy = [...original];\nvoid copy;\n",
+      ],
+    ] as const
+  ) {
+    await context.step(name, async () => {
+      const root = await auditFixture();
+      const outputPath = `${root}/audit.json`;
+      try {
+        await writeSource(root, "src/index.ts", content);
+        const result = await runAudit(["--root", root, "--output", outputPath]);
+        const report = JSON.parse(await Deno.readTextFile(outputPath));
+        assertEquals(result.code, 0, result.stderr);
+        assertEquals(report.evidenceComplete, true);
+        assertEquals(report.operationalErrors, []);
+        assertEquals(report.issues, []);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+  }
+  for (
+    const [name, content] of [
+      [
+        "object spread escape",
+        "const original = { load: require };\nconst copy = { ...original };\nuse(copy);\n",
+      ],
+      [
+        "array spread escape",
+        "const original = [require];\nconst copy = [...original];\nuse(copy);\n",
+      ],
+    ] as const
+  ) {
+    await context.step(name, async () => {
+      const root = await auditFixture();
+      const outputPath = `${root}/audit.json`;
+      try {
+        await writeSource(root, "src/index.ts", content);
+        const result = await runAudit(["--root", root, "--output", outputPath]);
+        const report = JSON.parse(await Deno.readTextFile(outputPath));
+        assertEquals(result.code, 2, result.stderr);
+        assertEquals(report.evidenceComplete, true);
+        assertEquals(report.operationalErrors, []);
+        assertEquals(
+          report.issues.some((entry: Record<string, unknown>) =>
+            entry.path === "src/index.ts" && entry.line === 3 &&
+            entry.code === "unresolved-runtime-loader" &&
+            entry.loader === "require-alias"
           ),
           true,
           JSON.stringify(report.issues, null, 2),
@@ -2000,21 +2534,1452 @@ Deno.test("strict audit walks transparent wrappers before classifying namespace 
   });
 });
 
-Deno.test("strict audit treats import-map expansion cycles as operational exit 3", async () => {
+Deno.test("strict audit rejects unsupported deno-config extends as incomplete evidence", async () => {
   const root = await auditFixture();
   const outputPath = `${root}/audit.json`;
   try {
     const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
-    config.imports["loop/"] = "loop/x/";
+    config.extends = "./base.json";
     await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
-    await writeSource(root, "src/index.ts", 'import "loop/value.ts";\n');
+    await Deno.writeTextFile(
+      `${root}/base.json`,
+      JSON.stringify({ compilerOptions: { noImplicitAny: false } }),
+    );
+    await Deno.writeTextFile(
+      `${root}/extends-probe.ts`,
+      "export function identity(value) { return value; }\n",
+    );
+    const denoProbe = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "check",
+        "--config",
+        `${root}/deno.json`,
+        `${root}/extends-probe.ts`,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(denoProbe.code, 1);
+    assertStringIncludes(new TextDecoder().decode(denoProbe.stderr), "TS7006");
+
     const result = await runAudit(["--root", root, "--output", outputPath]);
-    assertEquals(result.code, 3, result.stderr);
     const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 3, result.stderr);
     assertEquals(report.evidenceComplete, false);
-    assertStringIncludes(
-      report.operationalErrors[0].message,
-      "import-map alias cycle",
+    assertEquals(
+      report.operationalErrors[0]?.code,
+      "unsupported-config-extends",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit loads contained relative and file-URL external import maps relative to the map file", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    delete config.imports;
+    await Deno.mkdir(`${root}/config`, { recursive: true });
+    await Deno.writeTextFile(
+      `${root}/config/import-map.json`,
+      '{"imports":{"#local":"../src/local.ts","#\\uD83D\\uDE00":"../src/local.ts"}}',
+    );
+    await writeSource(root, "src/local.ts");
+    await writeSource(root, "src/index.ts", 'import "#local";\n');
+
+    for (
+      const reference of [
+        "./config/import-map.json",
+        toFileUrl(`${root}/config/import-map.json`).href,
+        toFileUrl(`${root}/config/import-map.json`).href.replace(
+          /^file:/,
+          "FILE:",
+        ),
+      ]
+    ) {
+      config.importMap = reference;
+      await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+      const runtime = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "check",
+          "--config",
+          `${root}/deno.json`,
+          `${root}/src/index.ts`,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(
+        runtime.code,
+        0,
+        `${reference}: ${new TextDecoder().decode(runtime.stderr)}`,
+      );
+      const result = await runAudit(["--root", root, "--output", outputPath]);
+      const report = JSON.parse(await Deno.readTextFile(outputPath));
+      assertEquals(result.code, 0, `${reference}: ${result.stderr}`);
+      assertEquals(report.evidenceComplete, true);
+      assertEquals(report.operationalErrors, []);
+      assertEquals(report.issues, []);
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit rejects every incomplete external import-map configuration", async () => {
+  const cases = [
+    "conflict",
+    "missing",
+    "malformed",
+    "escaping",
+    "external",
+    "symlink",
+    "jsonc-comment",
+    "jsonc-trailing-comma",
+    "jsonc-unquoted-key",
+    "jsonc-single-quoted-string",
+    "json-lone-high-surrogate",
+    "json-lone-low-surrogate",
+    "json-number-overflow",
+  ] as const;
+  const actual: Array<{ label: string; exit: number; code?: string }> = [];
+  for (const label of cases) {
+    const root = await auditFixture();
+    const outputPath = `${root}/audit.json`;
+    let outside: string | undefined;
+    try {
+      const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+      if (label !== "conflict") delete config.imports;
+      if (label === "external") {
+        config.importMap = "https://example.test/import-map.json";
+      } else if (label === "escaping") {
+        config.importMap = "../outside-import-map.json";
+      } else {
+        config.importMap = "./config/import-map.json";
+      }
+      await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+      if (!["missing", "escaping", "external"].includes(label)) {
+        await Deno.mkdir(`${root}/config`, { recursive: true });
+        if (label === "malformed") {
+          await Deno.writeTextFile(`${root}/config/import-map.json`, "{");
+        } else if (label === "jsonc-comment") {
+          await Deno.writeTextFile(
+            `${root}/config/import-map.json`,
+            '{\n  // External import maps remain strict JSON.\n  "imports": {}\n}\n',
+          );
+        } else if (label === "jsonc-trailing-comma") {
+          await Deno.writeTextFile(
+            `${root}/config/import-map.json`,
+            '{ "imports": {}, }\n',
+          );
+        } else if (label === "jsonc-unquoted-key") {
+          await Deno.writeTextFile(
+            `${root}/config/import-map.json`,
+            "{ imports: {} }\n",
+          );
+        } else if (label === "jsonc-single-quoted-string") {
+          await Deno.writeTextFile(
+            `${root}/config/import-map.json`,
+            `{ "imports": { "#local": '../src/local.ts' } }\n`,
+          );
+        } else if (label === "json-lone-high-surrogate") {
+          await Deno.writeTextFile(
+            `${root}/config/import-map.json`,
+            '{ "imports": { "#\\uD800": "../src/local.ts" } }\n',
+          );
+        } else if (label === "json-lone-low-surrogate") {
+          await Deno.writeTextFile(
+            `${root}/config/import-map.json`,
+            '{ "imports": { "#\\uDC00": "../src/local.ts" } }\n',
+          );
+        } else if (label === "json-number-overflow") {
+          await Deno.writeTextFile(
+            `${root}/config/import-map.json`,
+            '{ "imports": {}, "integrity": { "probe": 1e400 } }\n',
+          );
+        } else if (label === "symlink") {
+          outside = await Deno.makeTempDir();
+          await Deno.writeTextFile(
+            `${outside}/import-map.json`,
+            JSON.stringify({ imports: {} }),
+          );
+          await Deno.symlink(
+            `${outside}/import-map.json`,
+            `${root}/config/import-map.json`,
+          );
+        } else {
+          await Deno.writeTextFile(
+            `${root}/config/import-map.json`,
+            JSON.stringify({ imports: {} }),
+          );
+        }
+      }
+
+      if (
+        [
+          "jsonc-comment",
+          "jsonc-trailing-comma",
+          "jsonc-unquoted-key",
+          "jsonc-single-quoted-string",
+          "json-lone-high-surrogate",
+          "json-lone-low-surrogate",
+          "json-number-overflow",
+        ].includes(label)
+      ) {
+        const runtime = await new Deno.Command(Deno.execPath(), {
+          args: [
+            "check",
+            "--reload",
+            "--config",
+            `${root}/deno.json`,
+            `${root}/src/index.ts`,
+          ],
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(
+          runtime.code,
+          1,
+          `${label}: ${new TextDecoder().decode(runtime.stderr)}`,
+        );
+      }
+
+      const result = await runAudit(["--root", root, "--output", outputPath]);
+      const report = JSON.parse(await Deno.readTextFile(outputPath));
+      actual.push({
+        label,
+        exit: result.code,
+        code: report.operationalErrors[0]?.code,
+      });
+    } finally {
+      await Deno.remove(root, { recursive: true });
+      if (outside) await Deno.remove(outside, { recursive: true });
+    }
+  }
+  assertEquals(actual, [
+    { label: "conflict", exit: 3, code: "conflicting-import-map" },
+    { label: "missing", exit: 3, code: "missing-import-map" },
+    { label: "malformed", exit: 3, code: "import-map-parse-failure" },
+    { label: "escaping", exit: 3, code: "import-map-path-escape" },
+    { label: "external", exit: 3, code: "unsupported-import-map-reference" },
+    { label: "symlink", exit: 3, code: "import-map-path-escape" },
+    {
+      label: "jsonc-comment",
+      exit: 3,
+      code: "import-map-parse-failure",
+    },
+    {
+      label: "jsonc-trailing-comma",
+      exit: 3,
+      code: "import-map-parse-failure",
+    },
+    {
+      label: "jsonc-unquoted-key",
+      exit: 3,
+      code: "import-map-parse-failure",
+    },
+    {
+      label: "jsonc-single-quoted-string",
+      exit: 3,
+      code: "import-map-parse-failure",
+    },
+    {
+      label: "json-lone-high-surrogate",
+      exit: 3,
+      code: "import-map-parse-failure",
+    },
+    {
+      label: "json-lone-low-surrogate",
+      exit: 3,
+      code: "import-map-parse-failure",
+    },
+    {
+      label: "json-number-overflow",
+      exit: 3,
+      code: "import-map-parse-failure",
+    },
+  ]);
+});
+
+Deno.test("strict audit rejects external, escaping, encoded, and ambiguous import-map scopes", async () => {
+  const cases = ["external", "escaping", "encoded", "ambiguous"] as const;
+  const actual: Array<{
+    label: string;
+    exit: number;
+    code?: string;
+  }> = [];
+  for (const label of cases) {
+    const root = await auditFixture();
+    const outputPath = `${root}/audit.json`;
+    let outside: string | undefined;
+    try {
+      const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+      if (label === "external") {
+        config.scopes = {
+          "https://example.test/scope/": { "#scope": "./src/a.ts" },
+        };
+      } else if (label === "escaping") {
+        outside = await Deno.makeTempDir();
+        config.scopes = {
+          [toFileUrl(`${outside}/`).href]: { "#scope": "./src/a.ts" },
+        };
+      } else if (label === "encoded") {
+        config.scopes = {
+          "./src/%2e%2e/": { "#scope": "./src/a.ts" },
+        };
+      } else {
+        config.scopes = {
+          "./src/": { "#scope": "./src/a.ts" },
+          [toFileUrl(`${root}/src/`).href]: { "#scope": "./src/b.ts" },
+        };
+        await writeSource(root, "src/index.ts", 'import "#scope";\n');
+      }
+      await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+      await writeSource(root, "src/a.ts");
+      await writeSource(root, "src/b.ts");
+
+      const result = await runAudit(["--root", root, "--output", outputPath]);
+      const report = JSON.parse(await Deno.readTextFile(outputPath));
+      actual.push({
+        label,
+        exit: result.code,
+        code: report.operationalErrors[0]?.code,
+      });
+    } finally {
+      await Deno.remove(root, { recursive: true });
+      if (outside) await Deno.remove(outside, { recursive: true });
+    }
+  }
+  assertEquals(actual, [
+    { label: "external", exit: 3, code: "import-map-validation-failure" },
+    { label: "escaping", exit: 3, code: "import-map-validation-failure" },
+    { label: "encoded", exit: 3, code: "import-map-validation-failure" },
+    { label: "ambiguous", exit: 3, code: "binding-resolution-failure" },
+  ]);
+});
+
+Deno.test("strict audit applies URL-like import-map keys in canonical importer space", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.imports["./src/dep.ts"] =
+      "data:text/javascript,export%20default%201";
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(root, "src/dep.ts");
+    await writeSource(root, "src/index.ts", 'import "./dep.ts";\n');
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 2, result.stderr);
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    assertEquals(
+      report.issues
+        .filter((entry: Record<string, unknown>) =>
+          entry.specifier === "./dep.ts"
+        )
+        .map((entry: Record<string, unknown>) => ({
+          contextId: entry.contextId,
+          code: entry.code,
+          trace: entry.trace,
+          terminal: entry.terminal,
+        })),
+      [
+        {
+          contextId: "root-deno",
+          code: "forbidden-external-dependency",
+          trace: ["./dep.ts", "data:text/javascript,export%20default%201"],
+          terminal: "data:text/javascript,export%20default%201",
+        },
+        {
+          contextId: "root-node",
+          code: "forbidden-external-dependency",
+          trace: ["./dep.ts", "data:text/javascript,export%20default%201"],
+          terminal: "data:text/javascript,export%20default%201",
+        },
+      ],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit retains encoded URL-like mapping-key provenance without losing canonical traversal", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.scopes = {
+      "./src/": {
+        "./src/%65ncoded-key.ts": "./src/selected.test.ts",
+      },
+    };
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(
+      root,
+      "src/index.ts",
+      'import "./%65ncoded-key.ts";\n',
+    );
+    await writeSource(
+      root,
+      "src/selected.test.ts",
+      'import "npm:encoded-key-terminal@1";\n',
+    );
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 2, result.stderr);
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    const provenanceIssues = report.issues.filter(
+      (entry: Record<string, unknown>) =>
+        (entry.provenanceDecision as Record<string, unknown>)?.field ===
+          "sourceKey",
+    );
+    assertEquals(provenanceIssues.length, 2);
+    for (const entry of provenanceIssues) {
+      assertEquals(entry.trace, [
+        "./%65ncoded-key.ts",
+        "./src/encoded-key.ts",
+        "./src/selected.test.ts",
+      ]);
+      assertEquals(entry.mapping, {
+        owner: "deno.json",
+        base: "./",
+        sourceKey: "./src/%65ncoded-key.ts",
+        canonicalKey: "./src/%65ncoded-key.ts",
+        selectedAddress: "./src/selected.test.ts",
+        canonicalTarget: "./src/selected.test.ts",
+        sourceScope: "./src/",
+        canonicalScope: "./src/",
+      });
+      assertEquals(entry.provenanceDecision, {
+        kind: "noncanonical-path-encoding",
+        field: "sourceKey",
+        identity: "./src/%65ncoded-key.ts",
+      });
+    }
+    assertEquals(
+      report.issues
+        .filter((entry: Record<string, unknown>) =>
+          entry.specifier === "npm:encoded-key-terminal@1"
+        )
+        .map((entry: Record<string, unknown>) => entry.path),
+      ["src/selected.test.ts", "src/selected.test.ts"],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit keeps an equal-spelling mapped terminal relative to the map base", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.imports["./src/dep.ts"] = "./dep.ts";
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(root, "src/dep.ts");
+    await writeSource(root, "src/index.ts", 'import "./dep.ts";\n');
+    await Deno.writeTextFile(
+      `${root}/dep.ts`,
+      'import "npm:map-base-terminal@1";\n',
+    );
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 2, result.stderr);
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    assertEquals(
+      report.issues.some((entry: Record<string, unknown>) =>
+        entry.path === "src/index.ts" && entry.specifier === "./dep.ts" &&
+        entry.code === "source-target-escapes-core" &&
+        entry.resolved === "dep.ts" &&
+        (entry.mapping as Record<string, unknown>)?.selectedAddress ===
+          "./dep.ts"
+      ),
+      true,
+      JSON.stringify(report.issues, null, 2),
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit canonicalizes a selected prefix suffix before forced traversal", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.imports["#prefix/"] = "./src/prefix/";
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(
+      root,
+      "src/index.ts",
+      'import "#prefix/%68idden.test.ts";\n',
+    );
+    await writeSource(
+      root,
+      "src/prefix/hidden.test.ts",
+      'import "npm:canonical-prefix-terminal@1";\n',
+    );
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 2, result.stderr);
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    assertEquals(
+      report.issues
+        .filter((entry: Record<string, unknown>) =>
+          entry.path === "src/prefix/hidden.test.ts" &&
+          entry.specifier === "npm:canonical-prefix-terminal@1"
+        )
+        .map((entry: Record<string, unknown>) => entry.contextId),
+      ["root-deno", "root-node"],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit separates bare-map decorations from encoded paths", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const exactSpecifier = "#exact?flavor=%31#piece-%32";
+    const prefixSpecifier = "#prefix/value.test.ts?flavor=%31#piece-%32";
+    const encodedPathSpecifier = "#prefix/%76alue.test.ts?flavor=%33#piece-%34";
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.imports[exactSpecifier] = "./src/bare/exact.test.ts";
+    config.imports["#prefix/"] = "./src/bare/";
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(
+      root,
+      "src/index.ts",
+      `import ${JSON.stringify(exactSpecifier)};\n` +
+        `import ${JSON.stringify(prefixSpecifier)};\n` +
+        `import ${JSON.stringify(encodedPathSpecifier)};\n`,
+    );
+    await writeSource(
+      root,
+      "src/bare/exact.test.ts",
+      "import \"data:text/javascript,export default 'bare-exact'\";\n",
+    );
+    await writeSource(
+      root,
+      "src/bare/value.test.ts",
+      "import \"data:text/javascript,export default 'bare-prefix'\";\n",
+    );
+
+    const runtime = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--config",
+        `${root}/deno.json`,
+        `${root}/src/index.ts`,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(runtime.code, 0, new TextDecoder().decode(runtime.stderr));
+
+    const result = await runAudit([
+      "--root",
+      root,
+      "--output",
+      outputPath,
+    ]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 2, result.stderr);
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    for (const specifier of [exactSpecifier, prefixSpecifier]) {
+      assertEquals(
+        report.issues.some((entry: Record<string, unknown>) =>
+          entry.path === "src/index.ts" && entry.specifier === specifier &&
+          entry.code === "source-target-escapes-core"
+        ),
+        false,
+        JSON.stringify(report.issues, null, 2),
+      );
+    }
+    assertEquals(
+      report.issues.some((entry: Record<string, unknown>) =>
+        entry.path === "src/index.ts" &&
+        entry.specifier === encodedPathSpecifier &&
+        entry.code === "source-target-escapes-core" &&
+        (entry.provenanceDecision as Record<string, unknown>)?.field ===
+          "selectedAddress"
+      ),
+      true,
+      JSON.stringify(report.issues, null, 2),
+    );
+    assertEquals(
+      report.issues
+        .filter((entry: Record<string, unknown>) =>
+          entry.path === "src/bare/exact.test.ts" ||
+          entry.path === "src/bare/value.test.ts"
+        )
+        .map((entry: Record<string, unknown>) => ({
+          contextId: entry.contextId,
+          path: entry.path,
+          specifier: entry.specifier,
+        })),
+      [
+        {
+          contextId: "root-deno",
+          path: "src/bare/exact.test.ts",
+          specifier: "data:text/javascript,export default 'bare-exact'",
+        },
+        {
+          contextId: "root-deno",
+          path: "src/bare/value.test.ts",
+          specifier: "data:text/javascript,export default 'bare-prefix'",
+        },
+        {
+          contextId: "root-node",
+          path: "src/bare/exact.test.ts",
+          specifier: "data:text/javascript,export default 'bare-exact'",
+        },
+        {
+          contextId: "root-node",
+          path: "src/bare/value.test.ts",
+          specifier: "data:text/javascript,export default 'bare-prefix'",
+        },
+      ],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit fails only when an opaque import-map prefix is used", async (context) => {
+  for (const used of [false, true]) {
+    await context.step(used ? "used" : "unused", async () => {
+      const root = await auditFixture();
+      const outputPath = `${root}/audit.json`;
+      try {
+        const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+        config.imports["#opaque/"] = "data:text/javascript,export default 1;/";
+        await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+        await writeSource(
+          root,
+          "src/index.ts",
+          used ? 'import "#opaque/value.ts";\n' : "export {};\n",
+        );
+
+        const runtime = await new Deno.Command(Deno.execPath(), {
+          args: [
+            "run",
+            "--config",
+            `${root}/deno.json`,
+            `${root}/src/index.ts`,
+          ],
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        const runtimeError = new TextDecoder().decode(runtime.stderr);
+        assertEquals(runtime.code, used ? 1 : 0, runtimeError);
+        assertEquals(
+          runtimeError.includes(
+            "could not be URL-parsed relative to the URL prefix",
+          ),
+          used,
+          runtimeError,
+        );
+
+        const result = await runAudit([
+          "--root",
+          root,
+          "--output",
+          outputPath,
+        ]);
+        const report = JSON.parse(await Deno.readTextFile(outputPath));
+        assertEquals(result.code, used ? 3 : 0, result.stderr);
+        assertEquals(report.evidenceComplete, !used);
+        if (used) {
+          assertEquals(report.operationalErrors.length, 1);
+          assertEquals(
+            report.operationalErrors[0]?.code,
+            "binding-resolution-failure",
+          );
+          assertEquals(report.operationalErrors[0]?.path, "src/index.ts");
+          assertStringIncludes(
+            report.operationalErrors[0]?.message ?? "",
+            "import-map prefix suffix could not be URL-parsed relative to import-map prefix target: deno.json: #opaque/: #opaque/value.ts",
+          );
+        } else {
+          assertEquals(report.operationalErrors, []);
+        }
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+  }
+  await context.step("shadowed by a longer valid prefix", async () => {
+    const root = await auditFixture();
+    const outputPath = `${root}/audit.json`;
+    try {
+      const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+      config.imports["#opaque/"] = "data:text/javascript,export default 1;/";
+      config.imports["#opaque/safe/"] = "./src/safe/";
+      await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+      await writeSource(
+        root,
+        "src/index.ts",
+        'import "#opaque/safe/value.ts";\n',
+      );
+      await writeSource(root, "src/safe/value.ts");
+
+      const runtime = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--config",
+          `${root}/deno.json`,
+          `${root}/src/index.ts`,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(
+        runtime.code,
+        0,
+        new TextDecoder().decode(runtime.stderr),
+      );
+
+      const result = await runAudit([
+        "--root",
+        root,
+        "--output",
+        outputPath,
+      ]);
+      const report = JSON.parse(await Deno.readTextFile(outputPath));
+      assertEquals(result.code, 0, result.stderr);
+      assertEquals(report.evidenceComplete, true);
+      assertEquals(report.operationalErrors, []);
+      assertEquals(report.issues, []);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+});
+
+Deno.test("strict audit traverses decorated local targets with location-stable evidence", async () => {
+  const reports: string[] = [];
+  for (let fixtureIndex = 0; fixtureIndex < 2; fixtureIndex++) {
+    const root = await auditFixture();
+    const outputPath = `${root}/audit.json`;
+    try {
+      const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+      config.imports["npm:exact-query-entry@1"] =
+        "./src/exact-query.test.ts?flavor=1";
+      config.imports["npm:exact-hash-entry@1"] =
+        "./src/exact-hash.test.ts#piece";
+      config.imports["npm:exact-encoded-query-entry@1"] =
+        "./src/exact-encoded-query.test.ts?flavor=%31";
+      config.imports["npm:exact-encoded-hash-entry@1"] =
+        "./src/exact-encoded-hash.test.ts#piece-%31";
+      config.imports["npm:exact-empty-query-entry@1"] =
+        "./src/exact-empty-query.test.ts?";
+      config.imports["npm:exact-empty-hash-entry@1"] =
+        "./src/exact-empty-hash.test.ts#";
+      await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+      await writeSource(
+        root,
+        "src/index.ts",
+        'import "npm:exact-query-entry@1";\n' +
+          'import "npm:exact-hash-entry@1";\n' +
+          'import "npm:exact-encoded-query-entry@1";\n' +
+          'import "npm:exact-encoded-hash-entry@1";\n' +
+          'import "npm:exact-empty-query-entry@1";\n' +
+          'import "npm:exact-empty-hash-entry@1";\n' +
+          'import "./direct-query.test.ts?flavor=1";\n' +
+          'import "./direct-hash.test.ts#piece";\n' +
+          'import "./direct-encoded-query.test.ts?flavor=%31";\n' +
+          'import "./direct-encoded-hash.test.ts#piece-%31";\n' +
+          'import "./direct-empty-query.test.ts?";\n' +
+          'import "./direct-empty-hash.test.ts#";\n',
+      );
+      const terminals = [
+        [
+          "src/exact-query.test.ts",
+          "data:text/javascript,export default 'exact-query'",
+        ],
+        [
+          "src/exact-hash.test.ts",
+          "data:text/javascript,export default 'exact-hash'",
+        ],
+        [
+          "src/direct-query.test.ts",
+          "data:text/javascript,export default 'direct-query'",
+        ],
+        [
+          "src/direct-hash.test.ts",
+          "data:text/javascript,export default 'direct-hash'",
+        ],
+        [
+          "src/exact-encoded-query.test.ts",
+          "data:text/javascript,export default 'exact-encoded-query'",
+        ],
+        [
+          "src/exact-encoded-hash.test.ts",
+          "data:text/javascript,export default 'exact-encoded-hash'",
+        ],
+        [
+          "src/direct-encoded-query.test.ts",
+          "data:text/javascript,export default 'direct-encoded-query'",
+        ],
+        [
+          "src/direct-encoded-hash.test.ts",
+          "data:text/javascript,export default 'direct-encoded-hash'",
+        ],
+        [
+          "src/exact-empty-query.test.ts",
+          "data:text/javascript,export default 'exact-empty-query'",
+        ],
+        [
+          "src/exact-empty-hash.test.ts",
+          "data:text/javascript,export default 'exact-empty-hash'",
+        ],
+        [
+          "src/direct-empty-query.test.ts",
+          "data:text/javascript,export default 'direct-empty-query'",
+        ],
+        [
+          "src/direct-empty-hash.test.ts",
+          "data:text/javascript,export default 'direct-empty-hash'",
+        ],
+      ] as const;
+      for (const [path, terminal] of terminals) {
+        await writeSource(root, path, `import ${JSON.stringify(terminal)};\n`);
+      }
+
+      const runtime = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--config",
+          `${root}/deno.json`,
+          `${root}/src/index.ts`,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(
+        runtime.code,
+        0,
+        new TextDecoder().decode(runtime.stderr),
+      );
+
+      const result = await runAudit([
+        "--root",
+        root,
+        "--output",
+        outputPath,
+      ]);
+      const bytes = await Deno.readTextFile(outputPath);
+      const report = JSON.parse(bytes);
+      assertEquals(result.code, 2, result.stderr);
+      assertEquals(report.evidenceComplete, true);
+      assertEquals(report.operationalErrors, []);
+      assertEquals(bytes.includes(root), false, bytes);
+      const compareIssue = (
+        left: Record<string, unknown>,
+        right: Record<string, unknown>,
+      ): number => {
+        const leftKey = JSON.stringify(left);
+        const rightKey = JSON.stringify(right);
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+      };
+      assertEquals(
+        report.issues
+          .filter((entry: Record<string, unknown>) =>
+            terminals.some(([path, terminal]) =>
+              entry.path === path && entry.specifier === terminal
+            )
+          )
+          .map((entry: Record<string, unknown>) => ({
+            contextId: entry.contextId,
+            path: entry.path,
+            specifier: entry.specifier,
+          }))
+          .sort(compareIssue),
+        terminals.flatMap(([path, specifier]) =>
+          ["root-deno", "root-node"].map((contextId) => ({
+            contextId,
+            path,
+            specifier,
+          }))
+        ).sort(compareIssue),
+      );
+      for (
+        const [specifier, canonicalTarget] of [
+          [
+            "npm:exact-query-entry@1",
+            "./src/exact-query.test.ts?flavor=1",
+          ],
+          [
+            "npm:exact-hash-entry@1",
+            "./src/exact-hash.test.ts#piece",
+          ],
+          [
+            "npm:exact-encoded-query-entry@1",
+            "./src/exact-encoded-query.test.ts?flavor=%31",
+          ],
+          [
+            "npm:exact-encoded-hash-entry@1",
+            "./src/exact-encoded-hash.test.ts#piece-%31",
+          ],
+          [
+            "npm:exact-empty-query-entry@1",
+            "./src/exact-empty-query.test.ts?",
+          ],
+          [
+            "npm:exact-empty-hash-entry@1",
+            "./src/exact-empty-hash.test.ts#",
+          ],
+        ] as const
+      ) {
+        const entries = report.issues.filter(
+          (entry: Record<string, unknown>) => entry.specifier === specifier,
+        );
+        assertEquals(entries.length, 2, JSON.stringify(report.issues, null, 2));
+        for (const entry of entries) {
+          assertEquals(entry.trace, [specifier, canonicalTarget]);
+          assertEquals(
+            (entry.mapping as Record<string, unknown>)?.canonicalTarget,
+            canonicalTarget,
+          );
+        }
+      }
+      reports.push(bytes);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  }
+  assertEquals(reports[0], reports[1]);
+});
+
+Deno.test("strict audit retains raw encoded file-URL evidence while traversing its canonical target", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const repositoryUrl = toFileUrl(`${root}/`).href;
+    const encodedPathUrl = `${
+      new URL("src/deep/", repositoryUrl).href
+    }%2e%2e/encoded-file.test.ts?flavor=%31#piece-%31`;
+    const plainPathUrl = new URL(
+      "src/plain-file.test.ts?flavor=%31#piece-%31",
+      repositoryUrl,
+    ).href;
+    const mixedCaseEncodedPathUrl = encodedPathUrl.replace(
+      /^file:/,
+      "FiLe:",
+    ).replace("flavor=%31", "flavor=%32");
+    const mixedCasePlainPathUrl = plainPathUrl.replace(/^file:/, "FILE:")
+      .replace("flavor=%31", "flavor=%32");
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.imports["#mapped-mixed-encoded"] = mixedCaseEncodedPathUrl;
+    config.imports["#mapped-mixed-plain"] = mixedCasePlainPathUrl;
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(
+      root,
+      "src/index.ts",
+      `import ${JSON.stringify(encodedPathUrl)};\n` +
+        `import ${JSON.stringify(plainPathUrl)};\n` +
+        `import ${JSON.stringify(mixedCaseEncodedPathUrl)};\n` +
+        `import ${JSON.stringify(mixedCasePlainPathUrl)};\n` +
+        'import "#mapped-mixed-encoded";\n' +
+        'import "#mapped-mixed-plain";\n',
+    );
+    await writeSource(
+      root,
+      "src/encoded-file.test.ts",
+      "import \"data:text/javascript,export default 'encoded-file'\";\n",
+    );
+    await writeSource(
+      root,
+      "src/plain-file.test.ts",
+      "import \"data:text/javascript,export default 'plain-file'\";\n",
+    );
+
+    const runtime = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--config",
+        `${root}/deno.json`,
+        `${root}/src/index.ts`,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(runtime.code, 0, new TextDecoder().decode(runtime.stderr));
+
+    const result = await runAudit([
+      "--root",
+      root,
+      "--output",
+      outputPath,
+    ]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 2, result.stderr);
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    for (
+      const [specifier, canonicalTarget] of [
+        [
+          encodedPathUrl,
+          "./src/encoded-file.test.ts?flavor=%31#piece-%31",
+        ],
+        [
+          mixedCaseEncodedPathUrl,
+          "./src/encoded-file.test.ts?flavor=%32#piece-%31",
+        ],
+      ] as const
+    ) {
+      const encodedIssues = report.issues.filter(
+        (entry: Record<string, unknown>) =>
+          entry.path === "src/index.ts" && entry.specifier === specifier &&
+          entry.code === "source-target-escapes-core",
+      );
+      assertEquals(
+        encodedIssues.length,
+        2,
+        JSON.stringify(report.issues, null, 2),
+      );
+      for (const entry of encodedIssues) {
+        assertEquals(entry.hopIdentity, specifier);
+        assertEquals(entry.trace, [specifier, canonicalTarget]);
+      }
+    }
+    for (const specifier of [plainPathUrl, mixedCasePlainPathUrl]) {
+      assertEquals(
+        report.issues.some((entry: Record<string, unknown>) =>
+          entry.path === "src/index.ts" && entry.specifier === specifier
+        ),
+        false,
+        JSON.stringify(report.issues, null, 2),
+      );
+    }
+    const mappedEncodedIssues = report.issues.filter(
+      (entry: Record<string, unknown>) =>
+        entry.path === "src/index.ts" &&
+        entry.specifier === "#mapped-mixed-encoded" &&
+        entry.code === "source-target-escapes-core",
+    );
+    assertEquals(
+      mappedEncodedIssues.length,
+      2,
+      JSON.stringify(report.issues, null, 2),
+    );
+    for (const entry of mappedEncodedIssues) {
+      assertEquals(entry.trace, [
+        "#mapped-mixed-encoded",
+        "./src/encoded-file.test.ts?flavor=%32#piece-%31",
+      ]);
+      assertEquals(
+        (entry.mapping as Record<string, unknown>)?.selectedAddress,
+        mixedCaseEncodedPathUrl,
+      );
+      assertEquals(
+        (entry.provenanceDecision as Record<string, unknown>)?.field,
+        "selectedAddress",
+      );
+    }
+    assertEquals(
+      report.issues.some((entry: Record<string, unknown>) =>
+        entry.path === "src/index.ts" &&
+        entry.specifier === "#mapped-mixed-plain"
+      ),
+      false,
+      JSON.stringify(report.issues, null, 2),
+    );
+    assertEquals(
+      report.issues
+        .filter((entry: Record<string, unknown>) =>
+          entry.path === "src/encoded-file.test.ts" ||
+          entry.path === "src/plain-file.test.ts"
+        )
+        .map((entry: Record<string, unknown>) => ({
+          contextId: entry.contextId,
+          path: entry.path,
+          specifier: entry.specifier,
+        })),
+      [
+        {
+          contextId: "root-deno",
+          path: "src/encoded-file.test.ts",
+          specifier: "data:text/javascript,export default 'encoded-file'",
+        },
+        {
+          contextId: "root-deno",
+          path: "src/plain-file.test.ts",
+          specifier: "data:text/javascript,export default 'plain-file'",
+        },
+        {
+          contextId: "root-node",
+          path: "src/encoded-file.test.ts",
+          specifier: "data:text/javascript,export default 'encoded-file'",
+        },
+        {
+          contextId: "root-node",
+          path: "src/plain-file.test.ts",
+          specifier: "data:text/javascript,export default 'plain-file'",
+        },
+      ],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit traverses the one-hop selected import-map address", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.imports["#facade"] = "./src/a.test.ts";
+    config.imports["./src/a.test.ts"] = "./src/b.ts";
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(root, "src/index.ts", 'import "#facade";\n');
+    await writeSource(root, "src/a.test.ts", 'import "npm:hidden-edge@1";\n');
+    await writeSource(root, "src/b.ts");
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 2, result.stderr);
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    assertEquals(
+      report.issues
+        .filter((entry: Record<string, unknown>) =>
+          entry.specifier === "npm:hidden-edge@1"
+        )
+        .map((entry: Record<string, unknown>) => ({
+          contextId: entry.contextId,
+          path: entry.path,
+          code: entry.code,
+        })),
+      [
+        {
+          contextId: "root-deno",
+          path: "src/a.test.ts",
+          code: "forbidden-external-dependency",
+        },
+        {
+          contextId: "root-node",
+          path: "src/a.test.ts",
+          code: "forbidden-external-dependency",
+        },
+      ],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit discovers prefix and scoped selected excluded-name addresses but ignores unused mappings", async (context) => {
+  for (const mode of ["prefix", "scoped", "unused"] as const) {
+    await context.step(mode, async () => {
+      const root = await auditFixture();
+      const outputPath = `${root}/audit.json`;
+      try {
+        const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+        const selectedPath = `src/${mode}/hidden.test.ts`;
+        const selectedSpecifier = mode === "scoped"
+          ? "#scoped/hidden.test.ts"
+          : "#hidden/hidden.test.ts";
+        if (mode === "scoped") {
+          config.scopes = {
+            "./src/": { "#scoped/": "./src/scoped/" },
+          };
+        } else {
+          config.imports["#hidden/"] = `./src/${mode}/`;
+        }
+        await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+        await writeSource(
+          root,
+          "src/index.ts",
+          mode === "unused"
+            ? "export {};\n"
+            : `import ${JSON.stringify(selectedSpecifier)};\n`,
+        );
+        await writeSource(
+          root,
+          selectedPath,
+          `import "npm:${mode}-hidden-edge@1";\n`,
+        );
+
+        const result = await runAudit(["--root", root, "--output", outputPath]);
+        const report = JSON.parse(await Deno.readTextFile(outputPath));
+        assertEquals(result.code, mode === "unused" ? 0 : 2, result.stderr);
+        assertEquals(report.evidenceComplete, true);
+        assertEquals(report.operationalErrors, []);
+        assertEquals(
+          report.issues.some((entry: Record<string, unknown>) =>
+            entry.path === selectedPath &&
+            entry.specifier === `npm:${mode}-hidden-edge@1`
+          ),
+          mode !== "unused",
+          JSON.stringify(report.issues, null, 2),
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+  }
+});
+
+Deno.test("strict audit rejects every malformed import-map address before traversal", async () => {
+  for (
+    const [label, imports] of [
+      ["bare target", { "#a": "#b" }],
+      ["prefix slash mismatch", { "#x/": "./src/runtime" }],
+    ] as const
+  ) {
+    const root = await auditFixture();
+    const outputPath = `${root}/audit.json`;
+    try {
+      const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+      config.imports = imports;
+      await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+      const result = await runAudit(["--root", root, "--output", outputPath]);
+      const report = JSON.parse(await Deno.readTextFile(outputPath));
+      assertEquals(result.code, 3, `${label}: ${result.stderr}`);
+      assertEquals(report.evidenceComplete, false);
+      assertEquals(
+        report.operationalErrors[0]?.code,
+        "import-map-validation-failure",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  }
+});
+
+Deno.test("strict audit preserves a forbidden request and traverses its selected local address", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.imports["npm:intermediate@1"] = "./src/terminal.ts";
+    config.exports["./head"] = "./src/head.ts";
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(root, "src/head.ts", 'import "npm:intermediate@1";\n');
+    await writeSource(
+      root,
+      "src/terminal.ts",
+      'import "npm:terminal-edge@1";\n',
+    );
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 2, result.stderr);
+    const intermediate = report.issues.filter(
+      (entry: Record<string, unknown>) =>
+        entry.resolved === "npm:intermediate@1",
+    );
+    assertEquals(intermediate.length, 3);
+    for (const entry of intermediate) {
+      assertEquals(entry.trace, [
+        "npm:intermediate@1",
+        "./src/terminal.ts",
+      ]);
+      assertEquals(entry.terminal, "./src/terminal.ts");
+      assertEquals(entry.hopIndex, 0);
+      assertEquals(entry.hopIdentity, "npm:intermediate@1");
+      assertEquals(entry.policyTrace, [
+        {
+          identity: "npm:intermediate@1",
+          code: "forbidden-external-dependency",
+        },
+        { identity: "./src/terminal.ts", code: null },
+      ]);
+    }
+    assertEquals(
+      report.issues
+        .filter((entry: Record<string, unknown>) =>
+          entry.specifier === "npm:terminal-edge@1"
+        )
+        .map((entry: Record<string, unknown>) => entry.contextId)
+        .sort(),
+      ["browser-runtime", "root-deno", "root-node"],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit reports policy provenance for the request and selected address", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.imports["npm:first@1"] = "https://example.test/second.ts";
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(root, "src/index.ts", 'import "npm:first@1";\n');
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 2, result.stderr);
+    const traced = report.issues.filter(
+      (entry: Record<string, unknown>) => entry.specifier === "npm:first@1",
+    );
+    assertEquals(traced.length, 4, JSON.stringify(traced, null, 2));
+    for (const contextId of ["root-deno", "root-node"]) {
+      const contextIssues = traced.filter(
+        (entry: Record<string, unknown>) => entry.contextId === contextId,
+      ).sort((left: Record<string, unknown>, right: Record<string, unknown>) =>
+        Number(left.hopIndex) - Number(right.hopIndex)
+      );
+      assertEquals(
+        contextIssues.map((entry: Record<string, unknown>) => ({
+          code: entry.code,
+          hopIndex: entry.hopIndex,
+          hopIdentity: entry.hopIdentity,
+        })),
+        [
+          {
+            code: "forbidden-external-dependency",
+            hopIndex: 0,
+            hopIdentity: "npm:first@1",
+          },
+          {
+            code: "forbidden-external-dependency",
+            hopIndex: 1,
+            hopIdentity: "https://example.test/second.ts",
+          },
+        ],
+      );
+      for (const entry of contextIssues) {
+        assertEquals(entry.trace, [
+          "npm:first@1",
+          "https://example.test/second.ts",
+        ]);
+        assertEquals(entry.terminal, "https://example.test/second.ts");
+        assertEquals(entry.policyTrace, [
+          {
+            identity: "npm:first@1",
+            code: "forbidden-external-dependency",
+          },
+          {
+            identity: "https://example.test/second.ts",
+            code: "forbidden-external-dependency",
+          },
+        ]);
+      }
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit resolves manifest self subpaths and rejects unexported self subpaths", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.exports["./head"] = {
+      browser: "./src/public.browser.ts",
+      default: "./src/public.default.ts",
+    };
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(root, "src/public.browser.ts", 'import "node:fs";\n');
+    await writeSource(root, "src/public.default.ts");
+    await writeSource(root, "src/index.ts", 'import "fixture/head";\n');
+
+    const resolved = await runAudit(["--root", root, "--output", outputPath]);
+    const resolvedReport = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(resolved.code, 2, resolved.stderr);
+    assertEquals(
+      resolvedReport.issues.map((entry: Record<string, unknown>) => ({
+        contextId: entry.contextId,
+        code: entry.code,
+        specifier: entry.specifier,
+      })),
+      [{
+        contextId: "browser-runtime",
+        code: "unsupported-or-invalid-builtin",
+        specifier: "node:fs",
+      }],
+    );
+
+    await writeSource(root, "src/index.ts", 'import "fixture/private";\n');
+    const unexported = await runAudit(["--root", root, "--output", outputPath]);
+    const unexportedReport = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(unexported.code, 2, unexported.stderr);
+    assertEquals(
+      unexportedReport.issues
+        .filter((entry: Record<string, unknown>) =>
+          entry.specifier === "fixture/private"
+        )
+        .every((entry: Record<string, unknown>) =>
+          entry.code === "unexported-self-reference" &&
+          entry.terminal === "fixture/private"
+        ),
+      true,
+      JSON.stringify(unexportedReport.issues, null, 2),
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit audits every ordered runtime export-array alternative in its target", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.exports["./head"] = {
+      browser: ["./src/z-first.ts", "./src/a-later.ts"],
+      default: "./src/z-first.ts",
+    };
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(root, "src/z-first.ts");
+    await writeSource(root, "src/a-later.ts", 'import "node:fs";\n');
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 2, result.stderr);
+    assertEquals(
+      report.issues.some((entry: Record<string, unknown>) =>
+        entry.contextId === "browser-runtime" &&
+        entry.path === "src/a-later.ts" && entry.specifier === "node:fs"
+      ),
+      true,
+      JSON.stringify(report.issues, null, 2),
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit deduplicates complete issue identities after collection", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.compilerOptions = {
+      types: ["npm:duplicate-types@1", "npm:duplicate-types@1"],
+    };
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 2, result.stderr);
+    assertEquals(
+      report.issues.length,
+      5,
+      JSON.stringify(report.issues, null, 2),
+    );
+    assertEquals(
+      new Set(report.issues.map((entry: unknown) => JSON.stringify(entry)))
+        .size,
+      report.issues.length,
     );
   } finally {
     await Deno.remove(root, { recursive: true });
@@ -2304,6 +4269,278 @@ Deno.test("strict audit CLI writes incomplete atomic evidence and exits 3 for ze
     );
   } finally {
     Deno.chdir(previousDirectory);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit keeps logical decorated nodes distinct while parsing one physical source", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.imports["#value"] = "./src/plain.ts";
+    config.scopes = {
+      "./src/shared.ts?flavor=decorated": {
+        "#value": "npm:decorated-scope@1",
+      },
+    };
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(
+      root,
+      "src/index.ts",
+      'import "./shared.ts";\nimport "./shared.ts?flavor=decorated";\n',
+    );
+    await writeSource(root, "src/shared.ts", 'import "#value";\n');
+    await writeSource(root, "src/plain.ts");
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(
+      result.code,
+      2,
+      `${result.stderr}\n${JSON.stringify(report, null, 2)}`,
+    );
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(
+      report.issues.filter((entry: Record<string, unknown>) =>
+        entry.path === "src/shared.ts" && entry.specifier === "#value" &&
+        entry.resolved === "npm:decorated-scope@1"
+      ).map((entry: Record<string, unknown>) => entry.contextId),
+      ["root-deno", "root-node"],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit resolves production entrypoint requests through one import-map hop", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.imports["./src/index.ts"] = "./src/mapped-entry.ts";
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(root, "src/index.ts");
+    await writeSource(
+      root,
+      "src/mapped-entry.ts",
+      'import "npm:mapped-entry@1";\n',
+    );
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 2, result.stderr);
+    assertEquals(
+      report.issues.some((entry: Record<string, unknown>) =>
+        entry.path === "src/mapped-entry.ts" &&
+        entry.specifier === "npm:mapped-entry@1" &&
+        entry.contextId === "root-deno"
+      ),
+      true,
+      JSON.stringify(report, null, 2),
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit preserves decorated manifest identity for scope matching", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.exports["."] = "./src/index.ts?entry#root";
+    config.imports["#entry"] = "./src/plain.ts";
+    config.scopes = {
+      "./src/index.ts?entry#root": { "#entry": "npm:decorated-entry@1" },
+    };
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(root, "src/index.ts", 'import "#entry";\n');
+    await writeSource(root, "src/plain.ts");
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(
+      result.code,
+      2,
+      `${result.stderr}\n${JSON.stringify(report, null, 2)}`,
+    );
+    assertEquals(
+      report.issues.some((entry: Record<string, unknown>) =>
+        entry.path === "src/index.ts" && entry.specifier === "#entry" &&
+        entry.resolved === "npm:decorated-entry@1"
+      ),
+      true,
+      JSON.stringify(report, null, 2),
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit separates decorated manifest self identities from physical paths", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    config.exports["./decorated"] = "./src/shared.ts?mode=1#self";
+    config.imports["#value"] = "./src/plain.ts";
+    config.scopes = {
+      "./src/shared.ts?mode=1#self": {
+        "#value": "./src/scoped.ts",
+      },
+    };
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await writeSource(
+      root,
+      "src/index.ts",
+      'import "fixture/decorated";\n',
+    );
+    await writeSource(root, "src/shared.ts", 'import "#value";\n');
+    await writeSource(root, "src/plain.ts");
+    await writeSource(
+      root,
+      "src/scoped.ts",
+      "import \"data:text/javascript,export default 'decorated-self'\";\n",
+    );
+
+    const runtime = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "check",
+        "--config",
+        `${root}/deno.json`,
+        `${root}/src/index.ts`,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(runtime.code, 0, new TextDecoder().decode(runtime.stderr));
+
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(
+      result.code,
+      2,
+      `${result.stderr}\n${JSON.stringify(report, null, 2)}`,
+    );
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    assertEquals(
+      report.issues.some((entry: Record<string, unknown>) =>
+        entry.specifier === "fixture/decorated" &&
+        entry.code === "unresolvable-core-source"
+      ),
+      false,
+      JSON.stringify(report.issues, null, 2),
+    );
+    assertEquals(
+      report.issues.filter((entry: Record<string, unknown>) =>
+        entry.path === "src/scoped.ts" &&
+        entry.specifier ===
+          "data:text/javascript,export default 'decorated-self'"
+      ).map((entry: Record<string, unknown>) => entry.contextId),
+      ["root-deno", "root-node"],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit strips decorations only for external import-map reads", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    delete config.imports;
+    config.importMap = "./maps/import-map.json?revision=1#map";
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await Deno.mkdir(`${root}/maps`, { recursive: true });
+    await Deno.writeTextFile(
+      `${root}/maps/import-map.json`,
+      JSON.stringify({ imports: {} }),
+    );
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 0, `${result.stderr}\n${JSON.stringify(report)}`);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit rejects non-local file authorities at source, types, and importMap boundaries", async (context) => {
+  for (const kind of ["source", "types", "importMap"] as const) {
+    await context.step(kind, async () => {
+      const root = await auditFixture();
+      const outputPath = `${root}/audit.json`;
+      try {
+        const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+        if (kind === "source") {
+          await writeSource(
+            root,
+            "src/index.ts",
+            'import "file://example.test/src/evil.ts";\n',
+          );
+        } else if (kind === "types") {
+          config.compilerOptions = {
+            types: ["file://example.test/src/evil.ts"],
+          };
+        } else {
+          delete config.imports;
+          config.importMap = "file://example.test/import-map.json";
+        }
+        await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+        const result = await runAudit([
+          "--root",
+          root,
+          "--output",
+          outputPath,
+        ]);
+        const report = JSON.parse(await Deno.readTextFile(outputPath));
+        if (kind === "importMap") {
+          assertEquals(result.code, 3, result.stderr);
+          assertEquals(report.evidenceComplete, false);
+        } else {
+          assertEquals(result.code, 2, result.stderr);
+          assertEquals(
+            report.issues.some((entry: Record<string, unknown>) =>
+              entry.specifier === "file://example.test/src/evil.ts" &&
+              entry.code === "source-target-escapes-core"
+            ),
+            true,
+          );
+        }
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+  }
+});
+
+Deno.test("strict audit rejects escaped-equivalent duplicate external import-map keys", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    const config = JSON.parse(await Deno.readTextFile(`${root}/deno.json`));
+    delete config.imports;
+    config.importMap = "./import-map.json";
+    await Deno.writeTextFile(`${root}/deno.json`, JSON.stringify(config));
+    await Deno.writeTextFile(
+      `${root}/import-map.json`,
+      '{"imports":{"#value":"./src/index.ts","\\u0023value":"./src/index.ts"}}',
+    );
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 3, result.stderr);
+    assertEquals(report.evidenceComplete, false);
+    assertEquals(
+      report.operationalErrors.some((entry: Record<string, unknown>) =>
+        entry.code === "malformed-import-map" &&
+        String(entry.message).includes("duplicate external import-map key")
+      ),
+      true,
+      JSON.stringify(report, null, 2),
+    );
+  } finally {
     await Deno.remove(root, { recursive: true });
   }
 });
