@@ -1,6 +1,7 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  combineAgentServiceLifecycle,
   createAgentServiceRuntime,
   createHostedAgentServiceRuntime,
   startNodeAgentService,
@@ -176,5 +177,34 @@ describe("agent/agent-service-runtime", () => {
     } finally {
       await service.nodeServer.stop();
     }
+  });
+
+  it("runs secondary shutdown lifecycle even when primary stop fails", async () => {
+    const events: string[] = [];
+    const shutdownError = new Error("primary shutdown failed");
+    const lifecycle = combineAgentServiceLifecycle(
+      {
+        stop: () => {
+          events.push("primary-stop");
+          throw shutdownError;
+        },
+      },
+      {
+        stop: () => {
+          events.push("secondary-stop");
+        },
+      },
+    );
+
+    const rejected = await assertRejects(
+      async () => {
+        await lifecycle.stop?.();
+      },
+      Error,
+      "primary shutdown failed",
+    );
+
+    assertEquals(rejected, shutdownError);
+    assertEquals(events, ["primary-stop", "secondary-stop"]);
   });
 });
