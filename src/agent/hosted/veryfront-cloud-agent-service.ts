@@ -11,12 +11,15 @@ import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.t
 import type { AgentVeryfrontMcpServerConfig } from "../types.ts";
 import {
   type AgentServiceRuntimeBundle,
+  combineAgentServiceLifecycle,
   createAgentServiceRuntime,
   startAgentServiceRuntime,
   startNodeAgentService,
   type StartNodeAgentServiceResult,
 } from "../service/runtime.ts";
+import type { AgentServiceServerLifecycle } from "../service/server.ts";
 import type { CreateNodeAgentServiceRuntimeInfrastructureOptions } from "../service/node-runtime-infrastructure.ts";
+import type { NodeAgentServiceApplicationErrorLifecycle } from "../service/node-sentry.ts";
 import type { ProjectAgentRuntimeAgentSource } from "../project/agent-runtime.ts";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { resolveDefaultProcessTarget } from "./cloud-agent-paths.ts";
@@ -40,6 +43,12 @@ import {
 } from "./cloud-agent-chat-execution.ts";
 
 const DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS = 20_000;
+
+type InitializeApplicationErrors = () =>
+  | NodeAgentServiceApplicationErrorLifecycle
+  | Promise<NodeAgentServiceApplicationErrorLifecycle>;
+
+let initializeApplicationErrorsForTests: InitializeApplicationErrors | undefined;
 
 /** Public API contract for node Veryfront Cloud agent service process target. */
 export type NodeVeryfrontCloudAgentServiceProcessTarget =
@@ -134,7 +143,48 @@ export const veryfrontCloudAgentServiceInternals = {
   resolveHostedChildAgentExecutionConfig,
   resolveHostedChildToolNames,
   resolveMcpServers,
+  setInitializeApplicationErrorsForTests(
+    initializeApplicationErrors: InitializeApplicationErrors | undefined,
+  ): () => void {
+    initializeApplicationErrorsForTests = initializeApplicationErrors;
+    return () => {
+      if (initializeApplicationErrorsForTests === initializeApplicationErrors) {
+        initializeApplicationErrorsForTests = undefined;
+      }
+    };
+  },
 };
+
+function createApplicationErrorShutdownLifecycle(
+  getApplicationErrors: () => NodeAgentServiceApplicationErrorLifecycle,
+): AgentServiceServerLifecycle {
+  let cleanedUp = false;
+  return {
+    stop: async () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      const applicationErrors = getApplicationErrors();
+      try {
+        await applicationErrors.flush();
+      } finally {
+        applicationErrors.reset();
+      }
+    },
+  };
+}
+
+async function stopRegistrationForStartupFailure(
+  lifecycle: AgentServiceServerLifecycle | undefined,
+  logger: Pick<typeof agentLogger, "warn">,
+): Promise<void> {
+  try {
+    await lifecycle?.stop?.();
+  } catch (error) {
+    logger.warn("Agent service registration cleanup failed during startup rollback", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 /** Create node Veryfront Cloud agent service runtime. */
 export async function createNodeVeryfrontCloudAgentServiceRuntime(
@@ -162,7 +212,10 @@ export async function startNodeVeryfrontCloudAgentService(
       hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
     });
   } catch (error) {
-    await registrationLifecycle?.stop?.();
+    await stopRegistrationForStartupFailure(
+      registrationLifecycle,
+      context.infrastructure.logger,
+    );
     throw error;
   }
 }
@@ -181,11 +234,20 @@ export async function startAgentService(
     ...resolvedOptions,
     processTarget,
   });
+  let applicationErrors: NodeAgentServiceApplicationErrorLifecycle = {
+    enabled: false,
+    captureStartupError: (_error: unknown) => {},
+    flush: () => Promise.resolve(true),
+    reset: () => {},
+  };
   getRuntimeTraceContext = context.infrastructure.getTraceContext;
-  await initializeNodeVeryfrontCloudAgentServiceContext(context);
 
   await runAgentServiceMain({
     loadLogger: () => context.infrastructure.logger,
+    initializeApplicationErrors: async () => {
+      applicationErrors = await (initializeApplicationErrorsForTests?.() ??
+        context.infrastructure.initializeApplicationErrors());
+    },
     initializeTelemetry: async () => {
       return await context.infrastructure.initializeOpenTelemetry().catch((error) => {
         agentLogger.error("Failed to initialize OpenTelemetry:", { error });
@@ -200,21 +262,41 @@ export async function startAgentService(
       __registerTraceContextGetter(getter);
     },
     start: async () => {
+      await initializeNodeVeryfrontCloudAgentServiceContext(context);
       const registrationLifecycle = await createControlPlaneRegistrationLifecycle(context);
+      const applicationErrorLifecycle = createApplicationErrorShutdownLifecycle(() =>
+        applicationErrors
+      );
       try {
         await startAgentServiceRuntime({
           ...createNodeVeryfrontCloudAgentServiceRuntimeOptions(context),
-          lifecycle: registrationLifecycle,
+          lifecycle: combineAgentServiceLifecycle(
+            registrationLifecycle ?? {},
+            applicationErrorLifecycle,
+          ),
           signals: options.signals,
           hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
         });
       } catch (error) {
-        await registrationLifecycle?.stop?.();
+        await stopRegistrationForStartupFailure(
+          registrationLifecycle,
+          context.infrastructure.logger,
+        );
         throw error;
       }
     },
-    onStartupError: (error) => {
+    onStartupError: async (error) => {
+      applicationErrors.captureStartupError(error);
       agentLogger.error("Error in server startup:", { error });
+      try {
+        await applicationErrors.flush();
+      } catch (flushError) {
+        agentLogger.warn("Failed to flush application errors during startup failure", {
+          error: flushError instanceof Error ? flushError.message : String(flushError),
+        });
+      } finally {
+        applicationErrors.reset();
+      }
     },
     exit: processTarget?.exit,
     processTarget,

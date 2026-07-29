@@ -473,5 +473,228 @@ describe("Up Command", () => {
         await Deno.remove(tempDir, { recursive: true });
       }
     });
+
+    it("uses a pulled local project link without creating veryfront.json", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalConsoleLog = console.log;
+      const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+      const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+      const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+      const tempDir = await Deno.makeTempDir();
+      const output: string[] = [];
+      const requested: Array<{ method: string; pathname: string }> = [];
+      const uploadedFiles = new Map<string, string>();
+      let projectPostCount = 0;
+      let deploymentCreated = false;
+
+      try {
+        await Deno.mkdir(join(tempDir, ".veryfront"), { recursive: true });
+        await Deno.writeTextFile(join(tempDir, "package.json"), "{}");
+        await Deno.writeTextFile(
+          join(tempDir, ".veryfront", "project.json"),
+          `${
+            JSON.stringify(
+              {
+                version: 1,
+                controlPlane: "https://api.from-env.test",
+                projectId: "project-linked",
+                projectSlug: "pulled-up",
+              },
+              null,
+              2,
+            )
+          }\n`,
+        );
+        Deno.env.set("VERYFRONT_API_TOKEN", "env-token");
+        Deno.env.set("VERYFRONT_API_URL", "https://api.from-env.test");
+        Deno.env.delete("VERYFRONT_API_BASE_URL");
+        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        _resetEnvironmentConfig();
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          requested.push({ method: request.method, pathname: url.pathname });
+
+          if (request.method === "GET" && url.pathname === "/me") {
+            return Response.json({ id: "user-1", email: "dev@example.com" });
+          }
+
+          if (request.method === "POST" && url.pathname === "/projects") {
+            projectPostCount++;
+            return Response.json({ id: "unexpected-project", slug: "unexpected" });
+          }
+
+          if (request.method === "GET" && url.pathname === "/projects/project-linked") {
+            return Response.json({ id: "project-linked", slug: "pulled-up" });
+          }
+
+          if (request.method === "GET" && url.pathname === "/projects/project-linked/files") {
+            return Response.json({ data: [], page_info: {} });
+          }
+
+          if (
+            request.method === "PUT" &&
+            url.pathname.startsWith("/projects/project-linked/files/")
+          ) {
+            const path = decodeURIComponent(url.pathname.split("/files/")[1] ?? "");
+            const body = await request.clone().json() as { content: string };
+            uploadedFiles.set(path, body.content);
+            return Response.json({});
+          }
+
+          if (request.method === "POST" && url.pathname === "/projects/project-linked/branches") {
+            return Response.json({ id: "branch-1", name: "main", projectId: "project-linked" });
+          }
+
+          if (
+            request.method === "GET" && url.pathname === "/projects/project-linked/environments"
+          ) {
+            return Response.json({
+              data: [{
+                id: "env-1",
+                name: "preview",
+                protected: false,
+                project_id: "project-linked",
+                deployment: deploymentCreated
+                  ? { id: "deployment-1", release: { id: "release-1", name: "Preview" } }
+                  : null,
+              }],
+              page_info: {},
+            });
+          }
+
+          if (request.method === "POST" && url.pathname === "/projects/project-linked/releases") {
+            return Response.json({
+              id: "release-1",
+              name: "Preview",
+              version: "v1",
+              export_status: "complete",
+              build_status: "complete",
+              deploy_status: "pending",
+            });
+          }
+
+          if (
+            request.method === "POST" && url.pathname === "/projects/project-linked/deployments"
+          ) {
+            deploymentCreated = true;
+            return Response.json({
+              id: "deployment-1",
+              release: "release-1",
+              environment: "env-1",
+            });
+          }
+
+          if (
+            request.method === "GET" &&
+            [
+              "/projects/project-linked/releases/release-1",
+              "/projects/pulled-up/releases/release-1",
+            ]
+              .includes(url.pathname)
+          ) {
+            return Response.json({
+              id: "release-1",
+              name: "Preview",
+              version: "v1",
+              project_id: "project-linked",
+              export_status: "complete",
+              build_status: "complete",
+              deploy_status: "pending",
+            });
+          }
+
+          if (
+            request.method === "GET" &&
+            [
+              "/projects/project-linked/releases/release-1/versions",
+              "/projects/pulled-up/releases/release-1/versions",
+            ].includes(url.pathname)
+          ) {
+            return Response.json({
+              data: [...uploadedFiles].map(([path, content]) => ({
+                path,
+                data: JSON.stringify({ body: content, path }),
+              })),
+              page_info: {},
+            });
+          }
+
+          if (
+            request.method === "GET" &&
+            [
+              "/projects/project-linked/releases/release-1/asset-manifest",
+              "/projects/pulled-up/releases/release-1/asset-manifest",
+            ].includes(url.pathname)
+          ) {
+            return Response.json({
+              state: "ready",
+              manifest: {
+                modules: {},
+                css: [],
+                routes: {},
+                dependencies: {},
+                fallback: { mode: "jit", gaps: [] },
+              },
+            });
+          }
+
+          if (
+            request.method === "GET" &&
+            [
+              "/projects/project-linked/deployments/deployment-1",
+              "/projects/pulled-up/deployments/deployment-1",
+            ].includes(url.pathname)
+          ) {
+            return Response.json({
+              id: "deployment-1",
+              release_id: "release-1",
+              environment_id: "env-1",
+            });
+          }
+
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        setNonInteractive(true);
+        await upCommand({ projectDir: tempDir, force: false, dryRun: false });
+
+        assertEquals(projectPostCount, 0);
+        assertEquals(
+          requested.some((request) =>
+            request.method === "GET" && request.pathname === "/projects/project-linked/files"
+          ),
+          true,
+        );
+        assertEquals(
+          requested.some((request) =>
+            request.method === "POST" && request.pathname === "/projects/project-linked/deployments"
+          ),
+          true,
+        );
+
+        let veryfrontJsonExists = true;
+        try {
+          await Deno.stat(join(tempDir, "veryfront.json"));
+        } catch {
+          veryfrontJsonExists = false;
+        }
+        assertEquals(veryfrontJsonExists, false);
+        assertEquals(output.join("\n").includes("pulled-up"), true);
+      } finally {
+        console.log = originalConsoleLog;
+        globalThis.fetch = originalFetch;
+        restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+        restoreEnv("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+        restoreEnv("VERYFRONT_API_URL", originalApiUrl);
+        restoreEnv("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+        resetInteractiveMode();
+        _resetEnvironmentConfig();
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
   });
 });

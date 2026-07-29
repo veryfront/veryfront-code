@@ -13,18 +13,16 @@ export default agent({
   system: getSystemPrompt,
   tools: { getWeather: true },
   maxSteps: 10,
-  suggestions: {
-    suggestions: [
-      {
-        type: "prompt",
-        title: "San Francisco",
-        prompt: "What is the weather in San Francisco?",
-      },
-      {
-        type: "prompt",
-        title: "Tokyo",
-        prompt: "What is the weather in Tokyo?",
-      },
-    ],
-  },
+  suggestions: [
+    {
+      type: "prompt",
+      title: "San Francisco",
+      prompt: "What is the weather in San Francisco?",
+    },
+    {
+      type: "prompt",
+      title: "Tokyo",
+      prompt: "What is the weather in Tokyo?",
+    },
+  ],
 });

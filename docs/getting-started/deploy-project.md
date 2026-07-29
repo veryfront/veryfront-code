@@ -47,6 +47,10 @@ npx veryfront push
 `.veryfront/push-receipt.json`, and prints the preview URL. It does not write
 `veryfront.json`.
 
+Push preserves remote-only files by default. Use
+`npx veryfront push --prune --dry-run` to preview an exact remote mirror, then
+run `npx veryfront push --prune` only when those deletions are intentional.
+
 For a preview deployment per branch:
 
 ```bash

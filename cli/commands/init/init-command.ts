@@ -551,7 +551,9 @@ export async function initCommand(
 
   // Deploy to cloud if --deploy flag is set
   let deployedUrl: string | undefined;
-  const manualDeployCommand = `${getDlxCommand(pmPreference)} veryfront deploy`;
+  const manualDeployCommand = quiet
+    ? `${getDlxCommand(pmPreference)} veryfront deploy`
+    : getRunCommand(pmPreference, "deploy");
   if (options.deploy) {
     const manualDeployHint = `Run ${brand(manualDeployCommand)} to deploy later.`;
 
@@ -628,7 +630,7 @@ export async function initCommand(
   const displayName = projectName ?? "Project";
   const structureRoot = projectName ?? ".";
   const structureLines = renderProjectStructure(structureRoot, createdPaths);
-  const deployCommandHint = `${getDlxCommand(pm)} veryfront deploy`;
+  const deployCommandHint = getRunCommand(pm, "deploy");
 
   if (!quiet) {
     console.log();
