@@ -341,17 +341,22 @@ async function stopRuntime(
 ): Promise<void> {
   runtime.setShuttingDown();
   let failure: unknown;
+  let hasFailure = false;
   try {
     await stopServer();
   } catch (error) {
     failure = error;
+    hasFailure = true;
   }
   try {
     await runtime.stop();
   } catch (error) {
-    failure ??= error;
+    if (!hasFailure) {
+      failure = error;
+      hasFailure = true;
+    }
   }
-  if (failure !== undefined) {
+  if (hasFailure) {
     throw failure;
   }
 }

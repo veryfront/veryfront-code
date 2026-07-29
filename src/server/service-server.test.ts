@@ -147,6 +147,61 @@ Deno.test("Deno service shutdown runs runtime stop when server shutdown rejects"
   }
 });
 
+Deno.test("Deno service shutdown preserves undefined transport rejection", async () => {
+  const denoRuntime = Deno as unknown as {
+    serve: typeof Deno.serve;
+    addSignalListener: typeof Deno.addSignalListener;
+    removeSignalListener: typeof Deno.removeSignalListener;
+  };
+  const originalServe = denoRuntime.serve;
+  const originalAddSignalListener = denoRuntime.addSignalListener;
+  const originalRemoveSignalListener = denoRuntime.removeSignalListener;
+  const events: string[] = [];
+
+  denoRuntime.serve = (() => ({
+    addr: { port: 3212 },
+    shutdown: () => {
+      events.push("server-shutdown");
+      return Promise.reject(undefined);
+    },
+  })) as unknown as typeof Deno.serve;
+  denoRuntime.addSignalListener = (() => {}) as typeof Deno.addSignalListener;
+  denoRuntime.removeSignalListener = (() => {}) as typeof Deno.removeSignalListener;
+
+  try {
+    const runtime = createVeryfrontServer({
+      modules: [{
+        name: "test",
+        handle: () => new Response("served"),
+        setShuttingDown: () => events.push("runtime-shutdown"),
+        stop: () => {
+          events.push("runtime-stop");
+        },
+      }],
+    });
+    const server = await startVeryfrontServer({
+      runtime,
+      port: 0,
+      bindAddress: "127.0.0.1",
+      signals: [],
+    });
+
+    let rejected: unknown = "not-thrown";
+    try {
+      await server.stop();
+    } catch (error) {
+      rejected = error;
+    }
+
+    assertStrictEquals(rejected, undefined);
+    assertEquals(events, ["runtime-shutdown", "server-shutdown", "runtime-stop"]);
+  } finally {
+    denoRuntime.serve = originalServe;
+    denoRuntime.addSignalListener = originalAddSignalListener;
+    denoRuntime.removeSignalListener = originalRemoveSignalListener;
+  }
+});
+
 Deno.test("Bun service shutdown runs runtime stop when transport stop rejects", async () => {
   const originalBun = Reflect.get(globalThis, "Bun");
   const stopError = new Error("bun stop failed");
@@ -183,6 +238,56 @@ Deno.test("Bun service shutdown runs runtime stop when transport stop rejects", 
     const rejected = await assertRejects(() => server.stop(), Error, "bun stop failed");
 
     assertStrictEquals(rejected, stopError);
+    assertEquals(events, ["runtime-shutdown", "server-stop", "runtime-stop"]);
+  } finally {
+    if (originalBun === undefined) {
+      Reflect.deleteProperty(globalThis, "Bun");
+    } else {
+      Reflect.set(globalThis, "Bun", originalBun);
+    }
+  }
+});
+
+Deno.test("Bun service shutdown preserves null runtime stop rejection", async () => {
+  const originalBun = Reflect.get(globalThis, "Bun");
+  const events: string[] = [];
+  Reflect.set(globalThis, "Bun", {
+    serve: () => ({
+      port: 3213,
+      url: new URL("http://127.0.0.1:3213"),
+      stop: () => {
+        events.push("server-stop");
+      },
+    }),
+  });
+
+  try {
+    const runtime = createVeryfrontServer({
+      modules: [{
+        name: "test",
+        handle: () => new Response("served"),
+        setShuttingDown: () => events.push("runtime-shutdown"),
+        stop: () => {
+          events.push("runtime-stop");
+          return Promise.reject(null);
+        },
+      }],
+    });
+    const server = await startVeryfrontServer({
+      runtime,
+      port: 0,
+      bindAddress: "127.0.0.1",
+      signals: [],
+    });
+
+    let rejected: unknown = "not-thrown";
+    try {
+      await server.stop();
+    } catch (error) {
+      rejected = error;
+    }
+
+    assertStrictEquals(rejected, null);
     assertEquals(events, ["runtime-shutdown", "server-stop", "runtime-stop"]);
   } finally {
     if (originalBun === undefined) {
