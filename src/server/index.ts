@@ -84,6 +84,7 @@ export { ReloadNotifier };
 export { RouteDiscovery } from "./dev-server/route-discovery.ts";
 export type { BuildOptions, BuildStats } from "./build-types.ts";
 export { defaultDistributedCacheInitializers } from "./distributed-cache-initializers.ts";
+export { parseProjectDomain } from "./utils/domain-parser.ts";
 
 /** Shared options for both development and production server modes. */
 interface BaseServerOptions {

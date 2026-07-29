@@ -7,6 +7,7 @@ import {
   __resetLoggerConfigForTests,
   __resetLogRecordEmitterForTests,
   __resetTraceContextGetterForTests,
+  __subscribeLogRecordEmitter,
   createRunUserLogger,
   getBaseLogger,
   getDefaultLevel,
@@ -52,6 +53,59 @@ function withJsonLogFormat<T>(fn: () => T): T {
 }
 
 describe("logger", () => {
+  it("fans out structured records, isolates subscriber failures, and unregisters subscribers", () => {
+    const originalError = console.error;
+    const records: string[] = [];
+    const legacyRecords: string[] = [];
+    console.error = () => {};
+
+    try {
+      __resetLogRecordEmitterForTests();
+      __registerLogRecordEmitter((entry) => {
+        legacyRecords.push(entry.message);
+      });
+      const unsubscribeThrowing = __subscribeLogRecordEmitter(() => {
+        throw new Error("subscriber failed");
+      });
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        records.push(entry.message);
+      });
+
+      serverLogger.error("first fanout");
+      unsubscribeThrowing();
+      unsubscribe();
+      serverLogger.error("after unregister");
+
+      assertEquals(legacyRecords, ["first fanout", "after unregister"]);
+      assertEquals(records, ["first fanout"]);
+    } finally {
+      __resetLogRecordEmitterForTests();
+      console.error = originalError;
+    }
+  });
+
+  it("does not duplicate a legacy emitter that is also subscribed", () => {
+    const originalError = console.error;
+    const records: string[] = [];
+    const emitter = (entry: LogEntry) => {
+      records.push(entry.message);
+    };
+    console.error = () => {};
+
+    try {
+      __resetLogRecordEmitterForTests();
+      __registerLogRecordEmitter(emitter);
+      const unsubscribe = __subscribeLogRecordEmitter(emitter);
+      serverLogger.error("one record");
+      unsubscribe();
+
+      assertEquals(records, ["one record"]);
+    } finally {
+      __resetLogRecordEmitterForTests();
+      console.error = originalError;
+    }
+  });
+
   describe("getDefaultLevel", () => {
     // Note: Pass explicit values to avoid reading process env in parallel tests.
 
@@ -85,6 +139,10 @@ describe("logger", () => {
     it("should return DEBUG when VERYFRONT_DEBUG=true", () => {
       // Pass empty string for LOG_LEVEL to avoid triggering default parameter
       assertEquals(getDefaultLevel("", "true"), LogLevel.DEBUG);
+    });
+
+    it("should use the shared truthy semantics for VERYFRONT_DEBUG", () => {
+      assertEquals(getDefaultLevel("", " Yes "), LogLevel.DEBUG);
     });
 
     it("should return INFO by default", () => {

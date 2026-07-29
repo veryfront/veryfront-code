@@ -15,6 +15,7 @@ import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/sha
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createSpinner } from "#cli/ui";
+import { BRANCH_NOT_FOUND } from "veryfront/errors";
 
 /**
  * Schema factory for merge command arguments
@@ -163,7 +164,7 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
   const sourceBranch = await getBranchByName(client, config.projectSlug, branch);
   if (!sourceBranch) {
     spinner.stop();
-    throw new Error(`Branch "${branch}" not found`);
+    throw BRANCH_NOT_FOUND.create({ detail: `Branch "${branch}" not found` });
   }
 
   const targetName = into ?? "main";
@@ -174,7 +175,7 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
     const targetBranch = await getBranchByName(client, config.projectSlug, into);
     if (!targetBranch) {
       spinner.stop();
-      throw new Error(`Target branch "${into}" not found`);
+      throw BRANCH_NOT_FOUND.create({ detail: `Target branch "${into}" not found` });
     }
     targetBranchId = targetBranch.id;
   }

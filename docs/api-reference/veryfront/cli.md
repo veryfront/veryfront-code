@@ -29,7 +29,7 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront lint` | Run linter with optional structured JSON output |
 | `veryfront routes` | List all discovered routes in your application |
 | `veryfront schema` | Show CLI command schema for agent discovery |
-| `veryfront serve` | Start production server |
+| `veryfront serve` | Run the production HTTP server (headless) |
 | `veryfront styles` | Build project CSS artifacts |
 | `veryfront test` | Run tests with optional structured JSON output |
 
@@ -53,7 +53,7 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront init` | Initialize a new Veryfront project |
 | `veryfront install` | Install AI assistant integrations (Cursor, Claude Code, etc.) |
 | `veryfront open` | Open project URLs in the browser |
-| `veryfront start` | Start the production dashboard and proxy server |
+| `veryfront start` | Run the production dashboard with proxy and TUI |
 | `veryfront studio` | Open Veryfront Studio in browser |
 | `veryfront uninstall` | Remove AI assistant integrations |
 
@@ -72,11 +72,11 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront eval` | List, run, and export discovered eval definitions |
 | `veryfront issues` | File-based issue tracking (SDLC conventions) |
 | `veryfront mcp` | Start MCP server for coding agents |
-| `veryfront schedule` | Run a source-defined schedule locally or in the Veryfront cloud |
+| `veryfront schedule` | List or run source-defined schedules |
 | `veryfront schedules` | List source-defined schedules |
 | `veryfront skills` | List and inspect available agent skills |
 | `veryfront task` | Run a task from the tasks/ directory |
-| `veryfront webhook` | Run a source-defined webhook locally with a fixture payload |
+| `veryfront webhook` | List or run source-defined webhooks |
 | `veryfront webhooks` | List source-defined webhooks |
 | `veryfront worker` | Start workflow run worker |
 | `veryfront workflow` | Run a workflow from the workflows directory |

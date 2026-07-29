@@ -1,12 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter, RuntimeId } from "#veryfront/platform/adapters/base.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { clearConfigCache } from "#veryfront/config";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
 import {
   createHandlerRegistry,
@@ -17,6 +23,8 @@ import {
 } from "./index.ts";
 import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation.ts";
 import { defaultDiscoveryCache } from "./local-project-discovery.ts";
+import { runWithProjectEnv } from "../project-env/storage.ts";
+import { requestTracker } from "./request-tracker.ts";
 
 const encoder = new TextEncoder();
 
@@ -82,9 +90,10 @@ async function withTrustedProxyTopology<T>(operation: () => Promise<T>): Promise
 
 function createMockAdapter(
   environment: Readonly<Record<string, string>> = {},
+  id: RuntimeId = "memory",
 ): RuntimeAdapter {
   return {
-    id: "test",
+    id,
     name: "test",
     capabilities: {},
     fs: {
@@ -306,12 +315,63 @@ function createProxySecurityHandler(
   );
 }
 
+function captureConsoleOutput(): { lines: string[]; restore: () => void } {
+  const lines: string[] = [];
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  const capture = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+  console.log = capture;
+  console.warn = capture;
+  return {
+    lines,
+    restore: () => {
+      console.log = originalLog;
+      console.warn = originalWarn;
+    },
+  };
+}
+
+function captureDebugLogs(): { entries: LogEntry[]; restore: () => void } {
+  const entries: LogEntry[] = [];
+  const originalLogLevel = Deno.env.get("LOG_LEVEL");
+  const originalDebug = Deno.env.get("VERYFRONT_DEBUG");
+  Deno.env.set("LOG_LEVEL", "DEBUG");
+  Deno.env.delete("VERYFRONT_DEBUG");
+  __resetLoggerConfigForTests();
+  __registerLogRecordEmitter((entry) => entries.push(entry));
+
+  return {
+    entries,
+    restore: () => {
+      if (originalLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+      else Deno.env.set("LOG_LEVEL", originalLogLevel);
+      if (originalDebug === undefined) Deno.env.delete("VERYFRONT_DEBUG");
+      else Deno.env.set("VERYFRONT_DEBUG", originalDebug);
+      __resetLoggerConfigForTests();
+      __resetLogRecordEmitterForTests();
+    },
+  };
+}
+
+function createDebugTestHandler(
+  adapter: RuntimeAdapter,
+  projectDir = "/tmp/test-project",
+) {
+  return createVeryfrontHandler(projectDir, adapter, {
+    projectDir,
+    config: {
+      fs: { veryfront: { proxyMode: true } },
+    } as any,
+  });
+}
+
 describe("server/runtime-handler/index", () => {
   afterEach(async () => {
     injectIsolationDepsForTests(null);
     clearConfigCache();
     defaultDiscoveryCache.clear();
     await HMRHandler.shutdown();
+    requestTracker.shutdown();
   });
 
   it("constructs the complete development registry and excludes dev handlers in production", () => {
@@ -453,6 +513,59 @@ describe("server/runtime-handler/index", () => {
     assertEquals(disposed, true);
   });
 
+  it("preserves debug flags supplied by binding-backed runtime adapters", () => {
+    const { entries, restore } = captureDebugLogs();
+
+    try {
+      for (const id of ["cloudflare", "memory"] as const) {
+        entries.length = 0;
+        createDebugTestHandler(
+          createMockAdapter({ VERYFRONT_DEBUG: "yes" }, id),
+          `/tmp/test-project-${id}`,
+        );
+
+        assertEquals(
+          entries.some((entry) => entry.message === "[runtime-handler] handler initialized"),
+          true,
+        );
+      }
+    } finally {
+      restore();
+    }
+  });
+
+  it("reads host debug state per request despite a project env overlay", async () => {
+    const { entries, restore } = captureDebugLogs();
+
+    try {
+      const handler = createDebugTestHandler(new DenoAdapter());
+      entries.length = 0;
+
+      Deno.env.set("VERYFRONT_DEBUG", "yes");
+      await runWithProjectEnv(
+        { VERYFRONT_DEBUG: "0" },
+        () => handler(new Request("http://localhost/healthz")),
+      );
+      assertEquals(
+        entries.some((entry) => entry.message === "Processing GET /healthz"),
+        true,
+      );
+
+      Deno.env.delete("VERYFRONT_DEBUG");
+      entries.length = 0;
+      await runWithProjectEnv(
+        { VERYFRONT_DEBUG: "yes" },
+        () => handler(new Request("http://localhost/healthz")),
+      );
+      assertEquals(
+        entries.some((entry) => entry.message === "Processing GET /healthz"),
+        false,
+      );
+    } finally {
+      restore();
+    }
+  });
+
   it("returns 502 when x-project-slug is missing in proxy mode", async () => {
     const handler = createProxyModeHandler();
 
@@ -468,6 +581,66 @@ describe("server/runtime-handler/index", () => {
       error: "Missing project context",
       detail: "x-project-slug header is required in proxy mode",
     });
+  });
+
+  it("does not emit security guidance for the safe development defaults", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const adapter = new DenoAdapter();
+    const { lines, restore } = captureConsoleOutput();
+    const originalVeryfrontEnv = Deno.env.get("VERYFRONT_ENV");
+    Deno.env.set("VERYFRONT_ENV", "development");
+
+    try {
+      const handler = createVeryfrontHandler(projectDir, adapter, {
+        projectDir,
+        config: {} as any,
+      });
+      await handler.ready;
+      await handler(new Request("http://localhost/healthz"));
+    } finally {
+      restore();
+      if (originalVeryfrontEnv === undefined) Deno.env.delete("VERYFRONT_ENV");
+      else Deno.env.set("VERYFRONT_ENV", originalVeryfrontEnv);
+      HMRHandler.shutdown();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+
+    const securityGuidance = lines.filter((line) =>
+      line.includes("CSRF protection is not configured") ||
+      line.includes("Neither CORS nor CSRF protection is configured")
+    );
+    assertEquals(securityGuidance.length, 0);
+  });
+
+  it("keeps explicit security warnings visible for standalone production", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const adapter = new DenoAdapter();
+    const { lines, restore } = captureConsoleOutput();
+    const originalVeryfrontEnv = Deno.env.get("VERYFRONT_ENV");
+    Deno.env.set("VERYFRONT_ENV", "development");
+
+    try {
+      const handler = createVeryfrontHandler(projectDir, adapter, {
+        projectDir,
+        config: {
+          security: { csrf: false },
+        } as any,
+        defaultEnvironment: "production",
+      });
+      await handler.ready;
+      await handler(new Request("http://localhost/healthz"));
+    } finally {
+      restore();
+      if (originalVeryfrontEnv === undefined) Deno.env.delete("VERYFRONT_ENV");
+      else Deno.env.set("VERYFRONT_ENV", originalVeryfrontEnv);
+      HMRHandler.shutdown();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+
+    assertEquals(
+      lines.some((line) => line.includes("Neither CORS nor CSRF protection is configured")),
+      true,
+    );
   });
 
   it("returns 502 when x-token is missing in proxy mode", async () => {

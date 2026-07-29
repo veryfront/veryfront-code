@@ -36,7 +36,7 @@ describe("Open Command", () => {
       assertEquals(url, "https://veryfront.com/studio/my-app");
     });
 
-    it("uses project slug with --project-slug override", () => {
+    it("uses project slug with --project override", () => {
       const url = buildUrl("custom-slug", { studio: false });
       assertEquals(url, "https://veryfront.com/projects/custom-slug");
     });
@@ -55,6 +55,12 @@ describe("Open Command", () => {
   describe("parseOpenArgs", () => {
     it("parses -p as project slug from raw open argv", () => {
       const result = parseOpenArgs(parseCliArgs(["open", "-p", "my-project"]));
+      assertSuccess(result);
+      assertEquals(result.data.projectSlug, "my-project");
+    });
+
+    it("keeps --project-slug as a compatibility alias", () => {
+      const result = parseOpenArgs(parseCliArgs(["open", "--project-slug", "my-project"]));
       assertSuccess(result);
       assertEquals(result.data.projectSlug, "my-project");
     });

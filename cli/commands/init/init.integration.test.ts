@@ -180,13 +180,16 @@ describe("init command integration", () => {
       ]);
 
       assertEquals(result.code, 0);
-      assertEquals(result.stdout?.includes("\x1b[38;2;252;143;93m✓"), false);
+      assertEquals(result.stdout?.includes("\x1b[38;2;238;178;146m✓"), false);
       assertEquals(result.stdout?.includes("✓"), true);
       assertEquals(result.stdout?.includes("Creating new Veryfront project"), false);
       assertEquals(result.stdout?.includes("ready!"), false);
       assertEquals(result.stdout?.includes("Deploy:"), true);
       assertEquals(result.stdout?.includes("Project structure"), false);
       assertEquals(result.stdout?.includes("npx veryfront deploy"), true);
+      assertEquals(result.stdout?.includes("Project files created"), false);
+      assertEquals(result.stdout?.includes("Dependencies installed"), false);
+      assertEquals(result.stdout?.includes("Git repository initialized"), false);
       assertEquals(result.stdout?.includes("OPENAI_API_KEY"), false);
       assertEquals(result.stdout?.includes("auto-discovered"), false);
 
@@ -274,6 +277,30 @@ describe("init command integration", () => {
           "package-lock.json",
         );
         assertEquals(await runGit(["status", "--porcelain"], dir), "");
+      } finally {
+        await remove(dir, { recursive: true }).catch(() => {});
+        await remove(fakeNpm.binDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("does not leave a pending install spinner in non-interactive output", async () => {
+      const name = `install-output-${randomSuffix()}`;
+      const dir = join(TEST_DIR, name);
+      const fakeNpm = await createFakeNpm("success");
+
+      try {
+        const result = await runInitCommand([
+          name,
+          "-t",
+          "minimal",
+          "--skip-env-prompt",
+        ], {
+          env: withPath(fakeNpm.binDir),
+        });
+        const output = (result.stdout ?? "") + (result.stderr ?? "");
+
+        assertEquals(result.code, 0, output);
+        assertEquals(output.includes("Installing dependencies"), false);
       } finally {
         await remove(dir, { recursive: true }).catch(() => {});
         await remove(fakeNpm.binDir, { recursive: true }).catch(() => {});
@@ -560,7 +587,7 @@ describe("init command integration", () => {
             assertExists(pkg.dependencies.veryfront);
             assertExists(pkg.dependencies.react);
             assertExists(pkg.dependencies["react-dom"]);
-            assertEquals(pkg.dependencies.zod, "^3.24.0");
+            assertEquals(pkg.dependencies.zod, undefined);
 
             if (template === "docs-agent") {
               assertEquals(pkg.dependencies["@kreuzberg/node"], "^4.4.2");

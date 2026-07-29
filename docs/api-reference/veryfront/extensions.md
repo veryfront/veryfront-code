@@ -407,22 +407,41 @@ import { NodeTelemetryProviderName } from "veryfront/extensions/observability";
 Parser category barrel - CodeParser (AST traversal) contract.
 
 ```ts
-import "veryfront/extensions/parser";
+import { HTMLHeadLocatorName, MAX_HTML_HEAD_PARSE_BYTES } from "veryfront/extensions/parser";
 ```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `HTMLHeadLocatorName` | Stable runtime identifier for the HTML head locator extension contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/html-head-locator.ts#L2) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
 | `ASTNode` | A single node in an abstract syntax tree. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L10) |
+| `AuthoredImportMapState` | State of import maps authored in the parsed document. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/html-head-locator.ts#L27) |
 | `CodeParser` | Public API contract for code parser. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L90) |
 | `FunctionDirectiveOptions` | Options for a parser-owned function directive check. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L54) |
 | `GenerateOptions` | Options passed to `CodeParser.generate`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L60) |
 | `GenerateResult` | Result returned from `CodeParser.generate`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L70) |
+| `HtmlHeadInsertionPoint` | A source offset at which generated head content can safely be inserted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/html-head-locator.ts#L11) |
+| `HtmlHeadLocationResult` | Result of locating safe HTML head insertion positions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/html-head-locator.ts#L57) |
+| `HTMLHeadLocator` | Dependency-free contract implemented by HTML parser extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/html-head-locator.ts#L65) |
+| `HtmlHeadPlacement` | Syntax-aware insertion placement derived from a parsed HTML document. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/html-head-locator.ts#L44) |
+| `HtmlModuleResolutionOrdering` | Ordering information for module-resolution consumers in the document head. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/html-head-locator.ts#L19) |
 | `InjectJsxNodePositionsOptions` | Options for `CodeParser.injectJsxNodePositions`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L84) |
+| `MaxHTMLHeadParseBytes` | Literal type shared by implementations that enforce the parse-size limit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/html-head-locator.ts#L8) |
 | `NodePath` | Wrapper providing traversal context for a visited node. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L22) |
 | `ParseOptions` | Options passed to `CodeParser.parse`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L44) |
 | `TraverseVisitor` | Visitor callbacks keyed by node type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L34) |
+
+#### Constants
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `MAX_HTML_HEAD_PARSE_BYTES` | Maximum UTF-8 input size accepted by HTML head locator implementations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/html-head-locator.ts#L5) |
 
 ### `veryfront/extensions/sandbox`
 

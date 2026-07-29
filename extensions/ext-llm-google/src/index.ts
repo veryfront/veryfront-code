@@ -28,7 +28,7 @@ const extGoogle: ExtensionFactory = () => {
       registry.register(provider);
       ctx.provide("LLMProvider:google", registry.get(provider.id) ?? provider);
       registryRef = registry;
-      ctx.logger.info("[ext-llm-google] Google provider registered");
+      ctx.logger.debug("[ext-llm-google] Google provider registered");
     },
     teardown() {
       if (registeredProvider) registryRef?.unregister(provider.id);

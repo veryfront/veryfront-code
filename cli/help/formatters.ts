@@ -3,7 +3,7 @@ import type { CommandHelp, CommandOption } from "./types.ts";
 import { bold, brand, dim, muted } from "../ui/colors.ts";
 
 export function formatHeader(): string {
-  return `${bold(brand("Veryfront"))} ${dim(VERSION)}`;
+  return `${bold("Veryfront")} ${dim(`(v${VERSION})`)}`;
 }
 
 export function formatCommandName(name: string, paddingLength: number): string {
@@ -45,13 +45,20 @@ export function calculateMaxLength(items: Array<{ length: number }>): number {
   return Math.max(...items.map((item) => item.length));
 }
 
+function commandDisplayName(cmd: CommandHelp): string {
+  if (!cmd.aliases || cmd.aliases.length === 0) return cmd.name;
+  return `${cmd.name} (${cmd.aliases.join(", ")})`;
+}
+
 export function formatCommandList(
   commands: CommandHelp[],
   maxNameLength?: number,
 ): string[] {
+  const displayNames = commands.map(commandDisplayName);
   const padLength = maxNameLength ??
-    calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
+    calculateMaxLength(displayNames.map((n) => ({ length: n.length })));
   return commands.map(
-    (cmd) => `    ${formatCommandName(cmd.name, padLength)} ${formatDescription(cmd.description)}`,
+    (cmd, i) =>
+      `    ${formatCommandName(displayNames[i]!, padLength)} ${formatDescription(cmd.description)}`,
   );
 }

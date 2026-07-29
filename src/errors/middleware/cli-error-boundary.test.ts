@@ -34,7 +34,7 @@ describe("cli-error-boundary", () => {
 
       const output = formatCLIError(error, { color: false });
 
-      assertEquals(output, "\n✗ Something went wrong\n");
+      assertEquals(output, "\n✗ Something went wrong\n  Run with --verbose for details\n");
       assertEquals(output.includes("Check logs for more details"), false);
     });
 
@@ -120,7 +120,7 @@ describe("cli-error-boundary", () => {
 
       const output = formatCLIError(hostile);
 
-      assertEquals(output, "\n✗ Unknown error\n");
+      assertEquals(output, "\n✗ Unknown error\n  Run with --verbose for details\n");
       for (const secret of ["title-secret", "detail-secret", "cookie-secret"]) {
         assertEquals(output.includes(secret), false);
       }

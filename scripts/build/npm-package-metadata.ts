@@ -1,22 +1,22 @@
 type PackageJson = {
-	name?: string;
-	version?: string;
-	private?: boolean;
-	files?: string[];
-	dependencies?: Record<string, string>;
-	optionalDependencies?: Record<string, string>;
-	peerDependencies?: Record<string, string>;
-	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
-	devDependencies?: Record<string, string>;
-	overrides?: Record<string, string>;
-	exports?: Record<string, unknown>;
+  name?: string;
+  version?: string;
+  private?: boolean;
+  files?: string[];
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+  devDependencies?: Record<string, string>;
+  overrides?: Record<string, string>;
+  exports?: Record<string, unknown>;
 };
 
 import { OPAQUE_DEPENDENCY_VERSIONS } from "../../src/platform/compat/opaque-dependency-versions.ts";
 
 export const ROOT_OPTIONAL_RUNTIME_PEERS = [
-	"@huggingface/transformers",
-	"redis",
+  "@huggingface/transformers",
+  "redis",
 ] as const;
 
 /**
@@ -27,7 +27,7 @@ export const ROOT_OPTIONAL_RUNTIME_PEERS = [
  * package instead of being stripped with extension-only dependencies.
  */
 export const ROOT_SHARED_WORKSPACE_DEPENDENCIES = [
-	"remark-gfm",
+  "remark-gfm",
 ] as const;
 
 // Opaque imports (src/platform/compat/opaque-deps.ts) are invisible to dnt, so
@@ -35,175 +35,189 @@ export const ROOT_SHARED_WORKSPACE_DEPENDENCIES = [
 // fallback the optional-peer move silently skips them and the published
 // package.json omits the dependency entirely.
 const ROOT_OPTIONAL_RUNTIME_PEER_FALLBACK_RANGES: Record<string, string> = {
-	"@huggingface/transformers": `^${OPAQUE_DEPENDENCY_VERSIONS["@huggingface/transformers"]}`,
+  "@huggingface/transformers": `^${
+    OPAQUE_DEPENDENCY_VERSIONS["@huggingface/transformers"]
+  }`,
 };
 
 export const EXTENSION_OWNED_DEPENDENCIES = [
-	"@babel/generator",
-	"@babel/parser",
-	"@babel/traverse",
-	"@babel/types",
-	"@types/better-sqlite3",
-	"@types/hast",
-	"@types/mdast",
-	"@types/unist",
-	"better-sqlite3",
-	"@kreuzberg/node",
-	"@kreuzberg/wasm",
-	"@mdx-js/mdx",
-	"@mdx-js/react",
-	"@opentelemetry/api",
-	"@opentelemetry/api-logs",
-	"@opentelemetry/auto-instrumentations-node",
-	"@opentelemetry/context-async-hooks",
-	"@opentelemetry/core",
-	"@opentelemetry/exporter-logs-otlp-http",
-	"@opentelemetry/exporter-metrics-otlp-http",
-	"@opentelemetry/exporter-trace-otlp-http",
-	"@opentelemetry/resources",
-	"@opentelemetry/sdk-logs",
-	"@opentelemetry/sdk-metrics",
-	"@opentelemetry/sdk-node",
-	"@opentelemetry/sdk-trace-base",
-	"@opentelemetry/semantic-conventions",
-	"@sentry/deno",
-	"acorn",
-	"bash-tool",
-	"brace-expansion",
-	"es-module-lexer",
-	"esbuild",
-	"estree-util-is-identifier-name",
-	"gaxios",
-	"gcp-metadata",
-	"github-slugger",
-	"jose",
-	"jszip",
-	"just-bash",
-	"mdast-util-from-markdown",
-	"mdast-util-mdx",
-	"mdast-util-to-string",
-	"micromark-extension-mdxjs",
-	"pdf-lib",
-	"protobufjs",
-	"rehype-highlight",
-	"rehype-raw",
-	"rehype-sanitize",
-	"rehype-slug",
-	"rehype-starry-night",
-	"rehype-stringify",
-	"remark-frontmatter",
-	"remark-parse",
-	"remark-rehype",
-	"tailwindcss",
-	"unified",
-	"unist-util-visit",
-	"vfile",
-	"zod-to-json-schema",
+  "@babel/generator",
+  "@babel/parser",
+  "@babel/traverse",
+  "@babel/types",
+  "@types/better-sqlite3",
+  "@types/hast",
+  "@types/mdast",
+  "@types/unist",
+  "better-sqlite3",
+  "@kreuzberg/node",
+  "@kreuzberg/wasm",
+  "@mdx-js/mdx",
+  "@mdx-js/react",
+  "@opentelemetry/api",
+  "@opentelemetry/api-logs",
+  "@opentelemetry/auto-instrumentations-node",
+  "@opentelemetry/context-async-hooks",
+  "@opentelemetry/core",
+  "@opentelemetry/exporter-logs-otlp-http",
+  "@opentelemetry/exporter-metrics-otlp-http",
+  "@opentelemetry/exporter-trace-otlp-http",
+  "@opentelemetry/resources",
+  "@opentelemetry/sdk-logs",
+  "@opentelemetry/sdk-metrics",
+  "@opentelemetry/sdk-node",
+  "@opentelemetry/sdk-trace-base",
+  "@opentelemetry/semantic-conventions",
+  "@sentry/deno",
+  "@sentry/node",
+  "acorn",
+  "bash-tool",
+  "brace-expansion",
+  "es-module-lexer",
+  "esbuild",
+  "estree-util-is-identifier-name",
+  "gaxios",
+  "gcp-metadata",
+  "github-slugger",
+  "jose",
+  "jszip",
+  "just-bash",
+  "mdast-util-from-markdown",
+  "mdast-util-mdx",
+  "mdast-util-to-string",
+  "micromark-extension-mdxjs",
+  "parse5",
+  "pdf-lib",
+  "protobufjs",
+  "rehype-highlight",
+  "rehype-raw",
+  "rehype-sanitize",
+  "rehype-slug",
+  "rehype-starry-night",
+  "rehype-stringify",
+  "remark-frontmatter",
+  "remark-parse",
+  "remark-rehype",
+  "tailwindcss",
+  "unified",
+  "unist-util-visit",
+  "vfile",
+  "zod-to-json-schema",
 ] as const;
 
 const STALE_DIRECT_DEPENDENCIES = [
-	"ai",
+  "ai",
 ] as const;
 
 const STALE_DEV_DEPENDENCIES = [
-	"@types/better-sqlite3",
-	"@types/mime-types",
-	"@types/ws",
+  "@types/better-sqlite3",
+  "@types/mime-types",
+  "@types/ws",
 ] as const;
 
 const REQUIRED_NPM_OVERRIDES = {
-	protobufjs: "8.6.5",
+  protobufjs: "8.6.5",
 } as const;
 
 export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
-	if (pkg.files) {
-		pkg.files = pkg.files.filter((entry) => entry !== "src" && entry !== "/src");
-	}
+  if (pkg.files) {
+    pkg.files = pkg.files.filter((entry) =>
+      entry !== "src" && entry !== "/src"
+    );
+  }
 
-	for (const name of ROOT_OPTIONAL_RUNTIME_PEERS) {
-		movePackageToOptionalPeer(pkg, name);
-	}
+  for (const name of ROOT_OPTIONAL_RUNTIME_PEERS) {
+    movePackageToOptionalPeer(pkg, name);
+  }
 
-	for (const name of EXTENSION_OWNED_DEPENDENCIES) {
-		delete pkg.dependencies?.[name];
-		delete pkg.optionalDependencies?.[name];
-	}
+  for (const name of EXTENSION_OWNED_DEPENDENCIES) {
+    delete pkg.dependencies?.[name];
+    delete pkg.optionalDependencies?.[name];
+  }
 
-	for (const name of STALE_DIRECT_DEPENDENCIES) {
-		delete pkg.dependencies?.[name];
-		delete pkg.optionalDependencies?.[name];
-	}
+  for (const name of STALE_DIRECT_DEPENDENCIES) {
+    delete pkg.dependencies?.[name];
+    delete pkg.optionalDependencies?.[name];
+  }
 
-	for (const name of STALE_DEV_DEPENDENCIES) {
-		delete pkg.devDependencies?.[name];
-	}
+  for (const name of STALE_DEV_DEPENDENCIES) {
+    delete pkg.devDependencies?.[name];
+  }
 
-	deleteIfEmpty(pkg, "dependencies");
-	deleteIfEmpty(pkg, "optionalDependencies");
+  deleteIfEmpty(pkg, "dependencies");
+  deleteIfEmpty(pkg, "optionalDependencies");
 
-	pkg.overrides ??= {};
-	for (const [name, version] of Object.entries(REQUIRED_NPM_OVERRIDES)) {
-		pkg.overrides[name] = version;
-	}
+  pkg.overrides ??= {};
+  for (const [name, version] of Object.entries(REQUIRED_NPM_OVERRIDES)) {
+    pkg.overrides[name] = version;
+  }
 
-	pinAutomaticDependencyRanges(pkg);
+  pinAutomaticDependencyRanges(pkg);
 
-	return pkg;
+  return pkg;
 }
 
 export function removeInternalNpmEntryPointExports(
-	pkg: Pick<PackageJson, "exports">,
-	internalEntryPoints: readonly string[],
+  pkg: Pick<PackageJson, "exports">,
+  internalEntryPoints: readonly string[],
 ): void {
-	if (!pkg.exports) {
-		throw new Error("Generated npm package metadata is missing its exports map");
-	}
+  if (!pkg.exports) {
+    throw new Error(
+      "Generated npm package metadata is missing its exports map",
+    );
+  }
 
-	for (const entryPoint of internalEntryPoints) {
-		if (!Object.hasOwn(pkg.exports, entryPoint)) {
-			throw new Error(
-				`Generated npm package metadata is missing internal entry point ${entryPoint}`,
-			);
-		}
-		delete pkg.exports[entryPoint];
-	}
+  for (const entryPoint of internalEntryPoints) {
+    if (!Object.hasOwn(pkg.exports, entryPoint)) {
+      throw new Error(
+        `Generated npm package metadata is missing internal entry point ${entryPoint}`,
+      );
+    }
+    delete pkg.exports[entryPoint];
+  }
 }
 
 function pinAutomaticDependencyRanges(pkg: PackageJson): void {
-	for (const key of ["dependencies", "optionalDependencies", "devDependencies"] as const) {
-		const dependencies = pkg[key];
-		if (!dependencies) continue;
+  for (
+    const key of [
+      "dependencies",
+      "optionalDependencies",
+      "devDependencies",
+    ] as const
+  ) {
+    const dependencies = pkg[key];
+    if (!dependencies) continue;
 
-		for (const [name, range] of Object.entries(dependencies)) {
-			dependencies[name] = stripLeadingRangeOperator(range);
-		}
-	}
+    for (const [name, range] of Object.entries(dependencies)) {
+      dependencies[name] = stripLeadingRangeOperator(range);
+    }
+  }
 }
 
 function stripLeadingRangeOperator(range: string): string {
-	return range.replace(/^[\^~]/, "");
+  return range.replace(/^[\^~]/, "");
 }
 
 function movePackageToOptionalPeer(pkg: PackageJson, name: string): void {
-	const range = pkg.dependencies?.[name] ?? pkg.optionalDependencies?.[name] ??
-		ROOT_OPTIONAL_RUNTIME_PEER_FALLBACK_RANGES[name];
-	if (!range) return;
+  const range = pkg.dependencies?.[name] ?? pkg.optionalDependencies?.[name] ??
+    ROOT_OPTIONAL_RUNTIME_PEER_FALLBACK_RANGES[name];
+  if (!range) return;
 
-	delete pkg.dependencies?.[name];
-	delete pkg.optionalDependencies?.[name];
+  delete pkg.dependencies?.[name];
+  delete pkg.optionalDependencies?.[name];
 
-	pkg.peerDependencies ??= {};
-	pkg.peerDependencies[name] = range;
+  pkg.peerDependencies ??= {};
+  pkg.peerDependencies[name] = range;
 
-	pkg.peerDependenciesMeta ??= {};
-	pkg.peerDependenciesMeta[name] = { optional: true };
+  pkg.peerDependenciesMeta ??= {};
+  pkg.peerDependenciesMeta[name] = { optional: true };
 }
 
 function deleteIfEmpty(
-	pkg: PackageJson,
-	key: "dependencies" | "optionalDependencies",
+  pkg: PackageJson,
+  key: "dependencies" | "optionalDependencies",
 ): void {
-	if (pkg[key] && Object.keys(pkg[key]).length === 0) {
-		delete pkg[key];
-	}
+  if (pkg[key] && Object.keys(pkg[key]).length === 0) {
+    delete pkg[key];
+  }
 }

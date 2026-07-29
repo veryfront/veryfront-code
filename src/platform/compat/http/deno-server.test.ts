@@ -1,11 +1,41 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { DenoHttpServer } from "./deno-server.ts";
 
 describe("DenoHttpServer", () => {
   describe("serve", () => {
+    it("reports the native bound address before accepting requests", async () => {
+      if (!isDeno) return;
+      const server = new DenoHttpServer();
+      const ac = new AbortController();
+      let resolveAddress: (address: { hostname: string; port: number }) => void = () => {};
+      const listening = new Promise<{ hostname: string; port: number }>((resolve) => {
+        resolveAddress = resolve;
+      });
+
+      const servePromise = server.serve(() => new Response("ready"), {
+        hostname: "127.0.0.1",
+        port: 0,
+        signal: ac.signal,
+        onListen: resolveAddress,
+      });
+
+      const address = await listening;
+      assertEquals(address.hostname, "127.0.0.1");
+      assert(address.port > 0);
+
+      try {
+        const response = await fetch(`http://${address.hostname}:${address.port}`);
+        assertEquals(await response.text(), "ready");
+      } finally {
+        ac.abort();
+      }
+
+      await servePromise;
+    });
+
     it("returns native Response instances from handler", async () => {
       if (!isDeno) return;
       const server = new DenoHttpServer();

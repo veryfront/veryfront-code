@@ -180,11 +180,19 @@ export async function startAgentService(
     ...resolvedOptions,
     processTarget,
   });
+  let applicationErrors = {
+    captureStartupError: (_error: unknown) => {},
+    flush: () => Promise.resolve(true),
+    reset: () => {},
+  };
+  let startupErrorHandled = false;
   getRuntimeTraceContext = context.infrastructure.getTraceContext;
-  await initializeNodeVeryfrontCloudAgentServiceContext(context);
 
   await runAgentServiceMain({
     loadLogger: () => context.infrastructure.logger,
+    initializeApplicationErrors: async () => {
+      applicationErrors = await context.infrastructure.initializeApplicationErrors();
+    },
     initializeTelemetry: async () => {
       return await context.infrastructure.initializeOpenTelemetry().catch((error) => {
         agentLogger.error("Failed to initialize OpenTelemetry:", { error });
@@ -199,6 +207,7 @@ export async function startAgentService(
       __registerTraceContextGetter(getter);
     },
     start: async () => {
+      await initializeNodeVeryfrontCloudAgentServiceContext(context);
       const registrationLifecycle = await createControlPlaneRegistrationLifecycle(context);
       try {
         await startAgentServiceRuntime({
@@ -212,8 +221,18 @@ export async function startAgentService(
         throw error;
       }
     },
-    onStartupError: (error) => {
+    onStartupError: async (error) => {
+      applicationErrors.captureStartupError(error);
       agentLogger.error("Error in server startup:", { error });
+      await applicationErrors.flush();
+      applicationErrors.reset();
+      startupErrorHandled = true;
+    },
+    onFinally: async () => {
+      if (!startupErrorHandled) {
+        await applicationErrors.flush();
+      }
+      applicationErrors.reset();
     },
     exit: processTarget?.exit,
     processTarget,

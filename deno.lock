@@ -52,6 +52,7 @@
     "npm:@opentelemetry/semantic-conventions@1.43.0": "1.43.0",
     "npm:@redis/client@1.5.8": "1.5.8",
     "npm:@sentry/deno@10.68.0": "10.68.0",
+    "npm:@sentry/node@10.68.0": "10.68.0_@opentelemetry+core@2.9.0__@opentelemetry+api@1.9.1_@opentelemetry+exporter-trace-otlp-http@0.220.0__@opentelemetry+api@1.9.1",
     "npm:@types/better-sqlite3@7.6.13": "7.6.13",
     "npm:@types/hast@3.0.3": "3.0.3",
     "npm:@types/mdast@4.0.3": "4.0.3",
@@ -1763,6 +1764,51 @@
         "@opentelemetry/api",
         "@sentry/core",
         "@sentry/server-utils"
+      ]
+    },
+    "@sentry/node-core@10.68.0_@opentelemetry+api@1.9.1_@opentelemetry+core@2.9.0__@opentelemetry+api@1.9.1_@opentelemetry+exporter-trace-otlp-http@0.220.0__@opentelemetry+api@1.9.1_@opentelemetry+instrumentation@0.220.0__@opentelemetry+api@1.9.1_@opentelemetry+sdk-trace-base@2.9.0__@opentelemetry+api@1.9.1": {
+      "integrity": "sha512-VreORXnruy8A2SyprZKENAq3ArGwn35KPewLQSQ5dgDXSFtUj2scLuzZoVsZ/Uyt83td0WPvD6Lv0X7MvSYAMQ==",
+      "dependencies": [
+        "@opentelemetry/api",
+        "@opentelemetry/core@2.9.0_@opentelemetry+api@1.9.1",
+        "@opentelemetry/exporter-trace-otlp-http",
+        "@opentelemetry/instrumentation",
+        "@opentelemetry/sdk-trace-base@2.9.0_@opentelemetry+api@1.9.1",
+        "@sentry/conventions",
+        "@sentry/core",
+        "@sentry/opentelemetry",
+        "import-in-the-middle"
+      ],
+      "optionalPeers": [
+        "@opentelemetry/api",
+        "@opentelemetry/core@2.9.0_@opentelemetry+api@1.9.1",
+        "@opentelemetry/exporter-trace-otlp-http",
+        "@opentelemetry/instrumentation",
+        "@opentelemetry/sdk-trace-base@2.9.0_@opentelemetry+api@1.9.1"
+      ]
+    },
+    "@sentry/node@10.68.0_@opentelemetry+core@2.9.0__@opentelemetry+api@1.9.1_@opentelemetry+exporter-trace-otlp-http@0.220.0__@opentelemetry+api@1.9.1": {
+      "integrity": "sha512-bnvRzEehquG/894DD3BWNCBUbDWsLQfYPU+SNCMd6G4Ext75RthVkRs8R0sRaE6b8Tw9HSEgySHL834Tf8lVsA==",
+      "dependencies": [
+        "@opentelemetry/api",
+        "@opentelemetry/instrumentation",
+        "@opentelemetry/sdk-trace-base@2.9.0_@opentelemetry+api@1.9.1",
+        "@sentry/conventions",
+        "@sentry/core",
+        "@sentry/node-core",
+        "@sentry/opentelemetry",
+        "@sentry/server-utils",
+        "import-in-the-middle"
+      ]
+    },
+    "@sentry/opentelemetry@10.68.0_@opentelemetry+api@1.9.1_@opentelemetry+core@2.9.0__@opentelemetry+api@1.9.1_@opentelemetry+sdk-trace-base@2.9.0__@opentelemetry+api@1.9.1": {
+      "integrity": "sha512-JDNH9dacX0MSi7FRvabPCJUAXRMTe16bE/Gajc/7Gfcw7Rwvo4DZ0nd162PCSAW9QoEjUT12upDehEHJuFmsXg==",
+      "dependencies": [
+        "@opentelemetry/api",
+        "@opentelemetry/core@2.9.0_@opentelemetry+api@1.9.1",
+        "@opentelemetry/sdk-trace-base@2.9.0_@opentelemetry+api@1.9.1",
+        "@sentry/conventions",
+        "@sentry/core"
       ]
     },
     "@sentry/server-utils@10.68.0": {
@@ -6496,7 +6542,8 @@
       "extensions/ext-observability-sentry": {
         "dependencies": [
           "jsr:@std/assert@1.0.19",
-          "npm:@sentry/deno@10.68.0"
+          "npm:@sentry/deno@10.68.0",
+          "npm:@sentry/node@10.68.0"
         ]
       },
       "extensions/ext-parser-babel": {

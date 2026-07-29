@@ -66,7 +66,9 @@ function formatVeryfrontError(
   );
   const lines = ["", `${colors.red("✗")} ${primaryMessage}`];
 
-  if (snapshot.suggestion && snapshot.slug !== "unknown-error") {
+  if (snapshot.slug === "unknown-error") {
+    lines.push(colors.dim("  Run with --verbose for details"));
+  } else if (snapshot.suggestion) {
     lines.push(
       colors.dim(`  ${sanitizeTerminalDiagnosticText(snapshot.suggestion)}`),
     );

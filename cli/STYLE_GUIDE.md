@@ -152,7 +152,7 @@ catch (e) {
 ### Brand Palette
 
 ```typescript
-brand(); // rgb(252,143,93) - Orange, commands, URLs, and active controls
+brand(); // rgb(238,178,146) - Pastel orange, commands, URLs, and active controls
 success(); // rgb(34,197,94)  - Green, semantic health and availability values
 error(); // rgb(239,68,68)  - Red, failures only
 warning(); // rgb(234,179,8)  - Yellow, caution

@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const lockHelp: CommandHelp = {
   name: "lock",
+  hidden: true,
   category: "deploy",
   description: "Manage remote import lockfile for reproducible builds",
   usage: "veryfront lock [options]",

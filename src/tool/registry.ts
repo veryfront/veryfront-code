@@ -122,7 +122,7 @@ export function toolToProviderDefinition(tool: Tool): ToolDefinition {
     tool.id,
   );
 
-  agentLogger.info(
+  agentLogger.debug(
     `[TOOL] Using ${
       hasPreConvertedSchema ? "pre-converted" : "runtime-converted"
     } schema for "${tool.id}"`,

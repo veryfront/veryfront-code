@@ -1,5 +1,5 @@
 import { cliLogger } from "#cli/utils";
-import { exitProcess } from "#cli/utils";
+import { INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "veryfront/errors";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import { agentRegistry } from "../../../src/agent/composition/index.ts";
 import {
@@ -138,16 +138,16 @@ export async function runWorkflowCommand(
   dependencies: WorkflowCommandDependencies = {},
 ): Promise<void> {
   if (options.action !== "run") {
-    cliLogger.error(`Unknown workflow action: ${options.action}`);
-    exitProcess(1);
-    return;
+    throw INVALID_ARGUMENT.create({
+      detail: `Unknown workflow action: ${options.action}. Supported actions: run`,
+    });
   }
 
   const workflowId = options.name;
   if (!workflowId) {
-    cliLogger.error("Workflow ID is required. Usage: veryfront workflow run <id>");
-    exitProcess(1);
-    return;
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow ID is required. Usage: veryfront workflow run <id>",
+    });
   }
 
   let input: Record<string, unknown> = {};
@@ -155,9 +155,9 @@ export async function runWorkflowCommand(
     try {
       input = JSON.parse(options.input);
     } catch {
-      cliLogger.error("Invalid --input JSON");
-      exitProcess(1);
-      return;
+      throw INVALID_ARGUMENT.create({
+        detail: "Invalid --input JSON: must be a valid JSON object",
+      });
     }
   }
 
@@ -197,7 +197,6 @@ export async function runWorkflowCommand(
 
     const workflow = workflows.find((candidate) => candidate.id === workflowId);
     if (!workflow) {
-      cliLogger.error(`Workflow "${workflowId}" not found.`);
       if (discovery.errors.length > 0 && !options.debug) {
         cliLogger.warn("Some workflow files could not be loaded:");
         const errors = discovery.errors.map(formatRuntimeDiscoveryError);
@@ -213,8 +212,7 @@ export async function runWorkflowCommand(
       } else {
         cliLogger.info("No workflows found. Create a workflow file in workflows/.");
       }
-      exitProcess(1);
-      return;
+      throw RESOURCE_NOT_FOUND.create({ detail: `Workflow "${workflowId}" not found.` });
     }
 
     await runWithProjectAgentRuntime(discovery, async () => {
@@ -231,9 +229,5 @@ export async function runWorkflowCommand(
         await client.destroy();
       }
     });
-  }).catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    cliLogger.error(message);
-    exitProcess(1);
   });
 }

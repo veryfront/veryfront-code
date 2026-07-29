@@ -28,13 +28,21 @@ export type NpmPackageMapping = {
   subPath?: string;
 };
 
+export type ExtensionEntryPoint = {
+  name: string;
+  path: string;
+};
+
+export type ExtensionPackageJson = Record<string, unknown> & {
+  name: string;
+  version: string;
+};
+
 export type ExtensionPackageSpec = {
   manifestPath: string;
   manifestDir: string;
-  entryPoints: Array<{
-    name: string;
-    path: string;
-  }>;
+  entryPoints: ExtensionEntryPoint[];
+  entryPoint: string;
   packageName: string;
   packageDirectoryName: string;
   packageJson: PackageJson;
@@ -86,6 +94,50 @@ export function manifestDependencies(
   );
 }
 
+export function normalizeExtensionEntryPoints(input: {
+  manifestPath: string;
+  manifestDir: string;
+  exports: ExtensionManifest["exports"];
+}): ExtensionEntryPoint[] {
+  if (typeof input.exports === "string") {
+    return [{
+      name: ".",
+      path: resolveExtensionExportPath({
+        manifestPath: input.manifestPath,
+        manifestDir: input.manifestDir,
+        exportName: ".",
+        exportPath: input.exports,
+      }),
+    }];
+  }
+
+  const entries = Object.entries(input.exports);
+  if (!entries.some(([name]) => name === ".")) {
+    throw new Error(
+      `${input.manifestPath} exports must include "." when using an export map`,
+    );
+  }
+
+  return entries
+    .map(([exportName, exportPath]) => {
+      validateExtensionExportName(input.manifestPath, exportName);
+      return {
+        name: exportName,
+        path: resolveExtensionExportPath({
+          manifestPath: input.manifestPath,
+          manifestDir: input.manifestDir,
+          exportName,
+          exportPath,
+        }),
+      };
+    })
+    .toSorted((left, right) => {
+      if (left.name === ".") return -1;
+      if (right.name === ".") return 1;
+      return left.name.localeCompare(right.name);
+    });
+}
+
 export function createExtensionPackageSpec(input: {
   manifestPath: string;
   manifest: ExtensionManifest;
@@ -110,15 +162,18 @@ export function createExtensionPackageSpec(input: {
   const packageDirectoryName = extensionPackageDirectoryName(packageName);
   const dependencies = manifestDependencies(input.manifest);
   const veryfrontPeerRange = `^${input.version}`;
+  const entryPoints = normalizeExtensionEntryPoints({
+    manifestPath: input.manifestPath,
+    manifestDir,
+    exports: input.manifest.exports,
+  });
 
   return {
     manifestPath: input.manifestPath,
     manifestDir,
-    entryPoints: extensionPackageEntryPoints(
-      input.manifestPath,
-      manifestDir,
-      input.manifest.exports,
-    ),
+    entryPoints,
+    entryPoint: entryPoints.find((entryPoint) => entryPoint.name === ".")!
+      .path,
     packageName,
     packageDirectoryName,
     manifestDependencies: dependencies,
@@ -210,102 +265,14 @@ export function normalizeExtensionPackageJson(input: {
   const importPath = packageImportPath(pkg);
   if (importPath) {
     pkg.types = importPath.replace(/\.js$/, ".d.ts");
-    if (pkg.exports?.["."] && typeof pkg.exports["."] === "object") {
-      pkg.exports["."].types = pkg.types;
-    }
   }
-  for (const entry of Object.values(pkg.exports ?? {})) {
-    if (
-      typeof entry === "object" &&
-      typeof entry.import === "string" &&
-      typeof entry.types !== "string"
-    ) {
-      entry.types = entry.import.replace(/\.js$/, ".d.ts");
-    }
-  }
+  addExportTypes(pkg);
   pkg.files = ["esm", "LICENSE", "NOTICE", "README.md"];
   pkg.veryfront = input.spec.packageJson.veryfront;
   delete pkg.devDependencies;
   delete pkg._generatedBy;
 
   return pkg;
-}
-
-function extensionPackageEntryPoints(
-  manifestPath: string,
-  manifestDir: string,
-  exports: ExtensionManifest["exports"],
-): ExtensionPackageSpec["entryPoints"] {
-  if (typeof exports === "string") {
-    return [{
-      name: ".",
-      path: resolveExtensionEntryTarget(
-        manifestPath,
-        manifestDir,
-        ".",
-        exports,
-      ),
-    }];
-  }
-
-  const entries = Object.entries(exports);
-  if (!entries.some(([name]) => name === ".")) {
-    throw new Error(`${manifestPath} must define a root "." export`);
-  }
-
-  return entries
-    .map(([name, target]) => {
-      if (name !== "." && !isConcreteRelativeSubpath(name)) {
-        throw new Error(
-          `${manifestPath} contains invalid package export name: ${name}`,
-        );
-      }
-      if (typeof target !== "string" || target.length === 0) {
-        throw new Error(
-          `${manifestPath} contains invalid package export target for ${name}`,
-        );
-      }
-      return {
-        name,
-        path: resolveExtensionEntryTarget(
-          manifestPath,
-          manifestDir,
-          name,
-          target,
-        ),
-      };
-    })
-    .toSorted((left, right) => {
-      if (left.name === ".") return -1;
-      if (right.name === ".") return 1;
-      return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
-    });
-}
-
-function resolveExtensionEntryTarget(
-  manifestPath: string,
-  manifestDir: string,
-  exportName: string,
-  target: string,
-): string {
-  if (!isConcreteRelativeSubpath(target)) {
-    throw new Error(
-      `${manifestPath} contains invalid package export target for ${exportName}`,
-    );
-  }
-  const resolved = normalize(join(manifestDir, target));
-  const relativeTarget = relative(manifestDir, resolved);
-  if (
-    relativeTarget.length === 0 ||
-    relativeTarget === ".." ||
-    relativeTarget.startsWith("../") ||
-    relativeTarget.startsWith("..\\")
-  ) {
-    throw new Error(
-      `${manifestPath} contains invalid package export target for ${exportName}`,
-    );
-  }
-  return resolved;
 }
 
 function isConcreteRelativeSubpath(value: string): boolean {
@@ -351,6 +318,71 @@ function hasControlCharacter(value: string): boolean {
     if (code <= 0x1f || code === 0x7f) return true;
   }
   return false;
+}
+
+function validateExtensionExportName(
+  manifestPath: string,
+  exportName: string,
+): void {
+  if (exportName === "." || isConcreteRelativeSubpath(exportName)) {
+    return;
+  }
+
+  throw new Error(
+    `${manifestPath} contains invalid package export name: ${exportName}. Export names must be "." or concrete package subpaths such as "./node".`,
+  );
+}
+
+function resolveExtensionExportPath(input: {
+  manifestPath: string;
+  manifestDir: string;
+  exportName: string;
+  exportPath: string;
+}): string {
+  if (!isConcreteRelativeSubpath(input.exportPath)) {
+    throw new Error(
+      `${input.manifestPath} contains invalid package export target for ${input.exportName}: ${input.exportPath}. Targets must be concrete local file paths such as "./src/index.ts".`,
+    );
+  }
+
+  const resolved = normalize(join(input.manifestDir, input.exportPath));
+  const relativeTarget = relative(input.manifestDir, resolved);
+  if (
+    relativeTarget.length === 0 ||
+    relativeTarget === ".." ||
+    relativeTarget.startsWith("../") ||
+    relativeTarget.startsWith("..\\")
+  ) {
+    throw new Error(
+      `${input.manifestPath} contains invalid package export target for ${input.exportName}: ${input.exportPath}. Targets must stay within the extension package.`,
+    );
+  }
+  return resolved;
+}
+
+function addExportTypes(pkg: {
+  exports?: Record<string, string | { import?: string; types?: string }>;
+}): void {
+  if (!pkg.exports) return;
+
+  for (const [exportName, exportValue] of Object.entries(pkg.exports)) {
+    if (typeof exportValue === "string") {
+      if (exportValue.endsWith(".js")) {
+        pkg.exports[exportName] = {
+          import: exportValue,
+          types: exportValue.replace(/\.js$/, ".d.ts"),
+        };
+      }
+      continue;
+    }
+
+    if (
+      typeof exportValue.import === "string" &&
+      typeof exportValue.types !== "string"
+    ) {
+      exportValue.types = exportValue.import.replace(/\.js$/, ".d.ts");
+    }
+  }
 }
 
 const BARE_IMPORT_SPECIFIER_PATTERNS = [

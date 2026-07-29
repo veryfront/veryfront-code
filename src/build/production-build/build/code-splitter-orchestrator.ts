@@ -34,11 +34,11 @@ export async function runCodeSplitting(
     compilationRoutes.set(compilationPath, route.file);
   }
   if (compilationRoutes.size === 0) {
-    logger.info("Skipping code splitting: document routes are compiled by the MDX pipeline");
+    logger.debug("Skipping code splitting: document routes are compiled by the MDX pipeline");
     return { manifest: null, chunks: 0 };
   }
 
-  logger.info("Running code splitter...");
+  logger.debug("Running code splitter...");
 
   const splitter = createCodeSplitter({
     projectDir,
@@ -54,7 +54,7 @@ export async function runCodeSplitting(
   const { entries, shared, manifest } = await splitter.split();
   const chunks = entries.size + shared.size;
 
-  logger.info(`Created ${chunks} chunks`);
+  logger.debug(`Created ${chunks} chunks`);
 
   return { manifest, chunks };
 }

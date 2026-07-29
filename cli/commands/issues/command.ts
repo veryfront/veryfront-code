@@ -19,6 +19,7 @@ import { INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "veryfront/errors";
 import { bold, muted, success } from "#cli/ui";
 
 import type { ParsedArgs } from "#cli/shared/types";
+import { printJson } from "../../shared/json-output.ts";
 import { getNumberArg, getStringArg } from "../../shared/parsed-args.ts";
 
 /** Extract a boolean value from parsed args by checking multiple keys */
@@ -101,14 +102,9 @@ function getId(args: ParsedArgs, index: number): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function printJson(value: unknown): void {
-  console.log(JSON.stringify(value, null, 2));
-}
-
 function isIssuePrefix(value: string): value is IssuePrefix {
   return ISSUE_PREFIXES.some((prefix) => prefix === value);
 }
-
 function getPrefix(prefix: string | undefined, fallback?: IssuePrefix): IssuePrefix | undefined {
   if (prefix === undefined) return fallback;
   const value = prefix.trim().toUpperCase();

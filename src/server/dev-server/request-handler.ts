@@ -42,6 +42,13 @@ interface LeasedRuntimeHandler {
 }
 
 export class RequestHandler {
+  private readonly projectDir: string;
+  private readonly adapter: RuntimeAdapter;
+  private readonly isReady: () => boolean;
+  private readonly config?: VeryfrontConfig;
+  private readonly defaultProjectSlug?: string;
+  private readonly defaultProjectId?: string;
+  private readonly localProjects?: Record<string, string>;
   private runtimeHandler?: RuntimeRequestHandler;
   private runtimeHandlerInitialization?: Promise<RuntimeRequestHandler | undefined>;
   private readonly runtimeHandlerInitializations = new Set<
@@ -56,17 +63,58 @@ export class RequestHandler {
   private readonly runtimeHandlerFactory?: RuntimeRequestHandlerFactory;
 
   constructor(
-    private projectDir: string,
-    private adapter: RuntimeAdapter,
-    private isReady: () => boolean,
-    private isDebug: () => boolean,
-    private config?: VeryfrontConfig,
-    private defaultProjectSlug?: string,
-    private defaultProjectId?: string,
-    private localProjects?: Record<string, string>,
-    dependencies: RequestHandlerDependencies = {},
+    projectDir: string,
+    adapter: RuntimeAdapter,
+    isReady: () => boolean,
+    config?: VeryfrontConfig,
+    defaultProjectSlug?: string,
+    defaultProjectId?: string,
+    localProjects?: Record<string, string>,
+    dependencies?: RequestHandlerDependencies,
+  );
+  /** @deprecated The debug callback is ignored; runtime diagnostics now read host state per request. */
+  constructor(
+    projectDir: string,
+    adapter: RuntimeAdapter,
+    isReady: () => boolean,
+    debug: () => boolean,
+    config?: VeryfrontConfig,
+    defaultProjectSlug?: string,
+    defaultProjectId?: string,
+    localProjects?: Record<string, string>,
+    dependencies?: RequestHandlerDependencies,
+  );
+  constructor(
+    projectDir: string,
+    adapter: RuntimeAdapter,
+    isReady: () => boolean,
+    configOrLegacyDebug?: VeryfrontConfig | (() => boolean),
+    configOrProjectSlug?: VeryfrontConfig | string,
+    projectSlugOrId?: string,
+    projectIdOrLocalProjects?: string | Record<string, string>,
+    localProjectsOrDependencies?: Record<string, string> | RequestHandlerDependencies,
+    legacyDependencies: RequestHandlerDependencies = {},
   ) {
-    this.runtimeHandlerFactory = dependencies.runtimeHandlerFactory;
+    this.projectDir = projectDir;
+    this.adapter = adapter;
+    this.isReady = isReady;
+
+    const usesLegacyDebugArgument = typeof configOrLegacyDebug === "function";
+    if (usesLegacyDebugArgument) {
+      this.config = configOrProjectSlug as VeryfrontConfig | undefined;
+      this.defaultProjectSlug = projectSlugOrId;
+      this.defaultProjectId = projectIdOrLocalProjects as string | undefined;
+      this.localProjects = localProjectsOrDependencies as Record<string, string> | undefined;
+      this.runtimeHandlerFactory = legacyDependencies.runtimeHandlerFactory;
+      return;
+    }
+
+    this.config = configOrLegacyDebug;
+    this.defaultProjectSlug = configOrProjectSlug as string | undefined;
+    this.defaultProjectId = projectSlugOrId;
+    this.localProjects = projectIdOrLocalProjects as Record<string, string> | undefined;
+    this.runtimeHandlerFactory = (localProjectsOrDependencies as RequestHandlerDependencies)
+      ?.runtimeHandlerFactory;
   }
 
   async handleRequest(req: Request): Promise<Response> {
@@ -271,7 +319,6 @@ export class RequestHandler {
     return createVeryfrontHandler(this.projectDir, this.adapter, {
       projectDir: this.projectDir,
       profile: "development",
-      debug: this.isDebug(),
       moduleServerUrl: "/_vf_modules",
       config: this.config,
       defaultProjectSlug: this.defaultProjectSlug,

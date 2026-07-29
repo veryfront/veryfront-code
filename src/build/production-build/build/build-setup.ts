@@ -8,10 +8,10 @@ export async function setupBuildDirectories(
   outputDir: string,
   dryRun: boolean,
 ): Promise<void> {
-  logger.info("Setting up build directories...");
+  logger.debug("Setting up build directories...");
 
   if (dryRun) {
-    logger.info("Build directories ready");
+    logger.debug("Build directories ready");
     return;
   }
 
@@ -33,5 +33,5 @@ export async function setupBuildDirectories(
     await adapter.fs.mkdir(dir, { recursive: true });
   }
 
-  logger.info("Build directories ready");
+  logger.debug("Build directories ready");
 }

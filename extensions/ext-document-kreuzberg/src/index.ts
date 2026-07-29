@@ -323,7 +323,7 @@ const extDocumentKreuzberg: ExtensionFactory = () => {
     setup(ctx) {
       const extractor = new KreuzbergDocumentExtractor({ logger: ctx.logger });
       ctx.provide("DocumentExtractor", extractor);
-      ctx.logger.info("[ext-document-kreuzberg] document extraction registered");
+      ctx.logger.debug("[ext-document-kreuzberg] document extraction registered");
     },
   };
 };

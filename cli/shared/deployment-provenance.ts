@@ -278,7 +278,11 @@ export function validatePushReceipt(
     throw new Error("The latest push targeted a different project. Run veryfront push again.");
   }
   if (receipt.branch !== expected.branch) {
-    throw new Error("The latest push targeted a different branch. Run veryfront push again.");
+    throw new Error(
+      `The latest push is for branch "${receipt.branch}", but deploy targets "${expected.branch}". ` +
+        `Run veryfront deploy --branch ${receipt.branch} to deploy the latest push, ` +
+        `or veryfront push --branch ${expected.branch} to preview ${expected.branch} first.`,
+    );
   }
   if (expected.commitSha && receipt.commitSha !== expected.commitSha.toLowerCase()) {
     throw new Error(

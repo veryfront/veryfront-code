@@ -6,6 +6,7 @@ import type { Handler, HandlerContext, HandlerResult } from "./types.ts";
 import { CONFIG_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
 import { Response as NodeFetchResponse } from "npm:node-fetch@3.3.2";
 import { Response as UndiciResponse } from "npm:undici@7.28.0";
+import { __registerLogRecordEmitter, refreshLoggerConfig } from "#veryfront/utils";
 
 function makeHandler(
   name: string,
@@ -600,6 +601,33 @@ describe("routing/registry/RouteRegistry", () => {
   });
 
   describe("execute()", () => {
+    it("reads the current debug state for every request", async () => {
+      const previousLogLevel = Deno.env.get("LOG_LEVEL");
+      const lines: string[] = [];
+      let debug = false;
+
+      Deno.env.set("LOG_LEVEL", "DEBUG");
+      refreshLoggerConfig();
+      __registerLogRecordEmitter((entry) => lines.push(entry.message));
+
+      try {
+        const registry = new RouteRegistry();
+        registry.register(makeHandler("pass", 100));
+
+        await registry.execute(makeReq(), { ...makeCtx(), debug });
+        assertEquals(lines.some((line) => line.includes("Processing GET /test")), false);
+
+        debug = true;
+        await registry.execute(makeReq(), { ...makeCtx(), debug });
+        assertEquals(lines.some((line) => line.includes("Processing GET /test")), true);
+      } finally {
+        __registerLogRecordEmitter(null);
+        if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+        else Deno.env.set("LOG_LEVEL", previousLogLevel);
+        refreshLoggerConfig();
+      }
+    });
+
     it("adds trusted project identity to the routing span attributes", () => {
       const req = makeReq();
       const url = new URL(req.url);

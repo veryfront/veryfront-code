@@ -185,6 +185,7 @@ function snapshotThrowableBoundary(error: unknown): ThrowableBoundarySnapshot {
       const status = ownDataField(error, "status");
       const title = ownDataField(error, "title");
       const suggestion = optionalOwnString(error, "suggestion");
+      const exitCode = ownDataField(error, "exitCode");
       const detail = optionalOwnString(error, "detail");
       const instance = optionalOwnString(error, "instance");
       const cause = ownDataField(error, "cause");
@@ -198,6 +199,8 @@ function snapshotThrowableBoundary(error: unknown): ThrowableBoundarySnapshot {
         numberIsFinite(status) &&
         typeof title === "string" &&
         suggestion !== MISSING_DATA_FIELD &&
+        (exitCode === MISSING_DATA_FIELD || exitCode === undefined ||
+          (typeof exitCode === "number" && numberIsFinite(exitCode))) &&
         detail !== MISSING_DATA_FIELD &&
         instance !== MISSING_DATA_FIELD
       ) {
@@ -209,6 +212,7 @@ function snapshotThrowableBoundary(error: unknown): ThrowableBoundarySnapshot {
             title: sanitizeDiagnosticText(title),
             message,
             suggestion: suggestion === undefined ? undefined : sanitizeDiagnosticText(suggestion),
+            exitCode: exitCode === MISSING_DATA_FIELD ? undefined : exitCode,
             detail: detail === undefined ? undefined : sanitizeDiagnosticText(detail),
             cause: typeof cause === "string" ? sanitizeDiagnosticText(cause) : undefined,
             instance: instance === undefined ? undefined : sanitizeDiagnosticText(instance),
@@ -258,6 +262,7 @@ export function detachThrowableForBoundary(error: unknown): Error {
       status: snapshot.status,
       title: snapshot.title,
       suggestion: snapshot.suggestion,
+      exitCode: snapshot.exitCode,
       detail: snapshot.detail,
       cause: snapshot.cause,
       instance: snapshot.instance,
@@ -354,6 +359,7 @@ function sanitizeBoundaryErrorSnapshot(
     title: sanitizeDiagnosticText(candidate.title),
     message: sanitizeDiagnosticText(candidate.message),
     suggestion: sanitizeOptionalDiagnosticText(candidate.suggestion),
+    exitCode: candidate.exitCode,
     detail: sanitizeOptionalDiagnosticText(candidate.detail),
     cause: typeof candidate.cause === "string"
       ? sanitizeDiagnosticText(candidate.cause)

@@ -2,6 +2,7 @@ import { dirname } from "@std/path";
 import { MAX_STRING_DISPLAY_LENGTH } from "#veryfront/utils/constants/index.ts";
 import { MAX_FILE_LOG_FILES } from "#veryfront/utils/config-resource-limits.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import type { LogEntry, LogLevel, LogSubscriber } from "./log-buffer.ts";
 import {
   MAX_FILE_LOG_PENDING_WRITES,
@@ -233,7 +234,7 @@ export class FileLogSubscriber {
       } catch (error) {
         this.reportFailure(
           `[FileLogSubscriber] Failed to accept a log entry for ${this.config.path}.`,
-          describeFailure(error),
+          error,
         );
       }
     };
@@ -246,8 +247,8 @@ export class FileLogSubscriber {
       );
       this.recordFailure(error);
       this.reportFailure(
-        `[FileLogSubscriber] Dropped an entry for ${this.config.path} because the write queue reached capacity.`,
-        describeFailure(error),
+        `FileLogSubscriber: dropped an entry for ${this.config.path} because the write queue reached capacity`,
+        error,
       );
       return;
     }
@@ -257,10 +258,17 @@ export class FileLogSubscriber {
       .then(() => this.writeEntry(entry))
       .catch((error) => {
         this.recordFailure(error);
-        this.reportFailure(
-          `[FileLogSubscriber] Failed writing to ${this.config.path}. File logging will continue.`,
-          describeFailure(error),
-        );
+        if (isPermissionDenied(error)) {
+          this.reportFailure(
+            `FileLogSubscriber: permission denied writing to ${this.config.path}, file logging disabled`,
+            error,
+          );
+        } else {
+          this.reportFailure(
+            `FileLogSubscriber: failed writing to ${this.config.path}, file logging will continue`,
+            error,
+          );
+        }
       })
       .finally(() => {
         this.pendingWrites--;
@@ -294,9 +302,6 @@ export class FileLogSubscriber {
       const recoveryFailure = await this.rollbackPartialRecord(file, recordStart);
       if (isPermissionDenied(err)) {
         this.permissionFailed = true;
-        this.reportFailure(
-          `[FileLogSubscriber] Permission denied writing to ${this.config.path}. File logging disabled.`,
-        );
       }
       if (recoveryFailure !== undefined) {
         throw new AggregateError(
@@ -347,18 +352,21 @@ export class FileLogSubscriber {
     }
   }
 
-  private reportFailure(message: string, detail?: string): void {
+  private reportFailure(message: string, error?: unknown): void {
     if (this.reportingFailure) return;
     this.reportingFailure = true;
     try {
-      try {
-        console.error(
-          sanitizeUrlCredentials(message),
-          detail === undefined ? undefined : sanitizeUrlCredentials(detail),
-        );
-      } catch {
-        // Diagnostics must never break the logging queue or application code.
-      }
+      const normalizedError = error === undefined
+        ? undefined
+        : error instanceof Error
+        ? error
+        : new Error(describeFailure(error));
+      serverLogger.error(
+        sanitizeUrlCredentials(message),
+        ...(normalizedError ? [{ error: normalizedError }] : []),
+      );
+    } catch {
+      // Diagnostics must never break the logging queue or application code.
     } finally {
       this.reportingFailure = false;
     }

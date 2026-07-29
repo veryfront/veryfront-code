@@ -193,9 +193,9 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
         if (
           result.agents.size === 0 && result.tools.size === 0 && shouldWarnOnEmptyAiDiscovery
         ) {
-          logger.info("Primitive discovery found 0 agents and 0 tools", logData);
+          logger.debug("Primitive discovery found 0 agents and 0 tools", logData);
         } else {
-          logger.info("Primitive discovery completed", logData);
+          logger.debug("Primitive discovery completed", logData);
         }
 
         return result;

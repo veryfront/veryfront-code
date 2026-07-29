@@ -364,7 +364,7 @@ export class ExtensionLoader {
 
         this.assertWinningContractsWereProvided(resolved, contractWinner);
 
-        this.logger.info(`Extension "${ext.name}" v${ext.version} loaded from ${resolved.source}`);
+        this.logger.debug(`Extension "${ext.name}" v${ext.version} loaded from ${resolved.source}`);
       }
     } catch (error) {
       const rollback = this.teardownAllInternal();

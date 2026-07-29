@@ -33,6 +33,13 @@ describe("commands/dev/handler", () => {
       assertEquals(result.data.open, true);
     });
 
+    it("keeps -p as a compatibility alias for --port", () => {
+      const result = parseDevArgs(parseCliArgs(["dev", "-p", "4100"]));
+
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 4100);
+    });
+
     it("supports port configuration", () => {
       const args: ParsedArgs = {
         _: ["dev"],

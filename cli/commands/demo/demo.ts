@@ -11,6 +11,7 @@ import {
   AnimatedDotMatrix,
   bold,
   brand,
+  BRAND_TRUECOLOR,
   dim,
   error,
   formatDuration,
@@ -22,7 +23,7 @@ import {
   typeCommand,
   typeLine,
 } from "#cli/ui";
-import { exitProcess, isTTY } from "#cli/utils";
+import { exitProcess, isTTY, logError } from "#cli/utils";
 import {
   createOAuthAuthorizationUrl,
   createOAuthState,
@@ -553,7 +554,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
   autoMode = auto;
 
   if (!isTTY()) {
-    console.log("Demo requires an interactive terminal.");
+    logError("Demo requires an interactive terminal.");
     return;
   }
 
@@ -563,7 +564,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
     write(CLEAR_SCREEN + MOVE_HOME);
     console.log();
 
-    const matrix = new AnimatedDotMatrix({ litColor: "\x1b[38;2;252;143;93m" });
+    const matrix = new AnimatedDotMatrix({ litColor: BRAND_TRUECOLOR });
     const textLines = [
       bold(brand("Veryfront")),
       muted(`Interactive Demo${autoMode ? " (Auto Mode)" : ""}`),

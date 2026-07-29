@@ -1,5 +1,6 @@
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { isStdoutTTY } from "#veryfront/platform/compat/process/lifecycle.ts";
+import { isTruthyEnvValue } from "../constants/env.ts";
 import { RUNTIME_VERSION } from "../version.ts";
 import {
   ANSI,
@@ -125,13 +126,15 @@ export interface Logger {
 type LoggerConfig = {
   level: LogLevel;
   format: LogFormat;
+  /** Output preset: "server" emits timestamp+tag prefix; "cli" emits 2-space indent + glyph only. */
+  preset: "cli" | "server";
 };
 
 type ConsoleLoggerOptions = {
   injectTraceContext?: boolean;
 };
 
-type LogRecordEmitter = (entry: LogEntry) => void;
+export type LogRecordEmitter = (entry: LogEntry) => void;
 
 interface LogSnapshot {
   timestamp: string;
@@ -166,7 +169,7 @@ export function getDefaultLevel(
 ): LogLevel {
   const parsedLevel = parseLogLevel(envLevel);
   if (parsedLevel !== undefined) return parsedLevel;
-  if (debugFlag === "1" || debugFlag === "true") return LogLevel.DEBUG;
+  if (isTruthyEnvValue(debugFlag)) return LogLevel.DEBUG;
   return LogLevel.INFO;
 }
 
@@ -193,17 +196,41 @@ function getDefaultFormat(
  */
 let loggerConfig: LoggerConfig | null = null;
 
-let logRecordEmitter: LogRecordEmitter | null = null;
+let legacyLogRecordEmitter: LogRecordEmitter | null = null;
+const logRecordSubscribers = new Set<LogRecordEmitter>();
 
 /**
  * Re-read logger configuration from environment variables.
  * Call after loading .env files so the logger picks up any overrides.
+ * The active preset (cli/server) is preserved across refreshes.
  */
 export function refreshLoggerConfig(): void {
   loggerConfig = {
     level: getDefaultLevel(),
     format: getDefaultFormat(),
+    preset: loggerConfig?.preset ?? "server",
   };
+}
+
+/**
+ * Switch the text output format between server-style (timestamp + tag prefix)
+ * and CLI-style (2-space indent + glyph only, no timestamp or tag). JSON output
+ * is unaffected by this setting. Call before any framework code runs in CLI
+ * entry points so framework messages render in the CLI's visual language.
+ */
+export function setLoggerPreset(preset: "cli" | "server"): void {
+  const config = resolveLoggerConfig();
+  loggerConfig = { ...config, preset };
+}
+
+/**
+ * Override the active log level without re-reading environment variables.
+ * Use when a verbosity flag (--verbose, --quiet) has been parsed and its effect
+ * needs to propagate to all loggers immediately.
+ */
+export function setLogLevel(level: LogLevel): void {
+  const config = resolveLoggerConfig();
+  loggerConfig = { ...config, level };
 }
 
 /** @internal Alias kept for tests. */
@@ -211,12 +238,21 @@ export const __resetLoggerConfigForTests = refreshLoggerConfig;
 
 /** Register a process-level structured log emitter, for example an OTel bridge. */
 export function __registerLogRecordEmitter(emitter: LogRecordEmitter | null): void {
-  logRecordEmitter = emitter;
+  legacyLogRecordEmitter = emitter;
+}
+
+/** Subscribe to process-level structured log records. Returns an unregister function. */
+export function __subscribeLogRecordEmitter(emitter: LogRecordEmitter): () => void {
+  logRecordSubscribers.add(emitter);
+  return () => {
+    logRecordSubscribers.delete(emitter);
+  };
 }
 
 /** Reset the process-level structured log emitter. Only intended for tests. */
 export function __resetLogRecordEmitterForTests(): void {
-  logRecordEmitter = null;
+  legacyLogRecordEmitter = null;
+  logRecordSubscribers.clear();
 }
 
 function resolveLoggerConfig(): LoggerConfig {
@@ -224,6 +260,7 @@ function resolveLoggerConfig(): LoggerConfig {
     loggerConfig = {
       level: getDefaultLevel(),
       format: getDefaultFormat(),
+      preset: "server",
     };
   }
   return loggerConfig;
@@ -314,6 +351,14 @@ const TAG_COLORS: Record<string, string> = {
   AGENT: ANSI.cyan,
   PROXY: ANSI.cyan,
   VERYFRONT: ANSI.cyan,
+};
+
+/** Glyphs used in CLI preset mode — deliberately different from server glyphs. */
+const CLI_LEVEL_GLYPHS: Record<LogLevelName, string> = {
+  debug: "·",
+  info: "●",
+  warn: "!",
+  error: "✗",
 };
 
 function isTty(): boolean {
@@ -615,6 +660,18 @@ class ConsoleLogger implements Logger {
 
   private formatTextLine(level: LogEntry["level"], snapshot: LogSnapshot): string {
     const enableColor = shouldUseColor();
+    const contextText = formatContextText(
+      snapshot.context,
+      snapshot.error,
+      enableColor,
+    );
+
+    const { preset } = resolveLoggerConfig();
+    if (preset === "cli") {
+      // CLI preset: no timestamp or tag — 2-space indent + glyph only.
+      const glyph = colorize(CLI_LEVEL_GLYPHS[level], LEVEL_COLORS[level], enableColor);
+      return `  ${glyph} ${snapshot.message}${contextText}`;
+    }
 
     const timestamp = colorize(
       formatTimestamp(new Date(snapshot.timestamp)),
@@ -628,20 +685,8 @@ class ConsoleLogger implements Logger {
     );
     const glyph = colorize(LEVEL_GLYPHS[level], LEVEL_COLORS[level], enableColor);
     const componentTag = snapshot.component
-      ? ` ${
-        colorize(
-          `[${snapshot.component}]`,
-          ANSI.dim,
-          enableColor,
-        )
-      }`
+      ? ` ${colorize(`[${snapshot.component}]`, ANSI.dim, enableColor)}`
       : "";
-    const contextText = formatContextText(
-      snapshot.context,
-      snapshot.error,
-      enableColor,
-    );
-
     return `${timestamp}  ${tag} ${glyph}${componentTag} ${snapshot.message}${contextText}`;
   }
 
@@ -664,9 +709,18 @@ class ConsoleLogger implements Logger {
       })()
       : this.formatTextLine(level, snapshot);
 
-    if (logRecordEmitter) {
+    const emittedEntry = entry ?? this.createEntry(level, snapshot);
+    if (legacyLogRecordEmitter) {
       try {
-        logRecordEmitter(entry ?? this.createEntry(level, snapshot));
+        legacyLogRecordEmitter(emittedEntry);
+      } catch (_) {
+        /* do not let telemetry export failures affect application logging */
+      }
+    }
+    for (const subscriber of logRecordSubscribers) {
+      if (subscriber === legacyLogRecordEmitter) continue;
+      try {
+        subscriber(emittedEntry);
       } catch (_) {
         /* do not let telemetry export failures affect application logging */
       }

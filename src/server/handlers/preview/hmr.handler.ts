@@ -77,7 +77,7 @@ export class HMRHandler extends BaseHandler {
 
   private static ensureReloadSubscription(): void {
     if (HMRHandler.reloadUnsubscribe) return;
-    logger.info("Subscribing to ReloadNotifier");
+    logger.debug("Subscribing to ReloadNotifier");
 
     HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, project) => {
       if (!HMRHandler.acceptingReloads) return;

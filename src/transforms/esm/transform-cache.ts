@@ -329,7 +329,7 @@ export async function initializeTransformCache(): Promise<boolean> {
         cacheGateway = gateway;
         cacheInitialized = true;
         lastCacheInitFailureTime = undefined;
-        logger.info("Initialized with gateway", { backend: gateway.type });
+        logger.debug("Initialized with gateway", { backend: gateway.type });
       } catch (error) {
         if (cacheLifecycleGeneration !== generation) return;
         cacheGateway = null;

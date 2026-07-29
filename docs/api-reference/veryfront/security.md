@@ -133,7 +133,7 @@ applySecurityHeaders(response.headers, false, generateNonce(), null);
 | `DEFAULT_CORS_HEADERS` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/constants.ts#L18) |
 | `DEFAULT_CORS_METHODS` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/constants.ts#L17) |
 | `DEFAULT_LIMITS` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L15) |
-| `INPUT_VALIDATION_FAILED` | HTTP request input validation failures (replaces ValidationError) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L77) |
-| `SECURITY_VIOLATION` | Path traversal / secure-fs violations (replaces SecurityError) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L68) |
+| `INPUT_VALIDATION_FAILED` | HTTP request input validation failures (replaces ValidationError) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L86) |
+| `SECURITY_VIOLATION` | Path traversal / secure-fs violations (replaces SecurityError) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L77) |
 | `SERVER_PERMISSIONS` | SERVER - CLI server (dev, production, proxy, MCP, split-mode). Also used by build and test tasks that need equivalent access. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/deno-permissions.ts#L14) |
 | `WORKFLOW_RUN_PERMISSIONS` | WORKFLOW_RUN - `ProcessRunExecutor` (RESTRICTED). Runs user-authored code - no `--allow-run`, `--allow-ffi`, or `--allow-sys`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/deno-permissions.ts#L37) |

@@ -476,13 +476,14 @@ export class RouteRegistry {
 
   execute(req: Request, ctx: HandlerContext): Promise<Response | null> {
     const url = new URL(req.url);
+    const debug = Boolean(this.config.debug || ctx.debug);
 
     return withSpan(
       "routing.registry.execute",
       async () => {
         const startTime = Date.now();
 
-        if (this.config.debug) {
+        if (debug) {
           logger.debug(`Processing ${req.method} ${url.pathname}`);
         }
 
@@ -504,7 +505,7 @@ export class RouteRegistry {
             }
 
             if (enabled && !Reflect.apply(enabled, metadata, [ctx])) {
-              if (this.config.debug) {
+              if (debug) {
                 serverLogger.debug(
                   `[RouteRegistry] Skipping disabled handler: ${name}`,
                 );
@@ -525,14 +526,14 @@ export class RouteRegistry {
             );
             const handlerTime = Date.now() - handlerStart;
 
-            if (this.config.debug && this.config.enableMetrics) {
+            if (debug && this.config.enableMetrics) {
               serverLogger.debug(
                 `[RouteRegistry] Handler ${name} took ${handlerTime}ms`,
               );
             }
 
             if (result.response !== undefined) {
-              if (this.config.debug) {
+              if (debug) {
                 serverLogger.debug(
                   `[RouteRegistry] Response from ${name} (total: ${Date.now() - startTime}ms)`,
                 );
@@ -544,7 +545,7 @@ export class RouteRegistry {
             }
 
             if (!result.continueChain) {
-              if (this.config.debug) {
+              if (debug) {
                 serverLogger.debug(
                   `[RouteRegistry] Chain stopped by ${name} without response`,
                 );
@@ -568,7 +569,7 @@ export class RouteRegistry {
           }
         }
 
-        if (this.config.debug) {
+        if (debug) {
           serverLogger.debug(
             `[RouteRegistry] No handler matched (total: ${Date.now() - startTime}ms)`,
           );

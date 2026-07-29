@@ -43,7 +43,7 @@ const result = await withSpan("load-data", async () => {
 |------|-------------|--------|
 | `addSpanEvent` | Event emitted for add span. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L70) |
 | `createChildSpan` | Create child span. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L79) |
-| `createFileLogSubscriber` | Create file log subscriber. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/file-log-subscriber.ts#L493) |
+| `createFileLogSubscriber` | Create file log subscriber. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/file-log-subscriber.ts#L501) |
 | `createOpenTelemetryServiceTracer` | Create open telemetry service tracer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/service-tracer.ts#L370) |
 | `endSpan` | End an active tracing span. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L57) |
 | `extractContext` | Context for extract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L88) |
@@ -75,7 +75,7 @@ const result = await withSpan("load-data", async () => {
 | `isTracingEnabled` | Check whether tracing is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L26) |
 | `markRequestProfilePhase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/request-profiler.ts#L204) |
 | `parseCompileError` | Error shape for parse compile. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L418) |
-| `parseMaxSize` | Parses max size. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/file-log-subscriber.ts#L40) |
+| `parseMaxSize` | Parses max size. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/file-log-subscriber.ts#L41) |
 | `profilePhase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/request-profiler.ts#L191) |
 | `profileSyncPhase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/request-profiler.ts#L211) |
 | `recordApiRequest` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/simple-metrics/metrics-recorder.ts#L307) |
@@ -119,7 +119,7 @@ const result = await withSpan("load-data", async () => {
 | Name | Description | Source |
 |------|-------------|--------|
 | `ErrorCollector` | Implement error collector. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L91) |
-| `FileLogSubscriber` | Implement file log subscriber. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/file-log-subscriber.ts#L163) |
+| `FileLogSubscriber` | Implement file log subscriber. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/file-log-subscriber.ts#L164) |
 | `LogBuffer` | Implement log buffer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L38) |
 
 ### Types
@@ -135,7 +135,7 @@ const result = await withSpan("load-data", async () => {
 | `ErrorFilter` | Public API contract for error filter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L59) |
 | `ErrorSubscriber` | Public API contract for error subscriber. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L71) |
 | `ErrorType` | Public API contract for error type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L15) |
-| `FileLogConfig` | Configuration used by file log. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/file-log-subscriber.ts#L15) |
+| `FileLogConfig` | Configuration used by file log. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/file-log-subscriber.ts#L16) |
 | `Histogram` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L155) |
 | `LogBufferFilter` | Filter options for reading buffered log entries. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L19) |
 | `LogEntry` | Entry shape for log. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L10) |
@@ -223,8 +223,8 @@ import { captureApplicationError, flushApplicationErrors, initializeSentry } fro
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `captureApplicationError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L26) |
-| `flushApplicationErrors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L44) |
+| `captureApplicationError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L27) |
+| `flushApplicationErrors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L45) |
 | `initializeSentry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L70) |
 | `initializeSentryFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L63) |
 | `resetSentryForTests` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L120) |
@@ -236,5 +236,5 @@ import { captureApplicationError, flushApplicationErrors, initializeSentry } fro
 | Name | Description | Source |
 |------|-------------|--------|
 | `ApplicationErrorContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L5) |
-| `ApplicationErrorReporter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L13) |
+| `ApplicationErrorReporter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L14) |
 | `SentryConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L17) |

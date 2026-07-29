@@ -134,7 +134,7 @@ const extBabel: ExtensionFactory = () => {
     capabilities: [],
     setup(ctx) {
       ctx.provide("CodeParser", impl);
-      ctx.logger.info("[ext-parser-babel] CodeParser registered");
+      ctx.logger.debug("[ext-parser-babel] CodeParser registered");
     },
     teardown() {
       // No resources to release.

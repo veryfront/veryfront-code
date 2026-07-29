@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { runInNewContext } from "node:vm";
 import {
   buildErrorDocsUrl,
+  detachThrowableForBoundary,
   ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS,
   ERROR_DOCS_BASE_URL,
   ERROR_DOCS_SLUG_MAX_LENGTH_CHARS,
@@ -20,6 +21,21 @@ import {
 import { VeryfrontError } from "./types.ts";
 
 describe("safe-diagnostics", () => {
+  it("preserves a registered CLI exit code when detaching a VeryfrontError", () => {
+    const source = new VeryfrontError("Invalid argument", {
+      slug: "invalid-argument",
+      category: "GENERAL",
+      status: 400,
+      title: "Invalid function argument",
+      exitCode: 2,
+    });
+
+    const detached = detachThrowableForBoundary(source) as VeryfrontError;
+
+    assert(detached !== source, "Expected a detached VeryfrontError");
+    assertEquals(detached.exitCode, 2);
+  });
+
   it("should neutralize terminal controls and line injection in one diagnostic field", () => {
     const malicious = "before\x1b]2;owned\x07\x1b[2J\nFAKE SUCCESS";
 

@@ -210,9 +210,39 @@ describe("cli/templates", () => {
     const calculator = await Deno.readTextFile(calculatorPath);
 
     assertEquals(calculator.includes("execute: async"), false);
+    assertEquals(calculator.includes("execute: ({ operation, a, b }) =>"), true);
     assertEquals(
-      calculator.includes("execute: ({ operation, a, b }) =>"),
+      calculator.includes('v.enum(["add", "subtract", "multiply", "divide", "round"])'),
       true,
+    );
+    assertEquals(
+      calculator.includes("const precision = Math.min(100, Math.max(0, Math.trunc(b)));"),
+      true,
+    );
+    assertEquals(
+      calculator.includes(
+        "const offset = Math.sign(a) * Number.EPSILON * Math.max(1, Math.abs(a));",
+      ),
+      true,
+    );
+    assertEquals(
+      calculator.includes("return { result: Number((a + offset).toFixed(precision)) };"),
+      true,
+    );
+  });
+
+  it("rounds positive and negative half cents away from zero", async () => {
+    const { default: calculator } = await import(
+      "./files/ai-agent/tools/calculator.ts"
+    );
+
+    assertEquals(
+      await calculator.execute({ operation: "round", a: 1.005, b: 2 }),
+      { result: 1.01 },
+    );
+    assertEquals(
+      await calculator.execute({ operation: "round", a: -1.005, b: 2 }),
+      { result: -1.01 },
     );
   });
 
@@ -229,21 +259,78 @@ describe("cli/templates", () => {
     const page = await Deno.readTextFile(
       new URL("./files/ai-agent/app/page.tsx", import.meta.url),
     );
+    assertEquals(agent.includes('name: "Assistant"'), true);
+    assertEquals(agent.includes('description: "Turn a rough idea into a clear next move."'), true);
+    assertEquals(
+      agent.includes("Use the calculator tool for arithmetic instead of calculating mentally."),
+      true,
+    );
     assertEquals(
       agent.includes(
-        'prompt: "Create a concise plan for building and launching a small web application."',
+        "For currency splits, make rounded shares add exactly to the total and explain any remainder.",
       ),
       true,
     );
     assertEquals(
       agent.includes(
-        '"Calculate an 18% tip on $84.50, then split the total evenly among three people."',
+        'prompt: "Turn this rough idea into a focused plan with the first three steps: "',
       ),
       true,
     );
+    assertEquals(
+      agent.includes(
+        '"Calculate an 18% tip on $84.50, split the total among three people, and explain the result briefly."',
+      ),
+      true,
+    );
+    assertEquals(agent.includes('title: "Shape an idea"'), true);
+    assertEquals(agent.includes('title: "Run the numbers"'), true);
     assertEquals(assistantEval.includes('target: "agent:assistant"'), true);
+    assertEquals(
+      assistantEval.includes(
+        '"Calculate an 18% tip on $84.50, split the total among three people, and explain the result briefly."',
+      ),
+      true,
+    );
+    assertEquals(
+      assistantEval.includes(
+        "pattern: String.raw`(?<![-\\d.\\\\])\\\\?\\$15\\.21(?![\\d.])`",
+      ),
+      true,
+    );
     assertEquals(assistantEval.includes('metrics.agent.calledTool("calculator").gate()'), true);
     assertEquals(assistantEval.includes("metrics.agent.noFailedTools().gate()"), true);
+    assertEquals(
+      assistantEval.includes(
+        "pattern: String.raw`(?<![-\\d.\\\\])\\\\?\\$33\\.24(?![\\d.])`",
+      ),
+      true,
+    );
+    assertEquals(
+      assistantEval.includes(
+        "pattern: String.raw`(?<![-\\d.\\\\])\\\\?\\$33\\.23(?![\\d.])`",
+      ),
+      true,
+    );
+    assertEquals(assistantEval.includes("metrics.answer.contains("), false);
+    const moneyPattern = new RegExp(String.raw`(?<![-\d.\\])\\?\$15\.21(?![\d.])`);
+    for (const valid of ["$15.21", String.raw`\$15.21`, "($15.21)", "**$15.21**"]) {
+      assertEquals(moneyPattern.test(valid), true);
+    }
+    for (
+      const invalid of [
+        "-15.21",
+        "-$15.21",
+        String.raw`-\$15.21`,
+        "115.21",
+        "$15.210",
+        "$15.21.0",
+      ]
+    ) {
+      assertEquals(moneyPattern.test(invalid), false);
+    }
+    assertEquals(assistantEval.includes("judge: judges.llm.rubric()"), true);
+    assertEquals(assistantEval.includes("metrics.judge.rubric({"), true);
     assertEquals(layout.includes("className="), false);
     assertEquals(layout.includes("bg-white"), false);
     assertEquals(layout.includes("dark:bg-neutral-900"), false);

@@ -1,5 +1,6 @@
 import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
+import { createDntExtensionEntryPoints } from "./build-npm-extension-packages.ts";
 import {
   bareImportPackageNames,
   createExtensionPackageSpec,
@@ -7,6 +8,7 @@ import {
   type ExtensionManifest,
   firstPartyExtensionManifestPaths,
   manifestDependencies,
+  normalizeExtensionEntryPoints,
   normalizeExtensionPackageJson,
 } from "./npm-extension-package-metadata.ts";
 
@@ -71,6 +73,18 @@ describe("manifestDependencies", () => {
       "@kreuzberg/wasm": "4.5.2",
     });
   });
+
+  it("publishes the Tailwind extension's runtime dependency", async () => {
+    const manifest = JSON.parse(
+      await Deno.readTextFile(
+        new URL("../../extensions/ext-css-tailwind/deno.json", import.meta.url),
+      ),
+    ) as ExtensionManifest;
+
+    const dependencies = manifestDependencies(manifest);
+    assertEquals(Object.keys(dependencies), ["tailwindcss"]);
+    assertEquals(typeof dependencies.tailwindcss, "string");
+  });
 });
 
 describe("createExtensionPackageSpec", () => {
@@ -102,10 +116,16 @@ describe("createExtensionPackageSpec", () => {
 
     assertEquals(spec.packageName, "@veryfront/ext-sandbox-shell-tools");
     assertEquals(spec.packageDirectoryName, "ext-sandbox-shell-tools");
-    assertEquals(spec.entryPoints, [{
-      name: ".",
-      path: "extensions/ext-sandbox-shell-tools/src/index.ts",
-    }]);
+    assertEquals(
+      spec.entryPoint,
+      "extensions/ext-sandbox-shell-tools/src/index.ts",
+    );
+    assertEquals(spec.entryPoints, [
+      {
+        name: ".",
+        path: "extensions/ext-sandbox-shell-tools/src/index.ts",
+      },
+    ]);
     assertEquals(spec.manifestDependencies, {
       "bash-tool": "1.3.16",
       "just-bash": "2.14.5",
@@ -172,6 +192,54 @@ describe("createExtensionPackageSpec", () => {
         path: "extensions/ext-parser-babel/src/parser-only.ts",
       },
     ]);
+  });
+
+  it("creates publishable package metadata from a multi-entry extension export map", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-observability-sentry",
+      exports: {
+        ".": "./src/index.ts",
+        "./node": "./src/node.ts",
+        "./deno": "./src/deno.ts",
+      },
+      veryfront: { extension: true },
+      imports: {
+        "@sentry/deno": "npm:@sentry/deno@10.68.0",
+        "@sentry/node": "npm:@sentry/node@10.68.0",
+      },
+    };
+
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-observability-sentry/deno.json",
+      manifest,
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    assertEquals(
+      spec.entryPoint,
+      "extensions/ext-observability-sentry/src/index.ts",
+    );
+    assertEquals(spec.entryPoints, [
+      {
+        name: ".",
+        path: "extensions/ext-observability-sentry/src/index.ts",
+      },
+      {
+        name: "./deno",
+        path: "extensions/ext-observability-sentry/src/deno.ts",
+      },
+      {
+        name: "./node",
+        path: "extensions/ext-observability-sentry/src/node.ts",
+      },
+    ]);
+    assertEquals(spec.manifestDependencies, {
+      "@sentry/deno": "10.68.0",
+      "@sentry/node": "10.68.0",
+    });
   });
 
   it("rejects escaping, wildcard, and ambiguous extension entry points", () => {
@@ -265,6 +333,107 @@ describe("createExtensionPackageSpec", () => {
     assertEquals(
       mappings.some((mapping) => mapping.subPath === "transforms/frontmatter"),
       false,
+    );
+  });
+});
+
+describe("normalizeExtensionEntryPoints", () => {
+  it("keeps string exports as the root package entrypoint", () => {
+    assertEquals(
+      normalizeExtensionEntryPoints({
+        manifestPath: "extensions/ext-alpha/deno.json",
+        manifestDir: "extensions/ext-alpha",
+        exports: "./src/index.ts",
+      }),
+      [{ name: ".", path: "extensions/ext-alpha/src/index.ts" }],
+    );
+  });
+
+  it("sorts root and runtime subpath entrypoints deterministically", () => {
+    assertEquals(
+      normalizeExtensionEntryPoints({
+        manifestPath: "extensions/ext-alpha/deno.json",
+        manifestDir: "extensions/ext-alpha",
+        exports: {
+          ".": "./src/index.ts",
+          "./node": "./src/node.ts",
+          "./deno": "./src/deno.ts",
+        },
+      }),
+      [
+        { name: ".", path: "extensions/ext-alpha/src/index.ts" },
+        { name: "./deno", path: "extensions/ext-alpha/src/deno.ts" },
+        { name: "./node", path: "extensions/ext-alpha/src/node.ts" },
+      ],
+    );
+  });
+
+  it("rejects unsupported export keys with a precise manifest message", () => {
+    assertThrows(
+      () =>
+        normalizeExtensionEntryPoints({
+          manifestPath: "extensions/ext-alpha/deno.json",
+          manifestDir: "extensions/ext-alpha",
+          exports: {
+            ".": "./src/index.ts",
+            "node": "./src/node.ts",
+          },
+        }),
+      Error,
+      "extensions/ext-alpha/deno.json contains invalid package export name: node",
+    );
+  });
+
+  it("rejects non-local export paths with a precise manifest message", () => {
+    assertThrows(
+      () =>
+        normalizeExtensionEntryPoints({
+          manifestPath: "extensions/ext-alpha/deno.json",
+          manifestDir: "extensions/ext-alpha",
+          exports: {
+            ".": "./src/index.ts",
+            "./node": "../shared/node.ts",
+          },
+        }),
+      Error,
+      "extensions/ext-alpha/deno.json contains invalid package export target for ./node",
+    );
+  });
+
+  it("requires export maps to include the root entrypoint", () => {
+    assertThrows(
+      () =>
+        normalizeExtensionEntryPoints({
+          manifestPath: "extensions/ext-alpha/deno.json",
+          manifestDir: "extensions/ext-alpha",
+          exports: {
+            "./node": "./src/node.ts",
+          },
+        }),
+      Error,
+      'extensions/ext-alpha/deno.json exports must include "."',
+    );
+  });
+});
+
+describe("createDntExtensionEntryPoints", () => {
+  it("builds every normalized extension entrypoint from the repository root", () => {
+    assertEquals(
+      createDntExtensionEntryPoints({
+        rootDir: "/repo",
+        spec: {
+          entryPoints: [
+            { name: ".", path: "extensions/ext-alpha/src/index.ts" },
+            { name: "./node", path: "extensions/ext-alpha/src/node.ts" },
+            { name: "./deno", path: "extensions/ext-alpha/src/deno.ts" },
+          ],
+        },
+      }),
+      [
+        { name: ".", path: "/repo/extensions/ext-alpha/src/index.ts" },
+        { name: "./node", path: "/repo/extensions/ext-alpha/src/node.ts" },
+        { name: "./deno", path: "/repo/extensions/ext-alpha/src/deno.ts" },
+      ],
     );
   });
 });
@@ -489,6 +658,58 @@ describe("normalizeExtensionPackageJson", () => {
       "./parser-only": {
         import: "./esm/extensions/ext-parser-babel/src/parser-only.js",
         types: "./esm/extensions/ext-parser-babel/src/parser-only.d.ts",
+      },
+    });
+  });
+
+  it("adds type declarations for every generated package export", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-observability-sentry",
+      exports: {
+        ".": "./src/index.ts",
+        "./node": "./src/node.ts",
+        "./deno": "./src/deno.ts",
+      },
+      veryfront: { extension: true },
+    };
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-observability-sentry/deno.json",
+      manifest,
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    const normalized = normalizeExtensionPackageJson({
+      spec,
+      version: "0.1.985",
+      packageJson: {
+        name: "@veryfront/ext-observability-sentry",
+        exports: {
+          ".": { import: "./esm/index.js" },
+          "./node": { import: "./esm/node.js" },
+          "./deno": { import: "./esm/deno.js" },
+        },
+        dependencies: {
+          veryfront: "^0.1.985",
+        },
+      },
+    });
+
+    assertEquals(normalized.types, "./esm/index.d.ts");
+    assertEquals(normalized.exports, {
+      ".": {
+        import: "./esm/index.js",
+        types: "./esm/index.d.ts",
+      },
+      "./node": {
+        import: "./esm/node.js",
+        types: "./esm/node.d.ts",
+      },
+      "./deno": {
+        import: "./esm/deno.js",
+        types: "./esm/deno.d.ts",
       },
     });
   });

@@ -48,7 +48,13 @@
       "veryfront/resource": ["./npm/esm/src/resource/index.d.ts"],
       "veryfront/schemas": ["./npm/esm/src/schemas/index.d.ts"],
       "veryfront/skill": ["./npm/esm/src/skill/index.d.ts"],
-      "veryfront/tool": ["./npm/esm/src/tool/index.d.ts"]
+      "veryfront/tool": ["./npm/esm/src/tool/index.d.ts"],
+      "veryfront/observability/sentry": [
+        "./npm/esm/src/observability/sentry.d.ts"
+      ],
+      "@veryfront/ext-observability-sentry/node": [
+        "./npm/extensions/ext-observability-sentry/esm/node.d.ts"
+      ]
     }
   },
   "include": [

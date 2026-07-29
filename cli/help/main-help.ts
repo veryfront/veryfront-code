@@ -39,14 +39,22 @@ function groupByCategory(commands: CommandHelp[]): Map<CommandCategory, CommandH
   return groups;
 }
 
-export function showMainHelp(): void {
+export function showMainHelp(showAll = false): void {
   console.log(formatHeader());
   console.log();
   console.log(`  ${bold("Usage:")} veryfront <command> [options]`);
   console.log();
 
-  const commands = Object.values(COMMANDS);
-  const maxLength = calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
+  const allCommands = Object.values(COMMANDS);
+  const commands = showAll ? allCommands : allCommands.filter((c) => !c.hidden);
+  const maxLength = calculateMaxLength(
+    commands.map((c) => {
+      const display = c.aliases && c.aliases.length > 0
+        ? `${c.name} (${c.aliases.join(", ")})`
+        : c.name;
+      return { length: display.length };
+    }),
+  );
   const grouped = groupByCategory(commands);
 
   for (const category of CATEGORY_ORDER) {
@@ -122,4 +130,9 @@ export function showMainHelp(): void {
   console.log(`    ${dim("Support:")} https://github.com/veryfront/veryfront-code/issues`);
   console.log(`    ${dim("Help:")}    veryfront <command> --help`);
   console.log();
+
+  if (!showAll && allCommands.some((c) => c.hidden)) {
+    console.log(`  ${dim("Run veryfront help --all to include internal commands")}`);
+    console.log();
+  }
 }

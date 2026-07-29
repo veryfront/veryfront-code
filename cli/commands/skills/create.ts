@@ -7,7 +7,7 @@
 import type { ParsedArgs } from "#cli/shared/types";
 import { relative } from "#std/path.ts";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
-import { logSuccess } from "#cli/utils";
+import { exitProcess, logSuccess, logUsageError } from "#cli/utils";
 import { scaffoldProjectFile } from "../../scaffold/engine.ts";
 
 const VALID_SKILL_NAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
@@ -15,15 +15,17 @@ const VALID_SKILL_NAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 export async function createSkill(args: ParsedArgs, projectDir = Deno.cwd()): Promise<void> {
   const name = args._[2] as string | undefined;
   if (!name) {
-    console.error("Usage: veryfront skills create <name>");
-    Deno.exit(1);
+    logUsageError("Usage: veryfront skills create <name>");
+    exitProcess(2);
+    return;
   }
 
   if (!VALID_SKILL_NAME.test(name)) {
-    console.error(
+    logUsageError(
       `Invalid skill name "${name}". Use lowercase letters, numbers, and hyphens (e.g. "my-skill").`,
     );
-    Deno.exit(1);
+    exitProcess(2);
+    return;
   }
 
   const result = await scaffoldProjectFile({

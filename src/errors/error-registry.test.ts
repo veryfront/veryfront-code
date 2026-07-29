@@ -29,9 +29,9 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 90 registered errors", () => {
+    it("should have 100 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 90);
+      assertEquals(slugs.length, 100);
     });
   });
 
@@ -134,6 +134,11 @@ describe("error-registry", () => {
         error.suggestion,
         "Create veryfront.config.js, veryfront.config.ts, or veryfront.config.mjs in the project root",
       );
+    });
+
+    it("registers actionable CLI precondition errors", () => {
+      assertEquals(getErrorBySlug("authentication-required")?.status, 401);
+      assertEquals(getErrorBySlug("project-source-empty")?.status, 400);
     });
 
     it("should return correct error for all slugs", () => {
@@ -317,9 +322,9 @@ describe("error-registry", () => {
       SERVER: 15,
       BOUNDARY: 7,
       DEV: 5,
-      DEPLOY: 4,
+      DEPLOY: 12,
       AGENT: 7,
-      GENERAL: 10,
+      GENERAL: 12,
     };
 
     for (

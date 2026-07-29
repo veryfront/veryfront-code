@@ -27,7 +27,7 @@ const extOpenAI: ExtensionFactory = () => {
       registeredProvider = !registry.has(provider.id);
       registry.register(provider);
       ctx.provide("LLMProvider:openai", registry.get(provider.id) ?? provider);
-      ctx.logger.info("[ext-llm-openai] OpenAI provider registered");
+      ctx.logger.debug("[ext-llm-openai] OpenAI provider registered");
     },
     teardown() {
       if (registeredProvider) registry?.unregister(provider.id);

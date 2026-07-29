@@ -337,7 +337,7 @@ export async function copyStaticAssets(
     throw error;
   }
 
-  logger.info(`Copied ${stats.assets} static assets`);
+  logger.debug(`Copied ${stats.assets} static assets`);
   return stats;
 }
 

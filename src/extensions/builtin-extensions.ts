@@ -175,7 +175,7 @@ function createBuiltinLLMProviderExtension(
           providerId,
         );
         if (didRegister) {
-          ctx.logger.info(
+          ctx.logger.debug(
             `[${definition.extensionName}] ${providerId} provider registered`,
           );
         }

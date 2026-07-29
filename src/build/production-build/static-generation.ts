@@ -354,7 +354,7 @@ export async function buildAppRoutes(
   const stats: SSGStats = { pages: 0, totalSize: 0, ssgPaths: [] };
   if (appRoutes.length === 0) return stats;
 
-  logger.info("Building App Router static pages...");
+  logger.debug("Building App Router static pages...");
   let stylesheetHref: string | undefined;
   try {
     stylesheetHref = await traceStep(

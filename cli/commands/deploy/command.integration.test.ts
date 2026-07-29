@@ -303,8 +303,10 @@ async function expectDeployReceiptError(
 
   const result = output.map((line) => JSON.parse(line)).at(-1);
   assertEquals(result.success, false);
-  assertEquals(String(result.error).includes("orphaned"), true);
-  assertEquals(String(result.error).includes(forbiddenText), false);
+  assertEquals(result.error.includes("orphaned"), true);
+  assertEquals(result.error.includes(forbiddenText), false);
+  assertEquals(result.errorDetails.message, result.error);
+  assertEquals(typeof result.errorDetails.slug, "string");
 }
 
 it("deploys production from the existing verified push without mutating source", async () => {
@@ -370,6 +372,104 @@ it("deploys production from the existing verified push without mutating source",
       }
     });
   }
+});
+
+it("promotes the latest verified push when no branch is specified", async () => {
+  for (const jsonMode of [false, true]) {
+    const projectDir = await Deno.makeTempDir();
+    await withDeployEnv(projectDir, async ({ commitSha, sourceDigest }) => {
+      await writePushReceipt(projectDir, {
+        controlPlane: "https://control.example.test/api",
+        projectId: PROJECT_ID,
+        projectSlug: "my-project",
+        branch: "feature-x",
+        commitSha,
+        sourceDigest,
+        clean: true,
+        pushedAt: "2026-07-10T09:20:00.000Z",
+      });
+
+      const requests: string[] = [];
+      const output: string[] = [];
+      const originalLog = console.log;
+      setJsonMode(jsonMode);
+      console.log = (...args: unknown[]) => {
+        output.push(args.map(String).join(" "));
+      };
+
+      try {
+        const result = await withMockFetch(
+          createDeployFetchHandler({ requests, sourceDigest }),
+          () =>
+            deployCommand({
+              projectDir,
+              env: "production",
+              dryRun: false,
+              force: false,
+              quiet: true,
+              environmentPollIntervalMs: 1,
+              environmentTimeoutMs: 1_000,
+            }),
+        );
+
+        if (jsonMode) {
+          const jsonResult = output.map((line) => JSON.parse(line)).at(-1);
+          assertEquals(jsonResult.data.branch, "feature-x");
+        } else {
+          assertEquals(result?.branch, "feature-x");
+        }
+      } finally {
+        console.log = originalLog;
+      }
+
+      assertEquals(
+        requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
+        true,
+      );
+    });
+  }
+});
+
+it("keeps an explicitly selected deploy branch strict", async () => {
+  const projectDir = await Deno.makeTempDir();
+  await withDeployEnv(projectDir, async ({ commitSha, sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "feature-x",
+      commitSha,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+
+    const requests: string[] = [];
+    await assertRejects(
+      () =>
+        withMockFetch(
+          createDeployFetchHandler({ requests, sourceDigest }),
+          () =>
+            deployCommand({
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: false,
+              force: false,
+              quiet: true,
+              environmentPollIntervalMs: 1,
+              environmentTimeoutMs: 1_000,
+            }),
+        ),
+      Error,
+      'The latest push is for branch "feature-x", but deploy targets "main".',
+    );
+
+    assertEquals(
+      requests.includes(`POST /api/projects/${PROJECT_ID}/releases`),
+      false,
+    );
+  });
 });
 
 it("fails inferred deploys with an orphaned receipt before creating remote or local state", async () => {

@@ -6,7 +6,7 @@
 
 import type { ParsedArgs } from "#cli/shared/types";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
-import { logError, logSuccess } from "#cli/utils";
+import { exitProcess, logError, logSuccess, logWarning } from "#cli/utils";
 import { basename } from "#std/path.ts";
 import { isNotFoundError } from "veryfront/fs";
 import { parseSkillFileFrontmatter, validateSkillFileMetadata } from "veryfront/skill";
@@ -65,7 +65,7 @@ async function outputResults(
         issues,
       }),
     );
-    if (hasErrors) Deno.exit(1);
+    if (hasErrors) exitProcess(1);
     return;
   }
 
@@ -78,9 +78,9 @@ async function outputResults(
     if (issue.severity === "error") {
       logError(issue.message);
     } else {
-      console.log(`  ! ${issue.message}`);
+      logWarning(issue.message);
     }
   }
 
-  if (hasErrors) Deno.exit(1);
+  if (hasErrors) exitProcess(1);
 }

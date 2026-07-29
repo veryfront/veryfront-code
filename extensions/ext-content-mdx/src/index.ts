@@ -63,7 +63,7 @@ const extMdx: ExtensionFactory = () => {
     capabilities: [],
     setup(ctx) {
       ctx.provide("ContentProcessor", impl);
-      ctx.logger.info("[ext-content-mdx] ContentProcessor registered");
+      ctx.logger.debug("[ext-content-mdx] ContentProcessor registered");
     },
     teardown() {
       // No resources to release.

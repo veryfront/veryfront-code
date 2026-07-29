@@ -63,7 +63,6 @@ describe("server/dev-server/request-handler", () => {
       "/project/a",
       {} as RuntimeAdapter,
       () => true,
-      () => false,
       undefined,
       undefined,
       "project-a",

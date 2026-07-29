@@ -6,6 +6,7 @@ import {
   createExtensionPackageSpec,
   createVeryfrontPeerTypeImportReplacements,
   type ExtensionManifest,
+  type ExtensionPackageSpec,
   firstPartyExtensionManifestPaths,
   normalizeExtensionPackageJson,
   type RootPackageConfig,
@@ -41,10 +42,10 @@ export async function buildExtensionPackages(
 
     console.log(`📦 Building ${spec.packageName}...`);
     await build({
-      entryPoints: spec.entryPoints.map((entryPoint) => ({
-        name: entryPoint.name,
-        path: `${options.rootDir}/${entryPoint.path}`,
-      })),
+      entryPoints: createDntExtensionEntryPoints({
+        rootDir: options.rootDir,
+        spec,
+      }),
       outDir,
       test: false,
       scriptModule: false,
@@ -90,7 +91,7 @@ export async function buildExtensionPackages(
         }
 
         await removeUnusedBundledRootSource(outDir);
-        await removeDntImportMapArtifacts(outDir);
+        await removeDntImportMapArtifacts(outDir, spec);
         await removeUnreferencedTopLevelDir(outDir, "react");
         await removeUnreferencedDntDeps(outDir);
 
@@ -101,6 +102,16 @@ export async function buildExtensionPackages(
       },
     });
   }
+}
+
+export function createDntExtensionEntryPoints(input: {
+  rootDir: string;
+  spec: Pick<ExtensionPackageSpec, "entryPoints">;
+}): { name: string; path: string }[] {
+  return input.spec.entryPoints.map((entryPoint) => ({
+    name: entryPoint.name,
+    path: `${input.rootDir}/${entryPoint.path}`,
+  }));
 }
 
 async function rewriteVeryfrontPeerTypeImports(input: {
@@ -137,8 +148,14 @@ async function removeUnusedBundledRootSource(outDir: string): Promise<void> {
   await Deno.remove(rootSourceDir, { recursive: true });
 }
 
-async function removeDntImportMapArtifacts(outDir: string): Promise<void> {
+async function removeDntImportMapArtifacts(
+  outDir: string,
+  spec: Pick<ExtensionPackageSpec, "entryPoints">,
+): Promise<void> {
   if (await hasGeneratedDntImportMapReferences(outDir)) return;
+  if (spec.entryPoints.some((entryPoint) => entryPoint.name === "./deno")) {
+    return;
+  }
 
   await removeIfExists(`${outDir}/esm/deno.js`);
   await removeIfExists(`${outDir}/esm/deno.d.ts`);

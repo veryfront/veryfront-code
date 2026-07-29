@@ -5,7 +5,7 @@
 
 import { cliLogger as logger, isVerbose } from "#cli/utils";
 import { brand, dim, red } from "#cli/ui";
-import { createSpinner } from "../../ui/progress.ts";
+import { createTransientSpinner } from "../../ui/progress.ts";
 import { ensureDir } from "#std/fs.ts";
 import { join } from "veryfront/platform/path";
 import { createPackageJson } from "./config-generator.ts";
@@ -367,6 +367,10 @@ type StructureNode = {
   children: Map<string, StructureNode>;
 };
 
+interface InitCommandDependencies {
+  deployProject?: (projectDir: string) => Promise<string>;
+}
+
 const STRUCTURE_ORDER = [
   "app",
   "pages",
@@ -466,7 +470,10 @@ function renderProjectStructure(
 /**
  * Initializes a new Veryfront project with the specified template
  */
-export async function initCommand(options: InitOptions): Promise<void> {
+export async function initCommand(
+  options: InitOptions,
+  dependencies: InitCommandDependencies = {},
+): Promise<void> {
   const { name, features = [], quiet = false } = options;
   const { integrations = [] } = options;
   const parentDir = options.parentDir ?? cwd();
@@ -660,8 +667,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   if (projectName) await ensureDir(projectDir);
 
-  // Create project files with progress spinner
-  const filesSpinner = quiet ? null : createSpinner("Creating project files...");
+  const filesSpinner = quiet ? null : createTransientSpinner("Creating project files...");
   const createdPaths: string[] = [];
   try {
     for (const file of templateFiles as TemplateFile[]) {
@@ -737,7 +743,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   if (!options.skipInstall) {
     const pm = await detectPackageManager(projectDir, pmPreference);
-    const installSpinner = quiet ? null : createSpinner(`Installing dependencies with ${pm}...`);
+    const installSpinner = quiet
+      ? null
+      : createTransientSpinner(`Installing dependencies with ${pm}...`);
     const installSuccess = await installDependencies(projectDir, {
       silent: true,
       packageManager: pm,
@@ -757,17 +765,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   // Initialize git if requested
   if (initGit) {
-    const gitSpinner = quiet ? null : createSpinner("Initializing git repository...");
     try {
       const { initializeGitRepo } = await import("../../utils/git.ts");
       const success = await initializeGitRepo(projectDir, projectName ?? "veryfront project");
-      if (success) {
-        gitSpinner?.success("Git repository initialized");
-      } else {
-        gitSpinner?.error("Git initialization failed");
-      }
+      if (!success && !quiet) logger.warn("Git initialization failed");
     } catch {
-      gitSpinner?.error("Git initialization failed");
+      if (!quiet) logger.warn("Git initialization failed");
     }
   }
 
@@ -775,41 +778,60 @@ export async function initCommand(options: InitOptions): Promise<void> {
   let deployedUrl: string | undefined;
   const manualDeployCommand = `${getDlxCommand(pmPreference)} veryfront deploy`;
   if (options.deploy) {
-    const { chdir } = await import("veryfront/platform");
-    const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
-    const { deployCommand } = await import("../deploy/index.ts");
     const manualDeployHint = `Run ${brand(manualDeployCommand)} to deploy later.`;
 
-    const authResult = await ensureAuthenticated();
-    if (!authResult) {
-      log(`\n  Authentication required for --deploy. ${manualDeployHint}`);
+    if (dependencies.deployProject) {
+      try {
+        deployedUrl = await dependencies.deployProject(projectDir);
+        if (!deployedUrl) {
+          throw new Error("Deploy completed without a verified result.");
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!quiet) console.log();
+        log(`  Deploy failed: ${message}`);
+        log(`  Your project was created locally. ${manualDeployHint}`);
+      }
     } else {
-      const token = await readToken();
-      if (!token) {
-        log(`\n  Could not read auth token. ${manualDeployHint}`);
+      const { chdir } = await import("veryfront/platform");
+      const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
+      const { deployCommand } = await import("../deploy/index.ts");
+      const authResult = await ensureAuthenticated();
+
+      if (!authResult) {
+        if (!quiet) console.log();
+        log(`  Authentication required for --deploy. ${manualDeployHint}`);
       } else {
-        log(`\n  Deploying project...`);
+        const token = await readToken();
+        if (!token) {
+          if (!quiet) console.log();
+          log(`  Could not read auth token. ${manualDeployHint}`);
+        } else {
+          if (!quiet) console.log();
+          log(`  Deploying project...`);
 
-        try {
-          chdir(projectDir);
+          try {
+            chdir(projectDir);
 
-          const deployment = await deployCommand({
-            projectDir,
-            branch: "main",
-            env: "production",
-            force: true,
-            dryRun: false,
-            quiet: true,
-          });
+            const deployment = await deployCommand({
+              projectDir,
+              branch: "main",
+              env: "production",
+              force: true,
+              dryRun: false,
+              quiet: true,
+            });
 
-          if (!deployment) {
-            throw new Error("Deploy completed without a verified result.");
+            if (!deployment) {
+              throw new Error("Deploy completed without a verified result.");
+            }
+            deployedUrl = deployment.url;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!quiet) console.log();
+            log(`  Deploy failed: ${message}`);
+            log(`  Your project was created locally. ${manualDeployHint}`);
           }
-          deployedUrl = deployment.url;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          log(`\n  Deploy failed: ${message}`);
-          log(`  Your project was created locally. ${manualDeployHint}`);
         }
       }
     }
@@ -834,30 +856,28 @@ export async function initCommand(options: InitOptions): Promise<void> {
   const deployCommandHint = `${getDlxCommand(pm)} veryfront deploy`;
 
   if (!quiet) {
-    console.log("");
+    console.log();
     console.log(`  ✓ ${displayName} ready`);
 
     if (isVerbose()) {
-      console.log("");
+      console.log();
       console.log("  Project structure");
       for (const line of structureLines) {
         console.log(`  ${line}`);
       }
     }
 
-    console.log("");
-    for (const step of localSteps) {
-      console.log(`  ${step}`);
+    console.log();
+    for (const [index, step] of localSteps.entries()) {
+      console.log(`  ${index === 0 ? brand(step) : step}`);
     }
 
     if (deployedUrl) {
-      console.log("");
-      console.log(
-        `  ${dim("Live:")} ${brand(deployedUrl)}`,
-      );
+      console.log();
+      console.log(`  Live: ${brand(deployedUrl)}`);
     } else {
-      console.log("");
-      console.log(`  ${dim("Deploy:")} ${brand(deployCommandHint)}`);
+      console.log();
+      console.log(`  Deploy: ${brand(deployCommandHint)}`);
     }
 
     const tips: string[] = [];
@@ -869,12 +889,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }
 
     if (tips.length) {
-      console.log("");
+      console.log();
       for (const tip of tips) {
         console.log(`  ${tip}`);
       }
     }
 
-    console.log("");
+    console.log();
   }
 }

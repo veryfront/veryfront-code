@@ -412,18 +412,20 @@ fall back to the configured knowledge tool trace. When `citations` is absent,
 citation metrics read structured `output.citations`, `output.sources`, or
 `output.references`.
 
-Use rubric judges for semantic quality. Inject the judge function from your
-project so the eval definition stays portable:
+Use rubric judges for semantic answer quality:
 
 ```ts
+import { judges, metrics } from "veryfront/eval";
+
 metrics.judge.rubric({
   rubric: "Answer must cite the correct city and avoid unsupported facts.",
-  judge: async ({ output, reference }) => {
-    const pass = output.text === reference;
-    return { score: pass ? 1 : 0, pass };
-  },
+  judge: judges.llm.rubric(),
 }).gate({ min: 0.8 });
 ```
+
+The built-in judge grades correctness, completeness, relevance, and compliance
+with the rubric against the optional reference. Pass a custom `judge` function
+instead when evaluation must use project-specific logic or a non-LLM grader.
 
 Use `answer.groundedness` when the judge should compare the final answer against
 retrieved knowledge evidence:

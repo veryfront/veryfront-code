@@ -28,7 +28,7 @@ const extAnthropic: ExtensionFactory = () => {
       registry.register(provider);
       ctx.provide("LLMProvider:anthropic", registry.get(provider.id) ?? provider);
       registryRef = registry;
-      ctx.logger.info("[ext-llm-anthropic] Anthropic provider registered");
+      ctx.logger.debug("[ext-llm-anthropic] Anthropic provider registered");
     },
     teardown() {
       if (registeredProvider) registryRef?.unregister(provider.id);

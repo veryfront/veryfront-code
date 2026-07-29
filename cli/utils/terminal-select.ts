@@ -17,6 +17,13 @@ export interface SelectOption {
 export interface PromptDisplayOptions {
   showMarker?: boolean;
   showInstructions?: boolean;
+  showDescriptions?: boolean;
+  clearOnCancel?: boolean;
+  interruptOnCtrlC?: boolean;
+}
+
+export class PromptInterruptedError extends Error {
+  override name = "PromptInterruptedError";
 }
 
 // ANSI escape codes
@@ -24,6 +31,7 @@ const CLEAR_LINE = "\x1b[2K";
 const MOVE_UP = "\x1b[1A";
 const HIDE_CURSOR = "\x1b[?25l";
 const SHOW_CURSOR = "\x1b[?25h";
+const PROMPT_INTERRUPTED = Symbol("prompt-interrupted");
 
 function clearOptions(count: number): void {
   for (let i = 0; i < count; i++) {
@@ -43,6 +51,18 @@ export function formatPrompt(
   ];
 }
 
+export function formatSelectOption(
+  option: SelectOption,
+  selected: boolean,
+  showDescription = true,
+): string {
+  const marker = selected ? brand("●") : " ";
+  const description = showDescription && option.description
+    ? muted(` - ${option.description}`)
+    : "";
+  return `  ${marker} ${option.label}${description}`;
+}
+
 /**
  * Single-select with arrow key navigation
  */
@@ -55,21 +75,22 @@ export async function select(
   let selectedIndex = defaultIndex;
   const [heading, instructions] = formatPrompt(question, display.showMarker ?? false);
 
-  console.log("");
   console.log(heading);
   if (display.showInstructions ?? true) console.log(instructions);
-  console.log("");
+  console.log();
 
   function renderOptions(): void {
     for (let i = 0; i < options.length; i++) {
       const opt = options[i];
       if (!opt) continue;
 
-      const isSelected = i === selectedIndex;
-      const prefix = isSelected ? brand("❯") : " ";
-      const label = isSelected ? brand(opt.label) : opt.label;
-      const desc = opt.description ? muted(` - ${opt.description}`) : "";
-      console.log(`  ${prefix} ${label}${desc}`);
+      console.log(
+        formatSelectOption(
+          opt,
+          i === selectedIndex,
+          display.showDescriptions ?? true,
+        ),
+      );
     }
   }
 
@@ -96,13 +117,27 @@ export async function select(
 
       if (key === "enter") return options[selectedIndex]?.value ?? null;
       if (key === "escape") return null;
+      if (key === "ctrl-c") {
+        return display.interruptOnCtrlC ? PROMPT_INTERRUPTED : null;
+      }
 
       return undefined;
     });
 
     clearOptions(options.length);
+    if (result === PROMPT_INTERRUPTED) {
+      if (display.clearOnCancel) {
+        clearOptions((display.showInstructions ?? true) ? 4 : 3);
+      }
+      throw new PromptInterruptedError();
+    }
+
     const selected = options[selectedIndex];
-    if (selected) console.log(`  ✓ ${selected.label}`);
+    if (result === null && display.clearOnCancel) {
+      clearOptions((display.showInstructions ?? true) ? 4 : 3);
+    } else if (selected) {
+      console.log(`  ✓ ${selected.label}`);
+    }
 
     return result;
   } finally {

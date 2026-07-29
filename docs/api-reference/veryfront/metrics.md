@@ -32,21 +32,21 @@ metrics.gauge("vf_eval_queue_depth", 3);
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `counter` | Add a non-negative finite value to a monotonic project counter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L595) |
-| `flushMetrics` | Attempt to flush pending direct OTLP project metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L643) |
-| `gauge` | Set the latest finite value for a project gauge series. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L627) |
-| `histogram` | Record one finite value in a project histogram. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L611) |
+| `counter` | Add a non-negative finite value to a monotonic project counter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L607) |
+| `flushMetrics` | Attempt to flush pending direct OTLP project metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L655) |
+| `gauge` | Set the latest finite value for a project gauge series. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L639) |
+| `histogram` | Record one finite value in a project histogram. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L623) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MetricAttributes` | Low-cardinality attributes attached to one metric measurement. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L58) |
-| `MetricAttributeValue` | Primitive value accepted for a metric attribute. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L48) |
-| `MetricInstrumentOptions` | Stable OpenTelemetry metadata for a metric instrument. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L67) |
+| `MetricAttributes` | Low-cardinality attributes attached to one metric measurement. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L59) |
+| `MetricAttributeValue` | Primitive value accepted for a metric attribute. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L49) |
+| `MetricInstrumentOptions` | Stable OpenTelemetry metadata for a metric instrument. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L68) |
 
 ### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `metrics` | Immutable project metric hooks and direct-export lifecycle control. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L656) |
+| `metrics` | Immutable project metric hooks and direct-export lifecycle control. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L668) |

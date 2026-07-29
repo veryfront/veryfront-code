@@ -200,7 +200,6 @@ describe("cli/shared/args", () => {
     });
 
     it("should have projectSlug spec with multiple keys", () => {
-      assertEquals(CommonArgs.projectSlug.keys.includes("project-slug"), true);
       assertEquals(CommonArgs.projectSlug.keys.includes("project"), true);
       assertEquals(CommonArgs.projectSlug.keys.includes("p"), true);
     });
@@ -262,8 +261,9 @@ describe("cli/shared/args", () => {
       assertEquals(commandFlag._, ["init", "my-project"]);
     });
 
-    it("should resolve short aliases", () => {
-      assertEquals(parseCliArgs(["-p", "9000"]).port, "9000");
+    it("should not map -p to port (global alias removed)", () => {
+      assertEquals(parseCliArgs(["-p", "9000"]).port, undefined);
+      assertEquals(parseCliArgs(["-p", "9000"]).p, "9000");
     });
 
     it("should preserve the raw short key for command-specific parsers", () => {

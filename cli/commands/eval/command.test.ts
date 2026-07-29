@@ -342,23 +342,32 @@ async function captureConsoleOutput(fn: () => Promise<unknown>): Promise<{
 }
 
 function relevantEvalHumanLines(output: { stdout: string[]; stderr: string[] }): string[] {
-  return [...output.stdout, ...output.stderr].filter((line) =>
-    line.startsWith("Eval ") ||
-    line.startsWith("Target: ") ||
-    line.startsWith("Result: ") ||
-    line.startsWith("Report directory: ") ||
-    line.startsWith("Report markdown: ") ||
-    line.startsWith("Report: ") ||
-    line.startsWith("JUnit: ") ||
-    line.startsWith("Baseline written: ") ||
-    line.startsWith("Suite report: ") ||
-    line.startsWith("Model: ") ||
-    line.startsWith("Recommendation: ") ||
-    line.startsWith("  - ") ||
-    line.startsWith("Comparison: ") ||
-    line.startsWith("Comparison markdown: ") ||
-    line.startsWith("Eval suite: ")
-  );
+  return [...output.stdout, ...output.stderr]
+    .map((line) => {
+      // Strip logger text-mode prefix before matching content.
+      // Server preset (default in tests): "HH:MM:SS  TAGNAME    G " = 23 chars (PREFIX_WIDTH).
+      // CLI preset (when entry point sets it): "  G " = 4 chars.
+      if (/^\d{2}:\d{2}:\d{2}\s{2}/.test(line)) return line.slice(23);
+      if (/^\s{2}[·●!✗]\s/.test(line)) return line.slice(4);
+      return line;
+    })
+    .filter((line) =>
+      line.startsWith("Eval ") ||
+      line.startsWith("Target: ") ||
+      line.startsWith("Result: ") ||
+      line.startsWith("Report directory: ") ||
+      line.startsWith("Report markdown: ") ||
+      line.startsWith("Report: ") ||
+      line.startsWith("JUnit: ") ||
+      line.startsWith("Baseline written: ") ||
+      line.startsWith("Suite report: ") ||
+      line.startsWith("Model: ") ||
+      line.startsWith("Recommendation: ") ||
+      line.startsWith("  - ") ||
+      line.startsWith("Comparison: ") ||
+      line.startsWith("Comparison markdown: ") ||
+      line.startsWith("Eval suite: ")
+    );
 }
 
 function parseLastJsonEnvelope(output: { stdout: string[] }): {

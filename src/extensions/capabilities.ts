@@ -197,5 +197,5 @@ export function auditCapabilities(
   if (capabilities.length === 0) return;
 
   const lines = formatCapabilities(capabilities);
-  logger.info(`Extension "${extensionName}" declares capabilities:`, ...lines);
+  logger.debug(`Extension "${extensionName}" declares capabilities:`, ...lines);
 }

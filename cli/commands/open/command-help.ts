@@ -7,7 +7,7 @@ export const openHelp: CommandHelp = {
   usage: "veryfront open [options]",
   options: [
     {
-      flag: "-p, --project-slug <slug>",
+      flag: "-p, --project <slug>",
       description: "Project slug to open (overrides inferred project)",
     },
     { flag: "--env <name>", description: "Open a specific environment URL" },
@@ -16,7 +16,7 @@ export const openHelp: CommandHelp = {
   ],
   examples: [
     "veryfront open",
-    "veryfront open -p my-project",
+    "veryfront open --project my-project",
     "veryfront open --env staging",
     "veryfront open --studio",
     "veryfront open --json",

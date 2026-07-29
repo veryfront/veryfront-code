@@ -23,7 +23,7 @@ const SCAN_ROOTS = [
 // Lower this when you remove sanitizer opt-outs. Never raise it without a very
 // good reason — a new opt-out means a leak is being suppressed rather than fixed.
 // 402 after restoring sanitizer coverage in proxy cache and renderer routing tests.
-export const SANITIZER_OPT_OUT_BASELINE = 402;
+export const SANITIZER_OPT_OUT_BASELINE = 400;
 
 const OPT_OUT_PATTERN = /sanitize(?:Resources|Ops|Exit)\s*:\s*false/g;
 

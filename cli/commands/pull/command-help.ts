@@ -4,10 +4,10 @@ export const pullHelp: CommandHelp = {
   name: "pull",
   category: "deploy",
   description: "Download project files from Veryfront remote",
-  usage: "veryfront pull [project-slug] [options]",
+  usage: "veryfront pull [project] [options]",
   options: [
     {
-      flag: "-p, --project-slug <slug>",
+      flag: "-p, --project <slug>",
       description: "Project slug to pull (overrides inferred project)",
     },
     {
@@ -50,7 +50,7 @@ export const pullHelp: CommandHelp = {
   examples: [
     "veryfront pull",
     "veryfront pull veryfront-based-38c7d03a",
-    "veryfront pull -p veryfront-based-38c7d03a --dir ./veryfront-based",
+    "veryfront pull --project veryfront-based-38c7d03a --dir ./veryfront-based",
     "veryfront pull --dir ./my-project",
     "veryfront pull --branch feature-header",
     "veryfront pull --env production",

@@ -755,6 +755,7 @@ function detachVeryfrontError(snapshot: VeryfrontErrorSnapshot): VeryfrontError 
     status: snapshot.status,
     title: snapshot.title,
     suggestion: snapshot.suggestion,
+    exitCode: snapshot.exitCode,
     detail: snapshot.detail,
     cause: snapshot.cause,
     instance: snapshot.instance,

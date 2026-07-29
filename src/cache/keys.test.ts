@@ -19,7 +19,10 @@ import {
   computeContentSourceId,
   DEFAULT_EXCLUDED_QUERY_PARAMS,
   filterQueryParams,
+  isValidCacheKey,
+  isValidCachePattern,
   parseRenderCacheKey,
+  sanitizeCacheKey,
   sanitizeQueryParamsForCacheKey,
 } from "./keys.ts";
 import {
@@ -29,6 +32,9 @@ import {
   getReadyManifestForRenderAsync,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+
+const API_CACHE_KEY_MAX_LENGTH = 512;
+const API_CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
 
 describe("cache/keys", () => {
   describe("CacheKeyPrefix", () => {
@@ -557,6 +563,115 @@ describe("cache/keys", () => {
     it("should include HubSpot tracking params", () => {
       assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("_hsenc"), true);
       assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("_hsmi"), true);
+    });
+  });
+
+  describe("sanitizeCacheKey / isValidCacheKey", () => {
+    it("recognises a well-formed structural key as valid", () => {
+      const key = "veryfront:ssr-module:proj_123:production:rel-abc:components/Button.tsx";
+      assertEquals(isValidCacheKey(key), true);
+    });
+
+    it("treats the empty string as invalid", () => {
+      assertEquals(isValidCacheKey(""), false);
+    });
+
+    it("rejects keys and patterns longer than the API limit", () => {
+      assertEquals(isValidCacheKey("a".repeat(API_CACHE_KEY_MAX_LENGTH + 1)), false);
+      assertEquals(isValidCachePattern(`prefix:${"*".repeat(API_CACHE_KEY_MAX_LENGTH)}`), false);
+    });
+
+    it("flags keys containing characters outside the allowed set", () => {
+      assertEquals(isValidCacheKey("render:proj:/blog?ref=x&y=1"), false);
+      assertEquals(isValidCacheKey("render:proj: has space"), false);
+      assertEquals(isValidCacheKey("render:café"), false);
+    });
+
+    it("returns well-formed keys unchanged (no cache churn)", async () => {
+      const key = "veryfront:ssr-module:proj_123:production:rel-abc:components/Button.tsx";
+      assertEquals(await sanitizeCacheKey(key), key);
+    });
+
+    it("treats `*` as a wildcard for patterns but not as a valid key character", () => {
+      const pattern = "render:proj_123:production:rel-abc:*";
+      // `*` is only valid in a del-pattern, never in a concrete key.
+      assertEquals(isValidCachePattern(pattern), true);
+      assertEquals(isValidCacheKey(pattern), false);
+    });
+
+    it("leaves a clean del-pattern (prefix + wildcard) unchanged", () => {
+      const pattern = "render:proj_123:production:rel-abc:*";
+      assertEquals(isValidCachePattern(pattern), true);
+    });
+
+    it("flags a del-pattern whose literal segment has invalid characters", () => {
+      // Escaping a space in the literal prefix would inject `*` wildcards into
+      // the glob, so the backend must refuse it rather than sanitize.
+      assertEquals(isValidCachePattern("render:proj bad:*"), false);
+    });
+
+    it("maps a literal `*` to a valid concrete API key", async () => {
+      const sanitized = await sanitizeCacheKey("render:proj:a*b");
+      assertEquals(isValidCacheKey(sanitized), true);
+      assertMatch(sanitized, API_CACHE_KEY_PATTERN);
+      assertEquals(sanitized.includes("render:proj:a"), false);
+    });
+
+    it("does not collide a malformed key with a marker-looking valid key", async () => {
+      assertNotEquals(await sanitizeCacheKey("a b"), await sanitizeCacheKey("a*20b"));
+    });
+
+    it("maps leaked query-string characters to a valid concrete API key", async () => {
+      const sanitized = await sanitizeCacheKey("render:proj:/blog?ref=x&y=1");
+      assertEquals(isValidCacheKey(sanitized), true);
+      assertMatch(sanitized, API_CACHE_KEY_PATTERN);
+      assertEquals(sanitized.includes("render:proj:/blog"), false);
+    });
+
+    it("does not retain secret-bearing path prefixes from malformed URLs", async () => {
+      const sanitized = await sanitizeCacheKey(
+        "https://example.com/reset/token/secret123?next=/account",
+      );
+      assertEquals(sanitized.includes("secret123"), false);
+      assertEquals(isValidCacheKey(sanitized), true);
+    });
+
+    it("maps whitespace and non-ASCII characters to a valid concrete API key", async () => {
+      const sanitized = await sanitizeCacheKey("render:café page");
+      assertEquals(isValidCacheKey(sanitized), true);
+      assertMatch(sanitized, API_CACHE_KEY_PATTERN);
+      assertEquals(sanitized.includes("render:caf"), false);
+    });
+
+    it("always returns a valid, length-bounded concrete key", async () => {
+      for (
+        const input of [
+          "",
+          "a?b=c",
+          "spaces here",
+          "emoji-🚀-key",
+          "tab\tchar",
+          "percent%20already",
+          "back\\slash",
+          'quote"key',
+          "a".repeat(API_CACHE_KEY_MAX_LENGTH + 1),
+        ]
+      ) {
+        const sanitized = await sanitizeCacheKey(input);
+        assertEquals(isValidCacheKey(sanitized), true);
+        assertMatch(sanitized, API_CACHE_KEY_PATTERN);
+        assertEquals(sanitized.length <= API_CACHE_KEY_MAX_LENGTH, true);
+      }
+    });
+
+    it("keeps the reserved fallback namespace distinct from raw valid keys", async () => {
+      const sanitized = await sanitizeCacheKey("a b");
+      assertNotEquals(await sanitizeCacheKey(sanitized), sanitized);
+    });
+
+    it("is deterministic so a get derives the same key as its set", async () => {
+      const raw = "render:proj:/blog?ref=x";
+      assertEquals(await sanitizeCacheKey(raw), await sanitizeCacheKey(raw));
     });
   });
 });

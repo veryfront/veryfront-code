@@ -12,7 +12,6 @@ import { VeryfrontError } from "./types.ts";
 import {
   buildErrorDocsUrl,
   ERROR_CONTEXT_MAX_LENGTH_CHARS,
-  ERROR_OUTPUT_MAX_LENGTH_CHARS,
   sanitizeDiagnosticText,
   snapshotErrorForLoggingBoundary,
 } from "./safe-diagnostics.ts";
@@ -66,24 +65,6 @@ function redactAndMergeContext(
   }
 }
 
-function stringifyErrorLogEntry(entry: ErrorLogEntry): string {
-  const serialized = jsonStringify(entry);
-  if (serialized.length <= ERROR_OUTPUT_MAX_LENGTH_CHARS) return serialized;
-
-  return jsonStringify(
-    {
-      level: entry.level,
-      slug: entry.slug,
-      category: entry.category,
-      title: entry.title,
-      status: entry.status,
-      docs: entry.docs,
-      timestamp: entry.timestamp,
-      context: { context_truncated: true },
-    } satisfies ErrorLogEntry,
-  );
-}
-
 /**
  * Log a VeryfrontError with structured formatting
  *
@@ -117,22 +98,29 @@ export function logError(
   };
 
   if (isProduction()) {
-    // Direct JSON output - this module owns its own structured format
-    // (slug, category, status, docs) which differs from the logger envelope.
-    console.error(stringifyErrorLogEntry(entry));
+    // Route through the canonical logger so the JSON envelope, redaction pipeline,
+    // and OTel log-record bridge all apply. Error-specific fields (slug, category,
+    // status, docs) travel as structured context.
+    serverLogger.error(entry.title, {
+      ...(safeContext ?? {}),
+      slug: entry.slug,
+      category: entry.category,
+      ...(entry.detail !== undefined ? { detail: entry.detail } : {}),
+      ...(entry.suggestion !== undefined ? { suggestion: entry.suggestion } : {}),
+      status: entry.status,
+      docs: entry.docs,
+    });
   } else {
-    // Human-readable format for development
-    serverLogger.error(`[ERROR] ${entry.slug} (${entry.category}) - ${entry.title}`);
-    if (entry.detail) {
-      serverLogger.error(`  Detail: ${entry.detail}`);
-    }
-    if (entry.suggestion) {
-      serverLogger.error(`  💡 Suggestion: ${entry.suggestion}`);
-    }
-    serverLogger.error(`  📚 Docs: ${entry.docs}`);
-    if (safeContext) {
-      serverLogger.error(`  Context: ${jsonStringify(safeContext, null, 2)}`);
-    }
+    // Single-line summary always visible at error level.
+    const summary = entry.suggestion ? `${entry.title} - ${entry.suggestion}` : entry.title;
+    serverLogger.error(summary);
+
+    // Full diagnostic detail at debug level - visible with --debug / LOG_LEVEL=DEBUG.
+    serverLogger.debug(`[${entry.slug}] ${entry.category}`, {
+      ...(entry.detail !== undefined ? { detail: entry.detail } : {}),
+      docs: entry.docs,
+      ...(safeContext ? { context: safeContext } : {}),
+    });
   }
 }
 

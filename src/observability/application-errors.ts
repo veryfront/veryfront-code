@@ -1,5 +1,5 @@
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
-import { sanitizeTelemetryText } from "./telemetry-error.ts";
+import { sanitizeTelemetryAttributes, sanitizeTelemetryText } from "./telemetry-error.ts";
 import { MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH } from "./limits.ts";
 
 export type ApplicationErrorContext = {
@@ -8,6 +8,7 @@ export type ApplicationErrorContext = {
   requestId?: string;
   spanId?: string;
   traceId?: string;
+  attributes?: Record<string, string | number | boolean>;
 };
 
 export type ApplicationErrorReporter = {
@@ -88,7 +89,11 @@ function snapshotApplicationErrorContext(
     const normalized = normalizeContextValue(value);
     if (normalized) snapshot[key] = normalized;
   }
-  return snapshot;
+  const attributes = sanitizeTelemetryAttributes(context.attributes);
+  if (attributes && Object.keys(attributes).length > 0) {
+    snapshot.attributes = Object.freeze(attributes);
+  }
+  return Object.freeze(snapshot);
 }
 
 function normalizeContextValue(value: unknown): string | null {

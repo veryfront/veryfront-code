@@ -1837,7 +1837,7 @@ const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
         ),
       );
       registeredId = factoryConfig.id;
-      ctx.logger.info(
+      ctx.logger.debug(
         `[ext-eval-report-mlflow] EvalReportExporter "${factoryConfig.id}" registered`,
       );
     },

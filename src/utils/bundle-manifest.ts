@@ -765,7 +765,7 @@ export function setBundleManifestStore(store: BundleManifestStore): void {
     throw new TypeError("Bundle manifest store invalidatePrefix must be a function when provided");
   }
   manifestStore = store;
-  logger.info("Bundle manifest store configured");
+  logger.debug("Bundle manifest store configured");
 }
 
 /** Return bundle manifest store. */

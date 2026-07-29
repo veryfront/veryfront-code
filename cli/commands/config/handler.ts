@@ -1,5 +1,4 @@
 import type { ParsedArgs } from "#cli/shared/types";
-import { cliLogger } from "#cli/utils";
 import { getEnv } from "veryfront/platform";
 import {
   ENVIRONMENT_PROJECT_REFERENCE_NAMES,
@@ -112,25 +111,27 @@ export async function handleConfigCommand(_args: ParsedArgs): Promise<void> {
     return;
   }
 
-  cliLogger.info(`\n  ${bold("Project Configuration")}\n`);
-  cliLogger.info(
+  console.log();
+  console.log(`  ${bold("Project Configuration")}`);
+  console.log();
+  console.log(
     `  ${dim("Project slug:")}  ${configData.projectSlug ?? "(not set)"}`,
   );
-  cliLogger.info(`  ${dim("Environment:")}   ${configData.nodeEnv}`);
-  cliLogger.info(
+  console.log(`  ${dim("Environment:")}   ${configData.nodeEnv}`);
+  console.log(
     `  ${dim("VF Environment:")} ${configData.veryfrontEnv ?? "(not set)"}`,
   );
-  cliLogger.info(`  ${dim("API endpoint:")}  ${configData.apiBaseUrl}`);
-  cliLogger.info(`  ${dim("Debug:")}         ${configData.debug}`);
-  cliLogger.info(`  ${dim("CI:")}            ${configData.ci}`);
-  cliLogger.info(
+  console.log(`  ${dim("API endpoint:")}  ${configData.apiBaseUrl}`);
+  console.log(`  ${dim("Debug:")}         ${configData.debug}`);
+  console.log(`  ${dim("CI:")}            ${configData.ci}`);
+  console.log(
     `  ${dim("Authenticated:")} ${configData.hasApiToken ? "yes" : "no"}`,
   );
-  cliLogger.info(
+  console.log(
     `  ${dim("Config file:")}   ${configData.configSource ?? "(none)"}`,
   );
   if (configData.envOverrides.length > 0) {
-    cliLogger.info(`  ${dim("Env overrides:")}  ${configData.envOverrides.join(", ")}`);
+    console.log(`  ${dim("Env overrides:")}  ${configData.envOverrides.join(", ")}`);
   }
-  cliLogger.info("");
+  console.log();
 }

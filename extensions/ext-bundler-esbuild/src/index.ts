@@ -34,7 +34,7 @@ const extEsbuild: ExtensionFactory = () => {
       if (!ctx.get("ModuleLexer")) {
         ctx.provide("ModuleLexer", lexer);
       }
-      ctx.logger.info("[ext-bundler-esbuild] Bundler + ModuleLexer registered");
+      ctx.logger.debug("[ext-bundler-esbuild] Bundler + ModuleLexer registered");
     },
     async teardown() {
       await bundler.stop?.();

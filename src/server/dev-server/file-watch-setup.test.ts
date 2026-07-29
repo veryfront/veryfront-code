@@ -8,11 +8,15 @@ import {
 } from "./file-watch-setup.ts";
 
 describe("shouldIgnorePath", () => {
-  it("ignores paths inside generated/output directories", () => {
+  it("ignores generated/output directory events and their contents", () => {
     expect(shouldIgnorePath("/proj/node_modules/foo/index.js")).toBe(true);
+    expect(shouldIgnorePath("/proj/node_modules")).toBe(true);
     expect(shouldIgnorePath("/proj/.git/HEAD")).toBe(true);
     expect(shouldIgnorePath("/proj/.cache/bundle.js")).toBe(true);
+    expect(shouldIgnorePath("/proj/.veryfront")).toBe(true);
     expect(shouldIgnorePath("/proj/.veryfront/manifest.json")).toBe(true);
+    expect(shouldIgnorePath(String.raw`C:\proj\.veryfront`)).toBe(true);
+    expect(shouldIgnorePath(String.raw`C:\proj\.veryfront\manifest.json`)).toBe(true);
   });
 
   it("ignores the Playwright MCP output directory (regression for #1977)", () => {
@@ -46,6 +50,8 @@ describe("shouldIgnorePath", () => {
   it("does not ignore legitimate source files", () => {
     expect(shouldIgnorePath("/proj/pages/index.tsx")).toBe(false);
     expect(shouldIgnorePath("/proj/components/Button.jsx")).toBe(false);
+    expect(shouldIgnorePath("/proj/.veryfront.config.ts")).toBe(false);
+    expect(shouldIgnorePath("/proj/my-node_modules/index.ts")).toBe(false);
     expect(shouldIgnorePath("/proj/lib/util.ts")).toBe(false);
     expect(shouldIgnorePath("/proj/styles/app.css")).toBe(false);
     expect(shouldIgnorePath("/proj/content/post.mdx")).toBe(false);

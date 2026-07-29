@@ -127,6 +127,22 @@ describe("security/http/config", () => {
     assertEquals(loader.getSecurityConfig()?.csrf, true);
   });
 
+  it("honors standalone production intent when process env is development", async () => {
+    Deno.env.set("NODE_ENV", "development");
+    const loader = new SecurityConfigLoader(
+      "/project",
+      createMockAdapter(),
+      {
+        security: {},
+      },
+      true,
+    );
+
+    await loader.ensureLoaded();
+
+    assertEquals(loader.getSecurityConfig()?.csrf, true);
+  });
+
   it("does not warn that CSRF is unconfigured when production defaults enable it", async () => {
     Deno.env.set("NODE_ENV", "production");
     const { getOutput, restore } = captureConsoleLog();
@@ -147,8 +163,27 @@ describe("security/http/config", () => {
     assertEquals(getOutput().includes("Neither CORS nor CSRF protection is configured"), false);
   });
 
+  it("does not warn for the same-origin development default", async () => {
+    Deno.env.set("NODE_ENV", "development");
+    const { getOutput, restore } = captureConsoleLog();
+    const loader = new SecurityConfigLoader(
+      "/project",
+      createMockAdapter(),
+      { security: {} },
+    );
+
+    try {
+      await loader.ensureLoaded();
+    } finally {
+      restore();
+    }
+
+    assertEquals(getOutput().includes("Neither CORS nor CSRF protection is configured"), false);
+  });
+
   it("honors explicit CSRF disablement in production", async () => {
     Deno.env.set("NODE_ENV", "production");
+    const { getOutput, restore } = captureConsoleLog();
     const loader = new SecurityConfigLoader(
       "/project",
       createMockAdapter(),
@@ -157,9 +192,14 @@ describe("security/http/config", () => {
       },
     );
 
-    await loader.ensureLoaded();
+    try {
+      await loader.ensureLoaded();
+    } finally {
+      restore();
+    }
 
     assertEquals(loader.getSecurityConfig()?.csrf, false);
+    assertEquals(getOutput().includes("Neither CORS nor CSRF protection is configured"), true);
   });
 
   it("derives a deep-frozen request-owned security context without mutating config", () => {

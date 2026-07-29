@@ -550,6 +550,21 @@ describe("veryfront-error", () => {
   });
 
   describe("snapshotErrorAsError", () => {
+    it("preserves a registered CLI exit code on the detached snapshot", () => {
+      const source = new VeryfrontError("Invalid argument", {
+        slug: "invalid-argument",
+        category: "GENERAL",
+        status: 400,
+        title: "Invalid function argument",
+        exitCode: 2,
+      });
+
+      const result = snapshotErrorAsError(source) as VeryfrontError;
+
+      assert(result !== source, "Expected a detached VeryfrontError");
+      assertEquals(result.exitCode, 2);
+    });
+
     it("should treat Error proxies as opaque without reading fields", () => {
       let nameReads = 0;
       const hostile = new Proxy(new Error("retry"), {

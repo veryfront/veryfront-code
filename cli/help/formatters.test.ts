@@ -14,7 +14,7 @@ import {
 } from "./formatters.ts";
 import type { CommandHelp, CommandOption } from "./types.ts";
 import { VERSION } from "#cli/utils";
-import { setTestColorLevel } from "../ui/colors.ts";
+import { BRAND_TRUECOLOR, setTestColorLevel } from "../ui/colors.ts";
 
 describe("cli/help/formatters", () => {
   describe("formatUsage", () => {
@@ -102,7 +102,18 @@ describe("cli/help/formatters", () => {
     it("uses a compact product and version line without decorative art", () => {
       setTestColorLevel("none");
 
-      assertEquals(formatHeader(), `Veryfront ${VERSION}`);
+      assertEquals(formatHeader(), `Veryfront (v${VERSION})`);
+
+      setTestColorLevel(null);
+    });
+
+    it("keeps the product in the terminal foreground and dims the parenthesized version", () => {
+      setTestColorLevel("truecolor");
+
+      const header = formatHeader();
+      assertEquals(header.includes("\x1b[1mVeryfront\x1b[0m"), true);
+      assertEquals(header.includes(`\x1b[2m(v${VERSION})\x1b[0m`), true);
+      assertEquals(header.includes(BRAND_TRUECOLOR), false);
 
       setTestColorLevel(null);
     });

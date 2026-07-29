@@ -44,6 +44,8 @@ export interface ErrorDefinition {
   status: number;
   title: string;
   suggestion?: string;
+  /** Process exit code to use when this error reaches the CLI boundary (e.g. 2 for usage errors). */
+  exitCode?: number;
 }
 
 /**
@@ -69,6 +71,7 @@ export interface RegisteredError {
   readonly status: number;
   readonly title: string;
   readonly suggestion?: string;
+  readonly exitCode?: number;
   readonly create: (options?: ErrorCreateOptions) => VeryfrontError;
 }
 
@@ -108,6 +111,7 @@ export function defineError(definition: ErrorDefinition): RegisteredError {
         status,
         title: snapshot.title,
         suggestion: snapshot.suggestion,
+        exitCode: snapshot.exitCode,
         detail,
         cause,
         instance,
@@ -128,6 +132,8 @@ export interface VeryfrontErrorOptions extends ErrorCreateOptions {
   status: number;
   title: string;
   suggestion?: string;
+  /** Process exit code to use at the CLI boundary. */
+  exitCode?: number;
 }
 
 /** Data-only snapshot used at logging, HTTP, CLI, and telemetry boundaries. */
@@ -138,6 +144,7 @@ export interface VeryfrontErrorSnapshot {
   readonly title: string;
   readonly message: string;
   readonly suggestion?: string;
+  readonly exitCode?: number;
   readonly detail?: string;
   readonly cause?: unknown;
   readonly instance?: string;
@@ -158,6 +165,8 @@ export class VeryfrontError extends Error {
   override cause?: unknown;
   instance?: string;
   context?: unknown;
+  /** Process exit code for the CLI boundary (e.g. 2 for usage errors). */
+  exitCode?: number;
 
   constructor(message: string, options: VeryfrontErrorOptions) {
     super(message);
@@ -169,6 +178,7 @@ export class VeryfrontError extends Error {
     this.status = options.status;
     this.title = options.title;
     this.suggestion = options.suggestion;
+    this.exitCode = options.exitCode;
     this.detail = options.detail;
     this.cause = options.cause;
     this.instance = options.instance;
@@ -260,6 +270,7 @@ export function snapshotKnownVeryfrontError(
     const title = dataValue("title");
     const message = dataValue("message");
     const suggestion = dataValue("suggestion");
+    const exitCode = dataValue("exitCode");
     const detail = dataValue("detail");
     const cause = dataValue("cause");
     const instance = dataValue("instance");
@@ -274,6 +285,8 @@ export function snapshotKnownVeryfrontError(
       typeof title !== "string" ||
       typeof message !== "string" ||
       (suggestion !== undefined && typeof suggestion !== "string") ||
+      (exitCode !== undefined &&
+        (typeof exitCode !== "number" || !numberIsFinite(exitCode))) ||
       (detail !== undefined && typeof detail !== "string") ||
       (instance !== undefined && typeof instance !== "string") ||
       (stack !== undefined && typeof stack !== "string")
@@ -288,6 +301,7 @@ export function snapshotKnownVeryfrontError(
       title,
       message,
       suggestion,
+      exitCode,
       detail,
       cause,
       instance,

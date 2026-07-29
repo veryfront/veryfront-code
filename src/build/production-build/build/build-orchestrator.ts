@@ -60,7 +60,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
         });
       }
 
-      logger.info("Starting production build", options);
+      logger.debug("Starting production build", options);
 
       const context = await withSpan(
         "build.initializeContext",

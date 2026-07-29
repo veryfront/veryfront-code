@@ -25,7 +25,8 @@ import {
   enableSSRFetchInterception,
   setSSRServerPort,
 } from "#veryfront/rendering/ssr-globals.ts";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { deleteEnv, getEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
 import { isDiskCacheConfigured } from "#veryfront/cache/backend.ts";
@@ -107,7 +108,7 @@ export class DevServer {
   }
 
   private isDebug(): boolean {
-    return this.adapter?.env.get("VERYFRONT_DEBUG") === "1";
+    return isTruthyEnvValue(getHostEnv("VERYFRONT_DEBUG"));
   }
 
   /** Actual bound port, or the configured port in handler-only mode. */
@@ -280,7 +281,6 @@ export class DevServer {
         this.options.projectDir,
         this.adapter,
         () => this._isReady,
-        () => this.isDebug(),
         this.appConfig,
         defaultProjectSlug,
         this.options.defaultProjectId,
@@ -326,7 +326,7 @@ export class DevServer {
         onListen: ({ port }: { hostname: string; port: number }) => {
           this.installRuntimePort(port);
           const url = buildLocalhostUrl(port);
-          logger.info(`Dev server running at ${url}`);
+          logger.debug(`Dev server running at ${url}`);
 
           try {
             // _isReady must be set inside onListen — the server is only truly ready
@@ -496,7 +496,7 @@ export class DevServer {
     try {
       const config = this.buildDiscoveryConfig();
       const result = await replaceDiscoveredProjectPrimitives(config);
-      logger.info(
+      logger.debug(
         `[HMR] Re-discovered: ${result.tools.size} tools, ${result.agents.size} agents, ` +
           `${result.skills.size} skills, ${result.workflows.size} workflows, ` +
           `${result.prompts.size} prompts, ${result.resources.size} resources`,
@@ -568,7 +568,7 @@ export class DevServer {
   }
 
   private async stopInternal(): Promise<void> {
-    logger.info("Shutting down dev server...");
+    logger.debug("Shutting down dev server");
 
     this._isReady = false;
     this.rejectReady(new Error("Dev server stopped before becoming ready"));

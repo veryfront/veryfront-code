@@ -10,6 +10,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
+import { stripAnsi } from "../../ui/ansi.ts";
 import { initCommand } from "./init-command.ts";
 import type { InitOptions, InitTemplate } from "./types.ts";
 import { EXPERIMENTAL_INTEGRATIONS_ENV } from "../../../src/integrations/feature-flags.ts";
@@ -237,6 +238,42 @@ describe("InitCommand Types", () => {
         );
         assertEquals(await exists(join(parentDir, name)), false);
       } finally {
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("prints the verified URL returned by the composed deployment", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-deploy-" });
+      const name = `deployed-target-${crypto.randomUUID()}`;
+      const deployedUrl = "https://verified.example.test/app/dashboard";
+      const output: string[] = [];
+      const originalLog = console.log;
+
+      try {
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+
+        await initCommand(
+          {
+            name,
+            parentDir,
+            template: "minimal",
+            skipInstall: true,
+            skipEnvPrompt: true,
+            deploy: true,
+          },
+          {
+            deployProject: (projectDir) => {
+              assertEquals(projectDir, join(parentDir, name));
+              return Promise.resolve(deployedUrl);
+            },
+          },
+        );
+
+        const expectedLiveLine = `  Live: ${deployedUrl}`;
+        const liveLine = output.map(stripAnsi).find((line) => line === expectedLiveLine);
+        assertEquals(liveLine, expectedLiveLine);
+      } finally {
+        console.log = originalLog;
         await remove(parentDir, { recursive: true }).catch(() => {});
       }
     });

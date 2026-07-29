@@ -34,7 +34,7 @@ export async function performCleanup(renderer: VeryfrontRenderer): Promise<void>
 }
 
 export function logBuildCompletion(stats: BuildStats): void {
-  logger.info("Build complete!", {
+  logger.debug("Build complete!", {
     pages: stats.pages,
     chunks: stats.chunks,
     assets: stats.assets,

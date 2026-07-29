@@ -9,7 +9,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module cache/backend.test
  */
 
-import { assertEquals, assertExists, assertRejects, assertThrows } from "#std/assert";
+import { assertEquals, assertExists, assertMatch, assertRejects, assertThrows } from "#std/assert";
 import {
   _resetShimForTests,
   type AttributeValue,
@@ -26,6 +26,10 @@ import {
 import { runWithVerifiedCacheApiCredential } from "./verified-api-credential-context.ts";
 import { MAX_CACHE_TTL_SECONDS } from "./backends/ttl.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { buildQueryAwareCacheKey, isValidCacheKey } from "./keys.ts";
+
+const API_CACHE_KEY_MAX_LENGTH = 512;
+const API_CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
 
 type RecordedSpan = {
   name: string;
@@ -1008,6 +1012,161 @@ Deno.test("ApiCacheBackend uses custom keyPrefix", async () => {
   const cache = new ApiCacheBackend({ keyPrefix: "custom-prefix" });
   assertExists(cache);
   assertEquals(cache.type, "api");
+});
+
+Deno.test("ApiCacheBackend safely maps query-aware keys without logging key-derived data", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const requests: Array<{ url: string; body: Record<string, unknown> | null }> = [];
+  const warnings: string[] = [];
+
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    requests.push({
+      url,
+      body: init?.body ? JSON.parse(String(init.body)) : null,
+    });
+    const response = url.includes("/get-batch")
+      ? { values: {} }
+      : url.includes("/get?")
+      ? { value: null }
+      : {};
+    return Promise.resolve(
+      new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  }) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      keyPrefix: "prefix",
+      circuitBreakerName: "api-cache-malformed-key-test",
+    });
+    const rawKey = buildQueryAwareCacheKey(
+      "/reset/token/secret123",
+      new URL(
+        "https://example.test/reset/token/secret123?access_token=secret%20value",
+      ),
+      { policy: "include-all" },
+    );
+    assertEquals(rawKey.includes("*"), true);
+
+    await runWithRequestContext(
+      {
+        token: "request-token",
+        projectSlug: "project-slug",
+        tokenProvenance: "project-bound",
+      },
+      async () => {
+        await cache.get(rawKey);
+        await cache.getBatch([rawKey]);
+        await cache.set(rawKey, "value");
+        await cache.setBatch([{ key: rawKey, value: "value" }]);
+        await cache.del(rawKey);
+      },
+    );
+
+    const [getRequest, getBatchRequest, setRequest, setBatchRequest, delRequest] = requests;
+    assertExists(getRequest);
+    assertExists(getBatchRequest);
+    assertExists(setRequest);
+    assertExists(setBatchRequest);
+    assertExists(delRequest);
+    const getBatchKeys = getBatchRequest.body?.keys as string[];
+    const setBatchEntries = setBatchRequest.body?.entries as Array<{ key: string }>;
+    assertExists(getBatchKeys[0]);
+    assertExists(setBatchEntries[0]);
+    const outboundKeys = [
+      new URL(getRequest.url).searchParams.get("key"),
+      getBatchKeys[0],
+      setRequest.body?.key,
+      setBatchEntries[0].key,
+      delRequest.body?.key,
+    ];
+    assertEquals(outboundKeys.length, 5);
+    for (const key of outboundKeys) {
+      assertEquals(typeof key, "string");
+      assertEquals(isValidCacheKey(key as string), true);
+      assertMatch(key as string, API_CACHE_KEY_PATTERN);
+      assertEquals((key as string).length <= API_CACHE_KEY_MAX_LENGTH, true);
+      assertEquals((key as string).includes("access_token"), false);
+      assertEquals((key as string).includes("secret123"), false);
+      assertEquals((key as string).startsWith("prefix:vf-sanitized:"), true);
+    }
+    assertEquals(new Set(outboundKeys).size, 1);
+    const warningOutput = warnings.join("\n");
+    assertEquals(warningOutput.includes("originalLength"), true);
+    assertEquals(warningOutput.includes("keyHash"), false);
+    assertEquals(warningOutput.includes("access_token"), false);
+    assertEquals(warningOutput.includes("secret123"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+});
+
+Deno.test("ApiCacheBackend bounds long keys and refuses malformed delete patterns", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; body: Record<string, unknown> | null }> = [];
+
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      body: init?.body ? JSON.parse(String(init.body)) : null,
+    });
+    return Promise.resolve(
+      new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  }) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      keyPrefix: "prefix",
+      circuitBreakerName: "api-cache-long-key-test",
+    });
+
+    await runWithRequestContext(
+      {
+        token: "request-token",
+        projectSlug: "project-slug",
+        tokenProvenance: "project-bound",
+      },
+      async () => {
+        const overlongKey = `secret-path-token-${"a".repeat(API_CACHE_KEY_MAX_LENGTH)}`;
+        await cache.set(overlongKey, "value");
+        assertEquals(requests.length, 1);
+        const setRequest = requests[0];
+        assertExists(setRequest);
+        const outboundKey = setRequest.body?.key as string;
+        assertEquals(isValidCacheKey(outboundKey), true);
+        assertMatch(outboundKey, API_CACHE_KEY_PATTERN);
+        assertEquals(outboundKey.length <= API_CACHE_KEY_MAX_LENGTH, true);
+        assertEquals(outboundKey.includes("secret-path-token"), false);
+
+        const deleted = await cache.delByPattern("render:bad pattern:*");
+        assertEquals(deleted, 0);
+        assertEquals(requests.length, 1);
+
+        const overlongPattern = `render:${"*".repeat(API_CACHE_KEY_MAX_LENGTH)}`;
+        assertEquals(await cache.delByPattern(overlongPattern), 0);
+        assertEquals(requests.length, 1);
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from span URLs", async () => {

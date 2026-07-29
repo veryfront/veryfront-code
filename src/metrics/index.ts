@@ -26,13 +26,14 @@ import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { isProjectEnvActive } from "#veryfront/server/project-env/storage.ts";
 import { getMetricsApiRevision } from "#veryfront/observability/tracing/api-shim.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import {
   type DirectMetricInstrumentOptions,
   type DirectMetricKind,
   type DirectMetricsTarget,
   type DirectMetricTemporality,
 } from "./direct-exporter.ts";
-import { logDirectExportFailure, logMetricFailure } from "./diagnostics.ts";
+import { logMetricFailure } from "./diagnostics.ts";
 import {
   type LocalGaugeSample,
   type LocalGaugeState,
@@ -498,6 +499,17 @@ function runMetricOperation(operation: () => void): void {
     operation();
   } catch (error) {
     logMetricFailure("provider operation failed", error);
+  }
+}
+
+function logDirectExportFailure(message: string, error?: unknown): void {
+  try {
+    serverLogger.debug(
+      `metrics: direct OTLP export failed: ${message}`,
+      error instanceof Error ? error : { reason: String(error) },
+    );
+  } catch {
+    // Telemetry diagnostics must never affect application execution.
   }
 }
 

@@ -59,7 +59,9 @@ export const parseServeArgs: typeof parseServeArgsBase = (args) => {
 
 export async function handleServeCommand(args: ParsedArgs): Promise<void> {
   const opts = parseArgsOrThrow(parseServeArgs, "serve", args);
-  await ensureCliBundlerContracts();
+  if (opts.split || opts.mode === "proxy") {
+    await ensureCliBundlerContracts();
+  }
   const { serveCommand } = await import("./command.ts");
   await serveCommand({
     mode: opts.mode as "production" | "proxy" | "combined",

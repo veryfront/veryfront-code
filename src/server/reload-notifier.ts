@@ -60,7 +60,7 @@ class ReloadNotifierImpl {
 
     const projectInfo = normalizeProjectInfo(project);
 
-    logger.info("triggerReload called", {
+    logger.debug("triggerReload called", {
       invalidateListeners: this.invalidateListeners.size,
       reloadListeners: this.listeners.size,
       changedPaths,
