@@ -268,6 +268,10 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     parentRunId: "run-1",
     parentMessageId: "message-1",
     availableSkillIds: ["debug"],
+    skillSelectorPolicy: {
+      kind: "all-visible",
+      source: "omitted",
+    },
     publishParentRunEvents: result.creationOptions.publishParentRunEvents,
     clientProfile: null,
     liveProjectSteering: {
@@ -277,6 +281,10 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
         thinking: { enabled: true, budgetTokens: 1000 },
         maxSteps: 50,
         tools: ["get_agent", "load_skill", "update_agent"],
+      },
+      skillSelectorPolicy: {
+        kind: "all-visible",
+        source: "omitted",
       },
       environmentContext: "Browser workspace",
       initialProjectInstructions: "Project instructions",
@@ -1269,9 +1277,12 @@ Deno.test("prepareHostedChatRuntimeCreationOptions applies the skill selector an
   });
 
   const advertised = ["researcher--cite"];
-  const loadable = ["global-howto", "researcher--cite"];
   assertEquals(seenByInstructions, [advertised]);
-  assertEquals(result.creationOptions.availableSkillIds, loadable);
+  assertEquals(result.creationOptions.availableSkillIds, advertised);
+  assertEquals(result.creationOptions.skillSelectorPolicy, {
+    kind: "allowlist",
+    entries: ["cite"],
+  });
   assertEquals(result.creationOptions.skillSourcePaths, {
     "researcher--cite": "agents/researcher/skills/cite/SKILL.md",
   });
@@ -1284,7 +1295,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions applies the skill selector an
   assertEquals(result.steering.skills.map((skill) => skill.id), advertised);
 });
 
-Deno.test("prepareHostedChatRuntimeCreationOptions keeps the loader but advertises no skills for an empty selector", async () => {
+Deno.test("prepareHostedChatRuntimeCreationOptions uses the exact selector snapshot for an empty selector", async () => {
   const result = await prepareHostedChatRuntimeCreationOptions({
     request: createParsedHostedChatRequest({}),
     agentConfig: { id: "researcher", model: "configured-model", skills: [] },
@@ -1306,7 +1317,8 @@ Deno.test("prepareHostedChatRuntimeCreationOptions keeps the loader but advertis
     buildInstructions: (input) => [{ role: "system", content: `${input.skills.length}` }],
   });
 
-  assertEquals(result.creationOptions.availableSkillIds, ["global-howto"]);
+  assertEquals(result.creationOptions.availableSkillIds, []);
+  assertEquals(result.creationOptions.skillSelectorPolicy, { kind: "none" });
   assertEquals(result.creationOptions.instructions, [{ role: "system", content: "0" }]);
   assertEquals(result.steering.skills, []);
 });

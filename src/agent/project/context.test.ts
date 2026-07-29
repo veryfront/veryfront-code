@@ -11,6 +11,7 @@ Deno.test("applyAgentProjectContextChange updates project and resets branch and 
     projectId: "project-1",
     branchId: "branch-1",
     availableSkillIds: ["skill-a"],
+    skillSelectorPolicy: { kind: "allowlist", entries: ["skill-a"] },
     skillSourcePaths: { "skill-a": "skills/skill-a/SKILL.md" },
     steeringRevision: 3,
   };
@@ -24,6 +25,7 @@ Deno.test("applyAgentProjectContextChange updates project and resets branch and 
     runtimeTargetKind: "main_branch",
     runtimeTargetEnvironmentId: null,
     availableSkillIds: undefined,
+    skillSelectorPolicy: { kind: "allowlist", entries: ["skill-a"] },
     skillSourcePaths: undefined,
     steeringRevision: 3,
   });

@@ -222,15 +222,15 @@ export interface AgentConfig {
    */
   onToolResult?: ToolExecutionResultHandler;
   /**
-   * Select the skills advertised in this agent's system prompt.
+   * Select visible skill IDs or this agent's own skill short names advertised
+   * in this agent's system prompt and authorized for `load_skill`.
    * - omitted or true: include every discovered skill visible to this agent
-   * - string[] or false: include only the listed skill IDs; use [] or false to advertise none
+   * - string[]: include and authorize only listed visible skill IDs or this
+   *   agent's own skill short names
+   * - [] or false: advertise no skills and do not authorize project or
+   *   configured skills for `load_skill`
    *
-   * This selects the prompt catalog only. It does not restrict which
-   * owner-visible skills `load_skill` can resolve by id.
-   *
-   * Discovery happens at startup via discoverAll(). `load_skill` remains
-   * available to every agent regardless of this catalog selection.
+   * Discovery happens at startup via discoverAll().
    */
   skills?: true | false | string[];
   /**

@@ -1848,7 +1848,7 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     allowedModels:
       'Restrict runtime model overrides to these "provider/model" strings',
     skills:
-      "Enable all discovered skills (`true`) or only selected skill IDs (`string[]`)",
+      "Select visible skill IDs or this agent's own short names for prompts and `load_skill`",
   },
   SandboxOptions: {
     apiUrl:

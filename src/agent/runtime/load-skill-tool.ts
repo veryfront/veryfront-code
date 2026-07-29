@@ -27,6 +27,7 @@ import {
   type RuntimeLoadedSkillResponseMessages,
   type RuntimeSkillMetadataLogger,
 } from "./skill-metadata.ts";
+import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
 import { narrowPolicyAfterSubmittedForm } from "./skill-policy-enforcement.ts";
 
 /** Legacy continuation-note fallback used when runtime tool inventory is unavailable. */
@@ -109,6 +110,7 @@ export type RuntimeLoadSkillToolContext = RuntimeProjectSkillContext & {
   /** Agent identity used to enforce owner-scoped skill visibility. */
   agentId?: string;
   availableSkillIds?: readonly string[];
+  skillSelectorPolicy?: ResolvedSkillSelectorPolicy;
   availableToolNames?: readonly string[];
   loadedSkillResponses?: Record<string, RuntimeLoadedSkillResponse>;
   loadedSkillReferenceResponses?: Record<string, RuntimeLoadSkillReferenceFileOutput>;
@@ -254,10 +256,7 @@ function buildMissingSkillError(
   options: RuntimeLoadSkillToolOptions,
   skillId: string,
 ): RuntimeLoadSkillErrorOutput {
-  const knownIds = new Set([
-    ...(options.context.availableSkillIds ?? []),
-    ...(options.builtinSkillIds ?? []),
-  ]);
+  const knownIds = new Set(getKnownRuntimeSkillIds(options) ?? []);
   const available = [...knownIds].sort().join(", ");
   return {
     error: `Skill not found: ${skillId}. Available skills: ${available}`,
@@ -305,21 +304,22 @@ function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions):
     return options.description;
   }
 
-  if (!options.context.availableSkillIds && !options.builtinSkillIds) {
+  if (options.context.availableSkillIds === undefined && !options.builtinSkillIds) {
     return RUNTIME_LOAD_SKILL_DESCRIPTION;
   }
 
-  const knownIds = new Set([
-    ...(options.context.availableSkillIds ?? []),
-    ...(options.builtinSkillIds ?? []),
-  ]);
+  const knownIds = new Set(getKnownRuntimeSkillIds(options) ?? []);
   const available = [...knownIds].sort().join(", ") || "none";
 
   return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Available skill IDs: ${available}. Do not invent skill IDs. Only call load_skill with one of these IDs.`;
 }
 
 function getKnownRuntimeSkillIds(options: RuntimeLoadSkillToolOptions): string[] | null {
-  if (!options.context.availableSkillIds && !options.builtinSkillIds) {
+  if (options.context.availableSkillIds !== undefined) {
+    return [...new Set(options.context.availableSkillIds)].sort();
+  }
+
+  if (!options.builtinSkillIds) {
     return null;
   }
 
@@ -385,8 +385,20 @@ function normalizeRuntimeLoadSkillInputSkillId(
 
 function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) {
   const knownIds = getKnownRuntimeSkillIds(options);
-  if (!knownIds || knownIds.length === 0) {
+  if (!knownIds) {
     return runtimeLoadSkillToolInputSchema;
+  }
+
+  if (knownIds.length === 0) {
+    return defineSchema((v) =>
+      v.object({
+        skillId: v.string().refine(
+          () => false,
+          "No skills are available in this run.",
+        ).describe("No skills are available in this run."),
+        file: v.string().optional(),
+      }).strict()
+    )();
   }
 
   const knownIdSet = new Set(knownIds);

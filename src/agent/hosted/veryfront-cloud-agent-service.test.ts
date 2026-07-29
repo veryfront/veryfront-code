@@ -264,8 +264,62 @@ Deno.test("hosted child project agents request only materialized skill and deleg
       ],
       providerTools: ["web_search"],
       delegates: ["validation-agent"],
-    }),
-    ["get_file", "load_skill", "web_search", "agent_validation-agent"],
+    })?.toSorted(),
+    ["agent_validation-agent", "get_file", "load_skill", "web_search"],
+  );
+});
+
+Deno.test("hosted child project agents omit skill tools for an empty skill selector snapshot", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract an application",
+      instructions: "Extract the application.",
+      skills: [],
+      tools: [
+        "get_file",
+        "execute_skill_script",
+        "load_skill",
+        "load_skill_reference",
+      ],
+    }, { allowedSkillIds: [] }),
+    ["get_file"],
+  );
+});
+
+Deno.test("hosted child project agents keep delegation tools for an empty skill selector snapshot", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract an application",
+      instructions: "Extract the application.",
+      skills: [],
+      tools: [
+        "get_file",
+        "execute_skill_script",
+        "load_skill",
+        "load_skill_reference",
+      ],
+      providerTools: ["web_search"],
+      delegates: ["validation-agent"],
+    }, { allowedSkillIds: [] })?.toSorted(),
+    ["agent_validation-agent", "get_file", "web_search"],
+  );
+});
+
+Deno.test("hosted child project agents keep load_skill for a non-empty exact skill allowlist", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract an application",
+      instructions: "Extract the application.",
+      skills: ["extract"],
+      tools: ["get_file"],
+    }, { allowedSkillIds: ["extraction-agent--extract"] }),
+    ["get_file", "load_skill"],
   );
 });
 
@@ -633,6 +687,67 @@ Deno.test("hosted nested delegates inherit child scope and durable lineage", () 
   assertEquals(context.conversationId, "child-conversation");
   assertEquals(context.parentRunId, "child-run");
   assertEquals(context.parentMessageId, "child-message");
+});
+
+Deno.test("hosted nested delegates clear inherited skill catalog state for empty child selectors", () => {
+  const context = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+    {
+      authToken: "token-1",
+      projectId: "project-1",
+      branchId: "branch-1",
+      agentId: "orchestrator",
+      availableSkillIds: ["root-skill"],
+      skillSelectorPolicy: { kind: "allowlist", entries: ["root-skill"] },
+      skillSourcePaths: {
+        "root-skill": "skills/root/SKILL.md",
+      },
+      conversationId: "root-conversation",
+      parentRunId: "root-run",
+      parentMessageId: "root-message",
+    },
+    "extraction-agent",
+    {
+      system: "Extract applications.",
+      toolNames: ["get_file", "agent_validation-agent"],
+      availableSkillIds: [],
+      skillSelectorPolicy: { kind: "none" },
+      delegateIds: ["validation-agent"],
+      mcpServers: [],
+    },
+  );
+
+  assertEquals(context.agentId, "extraction-agent");
+  assertEquals(context.availableSkillIds, []);
+  assertEquals(context.skillSelectorPolicy, { kind: "none" });
+  assertEquals(context.skillSourcePaths, undefined);
+});
+
+Deno.test("hosted generic delegates preserve inherited skill catalog state", () => {
+  const context = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+    {
+      authToken: "token-1",
+      projectId: "project-1",
+      branchId: "branch-1",
+      agentId: "orchestrator",
+      availableSkillIds: ["root-skill"],
+      skillSelectorPolicy: { kind: "allowlist", entries: ["root-skill"] },
+      skillSourcePaths: {
+        "root-skill": "skills/root/SKILL.md",
+      },
+      conversationId: "root-conversation",
+      parentRunId: "root-run",
+      parentMessageId: "root-message",
+    },
+    "generic-agent",
+    undefined,
+  );
+
+  assertEquals(context.agentId, "generic-agent");
+  assertEquals(context.availableSkillIds, ["root-skill"]);
+  assertEquals(context.skillSelectorPolicy, { kind: "allowlist", entries: ["root-skill"] });
+  assertEquals(context.skillSourcePaths, {
+    "root-skill": "skills/root/SKILL.md",
+  });
 });
 
 Deno.test("hosted nested delegates preserve trusted root invocation context", () => {
@@ -1250,6 +1365,202 @@ Deno.test("hosted child execution config resolves steering against the target pr
     { projectId: "target-project", authToken: "token-1", branchId: null },
     { projectId: "target-project", authToken: "token-1", branchId: null },
   ]);
+});
+
+Deno.test("hosted child execution config hides skill infrastructure for skills empty and false", async () => {
+  for (const skills of [[], false] as const) {
+    try {
+      toolRegistry.registerShared(
+        "get_file",
+        tool({
+          id: "get_file",
+          description: "Get file",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ ok: true }),
+        }),
+      );
+      toolRegistry.registerShared("load_skill_reference", createLoadSkillReferenceTool());
+      toolRegistry.registerShared("execute_skill_script", createExecuteSkillScriptTool());
+
+      const childAgent = {
+        id: "extraction-agent",
+        name: "Extraction agent",
+        description: "Extract job applications",
+        instructions: "Extract the application.",
+        skills,
+        tools: [
+          "get_file",
+          "load_skill",
+          "load_skill_reference",
+          "execute_skill_script",
+        ],
+      };
+      const context = {
+        options: { mcpServers: [] },
+        discoveryResult: { agents: new Map([["extraction-agent", null]]) },
+        agentConfigs: new Map([["extraction-agent", childAgent]]),
+        projectSteeringByAgentId: new Map([["extraction-agent", {
+          getProjectInstructions: () => Promise.resolve("Use extraction policy."),
+          getSkillsConfig: () =>
+            Promise.resolve([{
+              id: "global-skill",
+              name: "Global skill",
+              description: "Global skill",
+              instructions: "Use global skill.",
+              allowedTools: [],
+            }]),
+          createLoadSkillTool: () =>
+            tool({
+              id: "load_skill",
+              description: "Load skill",
+              inputSchema: defineSchema((v) => v.object({}))(),
+              execute: () => ({ ok: true }),
+            }),
+        }]]),
+        trace: (_name: string, operation: () => unknown) => operation(),
+      } as never;
+      const config = await veryfrontCloudAgentServiceInternals
+        .resolveHostedChildAgentExecutionConfig(
+          context,
+          {
+            authToken: "token-1",
+            projectId: "project-1",
+            branchId: "branch-1",
+            agentId: "orchestrator",
+          },
+          "extraction-agent",
+          "project-1",
+        );
+
+      assertEquals(config?.availableSkillIds, []);
+      assertEquals(config?.toolNames, ["get_file"]);
+      assertEquals(config?.system.includes("global-skill"), false);
+      assertEquals(config?.system.includes("load_skill"), false);
+      assertEquals(config?.system.includes("load_skill_reference"), false);
+      assertEquals(config?.system.includes("execute_skill_script"), false);
+      const childToolContext = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+        {
+          authToken: "token-1",
+          projectId: "project-1",
+          branchId: "branch-1",
+          agentId: "orchestrator",
+        },
+        "extraction-agent",
+        config,
+      );
+      const hostTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+        context,
+        {
+          childAgentId: "extraction-agent",
+          childConfig: config,
+          childToolContext,
+        },
+      );
+
+      assertEquals("get_file" in hostTools, true);
+      assertEquals("load_skill" in hostTools, false);
+      assertEquals("load_skill_reference" in hostTools, false);
+      assertEquals("execute_skill_script" in hostTools, false);
+    } finally {
+      toolRegistry.clearAll();
+    }
+  }
+});
+
+Deno.test("hosted child execution config keeps exact non-empty skill authorization", async () => {
+  try {
+    toolRegistry.registerShared(
+      "get_file",
+      tool({
+        id: "get_file",
+        description: "Get file",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ ok: true }),
+      }),
+    );
+    const childAgent = {
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract job applications",
+      instructions: "Extract the application.",
+      skills: ["extract"],
+      tools: ["get_file"],
+    };
+    const context = {
+      options: { mcpServers: [] },
+      discoveryResult: { agents: new Map([["extraction-agent", null]]) },
+      agentConfigs: new Map([["extraction-agent", childAgent]]),
+      projectSteeringByAgentId: new Map([["extraction-agent", {
+        getProjectInstructions: () => Promise.resolve("Use extraction policy."),
+        getSkillsConfig: () =>
+          Promise.resolve([{
+            id: "extraction-agent--extract",
+            name: "Extract",
+            description: "Extract skill",
+            instructions: "Extract with skill.",
+            allowedTools: [],
+            ownerAgentId: "extraction-agent",
+            shortName: "extract",
+            sourcePath: "agents/extraction-agent/skills/extract/SKILL.md",
+          }, {
+            id: "global-skill",
+            name: "Global skill",
+            description: "Global skill",
+            instructions: "Use global skill.",
+            allowedTools: [],
+          }]),
+        createLoadSkillTool: () =>
+          tool({
+            id: "load_skill",
+            description: "Load skill",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => ({ ok: true }),
+          }),
+      }]]),
+      trace: (_name: string, operation: () => unknown) => operation(),
+    } as never;
+    const config = await veryfrontCloudAgentServiceInternals
+      .resolveHostedChildAgentExecutionConfig(
+        context,
+        {
+          authToken: "token-1",
+          projectId: "project-1",
+          branchId: "branch-1",
+          agentId: "orchestrator",
+        },
+        "extraction-agent",
+        "project-1",
+      );
+
+    assertEquals(config?.availableSkillIds, ["extraction-agent--extract"]);
+    assertEquals(config?.toolNames, ["get_file", "load_skill"]);
+    assert(config?.system.includes("extraction-agent--extract"));
+    assertEquals(config?.system.includes("global-skill"), false);
+
+    const childToolContext = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+      {
+        authToken: "token-1",
+        projectId: "project-1",
+        branchId: "branch-1",
+        agentId: "orchestrator",
+      },
+      "extraction-agent",
+      config,
+    );
+    const hostTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+      context,
+      {
+        childAgentId: "extraction-agent",
+        childConfig: config,
+        childToolContext,
+      },
+    );
+
+    assertEquals("get_file" in hostTools, true);
+    assertEquals("load_skill" in hostTools, true);
+  } finally {
+    toolRegistry.clearAll();
+  }
 });
 
 Deno.test({

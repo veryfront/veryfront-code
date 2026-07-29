@@ -1067,6 +1067,53 @@ Deno.test("createRuntimeLoadSkillTool rejects invented skill IDs before tool exe
   );
 });
 
+Deno.test("createRuntimeLoadSkillTool treats an empty availableSkillIds manifest as deny-all before storage reads", async () => {
+  let projectReads = 0;
+  let builtinReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({
+      availableSkillIds: [],
+    }),
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        projectReads++;
+        return Promise.resolve({ instructions: "# Project plan", references: [] });
+      },
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinSkillIds: ["plan"],
+    builtinStore: {
+      readSkill: () => {
+        builtinReads++;
+        return "# Builtin plan";
+      },
+      readReferenceFile: () => {
+        builtinReads++;
+        return "Guide";
+      },
+      listReferences: () => {
+        builtinReads++;
+        return ["references/guide.md"];
+      },
+    },
+  });
+
+  await assertRejects(
+    () => tool.execute({ skillId: "plan" }),
+    Error,
+    "input validation failed",
+  );
+  await assertRejects(
+    () => tool.execute({ skillId: "plan", file: "references/guide.md" }),
+    Error,
+    "input validation failed",
+  );
+  assertEquals(projectReads, 0);
+  assertEquals(builtinReads, 0);
+});
+
 Deno.test("createRuntimeLoadSkillTool allows host copy overrides", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),
