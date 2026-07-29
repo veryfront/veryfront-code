@@ -376,6 +376,48 @@ Deno.test("parser extension boundary recognizes runtime enum and namespace bindi
   assertEquals(issues, []);
 });
 
+Deno.test("parser extension boundary keeps dotted module bindings inside their owner", async () => {
+  const issues = await findUnauthorizedParserExtensionImports([
+    {
+      path: "src/dotted-namespace.ts",
+      content: [
+        "namespace Foo.require {",
+        "  export function load() {",
+        `    require("${PARSER_ONLY}");`,
+        "  }",
+        "}",
+        `require("${PARSER_ONLY}");`,
+      ].join("\n"),
+    },
+    {
+      path: "src/dotted-module.ts",
+      content: [
+        "module Foo.require {",
+        "  export function load() {",
+        `    require("${PARSER_ONLY}");`,
+        "  }",
+        "}",
+        `require("${PARSER_ONLY}");`,
+      ].join("\n"),
+    },
+    {
+      path: "src/external-module.ts",
+      content: [
+        'declare module "example" {',
+        "  namespace require {}",
+        "}",
+        `require("${PARSER_ONLY}");`,
+      ].join("\n"),
+    },
+  ]);
+
+  assertEquals(issues, [
+    { path: "src/dotted-namespace.ts", line: 6, specifier: PARSER_ONLY },
+    { path: "src/dotted-module.ts", line: 6, specifier: PARSER_ONLY },
+    { path: "src/external-module.ts", line: 4, specifier: PARSER_ONLY },
+  ]);
+});
+
 Deno.test("parser extension boundary reports every ECMAScript line terminator", async () => {
   const issues = await findUnauthorizedParserExtensionImports([
     {

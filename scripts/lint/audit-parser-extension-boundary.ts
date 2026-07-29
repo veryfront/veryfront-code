@@ -151,6 +151,15 @@ function buildScopeMap(ast: ASTNode): WeakMap<ASTNode, LexicalScope> {
         functionScope: false,
       };
       if (!isAmbient) addPatternBindings(node.id, scope.bindings);
+    } else if (node.type === "TSModuleDeclaration") {
+      if (incomingScope && node.declare !== true) {
+        addPatternBindings(node.id, incomingScope.bindings);
+      }
+      scope = {
+        parent: incomingScope,
+        bindings: new Set(),
+        functionScope: false,
+      };
     } else if (isLexicalScopeNode(node)) {
       scope = {
         parent: incomingScope,
@@ -190,10 +199,7 @@ function buildScopeMap(ast: ASTNode): WeakMap<ASTNode, LexicalScope> {
       node.type === "TSImportEqualsDeclaration" && node.importKind !== "type"
     ) {
       addPatternBindings(node.id, scope.bindings);
-    } else if (
-      (node.type === "TSEnumDeclaration" ||
-        node.type === "TSModuleDeclaration") && node.declare !== true
-    ) {
+    } else if (node.type === "TSEnumDeclaration" && node.declare !== true) {
       addPatternBindings(node.id, scope.bindings);
     }
 
