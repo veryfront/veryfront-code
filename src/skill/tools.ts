@@ -23,6 +23,8 @@ import type { Skill, SkillContent, SkillScriptExecutor } from "./types.ts";
 import {
   SKILL_ASSETS_DIR,
   SKILL_MD_FILENAME,
+  SKILL_NAME_REGEX,
+  SKILL_PROVIDER_SAFE_ID_REGEX,
   SKILL_REFERENCES_DIR,
   SKILL_RESOURCES_DIR,
   SKILL_SCRIPTS_DIR,
@@ -97,21 +99,42 @@ function resolveVisibleSkillOrThrow(
   const scope = { agentId: context?.agentId };
   const allowedSkillIds = getSelectorAllowedSkillIds(context, options);
   const skill = skillRegistry.resolveVisibleSkill(skillId, scope);
-  if (!skill) {
-    if (allowedSkillIds !== undefined) {
-      throw createSkillUnavailableError();
-    }
+  if (skill) {
+    assertSkillAllowedBySelector(skill, allowedSkillIds);
+    return skill;
+  }
 
-    const visible = skillRegistry.getVisibleSkillIds(scope).join(", ");
+  if (allowedSkillIds !== undefined) {
+    throw createSkillUnavailableError();
+  }
+
+  if (!isUnresolvedSkillSelectorValid(skillId)) {
+    const expectation = skillId.includes("--")
+      ? "must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters"
+      : "must be lowercase alphanumeric with hyphens, 1-64 characters";
     throw toError(
       createError({
         type: "agent",
-        message: `Skill "${skillId}" not found. Available skills: ${visible || "none"}`,
+        message: `Invalid skill id "${skillId}": ${expectation}`,
       }),
     );
   }
-  assertSkillAllowedBySelector(skill, allowedSkillIds);
-  return skill;
+
+  const visible = skillRegistry.getVisibleSkillIds(scope).join(", ");
+  throw toError(
+    createError({
+      type: "agent",
+      message: `Skill "${skillId}" not found. Available skills: ${visible || "none"}`,
+    }),
+  );
+}
+
+function isUnresolvedSkillSelectorValid(skillId: string): boolean {
+  if (SKILL_NAME_REGEX.test(skillId)) {
+    return true;
+  }
+
+  return skillId.includes("--") && SKILL_PROVIDER_SAFE_ID_REGEX.test(skillId);
 }
 
 function createSkillUnavailableError(): Error {

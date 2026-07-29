@@ -10,7 +10,12 @@
 
 import { createError, toError } from "#veryfront/errors";
 import { validateAllowedToolPatterns } from "./allowed-tools.ts";
-import { SKILL_DESCRIPTION_MAX_LENGTH, SKILL_NAME_REGEX, type SkillMetadata } from "./types.ts";
+import {
+  SKILL_DESCRIPTION_MAX_LENGTH,
+  SKILL_NAME_REGEX,
+  SKILL_PROVIDER_SAFE_ID_REGEX,
+  type SkillMetadata,
+} from "./types.ts";
 
 /** Result of parsing a SKILL.md file */
 interface ParsedSkillContent {
@@ -76,19 +81,24 @@ function parseFrontmatterFallback(content: string): ParsedSkillContent {
 export function validateSkillMetadata(
   frontmatter: Record<string, unknown>,
   directoryName: string,
+  options: { providerSafeName?: boolean } = {},
 ): SkillMetadata {
-  // Name: from frontmatter or directory name
-  const rawName = typeof frontmatter.name === "string" ? frontmatter.name.trim() : directoryName;
+  const canonicalName = directoryName;
+  const nameRegex = options.providerSafeName ? SKILL_PROVIDER_SAFE_ID_REGEX : SKILL_NAME_REGEX;
+  const nameExpectation = options.providerSafeName
+    ? "must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters"
+    : "must be lowercase alphanumeric with hyphens, 1-64 characters";
 
-  if (!SKILL_NAME_REGEX.test(rawName)) {
+  if (!nameRegex.test(canonicalName)) {
     throw toError(
       createError({
         type: "agent",
-        message:
-          `Invalid skill name "${rawName}": must be lowercase alphanumeric with hyphens, 1-64 characters`,
+        message: `Invalid skill name "${canonicalName}": ${nameExpectation}`,
       }),
     );
   }
+
+  const rawName = typeof frontmatter.name === "string" ? frontmatter.name.trim() : undefined;
 
   // Description: required
   const rawDescription = frontmatter.description;
@@ -96,7 +106,7 @@ export function validateSkillMetadata(
     throw toError(
       createError({
         type: "agent",
-        message: `Skill "${rawName}" is missing a required "description" field`,
+        message: `Skill "${canonicalName}" is missing a required "description" field`,
       }),
     );
   }
@@ -105,7 +115,7 @@ export function validateSkillMetadata(
 
   // Allowed-tools: parse from space-delimited string or array
   const allowedToolPatterns = frontmatter["allowed-tools"] ?? frontmatter.allowed_tools;
-  const allowedTools = parseAllowedTools(allowedToolPatterns, rawName);
+  const allowedTools = parseAllowedTools(allowedToolPatterns, canonicalName);
 
   // License: optional string passthrough
   const license = typeof frontmatter.license === "string" ? frontmatter.license.trim() : undefined;
@@ -117,15 +127,24 @@ export function validateSkillMetadata(
 
   // Metadata: convert nested object values to strings
   const metadata = parseMetadata(frontmatter.metadata);
+  const explicitDisplayName = getMetadataDisplayName(metadata);
+  const legacyDisplayName = rawName && rawName !== canonicalName ? rawName : undefined;
+  const displayName = explicitDisplayName ?? legacyDisplayName;
 
   return {
-    name: rawName,
+    name: canonicalName,
+    ...(displayName && { displayName }),
     description,
     ...(allowedTools && { allowedTools }),
     ...(license && { license }),
     ...(compatibility && { compatibility }),
     ...(metadata && { metadata }),
   };
+}
+
+function getMetadataDisplayName(metadata: Record<string, string> | undefined): string | undefined {
+  const displayName = metadata?.display_name?.trim();
+  return displayName ? displayName : undefined;
 }
 
 /**

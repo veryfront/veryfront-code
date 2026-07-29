@@ -52,4 +52,45 @@ Other instructions.`,
 
     assertEquals(result.skills.has("other"), true);
   });
+
+  it("discovers legacy display-style names by canonical directory id", async () => {
+    const files = {
+      "/project/skills/process-email/SKILL.md": `---
+name: Process Email
+description: Processes support emails.
+metadata:
+  display_name: Support Email Processor
+  team: support
+---
+Use this skill for support email workflows.`,
+    };
+
+    const result = await discoverAll({
+      baseDir: "/project",
+      toolDirs: [],
+      agentDirs: [],
+      resourceDirs: [],
+      promptDirs: [],
+      workflowDirs: [],
+      taskDirs: [],
+      skillDirs: ["skills"],
+      fsAdapter: createSkillTestAdapter(files),
+      verbose: false,
+    });
+
+    const skill = result.skills.get("process-email");
+    assertExists(skill);
+    assertEquals(skill.id, "process-email");
+    assertEquals(skill.metadata.name, "process-email");
+    assertEquals(skill.metadata.displayName, "Support Email Processor");
+    assertEquals(skill.metadata.metadata, {
+      display_name: "Support Email Processor",
+      team: "support",
+    });
+
+    const registrySkill = skillRegistry.get("process-email");
+    assertExists(registrySkill);
+    assertEquals(registrySkill.metadata.displayName, "Support Email Processor");
+    assertEquals(result.skills.has("Process Email"), false);
+  });
 });

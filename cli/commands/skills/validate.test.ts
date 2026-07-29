@@ -7,9 +7,12 @@ import { validateSkillDirectory } from "./validate.ts";
 async function withTempSkill(
   files: Record<string, string>,
   fn: (dir: string) => Promise<void>,
+  skillDirName = "test-skill",
 ): Promise<void> {
-  const dir = await Deno.makeTempDir({ prefix: "vf-skill-validate-" });
+  const rootDir = await Deno.makeTempDir({ prefix: "vf-skill-validate-" });
+  const dir = join(rootDir, skillDirName);
   try {
+    await Deno.mkdir(dir, { recursive: true });
     for (const [path, content] of Object.entries(files)) {
       const target = join(dir, path);
       await Deno.mkdir(join(target, ".."), { recursive: true });
@@ -17,7 +20,17 @@ async function withTempSkill(
     }
     await fn(dir);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(rootDir, { recursive: true });
+  }
+}
+
+async function withTempCwd(dir: string, fn: () => Promise<void>): Promise<void> {
+  const previous = Deno.cwd();
+  try {
+    Deno.chdir(dir);
+    await fn();
+  } finally {
+    Deno.chdir(previous);
   }
 }
 
@@ -37,7 +50,26 @@ Review the submitted changes.
     }, async (dir) => {
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues, []);
-    });
+    }, "code-review");
+  });
+
+  it("uses the current directory basename when validating the default path", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: code-review
+description: Review code changes.
+---
+
+# Code Review
+
+Review the submitted changes.
+`,
+    }, async (dir) => {
+      await withTempCwd(dir, async () => {
+        const issues = await validateSkillDirectory(".");
+        assertEquals(issues, []);
+      });
+    }, "code-review");
   });
 
   it("reports a missing SKILL.md", async () => {
@@ -47,11 +79,10 @@ Review the submitted changes.
     });
   });
 
-  it("reports invalid SKILL.md frontmatter", async () => {
+  it("reports invalid canonical directory names", async () => {
     await withTempSkill({
       "SKILL.md": `---
-name: BadName
-description: Invalid name.
+description: Invalid directory name.
 ---
 
 # Bad
@@ -60,8 +91,43 @@ description: Invalid name.
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues.length, 1);
       assertEquals(issues[0]?.severity, "error");
-      assertEquals(issues[0]?.message.includes("Invalid skill name"), true);
-    });
+      assertEquals(issues[0]?.message.includes('Invalid skill name "Bad Name"'), true);
+    }, "Bad Name");
+  });
+
+  it("preserves a legacy display-style frontmatter name", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: Process Email
+description: Process inbound email.
+---
+
+# Process Email
+
+Process inbound email.
+`,
+    }, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues, []);
+    }, "process-email");
+  });
+
+  it("reports SKILL.md frontmatter name mismatch with directory", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: email
+description: Mismatched name.
+---
+
+# Email
+`,
+    }, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues, [{
+        severity: "error",
+        message: 'Skill name "email" does not match directory name "process-email"',
+      }]);
+    }, "process-email");
   });
 
   it("warns when SKILL.md has no instruction body", async () => {
@@ -74,6 +140,6 @@ description: Empty instruction body.
     }, async (dir) => {
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues, [{ severity: "warning", message: "SKILL.md body is empty" }]);
-    });
+    }, "empty-body");
   });
 });
