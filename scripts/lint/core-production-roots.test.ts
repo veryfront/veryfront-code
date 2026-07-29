@@ -1,14 +1,40 @@
+import { win32 } from "node:path";
 import { assertEquals, assertRejects, assertThrows } from "#std/assert";
 import {
   collectConfigurationDependencyEdges,
   type CoreProductionContext,
   type CoreProductionRegistry,
   isImportableBuiltin,
+  isPathContained as isProductionPathContained,
   loadCoreProductionRegistry,
   resolveConfigRelativePath,
   resolveImportMapSpecifier,
   validateCoreProductionRegistry,
 } from "./core-production-roots.ts";
+
+Deno.test("production root containment is separator-agnostic for Windows paths", () => {
+  const root = String.raw`C:\repo\src`;
+  const implementation = {
+    relative: win32.relative,
+    isAbsolute: win32.isAbsolute,
+    separator: win32.sep,
+  };
+  for (
+    const [candidate, expected] of [
+      [root, true],
+      [String.raw`C:\repo\src\server\index.ts`, true],
+      [String.raw`C:\repo\src-other\index.ts`, false],
+      [String.raw`C:\repo\cli\main.ts`, false],
+      [String.raw`D:\repo\src\server\index.ts`, false],
+    ] as const
+  ) {
+    assertEquals(
+      isProductionPathContained(root, candidate, implementation),
+      expected,
+      candidate,
+    );
+  }
+});
 
 const REQUIRED_RUNTIME_ROOTS = [
   "src/config/declarative-evaluator.ts",

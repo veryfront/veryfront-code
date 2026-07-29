@@ -896,6 +896,148 @@ Deno.test("strict audit uses contextual import maps for loader API provenance", 
   }
 });
 
+Deno.test("strict audit fails closed for generic loader provenance escapes", async (context) => {
+  const cases = [
+    {
+      name: "ordinary parameter injection",
+      content: [
+        'function use(load: (specifier: string) => unknown) { load("npm:param-injection@1"); }',
+        "use(require);",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "named function return",
+      content: [
+        "function loader() { return require; }",
+        "const load = loader();",
+        'load("npm:named-return@1");',
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "nested member assignment",
+      content: [
+        "const box = { inner: {} as Record<string, unknown> };",
+        "box.inner.load = require;",
+        'box.inner.load("npm:nested-member@1");',
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "class static field alias",
+      content: [
+        "class Loaders { static load = require; }",
+        'Loaders.load("npm:class-static@1");',
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "computed service worker method",
+      content: [
+        'const target = "npm:computed-service-worker@1";',
+        'navigator.serviceWorker["reg" + "ister"](target);',
+      ].join("\n"),
+      expected: {
+        code: "forbidden-external-dependency",
+        loader: "navigator.serviceWorker.register",
+        specifier: "npm:computed-service-worker@1",
+      },
+    },
+    {
+      name: "createRequire call",
+      content: [
+        'import { createRequire } from "node:module";',
+        "const load = createRequire.call(null, import.meta.url);",
+        'load("npm:create-require-call@1");',
+      ].join("\n"),
+      expected: {
+        code: "forbidden-external-dependency",
+        loader: "require",
+        specifier: "npm:create-require-call@1",
+      },
+    },
+    {
+      name: "parameter injection through apply",
+      content: [
+        'function use(load: (specifier: string) => unknown) { load("npm:param-apply@1"); }',
+        "use.apply(null, [require]);",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "createRequire apply",
+      content: [
+        'import { createRequire } from "node:module";',
+        "const load = createRequire.apply(null, [import.meta.url]);",
+        'load("npm:create-require-apply@1");',
+      ].join("\n"),
+      expected: {
+        code: "forbidden-external-dependency",
+        loader: "require",
+        specifier: "npm:create-require-apply@1",
+      },
+    },
+    {
+      name: "computed constant nested member",
+      content: [
+        'const INNER = "inner";',
+        'const LOAD = "load";',
+        "const box = { inner: {} as Record<string, unknown> };",
+        "box[INNER][LOAD] = require;",
+        'box[INNER][LOAD]("npm:computed-member@1");',
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    await context.step(testCase.name, async () => {
+      const root = await auditFixture();
+      const outputPath = `${root}/audit.json`;
+      try {
+        await writeSource(root, "src/index.ts", `${testCase.content}\n`);
+        const result = await runAudit(["--root", root, "--output", outputPath]);
+        const report = JSON.parse(await Deno.readTextFile(outputPath));
+        assertEquals(result.code, 2, result.stderr);
+        assertEquals(report.evidenceComplete, true);
+        assertEquals(report.operationalErrors, []);
+        assertEquals(
+          report.issues.some((entry: Record<string, unknown>) =>
+            entry.path === "src/index.ts" &&
+            entry.code === testCase.expected.code &&
+            entry.loader === testCase.expected.loader &&
+            (!("specifier" in testCase.expected) ||
+              entry.specifier === testCase.expected.specifier)
+          ),
+          true,
+          JSON.stringify(report.issues, null, 2),
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+  }
+});
+
 Deno.test("strict audit treats import-map expansion cycles as operational exit 3", async () => {
   const root = await auditFixture();
   const outputPath = `${root}/audit.json`;
@@ -962,6 +1104,36 @@ Deno.test("strict audit CLI exits 3 with incomplete evidence for parser and mani
     } finally {
       await Deno.remove(root, { recursive: true });
     }
+  }
+});
+
+Deno.test("strict audit treats binding convergence exhaustion as operational exit 3", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    await writeSource(
+      root,
+      "src/index.ts",
+      "let load = require;\nload = Worker;\n",
+    );
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    assertEquals(result.code, 3, result.stderr);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(report.evidenceComplete, false);
+    assertEquals(report.issues, []);
+    assertEquals(
+      report.operationalErrors.some((error: Record<string, unknown>) =>
+        error.code === "binding-resolution-failure" &&
+        error.path === "src/index.ts" &&
+        String(error.message).includes(
+          "loader provenance binding analysis did not converge",
+        )
+      ),
+      true,
+      JSON.stringify(report.operationalErrors, null, 2),
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
   }
 });
 

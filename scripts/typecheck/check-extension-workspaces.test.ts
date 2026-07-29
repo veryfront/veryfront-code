@@ -1,8 +1,34 @@
+import { win32 } from "node:path";
 import { assertEquals, assertRejects } from "#std/assert";
 import {
   checkExtensionWorkspaces,
   type ExtensionCheckInvocation,
+  isPathContained as isExtensionPathContained,
 } from "./check-extension-workspaces.ts";
+
+Deno.test("extension file containment is separator-agnostic for Windows paths", () => {
+  const root = String.raw`C:\repo\extensions\ext-one`;
+  const implementation = {
+    relative: win32.relative,
+    isAbsolute: win32.isAbsolute,
+    separator: win32.sep,
+  };
+  for (
+    const [candidate, expected] of [
+      [root, true],
+      [String.raw`C:\repo\extensions\ext-one\src\index.ts`, true],
+      [String.raw`C:\repo\extensions\ext-one-other\index.ts`, false],
+      [String.raw`C:\repo\extensions\outside.ts`, false],
+      [String.raw`D:\repo\extensions\ext-one\src\index.ts`, false],
+    ] as const
+  ) {
+    assertEquals(
+      isExtensionPathContained(root, candidate, implementation),
+      expected,
+      candidate,
+    );
+  }
+});
 
 async function fixture(
   manifests: Record<string, unknown>,

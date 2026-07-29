@@ -112,7 +112,7 @@
   strict_status=0
   deno task lint:core-deps:strict --output "$strict_report_dir/source-dependencies.json" || strict_status=$?
   test "$strict_status" -eq 2
-  deno eval --allow-read 'const report = JSON.parse(await Deno.readTextFile(Deno.args[0])); const examined = report.examined; if (report.evidenceComplete !== true || report.operationalErrors?.length !== 0 || !Array.isArray(report.issues) || report.issues.length === 0 || !examined || !Number.isInteger(examined.roots) || examined.roots < 1 || !Number.isInteger(examined.files) || examined.files < 1) Deno.exit(1);' "$strict_report_dir/source-dependencies.json"
+  deno eval 'const report = JSON.parse(await Deno.readTextFile(Deno.args[0])); const examined = report.examined; if (report.evidenceComplete !== true || report.operationalErrors?.length !== 0 || !Array.isArray(report.issues) || report.issues.length === 0 || !examined || !Number.isInteger(examined.roots) || examined.roots < 1 || !Number.isInteger(examined.files) || examined.files < 1) Deno.exit(1);' "$strict_report_dir/source-dependencies.json"
   ```
 
   Exit `3` is a broken audit, not acceptable expected-red evidence. Do not add baselines or exceptions, call this checkpoint globally dependency-clean, or merge/release while the command is red.
@@ -855,7 +855,7 @@ Tasks 6–8 build additive, dormant generic lifecycle seams and are separately t
   strict_status=0
   deno task lint:core-deps:strict --output "$strict_report_dir/post-reporter-source-dependencies.json" || strict_status=$?
   test "$strict_status" -eq 2
-  deno eval --allow-read 'const report = JSON.parse(await Deno.readTextFile(Deno.args[0])); const examined = report.examined; if (report.evidenceComplete !== true || report.operationalErrors?.length !== 0 || !Array.isArray(report.issues) || report.issues.length === 0 || !examined || !Number.isInteger(examined.roots) || examined.roots < 1 || !Number.isInteger(examined.files) || examined.files < 1) Deno.exit(1);' "$strict_report_dir/post-reporter-source-dependencies.json"
+  deno eval 'const report = JSON.parse(await Deno.readTextFile(Deno.args[0])); const examined = report.examined; if (report.evidenceComplete !== true || report.operationalErrors?.length !== 0 || !Array.isArray(report.issues) || report.issues.length === 0 || !examined || !Number.isInteger(examined.roots) || examined.roots < 1 || !Number.isInteger(examined.files) || examined.files < 1) Deno.exit(1);' "$strict_report_dir/post-reporter-source-dependencies.json"
   ```
 
   This does not weaken the source checkpoint: all reporter-specific edges must be gone, while the branch remains merge/release-ineligible until the broader inventory is zero. Exit `3` is never accepted as dependency debt.
@@ -1034,7 +1034,7 @@ Tasks 6–8 build additive, dormant generic lifecycle seams and are separately t
   inventory_status=0
   deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run scripts/lint/core-dependency-inventory.ts --evidence-dir "$core_evidence_dir/evidence" --output .github/dependency-free-core-inventory.json --owner-table .github/DEPENDENCY-FREE-CORE.md || inventory_status=$?
   test "$inventory_status" -eq 2
-  deno eval --allow-read 'const report = JSON.parse(await Deno.readTextFile(Deno.args[0])); const examined = report.examined; if (report.evidenceComplete !== true || report.operationalErrors?.length !== 0 || !Array.isArray(report.issues) || report.issues.length === 0 || !examined || !Number.isInteger(examined.roots) || examined.roots < 1 || !Number.isInteger(examined.files) || examined.files < 1 || !Number.isInteger(examined.artifacts) || examined.artifacts < 1 || report.issues.some((issue) => typeof issue.owner !== "string" || issue.owner.length === 0)) Deno.exit(1);' .github/dependency-free-core-inventory.json
+  deno eval 'const report = JSON.parse(await Deno.readTextFile(Deno.args[0])); const examined = report.examined; if (report.evidenceComplete !== true || report.operationalErrors?.length !== 0 || !Array.isArray(report.issues) || report.issues.length === 0 || !examined || !Number.isInteger(examined.roots) || examined.roots < 1 || !Number.isInteger(examined.files) || examined.files < 1 || !Number.isInteger(examined.artifacts) || examined.artifacts < 1 || report.issues.some((issue) => typeof issue.owner !== "string" || issue.owner.length === 0)) Deno.exit(1);' .github/dependency-free-core-inventory.json
   deno task verify:quick
   ```
 
@@ -1259,7 +1259,7 @@ Do not implement or schedule this section from the reporter plan. After every ow
   inventory_status=0
   deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run scripts/lint/core-dependency-inventory.ts --evidence-dir "$core_evidence_dir/evidence" --output .github/dependency-free-core-inventory.json --owner-table .github/DEPENDENCY-FREE-CORE.md || inventory_status=$?
   test "$inventory_status" -eq 2
-  deno eval --allow-read 'const report = JSON.parse(await Deno.readTextFile(Deno.args[0])); const examined = report.examined; if (report.evidenceComplete !== true || report.operationalErrors?.length !== 0 || !Array.isArray(report.issues) || report.issues.length === 0 || !examined || !Number.isInteger(examined.roots) || examined.roots < 1 || !Number.isInteger(examined.files) || examined.files < 1 || !Number.isInteger(examined.artifacts) || examined.artifacts < 1 || report.issues.some((issue) => typeof issue.owner !== "string" || issue.owner.length === 0)) Deno.exit(1);' .github/dependency-free-core-inventory.json
+  deno eval 'const report = JSON.parse(await Deno.readTextFile(Deno.args[0])); const examined = report.examined; if (report.evidenceComplete !== true || report.operationalErrors?.length !== 0 || !Array.isArray(report.issues) || report.issues.length === 0 || !examined || !Number.isInteger(examined.roots) || examined.roots < 1 || !Number.isInteger(examined.files) || examined.files < 1 || !Number.isInteger(examined.artifacts) || examined.artifacts < 1 || report.issues.some((issue) => typeof issue.owner !== "string" || issue.owner.length === 0)) Deno.exit(1);' .github/dependency-free-core-inventory.json
   ```
 
   Exit `3`, missing/changed input hashes, stale package bytes, unknown ownership, or an empty inventory is a failure. Recompute the inventory hash only from these final bytes; do not reuse Task 10's earlier hash.

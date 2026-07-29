@@ -1,10 +1,36 @@
+import { win32 } from "node:path";
 import { assertEquals, assertRejects, assertThrows } from "#std/assert";
 import {
   collectCoreProductionFiles,
   collectSourceDependencies,
+  isPathContained as isSourcePathContained,
   type SourceDependency,
   SourceImportCollectorError,
 } from "./source-import-collector.ts";
+
+Deno.test("source file containment is separator-agnostic for Windows paths", () => {
+  const root = String.raw`C:\repo`;
+  const implementation = {
+    relative: win32.relative,
+    isAbsolute: win32.isAbsolute,
+    separator: win32.sep,
+  };
+  for (
+    const [candidate, expected] of [
+      [root, true],
+      [String.raw`C:\repo\src\index.ts`, true],
+      [String.raw`C:\repo-other\src\index.ts`, false],
+      [String.raw`C:\outside\index.ts`, false],
+      [String.raw`D:\repo\src\index.ts`, false],
+    ] as const
+  ) {
+    assertEquals(
+      isSourcePathContained(root, candidate, implementation),
+      expected,
+      candidate,
+    );
+  }
+});
 
 function dependencySummary(
   dependencies: SourceDependency[],
@@ -950,6 +976,139 @@ Deno.test("source collector fails closed when generated functions receive loader
   );
 });
 
+Deno.test("source collector fails closed across generic loader data-flow boundaries", async (context) => {
+  const cases = [
+    {
+      name: "ordinary parameter injection",
+      content: [
+        'function use(load: (specifier: string) => unknown) { load("npm:param-injection@1"); }',
+        "use(require);",
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "named function return",
+      content: [
+        "function loader() { return require; }",
+        "const load = loader();",
+        'load("npm:named-return@1");',
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "nested member assignment",
+      content: [
+        "const box = { inner: {} as Record<string, unknown> };",
+        "box.inner.load = require;",
+        'box.inner.load("npm:nested-member@1");',
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "class static field alias",
+      content: [
+        "class Loaders { static load = require; }",
+        'Loaders.load("npm:class-static@1");',
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "computed service worker method",
+      content: [
+        'const target = "npm:computed-service-worker@1";',
+        'navigator.serviceWorker["reg" + "ister"](target);',
+      ].join("\n"),
+      expected: {
+        kind: "runtime-loader",
+        loader: "navigator.serviceWorker.register",
+        specifier: "npm:computed-service-worker@1",
+      },
+    },
+    {
+      name: "createRequire call",
+      content: [
+        'import { createRequire } from "node:module";',
+        "const load = createRequire.call(null, import.meta.url);",
+        'load("npm:create-require-call@1");',
+      ].join("\n"),
+      expected: {
+        kind: "runtime-loader",
+        loader: "require",
+        specifier: "npm:create-require-call@1",
+      },
+    },
+    {
+      name: "parameter injection through apply",
+      content: [
+        'function use(load: (specifier: string) => unknown) { load("npm:param-apply@1"); }',
+        "use.apply(null, [require]);",
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "createRequire apply",
+      content: [
+        'import { createRequire } from "node:module";',
+        "const load = createRequire.apply(null, [import.meta.url]);",
+        'load("npm:create-require-apply@1");',
+      ].join("\n"),
+      expected: {
+        kind: "runtime-loader",
+        loader: "require",
+        specifier: "npm:create-require-apply@1",
+      },
+    },
+    {
+      name: "computed constant nested member",
+      content: [
+        'const INNER = "inner";',
+        'const LOAD = "load";',
+        "const box = { inner: {} as Record<string, unknown> };",
+        "box[INNER][LOAD] = require;",
+        'box[INNER][LOAD]("npm:computed-member@1");',
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    await context.step(testCase.name, () => {
+      const dependencies = dependencySummary(collectSourceDependencies({
+        path: `src/${testCase.name.replaceAll(" ", "-")}.ts`,
+        content: testCase.content,
+      })).filter(({ loader }) => loader !== undefined);
+      assertEquals(
+        dependencies.some((dependency) =>
+          dependency.kind === testCase.expected.kind &&
+          dependency.loader === testCase.expected.loader &&
+          (!("specifier" in testCase.expected) ||
+            dependency.specifier === testCase.expected.specifier)
+        ),
+        true,
+        JSON.stringify(dependencies, null, 2),
+      );
+    });
+  }
+});
+
 Deno.test("source collector recognizes only unshadowed browser-global eval", () => {
   const dependencies = collectSourceDependencies({
     path: "src/browser-global-eval.ts",
@@ -1615,6 +1774,21 @@ Deno.test("source collector turns parser failures into structured fatal errors",
       }),
     SourceImportCollectorError,
     "parse-failure: src/broken.ts",
+  );
+});
+
+Deno.test("source collector turns binding convergence exhaustion into a structured fatal error", () => {
+  assertThrows(
+    () =>
+      collectSourceDependencies(
+        {
+          path: "src/non-converging-bindings.ts",
+          content: "const load = require;\nload(target);\n",
+        },
+        { maximumBindingPasses: 0 },
+      ),
+    SourceImportCollectorError,
+    "binding-resolution-failure: src/non-converging-bindings.ts: loader provenance binding analysis did not converge",
   );
 });
 
