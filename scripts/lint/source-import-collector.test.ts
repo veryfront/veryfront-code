@@ -5,6 +5,7 @@ import {
   collectCoreProductionFiles,
   collectSourceDependencies,
   type SourceDependency,
+  type SourceDependencyCollectionOptions,
   SourceImportCollectorError,
 } from "./source-import-collector.ts";
 
@@ -455,9 +456,7 @@ Deno.test("source collector propagates default and literal destructuring aliases
     [
       { loader: "require-alias", line: 2 },
       { loader: "runtime-loader-alias", line: 3 },
-      { loader: "require-alias", line: 5 },
       { loader: "require-alias", line: 6 },
-      { loader: "require-alias", line: 7 },
       { loader: "require-alias", line: 8 },
       { loader: "Worker", line: 10 },
     ],
@@ -931,14 +930,10 @@ Deno.test("source collector follows loader aliases through local containers", ()
       kind === "unresolved-runtime-loader"
     ).map(({ loader, line }) => ({ loader, line })),
     [
-      { loader: "require-alias", line: 1 },
       { loader: "require-alias", line: 3 },
-      { loader: "require-alias", line: 4 },
       { loader: "require-alias", line: 6 },
       { loader: "require-alias", line: 7 },
-      { loader: "require-alias", line: 8 },
-      { loader: "require-alias", line: 8 },
-      { loader: "runtime-loader-alias", line: 9 },
+      { loader: "require-alias", line: 9 },
       { loader: "CSS.paintWorklet.addModule", line: 11 },
     ],
   );
@@ -1301,7 +1296,7 @@ Deno.test("source collector fails closed across generic loader data-flow boundar
   }
 });
 
-Deno.test("source collector fails closed at loader-bearing container stores", async (context) => {
+Deno.test("source collector retains loader facts through local container construction", async (context) => {
   const cases = [
     {
       name: "reverse alias member store",
@@ -1311,7 +1306,7 @@ Deno.test("source collector fails closed at loader-bearing container stores", as
         "alias.load = require;",
         "original.load(target);",
       ].join("\n"),
-      expected: [{ loader: "require-alias", line: 3 }],
+      expected: [{ loader: "require-alias", line: 4 }],
     },
     {
       name: "escaped original after alias store",
@@ -1321,7 +1316,7 @@ Deno.test("source collector fails closed at loader-bearing container stores", as
         "alias.load = require;",
         "use(original);",
       ].join("\n"),
-      expected: [{ loader: "require-alias", line: 3 }],
+      expected: [{ loader: "require-alias", line: 4 }],
     },
     {
       name: "object spread",
@@ -1329,10 +1324,7 @@ Deno.test("source collector fails closed at loader-bearing container stores", as
         "const original = { load: require };",
         "const copy = { ...original };",
       ].join("\n"),
-      expected: [
-        { loader: "require-alias", line: 1 },
-        { loader: "require-alias", line: 2 },
-      ],
+      expected: [],
     },
     {
       name: "array spread",
@@ -1340,10 +1332,7 @@ Deno.test("source collector fails closed at loader-bearing container stores", as
         "const original = [require];",
         "const copy = [...original];",
       ].join("\n"),
-      expected: [
-        { loader: "require-alias", line: 1 },
-        { loader: "require-alias", line: 2 },
-      ],
+      expected: [],
     },
     {
       name: "constant computed object key",
@@ -1352,10 +1341,7 @@ Deno.test("source collector fails closed at loader-bearing container stores", as
         "const original = { [LOAD]: require };",
         "original.load(target);",
       ].join("\n"),
-      expected: [
-        { loader: "require-alias", line: 2 },
-        { loader: "require-alias", line: 3 },
-      ],
+      expected: [{ loader: "require-alias", line: 3 }],
     },
     {
       name: "unknown computed namespace call",
@@ -1587,6 +1573,536 @@ Deno.test("source collector parses computed loader methods inside generated code
   );
 });
 
+Deno.test("source collector analyzes executable source semantically and anchors one outer finding", () => {
+  const dependencies = dependencySummary(collectSourceDependencies({
+    path: "src/semantic-executable-source.ts",
+    content: [
+      'eval(`import("npm:eval-source@1")`);',
+      'eval("const {");',
+      'new Function("return require(target)");',
+      'eval("const require = 1; require;");',
+      'eval("function Worker() {}; Worker;");',
+      'eval("obj.register(value)");',
+      'new Function("require", "return require(target)");',
+      'new Function("obj", "return obj.register(value)");',
+    ].join("\n"),
+  })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(dependencies, [
+    {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "eval",
+      line: 1,
+    },
+    {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "eval",
+      line: 2,
+    },
+    {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "Function",
+      line: 3,
+    },
+  ]);
+});
+
+Deno.test("source collector carries loader containers into direct eval", () => {
+  const dependencies = dependencySummary(collectSourceDependencies({
+    path: "src/direct-eval-containers.ts",
+    content: [
+      "const box = { load: require };",
+      'eval("box.load(target)");',
+      "const loaders = [require];",
+      'eval("loaders[0](target)");',
+      "const mixed = { load: require, safe(value: unknown) { return value; } };",
+      'eval("mixed.safe(target)");',
+      'eval("mixed.load(target)");',
+      'eval("sink(mixed)");',
+      "const nestedBox = { nested: { load: require, safe(value: unknown) { return value; } } };",
+      'eval("nestedBox.nested.safe(target)");',
+      'eval("sink(nestedBox.nested)");',
+      'eval("sink(nestedBox)");',
+      "const benign = { load(value: unknown) { return value; } };",
+      'eval("benign.load(target)");',
+      `eval('eval("box.load(target)")');`,
+      `eval('eval("sink(nestedBox.nested)")');`,
+      `eval('eval("sink(nestedBox)")');`,
+      `eval('eval("mixed.safe(target)")');`,
+      'eval("const alias = box; alias.load(target)");',
+      'eval("const { load } = box; load(target)");',
+      `eval('const nested = nestedBox.nested; eval("nested.load(target)")');`,
+      'eval("const safe = mixed.safe; safe(target)");',
+      'eval("const { nested: { load: nestedLoad } } = nestedBox; nestedLoad(target)");',
+      `eval('const nestedAlias = nestedBox.nested; eval("sink(nestedAlias)")');`,
+      'eval("const { safe } = mixed; safe(target)");',
+    ].join("\n"),
+  })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(dependencies.map(({ loader, line }) => ({ loader, line })), [
+    { loader: "eval", line: 2 },
+    { loader: "eval", line: 4 },
+    { loader: "eval", line: 7 },
+    { loader: "eval", line: 8 },
+    { loader: "eval", line: 11 },
+    { loader: "eval", line: 12 },
+    { loader: "eval", line: 15 },
+    { loader: "eval", line: 16 },
+    { loader: "eval", line: 17 },
+    { loader: "eval", line: 19 },
+    { loader: "eval", line: 20 },
+    { loader: "eval", line: 21 },
+    { loader: "eval", line: 23 },
+    { loader: "eval", line: 24 },
+  ]);
+});
+
+Deno.test("source collector fails closed when inherited member projections are truncated", () => {
+  const loaderMembers = Array.from(
+    { length: 300 },
+    (_, index) => `load${index}: require`,
+  ).join(", ");
+  let diagnostics:
+    | {
+      inheritedMemberProjectionTruncations?: number;
+      inheritedMemberProjectionVisits?: number;
+    }
+    | undefined;
+  const dependencies = dependencySummary(collectSourceDependencies(
+    {
+      path: "src/direct-eval-projection-budget.ts",
+      content: [
+        `const box = { safe(value: unknown) { return value; }, ${loaderMembers} };`,
+        'eval("box.safe(target)");',
+      ].join("\n"),
+    },
+    {
+      onAnalysisDiagnostics: (value) => {
+        diagnostics = value as unknown as typeof diagnostics;
+      },
+    },
+  )).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(dependencies.map(({ loader, line }) => ({ loader, line })), [
+    { loader: "eval", line: 2 },
+  ]);
+  assertEquals(diagnostics?.inheritedMemberProjectionTruncations, 1);
+  assertEquals(
+    typeof diagnostics?.inheritedMemberProjectionVisits === "number" &&
+      diagnostics.inheritedMemberProjectionVisits > 0,
+    true,
+  );
+});
+
+Deno.test("source collector fails closed at inherited member projection depth and visit budgets", () => {
+  let deeplyNested = "require";
+  for (let depth = 0; depth < 40; depth++) {
+    deeplyNested = `{ next: ${deeplyNested} }`;
+  }
+  let depthDiagnostics:
+    | { inheritedMemberProjectionTruncations?: number }
+    | undefined;
+  const depthDependencies = dependencySummary(collectSourceDependencies(
+    {
+      path: "src/direct-eval-projection-depth.ts",
+      content: [
+        `const box = { safe(value: unknown) { return value; }, nested: ${deeplyNested} };`,
+        'eval("box.safe(target)");',
+      ].join("\n"),
+    },
+    {
+      onAnalysisDiagnostics: (value) => {
+        depthDiagnostics = value as unknown as typeof depthDiagnostics;
+      },
+    },
+  )).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(
+    depthDependencies.map(({ loader, line }) => ({ loader, line })),
+    [{ loader: "eval", line: 2 }],
+  );
+  assertEquals(depthDiagnostics?.inheritedMemberProjectionTruncations, 1);
+
+  const expectedVisitBudget = 4_096;
+  const benignMembers = Array.from(
+    { length: expectedVisitBudget + 4 },
+    (_, index) => `value${index}: ${index}`,
+  ).join(", ");
+  let visitDiagnostics:
+    | {
+      inheritedMemberProjectionTruncations?: number;
+      inheritedMemberProjectionVisits?: number;
+    }
+    | undefined;
+  const visitDependencies = dependencySummary(collectSourceDependencies(
+    {
+      path: "src/direct-eval-projection-visits.ts",
+      content: [
+        `const box = { safe(value: unknown) { return value; }, ${benignMembers}, load: require };`,
+        'eval("box.safe(target)");',
+      ].join("\n"),
+    },
+    {
+      onAnalysisDiagnostics: (value) => {
+        visitDiagnostics = value as unknown as typeof visitDiagnostics;
+      },
+    },
+  )).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(
+    visitDependencies.map(({ loader, line }) => ({ loader, line })),
+    [{ loader: "eval", line: 2 }],
+  );
+  assertEquals(visitDiagnostics?.inheritedMemberProjectionTruncations, 1);
+  assertEquals(
+    visitDiagnostics?.inheritedMemberProjectionVisits,
+    expectedVisitBudget,
+  );
+});
+
+Deno.test("source collector preserves direct eval syntactic context", () => {
+  const dependencies = dependencySummary(collectSourceDependencies({
+    path: "src/direct-eval-context.ts",
+    content: [
+      "function Constructor() {",
+      '  "use strict"; eval("new.target");',
+      "}",
+      "class Derived extends Base {",
+      '  method() { eval("super.value"); }',
+      "}",
+      "class FieldDerived extends Base {",
+      '  value = eval("super.value");',
+      '  static target = eval("new.target");',
+      '  static { eval("super.value"); }',
+      "}",
+      'eval("return 1");',
+      'eval("new.target");',
+      'eval("super.value");',
+      'class InvalidFieldKey extends Base { [eval("super.value")] = 1; }',
+    ].join("\n"),
+  })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(dependencies.map(({ loader, line }) => ({ loader, line })), [
+    { loader: "eval", line: 12 },
+    { loader: "eval", line: 13 },
+    { loader: "eval", line: 14 },
+    { loader: "eval", line: 15 },
+  ]);
+});
+
+Deno.test("source collector bounds recursive executable-source work deterministically", () => {
+  let recursiveDiagnostics:
+    | {
+      executableSourceAnalyses?: number;
+      executableSourceCacheHits?: number;
+      executableSourceCycleCuts?: number;
+      executableSourceBudgetExhaustions?: number;
+      executableSourceDepthExhaustions?: number;
+    }
+    | undefined;
+  const recursive = dependencySummary(collectSourceDependencies(
+    {
+      path: "src/recursive-executable-source.ts",
+      content: `eval('const s = "eval(s); eval(s)"; eval(s)');`,
+    },
+    {
+      onAnalysisDiagnostics: (value) => {
+        recursiveDiagnostics = value as unknown as typeof recursiveDiagnostics;
+      },
+    },
+  )).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(recursive.map(({ loader, line }) => ({ loader, line })), [
+    { loader: "eval", line: 1 },
+  ]);
+  assertEquals(recursiveDiagnostics?.executableSourceAnalyses, 2);
+  assertEquals(recursiveDiagnostics?.executableSourceCycleCuts, 2);
+  assertEquals(recursiveDiagnostics?.executableSourceBudgetExhaustions, 0);
+
+  let boundedDiagnostics: typeof recursiveDiagnostics;
+  const boundedOptions = {
+    maximumExecutableSourceAnalyses: 2,
+    onAnalysisDiagnostics: (value) => {
+      boundedDiagnostics = value as unknown as typeof boundedDiagnostics;
+    },
+  } as SourceDependencyCollectionOptions & {
+    maximumExecutableSourceAnalyses: number;
+  };
+  const bounded = dependencySummary(collectSourceDependencies(
+    {
+      path: "src/bounded-executable-source.ts",
+      content: [
+        'eval("const first = 1");',
+        'eval("const second = 2");',
+        'eval("const third = 3");',
+      ].join("\n"),
+    },
+    boundedOptions,
+  )).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(bounded.map(({ loader, line }) => ({ loader, line })), [
+    { loader: "eval", line: 3 },
+  ]);
+  assertEquals(boundedDiagnostics?.executableSourceAnalyses, 2);
+  assertEquals(boundedDiagnostics?.executableSourceBudgetExhaustions, 1);
+
+  let memoizedDiagnostics: typeof recursiveDiagnostics;
+  const memoized = dependencySummary(collectSourceDependencies(
+    {
+      path: "src/memoized-executable-source.ts",
+      content: [
+        'eval("const stable = 1");',
+        'eval("const stable = 1");',
+      ].join("\n"),
+    },
+    {
+      onAnalysisDiagnostics: (value) => {
+        memoizedDiagnostics = value;
+      },
+    },
+  )).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(memoized, []);
+  assertEquals(memoizedDiagnostics?.executableSourceAnalyses, 1);
+  assertEquals(memoizedDiagnostics?.executableSourceCacheHits, 1);
+
+  let nestedSource = "const leaf = 1;";
+  for (let depth = 0; depth < 20; depth++) {
+    nestedSource = `eval(${JSON.stringify(nestedSource)});`;
+  }
+  let depthDiagnostics: typeof recursiveDiagnostics;
+  const depthBounded = dependencySummary(collectSourceDependencies(
+    {
+      path: "src/depth-bounded-executable-source.ts",
+      content: `eval(${JSON.stringify(nestedSource)});`,
+    },
+    {
+      onAnalysisDiagnostics: (value) => {
+        depthDiagnostics = value;
+      },
+    },
+  )).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(depthBounded.map(({ loader, line }) => ({ loader, line })), [
+    { loader: "eval", line: 1 },
+  ]);
+  assertEquals(depthDiagnostics?.executableSourceAnalyses, 16);
+  assertEquals(depthDiagnostics?.executableSourceDepthExhaustions, 1);
+});
+
+Deno.test("source collector derives executable function constructors only from fresh function provenance", () => {
+  const dependencies = dependencySummary(collectSourceDependencies({
+    path: "src/executable-function-constructors.ts",
+    content: [
+      "const DerivedAsyncFunction = (async function () {}).constructor;",
+      'DerivedAsyncFunction("return import(target)");',
+      'new DerivedAsyncFunction("return import(target)");',
+      'DerivedAsyncFunction.call(null, "return import(target)");',
+      'DerivedAsyncFunction.apply(null, ["return import(target)"]);',
+      'Reflect.apply(DerivedAsyncFunction, null, ["return import(target)"]);',
+      'Reflect.construct(DerivedAsyncFunction, ["return import(target)"]);',
+      "const GeneratorFunction = Object.getPrototypeOf(function* () {}).constructor;",
+      'new GeneratorFunction("yield import(target)");',
+      "const AsyncGeneratorFunction = Object.getPrototypeOf(async function* () {}).constructor;",
+      'Reflect.construct(AsyncGeneratorFunction, ["yield import(target)"]);',
+      "const ComputedAsyncFunction = (async () => {})['constructor'];",
+      "ComputedAsyncFunction(source);",
+      'ComputedAsyncFunction("return 1");',
+      'ComputedAsyncFunction("require", "return require(target)");',
+      'AsyncFunction("return import(ignored)");',
+      "function shadow(Object: unknown) {",
+      "  const Constructor = Object.getPrototypeOf(async function () {}).constructor;",
+      '  Constructor("return import(ignored)");',
+      "}",
+      "const freshAsync = async () => {};",
+      'freshAsync.constructor("return import(target)");',
+      'Reflect.getPrototypeOf(async function () {}).constructor("return import(target)");',
+      "function shadowReflect(Reflect: unknown) {",
+      "  const Constructor = Reflect.getPrototypeOf(async function () {}).constructor;",
+      '  Constructor("return import(ignored)");',
+      "}",
+      "const mutatedFresh = async () => {};",
+      'mutatedFresh.constructor("return import(target)");',
+      "mutatedFresh.constructor = function () {};",
+      'mutatedFresh.constructor("return import(ignored)");',
+      "async function declaredAsync() {}",
+      'declaredAsync.constructor("return import(target)");',
+      "function* declaredGenerator() {}",
+      'declaredGenerator.constructor("yield import(target)");',
+      "async function* declaredAsyncGenerator() {}",
+      'declaredAsyncGenerator.constructor("yield import(target)");',
+      "function declaredOrdinary() {}",
+      'declaredOrdinary.constructor("return import(target)");',
+      "const conditionallyMutated = async () => {};",
+      "if (condition) conditionallyMutated.constructor = function () {};",
+      'conditionallyMutated.constructor("return import(target)");',
+      "async function reassignedDeclaration() {}",
+      "reassignedDeclaration = { constructor() {} } as any;",
+      'reassignedDeclaration.constructor("return import(ignored)");',
+      "async function conditionallyReassignedDeclaration() {}",
+      "if (condition) conditionallyReassignedDeclaration = { constructor() {} } as any;",
+      'conditionallyReassignedDeclaration.constructor("return import(target)");',
+      "async function laterReassignedDeclaration() {}",
+      'laterReassignedDeclaration.constructor("return import(target)");',
+      "laterReassignedDeclaration = { constructor() {} } as any;",
+      "async function logicalMemberNoop() {}",
+      "logicalMemberNoop.constructor ||= function () {};",
+      'logicalMemberNoop.constructor("return import(target)");',
+      "async function deletedInheritedMember() {}",
+      "delete deletedInheritedMember.constructor;",
+      'deletedInheritedMember.constructor("return import(target)");',
+      "async function logicalBindingNoop() {}",
+      "logicalBindingNoop ||= ({ constructor() {} } as any);",
+      'logicalBindingNoop.constructor("return import(target)");',
+    ].join("\n"),
+  })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(
+    dependencies.map(({ loader, line, specifier }) => ({
+      loader,
+      line,
+      specifier,
+    })),
+    [
+      { loader: "AsyncFunction", line: 2, specifier: undefined },
+      { loader: "AsyncFunction", line: 3, specifier: undefined },
+      { loader: "AsyncFunction", line: 4, specifier: undefined },
+      { loader: "AsyncFunction", line: 5, specifier: undefined },
+      { loader: "AsyncFunction", line: 6, specifier: undefined },
+      { loader: "AsyncFunction", line: 7, specifier: undefined },
+      { loader: "GeneratorFunction", line: 9, specifier: undefined },
+      { loader: "AsyncGeneratorFunction", line: 11, specifier: undefined },
+      { loader: "AsyncFunction", line: 13, specifier: undefined },
+      { loader: "AsyncFunction", line: 22, specifier: undefined },
+      { loader: "AsyncFunction", line: 23, specifier: undefined },
+      { loader: "AsyncFunction", line: 29, specifier: undefined },
+      { loader: "AsyncFunction", line: 33, specifier: undefined },
+      { loader: "GeneratorFunction", line: 35, specifier: undefined },
+      { loader: "AsyncGeneratorFunction", line: 37, specifier: undefined },
+      { loader: "Function", line: 39, specifier: undefined },
+      { loader: "AsyncFunction", line: 42, specifier: undefined },
+      { loader: "AsyncFunction", line: 48, specifier: undefined },
+      { loader: "AsyncFunction", line: 50, specifier: undefined },
+      { loader: "AsyncFunction", line: 54, specifier: undefined },
+      { loader: "AsyncFunction", line: 57, specifier: undefined },
+      { loader: "AsyncFunction", line: 60, specifier: undefined },
+    ],
+  );
+});
+
+Deno.test("source collector follows node vm executable-source APIs through provenance", () => {
+  const dependencies = dependencySummary(collectSourceDependencies({
+    path: "src/node-vm-source.ts",
+    content: [
+      'import vm from "node:vm";',
+      'import { runInThisContext as run } from "node:vm";',
+      'import vmEquals = require("node:vm");',
+      'const required = require("node:vm");',
+      'const awaited = await import("node:vm");',
+      'run("import(unknownTarget)");',
+      'vm["runInContext"].call(null, "require(target)", context);',
+      'vmEquals.runInNewContext.apply(null, ["eval(source)", context]);',
+      'Reflect.apply(required.runInThisContext, null, ["new Worker(target)"]);',
+      'vm.compileFunction("return import(target)", ["target"]);',
+      "vm.compileFunction(source, parameters);",
+      'new required.Script("import(target)");',
+      "Reflect.construct(awaited.SourceTextModule, [\"import target from 'npm:module-source@1'\"]);",
+      'required.Script("import(ignored)");',
+      "required.SourceTextModule.call(null, \"import ignored from 'npm:ignored@1'\");",
+      'vm.compileFunction("return require(target)", ["require"]);',
+      "function shadow(vm: { runInThisContext(source: string): void }) {",
+      '  vm.runInThisContext("import(ignored)");',
+      "}",
+      'const awaitedDefault = (await import("node:vm")).default;',
+      'awaitedDefault.runInThisContext("import(defaultTarget)");',
+      'vm.createScript("import(createScriptTarget)");',
+      'vm.runInNewContext("load(target)", { load: require });',
+      'vm.compileFunction("return load(target)", [], { contextExtensions: [{ load: require }] });',
+      'vm.runInNewContext("value + 1", { value: 1 });',
+      'new vm.SourceTextModule("export {}", { importModuleDynamically: require });',
+      'new vm.Script("1", { importModuleDynamically: require });',
+      'vm.runInThisContext("1", { importModuleDynamically: require });',
+      'import { createScript } from "node:vm";',
+      'createScript("require(namedTarget)");',
+    ].join("\n"),
+  })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(
+    dependencies.map(({ loader, line, specifier }) => ({
+      loader,
+      line,
+      specifier,
+    })),
+    [
+      { loader: "node:vm.runInThisContext", line: 6, specifier: undefined },
+      { loader: "node:vm.runInContext", line: 7, specifier: undefined },
+      { loader: "node:vm.runInNewContext", line: 8, specifier: undefined },
+      { loader: "node:vm.runInThisContext", line: 9, specifier: undefined },
+      { loader: "node:vm.compileFunction", line: 10, specifier: undefined },
+      { loader: "node:vm.compileFunction", line: 11, specifier: undefined },
+      { loader: "node:vm.Script", line: 12, specifier: undefined },
+      { loader: "node:vm.SourceTextModule", line: 13, specifier: undefined },
+      { loader: "node:vm.runInThisContext", line: 21, specifier: undefined },
+      { loader: "node:vm.createScript", line: 22, specifier: undefined },
+      { loader: "node:vm.runInNewContext", line: 23, specifier: undefined },
+      { loader: "node:vm.compileFunction", line: 24, specifier: undefined },
+      { loader: "node:vm.SourceTextModule", line: 26, specifier: undefined },
+      { loader: "node:vm.Script", line: 27, specifier: undefined },
+      { loader: "node:vm.runInThisContext", line: 28, specifier: undefined },
+      { loader: "node:vm.createScript", line: 30, specifier: undefined },
+    ],
+  );
+});
+
+Deno.test("source collector analyzes only non-callable browser timer handlers as source", () => {
+  const dependencies = dependencySummary(collectSourceDependencies({
+    path: "src/browser-string-timers.ts",
+    content: [
+      'setTimeout("import(target)", 0);',
+      'globalThis["setInterval"].call(null, "require(target)", 0);',
+      "const schedule = setTimeout;",
+      'schedule.apply(null, ["eval(source)", 0]);',
+      'Reflect.apply(setInterval, null, ["new Worker(target)", 0]);',
+      "setTimeout(handler, 0);",
+      'setInterval("const {", 0);',
+      "setTimeout(42, 0);",
+      "setInterval(null, 0);",
+      'setTimeout(() => import("npm:callback@1"), 0);',
+      "function shadow(setTimeout: unknown, setInterval: unknown) {",
+      '  setTimeout("import(ignored)", 0);',
+      '  setInterval("require(ignored)", 0);',
+      "}",
+      'import { setTimeout as nodeTimeout } from "node:timers";',
+      'nodeTimeout("import(ignored)", 0);',
+    ].join("\n"),
+  }));
+
+  assertEquals(
+    dependencies.filter(({ kind }) => kind === "unresolved-runtime-loader")
+      .map(({ loader, line, specifier }) => ({ loader, line, specifier })),
+    [
+      { loader: "setTimeout", line: 1, specifier: undefined },
+      { loader: "setInterval", line: 2, specifier: undefined },
+      { loader: "setTimeout", line: 4, specifier: undefined },
+      { loader: "setInterval", line: 5, specifier: undefined },
+      { loader: "setTimeout", line: 6, specifier: undefined },
+      { loader: "setInterval", line: 7, specifier: undefined },
+    ],
+  );
+  assertEquals(
+    dependencies.filter(({ kind }) => kind === "dynamic-import"),
+    [{
+      kind: "dynamic-import",
+      specifier: "npm:callback@1",
+      loader: "import",
+      line: 10,
+    }],
+  );
+});
+
 Deno.test("source collector does not reduce URL calls through a shadowed globalThis", () => {
   const dependencies = collectSourceDependencies({
     path: "src/shadowed-global-url.ts",
@@ -1643,12 +2159,6 @@ Deno.test("source collector fails closed for assignment, object-member, and bind
         specifier: undefined,
         loader: "require-alias",
         line: 3,
-      },
-      {
-        kind: "unresolved-runtime-loader",
-        specifier: undefined,
-        loader: "require-alias",
-        line: 4,
       },
       {
         kind: "unresolved-runtime-loader",
@@ -1760,6 +2270,87 @@ Deno.test("source collector fails closed when higher-order invocation receivers 
     dependencySummary(collectSourceDependencies({
       path: "src/benign-higher-order-receiver.ts",
       content: "Reflect.apply(Function.prototype.call, benign, []);",
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+    [],
+  );
+});
+
+Deno.test("source collector treats namespace-valued ordinary invocation arguments as capability boundaries", async (context) => {
+  const cases = [
+    [
+      "direct global namespace",
+      "function consume(value: unknown) { return value; }\nconsume(globalThis);",
+      "runtime-loader-alias",
+    ],
+    [
+      "constructor global namespace",
+      "class Consumer { constructor(value: unknown) { void value; } }\nnew Consumer(globalThis);",
+      "runtime-loader-alias",
+    ],
+    [
+      "direct module namespace",
+      'import * as nodeModule from "node:module";\nconsume(nodeModule);',
+      "runtime-loader-alias",
+    ],
+  ] as const;
+
+  for (const [name, content, loader] of cases) {
+    await context.step(name, () => {
+      const unresolved = dependencySummary(collectSourceDependencies({
+        path: `src/${name.replaceAll(" ", "-")}.ts`,
+        content,
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      assertEquals(unresolved, [{
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader,
+        line: 2,
+      }]);
+    });
+  }
+
+  assertEquals(
+    dependencySummary(collectSourceDependencies({
+      path: "src/benign-ordinary-arguments.ts",
+      content: "consume(benign);\nclass Consumer {}\nnew Consumer(alsoBenign);",
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+    [],
+  );
+});
+
+Deno.test("source collector retains Reflect.construct newTarget as a capability input", async (context) => {
+  const cases = [
+    [
+      "loader newTarget",
+      "function Target() { return new.target; }\nReflect.construct(Target, [], require);",
+      "require-alias",
+    ],
+    [
+      "namespace newTarget",
+      "function Target() { return new.target; }\nReflect.construct(Target, [], globalThis);",
+      "runtime-loader-alias",
+    ],
+  ] as const;
+
+  for (const [name, content, loader] of cases) {
+    await context.step(name, () => {
+      const unresolved = dependencySummary(collectSourceDependencies({
+        path: `src/${name.replaceAll(" ", "-")}.ts`,
+        content,
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      assertEquals(unresolved, [{
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader,
+        line: 2,
+      }]);
+    });
+  }
+
+  assertEquals(
+    dependencySummary(collectSourceDependencies({
+      path: "src/benign-new-target.ts",
+      content: "Reflect.construct(Target, [], BenignTarget);",
     })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
     [],
   );
@@ -2167,7 +2758,617 @@ Deno.test("source collector turns binding convergence exhaustion into a structur
   );
 });
 
-Deno.test("source collector monotonically joins alternating binding and member loader facts", () => {
+Deno.test("source collector resolves reverse binding chains with affine transfer work", () => {
+  const collect = (width: number) => {
+    const content: string[] = [];
+    for (let index = 0; index < width - 1; index++) {
+      content.push(`const load${index} = load${index + 1};`);
+    }
+    content.push(`const load${width - 1} = require;`);
+    content.push("load0(target);");
+
+    let diagnostics:
+      | {
+        bindingDependencyEdges: number;
+        bindingTransferEvaluations: number;
+        bindingWorklistEnqueues: number;
+      }
+      | undefined;
+    const started = performance.now();
+    const dependencies = dependencySummary(collectSourceDependencies(
+      {
+        path: `src/reverse-binding-chain-${width}.ts`,
+        content: content.join("\n"),
+      },
+      {
+        onAnalysisDiagnostics: (value) => {
+          diagnostics = value;
+        },
+      },
+    ));
+    const elapsed = performance.now() - started;
+
+    if (!diagnostics) {
+      throw new Error("binding analysis did not report work diagnostics");
+    }
+    assertEquals(dependencies, [{
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "require-alias",
+      line: width + 1,
+    }]);
+    assertEquals(diagnostics.bindingTransferEvaluations, 2 * width - 1);
+    // Each alias transfer permanently subscribes to both its value provenance
+    // and its potential constant-string provenance.
+    assertEquals(diagnostics.bindingDependencyEdges, 2 * (width - 1));
+    assertEquals(diagnostics.bindingWorklistEnqueues, 2 * width - 1);
+    if (elapsed >= 5_000) {
+      throw new Error(
+        `reverse binding chain analysis took ${elapsed.toFixed(1)}ms`,
+      );
+    }
+    return diagnostics;
+  };
+
+  assertEquals(collect(64).bindingTransferEvaluations, 127);
+  assertEquals(collect(128).bindingTransferEvaluations, 255);
+});
+
+Deno.test("source collector structurally bounds cyclic composite facts", () => {
+  const collect = () =>
+    collectSourceDependencies({
+      path: "src/cyclic-composite-facts.ts",
+      content: [
+        "const left = {};",
+        "const right = {};",
+        "left.next = right;",
+        "right.next = left;",
+        "consume(left);",
+      ].join("\n"),
+    });
+
+  assertEquals(collect(), []);
+  assertEquals(collect(), []);
+});
+
+Deno.test("source collector bounds shared and deep container graphs", async (context) => {
+  await context.step("shared diamond", () => {
+    const depth = 20;
+    const content = ["const c0 = {};"];
+    for (let index = 1; index <= depth; index++) {
+      content.push(
+        `const c${index} = { left: c${index - 1}, right: c${index - 1} };`,
+      );
+    }
+    content.push("c0.load = require;");
+    content.push('c0.pending = import("node:worker_threads");');
+    content.push(`consume(c${depth});`);
+
+    const started = performance.now();
+    const dependencies = dependencySummary(collectSourceDependencies({
+      path: "src/shared-container-diamond.ts",
+      content: content.join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+    const elapsed = performance.now() - started;
+    if (elapsed >= 1_000) {
+      throw new Error(
+        `shared container traversal took ${elapsed.toFixed(1)}ms`,
+      );
+    }
+    assertEquals(dependencies.length, 1);
+    assertEquals(dependencies.at(-1), {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: depth + 4,
+    });
+  });
+
+  await context.step("capability cycle", () => {
+    const dependencies = dependencySummary(collectSourceDependencies({
+      path: "src/cyclic-container-capability.ts",
+      content: [
+        "const left = {}; const right = {};",
+        "left.next = right;",
+        "right.next = left;",
+        "left.load = require;",
+        "consume(right);",
+      ].join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+    assertEquals(dependencies, [
+      {
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader: "require-alias",
+        line: 5,
+      },
+    ]);
+  });
+
+  await context.step("deep chain", () => {
+    const depth = 512;
+    const content = ["const c0 = {};"];
+    for (let index = 1; index <= depth; index++) {
+      content.push(`const c${index} = { next: c${index - 1} };`);
+    }
+    content.push(`consume(c${depth});`);
+
+    assertEquals(
+      collectSourceDependencies({
+        path: "src/deep-container-chain.ts",
+        content: content.join("\n"),
+      }),
+      [],
+    );
+  });
+
+  await context.step("wide local member accumulation", () => {
+    const collect = (width: number) => {
+      const content = ["const box = {};"];
+      for (let index = 0; index < width; index++) {
+        content.push(`box.p${index} = value${index};`);
+      }
+      content.push("consume(box);");
+      let containerMapEntryCopies: number | undefined;
+      let containerMemberJoins: number | undefined;
+      const started = performance.now();
+      collectSourceDependencies(
+        {
+          path: `src/wide-local-member-accumulation-${width}.ts`,
+          content: content.join("\n"),
+        },
+        {
+          onAnalysisDiagnostics: (diagnostics) => {
+            containerMapEntryCopies = diagnostics.containerMapEntryCopies;
+            containerMemberJoins = diagnostics.containerMemberJoins;
+          },
+        },
+      );
+      return {
+        containerMapEntryCopies,
+        containerMemberJoins,
+        elapsed: performance.now() - started,
+      };
+    };
+
+    const narrow = collect(400);
+    const wide = collect(800);
+    if (
+      narrow.containerMapEntryCopies === undefined ||
+      wide.containerMapEntryCopies === undefined ||
+      narrow.containerMemberJoins === undefined ||
+      wide.containerMemberJoins === undefined
+    ) {
+      throw new Error("container analysis did not report work diagnostics");
+    }
+    if (
+      wide.containerMapEntryCopies >
+        2 * narrow.containerMapEntryCopies + 32 ||
+      wide.containerMemberJoins > 2 * narrow.containerMemberJoins + 32
+    ) {
+      throw new Error(
+        `wide member work grew superlinearly: copies ${narrow.containerMapEntryCopies} -> ${wide.containerMapEntryCopies}, joins ${narrow.containerMemberJoins} -> ${wide.containerMemberJoins}`,
+      );
+    }
+    if (wide.elapsed >= 5_000) {
+      throw new Error(
+        `wide local member accumulation took ${wide.elapsed.toFixed(1)}ms`,
+      );
+    }
+  });
+
+  await context.step("wide container identity accumulation", () => {
+    const collect = (width: number) => {
+      const content: string[] = [];
+      for (let index = 0; index < width; index++) {
+        content.push(`const c${index} = {};`);
+      }
+      content.push("let all = c0;");
+      for (let index = 1; index < width; index++) {
+        content.push(`all = flag${index} ? all : c${index};`);
+      }
+      content.push("consume(all);");
+      let diagnostics:
+        | {
+          containerIdentityElementVisits: number;
+          containerIdentityInsertions: number;
+          containerSnapshotForkElementCopies: number;
+        }
+        | undefined;
+      collectSourceDependencies(
+        {
+          path: `src/wide-container-identity-accumulation-${width}.ts`,
+          content: content.join("\n"),
+        },
+        {
+          onAnalysisDiagnostics: (value) => {
+            diagnostics = value;
+          },
+        },
+      );
+      if (!diagnostics) {
+        throw new Error("container analysis did not report work diagnostics");
+      }
+      return diagnostics;
+    };
+
+    const narrow = collect(40);
+    const wide = collect(80);
+    if (
+      wide.containerIdentityElementVisits >
+        2 * narrow.containerIdentityElementVisits + 32 ||
+      wide.containerIdentityInsertions >
+        2 * narrow.containerIdentityInsertions + 32 ||
+      narrow.containerSnapshotForkElementCopies !== 0 ||
+      wide.containerSnapshotForkElementCopies !== 0
+    ) {
+      throw new Error(
+        `wide identity work grew superlinearly: visits ${narrow.containerIdentityElementVisits} -> ${wide.containerIdentityElementVisits}, insertions ${narrow.containerIdentityInsertions} -> ${wide.containerIdentityInsertions}, fork copies ${narrow.containerSnapshotForkElementCopies} -> ${wide.containerSnapshotForkElementCopies}`,
+      );
+    }
+  });
+});
+
+Deno.test("source collector keeps mixed traversal policy state across shared cycles", () => {
+  const collect = () =>
+    dependencySummary(collectSourceDependencies({
+      path: "src/mixed-container-policy-cycle.ts",
+      content: [
+        'const batch = await Promise.all([import("node:module")]);',
+        'const shared = flag ? batch : await import("node:module");',
+        "const denied = { value: shared };",
+        "denied.self = denied;",
+        "const allowed = await Promise.all([shared]);",
+        "const graph = { allowed, denied };",
+        "consume(graph);",
+      ].join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  const first = collect();
+  assertEquals(collect(), first);
+  assertEquals(
+    first.some(({ line, loader }) =>
+      line === 7 && loader === "runtime-loader-alias"
+    ),
+    true,
+  );
+});
+
+Deno.test("source collector bounds shared and deep promise-origin graphs", async (context) => {
+  await context.step("shared Promise.all diamond", () => {
+    const depth = 20;
+    const content = ['const p0 = import("node:module");'];
+    for (let index = 1; index <= depth; index++) {
+      content.push(
+        `const p${index} = Promise.all([p${index - 1}, p${index - 1}]);`,
+      );
+    }
+    content.push(`consume(p${depth});`);
+
+    const started = performance.now();
+    const dependencies = dependencySummary(collectSourceDependencies({
+      path: "src/shared-promise-diamond.ts",
+      content: content.join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+    const elapsed = performance.now() - started;
+    if (elapsed >= 1_000) {
+      throw new Error(
+        `shared promise traversal took ${elapsed.toFixed(1)}ms`,
+      );
+    }
+    assertEquals(dependencies.at(-1), {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: depth + 2,
+    });
+  });
+
+  await context.step("awaited diamond projection", () => {
+    const depth = 20;
+    const content = ['const p0 = import("node:module");'];
+    for (let index = 1; index <= depth; index++) {
+      content.push(
+        `const p${index} = Promise.all([p${index - 1}, p${index - 1}]);`,
+      );
+    }
+    content.push(`const resolved = await p${depth};`);
+    content.push(`resolved${"[0]".repeat(depth)}.register(target);`);
+
+    const started = performance.now();
+    const dependencies = dependencySummary(collectSourceDependencies({
+      path: "src/awaited-promise-diamond.ts",
+      content: content.join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+    const elapsed = performance.now() - started;
+    if (elapsed >= 500) {
+      throw new Error(
+        `awaited promise projection took ${elapsed.toFixed(1)}ms`,
+      );
+    }
+    assertEquals(dependencies.at(-1), {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "module.register",
+      line: depth + 3,
+    });
+  });
+
+  await context.step("promise-origin cycle", () => {
+    const collect = () =>
+      dependencySummary(collectSourceDependencies({
+        path: "src/cyclic-promise-origins.ts",
+        content: [
+          'let left = import("node:module");',
+          "let right;",
+          "left = Promise.all([right]);",
+          "right = Promise.all([left]);",
+          "consume(right);",
+        ].join("\n"),
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+    const first = collect();
+    assertEquals(collect(), first);
+    assertEquals(
+      first.some(({ line, loader }) =>
+        line === 5 && loader === "runtime-loader-alias"
+      ),
+      true,
+    );
+  });
+
+  await context.step("deep Promise.all chain", () => {
+    const depth = 512;
+    const content = ['const p0 = import("node:worker_threads");'];
+    for (let index = 1; index <= depth; index++) {
+      content.push(`const p${index} = Promise.all([p${index - 1}]);`);
+    }
+    content.push(`consume(p${depth});`);
+
+    const dependencies = dependencySummary(collectSourceDependencies({
+      path: "src/deep-promise-chain.ts",
+      content: content.join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+    assertEquals(
+      dependencies.some(({ line, loader }) =>
+        line === depth + 2 && loader === "runtime-loader-alias"
+      ),
+      true,
+    );
+  });
+
+  await context.step("shared multi-origin capability facts", () => {
+    const collect = (width: number) => {
+      const content = ["let pending;"];
+      for (let index = 0; index < width; index++) {
+        content.push('pending = import("node:module");');
+      }
+      content.push(
+        `const values = [${Array(width).fill("pending").join(",")}];`,
+      );
+      content.push("consume(values);");
+
+      let promiseOriginElementVisits: number | undefined;
+      const started = performance.now();
+      const dependencies = dependencySummary(collectSourceDependencies(
+        {
+          path: `src/shared-multi-origin-capability-${width}.ts`,
+          content: content.join("\n"),
+        },
+        {
+          onAnalysisDiagnostics: (diagnostics) => {
+            promiseOriginElementVisits = diagnostics.promiseOriginElementVisits;
+          },
+        },
+      )).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      return {
+        dependencies,
+        elapsed: performance.now() - started,
+        promiseOriginElementVisits,
+      };
+    };
+
+    const narrow = collect(400);
+    const wide = collect(800);
+    assertEquals(narrow.dependencies, [{
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: 403,
+    }]);
+    assertEquals(wide.dependencies, [{
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: 803,
+    }]);
+    if (
+      narrow.promiseOriginElementVisits === undefined ||
+      wide.promiseOriginElementVisits === undefined
+    ) {
+      throw new Error("binding analysis did not report work diagnostics");
+    }
+    if (
+      narrow.promiseOriginElementVisits > 4 * 400 + 32 ||
+      wide.promiseOriginElementVisits >
+        2 * narrow.promiseOriginElementVisits + 32
+    ) {
+      throw new Error(
+        `shared provenance work grew superlinearly: ${narrow.promiseOriginElementVisits} -> ${wide.promiseOriginElementVisits}`,
+      );
+    }
+    if (wide.elapsed >= 1_000) {
+      throw new Error(
+        `shared multi-origin capability traversal took ${
+          wide.elapsed.toFixed(1)
+        }ms`,
+      );
+    }
+  });
+
+  await context.step("shared multi-origin awaited facts", () => {
+    const width = 1_600;
+    const content = ["let pending;"];
+    for (let index = 0; index < width; index++) {
+      content.push('pending = import("node:module");');
+    }
+    content.push(
+      `const values = await Promise.all([${
+        Array(width).fill("pending").join(",")
+      }]);`,
+    );
+    content.push("values[0].register(target);");
+
+    let awaitedPromiseOriginElementVisits: number | undefined;
+    const started = performance.now();
+    const dependencies = dependencySummary(collectSourceDependencies(
+      {
+        path: "src/shared-multi-origin-awaited.ts",
+        content: content.join("\n"),
+      },
+      {
+        onAnalysisDiagnostics: (diagnostics) => {
+          awaitedPromiseOriginElementVisits =
+            diagnostics.awaitedPromiseOriginElementVisits;
+        },
+      },
+    )).filter(({ kind }) => kind === "unresolved-runtime-loader");
+    const elapsed = performance.now() - started;
+    if (
+      awaitedPromiseOriginElementVisits === undefined ||
+      awaitedPromiseOriginElementVisits > 8 * width + 64
+    ) {
+      throw new Error(
+        `shared awaited provenance work was not linear: ${awaitedPromiseOriginElementVisits}`,
+      );
+    }
+    if (elapsed >= 5_000) {
+      throw new Error(
+        `shared multi-origin awaited traversal took ${elapsed.toFixed(1)}ms`,
+      );
+    }
+    assertEquals(dependencies.at(-1), {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "module.register",
+      line: width + 3,
+    });
+  });
+
+  await context.step("shared local Promise.all iterable", () => {
+    const width = 1_600;
+    const content = [
+      `const inputs = [${
+        Array(width).fill('import("node:module")').join(",")
+      }];`,
+      "let pending;",
+    ];
+    for (let index = 0; index < width; index++) {
+      content.push("pending = Promise.all(inputs);");
+    }
+    content.push("const values = await pending;");
+    content.push("values[0].register(target);");
+
+    let awaitedIterableMemberVisits: number | undefined;
+    const started = performance.now();
+    const dependencies = dependencySummary(collectSourceDependencies(
+      {
+        path: "src/shared-local-promise-iterable.ts",
+        content: content.join("\n"),
+      },
+      {
+        onAnalysisDiagnostics: (diagnostics) => {
+          awaitedIterableMemberVisits = diagnostics.awaitedIterableMemberVisits;
+        },
+      },
+    )).filter(({ kind }) => kind === "unresolved-runtime-loader");
+    const elapsed = performance.now() - started;
+    if (
+      awaitedIterableMemberVisits === undefined ||
+      awaitedIterableMemberVisits > 8 * width + 64
+    ) {
+      throw new Error(
+        `shared local iterable work was not linear: ${awaitedIterableMemberVisits}`,
+      );
+    }
+    if (elapsed >= 5_000) {
+      throw new Error(
+        `shared local Promise.all traversal took ${elapsed.toFixed(1)}ms`,
+      );
+    }
+    assertEquals(dependencies.at(-1), {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "module.register",
+      line: width + 4,
+    });
+  });
+});
+
+Deno.test("source collector bounds frozen config bridge facts by allocation identity", () => {
+  const collect = () =>
+    collectSourceDependencies(
+      {
+        path: "src/config/config-shim.ts",
+        content: [
+          'import { defineConfig, mergeConfigs } from "./define-config.ts";',
+          'import { getEnv } from "#veryfront/platform/compat/process.ts";',
+          "function createConfigShimModule(name, bridge) {",
+          "  const bridgeKey = `__veryfrontConfigShimBridgeV1:${name}`;",
+          "  const frozenBridge = Object.freeze({ ...bridge });",
+          "  Object.defineProperty(globalThis, bridgeKey, {",
+          "    configurable: false,",
+          "    enumerable: false,",
+          "    writable: false,",
+          "    value: frozenBridge,",
+          "  });",
+          "  const source = `const bridge = globalThis[${JSON.stringify(bridgeKey)}];`;",
+          "  return Object.freeze({",
+          "    source,",
+          "    url: `data:text/javascript;base64,${source}`,",
+          "  });",
+          "}",
+          'const shim = createConfigShimModule("loader", {',
+          "  defineConfig,",
+          "  getEnv,",
+          "  mergeConfigs,",
+          "});",
+          "export const SOURCE = shim.source;",
+          "export const URL = shim.url;",
+        ].join("\n"),
+      },
+      { maximumBindingPasses: 8 },
+    );
+
+  const expected = [
+    {
+      path: "src/config/config-shim.ts",
+      line: 1,
+      column: 1,
+      kind: "static-import" as const,
+      specifier: "./define-config.ts",
+    },
+    {
+      path: "src/config/config-shim.ts",
+      line: 2,
+      column: 1,
+      kind: "static-import" as const,
+      specifier: "#veryfront/platform/compat/process.ts",
+    },
+    {
+      path: "src/config/config-shim.ts",
+      line: 6,
+      column: 3,
+      kind: "unresolved-runtime-loader" as const,
+      loader: "runtime-loader-alias",
+    },
+  ];
+  assertEquals(collect(), expected);
+  assertEquals(collect(), expected);
+});
+
+Deno.test("source collector joins scalar facts and honors the last definite local slot write", () => {
   const dependencies = dependencySummary(collectSourceDependencies({
     path: "src/alternating-loader-facts.ts",
     content: [
@@ -2180,7 +3381,7 @@ Deno.test("source collector monotonically joins alternating binding and member l
       "box.load = require;",
       "box.load(memberTarget);",
     ].join("\n"),
-  })).filter(({ loader }) => loader === "runtime-loader-alias");
+  })).filter(({ kind }) => kind === "unresolved-runtime-loader");
 
   assertEquals(dependencies, [
     {
@@ -2192,13 +3393,7 @@ Deno.test("source collector monotonically joins alternating binding and member l
     {
       kind: "unresolved-runtime-loader",
       specifier: undefined,
-      loader: "runtime-loader-alias",
-      line: 6,
-    },
-    {
-      kind: "unresolved-runtime-loader",
-      specifier: undefined,
-      loader: "runtime-loader-alias",
+      loader: "require-alias",
       line: 8,
     },
   ]);
@@ -2505,6 +3700,75 @@ Deno.test("source collector joins conflicting promise provenance without treatin
   ]);
 });
 
+Deno.test("source collector never mutates promise facts while joining independent values", async (context) => {
+  const branchOrders = [
+    "p1 = flag ? p0 : p2;",
+    "p1 = flag ? p2 : p0;",
+  ];
+
+  for (const [index, conditional] of branchOrders.entries()) {
+    await context.step(`conditional order ${index + 1}`, () => {
+      const dependencies = dependencySummary(collectSourceDependencies({
+        path: `src/independent-promise-facts-${index}.ts`,
+        content: [
+          "let p0, p1, p2;",
+          'p0 = import("node:fs");',
+          'p0 = import("node:fs");',
+          'p2 = import("node:module");',
+          conditional,
+          "const api = await p0;",
+          'api.register("npm:must-not-be-inferred@1");',
+        ].join("\n"),
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+      assertEquals(dependencies, []);
+    });
+  }
+
+  await context.step("duplicate exact origins remain exact", () => {
+    const dependencies = dependencySummary(collectSourceDependencies({
+      path: "src/duplicate-exact-promise-origins.ts",
+      content: [
+        "let pending;",
+        'pending = import("node:module");',
+        'pending = import("node:module");',
+        "const api = await pending;",
+        "api.register(target);",
+      ].join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+    assertEquals(dependencies, [{
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "module.register",
+      line: 5,
+    }]);
+  });
+
+  await context.step(
+    "derived unions cannot contaminate source or sibling facts",
+    () => {
+      const dependencies = dependencySummary(collectSourceDependencies({
+        path: "src/promise-origin-siblings.ts",
+        content: [
+          "let source, left, right, other, union;",
+          'source = import("node:fs");',
+          "left = source;",
+          "right = source;",
+          'other = import("node:module");',
+          "union = flag ? left : other;",
+          "const sourceApi = await source;",
+          "const siblingApi = await right;",
+          'sourceApi.register("npm:source-contamination@1");',
+          'siblingApi.register("npm:sibling-contamination@1");',
+        ].join("\n"),
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+      assertEquals(dependencies, []);
+    },
+  );
+});
+
 Deno.test("source collector fails closed when loader-bearing promises cross unmodeled boundaries", async (context) => {
   const cases = [
     [
@@ -2553,6 +3817,11 @@ Deno.test("source collector fails closed when loader-bearing promises cross unmo
       'function* values() { yield import("node:module"); }',
       1,
     ],
+    [
+      "throw container",
+      'const box = {};\nbox.pending = import("node:module");\nthrow box;',
+      3,
+    ],
     ["instance field", 'class Box { pending = import("node:module"); }', 1],
     [
       "static field",
@@ -2590,10 +3859,7 @@ Deno.test("source collector fails closed when loader-bearing promises cross unmo
       } as const;
       assertEquals(
         dependencies,
-        // The nested aggregate and its public export are distinct boundaries.
-        name === "nested batched export"
-          ? [unresolved, unresolved]
-          : [unresolved],
+        [unresolved],
       );
     });
   }
@@ -2614,7 +3880,7 @@ Deno.test("source collector fails closed when loader-bearing promises cross unmo
   assertEquals(localControls, []);
 });
 
-Deno.test("source collector resolves direct promise projections and rejects unmodeled nested promise containers", async (context) => {
+Deno.test("source collector resolves direct and nested promise-container projections", async (context) => {
   const exactCases = [
     [
       "direct index declaration",
@@ -2664,25 +3930,24 @@ Deno.test("source collector resolves direct promise projections and rejects unmo
     });
   }
 
-  const unsupportedCases = [
+  const nestedCases = [
     [
       "nested object",
       'const box = { nested: { pending: import("node:module") } };\nconst api = await box.nested.pending;\napi.register(target);',
+      3,
     ],
     [
       "nested array",
       'const values = [[import("node:module")]];\nconst api = await values[0][0];\napi.register(target);',
+      3,
     ],
     [
       "nested object destructuring",
       'const box = { nested: { pending: import("node:module") } };\nconst { nested: { pending } } = box;\nconst api = await pending;\napi.register(target);',
-    ],
-    [
-      "nested batch",
-      'const [[api]] = await Promise.all([Promise.all([import("node:module")])]);\napi.register(target);',
+      4,
     ],
   ] as const;
-  for (const [name, content] of unsupportedCases) {
+  for (const [name, content, line] of nestedCases) {
     await context.step(name, () => {
       const unresolved = dependencySummary(collectSourceDependencies({
         path: `src/${name.replaceAll(" ", "-")}.ts`,
@@ -2691,8 +3956,8 @@ Deno.test("source collector resolves direct promise projections and rejects unmo
       assertEquals(unresolved, [{
         kind: "unresolved-runtime-loader",
         specifier: undefined,
-        loader: "runtime-loader-alias",
-        line: 1,
+        loader: "module.register",
+        line,
       }]);
     });
   }
@@ -2739,31 +4004,36 @@ Deno.test("source collector fails closed for indeterminate Promise.all projectio
     [
       "array rest",
       'const [...apis] = await Promise.all([import("node:module")]);\napis[0].register(target);',
+      "module.register",
       2,
     ],
     [
       "namespace object rest",
       'const [{ ...api }] = await Promise.all([import("node:module")]);\napi.register(target);',
+      "runtime-loader-alias",
       2,
     ],
     [
       "computed member",
       'const api = (await Promise.all([import("node:module")]))[key];\napi.register(target);',
+      "runtime-loader-alias",
       2,
     ],
     [
       "computed object pattern",
       'const { [key]: api } = await Promise.all([import("node:module")]);\napi.register(target);',
+      "runtime-loader-alias",
       2,
     ],
     [
       "object rest",
       'const { ...apis } = await Promise.all([import("node:module")]);\napis[0].register(target);',
+      "module.register",
       2,
     ],
   ] as const;
 
-  for (const [name, content, line] of cases) {
+  for (const [name, content, loader, line] of cases) {
     await context.step(name, () => {
       const unresolved = dependencySummary(collectSourceDependencies({
         path: `src/${name.replaceAll(" ", "-")}.ts`,
@@ -2772,7 +4042,7 @@ Deno.test("source collector fails closed for indeterminate Promise.all projectio
       assertEquals(unresolved, [{
         kind: "unresolved-runtime-loader",
         specifier: undefined,
-        loader: "runtime-loader-alias",
+        loader,
         line,
       }]);
     });
@@ -2788,7 +4058,1522 @@ Deno.test("source collector fails closed for indeterminate Promise.all projectio
   );
 });
 
+Deno.test("source collector transfers ordinary promise-container projections exhaustively", async (context) => {
+  const cases = [
+    [
+      "object rest declaration",
+      'const box = { pending: import("node:module") };\nconst { ...rest } = box;\nconst api = await rest.pending;\napi.register(target);',
+      "module.register",
+      4,
+    ],
+    [
+      "array rest declaration",
+      'const values = [import("node:module")];\nconst [...rest] = values;\nconst api = await rest[0];\napi.register(target);',
+      "module.register",
+      4,
+    ],
+    [
+      "computed declaration",
+      'const box = { pending: import("node:module") };\nconst pending = box[key];\nconst api = await pending;\napi.register(target);',
+      "runtime-loader-alias",
+      4,
+    ],
+    [
+      "empty string property",
+      'const box = { "": import("node:module") };\nconst pending = box[""];\nconst api = await pending;\napi.register(target);',
+      "module.register",
+      4,
+    ],
+    [
+      "object rest assignment",
+      'const box = { pending: import("node:module") };\nlet rest;\n({ ...rest } = box);\nconst api = await rest.pending;\napi.register(target);',
+      "module.register",
+      5,
+    ],
+    [
+      "array rest assignment",
+      'const values = [import("node:module")];\nlet rest;\n[...rest] = values;\nconst api = await rest[0];\napi.register(target);',
+      "module.register",
+      5,
+    ],
+    [
+      "computed assignment",
+      'const box = { pending: import("node:module") };\nlet pending;\n({ [key]: pending } = box);\nconst api = await pending;\napi.register(target);',
+      "runtime-loader-alias",
+      5,
+    ],
+  ] as const;
+
+  for (const [name, content, loader, line] of cases) {
+    await context.step(name, () => {
+      const unresolved = dependencySummary(collectSourceDependencies({
+        path: `src/${name.replaceAll(" ", "-")}.ts`,
+        content,
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      assertEquals(unresolved, [{
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader,
+        line,
+      }]);
+    });
+  }
+
+  assertEquals(
+    dependencySummary(collectSourceDependencies({
+      path: "src/local-computed-object-store.ts",
+      content: 'const box = { [key]: import("node:module") };\nvoid box;',
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+    [],
+  );
+
+  assertEquals(
+    dependencySummary(collectSourceDependencies({
+      path: "src/non-loader-ordinary-rest.ts",
+      content:
+        'const box = { pending: import("node:fs") };\nconst { ...rest } = box;\nconst api = await rest.pending;\napi.readFile(target);',
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+    [],
+  );
+});
+
+Deno.test("source collector widens joined and overwritten promise provenance to unknown", async (context) => {
+  const cases = [
+    [
+      "conditional",
+      'const pending = flag ? import("node:module") : external;\nconst api = await pending;\napi.register(target);',
+      3,
+    ],
+    [
+      "logical",
+      'const pending = flag && import("node:module");\nconst api = await pending;\napi.register(target);',
+      3,
+    ],
+    [
+      "nullish",
+      'const pending = external ?? import("node:module");\nconst api = await pending;\napi.register(target);',
+      3,
+    ],
+    [
+      "overwrite",
+      'let pending = import("node:module");\npending = external;\nconst api = await pending;\napi.register(target);',
+      4,
+    ],
+    [
+      "update",
+      'let pending = import("node:module");\npending++;\nconst api = await pending;\napi.register(target);',
+      4,
+    ],
+    [
+      "logical assignment",
+      'let pending = external;\npending ||= import("node:module");\nconst api = await pending;\napi.register(target);',
+      4,
+    ],
+    [
+      "Promise.all input",
+      'const [api] = await Promise.all([flag ? import("node:module") : external]);\napi.register(target);',
+      2,
+    ],
+    [
+      "object member",
+      'const box = { pending: flag ? import("node:module") : external };\nconst api = await box.pending;\napi.register(target);',
+      3,
+    ],
+  ] as const;
+
+  for (const [name, content, line] of cases) {
+    await context.step(name, () => {
+      const collect = () =>
+        dependencySummary(collectSourceDependencies({
+          path: `src/${name.replaceAll(" ", "-")}.ts`,
+          content,
+        })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      const unresolved = collect();
+      assertEquals(unresolved, [{
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader: "runtime-loader-alias",
+        line,
+      }]);
+      assertEquals(collect(), unresolved);
+    });
+  }
+});
+
+Deno.test("source collector transfers promise provenance through loop targets and conditional containers", async (context) => {
+  const cases = [
+    [
+      "for-of declaration",
+      'const values = [import("node:module")];\nfor (const pending of values) {\n  const api = await pending;\n  api.register(target);\n}',
+      "module.register",
+      4,
+    ],
+    [
+      "for-of assignment",
+      'const values = [import("node:module")];\nlet pending;\nfor (pending of values) {\n  const api = await pending;\n  api.register(target);\n}',
+      "module.register",
+      5,
+    ],
+    [
+      "for-await declaration",
+      'const values = [import("node:module")];\nfor await (const api of values) {\n  api.register(target);\n}',
+      "module.register",
+      3,
+    ],
+    [
+      "for-await assignment",
+      'const values = [import("node:module")];\nlet api;\nfor await (api of values) {\n  api.register(target);\n}',
+      "module.register",
+      4,
+    ],
+    [
+      "conditional object",
+      'const box = flag ? { pending: import("node:module") } : external;\nconst { pending } = box;\nconst api = await pending;\napi.register(target);',
+      "runtime-loader-alias",
+      4,
+    ],
+    [
+      "conditional array",
+      'const values = flag ? [import("node:module")] : external;\nconst [pending] = values;\nconst api = await pending;\napi.register(target);',
+      "runtime-loader-alias",
+      4,
+    ],
+  ] as const;
+
+  for (const [name, content, loader, line] of cases) {
+    await context.step(name, () => {
+      const unresolved = dependencySummary(collectSourceDependencies({
+        path: `src/${name.replaceAll(" ", "-")}.ts`,
+        content,
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      assertEquals(unresolved, [{
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader,
+        line,
+      }]);
+    });
+  }
+});
+
+Deno.test("source collector widens overridable assignment-pattern defaults", async (context) => {
+  const cases = [
+    [
+      "parameter default",
+      'async function load(pending = import("node:module")) {\n  const api = await pending;\n  api.register(target);\n}',
+      3,
+    ],
+    [
+      "object declaration default",
+      'const { pending = import("node:module") } = source;\nconst api = await pending;\napi.register(target);',
+      3,
+    ],
+    [
+      "array declaration default",
+      'const [pending = import("node:module")] = source;\nconst api = await pending;\napi.register(target);',
+      3,
+    ],
+    [
+      "object assignment default",
+      'let pending;\n({ pending = import("node:module") } = source);\nconst api = await pending;\napi.register(target);',
+      4,
+    ],
+    [
+      "array assignment default",
+      'let pending;\n[pending = import("node:module")] = source;\nconst api = await pending;\napi.register(target);',
+      4,
+    ],
+  ] as const;
+
+  for (const [name, content, line] of cases) {
+    await context.step(name, () => {
+      const collect = () =>
+        dependencySummary(collectSourceDependencies({
+          path: `src/default-${name.replaceAll(" ", "-")}.ts`,
+          content,
+        })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      const expected = [{
+        kind: "unresolved-runtime-loader" as const,
+        specifier: undefined,
+        loader: "runtime-loader-alias",
+        line,
+      }];
+      assertEquals(collect(), expected);
+      assertEquals(collect(), expected);
+    });
+  }
+});
+
+Deno.test("source collector transfers iterable element facts through every loop target", async (context) => {
+  const exactCases = [
+    [
+      "local literal namespace",
+      'const values = [await import("node:module")];\nfor (const api of values) api.register(target);',
+      2,
+    ],
+    [
+      "awaited values declaration",
+      'const values = await Promise.all([import("node:module")]);\nfor (const api of values) api.register(target);',
+      2,
+    ],
+    [
+      "awaited values assignment",
+      'const values = await Promise.all([import("node:module")]);\nlet api;\nfor (api of values) api.register(target);',
+      3,
+    ],
+    [
+      "awaited values for-await declaration",
+      'const values = await Promise.all([import("node:module")]);\nfor await (const api of values) api.register(target);',
+      2,
+    ],
+    [
+      "awaited values for-await assignment",
+      'const values = await Promise.all([import("node:module")]);\nlet api;\nfor await (api of values) api.register(target);',
+      3,
+    ],
+    [
+      "inline awaited values",
+      'for (const api of await Promise.all([import("node:module")])) api.register(target);',
+      1,
+    ],
+    [
+      "nested array declaration target",
+      'const batches = [await Promise.all([import("node:module")])];\nfor (const [api] of batches) api.register(target);',
+      2,
+    ],
+    [
+      "nested array assignment target",
+      'const batches = [await Promise.all([import("node:module")])];\nlet api;\nfor ([api] of batches) api.register(target);',
+      3,
+    ],
+    [
+      "nested rest target",
+      'const batches = [await Promise.all([import("node:module")])];\nfor (const [...apis] of batches) apis[0].register(target);',
+      2,
+    ],
+    [
+      "for-await nested Promise.all",
+      'for await (const apis of [Promise.all([import("node:module")])]) apis[0].register(target);',
+      1,
+    ],
+  ] as const;
+
+  for (const [name, content, line] of exactCases) {
+    await context.step(name, () => {
+      const unresolved = dependencySummary(collectSourceDependencies({
+        path: `src/loop-${name.replaceAll(" ", "-")}.ts`,
+        content,
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      assertEquals(unresolved, [{
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader: "module.register",
+        line,
+      }]);
+    });
+  }
+
+  const uncertainCases = [
+    [
+      "mixed awaited values",
+      'const values = await Promise.all([import("node:module"), external]);\nfor (const api of values) api.register(target);',
+    ],
+    [
+      "conflicting awaited values",
+      'const values = await Promise.all([import("node:module"), import("node:worker_threads")]);\nfor (const api of values) api.register(target);',
+    ],
+    [
+      "conditional iterable",
+      'const values = flag ? await Promise.all([import("node:module")]) : external;\nfor (const api of values) api.register(target);',
+    ],
+  ] as const;
+  for (const [name, content] of uncertainCases) {
+    await context.step(name, () => {
+      const unresolved = dependencySummary(collectSourceDependencies({
+        path: `src/loop-${name.replaceAll(" ", "-")}.ts`,
+        content,
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      assertEquals(unresolved, [{
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader: "runtime-loader-alias",
+        line: 2,
+      }]);
+    });
+  }
+
+  for (
+    const [name, content] of [
+      [
+        "non-loader awaited values",
+        'const values = await Promise.all([import("node:fs")]);\nfor (const api of values) api.readFile(target);',
+      ],
+      [
+        "ordinary benign values",
+        "const values = [1, 2];\nfor (const value of values) consume(value);",
+      ],
+    ] as const
+  ) {
+    await context.step(name, () => {
+      assertEquals(
+        dependencySummary(collectSourceDependencies({
+          path: `src/loop-${name.replaceAll(" ", "-")}.ts`,
+          content,
+        })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+        [],
+      );
+    });
+  }
+});
+
+Deno.test("source collector treats fresh literal construction as containment and reports real escapes", async (context) => {
+  const exactCases = [
+    [
+      "array member use",
+      'const values = [await import("node:module")];\nvalues[0].register(target);',
+      2,
+    ],
+    [
+      "object member use",
+      'const box = { api: await import("node:module") };\nbox.api.register(target);',
+      2,
+    ],
+  ] as const;
+  for (const [name, content, line] of exactCases) {
+    await context.step(name, () => {
+      assertEquals(
+        dependencySummary(collectSourceDependencies({
+          path: `src/local-literal-${name.replaceAll(" ", "-")}.ts`,
+          content,
+        })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+        [{
+          kind: "unresolved-runtime-loader",
+          specifier: undefined,
+          loader: "module.register",
+          line,
+        }],
+      );
+    });
+  }
+
+  const escapeCases = [
+    [
+      "array argument",
+      'const values = [await import("node:module")];\nconsume(values);',
+      2,
+    ],
+    [
+      "computed object argument",
+      'const box = { [key]: await import("node:module") };\nconsume(box);',
+      2,
+    ],
+    [
+      "spread array argument",
+      'const values = [await import("node:module")];\nconst copy = [...values];\nconsume(copy);',
+      3,
+    ],
+  ] as const;
+  for (const [name, content, line] of escapeCases) {
+    await context.step(name, () => {
+      assertEquals(
+        dependencySummary(collectSourceDependencies({
+          path: `src/local-literal-${name.replaceAll(" ", "-")}.ts`,
+          content,
+        })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+        [{
+          kind: "unresolved-runtime-loader",
+          specifier: undefined,
+          loader: "runtime-loader-alias",
+          line,
+        }],
+      );
+    });
+  }
+});
+
+Deno.test("source collector joins scalar API facts across logical assignments", async (context) => {
+  const cases = [
+    [
+      "require ||=",
+      "let loader = external;\nloader ||= require;\nloader(target);",
+      "require-alias",
+    ],
+    [
+      "require &&=",
+      "let loader = external;\nloader &&= require;\nloader(target);",
+      "require-alias",
+    ],
+    [
+      "require ??=",
+      "let loader = external;\nloader ??= require;\nloader(target);",
+      "require-alias",
+    ],
+    [
+      "Function ||=",
+      "let loader = external;\nloader ||= Function;\nloader(code);",
+      "runtime-loader-alias",
+    ],
+    [
+      "Function &&=",
+      "let loader = external;\nloader &&= Function;\nloader(code);",
+      "runtime-loader-alias",
+    ],
+    [
+      "Function ??=",
+      "let loader = external;\nloader ??= Function;\nloader(code);",
+      "runtime-loader-alias",
+    ],
+    [
+      "namespace ||=",
+      "let api = external;\napi ||= globalThis;\napi.eval(code);",
+      "runtime-loader-alias",
+    ],
+    [
+      "namespace &&=",
+      "let api = external;\napi &&= globalThis;\napi.eval(code);",
+      "runtime-loader-alias",
+    ],
+    [
+      "namespace ??=",
+      "let api = external;\napi ??= globalThis;\napi.eval(code);",
+      "runtime-loader-alias",
+    ],
+    [
+      "conflicting facts",
+      "let loader = require;\nloader ||= Function;\nloader(target);",
+      "runtime-loader-alias",
+    ],
+  ] as const;
+
+  for (const [name, content, loader] of cases) {
+    await context.step(name, () => {
+      const collect = () =>
+        dependencySummary(collectSourceDependencies({
+          path: `src/logical-api-${name.replaceAll(" ", "-")}.ts`,
+          content,
+        })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      const expected = [{
+        kind: "unresolved-runtime-loader" as const,
+        specifier: undefined,
+        loader,
+        line: 3,
+      }];
+      assertEquals(collect(), expected);
+      assertEquals(collect(), expected);
+    });
+  }
+
+  assertEquals(
+    dependencySummary(collectSourceDependencies({
+      path: "src/benign-logical-api-assignments.ts",
+      content: [
+        "let value = external;",
+        "value ||= fallback;",
+        "value &&= alternate;",
+        "value ??= finalValue;",
+        "consume(value);",
+      ].join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+    [],
+  );
+});
+
+Deno.test("source collector recursively transfers nested rest targets", async (context) => {
+  const cases = [
+    [
+      "array rest declaration",
+      'const values = [import("node:module")];\nconst [...[pending]] = values;\nconst api = await pending;\napi.register(target);',
+      "module.register",
+      4,
+    ],
+    [
+      "array rest assignment",
+      'const values = [import("node:module")];\nlet pending;\n[...[pending]] = values;\nconst api = await pending;\napi.register(target);',
+      "module.register",
+      5,
+    ],
+    [
+      "object rest declaration",
+      'const values = [import("node:module")];\nconst [...{ 0: pending }] = values;\nconst api = await pending;\napi.register(target);',
+      "module.register",
+      4,
+    ],
+    [
+      "object rest assignment",
+      'const values = [import("node:module")];\nlet pending;\n[...{ 0: pending }] = values;\nconst api = await pending;\napi.register(target);',
+      "module.register",
+      5,
+    ],
+    [
+      "awaited API rest declaration",
+      'const [...[api]] = await Promise.all([import("node:module")]);\napi.register(target);',
+      "module.register",
+      2,
+    ],
+    [
+      "awaited API rest assignment",
+      'let api;\n[...[api]] = await Promise.all([import("node:module")]);\napi.register(target);',
+      "runtime-loader-alias",
+      3,
+    ],
+    [
+      "awaited API object rest",
+      'const [...{ 0: api }] = await Promise.all([import("node:module")]);\napi.register(target);',
+      "module.register",
+      2,
+    ],
+  ] as const;
+
+  for (const [name, content, loader, line] of cases) {
+    await context.step(name, () => {
+      const unresolved = dependencySummary(collectSourceDependencies({
+        path: `src/nested-rest-${name.replaceAll(" ", "-")}.ts`,
+        content,
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      assertEquals(unresolved, [{
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader,
+        line,
+      }]);
+    });
+  }
+
+  assertEquals(
+    dependencySummary(collectSourceDependencies({
+      path: "src/benign-nested-rest.ts",
+      content:
+        'const values = [import("node:fs")];\nconst [...[pending]] = values;\nconst api = await pending;\napi.readFile(target);',
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+    [],
+  );
+});
+
+Deno.test("source collector invalidates exact API and promise member facts monotonically", async (context) => {
+  const apiMemberCases = [
+    ["plain assignment", "box[0] = external;", "runtime-loader-alias"],
+    ["truthy logical and", "box[0] &&= external;", "runtime-loader-alias"],
+    ["compound assignment", "box[0] += external;", "runtime-loader-alias"],
+    ["update", "box[0]++;", "runtime-loader-alias"],
+    ["delete", "delete box[0];", "runtime-loader-alias"],
+    ["truthy logical or no-op", "box[0] ||= external;", "module.register"],
+    ["non-nullish assignment no-op", "box[0] ??= external;", "module.register"],
+  ] as const;
+  for (const [name, mutation, loader] of apiMemberCases) {
+    await context.step(`API member ${name}`, () => {
+      const content = [
+        'const box = await Promise.all([import("node:module")]);',
+        mutation,
+        "box[0].register(target);",
+      ].join("\n");
+      const collect = () =>
+        dependencySummary(collectSourceDependencies({
+          path: `src/api-member-${name.replaceAll(" ", "-")}.ts`,
+          content,
+        })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      const expected = [{
+        kind: "unresolved-runtime-loader" as const,
+        specifier: undefined,
+        loader,
+        line: 3,
+      }];
+      assertEquals(collect(), expected);
+      assertEquals(collect(), expected);
+    });
+  }
+
+  const promiseMemberCases = [
+    ["plain assignment", "box[0] = external;", "runtime-loader-alias"],
+    ["truthy logical and", "box[0] &&= external;", "runtime-loader-alias"],
+    ["compound assignment", "box[0] += external;", "runtime-loader-alias"],
+    ["update", "box[0]++;", "runtime-loader-alias"],
+    ["delete", "delete box[0];", "runtime-loader-alias"],
+    ["truthy logical or no-op", "box[0] ||= external;", "module.register"],
+    ["non-nullish assignment no-op", "box[0] ??= external;", "module.register"],
+  ] as const;
+  for (const [name, mutation, loader] of promiseMemberCases) {
+    await context.step(`promise member ${name}`, () => {
+      const content = [
+        'const box = [import("node:module")];',
+        mutation,
+        "const api = await box[0];",
+        "api.register(target);",
+      ].join("\n");
+      const collect = () =>
+        dependencySummary(collectSourceDependencies({
+          path: `src/promise-member-${name.replaceAll(" ", "-")}.ts`,
+          content,
+        })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      const expected = [{
+        kind: "unresolved-runtime-loader" as const,
+        specifier: undefined,
+        loader,
+        line: 4,
+      }];
+      assertEquals(collect(), expected);
+      assertEquals(collect(), expected);
+    });
+  }
+
+  for (
+    const [name, operator, loader] of [
+      ["scalar logical and", "&&=", "runtime-loader-alias"],
+      ["scalar logical or no-op", "||=", "module.register"],
+      ["scalar non-nullish no-op", "??=", "module.register"],
+    ] as const
+  ) {
+    await context.step(name, () => {
+      const unresolved = dependencySummary(collectSourceDependencies({
+        path: `src/${name.replaceAll(" ", "-")}.ts`,
+        content:
+          `let pending = import("node:module");\npending ${operator} external;\nconst api = await pending;\napi.register(target);`,
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      assertEquals(unresolved, [{
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader,
+        line: 4,
+      }]);
+    });
+  }
+
+  assertEquals(
+    dependencySummary(collectSourceDependencies({
+      path: "src/benign-member-mutations.ts",
+      content: [
+        "const box = [1];",
+        "box[0] = external;",
+        "box[0] &&= external;",
+        "box[0] += 1;",
+        "box[0]++;",
+        "delete box[0];",
+      ].join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+    [],
+  );
+});
+
+Deno.test("source collector fails closed for loop member assignment targets", async (context) => {
+  const cases = [
+    [
+      "raw promise owned target",
+      'const values = [import("node:module")];\nconst box = {};\nfor (box.pending of values) {}',
+      3,
+    ],
+    [
+      "raw promise global target",
+      'const values = [import("node:module")];\nfor (globalThis.pending of values) {}',
+      2,
+    ],
+    [
+      "resolved API owned target",
+      'const values = [import("node:module")];\nconst box = {};\nfor await (box.api of values) {}',
+      3,
+    ],
+    [
+      "resolved API global target",
+      'const values = [import("node:module")];\nfor await (globalThis.api of values) {}',
+      2,
+    ],
+    [
+      "awaited values owned target",
+      'const values = await Promise.all([import("node:module")]);\nconst box = {};\nfor (box.api of values) {}',
+      3,
+    ],
+    [
+      "awaited values global target",
+      'const values = await Promise.all([import("node:module")]);\nfor (globalThis.api of values) {}',
+      2,
+    ],
+    [
+      "nested Promise.all owned target",
+      'const box = {};\nfor await (box.apis of [Promise.all([import("node:module")])]) {}',
+      2,
+    ],
+  ] as const;
+
+  for (const [name, content, line] of cases) {
+    await context.step(name, () => {
+      const unresolved = dependencySummary(collectSourceDependencies({
+        path: `src/loop-member-${name.replaceAll(" ", "-")}.ts`,
+        content,
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      assertEquals(unresolved, [{
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader: "runtime-loader-alias",
+        line,
+      }]);
+    });
+  }
+});
+
+Deno.test("source collector shares member mutation state across container aliases", async (context) => {
+  const cases = [
+    [
+      "resolved alias mutates original reads",
+      'const box = await Promise.all([import("node:module")]);\nconst alias = box;\nalias[0] = external;\nbox[0].register(target);',
+      4,
+    ],
+    [
+      "resolved original mutates alias reads",
+      'const box = await Promise.all([import("node:module")]);\nconst alias = box;\nbox[0] = external;\nalias[0].register(target);',
+      4,
+    ],
+    [
+      "resolved mutation precedes alias",
+      'const box = await Promise.all([import("node:module")]);\nbox[0] = external;\nconst alias = box;\nalias[0].register(target);',
+      4,
+    ],
+    [
+      "resolved alias chain",
+      'const box = await Promise.all([import("node:module")]);\nconst first = box;\nconst second = first;\nsecond[0] = external;\nbox[0].register(target);',
+      5,
+    ],
+    [
+      "resolved destructured alias",
+      'const box = await Promise.all([import("node:module")]);\nconst [alias] = [box];\nalias[0] = external;\nbox[0].register(target);',
+      4,
+    ],
+    [
+      "promise alias mutates original reads",
+      'const box = [import("node:module")];\nconst alias = box;\nalias[0] = external;\nconst api = await box[0];\napi.register(target);',
+      5,
+    ],
+    [
+      "promise original mutates alias reads",
+      'const box = [import("node:module")];\nconst alias = box;\nbox[0] = external;\nconst api = await alias[0];\napi.register(target);',
+      5,
+    ],
+    [
+      "computed alias mutation",
+      'const box = await Promise.all([import("node:module"), import("node:fs")]);\nconst alias = box;\nalias[key] = external;\nbox[0].register(target);',
+      4,
+    ],
+  ] as const;
+
+  for (const [name, content, line] of cases) {
+    await context.step(name, () => {
+      const collect = () =>
+        dependencySummary(collectSourceDependencies({
+          path: `src/shared-container-${name.replaceAll(" ", "-")}.ts`,
+          content,
+        })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      const expected = [{
+        kind: "unresolved-runtime-loader" as const,
+        specifier: undefined,
+        loader: "runtime-loader-alias",
+        line,
+      }];
+      assertEquals(collect(), expected);
+      assertEquals(collect(), expected);
+    });
+  }
+
+  const benign = () =>
+    dependencySummary(collectSourceDependencies({
+      path: "src/shared-benign-container.ts",
+      content:
+        'const box = await Promise.all([import("node:fs")]);\nconst alias = box;\nalias[0] = external;\nbox[0].readFile(target);',
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+  assertEquals(benign(), []);
+  assertEquals(benign(), []);
+
+  await context.step("mutable points-to union", () => {
+    const collect = () =>
+      dependencySummary(collectSourceDependencies({
+        path: "src/shared-container-points-to-union.ts",
+        content: [
+          'const left = await Promise.all([import("node:module")]);',
+          'const right = await Promise.all([import("node:module")]);',
+          "let selected = flag ? left : right;",
+          "selected[0] = external;",
+          "left[0].register(first);",
+          "right[0].register(second);",
+        ].join("\n"),
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+    const expected = [5, 6].map((line) => ({
+      kind: "unresolved-runtime-loader" as const,
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line,
+    }));
+    assertEquals(collect(), expected);
+    assertEquals(collect(), expected);
+  });
+});
+
+Deno.test("source collector applies strong local slot updates only on definite paths", async (context) => {
+  const collect = (name: string, content: string) =>
+    dependencySummary(collectSourceDependencies({
+      path: `src/strong-slot-${name}.ts`,
+      content,
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+  const benign = "const benign = { register(value) { consume(value); } };";
+
+  await context.step("definite overwrite", () => {
+    assertEquals(
+      collect(
+        "definite",
+        [
+          benign,
+          'const box = await Promise.all([import("node:module")]);',
+          "box[0] = benign;",
+          "box[0].register(target);",
+        ].join("\n"),
+      ),
+      [],
+    );
+  });
+
+  await context.step("definite overwrite through alias", () => {
+    assertEquals(
+      collect(
+        "alias",
+        [
+          benign,
+          'const box = await Promise.all([import("node:module")]);',
+          "const alias = box;",
+          "alias[0] = benign;",
+          "box[0].register(target);",
+        ].join("\n"),
+      ),
+      [],
+    );
+  });
+
+  await context.step("use before overwrite", () => {
+    assertEquals(
+      collect(
+        "prior-use",
+        [
+          benign,
+          'const box = await Promise.all([import("node:module")]);',
+          "box[0].register(before);",
+          "box[0] = benign;",
+          "box[0].register(after);",
+        ].join("\n"),
+      ),
+      [{
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader: "module.register",
+        line: 3,
+      }],
+    );
+  });
+
+  for (
+    const [name, write, loader] of [
+      [
+        "conditional",
+        "if (flag) box[0] = benign;",
+        "runtime-loader-alias",
+      ],
+      ["loop", "while (flag) box[0] = benign;", "module.register"],
+      [
+        "conditional expression",
+        "flag ? box[0] = benign : undefined;",
+        "runtime-loader-alias",
+      ],
+      [
+        "logical expression",
+        "flag && (box[0] = benign);",
+        "runtime-loader-alias",
+      ],
+      [
+        "switch",
+        "switch (value) { case 1: box[0] = benign; break; }",
+        "module.register",
+      ],
+      [
+        "try",
+        "try { box[0] = benign; mayThrow(); } catch {}",
+        "module.register",
+      ],
+    ] as const
+  ) {
+    await context.step(`${name} overwrite`, () => {
+      assertEquals(
+        collect(
+          name,
+          [
+            benign,
+            'const box = await Promise.all([import("node:module")]);',
+            write,
+            "box[0].register(target);",
+          ].join("\n"),
+        ),
+        [{
+          kind: "unresolved-runtime-loader",
+          specifier: undefined,
+          loader,
+          line: 4,
+        }],
+      );
+    });
+  }
+
+  await context.step("unknown overwrite remains fail closed", () => {
+    assertEquals(
+      collect(
+        "unknown",
+        [
+          'const box = await Promise.all([import("node:module")]);',
+          "box[0] = external;",
+          "box[0].register(target);",
+        ].join("\n"),
+      ),
+      [{
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader: "runtime-loader-alias",
+        line: 3,
+      }],
+    );
+  });
+
+  for (
+    const [name, preparation] of [
+      ["escaped owner", "consume(box);"],
+      ["prototype operation", "Object.setPrototypeOf(box, proto);"],
+      [
+        "descriptor operation",
+        'Object.defineProperty(box, "0", { value: benign });',
+      ],
+    ] as const
+  ) {
+    await context.step(name, () => {
+      assertEquals(
+        collect(
+          name.replaceAll(" ", "-"),
+          [
+            benign,
+            'const box = await Promise.all([import("node:module")]);',
+            preparation,
+            "box[0] = benign;",
+            "box[0].register(target);",
+          ].join("\n"),
+        ),
+        [3, 5].map((line) => ({
+          kind: "unresolved-runtime-loader" as const,
+          specifier: undefined,
+          loader: "runtime-loader-alias",
+          line,
+        })),
+      );
+    });
+  }
+
+  await context.step(
+    "cross-function mutation is never strongly refined",
+    () => {
+      assertEquals(
+        collect(
+          "cross-function",
+          [
+            benign,
+            'const box = await Promise.all([import("node:module")]);',
+            "function replace() { box[0] = benign; }",
+            "if (flag) replace();",
+            "box[0].register(target);",
+          ].join("\n"),
+        ),
+        [{
+          kind: "unresolved-runtime-loader",
+          specifier: undefined,
+          loader: "module.register",
+          line: 5,
+        }],
+      );
+    },
+  );
+});
+
+Deno.test("source collector keeps strong slot facts sound across control-flow boundaries", async (context) => {
+  const cases = [
+    {
+      name: "loop back edge",
+      content: [
+        'import * as api from "node:module";',
+        "const benign = { register(_value) {} };",
+        "const box = [benign];",
+        "for (let index = 0; index < 2; index++) {",
+        '  box[0].register("npm:loop-backedge@1");',
+        "  box[0] = api;",
+        "}",
+      ].join("\n"),
+      line: 5,
+      specifier: "npm:loop-backedge@1",
+    },
+    {
+      name: "switch fallthrough",
+      content: [
+        'import * as api from "node:module";',
+        "const benign = { register(_value) {} };",
+        "const box = [benign];",
+        "switch (mode) {",
+        "  case 1: box[0] = api;",
+        '  case 2: box[0].register("npm:switch-fallthrough@1");',
+        "}",
+      ].join("\n"),
+      line: 6,
+      specifier: "npm:switch-fallthrough@1",
+    },
+    {
+      name: "catch receives thrown state",
+      content: [
+        'import * as api from "node:module";',
+        "const benign = { register(_value) {} };",
+        "const box = [benign];",
+        "try {",
+        "  box[0] = api;",
+        "  throw 0;",
+        "} catch {",
+        '  box[0].register("npm:catch-state@1");',
+        "}",
+      ].join("\n"),
+      line: 8,
+      specifier: "npm:catch-state@1",
+    },
+    {
+      name: "abrupt completion before finally",
+      content: [
+        'import * as api from "node:module";',
+        "const benign = { register(_value) {} };",
+        "function run() {",
+        "  const box = [benign];",
+        "  try {",
+        "    box[0] = api;",
+        "    return;",
+        "    box[0] = benign;",
+        "  } finally {",
+        '    box[0].register("npm:return-finally@1");',
+        "  }",
+        "}",
+        "run();",
+      ].join("\n"),
+      line: 10,
+      specifier: "npm:return-finally@1",
+    },
+  ] as const;
+
+  for (const { name, content, line, specifier } of cases) {
+    await context.step(name, () => {
+      const unresolved = dependencySummary(collectSourceDependencies({
+        path: `src/control-flow-${name.replaceAll(" ", "-")}.ts`,
+        content,
+      })).filter(({ kind }) =>
+        kind === "runtime-loader" || kind === "unresolved-runtime-loader"
+      );
+      assertEquals(unresolved, [{
+        kind: "runtime-loader",
+        specifier,
+        loader: "module.register",
+        line,
+      }]);
+    });
+  }
+});
+
+Deno.test("source collector treats unmodeled receiver and syntax invocations as capability boundaries", async (context) => {
+  await context.step("container receiver", () => {
+    const unresolved = dependencySummary(collectSourceDependencies({
+      path: "src/container-receiver-boundary.ts",
+      content: [
+        'import * as api from "node:module";',
+        "const benign = { register(_value) {} };",
+        "const box = [benign, api];",
+        "box.reverse();",
+        'box[0].register("npm:receiver-mutation@1");',
+      ].join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+    assertEquals(unresolved, [{
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: 4,
+    }]);
+  });
+
+  await context.step("tagged template", () => {
+    const unresolved = dependencySummary(collectSourceDependencies({
+      path: "src/tagged-template-boundary.ts",
+      content: [
+        'import { register } from "node:module";',
+        "function invoke(_parts, loader) {",
+        '  loader("npm:tagged-template@1");',
+        "}",
+        "invoke`${register}`;",
+      ].join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+    assertEquals(unresolved, [{
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: 5,
+    }]);
+  });
+
+  await context.step("JSX property", () => {
+    const unresolved = dependencySummary(collectSourceDependencies({
+      path: "src/jsx-capability-boundary.tsx",
+      content: [
+        'import { register } from "node:module";',
+        "function Component({ loader }) {",
+        '  loader("npm:jsx-property@1");',
+        "  return null;",
+        "}",
+        "const view = <Component loader={register} />;",
+      ].join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+    assertEquals(unresolved, [{
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: 6,
+    }]);
+  });
+});
+
+Deno.test("source collector reports default capabilities flowing into member targets once", async (context) => {
+  const cases = [
+    [
+      "assignment API",
+      "const box = {};\n({ value: box.load = require } = source);",
+      "require-alias",
+      2,
+    ],
+    [
+      "assignment promise",
+      'const box = {};\n({ value: box.load = import("node:module") } = source);',
+      "runtime-loader-alias",
+      2,
+    ],
+    [
+      "nested assignment",
+      "const box = {};\n({ value: [box.load = require] } = source);",
+      "require-alias",
+      2,
+    ],
+    [
+      "rest assignment",
+      "const box = {};\n[...[box.load = require]] = source;",
+      "require-alias",
+      2,
+    ],
+    [
+      "loop API",
+      "const box = {};\nfor ([box.load = require] of source) {}",
+      "require-alias",
+      2,
+    ],
+    [
+      "loop promise",
+      'const box = {};\nfor ([box.load = import("node:module")] of source) {}',
+      "runtime-loader-alias",
+      2,
+    ],
+    [
+      "nested loop",
+      "const box = {};\nfor ({ value: [box.load = require] } of source) {}",
+      "require-alias",
+      2,
+    ],
+    [
+      "rest loop",
+      "const box = {};\nfor ([...[box.load = require]] of source) {}",
+      "require-alias",
+      2,
+    ],
+    [
+      "computed assignment",
+      "const box = {};\n({ value: box[key] = require } = source);",
+      "require-alias",
+      2,
+    ],
+    [
+      "global loop",
+      'for ([globalThis.load = import("node:module")] of source) {}',
+      "runtime-loader-alias",
+      1,
+    ],
+    [
+      "unbound assignment API",
+      "({ value: missing = require } = source);",
+      "require-alias",
+      1,
+    ],
+    [
+      "unbound assignment promise",
+      '({ value: missing = import("node:module") } = source);',
+      "runtime-loader-alias",
+      1,
+    ],
+    [
+      "unbound loop API",
+      "for ([missing = require] of source) {}",
+      "require-alias",
+      1,
+    ],
+    [
+      "unbound loop promise",
+      'for ([missing = import("node:module")] of source) {}',
+      "runtime-loader-alias",
+      1,
+    ],
+  ] as const;
+
+  for (const [name, content, loader, line] of cases) {
+    await context.step(name, () => {
+      const collect = () =>
+        dependencySummary(collectSourceDependencies({
+          path: `src/member-default-${name.replaceAll(" ", "-")}.ts`,
+          content,
+        })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      const expected = [{
+        kind: "unresolved-runtime-loader" as const,
+        specifier: undefined,
+        loader,
+        line,
+      }];
+      assertEquals(collect(), expected);
+      assertEquals(collect(), expected);
+    });
+  }
+
+  await context.step("declaration controls", () => {
+    assertEquals(
+      dependencySummary(collectSourceDependencies({
+        path: "src/declaration-default-controls.ts",
+        content: [
+          "const { value: [load = require] } = source;",
+          "load(target);",
+          'const [...[pending = import("node:module")]] = source;',
+          "const api = await pending;",
+          "api.register(target);",
+        ].join("\n"),
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+      [
+        {
+          kind: "unresolved-runtime-loader",
+          specifier: undefined,
+          loader: "require-alias",
+          line: 2,
+        },
+        {
+          kind: "unresolved-runtime-loader",
+          specifier: undefined,
+          loader: "runtime-loader-alias",
+          line: 5,
+        },
+      ],
+    );
+  });
+
+  assertEquals(
+    dependencySummary(collectSourceDependencies({
+      path: "src/benign-member-default.ts",
+      content: "const box = {};\n({ value: box.load = fallback } = source);",
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+    [],
+  );
+  assertEquals(
+    dependencySummary(collectSourceDependencies({
+      path: "src/benign-unbound-default.ts",
+      content: "({ value: missing = fallback } = source);",
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+    [],
+  );
+});
+
+Deno.test("source collector projects and mutates bounded nested resolved containers", async (context) => {
+  const exactCases = [
+    [
+      "object direct",
+      'const box = { inner: await Promise.all([import("node:module")]) };\nbox.inner[0].register(target);',
+      2,
+    ],
+    [
+      "array direct",
+      'const box = [await Promise.all([import("node:module")])];\nbox[0][0].register(target);',
+      2,
+    ],
+    [
+      "object nested pattern",
+      'const box = { inner: await Promise.all([import("node:module")]) };\nconst { inner: [api] } = box;\napi.register(target);',
+      3,
+    ],
+    [
+      "nested rest pattern",
+      'const box = { inner: await Promise.all([import("node:module")]) };\nconst { inner: [...apis] } = box;\napis[0].register(target);',
+      3,
+    ],
+    [
+      "deep direct",
+      'const box = { outer: { inner: await Promise.all([import("node:module")]) } };\nbox.outer.inner[0].register(target);',
+      2,
+    ],
+    [
+      "nested Promise.all pattern",
+      'const [[api]] = await Promise.all([Promise.all([import("node:module")])]);\napi.register(target);',
+      2,
+    ],
+    [
+      "late assignment into literal",
+      'let batch;\nbatch = await Promise.all([import("node:module")]);\nconst box = { inner: batch };\nbox.inner[0].register(target);',
+      4,
+    ],
+    [
+      "loop binding into literal",
+      'const batches = [await Promise.all([import("node:module")])];\nfor (const batch of batches) {\n  const box = { inner: batch };\n  box.inner[0].register(target);\n}',
+      4,
+    ],
+    [
+      "late raw promise into literal",
+      'let pending;\npending = import("node:module");\nconst box = { pending };\nconst api = await box.pending;\napi.register(target);',
+      5,
+    ],
+  ] as const;
+
+  for (const [name, content, line] of exactCases) {
+    await context.step(name, () => {
+      const collect = () =>
+        dependencySummary(collectSourceDependencies({
+          path: `src/nested-resolved-${name.replaceAll(" ", "-")}.ts`,
+          content,
+        })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      const expected = [{
+        kind: "unresolved-runtime-loader" as const,
+        specifier: undefined,
+        loader: "module.register",
+        line,
+      }];
+      assertEquals(collect(), expected);
+      assertEquals(collect(), expected);
+    });
+  }
+
+  const mutationCases = [
+    [
+      "nested mutation then extraction",
+      'const box = { inner: await Promise.all([import("node:module")]) };\nbox.inner[0] = external;\nconst { inner: [api] } = box;\napi.register(target);',
+      4,
+    ],
+    [
+      "nested alias mutation",
+      'const box = { inner: await Promise.all([import("node:module")]) };\nconst alias = box;\nalias.inner[0] = external;\nbox.inner[0].register(target);',
+      4,
+    ],
+    [
+      "projected nested alias mutation",
+      'const box = { inner: await Promise.all([import("node:module")]) };\nconst inner = box.inner;\ninner[0] = external;\nbox.inner[0].register(target);',
+      4,
+    ],
+    [
+      "nested references survive outer rest",
+      'const inner = await Promise.all([import("node:module")]);\nconst source = [inner];\nconst [...rest] = source;\nrest[0][0] = external;\nsource[0][0].register(target);',
+      5,
+    ],
+  ] as const;
+  for (const [name, content, line] of mutationCases) {
+    await context.step(name, () => {
+      const collect = () =>
+        dependencySummary(collectSourceDependencies({
+          path: `src/nested-resolved-${name.replaceAll(" ", "-")}.ts`,
+          content,
+        })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      const expected = [{
+        kind: "unresolved-runtime-loader" as const,
+        specifier: undefined,
+        loader: "runtime-loader-alias",
+        line,
+      }];
+      assertEquals(collect(), expected);
+      assertEquals(collect(), expected);
+    });
+  }
+
+  await context.step("rest creates a fresh outer container", () => {
+    const collect = () =>
+      dependencySummary(collectSourceDependencies({
+        path: "src/nested-resolved-fresh-rest.ts",
+        content: [
+          'const source = await Promise.all([import("node:module")]);',
+          "const [...rest] = source;",
+          "rest[0] = external;",
+          "source[0].register(target);",
+        ].join("\n"),
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+    const expected = [{
+      kind: "unresolved-runtime-loader" as const,
+      specifier: undefined,
+      loader: "module.register",
+      line: 4,
+    }];
+    assertEquals(collect(), expected);
+    assertEquals(collect(), expected);
+  });
+
+  await context.step("computed nested projection", () => {
+    const collect = () =>
+      dependencySummary(collectSourceDependencies({
+        path: "src/nested-resolved-computed.ts",
+        content:
+          'const box = { inner: await Promise.all([import("node:module")]) };\nbox.inner[key].register(target);',
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+    const expected = [{
+      kind: "unresolved-runtime-loader" as const,
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: 2,
+    }];
+    assertEquals(collect(), expected);
+    assertEquals(collect(), expected);
+  });
+
+  assertEquals(
+    dependencySummary(collectSourceDependencies({
+      path: "src/benign-nested-resolved-container.ts",
+      content:
+        'const box = { inner: await Promise.all([import("node:fs")]) };\nbox.inner[0].readFile(target);',
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+    [],
+  );
+});
+
+Deno.test("source collector treats logical promise member assignments as boundaries", async (context) => {
+  for (const operator of ["||=", "&&=", "??="] as const) {
+    await context.step(operator, () => {
+      const unresolved = dependencySummary(collectSourceDependencies({
+        path: `src/logical-member-${operator.slice(0, -1)}.ts`,
+        content:
+          `const box = {};\nbox.pending ${operator} import("node:module");\nvoid box.pending;`,
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      assertEquals(unresolved, [{
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader: "runtime-loader-alias",
+        line: 2,
+      }]);
+    });
+  }
+});
+
 Deno.test("source collector keeps direct local promise stores exact and rejects unowned stores", async (context) => {
+  await context.step("unknown-only local member stays clean", () => {
+    const unresolved = dependencySummary(collectSourceDependencies({
+      path: "src/unknown-only-local-promise-store.ts",
+      content: [
+        "const box = {};",
+        "box.pending = external;",
+        "consume(box.pending);",
+      ].join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+    assertEquals(unresolved, []);
+  });
+
   await context.step("direct local member", () => {
     const dependencies = dependencySummary(collectSourceDependencies({
       path: "src/direct-local-promise-store.ts",
@@ -2859,14 +5644,40 @@ Deno.test("source collector keeps direct local promise stores exact and rejects 
       2,
     ],
     [
-      "local allocation alias",
-      'const box = {};\nconst alias = box;\nalias.pending = import("node:module");',
-      3,
-    ],
-    [
       "inline exported owner",
       'export const box = {};\nbox.pending = import("node:module");',
       2,
+    ],
+    [
+      "setter owner",
+      'const box = { set pending(value) { consume(value); } };\nbox.pending = import("node:module");',
+      2,
+    ],
+    [
+      "custom prototype owner",
+      'const box = { __proto__: externalPrototype };\nbox.pending = import("node:module");',
+      2,
+    ],
+    [
+      "prototype mutated after initialization",
+      [
+        "const proto = { set pending(value) { consume(value); } };",
+        "const box = {};",
+        "box.__proto__ = proto;",
+        'box.pending = import("node:module");',
+      ].join("\n"),
+      4,
+    ],
+    [
+      "prototype mutated through alias",
+      [
+        "const proto = { set pending(value) { consume(value); } };",
+        "const box = {};",
+        "const alias = box;",
+        "alias.__proto__ = proto;",
+        'box.pending = import("node:module");',
+      ].join("\n"),
+      5,
     ],
     ["external owner", 'globalThis.pending = import("node:module");', 1],
   ] as const;
@@ -2884,6 +5695,36 @@ Deno.test("source collector keeps direct local promise stores exact and rejects 
       }]);
     });
   }
+
+  await context.step("local allocation alias", () => {
+    assertEquals(
+      dependencySummary(collectSourceDependencies({
+        path: "src/local-allocation-alias.ts",
+        content:
+          'const box = {};\nconst alias = box;\nalias.pending = import("node:module");',
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader"),
+      [],
+    );
+  });
+
+  await context.step("null prototype data owner", () => {
+    const dependencies = dependencySummary(collectSourceDependencies({
+      path: "src/null-prototype-data-owner.ts",
+      content: [
+        "const box = { __proto__: null };",
+        'box.pending = import("node:module");',
+        "const api = await box.pending;",
+        "api.register(target);",
+      ].join("\n"),
+    })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+    assertEquals(dependencies, [{
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "module.register",
+      line: 4,
+    }]);
+  });
 });
 
 Deno.test("source collector walks transparent wrappers before classifying namespace writes", () => {

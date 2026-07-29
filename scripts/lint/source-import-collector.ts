@@ -22,6 +22,34 @@ export interface SourceDependencyCollectionOptions {
   resolveModuleSpecifier?: (specifier: string, importer: string) => string;
   /** Test seam for forcing the structured non-convergence failure path. */
   maximumBindingPasses?: number;
+  /** Maximum unique generated-source parses before analysis fails closed. */
+  maximumExecutableSourceAnalyses?: number;
+  /** Optional deterministic work counters for complexity regression tests. */
+  onAnalysisDiagnostics?: (
+    diagnostics: Readonly<SourceDependencyAnalysisDiagnostics>,
+  ) => void;
+}
+
+export interface SourceDependencyAnalysisDiagnostics {
+  awaitedIterableMemberVisits: number;
+  awaitedPromiseOriginElementVisits: number;
+  bindingDependencyEdges: number;
+  bindingPasses: number;
+  bindingTransferEvaluations: number;
+  bindingWorklistEnqueues: number;
+  containerIdentityElementVisits: number;
+  containerIdentityInsertions: number;
+  containerSnapshotForkElementCopies: number;
+  containerMapEntryCopies: number;
+  containerMemberJoins: number;
+  executableSourceAnalyses: number;
+  executableSourceBudgetExhaustions: number;
+  executableSourceCacheHits: number;
+  executableSourceCycleCuts: number;
+  executableSourceDepthExhaustions: number;
+  inheritedMemberProjectionTruncations: number;
+  inheritedMemberProjectionVisits: number;
+  promiseOriginElementVisits: number;
 }
 
 export type SourceDependencyKind =
@@ -73,7 +101,7 @@ interface AstNode {
 interface NormalizedInvocation {
   target: unknown;
   arguments: unknown[];
-  explicitThisArgument?: unknown;
+  capabilityInputs: unknown[];
   kind: "direct" | "call" | "apply" | "construct";
   argumentsKnown: boolean;
 }
@@ -82,6 +110,23 @@ interface LexicalScope {
   parent?: LexicalScope;
   bindings: Set<string>;
   functionScope: boolean;
+}
+
+interface InheritedBindingSeed {
+  name: string;
+  api?: ApiBinding;
+  stringValue?: string;
+  memberApis?: InheritedMemberApiSnapshot;
+}
+
+interface InheritedMemberApiSeed {
+  path: readonly (string | undefined)[];
+  api: ApiBinding;
+}
+
+interface InheritedMemberApiSnapshot {
+  projections: readonly InheritedMemberApiSeed[];
+  truncated: boolean;
 }
 
 type ApiBinding =
@@ -112,7 +157,20 @@ type ApiBinding =
   | "web-worker"
   | "shared-worker"
   | "Function"
+  | "AsyncFunction"
+  | "GeneratorFunction"
+  | "AsyncGeneratorFunction"
   | "eval"
+  | "set-timeout"
+  | "set-interval"
+  | "node-vm-namespace"
+  | "node-vm-run-in-context"
+  | "node-vm-run-in-new-context"
+  | "node-vm-run-in-this-context"
+  | "node-vm-compile-function"
+  | "node-vm-create-script"
+  | "node-vm-script"
+  | "node-vm-source-text-module"
   | "uncertain-runtime-loader";
 
 const REQUIRE_FAMILY_APIS: ReadonlySet<ApiBinding> = new Set([
@@ -123,8 +181,193 @@ const REQUIRE_FAMILY_APIS: ReadonlySet<ApiBinding> = new Set([
 ]);
 
 type ScopedValues<T> = WeakMap<LexicalScope, Map<string, T>>;
-type ScopedMemberValues<T> = WeakMap<LexicalScope, Map<string, Map<string, T>>>;
-type PromiseOrigins = ReadonlySet<AstNode>;
+
+interface PrefixSnapshotSetArena<T> {
+  values: T[];
+  positions: Map<T, number>;
+}
+
+interface PrefixSnapshotSetWorkDiagnostics {
+  containerIdentityElementVisits: number;
+  containerIdentityInsertions: number;
+  containerSnapshotForkElementCopies: number;
+}
+
+interface ImmutableSnapshotSet<T> extends Iterable<T> {
+  readonly size: number;
+  has(value: T): boolean;
+}
+
+/**
+ * An immutable set view backed by an append-only arena.
+ *
+ * Appending at the arena tip is O(delta) while older views retain their fixed
+ * prefix length. Appending from an older branch forks only that branch, so a
+ * join can never mutate facts that share the same provenance history.
+ */
+class PrefixSnapshotSet<T> implements ImmutableSnapshotSet<T> {
+  readonly #arena: PrefixSnapshotSetArena<T>;
+  readonly #length: number;
+
+  private constructor(arena: PrefixSnapshotSetArena<T>, length: number) {
+    this.#arena = arena;
+    this.#length = length;
+  }
+
+  static from<T>(values: Iterable<T>): PrefixSnapshotSet<T> {
+    if (values instanceof PrefixSnapshotSet) return values;
+    const ordered: T[] = [];
+    const positions = new Map<T, number>();
+    for (const value of values) {
+      if (positions.has(value)) continue;
+      positions.set(value, ordered.length);
+      ordered.push(value);
+    }
+    return new PrefixSnapshotSet(
+      { values: ordered, positions },
+      ordered.length,
+    );
+  }
+
+  append(
+    values: Iterable<T>,
+    diagnostics?: PrefixSnapshotSetWorkDiagnostics,
+  ): PrefixSnapshotSet<T> {
+    const additions: T[] = [];
+    const pending = new Set<T>();
+    for (const value of values) {
+      if (diagnostics) diagnostics.containerIdentityElementVisits++;
+      if (this.has(value) || pending.has(value)) continue;
+      pending.add(value);
+      additions.push(value);
+    }
+    if (additions.length === 0) return this;
+
+    let arena = this.#arena;
+    if (this.#length !== arena.values.length) {
+      if (diagnostics) {
+        diagnostics.containerSnapshotForkElementCopies += this.#length;
+      }
+      const prefix = arena.values.slice(0, this.#length);
+      arena = {
+        values: prefix,
+        positions: new Map(prefix.map((value, index) => [value, index])),
+      };
+    }
+    for (const value of additions) {
+      if (arena.positions.has(value)) continue;
+      arena.positions.set(value, arena.values.length);
+      arena.values.push(value);
+    }
+    if (diagnostics) {
+      diagnostics.containerIdentityInsertions += additions.length;
+    }
+    return new PrefixSnapshotSet(arena, arena.values.length);
+  }
+
+  mergedWith(
+    other: PrefixSnapshotSet<T>,
+    diagnostics?: PrefixSnapshotSetWorkDiagnostics,
+  ): PrefixSnapshotSet<T> {
+    if (other === this) return this;
+    if (other.#arena === this.#arena) {
+      if (other.#length <= this.#length) return this;
+      if (diagnostics) {
+        diagnostics.containerIdentityInsertions += other.#length - this.#length;
+      }
+      return other;
+    }
+    return this.append(other, diagnostics);
+  }
+
+  get size(): number {
+    return this.#length;
+  }
+
+  has(value: T): boolean {
+    const position = this.#arena.positions.get(value);
+    return position !== undefined && position < this.#length;
+  }
+
+  *#values(): IterableIterator<T> {
+    for (let index = 0; index < this.#length; index++) {
+      yield this.#arena.values[index];
+    }
+  }
+
+  *#entries(): IterableIterator<[T, T]> {
+    for (const value of this.#values()) yield [value, value];
+  }
+
+  entries(): SetIterator<[T, T]> {
+    return this.#entries() as SetIterator<[T, T]>;
+  }
+
+  keys(): SetIterator<T> {
+    return this.#values() as SetIterator<T>;
+  }
+
+  values(): SetIterator<T> {
+    return this.#values() as SetIterator<T>;
+  }
+
+  forEach(
+    callbackfn: (value: T, value2: T, set: ImmutableSnapshotSet<T>) => void,
+    thisArg?: unknown,
+  ): void {
+    for (const value of this.#values()) {
+      callbackfn.call(thisArg, value, value, this);
+    }
+  }
+
+  [Symbol.iterator](): SetIterator<T> {
+    return this.values();
+  }
+
+  get [Symbol.toStringTag](): string {
+    return "Set";
+  }
+}
+
+interface PromiseOrigins {
+  origins: PrefixSnapshotSet<AstNode>;
+  unknown: boolean;
+}
+
+type ValueContainerKind =
+  | "object-literal"
+  | "array-literal"
+  | "promise-all-result"
+  | "array-rest"
+  | "object-rest";
+
+interface ValueContainerIdentity {
+  readonly site: AstNode;
+  readonly kind: ValueContainerKind;
+}
+
+interface ValueFacts {
+  api?: ApiBinding;
+  promise: PromiseOrigins;
+  containers: PrefixSnapshotSet<ValueContainerIdentity>;
+  unknown: boolean;
+  definitelyTruthy: boolean;
+  definitelyNonNullish: boolean;
+}
+
+interface ValueContainerFacts {
+  members: Map<string, ValueFacts>;
+  wildcard?: ValueFacts;
+}
+
+const NO_PROMISE_ORIGINS: PromiseOrigins = {
+  origins: PrefixSnapshotSet.from<AstNode>([]),
+  unknown: false,
+};
+const UNKNOWN_PROMISE_ORIGINS: PromiseOrigins = {
+  origins: PrefixSnapshotSet.from<AstNode>([]),
+  unknown: true,
+};
 
 const SOURCE_EXTENSIONS = [
   ".ts",
@@ -457,7 +700,10 @@ function isLexicalScopeNode(node: AstNode): boolean {
     node.type === "SwitchStatement" || node.type === "TSModuleBlock";
 }
 
-function buildScopeMap(ast: AstNode): {
+function buildScopeMap(
+  ast: AstNode,
+  inheritedScope?: LexicalScope,
+): {
   scopeByNode: WeakMap<AstNode, LexicalScope>;
   programScope: LexicalScope;
 } {
@@ -467,9 +713,17 @@ function buildScopeMap(ast: AstNode): {
   function visit(node: AstNode, incomingScope?: LexicalScope): void {
     let scope = incomingScope;
     if (node.type === "File") {
-      scope = { bindings: new Set(), functionScope: true };
+      scope = {
+        parent: inheritedScope,
+        bindings: new Set(),
+        functionScope: true,
+      };
     } else if (node.type === "Program") {
-      scope ??= { bindings: new Set(), functionScope: true };
+      scope ??= {
+        parent: inheritedScope,
+        bindings: new Set(),
+        functionScope: true,
+      };
       programScope = scope;
     } else if (isFunctionNode(node)) {
       if (node.type === "FunctionDeclaration" && incomingScope) {
@@ -641,10 +895,6 @@ function unwrapAwait(node: unknown): unknown {
   return unwrapAwaitedExpression(node).value;
 }
 
-function propertyKeyName(node: AstNode): string | undefined {
-  return identifierName(node.key) ?? literalString(node.key);
-}
-
 function getScopedValue<T>(
   values: ScopedValues<T>,
   scope: LexicalScope,
@@ -672,93 +922,51 @@ function setScopedValue<T>(
   return true;
 }
 
-function getScopedMemberValue<T>(
-  values: ScopedMemberValues<T>,
-  scope: LexicalScope,
-  ownerName: string,
-  property: string,
-): T | undefined {
-  const bindingScope = closestBindingScope(scope, ownerName);
-  return bindingScope
-    ? values.get(bindingScope)?.get(ownerName)?.get(property)
-    : undefined;
-}
-
-function setScopedMemberValue<T>(
-  values: ScopedMemberValues<T>,
-  scope: LexicalScope,
-  ownerName: string,
-  property: string,
-  value: T,
-): boolean {
-  const bindingScope = closestBindingScope(scope, ownerName);
-  if (!bindingScope) return false;
-  let scoped = values.get(bindingScope);
-  if (!scoped) {
-    scoped = new Map();
-    values.set(bindingScope, scoped);
-  }
-  let members = scoped.get(ownerName);
-  if (!members) {
-    members = new Map();
-    scoped.set(ownerName, members);
-  }
-  if (members.get(property) === value) return false;
-  members.set(property, value);
-  return true;
-}
-
-function getScopedMemberValues<T>(
-  values: ScopedMemberValues<T>,
-  scope: LexicalScope,
-  ownerName: string,
-): ReadonlyMap<string, T> | undefined {
-  const bindingScope = closestBindingScope(scope, ownerName);
-  return bindingScope ? values.get(bindingScope)?.get(ownerName) : undefined;
-}
-
 function joinPromiseOrigins(
   current: PromiseOrigins | undefined,
   incoming: PromiseOrigins,
+  diagnostics?: SourceDependencyAnalysisDiagnostics,
 ): PromiseOrigins {
-  if (current === undefined) return new Set(incoming);
-  if ([...incoming].every((origin) => current.has(origin))) return current;
-  return new Set([...current, ...incoming]);
+  if (current === undefined) {
+    if (diagnostics) {
+      diagnostics.promiseOriginElementVisits += incoming.origins.size;
+    }
+    return {
+      origins: PrefixSnapshotSet.from(incoming.origins),
+      unknown: incoming.unknown,
+    };
+  }
+  if (
+    current === incoming ||
+    current.origins === incoming.origins &&
+      (!incoming.unknown || current.unknown)
+  ) {
+    return current;
+  }
+  const additions: AstNode[] = [];
+  for (const origin of incoming.origins) {
+    if (diagnostics) diagnostics.promiseOriginElementVisits++;
+    if (!current.origins.has(origin)) additions.push(origin);
+  }
+  const addsOrigin = additions.length > 0;
+  const addsUnknown = incoming.unknown && !current.unknown;
+  if (!addsOrigin && !addsUnknown) return current;
+  return {
+    origins: addsOrigin
+      ? PrefixSnapshotSet.from(current.origins).append(additions)
+      : current.origins,
+    unknown: current.unknown || incoming.unknown,
+  };
 }
 
-function setScopedPromiseOrigins(
-  values: ScopedValues<PromiseOrigins>,
-  scope: LexicalScope,
-  name: string,
-  incoming: PromiseOrigins,
-): boolean {
-  if (incoming.size === 0) return false;
-  return setScopedValue(
-    values,
-    scope,
-    name,
-    joinPromiseOrigins(getScopedValue(values, scope, name), incoming),
-  );
+function withUnknownPromiseOrigins(origins: PromiseOrigins): PromiseOrigins {
+  return origins.unknown
+    ? origins
+    : { origins: origins.origins, unknown: true };
 }
 
-function setScopedMemberPromiseOrigins(
-  values: ScopedMemberValues<PromiseOrigins>,
-  scope: LexicalScope,
-  ownerName: string,
-  property: string,
-  incoming: PromiseOrigins,
-): boolean {
-  if (incoming.size === 0) return false;
-  return setScopedMemberValue(
-    values,
-    scope,
-    ownerName,
-    property,
-    joinPromiseOrigins(
-      getScopedMemberValue(values, scope, ownerName, property),
-      incoming,
-    ),
-  );
+function hasPromiseOrigins(origins: PromiseOrigins): boolean {
+  return origins.origins.size > 0 || origins.unknown;
 }
 
 function uncertainAlias(api: ApiBinding): ApiBinding {
@@ -777,62 +985,6 @@ function joinApiBinding(
   return REQUIRE_FAMILY_APIS.has(current) && REQUIRE_FAMILY_APIS.has(incoming)
     ? "require-alias"
     : "uncertain-runtime-loader";
-}
-
-function setScopedApiValue(
-  values: ScopedValues<ApiBinding>,
-  scope: LexicalScope,
-  name: string,
-  incoming: ApiBinding,
-): boolean {
-  return setScopedValue(
-    values,
-    scope,
-    name,
-    joinApiBinding(getScopedValue(values, scope, name), incoming),
-  );
-}
-
-function setScopedMemberApiValue(
-  values: ScopedMemberValues<ApiBinding>,
-  scope: LexicalScope,
-  ownerName: string,
-  property: string,
-  incoming: ApiBinding,
-): boolean {
-  return setScopedMemberValue(
-    values,
-    scope,
-    ownerName,
-    property,
-    joinApiBinding(
-      getScopedMemberValue(values, scope, ownerName, property),
-      incoming,
-    ),
-  );
-}
-
-function copyScopedMemberApiValues(
-  values: ScopedMemberValues<ApiBinding>,
-  scope: LexicalScope,
-  sourceName: string,
-  targetName: string,
-): boolean {
-  const sourceScope = closestBindingScope(scope, sourceName);
-  if (!sourceScope) return false;
-  const members = values.get(sourceScope)?.get(sourceName);
-  if (!members) return false;
-  let changed = false;
-  for (const [property, api] of members) {
-    changed = setScopedMemberApiValue(
-      values,
-      scope,
-      targetName,
-      property,
-      api,
-    ) || changed;
-  }
-  return changed;
 }
 
 function loaderForApi(api: ApiBinding): string | undefined {
@@ -873,6 +1025,24 @@ function unresolvedLoaderForApi(api: ApiBinding): string | undefined {
   if (api === "require-resolve") return "require.resolve";
   if (api === "eval") return "eval";
   if (api === "Function") return "Function";
+  if (api === "AsyncFunction") return "AsyncFunction";
+  if (api === "GeneratorFunction") return "GeneratorFunction";
+  if (api === "AsyncGeneratorFunction") return "AsyncGeneratorFunction";
+  if (api === "set-timeout") return "setTimeout";
+  if (api === "set-interval") return "setInterval";
+  if (api === "node-vm-run-in-context") return "node:vm.runInContext";
+  if (api === "node-vm-run-in-new-context") {
+    return "node:vm.runInNewContext";
+  }
+  if (api === "node-vm-run-in-this-context") {
+    return "node:vm.runInThisContext";
+  }
+  if (api === "node-vm-compile-function") return "node:vm.compileFunction";
+  if (api === "node-vm-create-script") return "node:vm.createScript";
+  if (api === "node-vm-script") return "node:vm.Script";
+  if (api === "node-vm-source-text-module") {
+    return "node:vm.SourceTextModule";
+  }
   if (api === "uncertain-runtime-loader") return "runtime-loader-alias";
   return loaderForApi(api);
 }
@@ -889,6 +1059,15 @@ function importedApi(
   }
   if (moduleName === "node:worker_threads" && imported === "Worker") {
     return "node-worker";
+  }
+  if (moduleName === "node:vm") {
+    if (imported === "runInContext") return "node-vm-run-in-context";
+    if (imported === "runInNewContext") return "node-vm-run-in-new-context";
+    if (imported === "runInThisContext") return "node-vm-run-in-this-context";
+    if (imported === "compileFunction") return "node-vm-compile-function";
+    if (imported === "createScript") return "node-vm-create-script";
+    if (imported === "Script") return "node-vm-script";
+    if (imported === "SourceTextModule") return "node-vm-source-text-module";
   }
   return undefined;
 }
@@ -923,11 +1102,23 @@ function memberApi(
   if (owner === "worker-threads-namespace" && property === "Worker") {
     return "node-worker";
   }
+  if (owner === "node-vm-namespace") {
+    if (property === "default") return "node-vm-namespace";
+    if (property === "runInContext") return "node-vm-run-in-context";
+    if (property === "runInNewContext") return "node-vm-run-in-new-context";
+    if (property === "runInThisContext") return "node-vm-run-in-this-context";
+    if (property === "compileFunction") return "node-vm-compile-function";
+    if (property === "createScript") return "node-vm-create-script";
+    if (property === "Script") return "node-vm-script";
+    if (property === "SourceTextModule") return "node-vm-source-text-module";
+  }
   if (owner === "global-namespace") {
     if (property === "Worker") return "web-worker";
     if (property === "SharedWorker") return "shared-worker";
     if (property === "Function") return "Function";
     if (property === "eval") return "eval";
+    if (property === "setTimeout") return "set-timeout";
+    if (property === "setInterval") return "set-interval";
     if (property === "importScripts") return "import-scripts";
     if (property === "CSS") return "css-namespace";
     if (property === "audioWorklet") return "audio-worklet";
@@ -982,104 +1173,15 @@ function isGlobalNavigator(node: unknown, scope: LexicalScope): boolean {
     isUnboundGlobalObject(node.object, scope);
 }
 
-function bindObjectPatternFromOwner(
-  pattern: AstNode,
-  owner: ApiBinding | undefined,
-  scope: LexicalScope,
-  apiBindings: ScopedValues<ApiBinding>,
-  resolvePropertyName: (property: AstNode) => string | undefined =
-    propertyKeyName,
-  transform: (api: ApiBinding) => ApiBinding = (api) => api,
-): boolean {
-  let changed = false;
-  if (pattern.type !== "ObjectPattern") return false;
-  for (
-    const property of Array.isArray(pattern.properties)
-      ? pattern.properties
-      : []
-  ) {
-    if (!isNode(property)) continue;
-    if (property.type === "RestElement") {
-      const local = identifierName(property.argument);
-      if (local && owner) {
-        changed = setScopedApiValue(
-          apiBindings,
-          scope,
-          local,
-          transform(uncertainAlias(owner)),
-        ) || changed;
-      }
-      continue;
-    }
-    if (property.type !== "ObjectProperty") continue;
-    const propertyName = resolvePropertyName(property);
-    const api = propertyName === undefined && owner
-      ? uncertainAlias(owner)
-      : memberApi(owner, propertyName);
-    if (isNode(property.value) && property.value.type === "ObjectPattern") {
-      changed = bindObjectPatternFromOwner(
-        property.value,
-        api,
-        scope,
-        apiBindings,
-        resolvePropertyName,
-        transform,
-      ) || changed;
-      continue;
-    }
-    const local = identifierName(property.value) ||
-      (isNode(property.value) && property.value.type === "AssignmentPattern"
-        ? identifierName(property.value.left)
-        : undefined);
-    if (!local) continue;
-    if (api) {
-      changed = setScopedApiValue(apiBindings, scope, local, transform(api)) ||
-        changed;
-    }
-  }
-  return changed;
-}
-
-function bindObjectPatternApis(
-  pattern: AstNode,
-  moduleName: string,
-  scope: LexicalScope,
-  apiBindings: ScopedValues<ApiBinding>,
-  resolvePropertyName: (property: AstNode) => string | undefined =
-    propertyKeyName,
-  transform: (api: ApiBinding) => ApiBinding = (api) => api,
-): boolean {
-  let changed = false;
-  if (pattern.type !== "ObjectPattern") return false;
-  for (
-    const property of Array.isArray(pattern.properties)
-      ? pattern.properties
-      : []
-  ) {
-    if (!isNode(property) || property.type !== "ObjectProperty") continue;
-    const imported = resolvePropertyName(property);
-    const local = identifierName(property.value) ||
-      (isNode(property.value) && property.value.type === "AssignmentPattern"
-        ? identifierName(property.value.left)
-        : undefined);
-    if (!imported || !local) continue;
-    const api = importedApi(moduleName, imported);
-    if (api) {
-      changed = setScopedApiValue(apiBindings, scope, local, transform(api)) ||
-        changed;
-    }
-  }
-  return changed;
-}
-
 function collectModuleBindings(
   ast: AstNode,
   scopeByNode: WeakMap<AstNode, LexicalScope>,
   filePath: string,
   options: SourceDependencyCollectionOptions,
+  inheritedScope: LexicalScope | undefined,
+  inheritedBindings: readonly InheritedBindingSeed[],
 ): {
   stringValues: ScopedValues<string>;
-  apiBindings: ScopedValues<ApiBinding>;
   resolveApi: (node: unknown, scope: LexicalScope) => ApiBinding | undefined;
   resolveMemberProperty: (
     node: unknown,
@@ -1093,15 +1195,90 @@ function collectModuleBindings(
     node: AstNode,
     scope: LexicalScope,
   ) => ApiBinding | undefined;
+  capabilityApiForExpression: (
+    node: unknown,
+    scope: LexicalScope,
+  ) => ApiBinding | undefined;
+  memberApisForExpression: (
+    node: unknown,
+    scope: LexicalScope,
+  ) => InheritedMemberApiSnapshot;
+  analysisDiagnostics: SourceDependencyAnalysisDiagnostics;
 } {
+  const analysisDiagnostics: SourceDependencyAnalysisDiagnostics = {
+    awaitedIterableMemberVisits: 0,
+    awaitedPromiseOriginElementVisits: 0,
+    bindingDependencyEdges: 0,
+    bindingPasses: 0,
+    bindingTransferEvaluations: 0,
+    bindingWorklistEnqueues: 0,
+    containerIdentityElementVisits: 0,
+    containerIdentityInsertions: 0,
+    containerSnapshotForkElementCopies: 0,
+    containerMapEntryCopies: 0,
+    containerMemberJoins: 0,
+    executableSourceAnalyses: 0,
+    executableSourceBudgetExhaustions: 0,
+    executableSourceCacheHits: 0,
+    executableSourceCycleCuts: 0,
+    executableSourceDepthExhaustions: 0,
+    inheritedMemberProjectionTruncations: 0,
+    inheritedMemberProjectionVisits: 0,
+    promiseOriginElementVisits: 0,
+  };
   const stringValues: ScopedValues<string> = new WeakMap();
-  const apiBindings: ScopedValues<ApiBinding> = new WeakMap();
-  const memberBindings: ScopedMemberValues<ApiBinding> = new WeakMap();
-  const promiseBindings: ScopedValues<PromiseOrigins> = new WeakMap();
-  const promiseMemberBindings: ScopedMemberValues<PromiseOrigins> =
-    new WeakMap();
-  const locallyOwnedContainers: WeakMap<LexicalScope, Set<string>> =
-    new WeakMap();
+  const valueBindings: ScopedValues<ValueFacts> = new WeakMap();
+  const valueContainerIdentities = new WeakMap<
+    AstNode,
+    ValueContainerIdentity
+  >();
+  const valueContainerFacts = new Map<
+    ValueContainerIdentity,
+    ValueContainerFacts
+  >();
+  const constructedValueContainerFacts = new Map<
+    ValueContainerIdentity,
+    ValueContainerFacts
+  >();
+  const valueContainerVersions = new Map<ValueContainerIdentity, number>();
+  const flowValueFactsByNode = new WeakMap<AstNode, ValueFacts>();
+  const unsafeLocalContainerIdentities = new Set<ValueContainerIdentity>();
+  const trustedLocalContainerSites = new WeakSet<AstNode>();
+  const staticApiSeeds: Array<{
+    scope: LexicalScope;
+    name: string;
+    api: ApiBinding;
+  }> = [];
+  const inheritedMemberApis = new Map<
+    string,
+    InheritedMemberApiSnapshot
+  >();
+  if (inheritedScope) {
+    for (const binding of inheritedBindings) {
+      if (binding.api) {
+        staticApiSeeds.push({
+          scope: inheritedScope,
+          name: binding.name,
+          api: binding.api,
+        });
+      }
+      if (binding.stringValue !== undefined) {
+        setScopedValue(
+          stringValues,
+          inheritedScope,
+          binding.name,
+          binding.stringValue,
+        );
+      }
+      if (
+        binding.memberApis &&
+        (binding.memberApis.projections.length > 0 ||
+          binding.memberApis.truncated)
+      ) {
+        inheritedMemberApis.set(binding.name, binding.memberApis);
+      }
+    }
+  }
   const parentByNode = new WeakMap<AstNode, AstNode>();
   const functionByScope = new WeakMap<LexicalScope, AstNode>();
   const immediatelyInvokedFunctions = new WeakSet<AstNode>();
@@ -1111,6 +1288,14 @@ function collectModuleBindings(
   >();
   const mutatedMemberBindings: WeakMap<LexicalScope, Set<string>> =
     new WeakMap();
+  const memberMutationSites: WeakMap<
+    LexicalScope,
+    Map<string, AstNode[]>
+  > = new WeakMap();
+  const bindingReassignmentSites: WeakMap<
+    LexicalScope,
+    Map<string, AstNode[]>
+  > = new WeakMap();
   const memberMutations: Array<{ target: AstNode; scope: LexicalScope }> = [];
   const escapedValues: Array<{ value: unknown; scope: LexicalScope }> = [];
   const declarations: Array<{
@@ -1119,15 +1304,148 @@ function collectModuleBindings(
     kind: "const" | "let" | "var";
   }> = [];
   const assignmentPatterns: Array<{ node: AstNode; scope: LexicalScope }> = [];
-  const assignments: Array<{ node: AstNode; scope: LexicalScope }> = [];
+  const mutations: Array<{ node: AstNode; scope: LexicalScope }> = [];
+  const loopBindings: Array<{ node: AstNode; scope: LexicalScope }> = [];
+  const functionNodes: AstNode[] = [];
   let visitedNodeCount = 0;
   let promiseProducerNodeCount = 0;
   const resolveModuleName = (specifier: string): string =>
     options.resolveModuleSpecifier?.(specifier, filePath) ?? specifier;
 
+  interface BindingDependency {
+    readonly kind: "value" | "string" | "container";
+  }
+
+  interface BindingTransfer {
+    readonly dependencies: Set<BindingDependency>;
+    readonly evaluate: () => void;
+    queued: boolean;
+  }
+
+  const valueBindingDependencies: WeakMap<
+    LexicalScope,
+    Map<string, BindingDependency>
+  > = new WeakMap();
+  const stringBindingDependencies: WeakMap<
+    LexicalScope,
+    Map<string, BindingDependency>
+  > = new WeakMap();
+  const containerDependencies = new Map<
+    ValueContainerIdentity,
+    BindingDependency
+  >();
+  const dependencySubscribers = new Map<
+    BindingDependency,
+    Set<BindingTransfer>
+  >();
+  const bindingWorklist: BindingTransfer[] = [];
+  let bindingWorklistHead = 0;
+  let activeBindingTransfer: BindingTransfer | undefined;
+
+  const scopedBindingDependency = (
+    dependencies: WeakMap<LexicalScope, Map<string, BindingDependency>>,
+    kind: "value" | "string",
+    scope: LexicalScope,
+    name: string,
+  ): BindingDependency | undefined => {
+    const bindingScope = closestBindingScope(scope, name);
+    if (!bindingScope) return undefined;
+    let scoped = dependencies.get(bindingScope);
+    if (!scoped) {
+      scoped = new Map();
+      dependencies.set(bindingScope, scoped);
+    }
+    let dependency = scoped.get(name);
+    if (!dependency) {
+      dependency = { kind };
+      scoped.set(name, dependency);
+    }
+    return dependency;
+  };
+
+  const containerDependency = (
+    identity: ValueContainerIdentity,
+  ): BindingDependency => {
+    let dependency = containerDependencies.get(identity);
+    if (!dependency) {
+      dependency = { kind: "container" };
+      containerDependencies.set(identity, dependency);
+    }
+    return dependency;
+  };
+
+  const recordBindingDependency = (
+    dependency: BindingDependency | undefined,
+  ): void => {
+    const transfer = activeBindingTransfer;
+    if (!transfer || !dependency || transfer.dependencies.has(dependency)) {
+      return;
+    }
+    transfer.dependencies.add(dependency);
+    let subscribers = dependencySubscribers.get(dependency);
+    if (!subscribers) {
+      subscribers = new Set();
+      dependencySubscribers.set(dependency, subscribers);
+    }
+    subscribers.add(transfer);
+    analysisDiagnostics.bindingDependencyEdges++;
+  };
+
+  const enqueueBindingTransfer = (transfer: BindingTransfer): void => {
+    if (transfer.queued) return;
+    transfer.queued = true;
+    bindingWorklist.push(transfer);
+    analysisDiagnostics.bindingWorklistEnqueues++;
+  };
+
+  const notifyBindingDependency = (
+    dependency: BindingDependency | undefined,
+  ): void => {
+    if (!dependency) return;
+    const subscribers = dependencySubscribers.get(dependency);
+    if (!subscribers) return;
+    for (const transfer of subscribers) enqueueBindingTransfer(transfer);
+  };
+
+  const readValueBinding = (
+    scope: LexicalScope,
+    name: string,
+  ): ValueFacts | undefined => {
+    recordBindingDependency(
+      scopedBindingDependency(valueBindingDependencies, "value", scope, name),
+    );
+    return getScopedValue(valueBindings, scope, name);
+  };
+
+  const readStringBinding = (
+    scope: LexicalScope,
+    name: string,
+  ): string | undefined => {
+    recordBindingDependency(
+      scopedBindingDependency(stringBindingDependencies, "string", scope, name),
+    );
+    return getScopedValue(stringValues, scope, name);
+  };
+
+  const readContainerFacts = (
+    identity: ValueContainerIdentity,
+  ): ValueContainerFacts | undefined => {
+    recordBindingDependency(containerDependency(identity));
+    return valueContainerFacts.get(identity);
+  };
+
+  const readContainerVersion = (
+    identity: ValueContainerIdentity,
+  ): number => {
+    recordBindingDependency(containerDependency(identity));
+    return valueContainerVersions.get(identity) ?? 0;
+  };
+
   const markMemberMutation = (
     target: unknown,
     scope: LexicalScope,
+    mutation: AstNode,
+    definitelyOverwritesConstructor: boolean,
   ): void => {
     let root = target;
     while (
@@ -1147,6 +1465,40 @@ function collectModuleBindings(
       mutatedMemberBindings.set(bindingScope, names);
     }
     names.add(name);
+    if (!definitelyOverwritesConstructor) return;
+    let scopedSites = memberMutationSites.get(bindingScope);
+    if (!scopedSites) {
+      scopedSites = new Map();
+      memberMutationSites.set(bindingScope, scopedSites);
+    }
+    let sites = scopedSites.get(name);
+    if (!sites) {
+      sites = [];
+      scopedSites.set(name, sites);
+    }
+    sites.push(mutation);
+  };
+
+  const markBindingReassignment = (
+    target: unknown,
+    scope: LexicalScope,
+    mutation: AstNode,
+  ): void => {
+    const name = identifierName(unwrapTransparentExpression(target));
+    if (!name) return;
+    const bindingScope = closestBindingScope(scope, name);
+    if (!bindingScope) return;
+    let scopedSites = bindingReassignmentSites.get(bindingScope);
+    if (!scopedSites) {
+      scopedSites = new Map();
+      bindingReassignmentSites.set(bindingScope, scopedSites);
+    }
+    let sites = scopedSites.get(name);
+    if (!sites) {
+      sites = [];
+      scopedSites.set(name, sites);
+    }
+    sites.push(mutation);
   };
 
   const visit = (node: AstNode): void => {
@@ -1159,6 +1511,7 @@ function collectModuleBindings(
     if (!scope) throw new Error(`missing lexical scope for ${node.type}`);
     if (isFunctionNode(node)) {
       functionByScope.set(scope, node);
+      functionNodes.push(node);
     }
     if (
       node.type === "CallExpression" || node.type === "OptionalCallExpression"
@@ -1195,6 +1548,9 @@ function collectModuleBindings(
     if (node.type === "AssignmentPattern") {
       assignmentPatterns.push({ node, scope });
     }
+    if (node.type === "ForOfStatement") {
+      loopBindings.push({ node, scope });
+    }
     if (node.type === "ImportDeclaration" && node.importKind !== "type") {
       const rawModuleName = literalString(node.source);
       const moduleName = rawModuleName === undefined
@@ -1218,12 +1574,13 @@ function collectModuleBindings(
             if (moduleName === "node:worker_threads") {
               api = "worker-threads-namespace";
             }
+            if (moduleName === "node:vm") api = "node-vm-namespace";
           } else {
             const imported = identifierName(specifier.imported) ??
               literalString(specifier.imported);
             if (imported) api = importedApi(moduleName, imported);
           }
-          if (api) setScopedApiValue(apiBindings, scope, local, api);
+          if (api) staticApiSeeds.push({ scope, name: local, api });
         }
       }
     } else if (
@@ -1240,8 +1597,10 @@ function collectModuleBindings(
         ? "node-module-namespace"
         : moduleName === "node:worker_threads"
         ? "worker-threads-namespace"
+        : moduleName === "node:vm"
+        ? "node-vm-namespace"
         : undefined;
-      if (local && api) setScopedApiValue(apiBindings, scope, local, api);
+      if (local && api) staticApiSeeds.push({ scope, name: local, api });
     } else if (
       node.type === "VariableDeclaration" &&
       (node.kind === "const" || node.kind === "let" || node.kind === "var")
@@ -1265,18 +1624,24 @@ function collectModuleBindings(
         (node.left.type === "MemberExpression" ||
           node.left.type === "OptionalMemberExpression")
       ) {
-        markMemberMutation(node.left, scope);
+        markMemberMutation(node.left, scope, node, node.operator === "=");
         memberMutations.push({ target: node.left, scope });
         escapedValues.push({ value: node.right, scope });
       }
-      if (node.operator === "=") assignments.push({ node, scope });
+      if (node.operator === "=") {
+        markBindingReassignment(node.left, scope, node);
+      }
+      mutations.push({ node, scope });
     } else if (node.type === "UpdateExpression") {
-      markMemberMutation(node.argument, scope);
+      mutations.push({ node, scope });
+      markMemberMutation(node.argument, scope, node, true);
+      markBindingReassignment(node.argument, scope, node);
       if (isNode(node.argument)) {
         memberMutations.push({ target: node.argument, scope });
       }
     } else if (node.type === "UnaryExpression" && node.operator === "delete") {
-      markMemberMutation(node.argument, scope);
+      mutations.push({ node, scope });
+      markMemberMutation(node.argument, scope, node, false);
       if (isNode(node.argument)) {
         memberMutations.push({ target: node.argument, scope });
       }
@@ -1288,7 +1653,133 @@ function collectModuleBindings(
   };
   visit(ast);
 
+  const immutableFunctionInitializers: ScopedValues<{
+    value: unknown;
+    scope: LexicalScope;
+  }> = new WeakMap();
+  interface ImmutableProjectionInitializer {
+    source: unknown;
+    scope: LexicalScope;
+    path: readonly (string | undefined)[];
+    uncertain: boolean;
+  }
+  const immutableProjectionInitializers: ScopedValues<
+    ImmutableProjectionInitializer
+  > = new WeakMap();
   for (const { node: declaration, scope, kind } of declarations) {
+    if (kind !== "const") continue;
+    const name = identifierName(declaration.id);
+    if (!name || declaration.init === undefined) continue;
+    setScopedValue(immutableFunctionInitializers, scope, name, {
+      value: declaration.init,
+      scope,
+    });
+  }
+  for (const functionNode of functionNodes) {
+    if (functionNode.type !== "FunctionDeclaration") continue;
+    const name = identifierName(functionNode.id);
+    const scope = scopeByNode.get(functionNode);
+    if (!name || !scope) continue;
+    setScopedValue(immutableFunctionInitializers, scope, name, {
+      value: functionNode,
+      scope,
+    });
+  }
+
+  const nearestFunctionAncestor = (node: AstNode): AstNode | undefined => {
+    for (
+      let current = parentByNode.get(node);
+      current;
+      current = parentByNode.get(current)
+    ) {
+      if (isFunctionNode(current)) return current;
+    }
+    return undefined;
+  };
+
+  const sequentialPosition = (
+    node: AstNode,
+  ):
+    | { container: AstNode; statement: AstNode; index: number }
+    | undefined => {
+    let child = node;
+    for (
+      let parent = parentByNode.get(child);
+      parent;
+      parent = parentByNode.get(parent)
+    ) {
+      if (
+        parent.type === "Program" || parent.type === "BlockStatement" ||
+        parent.type === "StaticBlock"
+      ) {
+        const body = Array.isArray(parent.body)
+          ? parent.body.filter(isNode)
+          : [];
+        const index = body.indexOf(child);
+        if (index >= 0) {
+          return { container: parent, statement: child, index };
+        }
+      }
+      child = parent;
+    }
+    return undefined;
+  };
+
+  const hasDefiniteMutationBefore = (
+    mutationSites: WeakMap<LexicalScope, Map<string, AstNode[]>>,
+    bindingScope: LexicalScope,
+    name: string,
+    useSite: AstNode,
+  ): boolean => {
+    const usePosition = sequentialPosition(useSite);
+    if (!usePosition) return false;
+    const useFunction = nearestFunctionAncestor(useSite);
+    for (
+      const mutation of mutationSites.get(bindingScope)?.get(name) ?? []
+    ) {
+      if (nearestFunctionAncestor(mutation) !== useFunction) continue;
+      const mutationPosition = sequentialPosition(mutation);
+      if (
+        !mutationPosition ||
+        mutationPosition.container !== usePosition.container ||
+        mutationPosition.index >= usePosition.index ||
+        mutationPosition.statement.type !== "ExpressionStatement" ||
+        unwrapTransparentExpression(mutationPosition.statement.expression) !==
+          mutation
+      ) {
+        continue;
+      }
+      return true;
+    }
+    return false;
+  };
+
+  const isInertLocalContainerInitializer = (node: AstNode): boolean => {
+    if (node.type === "ArrayExpression") return true;
+    if (node.type !== "ObjectExpression") return false;
+    for (
+      const property of Array.isArray(node.properties) ? node.properties : []
+    ) {
+      if (!isNode(property)) continue;
+      if (property.type === "ObjectMethod") return false;
+      if (property.type !== "ObjectProperty") continue;
+      if (
+        property.kind === "get" || property.kind === "set" ||
+        property.method === true
+      ) return false;
+      const isPrototypeInitializer = property.computed !== true &&
+        property.shorthand !== true &&
+        (identifierName(property.key) ?? literalString(property.key)) ===
+          "__proto__";
+      if (
+        isPrototypeInitializer &&
+        (!isNode(property.value) || property.value.type !== "NullLiteral")
+      ) return false;
+    }
+    return true;
+  };
+
+  for (const { node: declaration, kind } of declarations) {
     if (kind !== "const") continue;
     const variableDeclaration = parentByNode.get(declaration);
     const declarationOwner = variableDeclaration
@@ -1305,18 +1796,12 @@ function collectModuleBindings(
     if (
       !name || !isNode(initializer) ||
       (initializer.type !== "ObjectExpression" &&
-        initializer.type !== "ArrayExpression")
+        initializer.type !== "ArrayExpression") ||
+      !isInertLocalContainerInitializer(initializer)
     ) {
       continue;
     }
-    const bindingScope = closestBindingScope(scope, name);
-    if (!bindingScope) continue;
-    let bindings = locallyOwnedContainers.get(bindingScope);
-    if (!bindings) {
-      bindings = new Set();
-      locallyOwnedContainers.set(bindingScope, bindings);
-    }
-    bindings.add(name);
+    trustedLocalContainerSites.add(initializer);
   }
 
   const evaluateString = (
@@ -1327,7 +1812,7 @@ function collectModuleBindings(
     const literal = literalString(value);
     if (literal !== undefined) return literal;
     const name = identifierName(value);
-    if (name) return getScopedValue(stringValues, scope, name);
+    if (name) return readStringBinding(scope, name);
     if (
       isNode(value) && value.type === "BinaryExpression" &&
       value.operator === "+"
@@ -1411,6 +1896,97 @@ function collectModuleBindings(
       : undefined;
   };
 
+  const recordImmutableProjectionPattern = (
+    pattern: unknown,
+    source: unknown,
+    scope: LexicalScope,
+    path: readonly (string | undefined)[] = [],
+    uncertain = false,
+  ): void => {
+    const target = unwrapTransparentExpression(pattern);
+    if (!isNode(target)) return;
+    const name = identifierName(target);
+    if (name) {
+      setScopedValue(immutableProjectionInitializers, scope, name, {
+        source,
+        scope,
+        path: [...path],
+        uncertain,
+      });
+      return;
+    }
+    if (target.type === "AssignmentPattern") {
+      recordImmutableProjectionPattern(
+        target.left,
+        source,
+        scope,
+        path,
+        true,
+      );
+      return;
+    }
+    if (target.type === "RestElement") {
+      recordImmutableProjectionPattern(
+        target.argument,
+        source,
+        scope,
+        path,
+        true,
+      );
+      return;
+    }
+    if (target.type === "ArrayPattern") {
+      const elements = Array.isArray(target.elements) ? target.elements : [];
+      elements.forEach((element, index) => {
+        if (!isNode(element)) return;
+        const rest = element.type === "RestElement";
+        recordImmutableProjectionPattern(
+          rest ? element.argument : element,
+          source,
+          scope,
+          rest ? path : [...path, String(index)],
+          uncertain || rest,
+        );
+      });
+      return;
+    }
+    if (target.type !== "ObjectPattern") return;
+    for (
+      const property of Array.isArray(target.properties)
+        ? target.properties
+        : []
+    ) {
+      if (!isNode(property)) continue;
+      if (property.type === "RestElement") {
+        recordImmutableProjectionPattern(
+          property.argument,
+          source,
+          scope,
+          path,
+          true,
+        );
+        continue;
+      }
+      if (property.type !== "ObjectProperty") continue;
+      const propertyName = resolvedPropertyKey(property, scope);
+      recordImmutableProjectionPattern(
+        property.value,
+        source,
+        scope,
+        [...path, propertyName],
+        uncertain || propertyName === undefined,
+      );
+    }
+  };
+  for (const { node: declaration, scope, kind } of declarations) {
+    if (kind !== "const" || declaration.init === undefined) continue;
+    recordImmutableProjectionPattern(
+      declaration.id,
+      declaration.init,
+      scope,
+    );
+  }
+
   const requiredModuleName = (
     node: unknown,
     scope: LexicalScope,
@@ -1426,19 +2002,23 @@ function collectModuleBindings(
     return moduleName === undefined ? undefined : resolveModuleName(moduleName);
   };
 
+  const rawImportedModuleNames = new WeakMap<AstNode, string | undefined>();
   const rawImportedModuleName = (
     node: unknown,
     scope: LexicalScope,
   ): string | undefined => {
     const unwrapped = unwrapTransparentExpression(node);
     if (!isNode(unwrapped)) return undefined;
+    if (rawImportedModuleNames.has(unwrapped)) {
+      return rawImportedModuleNames.get(unwrapped);
+    }
+    let resolved: string | undefined;
     if (unwrapped.type === "ImportExpression") {
       const moduleName = evaluateString(unwrapped.source, scope);
-      return moduleName === undefined
+      resolved = moduleName === undefined
         ? undefined
         : resolveModuleName(moduleName);
-    }
-    if (
+    } else if (
       unwrapped.type === "CallExpression" && isNode(unwrapped.callee) &&
       unwrapped.callee.type === "Import"
     ) {
@@ -1446,19 +2026,12 @@ function collectModuleBindings(
         ? unwrapped.arguments
         : [];
       const moduleName = evaluateString(args[0], scope);
-      return moduleName === undefined
+      resolved = moduleName === undefined
         ? undefined
         : resolveModuleName(moduleName);
     }
-    return undefined;
-  };
-
-  const importedModuleName = (
-    node: unknown,
-    scope: LexicalScope,
-  ): string | undefined => {
-    const { value, awaited } = unwrapAwaitedExpression(node);
-    return awaited ? rawImportedModuleName(value, scope) : undefined;
+    rawImportedModuleNames.set(unwrapped, resolved);
+    return resolved;
   };
 
   const arrayInvocationArguments = (
@@ -1493,6 +2066,7 @@ function collectModuleBindings(
       return {
         target: node.callee,
         arguments: rawArguments,
+        capabilityInputs: [],
         kind: "construct",
         argumentsKnown: rawArguments.every((argument) =>
           !isNode(argument) || argument.type !== "SpreadElement"
@@ -1507,6 +2081,7 @@ function collectModuleBindings(
       return {
         target: node.callee,
         arguments: rawArguments,
+        capabilityInputs: [],
         kind: "direct",
         argumentsKnown: rawArguments.every((argument) =>
           !isNode(argument) || argument.type !== "SpreadElement"
@@ -1526,7 +2101,9 @@ function collectModuleBindings(
       return {
         target: rawArguments[0],
         arguments: forwarded.values,
-        explicitThisArgument: method === "apply" ? rawArguments[1] : undefined,
+        capabilityInputs: [
+          method === "apply" ? rawArguments[1] : rawArguments[2],
+        ].filter((value) => value !== undefined),
         kind: method,
         argumentsKnown: forwarded.known,
       };
@@ -1536,7 +2113,9 @@ function collectModuleBindings(
       return {
         target: node.callee.object,
         arguments: effectiveArguments,
-        explicitThisArgument: rawArguments[0],
+        capabilityInputs: rawArguments[0] === undefined
+          ? []
+          : [rawArguments[0]],
         kind: "call",
         argumentsKnown: effectiveArguments.every((argument) =>
           !isNode(argument) || argument.type !== "SpreadElement"
@@ -1548,7 +2127,9 @@ function collectModuleBindings(
       return {
         target: node.callee.object,
         arguments: forwarded.values,
-        explicitThisArgument: rawArguments[0],
+        capabilityInputs: rawArguments[0] === undefined
+          ? []
+          : [rawArguments[0]],
         kind: "apply",
         argumentsKnown: forwarded.known,
       };
@@ -1556,6 +2137,7 @@ function collectModuleBindings(
     return {
       target: node.callee,
       arguments: rawArguments,
+      capabilityInputs: [],
       kind: "direct",
       argumentsKnown: rawArguments.every((argument) =>
         !isNode(argument) || argument.type !== "SpreadElement"
@@ -1616,9 +2198,12 @@ function collectModuleBindings(
     scope: LexicalScope,
   ): PromiseOrigins => {
     const unwrapped = unwrapTransparentExpression(node);
-    if (!isNode(unwrapped)) return new Set();
+    if (!isNode(unwrapped)) return UNKNOWN_PROMISE_ORIGINS;
     if (isRawDynamicImport(unwrapped) || isPromiseAll(unwrapped, scope)) {
-      return new Set([unwrapped]);
+      return {
+        origins: PrefixSnapshotSet.from([unwrapped]),
+        unknown: false,
+      };
     }
     if (unwrapped.type === "SequenceExpression") {
       const expressions = Array.isArray(unwrapped.expressions)
@@ -1626,10 +2211,18 @@ function collectModuleBindings(
         : [];
       return promiseOriginsForExpression(expressions.at(-1), scope);
     }
-    if (
-      unwrapped.type === "AssignmentExpression" && unwrapped.operator === "="
-    ) {
-      return promiseOriginsForExpression(unwrapped.right, scope);
+    if (unwrapped.type === "AssignmentExpression") {
+      if (unwrapped.operator === "=") {
+        return promiseOriginsForExpression(unwrapped.right, scope);
+      }
+      if (["&&=", "||=", "??="].includes(unwrapped.operator as string)) {
+        return withUnknownPromiseOrigins(joinPromiseOrigins(
+          promiseOriginsForExpression(unwrapped.left, scope),
+          promiseOriginsForExpression(unwrapped.right, scope),
+          analysisDiagnostics,
+        ));
+      }
+      return UNKNOWN_PROMISE_ORIGINS;
     }
     if (
       unwrapped.type === "ConditionalExpression" ||
@@ -1643,36 +2236,35 @@ function collectModuleBindings(
           joinPromiseOrigins(
             origins,
             promiseOriginsForExpression(branch, scope),
+            analysisDiagnostics,
           ),
-        new Set<AstNode>(),
+        NO_PROMISE_ORIGINS,
       );
     }
     const name = identifierName(unwrapped);
-    if (name) return getScopedValue(promiseBindings, scope, name) ?? new Set();
+    if (name) {
+      return readValueBinding(scope, name)?.promise ??
+        (isUnbound(scope, name) ? UNKNOWN_PROMISE_ORIGINS : NO_PROMISE_ORIGINS);
+    }
     if (
       unwrapped.type === "MemberExpression" ||
       unwrapped.type === "OptionalMemberExpression"
     ) {
-      const ownerName = identifierName(unwrapped.object);
       const property = resolvedMemberProperty(unwrapped, scope);
-      if (ownerName && property) {
-        return getScopedMemberValue(
-          promiseMemberBindings,
-          scope,
-          ownerName,
-          property,
-        ) ?? new Set();
-      }
+      const owner = valueFactsForExpression(unwrapped.object, scope);
+      return (property === undefined
+        ? projectedUnknownPropertyValueFacts(owner)
+        : projectedValueFacts(owner, property)).promise;
     }
-    return new Set();
+    return UNKNOWN_PROMISE_ORIGINS;
   };
 
   const awaitedApiForPromiseOrigins = (
     origins: PromiseOrigins,
   ): ApiBinding | undefined => {
     let result: ApiBinding | undefined;
-    let sawNonApiResult = false;
-    for (const origin of origins) {
+    let sawNonApiResult = origins.unknown;
+    for (const origin of origins.origins) {
       const originScope = scopeByNode.get(origin);
       if (!originScope) {
         sawNonApiResult = true;
@@ -1684,6 +2276,8 @@ function collectModuleBindings(
           ? "node-module-namespace" as const
           : moduleName === "node:worker_threads"
           ? "worker-threads-namespace" as const
+          : moduleName === "node:vm"
+          ? "node-vm-namespace" as const
           : undefined;
         if (api) result = joinApiBinding(result, api);
         else sawNonApiResult = true;
@@ -1700,12 +2294,315 @@ function collectModuleBindings(
   ): ApiBinding | undefined =>
     awaitedApiForPromiseOrigins(promiseOriginsForExpression(node, scope));
 
+  const freshFunctionConstructorApi = (
+    node: unknown,
+  ): ApiBinding | undefined => {
+    const value = unwrapTransparentExpression(node);
+    if (
+      !isNode(value) ||
+      (value.type !== "FunctionExpression" &&
+        value.type !== "ArrowFunctionExpression" &&
+        value.type !== "FunctionDeclaration")
+    ) {
+      return undefined;
+    }
+    if (value.async === true && value.generator === true) {
+      return "AsyncGeneratorFunction";
+    }
+    if (value.async === true) return "AsyncFunction";
+    if (value.generator === true) return "GeneratorFunction";
+    return "Function";
+  };
+
+  const immutableFreshFunctionConstructorApi = (
+    node: unknown,
+    scope: LexicalScope,
+    useSite: AstNode,
+    seen = new Set<AstNode>(),
+  ): ApiBinding | undefined => {
+    const value = unwrapTransparentExpression(node);
+    const direct = freshFunctionConstructorApi(value);
+    if (direct) return direct;
+    if (!isNode(value) || seen.has(value)) return undefined;
+    seen.add(value);
+    const name = identifierName(value);
+    if (name) {
+      const bindingScope = closestBindingScope(scope, name);
+      if (
+        !bindingScope ||
+        hasDefiniteMutationBefore(
+          memberMutationSites,
+          bindingScope,
+          name,
+          useSite,
+        ) ||
+        hasDefiniteMutationBefore(
+          bindingReassignmentSites,
+          bindingScope,
+          name,
+          useSite,
+        )
+      ) {
+        return undefined;
+      }
+      const initializer = getScopedValue(
+        immutableFunctionInitializers,
+        scope,
+        name,
+      );
+      return initializer
+        ? immutableFreshFunctionConstructorApi(
+          initializer.value,
+          initializer.scope,
+          useSite,
+          seen,
+        )
+        : undefined;
+    }
+    if (value.type === "SequenceExpression") {
+      const expressions = Array.isArray(value.expressions)
+        ? value.expressions
+        : [];
+      return immutableFreshFunctionConstructorApi(
+        expressions.at(-1),
+        scope,
+        useSite,
+        seen,
+      );
+    }
+    if (value.type === "ConditionalExpression") {
+      const consequent = immutableFreshFunctionConstructorApi(
+        value.consequent,
+        scope,
+        useSite,
+        new Set(seen),
+      );
+      const alternate = immutableFreshFunctionConstructorApi(
+        value.alternate,
+        scope,
+        useSite,
+        new Set(seen),
+      );
+      return consequent === alternate ? consequent : undefined;
+    }
+    return undefined;
+  };
+
+  const derivedFunctionConstructorApi = (
+    node: AstNode,
+    scope: LexicalScope,
+  ): ApiBinding | undefined => {
+    if (
+      node.type !== "MemberExpression" &&
+      node.type !== "OptionalMemberExpression"
+    ) {
+      return undefined;
+    }
+    if (resolvedMemberProperty(node, scope) !== "constructor") {
+      return undefined;
+    }
+    const direct = immutableFreshFunctionConstructorApi(
+      node.object,
+      scope,
+      node,
+    );
+    if (direct) return direct;
+    const owner = unwrapTransparentExpression(node.object);
+    if (
+      !isNode(owner) || owner.type !== "CallExpression" ||
+      !isNode(owner.callee) ||
+      (owner.callee.type !== "MemberExpression" &&
+        owner.callee.type !== "OptionalMemberExpression") ||
+      resolvedMemberProperty(owner.callee, scope) !== "getPrototypeOf"
+    ) {
+      return undefined;
+    }
+    const intrinsic = identifierName(owner.callee.object);
+    if (
+      (intrinsic !== "Object" && intrinsic !== "Reflect") ||
+      !isUnbound(scope, intrinsic)
+    ) {
+      return undefined;
+    }
+    const args = Array.isArray(owner.arguments) ? owner.arguments : [];
+    if (args.length !== 1) return undefined;
+    return immutableFreshFunctionConstructorApi(args[0], scope, node);
+  };
+
+  interface InheritedMemberReference {
+    snapshot: InheritedMemberApiSnapshot;
+    path: readonly (string | undefined)[];
+    uncertain: boolean;
+    indeterminate: boolean;
+  }
+
+  const inheritedMemberReferenceForExpression = (
+    node: unknown,
+    scope: LexicalScope,
+    seen = new Set<ImmutableProjectionInitializer>(),
+  ): InheritedMemberReference | undefined => {
+    if (!inheritedScope || inheritedMemberApis.size === 0) return undefined;
+    const value = unwrapTransparentExpression(node);
+    if (!isNode(value)) return undefined;
+    if (
+      value.type === "MemberExpression" ||
+      value.type === "OptionalMemberExpression"
+    ) {
+      const owner = inheritedMemberReferenceForExpression(
+        value.object,
+        scope,
+        seen,
+      );
+      if (!owner) return undefined;
+      const property = resolvedMemberProperty(value, scope);
+      return {
+        ...owner,
+        path: [...owner.path, property],
+        uncertain: owner.uncertain || property === undefined,
+      };
+    }
+    const name = identifierName(value);
+    if (name) {
+      const bindingScope = closestBindingScope(scope, name);
+      if (!bindingScope) return undefined;
+      if (bindingScope === inheritedScope) {
+        const snapshot = inheritedMemberApis.get(name);
+        return snapshot
+          ? {
+            snapshot,
+            path: [],
+            uncertain: mutatedMemberBindings.get(bindingScope)?.has(name) ===
+              true,
+            indeterminate: false,
+          }
+          : undefined;
+      }
+      const initializer = getScopedValue(
+        immutableProjectionInitializers,
+        scope,
+        name,
+      );
+      if (!initializer || seen.has(initializer)) return undefined;
+      const nextSeen = new Set(seen);
+      nextSeen.add(initializer);
+      const source = inheritedMemberReferenceForExpression(
+        initializer.source,
+        initializer.scope,
+        nextSeen,
+      );
+      return source
+        ? {
+          ...source,
+          path: [...source.path, ...initializer.path],
+          uncertain: source.uncertain || initializer.uncertain ||
+            mutatedMemberBindings.get(bindingScope)?.has(name) === true,
+        }
+        : undefined;
+    }
+    if (value.type === "SequenceExpression") {
+      const expressions = Array.isArray(value.expressions)
+        ? value.expressions
+        : [];
+      return inheritedMemberReferenceForExpression(
+        expressions.at(-1),
+        scope,
+        seen,
+      );
+    }
+    if (value.type === "AssignmentExpression" && value.operator === "=") {
+      const assigned = inheritedMemberReferenceForExpression(
+        value.right,
+        scope,
+        seen,
+      );
+      return assigned ? { ...assigned, uncertain: true } : undefined;
+    }
+    if (
+      value.type !== "ConditionalExpression" &&
+      value.type !== "LogicalExpression"
+    ) {
+      return undefined;
+    }
+    const branches = value.type === "ConditionalExpression"
+      ? [value.consequent, value.alternate]
+      : [value.left, value.right];
+    const references = branches.map((branch) =>
+      inheritedMemberReferenceForExpression(branch, scope, new Set(seen))
+    );
+    const present = references.filter((reference) => reference !== undefined);
+    if (present.length === 0) return undefined;
+    const first = present[0]!;
+    const samePath = present.every((reference) =>
+      reference!.snapshot === first.snapshot &&
+      reference!.path.length === first.path.length &&
+      reference!.path.every((segment, index) => segment === first.path[index])
+    );
+    return {
+      ...first,
+      uncertain: true,
+      indeterminate: first.indeterminate || !samePath ||
+        present.length !== references.length,
+    };
+  };
+
+  const inheritedMemberApiForExpression = (
+    node: unknown,
+    scope: LexicalScope,
+    includeDescendants = false,
+  ): ApiBinding | undefined => {
+    const reference = inheritedMemberReferenceForExpression(node, scope);
+    if (!reference) return undefined;
+    const { snapshot, path } = reference;
+    if (snapshot.truncated || reference.indeterminate) {
+      return "uncertain-runtime-loader";
+    }
+    let result: ApiBinding | undefined;
+    let uncertain = reference.uncertain;
+    for (const projection of snapshot.projections) {
+      if (
+        projection.path.length !== path.length &&
+        (!includeDescendants || projection.path.length <= path.length)
+      ) {
+        continue;
+      }
+      let matches = true;
+      let exact = true;
+      for (let index = 0; index < path.length; index++) {
+        const expected = projection.path[index];
+        const actual = path[index];
+        if (expected !== undefined && actual !== undefined) {
+          if (expected !== actual) {
+            matches = false;
+            break;
+          }
+        } else {
+          exact = false;
+        }
+      }
+      if (!matches) continue;
+      result = joinApiBinding(result, projection.api);
+      if (!exact || projection.path.length > path.length) uncertain = true;
+    }
+    return result && uncertain ? uncertainAlias(result) : result;
+  };
+
   function apiForExpression(
     node: unknown,
     scope: LexicalScope,
+    precomputedMemberOwner?: ValueFacts,
   ): ApiBinding | undefined {
     const unwrapped = unwrapTransparentExpression(node);
     if (!isNode(unwrapped)) return undefined;
+    const inheritedMemberApi = inheritedMemberApiForExpression(
+      unwrapped,
+      scope,
+    );
+    if (inheritedMemberApi) return inheritedMemberApi;
+    const derivedFunctionConstructor = derivedFunctionConstructorApi(
+      unwrapped,
+      scope,
+    );
+    if (derivedFunctionConstructor) return derivedFunctionConstructor;
     if (unwrapped.type === "AwaitExpression") {
       return awaitedApiForPromiseExpression(unwrapped.argument, scope) ??
         apiForExpression(unwrapped.argument, scope);
@@ -1728,6 +2625,7 @@ function collectModuleBindings(
     if (loadedModule === "node:worker_threads") {
       return "worker-threads-namespace";
     }
+    if (loadedModule === "node:vm") return "node-vm-namespace";
     if (
       unwrapped.type === "ObjectExpression" ||
       unwrapped.type === "ArrayExpression"
@@ -1811,12 +2709,14 @@ function collectModuleBindings(
     }
     const name = identifierName(unwrapped);
     if (name) {
-      const bound = getScopedValue(apiBindings, scope, name);
+      const bound = readValueBinding(scope, name)?.api;
       if (bound) return bound;
       if (!isUnbound(scope, name)) return undefined;
       if (name === "require") return "require-alias";
       if (name === "Function") return "Function";
       if (name === "eval") return "eval";
+      if (name === "setTimeout") return "set-timeout";
+      if (name === "setInterval") return "set-interval";
       if (name === "Worker") return "web-worker";
       if (name === "SharedWorker") return "shared-worker";
       if (name === "importScripts") return "import-scripts";
@@ -1836,30 +2736,14 @@ function collectModuleBindings(
       return undefined;
     }
     const property = resolvedMemberProperty(unwrapped, scope);
-    const memberOwner = unwrapTransparentExpression(unwrapped.object);
-    if (isNode(memberOwner) && memberOwner.type === "AwaitExpression") {
-      const awaitedMembers = awaitedPromiseMemberApis(
-        memberOwner.argument,
-        scope,
-      );
-      const awaitedMember = property === undefined
-        ? undefined
-        : awaitedMembers.get(property);
-      if (awaitedMember) return awaitedMember;
-      if (property === undefined) {
-        let uncertainMember: ApiBinding | undefined;
-        for (const member of awaitedMembers.values()) {
-          uncertainMember = joinApiBinding(uncertainMember, member);
-        }
-        if (uncertainMember) return uncertainAlias(uncertainMember);
-      }
-    }
     if (isImportMeta(unwrapped.object) && property === "resolve") {
       return "import-meta-resolve";
     }
     if (isUnboundGlobalObject(unwrapped.object, scope)) {
       if (property === "Function") return "Function";
       if (property === "eval") return "eval";
+      if (property === "setTimeout") return "set-timeout";
+      if (property === "setInterval") return "set-interval";
       if (property === "Worker") return "web-worker";
       if (property === "SharedWorker") return "shared-worker";
       if (property === "importScripts") return "import-scripts";
@@ -1873,303 +2757,1294 @@ function collectModuleBindings(
       return "service-worker-register";
     }
     if (property === "audioWorklet") return "audio-worklet";
-    const ownerName = identifierName(unwrapped.object);
-    if (ownerName && property) {
-      const boundMember = getScopedMemberValue(
-        memberBindings,
-        scope,
-        ownerName,
-        property,
-      );
-      if (boundMember) return boundMember;
+    const ownerFacts = precomputedMemberOwner ??
+      valueFactsForExpression(unwrapped.object, scope);
+    if (property === undefined && ownerFacts.containers.size === 0) {
+      return undefined;
     }
-    return memberApi(apiForExpression(unwrapped.object, scope), property);
+    const projected = flowValueFactsByNode.get(unwrapped) ??
+      (property === undefined
+        ? projectedUnknownPropertyValueFacts(ownerFacts)
+        : projectedValueFacts(ownerFacts, property));
+    return projected.api ?? memberApi(ownerFacts.api, property);
   }
 
-  const awaitedPromiseMemberApisForOrigins = (
-    origins: PromiseOrigins,
-  ): ReadonlyMap<string, ApiBinding> => {
-    const perOrigin: Array<ReadonlyMap<string, ApiBinding>> = [];
-    let nonArrayOriginCount = 0;
-    for (const origin of origins) {
-      const originScope = scopeByNode.get(origin);
-      if (!originScope || !isPromiseAll(origin, originScope)) {
-        nonArrayOriginCount++;
+  const NO_VALUE_CONTAINERS = PrefixSnapshotSet.from<ValueContainerIdentity>(
+    [],
+  );
+  // A bound value whose provenance has not reached this fixed-point pass yet.
+  // Unlike EMPTY_VALUE_FACTS, this is lattice bottom rather than a concrete
+  // capability-free/falsey alternative, so joining it must preserve identity.
+  const BOTTOM_VALUE_FACTS: ValueFacts = {
+    promise: NO_PROMISE_ORIGINS,
+    containers: NO_VALUE_CONTAINERS,
+    unknown: false,
+    definitelyTruthy: false,
+    definitelyNonNullish: false,
+  };
+  const EMPTY_VALUE_FACTS: ValueFacts = {
+    promise: NO_PROMISE_ORIGINS,
+    containers: NO_VALUE_CONTAINERS,
+    unknown: false,
+    definitelyTruthy: false,
+    definitelyNonNullish: false,
+  };
+  const UNKNOWN_VALUE_FACTS: ValueFacts = {
+    promise: UNKNOWN_PROMISE_ORIGINS,
+    containers: NO_VALUE_CONTAINERS,
+    unknown: true,
+    definitelyTruthy: false,
+    definitelyNonNullish: false,
+  };
+
+  const apiIsDefinitelyTruthy = (api: ApiBinding): boolean =>
+    api !== "require-alias" && api !== "uncertain-runtime-loader";
+
+  const valueFactsForApi = (api: ApiBinding): ValueFacts => ({
+    api,
+    promise: NO_PROMISE_ORIGINS,
+    containers: NO_VALUE_CONTAINERS,
+    unknown: false,
+    definitelyTruthy: apiIsDefinitelyTruthy(api),
+    definitelyNonNullish: apiIsDefinitelyTruthy(api),
+  });
+
+  const withUnknownValueFacts = (facts: ValueFacts): ValueFacts => {
+    const api = facts.api === undefined ? undefined : uncertainAlias(facts.api);
+    const promise = withUnknownPromiseOrigins(facts.promise);
+    if (
+      facts.unknown && api === facts.api && promise === facts.promise &&
+      !facts.definitelyTruthy && !facts.definitelyNonNullish
+    ) {
+      return facts;
+    }
+    return {
+      ...facts,
+      api,
+      promise,
+      unknown: true,
+      definitelyTruthy: false,
+      definitelyNonNullish: false,
+    };
+  };
+
+  const joinValueFacts = (
+    current: ValueFacts | undefined,
+    incoming: ValueFacts,
+  ): ValueFacts => {
+    if (current === undefined) {
+      return incoming.unknown ? withUnknownValueFacts(incoming) : incoming;
+    }
+    if (current === BOTTOM_VALUE_FACTS) return incoming;
+    if (incoming === BOTTOM_VALUE_FACTS) return current;
+    if (current === incoming) return current;
+    let api = current.api;
+    if (incoming.api !== undefined) api = joinApiBinding(api, incoming.api);
+    const promise = joinPromiseOrigins(
+      current.promise,
+      incoming.promise,
+      analysisDiagnostics,
+    );
+    const containers = current.containers.mergedWith(
+      incoming.containers,
+      analysisDiagnostics,
+    );
+    const unknown = current.unknown || incoming.unknown;
+    const definitelyTruthy = current.definitelyTruthy &&
+      incoming.definitelyTruthy;
+    const definitelyNonNullish = current.definitelyNonNullish &&
+      incoming.definitelyNonNullish;
+    let result = api === current.api && promise === current.promise &&
+        containers === current.containers && unknown === current.unknown &&
+        definitelyTruthy === current.definitelyTruthy &&
+        definitelyNonNullish === current.definitelyNonNullish
+      ? current
+      : {
+        api,
+        promise,
+        containers,
+        unknown,
+        definitelyTruthy,
+        definitelyNonNullish,
+      };
+    if (unknown) result = withUnknownValueFacts(result);
+    return result;
+  };
+
+  const setScopedValueFacts = (
+    scope: LexicalScope,
+    name: string,
+    incoming: ValueFacts,
+  ): boolean => {
+    if (
+      incoming.api === undefined && !hasPromiseOrigins(incoming.promise) &&
+      incoming.containers.size === 0 && !incoming.unknown
+    ) return false;
+    const current = getScopedValue(valueBindings, scope, name);
+    const joined = joinValueFacts(current, incoming);
+    if (joined === current) return false;
+    const changed = setScopedValue(valueBindings, scope, name, joined);
+    if (changed) {
+      notifyBindingDependency(
+        scopedBindingDependency(
+          valueBindingDependencies,
+          "value",
+          scope,
+          name,
+        ),
+      );
+    }
+    return changed;
+  };
+
+  const containerIdentityFor = (
+    site: AstNode,
+    kind: ValueContainerKind,
+  ): ValueContainerIdentity => {
+    let identity = valueContainerIdentities.get(site);
+    if (!identity) {
+      identity = { site, kind };
+      valueContainerIdentities.set(site, identity);
+    }
+    return identity;
+  };
+
+  const joinContainerFacts = (
+    current: ValueContainerFacts | undefined,
+    incoming: ValueContainerFacts,
+  ): { facts: ValueContainerFacts; changed: boolean } => {
+    if (!current) {
+      analysisDiagnostics.containerMapEntryCopies += incoming.members.size;
+      return {
+        facts: {
+          members: new Map(incoming.members),
+          wildcard: incoming.wildcard,
+        },
+        changed: true,
+      };
+    }
+    let changed = false;
+    for (const [key, incomingMember] of incoming.members) {
+      analysisDiagnostics.containerMemberJoins++;
+      const currentMember = current.members.get(key);
+      const joined = joinValueFacts(currentMember, incomingMember);
+      if (joined !== currentMember) {
+        current.members.set(key, joined);
+        changed = true;
+      }
+    }
+    if (incoming.wildcard !== undefined) {
+      const wildcard = joinValueFacts(current.wildcard, incoming.wildcard);
+      if (wildcard !== current.wildcard) {
+        current.wildcard = wildcard;
+        changed = true;
+      }
+    }
+    return { facts: current, changed };
+  };
+
+  const initializeContainerFacts = (
+    identity: ValueContainerIdentity,
+    facts: ValueContainerFacts,
+  ): void => {
+    const constructed = joinContainerFacts(
+      constructedValueContainerFacts.get(identity),
+      facts,
+    );
+    constructedValueContainerFacts.set(identity, constructed.facts);
+    const current = valueContainerFacts.get(identity);
+    const joined = joinContainerFacts(current, facts);
+    if (joined.changed) {
+      valueContainerFacts.set(identity, joined.facts);
+      valueContainerVersions.set(
+        identity,
+        (valueContainerVersions.get(identity) ?? 0) + 1,
+      );
+      notifyBindingDependency(containerDependency(identity));
+    }
+  };
+
+  const valueFactsReferencingContainer = (
+    identity: ValueContainerIdentity,
+    facts: ValueContainerFacts,
+  ): ValueFacts => ({
+    promise: NO_PROMISE_ORIGINS,
+    containers: PrefixSnapshotSet.from([identity]),
+    unknown: facts.wildcard !== undefined,
+    definitelyTruthy: true,
+    definitelyNonNullish: true,
+  });
+
+  const writeContainerFacts = (
+    identity: ValueContainerIdentity,
+    facts: ValueContainerFacts,
+  ): boolean => {
+    const current = valueContainerFacts.get(identity);
+    const joined = joinContainerFacts(current, facts);
+    if (!joined.changed) return false;
+    valueContainerFacts.set(identity, joined.facts);
+    valueContainerVersions.set(
+      identity,
+      (valueContainerVersions.get(identity) ?? 0) + 1,
+    );
+    notifyBindingDependency(containerDependency(identity));
+    return true;
+  };
+
+  const valueFactsForContainer = (
+    site: AstNode,
+    kind: ValueContainerKind,
+    facts: ValueContainerFacts,
+  ): ValueFacts => {
+    const identity = containerIdentityFor(site, kind);
+    initializeContainerFacts(identity, facts);
+    return valueFactsReferencingContainer(identity, facts);
+  };
+
+  const projectedValueFacts = (
+    facts: ValueFacts,
+    property: string,
+  ): ValueFacts => {
+    let projected: ValueFacts | undefined;
+    let missing = facts.unknown;
+    let unresolvedContainer = false;
+    for (const identity of facts.containers) {
+      const container = readContainerFacts(identity);
+      if (!container) {
+        missing = true;
+        unresolvedContainer = true;
         continue;
       }
-      const members = new Map<string, ApiBinding>();
+      const member = container.members.get(property);
+      if (member) projected = joinValueFacts(projected, member);
+      else missing = true;
+      if (container.wildcard) {
+        projected = joinValueFacts(projected, container.wildcard);
+      }
+    }
+    const projectedApi = memberApi(facts.api, property);
+    if (projectedApi !== undefined) {
+      projected = joinValueFacts(projected, valueFactsForApi(projectedApi));
+    }
+    if (projected === undefined) {
+      return facts.api !== undefined || facts.unknown || unresolvedContainer
+        ? UNKNOWN_VALUE_FACTS
+        : EMPTY_VALUE_FACTS;
+    }
+    return missing ? withUnknownValueFacts(projected) : projected;
+  };
+
+  const projectedUnknownPropertyValueFacts = (
+    facts: ValueFacts,
+  ): ValueFacts => {
+    let projected: ValueFacts | undefined;
+    for (const identity of facts.containers) {
+      const container = readContainerFacts(identity);
+      if (!container) continue;
+      for (const member of container.members.values()) {
+        projected = joinValueFacts(projected, member);
+      }
+      if (container.wildcard) {
+        projected = joinValueFacts(projected, container.wildcard);
+      }
+    }
+    if (facts.api !== undefined) {
+      projected = joinValueFacts(
+        projected,
+        valueFactsForApi(uncertainAlias(facts.api)),
+      );
+    }
+    if (projected) return withUnknownValueFacts(projected);
+    return facts.containers.size > 0 || facts.api !== undefined || facts.unknown
+      ? UNKNOWN_VALUE_FACTS
+      : EMPTY_VALUE_FACTS;
+  };
+
+  const containerMembersForValueFacts = (
+    facts: ValueFacts,
+  ): { members: ReadonlyMap<string, ValueFacts>; unknown: boolean } => {
+    const keys = new Set<string>();
+    let unknown = facts.unknown;
+    for (const identity of facts.containers) {
+      const container = readContainerFacts(identity);
+      if (!container) {
+        unknown = true;
+        continue;
+      }
+      for (const key of container.members.keys()) keys.add(key);
+      if (container.wildcard) unknown = true;
+    }
+    const members = new Map<string, ValueFacts>();
+    for (const key of keys) members.set(key, projectedValueFacts(facts, key));
+    return { members, unknown };
+  };
+
+  const awaitedIterableFactsCache = new Map<
+    ValueFacts,
+    {
+      versions: ReadonlyMap<ValueContainerIdentity, number>;
+      facts: ValueContainerFacts;
+    }
+  >();
+
+  function awaitedValueFacts(
+    facts: ValueFacts,
+  ): ValueFacts {
+    const pendingOrigins: AstNode[] = [];
+    const enqueuedOrigins = new Set<AstNode>();
+    const awaitedShellCache = new Map<ValueFacts, ValueFacts>();
+
+    const enqueueOrigin = (origin: AstNode): void => {
+      if (enqueuedOrigins.has(origin)) return;
+      enqueuedOrigins.add(origin);
+      pendingOrigins.push(origin);
+    };
+
+    const awaitedShell = (input: ValueFacts): ValueFacts => {
+      const cached = awaitedShellCache.get(input);
+      if (cached) return cached;
+      let result: ValueFacts | undefined;
+      for (const origin of input.promise.origins) {
+        analysisDiagnostics.awaitedPromiseOriginElementVisits++;
+        const originScope = scopeByNode.get(origin);
+        if (!originScope) {
+          throw new Error("promise origin is missing its lexical scope");
+        }
+        if (isRawDynamicImport(origin)) {
+          const moduleName = rawImportedModuleName(origin, originScope);
+          const api = moduleName === "node:module"
+            ? "node-module-namespace" as const
+            : moduleName === "node:worker_threads"
+            ? "worker-threads-namespace" as const
+            : moduleName === "node:vm"
+            ? "node-vm-namespace" as const
+            : undefined;
+          result = joinValueFacts(
+            result,
+            api === undefined ? UNKNOWN_VALUE_FACTS : valueFactsForApi(api),
+          );
+          continue;
+        }
+        if (!isPromiseAll(origin, originScope)) {
+          throw new Error("unexpected promise provenance origin");
+        }
+        enqueueOrigin(origin);
+        const identity = containerIdentityFor(origin, "promise-all-result");
+        result = joinValueFacts(
+          result,
+          valueFactsReferencingContainer(identity, { members: new Map() }),
+        );
+      }
+      if (input.promise.unknown || input.unknown) {
+        result = joinValueFacts(result, UNKNOWN_VALUE_FACTS);
+      }
+      if (input.api !== undefined || input.containers.size > 0) {
+        result = joinValueFacts(result, {
+          api: input.api,
+          promise: NO_PROMISE_ORIGINS,
+          containers: input.containers,
+          unknown: input.unknown,
+          definitelyTruthy: input.definitelyTruthy,
+          definitelyNonNullish: input.definitelyNonNullish,
+        });
+      }
+      const awaited = result ?? EMPTY_VALUE_FACTS;
+      awaitedShellCache.set(input, awaited);
+      return awaited;
+    };
+
+    const awaitedIterableFacts = (input: ValueFacts): ValueContainerFacts => {
+      const cached = awaitedIterableFactsCache.get(input);
+      if (
+        cached && cached.versions.size === input.containers.size &&
+        [...input.containers].every((identity) =>
+          cached.versions.get(identity) ===
+            readContainerVersion(identity)
+        )
+      ) {
+        return cached.facts;
+      }
+
+      const inputContainer = containerMembersForValueFacts(input);
+      const members = new Map<string, ValueFacts>();
+      for (const [key, member] of inputContainer.members) {
+        analysisDiagnostics.awaitedIterableMemberVisits++;
+        members.set(key, awaitedShell(member));
+      }
+      const resolved = {
+        members,
+        wildcard: inputContainer.unknown ? UNKNOWN_VALUE_FACTS : undefined,
+      };
+      awaitedIterableFactsCache.set(input, {
+        versions: new Map(
+          [...input.containers].map((identity) => [
+            identity,
+            readContainerVersion(identity),
+          ]),
+        ),
+        facts: resolved,
+      });
+      return resolved;
+    };
+
+    const result = awaitedShell(facts);
+    while (pendingOrigins.length > 0) {
+      const origin = pendingOrigins.pop();
+      if (!origin) break;
+      const originScope = scopeByNode.get(origin);
+      if (!originScope) {
+        throw new Error("promise origin is missing its lexical scope");
+      }
+      if (!isPromiseAll(origin, originScope)) {
+        throw new Error("unexpected promise provenance origin");
+      }
+
+      const members = new Map<string, ValueFacts>();
       const inputs = promiseAllInputs(origin, originScope);
       if (inputs) {
         inputs.forEach((input, index) => {
-          const api = awaitedApiForPromiseExpression(input, originScope) ??
-            apiForExpression(input, originScope);
-          if (api) members.set(String(index), api);
-        });
-      } else {
-        const args = Array.isArray(origin.arguments) ? origin.arguments : [];
-        const inputName = identifierName(
-          unwrapTransparentExpression(args[0]),
-        );
-        if (inputName) {
-          const promiseMembers = getScopedMemberValues(
-            promiseMemberBindings,
-            originScope,
-            inputName,
-          ) ?? new Map();
-          const apiMembers = getScopedMemberValues(
-            memberBindings,
-            originScope,
-            inputName,
-          ) ?? new Map();
-          const keys = new Set([
-            ...promiseMembers.keys(),
-            ...apiMembers.keys(),
-          ]);
-          for (const key of keys) {
-            const promiseApi = promiseMembers.has(key)
-              ? awaitedApiForPromiseOrigins(promiseMembers.get(key)!)
-              : undefined;
-            const api = promiseApi ?? apiMembers.get(key);
-            if (api) members.set(key, api);
-          }
-        }
-      }
-      perOrigin.push(members);
-    }
-    const keys = new Set(perOrigin.flatMap((members) => [...members.keys()]));
-    const result = new Map<string, ApiBinding>();
-    for (const key of keys) {
-      let api: ApiBinding | undefined;
-      let missing = nonArrayOriginCount > 0;
-      for (const members of perOrigin) {
-        const member = members.get(key);
-        if (member) api = joinApiBinding(api, member);
-        else missing = true;
-      }
-      if (api) result.set(key, missing ? uncertainAlias(api) : api);
-    }
-    return result;
-  };
-
-  const awaitedPromiseMemberApis = (
-    node: unknown,
-    scope: LexicalScope,
-  ): ReadonlyMap<string, ApiBinding> =>
-    awaitedPromiseMemberApisForOrigins(
-      promiseOriginsForExpression(node, scope),
-    );
-
-  const promiseCapabilityForOrigins = (
-    origins: PromiseOrigins,
-    seen = new Set<AstNode>(),
-  ): ApiBinding | undefined => {
-    let result = awaitedApiForPromiseOrigins(origins);
-    for (const origin of origins) {
-      if (seen.has(origin)) continue;
-      const originScope = scopeByNode.get(origin);
-      if (!originScope || !isPromiseAll(origin, originScope)) continue;
-      const nextSeen = new Set(seen).add(origin);
-      const inputs = promiseAllInputs(origin, originScope);
-      if (inputs) {
-        for (const input of inputs) {
-          const inputOrigins = promiseOriginsForExpression(input, originScope);
-          const promiseApi = promiseCapabilityForOrigins(
-            inputOrigins,
-            nextSeen,
+          members.set(
+            String(index),
+            awaitedShell(valueFactsForExpression(input, originScope)),
           );
-          const api = promiseApi ?? apiForExpression(input, originScope);
-          if (api) result = joinApiBinding(result, api);
-        }
+        });
+        valueFactsForContainer(origin, "promise-all-result", { members });
         continue;
       }
+
       const args = Array.isArray(origin.arguments) ? origin.arguments : [];
-      const inputName = identifierName(unwrapTransparentExpression(args[0]));
-      if (!inputName) continue;
-      const promiseMembers = getScopedMemberValues(
-        promiseMemberBindings,
-        originScope,
-        inputName,
-      ) ?? new Map();
-      for (const memberOrigins of promiseMembers.values()) {
-        const api = promiseCapabilityForOrigins(memberOrigins, nextSeen);
-        if (api) result = joinApiBinding(result, api);
-      }
-      const apiMembers = getScopedMemberValues(
-        memberBindings,
-        originScope,
-        inputName,
-      ) ?? new Map();
-      for (const api of apiMembers.values()) {
-        result = joinApiBinding(result, api);
-      }
+      const inputFacts = valueFactsForExpression(args[0], originScope);
+      valueFactsForContainer(
+        origin,
+        "promise-all-result",
+        awaitedIterableFacts(inputFacts),
+      );
     }
     return result;
+  }
+
+  const logicalValueFacts = (
+    operator: string,
+    left: ValueFacts,
+    right: ValueFacts,
+  ): ValueFacts => {
+    if (operator === "&&" || operator === "&&=") {
+      return left.definitelyTruthy ? right : joinValueFacts(left, right);
+    }
+    if (
+      operator === "||" || operator === "||=" || operator === "??" ||
+      operator === "??="
+    ) {
+      const definitelyKeepsLeft = operator === "??" || operator === "??="
+        ? left.definitelyNonNullish
+        : left.definitelyTruthy;
+      return definitelyKeepsLeft ? left : joinValueFacts(left, right);
+    }
+    return UNKNOWN_VALUE_FACTS;
   };
 
-  const bindPromiseAllPatternApis = (
-    pattern: AstNode,
-    members: ReadonlyMap<string, ApiBinding>,
+  function literalContainerFacts(
+    expression: AstNode,
     scope: LexicalScope,
-    transform: (api: ApiBinding) => ApiBinding = (api) => api,
-  ): boolean => {
-    let changed = false;
-    let unknownMember: ApiBinding | undefined;
-    for (const api of members.values()) {
-      unknownMember = joinApiBinding(unknownMember, api);
-    }
-    if (unknownMember) unknownMember = uncertainAlias(unknownMember);
-    const bindTarget = (target: AstNode, api: ApiBinding): void => {
-      if (target.type === "ObjectPattern") {
-        changed = bindObjectPatternFromOwner(
-          target,
-          api,
-          scope,
-          apiBindings,
-          (property) => resolvedPropertyKey(property, scope),
-          transform,
-        ) || changed;
-        return;
-      }
-      const local = identifierName(target) ||
-        (target.type === "AssignmentPattern"
-          ? identifierName(target.left)
-          : undefined);
-      if (local) {
-        changed = setScopedApiValue(
-          apiBindings,
-          scope,
-          local,
-          transform(api),
-        ) || changed;
-      }
+  ): ValueContainerFacts {
+    const members = new Map<string, ValueFacts>();
+    let wildcard: ValueFacts | undefined;
+    const addWildcard = (facts: ValueFacts): void => {
+      wildcard = joinValueFacts(wildcard, withUnknownValueFacts(facts));
     };
-    if (pattern.type === "ArrayPattern") {
-      const elements = Array.isArray(pattern.elements) ? pattern.elements : [];
-      elements.forEach((element, index) => {
-        if (!isNode(element)) return;
-        if (element.type === "RestElement") {
-          if (unknownMember && isNode(element.argument)) {
-            bindTarget(element.argument, unknownMember);
-          }
-          return;
-        }
-        const api = members.get(String(index));
-        if (api) bindTarget(element, api);
-      });
-    } else if (pattern.type === "ObjectPattern") {
+    if (expression.type === "ObjectExpression") {
       for (
-        const property of Array.isArray(pattern.properties)
-          ? pattern.properties
+        const property of Array.isArray(expression.properties)
+          ? expression.properties
           : []
       ) {
         if (!isNode(property)) continue;
-        if (property.type === "RestElement") {
-          if (unknownMember && isNode(property.argument)) {
-            bindTarget(property.argument, unknownMember);
+        if (property.type === "SpreadElement") {
+          const spread = valueFactsForExpression(property.argument, scope);
+          const spreadContainer = containerMembersForValueFacts(spread);
+          for (const [key, member] of spreadContainer.members) {
+            members.set(key, joinValueFacts(members.get(key), member));
+          }
+          if (spreadContainer.unknown) addWildcard(UNKNOWN_VALUE_FACTS);
+          if (spread.api !== undefined) {
+            addWildcard(projectedUnknownPropertyValueFacts(spread));
           }
           continue;
         }
         if (property.type !== "ObjectProperty") continue;
         const key = resolvedPropertyKey(property, scope);
-        const api = key === undefined ? unknownMember : members.get(key);
-        if (api && isNode(property.value)) bindTarget(property.value, api);
+        if (key === undefined) {
+          addWildcard(valueFactsForExpression(property.value, scope));
+          continue;
+        }
+        members.set(key, valueFactsForExpression(property.value, scope));
       }
     } else {
-      return false;
-    }
-    return changed;
-  };
-
-  const promiseMembersForContainer = (
-    node: unknown,
-    scope: LexicalScope,
-  ): ReadonlyMap<string, PromiseOrigins> => {
-    const unwrapped = unwrapTransparentExpression(node);
-    if (!isNode(unwrapped) || unwrapped.type === "AwaitExpression") {
-      return new Map();
-    }
-    const ownerName = identifierName(unwrapped);
-    if (ownerName) {
-      return getScopedMemberValues(
-        promiseMemberBindings,
-        scope,
-        ownerName,
-      ) ?? new Map();
-    }
-    const members = new Map<string, PromiseOrigins>();
-    if (unwrapped.type === "ObjectExpression") {
-      for (
-        const property of Array.isArray(unwrapped.properties)
-          ? unwrapped.properties
-          : []
-      ) {
-        if (!isNode(property) || property.type !== "ObjectProperty") continue;
-        const key = resolvedPropertyKey(property, scope);
-        const origins = promiseOriginsForExpression(property.value, scope);
-        if (key && origins.size > 0) members.set(key, origins);
-      }
-    } else if (unwrapped.type === "ArrayExpression") {
-      for (
-        const [index, value]
-          of (Array.isArray(unwrapped.elements) ? unwrapped.elements : [])
-            .entries()
-      ) {
-        const origins = promiseOriginsForExpression(value, scope);
-        if (origins.size > 0) members.set(String(index), origins);
-      }
-    }
-    return members;
-  };
-
-  const bindPromisePatternFromContainer = (
-    pattern: AstNode,
-    value: unknown,
-    scope: LexicalScope,
-  ): boolean => {
-    const members = promiseMembersForContainer(value, scope);
-    let changed = false;
-    if (pattern.type === "ObjectPattern") {
-      for (
-        const property of Array.isArray(pattern.properties)
-          ? pattern.properties
-          : []
-      ) {
-        if (!isNode(property) || property.type !== "ObjectProperty") continue;
-        const key = resolvedPropertyKey(property, scope);
-        const origins = key ? members.get(key) : undefined;
-        const local = identifierName(property.value) ||
-          (isNode(property.value) && property.value.type === "AssignmentPattern"
-            ? identifierName(property.value.left)
-            : undefined);
-        if (local && origins) {
-          changed = setScopedPromiseOrigins(
-            promiseBindings,
-            scope,
-            local,
-            origins,
-          ) || changed;
-        }
-      }
-    } else if (pattern.type === "ArrayPattern") {
-      const elements = Array.isArray(pattern.elements) ? pattern.elements : [];
+      const elements = Array.isArray(expression.elements)
+        ? expression.elements
+        : [];
       elements.forEach((element, index) => {
-        if (!isNode(element)) return;
-        const local = identifierName(element) ||
-          (element.type === "AssignmentPattern"
-            ? identifierName(element.left)
-            : undefined);
-        const origins = members.get(String(index));
-        if (local && origins) {
-          changed = setScopedPromiseOrigins(
-            promiseBindings,
-            scope,
-            local,
-            origins,
-          ) || changed;
+        if (isNode(element) && element.type === "SpreadElement") {
+          addWildcard(
+            iterableElementValueFacts(element.argument, scope, false),
+          );
+          return;
         }
+        members.set(
+          String(index),
+          valueFactsForExpression(element, scope),
+        );
       });
     }
+    return {
+      members,
+      wildcard,
+    };
+  }
+
+  function valueFactsForExpression(
+    node: unknown,
+    scope: LexicalScope,
+  ): ValueFacts {
+    const unwrapped = unwrapTransparentExpression(node);
+    if (!isNode(unwrapped)) return UNKNOWN_VALUE_FACTS;
+    if (unwrapped.type === "AwaitExpression") {
+      return awaitedValueFacts(
+        valueFactsForExpression(unwrapped.argument, scope),
+      );
+    }
+    if (isRawDynamicImport(unwrapped) || isPromiseAll(unwrapped, scope)) {
+      return {
+        promise: {
+          origins: PrefixSnapshotSet.from([unwrapped]),
+          unknown: false,
+        },
+        containers: NO_VALUE_CONTAINERS,
+        unknown: false,
+        definitelyTruthy: true,
+        definitelyNonNullish: true,
+      };
+    }
+    if (unwrapped.type === "SequenceExpression") {
+      const expressions = Array.isArray(unwrapped.expressions)
+        ? unwrapped.expressions
+        : [];
+      return valueFactsForExpression(expressions.at(-1), scope);
+    }
+    if (unwrapped.type === "AssignmentExpression") {
+      if (unwrapped.operator === "=") {
+        return valueFactsForExpression(unwrapped.right, scope);
+      }
+      if (["&&=", "||=", "??="].includes(unwrapped.operator as string)) {
+        return logicalValueFacts(
+          unwrapped.operator as string,
+          valueFactsForExpression(unwrapped.left, scope),
+          valueFactsForExpression(unwrapped.right, scope),
+        );
+      }
+      return UNKNOWN_VALUE_FACTS;
+    }
+    if (unwrapped.type === "ConditionalExpression") {
+      return withUnknownValueFacts(joinValueFacts(
+        valueFactsForExpression(unwrapped.consequent, scope),
+        valueFactsForExpression(unwrapped.alternate, scope),
+      ));
+    }
+    if (unwrapped.type === "LogicalExpression") {
+      return logicalValueFacts(
+        unwrapped.operator as string,
+        valueFactsForExpression(unwrapped.left, scope),
+        valueFactsForExpression(unwrapped.right, scope),
+      );
+    }
+    if (
+      unwrapped.type === "ObjectExpression" ||
+      unwrapped.type === "ArrayExpression"
+    ) {
+      return valueFactsForContainer(
+        unwrapped,
+        unwrapped.type === "ObjectExpression"
+          ? "object-literal"
+          : "array-literal",
+        literalContainerFacts(unwrapped, scope),
+      );
+    }
+
+    const name = identifierName(unwrapped);
+    if (name) {
+      const result = readValueBinding(scope, name);
+      if (result) return result;
+      const api = apiForExpression(unwrapped, scope);
+      if (api !== undefined) return valueFactsForApi(api);
+      return isUnbound(scope, name) ? UNKNOWN_VALUE_FACTS : BOTTOM_VALUE_FACTS;
+    }
+
+    if (
+      unwrapped.type === "MemberExpression" ||
+      unwrapped.type === "OptionalMemberExpression"
+    ) {
+      const flowFacts = flowValueFactsByNode.get(unwrapped);
+      if (flowFacts) return flowFacts;
+      const property = resolvedMemberProperty(unwrapped, scope);
+      const owner = valueFactsForExpression(unwrapped.object, scope);
+      const api = apiForExpression(unwrapped, scope, owner);
+      if (api !== undefined) return valueFactsForApi(api);
+      return property === undefined
+        ? projectedUnknownPropertyValueFacts(owner)
+        : projectedValueFacts(owner, property);
+    }
+
+    const api = apiForExpression(unwrapped, scope);
+    return api === undefined ? UNKNOWN_VALUE_FACTS : {
+      api,
+      promise: NO_PROMISE_ORIGINS,
+      containers: NO_VALUE_CONTAINERS,
+      unknown: false,
+      definitelyTruthy: apiIsDefinitelyTruthy(api),
+      definitelyNonNullish: apiIsDefinitelyTruthy(api),
+    };
+  }
+
+  const iterableElementValueFacts = (
+    iterable: unknown,
+    scope: LexicalScope,
+    awaitElements: boolean,
+  ): ValueFacts => {
+    const iterableFacts = valueFactsForExpression(iterable, scope);
+    let result: ValueFacts | undefined;
+    const iterableContainer = containerMembersForValueFacts(iterableFacts);
+    for (const member of iterableContainer.members.values()) {
+      result = joinValueFacts(
+        result,
+        awaitElements ? awaitedValueFacts(member) : member,
+      );
+    }
+    if (iterableContainer.unknown) {
+      result = joinValueFacts(result, UNKNOWN_VALUE_FACTS);
+    }
+    return result ??
+      (iterableFacts.unknown ? UNKNOWN_VALUE_FACTS : EMPTY_VALUE_FACTS);
+  };
+
+  const capabilityInValueFactsGraph = (
+    root: ValueFacts,
+    options: {
+      includeApi: (api: ApiBinding) => boolean;
+      includePromises: boolean;
+      forceUncertain?: boolean;
+    },
+  ): ApiBinding | undefined => {
+    type CapabilityWorkItem =
+      | {
+        kind: "value";
+        facts: ValueFacts;
+        uncertain: boolean;
+        promiseContext: boolean;
+      }
+      | {
+        kind: "container";
+        identity: ValueContainerIdentity;
+        uncertain: boolean;
+        promiseContext: boolean;
+      }
+      | {
+        kind: "origin-set";
+        origins: PromiseOrigins;
+        uncertain: boolean;
+      }
+      | {
+        kind: "origin";
+        origin: AstNode;
+        uncertain: boolean;
+      };
+
+    const worklist: CapabilityWorkItem[] = [{
+      kind: "value",
+      facts: root,
+      uncertain: false,
+      promiseContext: false,
+    }];
+    const visitedValues = Array.from(
+      { length: 4 },
+      () => new Set<ValueFacts>(),
+    );
+    const visitedContainers = Array.from(
+      { length: 4 },
+      () => new Set<ValueContainerIdentity>(),
+    );
+    const visitedContainerFacts = Array.from(
+      { length: 4 },
+      () => new Set<ValueContainerFacts>(),
+    );
+    const visitedOriginSets = [
+      new Set<PromiseOrigins>(),
+      new Set<PromiseOrigins>(),
+    ];
+    const visitedOrigins = [
+      new Set<AstNode>(),
+      new Set<AstNode>(),
+    ];
+    const promiseOriginApis = new Map<AstNode, ApiBinding | undefined>();
+    const originSetSummaries = new Map<
+      PromiseOrigins,
+      {
+        allRawImports: boolean;
+        api?: ApiBinding;
+        uncertain: boolean;
+      }
+    >();
+    let result: ApiBinding | undefined;
+
+    const recordCapability = (
+      api: ApiBinding,
+      uncertain: boolean,
+    ): void => {
+      result = joinApiBinding(
+        result,
+        uncertain || options.forceUncertain ? uncertainAlias(api) : api,
+      );
+    };
+
+    const promiseOriginApi = (
+      origin: AstNode,
+      scope: LexicalScope,
+    ): ApiBinding | undefined => {
+      if (promiseOriginApis.has(origin)) return promiseOriginApis.get(origin);
+      const moduleName = rawImportedModuleName(origin, scope);
+      const api = moduleName === "node:module"
+        ? "node-module-namespace"
+        : moduleName === "node:worker_threads"
+        ? "worker-threads-namespace"
+        : moduleName === "node:vm"
+        ? "node-vm-namespace"
+        : undefined;
+      promiseOriginApis.set(origin, api);
+      return api;
+    };
+
+    const summarizeOriginSet = (
+      origins: PromiseOrigins,
+    ): {
+      allRawImports: boolean;
+      api?: ApiBinding;
+      uncertain: boolean;
+    } => {
+      const cached = originSetSummaries.get(origins);
+      if (cached) return cached;
+      let api: ApiBinding | undefined;
+      let allRawImports = true;
+      let sawAbsentAlternative = origins.unknown;
+      for (const origin of origins.origins) {
+        const originScope = scopeByNode.get(origin);
+        if (!originScope) {
+          throw new Error("promise origin is missing its lexical scope");
+        }
+        if (!isRawDynamicImport(origin)) {
+          allRawImports = false;
+          continue;
+        }
+        const originApi = promiseOriginApi(origin, originScope);
+        if (originApi === undefined) sawAbsentAlternative = true;
+        else api = joinApiBinding(api, originApi);
+      }
+      const summary = {
+        allRawImports,
+        ...(api === undefined ? {} : { api }),
+        uncertain: origins.unknown ||
+          origins.origins.size > 1 &&
+            (!allRawImports || sawAbsentAlternative),
+      };
+      originSetSummaries.set(origins, summary);
+      return summary;
+    };
+
+    while (worklist.length > 0) {
+      const entry = worklist.pop();
+      if (!entry) break;
+
+      if (entry.kind === "origin-set") {
+        const summary = summarizeOriginSet(entry.origins);
+        const uncertain = entry.uncertain || summary.uncertain;
+        const visited = visitedOriginSets[uncertain ? 1 : 0];
+        if (visited.has(entry.origins)) continue;
+        visited.add(entry.origins);
+        if (summary.allRawImports) {
+          if (summary.api) recordCapability(summary.api, uncertain);
+          continue;
+        }
+        for (const origin of entry.origins.origins) {
+          worklist.push({ kind: "origin", origin, uncertain });
+        }
+        continue;
+      }
+
+      if (entry.kind === "origin") {
+        const visited = visitedOrigins[entry.uncertain ? 1 : 0];
+        if (visited.has(entry.origin)) continue;
+        visited.add(entry.origin);
+        const originScope = scopeByNode.get(entry.origin);
+        if (!originScope) {
+          throw new Error("promise origin is missing its lexical scope");
+        }
+        if (isRawDynamicImport(entry.origin)) {
+          const api = promiseOriginApi(entry.origin, originScope);
+          if (api) recordCapability(api, entry.uncertain);
+          continue;
+        }
+        if (!isPromiseAll(entry.origin, originScope)) {
+          throw new Error("unexpected promise provenance origin");
+        }
+
+        const inputs = promiseAllInputs(entry.origin, originScope);
+        if (inputs) {
+          for (const input of inputs) {
+            worklist.push({
+              kind: "value",
+              facts: valueFactsForExpression(input, originScope),
+              uncertain: entry.uncertain,
+              promiseContext: true,
+            });
+          }
+          continue;
+        }
+
+        const args = Array.isArray(entry.origin.arguments)
+          ? entry.origin.arguments
+          : [];
+        const iterableFacts = valueFactsForExpression(args[0], originScope);
+        const uncertain = entry.uncertain || iterableFacts.unknown;
+        for (const identity of iterableFacts.containers) {
+          worklist.push({
+            kind: "container",
+            identity,
+            uncertain,
+            promiseContext: true,
+          });
+        }
+        continue;
+      }
+
+      if (entry.kind === "container") {
+        const state = (entry.promiseContext ? 2 : 0) +
+          (entry.uncertain ? 1 : 0);
+        const visited = visitedContainers[state];
+        if (visited.has(entry.identity)) continue;
+        visited.add(entry.identity);
+        const container = readContainerFacts(entry.identity);
+        if (!container) {
+          throw new Error("value container identity has no heap facts");
+        }
+        const visitedFacts = visitedContainerFacts[state];
+        if (visitedFacts.has(container)) continue;
+        visitedFacts.add(container);
+        for (const member of container.members.values()) {
+          worklist.push({
+            kind: "value",
+            facts: member,
+            uncertain: entry.uncertain,
+            promiseContext: entry.promiseContext,
+          });
+        }
+        if (container.wildcard) {
+          worklist.push({
+            kind: "value",
+            facts: container.wildcard,
+            uncertain: true,
+            promiseContext: entry.promiseContext,
+          });
+        }
+        continue;
+      }
+
+      const uncertain = entry.uncertain || entry.facts.unknown;
+      const state = (entry.promiseContext ? 2 : 0) + (uncertain ? 1 : 0);
+      const visited = visitedValues[state];
+      if (visited.has(entry.facts)) continue;
+      visited.add(entry.facts);
+      if (
+        entry.facts.api &&
+        (entry.promiseContext || options.includeApi(entry.facts.api))
+      ) {
+        recordCapability(entry.facts.api, uncertain);
+      }
+      if (options.includePromises && hasPromiseOrigins(entry.facts.promise)) {
+        worklist.push({
+          kind: "origin-set",
+          origins: entry.facts.promise,
+          uncertain,
+        });
+      }
+      for (const identity of entry.facts.containers) {
+        worklist.push({
+          kind: "container",
+          identity,
+          uncertain,
+          promiseContext: entry.promiseContext,
+        });
+      }
+    }
+    return result;
+  };
+
+  const capabilityForValueFacts = (
+    facts: ValueFacts,
+  ): ApiBinding | undefined =>
+    capabilityInValueFactsGraph(facts, {
+      includeApi: () => true,
+      includePromises: true,
+    });
+
+  const valueFactsContainPromise = (
+    facts: ValueFacts,
+  ): boolean => {
+    const worklist = [facts];
+    const visited = new Set<ValueContainerIdentity>();
+    while (worklist.length > 0) {
+      const current = worklist.pop();
+      if (!current) break;
+      if (current.promise.origins.size > 0) return true;
+      for (const identity of current.containers) {
+        if (visited.has(identity)) continue;
+        visited.add(identity);
+        const container = readContainerFacts(identity);
+        if (!container) continue;
+        worklist.push(...container.members.values());
+        if (container.wildcard) worklist.push(container.wildcard);
+      }
+    }
+    return false;
+  };
+
+  const isModeledResolvedApiContainer = (facts: ValueFacts): boolean =>
+    facts.containers.size > 0 && capabilityForValueFacts(facts) !== undefined &&
+    !valueFactsContainPromise(facts);
+
+  interface TargetTransferOptions {
+    transformApi: (api: ApiBinding) => ApiBinding;
+    allowTrustedMemberWrite?: boolean;
+  }
+
+  const restTargetValueFacts = (
+    source: ValueFacts,
+    rest: ValueFacts,
+  ): ValueFacts => {
+    if (source.api === undefined) return rest;
+    return withUnknownValueFacts(
+      joinValueFacts(rest, valueFactsForApi(source.api)),
+    );
+  };
+
+  const transformValueFactApis = (
+    facts: ValueFacts,
+    transform: (api: ApiBinding) => ApiBinding,
+  ): ValueFacts => {
+    const api = facts.api === undefined ? undefined : transform(facts.api);
+    const transformedApiIsDefinite = api === undefined ||
+      apiIsDefinitelyTruthy(api);
+    const definitelyTruthy = facts.definitelyTruthy &&
+      transformedApiIsDefinite;
+    const definitelyNonNullish = facts.definitelyNonNullish &&
+      transformedApiIsDefinite;
+    return api === facts.api &&
+        definitelyTruthy === facts.definitelyTruthy &&
+        definitelyNonNullish === facts.definitelyNonNullish
+      ? facts
+      : {
+        ...facts,
+        api,
+        definitelyTruthy,
+        definitelyNonNullish,
+      };
+  };
+
+  const isResolvedContainerTree = (
+    facts: ValueFacts,
+    directApiAllowed = false,
+  ): boolean => {
+    const worklist: Array<{ facts: ValueFacts; directApiAllowed: boolean }> = [{
+      facts,
+      directApiAllowed,
+    }];
+    const visitedDisallowed = new Set<ValueContainerIdentity>();
+    const visitedAllowed = new Set<ValueContainerIdentity>();
+    while (worklist.length > 0) {
+      const entry = worklist.pop();
+      if (!entry) break;
+      if (entry.facts.api !== undefined && !entry.directApiAllowed) {
+        return false;
+      }
+      if (entry.facts.promise.origins.size > 0) return false;
+      if (entry.facts.promise.unknown && !entry.directApiAllowed) return false;
+      const visited = entry.directApiAllowed
+        ? visitedAllowed
+        : visitedDisallowed;
+      for (const identity of entry.facts.containers) {
+        if (visited.has(identity)) continue;
+        visited.add(identity);
+        const container = readContainerFacts(identity);
+        if (!container) return false;
+        const memberApiAllowed = identity.kind === "promise-all-result";
+        for (const member of container.members.values()) {
+          worklist.push({ facts: member, directApiAllowed: memberApiAllowed });
+        }
+        if (container.wildcard) {
+          worklist.push({
+            facts: container.wildcard,
+            directApiAllowed: memberApiAllowed,
+          });
+        }
+      }
+    }
+    return true;
+  };
+
+  const storedInitializerValueFacts = (
+    initializer: unknown,
+    scope: LexicalScope,
+  ): ValueFacts => valueFactsForExpression(initializer, scope);
+
+  const syncIdentifierValueFacts = (
+    name: string,
+    facts: ValueFacts,
+    scope: LexicalScope,
+  ): boolean => {
+    return setScopedValueFacts(scope, name, facts);
+  };
+
+  const writeMemberValueFacts = (
+    owner: ValueFacts,
+    property: string | undefined,
+    incoming: ValueFacts,
+    options: TargetTransferOptions,
+  ): boolean => {
+    const capability = capabilityForValueFacts(incoming);
+    const stored = capability !== undefined &&
+        !options.allowTrustedMemberWrite
+      ? UNKNOWN_VALUE_FACTS
+      : incoming;
+    let changed = false;
+    for (const identity of owner.containers) {
+      if (
+        (property === undefined || property === "__proto__") &&
+        !unsafeLocalContainerIdentities.has(identity)
+      ) {
+        unsafeLocalContainerIdentities.add(identity);
+        changed = true;
+      }
+      changed = writeContainerFacts(
+        identity,
+        property === undefined
+          ? { members: new Map(), wildcard: withUnknownValueFacts(stored) }
+          : { members: new Map([[property, stored]]) },
+      ) || changed;
+    }
     return changed;
+  };
+
+  const transferValueFactsToTarget = (
+    target: AstNode,
+    incoming: ValueFacts,
+    scope: LexicalScope,
+    options: TargetTransferOptions,
+  ): boolean => {
+    const targetNode = unwrapTransparentExpression(target);
+    if (!isNode(targetNode)) return false;
+    if (targetNode.type === "AssignmentPattern") {
+      if (!isNode(targetNode.left)) return false;
+      const withDefault = withUnknownValueFacts(joinValueFacts(
+        incoming,
+        valueFactsForExpression(targetNode.right, scope),
+      ));
+      return transferValueFactsToTarget(
+        targetNode.left,
+        withDefault,
+        scope,
+        options,
+      );
+    }
+    if (targetNode.type === "RestElement") {
+      return isNode(targetNode.argument)
+        ? transferValueFactsToTarget(
+          targetNode.argument,
+          incoming,
+          scope,
+          options,
+        )
+        : false;
+    }
+
+    const facts = transformValueFactApis(incoming, options.transformApi);
+    const local = identifierName(targetNode);
+    if (local) return syncIdentifierValueFacts(local, facts, scope);
+    if (
+      targetNode.type === "MemberExpression" ||
+      targetNode.type === "OptionalMemberExpression"
+    ) {
+      const property = resolvedMemberProperty(targetNode, scope);
+      return writeMemberValueFacts(
+        valueFactsForExpression(targetNode.object, scope),
+        property,
+        facts,
+        options,
+      );
+    }
+
+    if (targetNode.type === "ArrayPattern") {
+      let changed = false;
+      const elements = Array.isArray(targetNode.elements)
+        ? targetNode.elements
+        : [];
+      for (const [index, element] of elements.entries()) {
+        if (!isNode(element)) continue;
+        if (element.type === "RestElement" && isNode(element.argument)) {
+          const sourceContainer = containerMembersForValueFacts(facts);
+          const remaining = new Map<string, ValueFacts>();
+          for (const [key, member] of sourceContainer.members) {
+            const sourceIndex = Number(key);
+            if (
+              Number.isSafeInteger(sourceIndex) && sourceIndex >= index &&
+              String(sourceIndex) === key
+            ) {
+              remaining.set(String(sourceIndex - index), member);
+            }
+          }
+          const restFacts = valueFactsForContainer(
+            element,
+            "array-rest",
+            {
+              members: remaining,
+              wildcard: sourceContainer.unknown
+                ? UNKNOWN_VALUE_FACTS
+                : undefined,
+            },
+          );
+          changed = transferValueFactsToTarget(
+            element.argument,
+            restTargetValueFacts(facts, restFacts),
+            scope,
+            options,
+          ) || changed;
+          continue;
+        }
+        const memberFacts = projectedValueFacts(facts, String(index));
+        changed = transferValueFactsToTarget(
+          element,
+          memberFacts,
+          scope,
+          options,
+        ) || changed;
+      }
+      return changed;
+    }
+    if (targetNode.type !== "ObjectPattern") return false;
+
+    let changed = false;
+    const properties =
+      (Array.isArray(targetNode.properties) ? targetNode.properties : [])
+        .filter(isNode);
+    const excludedKeys = new Set<string>();
+    let hasIndeterminateKey = false;
+    for (const property of properties) {
+      if (property.type !== "ObjectProperty") continue;
+      const key = resolvedPropertyKey(property, scope);
+      if (key === undefined) hasIndeterminateKey = true;
+      else excludedKeys.add(key);
+    }
+    for (const property of properties) {
+      if (property.type === "RestElement" && isNode(property.argument)) {
+        const sourceContainer = containerMembersForValueFacts(facts);
+        const remaining = hasIndeterminateKey
+          ? new Map(sourceContainer.members)
+          : new Map(
+            [...sourceContainer.members].filter(([key]) =>
+              !excludedKeys.has(key)
+            ),
+          );
+        const restFacts = valueFactsForContainer(
+          property,
+          "object-rest",
+          {
+            members: remaining,
+            wildcard: sourceContainer.unknown || hasIndeterminateKey
+              ? UNKNOWN_VALUE_FACTS
+              : undefined,
+          },
+        );
+        changed = transferValueFactsToTarget(
+          property.argument,
+          restTargetValueFacts(facts, restFacts),
+          scope,
+          options,
+        ) || changed;
+        continue;
+      }
+      if (property.type !== "ObjectProperty" || !isNode(property.value)) {
+        continue;
+      }
+      const key = resolvedPropertyKey(property, scope);
+      if (key !== undefined) {
+        const memberFacts = projectedValueFacts(facts, key);
+        changed = transferValueFactsToTarget(
+          property.value,
+          memberFacts,
+          scope,
+          options,
+        ) || changed;
+        continue;
+      }
+      changed = transferValueFactsToTarget(
+        property.value,
+        projectedUnknownPropertyValueFacts(facts),
+        scope,
+        options,
+      ) || changed;
+    }
+    return changed;
+  };
+
+  const loopBindingTarget = (loop: AstNode): AstNode | undefined => {
+    const left = loop.left;
+    if (!isNode(left)) return undefined;
+    if (left.type !== "VariableDeclaration") return left;
+    return Array.isArray(left.declarations) && isNode(left.declarations[0]) &&
+        isNode(left.declarations[0].id)
+      ? left.declarations[0].id
+      : undefined;
+  };
+
+  const mutationValueFacts = (
+    mutation: AstNode,
+    scope: LexicalScope,
+  ): { target: AstNode; facts: ValueFacts } | undefined => {
+    if (mutation.type === "AssignmentExpression" && isNode(mutation.left)) {
+      if (mutation.operator === "=") {
+        return {
+          target: mutation.left,
+          facts: valueFactsForExpression(mutation.right, scope),
+        };
+      }
+      if (["&&=", "||=", "??="].includes(mutation.operator as string)) {
+        return {
+          target: mutation.left,
+          facts: logicalValueFacts(
+            mutation.operator as string,
+            valueFactsForExpression(mutation.left, scope),
+            valueFactsForExpression(mutation.right, scope),
+          ),
+        };
+      }
+      return { target: mutation.left, facts: UNKNOWN_VALUE_FACTS };
+    }
+    if (mutation.type === "UpdateExpression" && isNode(mutation.argument)) {
+      return { target: mutation.argument, facts: UNKNOWN_VALUE_FACTS };
+    }
+    if (
+      mutation.type === "UnaryExpression" && mutation.operator === "delete" &&
+      isNode(mutation.argument)
+    ) {
+      return { target: mutation.argument, facts: UNKNOWN_VALUE_FACTS };
+    }
+    return undefined;
   };
 
   interface BindingIdentity {
@@ -2269,322 +4144,76 @@ function collectModuleBindings(
     if (origin) unsafeUrlOrigins.add(origin);
   }
 
-  // API facts and promise origins are addressed only by finite AST nodes.
-  // Promise provenance joins can add each producer site to each binding site at
-  // most once, so this structural product bounds all useful monotone progress.
+  for (const seed of staticApiSeeds) {
+    syncIdentifierValueFacts(
+      seed.name,
+      valueFactsForApi(seed.api),
+      seed.scope,
+    );
+  }
+
+  // Bindings contain only scalar lattice values and finite allocation-site
+  // identities. Container members live in the shallow heap above, so cycles
+  // add an existing identity instead of recursively growing copied trees.
   const structuralBindingStateCapacity = Math.max(
     1,
-    visitedNodeCount * (2 + promiseProducerNodeCount) + declarations.length +
-      assignments.length + assignmentPatterns.length,
+    visitedNodeCount + promiseProducerNodeCount + declarations.length +
+      mutations.length + assignmentPatterns.length + loopBindings.length,
   );
   const maximumBindingPasses = options.maximumBindingPasses ??
     structuralBindingStateCapacity;
   if (!Number.isInteger(maximumBindingPasses) || maximumBindingPasses < 0) {
     throw new Error("maximum binding passes must be a non-negative integer");
   }
-  let bindingPass = 0;
-  let changed = true;
-  while (changed) {
-    if (bindingPass >= maximumBindingPasses) {
-      throw new Error(
-        `loader provenance binding analysis did not converge after ${bindingPass} passes (structural capacity ${structuralBindingStateCapacity})`,
-      );
-    }
-    bindingPass++;
-    changed = false;
-    for (const { node: pattern, scope } of assignmentPatterns) {
-      const name = identifierName(pattern.left);
-      const api = apiForExpression(pattern.right, scope);
-      const promiseOrigins = promiseOriginsForExpression(pattern.right, scope);
-      if (name && promiseOrigins.size > 0) {
-        changed = setScopedPromiseOrigins(
-          promiseBindings,
-          scope,
-          name,
-          promiseOrigins,
-        ) || changed;
-      }
-      if (name && api) {
-        changed = setScopedApiValue(
-          apiBindings,
-          scope,
-          name,
-          uncertainAlias(api),
-        ) || changed;
-      }
-    }
-    for (const { node: declaration, scope, kind } of declarations) {
-      if (!isNode(declaration.id)) continue;
-      const promiseName = identifierName(declaration.id);
-      const promiseOrigins = promiseOriginsForExpression(
-        declaration.init,
+  const throwBindingNonConvergence = (): never => {
+    throw new Error(
+      `loader provenance binding analysis did not converge after ${analysisDiagnostics.bindingPasses} passes (structural capacity ${structuralBindingStateCapacity})`,
+    );
+  };
+  if (maximumBindingPasses === 0) throwBindingNonConvergence();
+
+  interface BindingTransferDefinition {
+    readonly node: AstNode;
+    readonly sequence: number;
+    readonly evaluate: () => void;
+  }
+  const transferDefinitions: BindingTransferDefinition[] = [];
+  const defineBindingTransfer = (
+    node: AstNode,
+    evaluate: () => void,
+  ): void => {
+    transferDefinitions.push({
+      node,
+      sequence: transferDefinitions.length,
+      evaluate,
+    });
+  };
+
+  for (const { node: pattern, scope } of assignmentPatterns) {
+    defineBindingTransfer(pattern, () => {
+      transferValueFactsToTarget(
+        pattern,
+        UNKNOWN_VALUE_FACTS,
         scope,
+        { transformApi: (api) => api },
       );
-      if (promiseName && promiseOrigins.size > 0) {
-        changed = setScopedPromiseOrigins(
-          promiseBindings,
-          scope,
-          promiseName,
-          promiseOrigins,
-        ) || changed;
-      }
-      if (
-        declaration.id.type === "ObjectPattern" ||
-        declaration.id.type === "ArrayPattern"
-      ) {
-        changed = bindPromisePatternFromContainer(
+    });
+  }
+  for (const { node: declaration, scope, kind } of declarations) {
+    defineBindingTransfer(declaration, () => {
+      if (!isNode(declaration.id)) return;
+      if (declaration.init !== undefined && declaration.init !== null) {
+        transferValueFactsToTarget(
           declaration.id,
-          declaration.init,
+          storedInitializerValueFacts(declaration.init, scope),
           scope,
-        ) || changed;
+          {
+            transformApi: kind === "const" ? (api) => api : uncertainAlias,
+          },
+        );
       }
-      if (promiseName) {
-        for (
-          const [property, origins] of promiseMembersForContainer(
-            declaration.init,
-            scope,
-          )
-        ) {
-          changed = setScopedMemberPromiseOrigins(
-            promiseMemberBindings,
-            scope,
-            promiseName,
-            property,
-            origins,
-          ) || changed;
-        }
-      }
-      const moduleName = importedModuleName(declaration.init, scope) ??
-        requiredModuleName(declaration.init, scope);
-      if (moduleName && declaration.id.type === "ObjectPattern") {
-        changed = bindObjectPatternApis(
-          declaration.id,
-          moduleName,
-          scope,
-          apiBindings,
-          (property) => resolvedPropertyKey(property, scope),
-        ) || changed;
-      } else if (moduleName && declaration.id.type === "Identifier") {
-        const api = moduleName === "node:module"
-          ? "node-module-namespace"
-          : moduleName === "node:worker_threads"
-          ? "worker-threads-namespace"
-          : undefined;
-        if (api) {
-          changed = setScopedApiValue(
-            apiBindings,
-            scope,
-            declaration.id.name as string,
-            api,
-          ) ||
-            changed;
-        }
-      }
-
-      if (declaration.id.type === "ObjectPattern") {
-        const objectPatternInit = unwrapAwait(declaration.init);
-        changed = bindObjectPatternFromOwner(
-          declaration.id,
-          isNode(objectPatternInit) &&
-            (objectPatternInit.type === "ObjectExpression" ||
-              objectPatternInit.type === "ArrayExpression")
-            ? undefined
-            : apiForExpression(declaration.init, scope),
-          scope,
-          apiBindings,
-          (property) => resolvedPropertyKey(property, scope),
-        ) || changed;
-        const ownerName = identifierName(unwrapAwait(declaration.init));
-        if (ownerName) {
-          for (
-            const property of Array.isArray(declaration.id.properties)
-              ? declaration.id.properties
-              : []
-          ) {
-            if (!isNode(property) || property.type !== "ObjectProperty") {
-              continue;
-            }
-            const key = resolvedPropertyKey(property, scope);
-            const local = identifierName(property.value) ??
-              (isNode(property.value) &&
-                  property.value.type === "AssignmentPattern"
-                ? identifierName(property.value.left)
-                : undefined);
-            const api = key
-              ? getScopedMemberValue(memberBindings, scope, ownerName, key)
-              : undefined;
-            if (local && api) {
-              changed = setScopedApiValue(
-                apiBindings,
-                scope,
-                local,
-                uncertainAlias(api),
-              ) || changed;
-            }
-          }
-        }
-        if (
-          isNode(declaration.init) &&
-          declaration.init.type === "ObjectExpression"
-        ) {
-          const valuesByKey = new Map<string, unknown>();
-          for (
-            const property of Array.isArray(declaration.init.properties)
-              ? declaration.init.properties
-              : []
-          ) {
-            if (!isNode(property) || property.type !== "ObjectProperty") {
-              continue;
-            }
-            const key = resolvedPropertyKey(property, scope);
-            if (key) valuesByKey.set(key, property.value);
-          }
-          for (
-            const property of Array.isArray(declaration.id.properties)
-              ? declaration.id.properties
-              : []
-          ) {
-            if (!isNode(property) || property.type !== "ObjectProperty") {
-              continue;
-            }
-            const key = resolvedPropertyKey(property, scope);
-            const value = key ? valuesByKey.get(key) : undefined;
-            const local = identifierName(property.value) ??
-              (isNode(property.value) &&
-                  property.value.type === "AssignmentPattern"
-                ? identifierName(property.value.left)
-                : undefined);
-            const api = apiForExpression(value, scope);
-            if (local && api) {
-              changed = setScopedApiValue(
-                apiBindings,
-                scope,
-                local,
-                uncertainAlias(api),
-              ) || changed;
-            }
-          }
-        }
-      } else if (declaration.id.type === "ArrayPattern") {
-        const patterns = Array.isArray(declaration.id.elements)
-          ? declaration.id.elements
-          : [];
-        const init = unwrapAwait(declaration.init);
-        const values = isNode(init) && init.type === "ArrayExpression" &&
-            Array.isArray(init.elements)
-          ? init.elements
-          : [];
-        const ownerName = identifierName(init);
-        patterns.forEach((pattern, index) => {
-          const local = identifierName(pattern) ??
-            (isNode(pattern) && pattern.type === "AssignmentPattern"
-              ? identifierName(pattern.left)
-              : undefined);
-          const api = ownerName
-            ? getScopedMemberValue(
-              memberBindings,
-              scope,
-              ownerName,
-              String(index),
-            )
-            : apiForExpression(values[index], scope);
-          if (local && api) {
-            changed = setScopedApiValue(
-              apiBindings,
-              scope,
-              local,
-              uncertainAlias(api),
-            ) || changed;
-          }
-        });
-      }
-
-      const declaredName = identifierName(declaration.id);
-      const aliasedContainerName = identifierName(
-        unwrapAwait(declaration.init),
-      );
-      if (declaredName && aliasedContainerName) {
-        changed = copyScopedMemberApiValues(
-          memberBindings,
-          scope,
-          aliasedContainerName,
-          declaredName,
-        ) || changed;
-      }
-      if (
-        declaredName && isNode(declaration.init) &&
-        declaration.init.type === "ObjectExpression"
-      ) {
-        for (
-          const property of Array.isArray(declaration.init.properties)
-            ? declaration.init.properties
-            : []
-        ) {
-          if (!isNode(property) || property.type !== "ObjectProperty") continue;
-          const propertyName = resolvedPropertyKey(property, scope);
-          const memberApiBinding = apiForExpression(property.value, scope);
-          if (propertyName && memberApiBinding) {
-            changed = setScopedMemberApiValue(
-              memberBindings,
-              scope,
-              declaredName,
-              propertyName,
-              uncertainAlias(memberApiBinding),
-            ) || changed;
-          }
-        }
-      } else if (
-        declaredName && isNode(declaration.init) &&
-        declaration.init.type === "ArrayExpression"
-      ) {
-        for (
-          const [index, value] of (Array.isArray(declaration.init.elements)
-            ? declaration.init.elements
-            : []).entries()
-        ) {
-          const memberApiBinding = apiForExpression(value, scope);
-          if (memberApiBinding) {
-            changed = setScopedMemberApiValue(
-              memberBindings,
-              scope,
-              declaredName,
-              String(index),
-              uncertainAlias(memberApiBinding),
-            ) || changed;
-          }
-        }
-      }
-
-      const { value: init, awaited: initAwaited } = unwrapAwaitedExpression(
-        declaration.init,
-      );
-      if (initAwaited) {
-        const members = awaitedPromiseMemberApis(init, scope);
-        if (
-          declaration.id.type === "ArrayPattern" ||
-          declaration.id.type === "ObjectPattern"
-        ) {
-          changed = bindPromiseAllPatternApis(
-            declaration.id,
-            members,
-            scope,
-            kind === "const" ? (api) => api : uncertainAlias,
-          ) || changed;
-        } else if (promiseName) {
-          for (const [property, api] of members) {
-            changed = setScopedMemberApiValue(
-              memberBindings,
-              scope,
-              promiseName,
-              property,
-              kind === "const" ? api : uncertainAlias(api),
-            ) || changed;
-          }
-        }
-      }
-
       const name = identifierName(declaration.id);
-      if (!name) continue;
+      if (!name) return;
       const bindingScope = closestBindingScope(scope, name);
       const hasMemberMutation = bindingScope !== undefined &&
         mutatedMemberBindings.get(bindingScope)?.has(name) === true;
@@ -2595,175 +4224,759 @@ function collectModuleBindings(
           !hasUnsafeUrlOrigin
         ? evaluateString(declaration.init, scope)
         : undefined;
-      if (value !== undefined) {
-        changed = setScopedValue(stringValues, scope, name, value) || changed;
+      if (value === undefined) return;
+      const changed = setScopedValue(stringValues, scope, name, value);
+      if (changed) {
+        notifyBindingDependency(
+          scopedBindingDependency(
+            stringBindingDependencies,
+            "string",
+            scope,
+            name,
+          ),
+        );
       }
-      const declarationInit = unwrapAwait(declaration.init);
-      let api = isNode(declarationInit) &&
-          (declarationInit.type === "ObjectExpression" ||
-            declarationInit.type === "ArrayExpression")
-        ? undefined
-        : apiForExpression(declaration.init, scope);
-      if (
-        isNode(declaration.init) && declaration.init.type === "CallExpression"
-      ) {
-        const calleeApi = apiForExpression(declaration.init.callee, scope);
-        if (calleeApi === "create-require") api = "require";
-      }
-      if (kind !== "const" && api) api = uncertainAlias(api);
-      if (api) {
-        changed = setScopedApiValue(apiBindings, scope, name, api) || changed;
+    });
+  }
+  for (const { node: mutation, scope } of mutations) {
+    defineBindingTransfer(mutation, () => {
+      const transition = mutationValueFacts(mutation, scope);
+      if (!transition) return;
+      const isPlainAssignment = mutation.type === "AssignmentExpression" &&
+        mutation.operator === "=";
+      const isTrustedMemberWrite = isPlainAssignment &&
+        isTrackableLocalMemberStore(mutation, scope);
+      const transformApi = isPlainAssignment && !isTrustedMemberWrite
+        ? uncertainAlias
+        : (api: ApiBinding) => api;
+      transferValueFactsToTarget(
+        transition.target,
+        transition.facts,
+        scope,
+        {
+          transformApi,
+          allowTrustedMemberWrite: !isPlainAssignment ||
+            isTrustedMemberWrite,
+        },
+      );
+    });
+  }
+  for (const { node: loop, scope } of loopBindings) {
+    defineBindingTransfer(loop, () => {
+      const target = loopBindingTarget(loop);
+      if (!target) return;
+      transferValueFactsToTarget(
+        target,
+        iterableElementValueFacts(loop.right, scope, loop.await === true),
+        scope,
+        { transformApi: (api) => api },
+      );
+    });
+  }
+
+  const sourceOffset = (node: AstNode): number =>
+    typeof node.start === "number" ? node.start : Number.MAX_SAFE_INTEGER;
+  transferDefinitions.sort((left, right) =>
+    sourceOffset(left.node) - sourceOffset(right.node) ||
+    left.sequence - right.sequence
+  );
+  const bindingTransfers = transferDefinitions.map<BindingTransfer>(
+    (definition) => ({
+      dependencies: new Set(),
+      evaluate: definition.evaluate,
+      queued: false,
+    }),
+  );
+  for (const transfer of bindingTransfers) enqueueBindingTransfer(transfer);
+
+  const transferCount = Math.max(1, bindingTransfers.length);
+  const maximumTransferEvaluations = maximumBindingPasses * transferCount;
+  while (bindingWorklistHead < bindingWorklist.length) {
+    if (
+      analysisDiagnostics.bindingTransferEvaluations >=
+        maximumTransferEvaluations
+    ) {
+      throwBindingNonConvergence();
+    }
+    const transfer = bindingWorklist[bindingWorklistHead++];
+    transfer.queued = false;
+    activeBindingTransfer = transfer;
+    analysisDiagnostics.bindingTransferEvaluations++;
+    analysisDiagnostics.bindingPasses = Math.ceil(
+      analysisDiagnostics.bindingTransferEvaluations / transferCount,
+    );
+    try {
+      transfer.evaluate();
+    } finally {
+      activeBindingTransfer = undefined;
+    }
+  }
+
+  interface SlotFlowState {
+    slots: Map<
+      ValueContainerIdentity,
+      Map<string, ValueFacts>
+    >;
+    unsafe: Set<ValueContainerIdentity>;
+  }
+
+  const cloneValueFacts = (facts: ValueFacts): ValueFacts => ({
+    ...facts,
+    promise: {
+      origins: PrefixSnapshotSet.from(facts.promise.origins),
+      unknown: facts.promise.unknown,
+    },
+    containers: facts.containers,
+  });
+  const baseSlotFactsCache = new Map<
+    ValueContainerIdentity,
+    Map<string, ValueFacts>
+  >();
+  const baseSlotFacts = (
+    identity: ValueContainerIdentity,
+    property: string,
+  ): ValueFacts => {
+    let cached = baseSlotFactsCache.get(identity);
+    if (!cached) {
+      cached = new Map();
+      baseSlotFactsCache.set(identity, cached);
+    }
+    const prior = cached.get(property);
+    if (prior) return prior;
+    const container = constructedValueContainerFacts.get(identity);
+    if (!container) {
+      throw new Error("value container identity has no construction facts");
+    }
+    let facts = container.members.get(property);
+    if (container.wildcard) {
+      facts = withUnknownValueFacts(joinValueFacts(
+        facts,
+        container.wildcard,
+      ));
+    }
+    const result = cloneValueFacts(facts ?? EMPTY_VALUE_FACTS);
+    cached.set(property, result);
+    return result;
+  };
+  const cloneFlowState = (state: SlotFlowState): SlotFlowState => ({
+    slots: new Map(
+      [...state.slots].map(([identity, members]) => [
+        identity,
+        new Map(members),
+      ]),
+    ),
+    unsafe: new Set(state.unsafe),
+  });
+  const flowSlotFacts = (
+    state: SlotFlowState,
+    identity: ValueContainerIdentity,
+    property: string,
+  ): ValueFacts =>
+    state.slots.get(identity)?.get(property) ??
+      baseSlotFacts(identity, property);
+  const setFlowSlotFacts = (
+    state: SlotFlowState,
+    identity: ValueContainerIdentity,
+    property: string,
+    facts: ValueFacts,
+  ): void => {
+    let members = state.slots.get(identity);
+    if (!members) {
+      members = new Map();
+      state.slots.set(identity, members);
+    }
+    members.set(property, cloneValueFacts(facts));
+  };
+  const mergeFlowStates = (
+    target: SlotFlowState,
+    alternatives: readonly SlotFlowState[],
+  ): void => {
+    const unsafe = new Set<ValueContainerIdentity>();
+    const keys = new Map<ValueContainerIdentity, Set<string>>();
+    for (const alternative of alternatives) {
+      for (const identity of alternative.unsafe) unsafe.add(identity);
+      for (const [identity, members] of alternative.slots) {
+        let properties = keys.get(identity);
+        if (!properties) {
+          properties = new Set();
+          keys.set(identity, properties);
+        }
+        for (const property of members.keys()) properties.add(property);
       }
     }
-    for (const { node: assignment, scope } of assignments) {
-      const api = apiForExpression(assignment.right, scope);
-      const assignedName = identifierName(assignment.left);
-      const assignedPromiseOrigins = promiseOriginsForExpression(
-        assignment.right,
-        scope,
+    const slots = new Map<
+      ValueContainerIdentity,
+      Map<string, ValueFacts>
+    >();
+    for (const [identity, properties] of keys) {
+      const members = new Map<string, ValueFacts>();
+      for (const property of properties) {
+        const values = alternatives.map((alternative) =>
+          flowSlotFacts(alternative, identity, property)
+        );
+        let joined: ValueFacts | undefined;
+        for (const value of values) joined = joinValueFacts(joined, value);
+        if (!joined) continue;
+        const same = values.every((value) => value === values[0]);
+        members.set(
+          property,
+          cloneValueFacts(same ? joined : withUnknownValueFacts(joined)),
+        );
+      }
+      if (members.size > 0) slots.set(identity, members);
+    }
+    target.slots = slots;
+    target.unsafe = unsafe;
+  };
+
+  const factsAreComplete = (root: ValueFacts): boolean => {
+    const worklist = [root];
+    const visited = new Set<ValueContainerIdentity>();
+    while (worklist.length > 0) {
+      const facts = worklist.pop();
+      if (!facts) break;
+      if (facts.unknown || facts.promise.unknown) return false;
+      for (const identity of facts.containers) {
+        if (visited.has(identity)) continue;
+        visited.add(identity);
+        const container = constructedValueContainerFacts.get(identity);
+        if (!container || container.wildcard) return false;
+        worklist.push(...container.members.values());
+      }
+    }
+    return true;
+  };
+  const crossFunctionMutatedIdentities = new Set<ValueContainerIdentity>();
+  const nonRefinableFlowIdentities = new Set<ValueContainerIdentity>();
+  const nonLinearFlowNodeTypes = new Set([
+    "WhileStatement",
+    "DoWhileStatement",
+    "ForStatement",
+    "ForInStatement",
+    "ForOfStatement",
+    "SwitchStatement",
+    "TryStatement",
+    "CatchClause",
+  ]);
+  const isInsideNonLinearFlow = (node: AstNode): boolean => {
+    let current = parentByNode.get(node);
+    while (current && !isFunctionNode(current)) {
+      if (nonLinearFlowNodeTypes.has(current.type)) return true;
+      current = parentByNode.get(current);
+    }
+    return false;
+  };
+  const memberTargetsInPattern = (target: unknown): AstNode[] => {
+    const node = unwrapTransparentExpression(target);
+    if (!isNode(node)) return [];
+    if (
+      node.type === "MemberExpression" ||
+      node.type === "OptionalMemberExpression"
+    ) return [node];
+    if (node.type === "AssignmentPattern") {
+      return memberTargetsInPattern(node.left);
+    }
+    if (node.type === "RestElement") {
+      return memberTargetsInPattern(node.argument);
+    }
+    if (node.type === "ArrayPattern") {
+      return (Array.isArray(node.elements) ? node.elements : []).flatMap(
+        memberTargetsInPattern,
       );
-      if (assignedName && assignedPromiseOrigins.size > 0) {
-        changed = setScopedPromiseOrigins(
-          promiseBindings,
-          scope,
-          assignedName,
-          assignedPromiseOrigins,
-        ) || changed;
+    }
+    if (node.type === "ObjectPattern") {
+      return (Array.isArray(node.properties) ? node.properties : []).flatMap(
+        (property) => {
+          if (!isNode(property)) return [];
+          return property.type === "RestElement"
+            ? memberTargetsInPattern(property.argument)
+            : property.type === "ObjectProperty"
+            ? memberTargetsInPattern(property.value)
+            : [];
+        },
+      );
+    }
+    return [];
+  };
+  const disqualifyTargetIdentities = (
+    target: unknown,
+    scope: LexicalScope,
+  ): void => {
+    for (const member of memberTargetsInPattern(target)) {
+      const owner = valueFactsForExpression(member.object, scope);
+      for (const identity of owner.containers) {
+        nonRefinableFlowIdentities.add(identity);
       }
-      if (
-        isNode(assignment.left) &&
-        (assignment.left.type === "ObjectPattern" ||
-          assignment.left.type === "ArrayPattern")
-      ) {
-        changed = bindPromisePatternFromContainer(
-          assignment.left,
-          assignment.right,
-          scope,
-        ) || changed;
-      }
-      if (
-        isNode(assignment.left) &&
-        (assignment.left.type === "MemberExpression" ||
-          assignment.left.type === "OptionalMemberExpression") &&
-        assignedPromiseOrigins.size > 0
-      ) {
-        const ownerName = identifierName(assignment.left.object);
-        const property = resolvedMemberProperty(assignment.left, scope);
-        if (ownerName && property) {
-          changed = setScopedMemberPromiseOrigins(
-            promiseMemberBindings,
-            scope,
-            ownerName,
-            property,
-            assignedPromiseOrigins,
-          ) || changed;
+    }
+  };
+  for (const { node: mutation, scope } of mutations) {
+    const target = mutation.type === "AssignmentExpression"
+      ? mutation.left
+      : mutation.argument;
+    const memberTargets = memberTargetsInPattern(target);
+    for (const member of memberTargets) {
+      const owner = valueFactsForExpression(member.object, scope);
+      for (const identity of owner.containers) {
+        const allocationScope = scopeByNode.get(identity.site);
+        if (!allocationScope) {
+          throw new Error("value container allocation is missing its scope");
         }
-      }
-      if (assignedName) {
-        for (
-          const [property, origins] of promiseMembersForContainer(
-            assignment.right,
-            scope,
-          )
-        ) {
-          changed = setScopedMemberPromiseOrigins(
-            promiseMemberBindings,
-            scope,
-            assignedName,
-            property,
-            origins,
-          ) || changed;
-        }
-      }
-      const { value: assignedValue, awaited: assignmentAwaited } =
-        unwrapAwaitedExpression(assignment.right);
-      if (assignmentAwaited) {
-        const members = awaitedPromiseMemberApis(assignedValue, scope);
         if (
-          isNode(assignment.left) &&
-          (assignment.left.type === "ArrayPattern" ||
-            assignment.left.type === "ObjectPattern")
-        ) {
-          changed = bindPromiseAllPatternApis(
-            assignment.left,
-            members,
-            scope,
-            uncertainAlias,
-          ) || changed;
-        } else if (assignedName) {
-          for (const [property, memberApiBinding] of members) {
-            changed = setScopedMemberApiValue(
-              memberBindings,
-              scope,
-              assignedName,
-              property,
-              uncertainAlias(memberApiBinding),
-            ) || changed;
+          nearestFunctionScope(allocationScope) !== nearestFunctionScope(scope)
+        ) crossFunctionMutatedIdentities.add(identity);
+        if (
+          memberTargets.length > 1 ||
+          member !== unwrapTransparentExpression(target) ||
+          isInsideNonLinearFlow(mutation)
+        ) nonRefinableFlowIdentities.add(identity);
+      }
+    }
+  }
+  for (const { node: loop, scope } of loopBindings) {
+    disqualifyTargetIdentities(loopBindingTarget(loop), scope);
+  }
+  const identityCanBeFlowRefined = (
+    identity: ValueContainerIdentity,
+    property: string,
+    scope: LexicalScope,
+  ): boolean => {
+    const allocationScope = scopeByNode.get(identity.site);
+    if (!allocationScope) {
+      throw new Error("value container allocation is missing its scope");
+    }
+    const constructed = constructedValueContainerFacts.get(identity);
+    return nearestFunctionScope(allocationScope) ===
+        nearestFunctionScope(scope) &&
+      !crossFunctionMutatedIdentities.has(identity) &&
+      !nonRefinableFlowIdentities.has(identity) &&
+      !unsafeLocalContainerIdentities.has(identity) &&
+      (trustedLocalContainerSites.has(identity.site) ||
+        identity.kind === "promise-all-result" &&
+          constructed?.members.has(property) === true);
+  };
+  const exactFlowSlot = (
+    member: AstNode,
+    scope: LexicalScope,
+  ): { identity: ValueContainerIdentity; property: string } | undefined => {
+    if (
+      member.type !== "MemberExpression" &&
+      member.type !== "OptionalMemberExpression"
+    ) return undefined;
+    const property = resolvedMemberProperty(member, scope);
+    if (property === undefined || property === "__proto__") return undefined;
+    const owner = valueFactsForExpression(member.object, scope);
+    if (owner.unknown || owner.containers.size !== 1) return undefined;
+    const identity = [...owner.containers][0];
+    return identity && identityCanBeFlowRefined(identity, property, scope)
+      ? { identity, property }
+      : undefined;
+  };
+  const markFlowValueUnsafe = (
+    value: unknown,
+    scope: LexicalScope,
+    state: SlotFlowState,
+  ): void => {
+    const facts = valueFactsForExpression(value, scope);
+    for (const identity of facts.containers) state.unsafe.add(identity);
+  };
+  const recordFlowMemberRead = (
+    member: AstNode,
+    scope: LexicalScope,
+    state: SlotFlowState,
+  ): void => {
+    const slot = exactFlowSlot(member, scope);
+    if (!slot) return;
+    if (state.unsafe.has(slot.identity)) {
+      const owner = valueFactsForExpression(member.object, scope);
+      flowValueFactsByNode.set(
+        member,
+        withUnknownValueFacts(projectedValueFacts(owner, slot.property)),
+      );
+      return;
+    }
+    flowValueFactsByNode.set(
+      member,
+      flowSlotFacts(state, slot.identity, slot.property),
+    );
+  };
+
+  const isFlowStatement = (node: AstNode): boolean =>
+    node.type === "Program" || node.type === "BlockStatement" ||
+    node.type.endsWith("Statement") || node.type.endsWith("Declaration") ||
+    node.type === "SwitchCase" || node.type === "CatchClause";
+  const flowVisitExpression = (
+    node: unknown,
+    state: SlotFlowState,
+  ): void => {
+    if (!isNode(node) || isFunctionNode(node)) return;
+    const scope = scopeByNode.get(node);
+    if (!scope) throw new Error(`missing lexical scope for ${node.type}`);
+    if (node.type === "ConditionalExpression") {
+      flowVisitExpression(node.test, state);
+      const consequent = cloneFlowState(state);
+      flowVisitExpression(node.consequent, consequent);
+      const alternate = cloneFlowState(state);
+      flowVisitExpression(node.alternate, alternate);
+      mergeFlowStates(state, [consequent, alternate]);
+      return;
+    }
+    if (node.type === "LogicalExpression") {
+      flowVisitExpression(node.left, state);
+      const withoutRight = cloneFlowState(state);
+      const withRight = cloneFlowState(state);
+      flowVisitExpression(node.right, withRight);
+      mergeFlowStates(state, [withoutRight, withRight]);
+      return;
+    }
+    if (node.type === "AssignmentPattern") {
+      flowVisitExpression(node.left, state);
+      const withoutDefault = cloneFlowState(state);
+      const withDefault = cloneFlowState(state);
+      flowVisitExpression(node.right, withDefault);
+      mergeFlowStates(state, [withoutDefault, withDefault]);
+      return;
+    }
+    if (node.type === "OptionalCallExpression" && node.optional === true) {
+      flowVisitExpression(node.callee, state);
+      const withoutCall = cloneFlowState(state);
+      const withCall = cloneFlowState(state);
+      for (
+        const argument of Array.isArray(node.arguments) ? node.arguments : []
+      ) {
+        const value = isNode(argument) && argument.type === "SpreadElement"
+          ? argument.argument
+          : argument;
+        flowVisitExpression(value, withCall);
+        markFlowValueUnsafe(value, scope, withCall);
+      }
+      mergeFlowStates(state, [withoutCall, withCall]);
+      return;
+    }
+    if (
+      node.type === "OptionalMemberExpression" && node.optional === true
+    ) {
+      flowVisitExpression(node.object, state);
+      if (node.computed === true) {
+        const withoutProperty = cloneFlowState(state);
+        const withProperty = cloneFlowState(state);
+        flowVisitExpression(node.property, withProperty);
+        mergeFlowStates(state, [withoutProperty, withProperty]);
+      }
+      return;
+    }
+    if (
+      node.type === "AssignmentExpression" && isNode(node.left) &&
+      (node.left.type === "MemberExpression" ||
+        node.left.type === "OptionalMemberExpression")
+    ) {
+      flowVisitExpression(node.left.object, state);
+      if (node.left.computed === true) {
+        flowVisitExpression(node.left.property, state);
+      }
+      const slot = exactFlowSlot(node.left, scope);
+      const operator = String(node.operator);
+      const isLogicalAssignment = ["&&=", "||=", "??="].includes(operator);
+      const current = slot
+        ? flowSlotFacts(state, slot.identity, slot.property)
+        : undefined;
+      const canTrustCurrent = slot !== undefined &&
+        !state.unsafe.has(slot.identity);
+      const skipsRight = canTrustCurrent && current !== undefined &&
+        (operator === "||=" && current.definitelyTruthy ||
+          operator === "??=" && current.definitelyNonNullish);
+      if (skipsRight) return;
+      const definitelyEvaluatesRight = !isLogicalAssignment ||
+        canTrustCurrent && operator === "&&=" &&
+          current?.definitelyTruthy === true;
+      if (!definitelyEvaluatesRight) {
+        const withoutRight = cloneFlowState(state);
+        const withRight = cloneFlowState(state);
+        flowVisitExpression(node.right, withRight);
+        if (slot && current) {
+          const incoming = valueFactsForExpression(node.right, scope);
+          setFlowSlotFacts(
+            withRight,
+            slot.identity,
+            slot.property,
+            factsAreComplete(incoming)
+              ? incoming
+              : withUnknownValueFacts(joinValueFacts(current, incoming)),
+          );
+        } else {
+          markFlowValueUnsafe(node.right, scope, withRight);
+          const owner = valueFactsForExpression(node.left.object, scope);
+          for (const identity of owner.containers) {
+            withRight.unsafe.add(identity);
           }
         }
+        mergeFlowStates(state, [withoutRight, withRight]);
+        return;
       }
-      const aliasedContainerName = identifierName(
-        unwrapAwait(assignment.right),
+      flowVisitExpression(node.right, state);
+      if (!slot) {
+        markFlowValueUnsafe(node.right, scope, state);
+        const owner = valueFactsForExpression(node.left.object, scope);
+        for (const identity of owner.containers) state.unsafe.add(identity);
+        return;
+      }
+      if (node.operator !== "=" || state.unsafe.has(slot.identity)) {
+        const currentSlot = flowSlotFacts(
+          state,
+          slot.identity,
+          slot.property,
+        );
+        const incoming = valueFactsForExpression(node.right, scope);
+        const candidate = ["&&=", "||=", "??="].includes(operator)
+          ? logicalValueFacts(operator, currentSlot, incoming)
+          : UNKNOWN_VALUE_FACTS;
+        setFlowSlotFacts(
+          state,
+          slot.identity,
+          slot.property,
+          factsAreComplete(candidate)
+            ? candidate
+            : withUnknownValueFacts(joinValueFacts(currentSlot, candidate)),
+        );
+        return;
+      }
+      const incoming = valueFactsForExpression(node.right, scope);
+      setFlowSlotFacts(
+        state,
+        slot.identity,
+        slot.property,
+        factsAreComplete(incoming)
+          ? incoming
+          : withUnknownValueFacts(joinValueFacts(
+            flowSlotFacts(state, slot.identity, slot.property),
+            incoming,
+          )),
       );
-      if (assignedName && aliasedContainerName) {
-        changed = copyScopedMemberApiValues(
-          memberBindings,
-          scope,
-          aliasedContainerName,
-          assignedName,
-        ) || changed;
-      }
-      if (isNode(assignment.left) && assignment.left.type === "ObjectPattern") {
-        const moduleName = importedModuleName(assignment.right, scope) ??
-          requiredModuleName(assignment.right, scope);
-        if (moduleName) {
-          changed = bindObjectPatternApis(
-            assignment.left,
-            moduleName,
-            scope,
-            apiBindings,
-            (property) => resolvedPropertyKey(property, scope),
-            uncertainAlias,
-          ) || changed;
-        } else if (api) {
-          changed = bindObjectPatternFromOwner(
-            assignment.left,
-            api,
-            scope,
-            apiBindings,
-            (property) => resolvedPropertyKey(property, scope),
-            uncertainAlias,
-          ) || changed;
+      return;
+    }
+    if (
+      node.type === "UpdateExpression" ||
+      node.type === "UnaryExpression" && node.operator === "delete"
+    ) {
+      const target = node.argument;
+      if (isNode(target)) {
+        flowVisitExpression(target, state);
+        const slot = exactFlowSlot(target, scope);
+        if (slot) {
+          setFlowSlotFacts(
+            state,
+            slot.identity,
+            slot.property,
+            withUnknownValueFacts(flowSlotFacts(
+              state,
+              slot.identity,
+              slot.property,
+            )),
+          );
         }
-        continue;
       }
-      if (!api) continue;
-      const name = assignedName;
-      if (name) {
-        changed = setScopedApiValue(
-          apiBindings,
+      return;
+    }
+    for (const child of childNodes(node)) {
+      if (!isFunctionNode(child)) flowVisitExpression(child, state);
+    }
+    if (
+      node.type === "MemberExpression" ||
+      node.type === "OptionalMemberExpression"
+    ) {
+      recordFlowMemberRead(node, scope, state);
+    }
+    if (
+      node.type === "CallExpression" ||
+      node.type === "OptionalCallExpression" ||
+      node.type === "NewExpression"
+    ) {
+      for (
+        const argument of Array.isArray(node.arguments) ? node.arguments : []
+      ) {
+        markFlowValueUnsafe(
+          isNode(argument) && argument.type === "SpreadElement"
+            ? argument.argument
+            : argument,
           scope,
-          name,
-          uncertainAlias(api),
-        ) || changed;
-        continue;
+          state,
+        );
       }
       if (
-        isNode(assignment.left) &&
-        (assignment.left.type === "MemberExpression" ||
-          assignment.left.type === "OptionalMemberExpression")
+        isNode(node.callee) &&
+        (node.callee.type === "MemberExpression" ||
+          node.callee.type === "OptionalMemberExpression")
       ) {
-        const ownerName = identifierName(assignment.left.object);
-        const property = resolvedMemberProperty(assignment.left, scope);
-        if (ownerName && property) {
-          changed = setScopedMemberApiValue(
-            memberBindings,
-            scope,
-            ownerName,
-            property,
-            uncertainAlias(api),
-          ) || changed;
+        markFlowValueUnsafe(node.callee.object, scope, state);
+      }
+    }
+    if (node.type === "TaggedTemplateExpression") {
+      for (
+        const expression of isNode(node.quasi) &&
+            Array.isArray(node.quasi.expressions)
+          ? node.quasi.expressions
+          : []
+      ) {
+        markFlowValueUnsafe(expression, scope, state);
+      }
+    }
+    if (
+      node.type === "JSXExpressionContainer" ||
+      node.type === "JSXSpreadAttribute" ||
+      node.type === "JSXSpreadChild"
+    ) {
+      markFlowValueUnsafe(
+        node.type === "JSXExpressionContainer"
+          ? node.expression
+          : node.argument,
+        scope,
+        state,
+      );
+    }
+  };
+
+  const flowVisitStatement = (
+    node: AstNode,
+    state: SlotFlowState,
+  ): void => {
+    const scope = scopeByNode.get(node);
+    if (!scope) throw new Error(`missing lexical scope for ${node.type}`);
+    if (isFunctionNode(node)) return;
+    if (node.type === "Program" || node.type === "BlockStatement") {
+      for (const statement of Array.isArray(node.body) ? node.body : []) {
+        if (isNode(statement)) flowVisitStatement(statement, state);
+      }
+      return;
+    }
+    if (node.type === "VariableDeclaration") {
+      for (
+        const declaration of Array.isArray(node.declarations)
+          ? node.declarations
+          : []
+      ) {
+        if (isNode(declaration)) flowVisitExpression(declaration.init, state);
+      }
+      return;
+    }
+    if (node.type === "ExpressionStatement") {
+      flowVisitExpression(node.expression, state);
+      return;
+    }
+    if (node.type === "IfStatement") {
+      flowVisitExpression(node.test, state);
+      const consequent = cloneFlowState(state);
+      if (isNode(node.consequent)) {
+        flowVisitStatement(node.consequent, consequent);
+      }
+      const alternate = cloneFlowState(state);
+      if (isNode(node.alternate)) flowVisitStatement(node.alternate, alternate);
+      mergeFlowStates(state, [consequent, alternate]);
+      return;
+    }
+    if (
+      node.type === "WhileStatement" || node.type === "DoWhileStatement" ||
+      node.type === "ForStatement" || node.type === "ForInStatement" ||
+      node.type === "ForOfStatement"
+    ) {
+      const entry = cloneFlowState(state);
+      if (node.type === "ForStatement") {
+        if (isNode(node.init)) {
+          if (isFlowStatement(node.init)) flowVisitStatement(node.init, state);
+          else flowVisitExpression(node.init, state);
         }
+        flowVisitExpression(node.test, state);
+      } else if (
+        node.type === "ForInStatement" || node.type === "ForOfStatement"
+      ) {
+        flowVisitExpression(node.right, state);
+      } else {
+        flowVisitExpression(node.test, state);
+      }
+      const iteration = cloneFlowState(state);
+      if (isNode(node.body)) flowVisitStatement(node.body, iteration);
+      if (node.type === "ForStatement") {
+        flowVisitExpression(node.update, iteration);
+      }
+      mergeFlowStates(state, [entry, iteration]);
+      return;
+    }
+    if (node.type === "SwitchStatement") {
+      flowVisitExpression(node.discriminant, state);
+      const alternatives: SlotFlowState[] = [cloneFlowState(state)];
+      for (const switchCase of Array.isArray(node.cases) ? node.cases : []) {
+        if (!isNode(switchCase)) continue;
+        const alternative = cloneFlowState(state);
+        flowVisitExpression(switchCase.test, alternative);
+        for (
+          const statement of Array.isArray(switchCase.consequent)
+            ? switchCase.consequent
+            : []
+        ) {
+          if (isNode(statement)) flowVisitStatement(statement, alternative);
+        }
+        alternatives.push(alternative);
+      }
+      mergeFlowStates(state, alternatives);
+      return;
+    }
+    if (node.type === "TryStatement") {
+      const alternatives: SlotFlowState[] = [];
+      const body = cloneFlowState(state);
+      if (isNode(node.block)) flowVisitStatement(node.block, body);
+      alternatives.push(body);
+      if (isNode(node.handler)) {
+        const caught = cloneFlowState(state);
+        if (isNode(node.handler.body)) {
+          flowVisitStatement(node.handler.body, caught);
+        }
+        alternatives.push(caught);
+      } else {
+        alternatives.push(cloneFlowState(state));
+      }
+      mergeFlowStates(state, alternatives);
+      if (isNode(node.finalizer)) flowVisitStatement(node.finalizer, state);
+      return;
+    }
+    if (node.type === "ReturnStatement" || node.type === "ThrowStatement") {
+      flowVisitExpression(node.argument, state);
+      markFlowValueUnsafe(node.argument, scope, state);
+      return;
+    }
+    if (
+      node.type === "ExportNamedDeclaration" ||
+      node.type === "ExportDefaultDeclaration"
+    ) {
+      if (isNode(node.declaration)) {
+        if (isFlowStatement(node.declaration)) {
+          flowVisitStatement(node.declaration, state);
+        } else {
+          flowVisitExpression(node.declaration, state);
+        }
+        markFlowValueUnsafe(node.declaration, scope, state);
+      }
+      for (
+        const specifier of Array.isArray(node.specifiers) ? node.specifiers : []
+      ) {
+        if (isNode(specifier)) {
+          markFlowValueUnsafe(specifier.local, scope, state);
+        }
+      }
+      return;
+    }
+    for (const child of childNodes(node)) {
+      if (isFunctionNode(child)) continue;
+      if (isFlowStatement(child)) flowVisitStatement(child, state);
+      else flowVisitExpression(child, state);
+    }
+  };
+
+  flowVisitStatement(ast, { slots: new Map(), unsafe: new Set() });
+  for (const functionNode of functionNodes) {
+    const state: SlotFlowState = { slots: new Map(), unsafe: new Set() };
+    if (isNode(functionNode.body)) {
+      if (functionNode.body.type === "BlockStatement") {
+        flowVisitStatement(functionNode.body, state);
+      } else {
+        flowVisitExpression(functionNode.body, state);
       }
     }
   }
@@ -2805,58 +5018,14 @@ function collectModuleBindings(
     value: unknown,
     scope: LexicalScope,
   ): ApiBinding | undefined => {
-    const pending = [value];
-    let result: ApiBinding | undefined;
-    while (pending.length > 0) {
-      const expression = unwrapAwait(pending.pop());
-      if (!isNode(expression)) continue;
-      if (expression.type === "ObjectExpression") {
-        for (
-          const property of Array.isArray(expression.properties)
-            ? expression.properties
-            : []
-        ) {
-          if (!isNode(property)) continue;
-          if (property.type === "ObjectProperty") pending.push(property.value);
-          else if (property.type === "SpreadElement") {
-            pending.push(property.argument);
-          }
-        }
-        continue;
-      }
-      if (expression.type === "ArrayExpression") {
-        pending.push(
-          ...(Array.isArray(expression.elements) ? expression.elements : []),
-        );
-        continue;
-      }
-      const containerName = identifierName(expression);
-      const containerScope = containerName
-        ? closestBindingScope(scope, containerName)
-        : undefined;
-      const memberPromises = containerName && containerScope
-        ? promiseMemberBindings.get(containerScope)?.get(containerName)
-        : undefined;
-      if (memberPromises) {
-        for (const origins of memberPromises.values()) {
-          const api = promiseCapabilityForOrigins(origins);
-          if (api) result = joinApiBinding(result, uncertainAlias(api));
-        }
-      }
-      const origins = promiseOriginsForExpression(expression, scope);
-      const promiseApi = promiseCapabilityForOrigins(origins);
-      if (promiseApi) {
-        result = joinApiBinding(result, uncertainAlias(promiseApi));
-      }
-      if (
-        (expression.type === "MemberExpression" ||
-          expression.type === "OptionalMemberExpression") &&
-        resolvedMemberProperty(expression, scope) === undefined
-      ) {
-        pending.push(expression.object);
-      }
-    }
-    return result;
+    const result = capabilityInValueFactsGraph(
+      valueFactsForExpression(value, scope),
+      {
+        includeApi: () => false,
+        includePromises: true,
+      },
+    );
+    return result ? uncertainAlias(result) : undefined;
   };
 
   const escapedApiInExpression = (
@@ -2864,64 +5033,30 @@ function collectModuleBindings(
     scope: LexicalScope,
     includeNamespaces = false,
     includePromiseCapabilities = false,
+    includeInheritedDescendants = true,
   ): ApiBinding | undefined => {
-    const pending = [value];
-    let result: ApiBinding | undefined;
-    while (pending.length > 0) {
-      const candidate = pending.pop();
-      const expression = unwrapAwait(candidate);
-      if (!isNode(expression)) continue;
-      if (expression.type === "ObjectExpression") {
-        for (
-          const property of Array.isArray(expression.properties)
-            ? expression.properties
-            : []
-        ) {
-          if (!isNode(property)) continue;
-          if (property.type === "ObjectProperty") pending.push(property.value);
-          else if (property.type === "SpreadElement") {
-            pending.push(property.argument);
-          }
-        }
-        continue;
-      }
-      if (expression.type === "ArrayExpression") {
-        pending.push(
-          ...(Array.isArray(expression.elements) ? expression.elements : []),
-        );
-        continue;
-      }
-      const containerName = identifierName(expression);
-      const containerScope = containerName
-        ? closestBindingScope(scope, containerName)
-        : undefined;
-      const memberApis = containerName && containerScope
-        ? memberBindings.get(containerScope)?.get(containerName)
-        : undefined;
-      if (memberApis) {
-        for (const api of memberApis.values()) {
-          if (includeNamespaces || unresolvedLoaderForApi(api)) {
-            result = joinApiBinding(result, uncertainAlias(api));
-          }
-        }
-      }
-      if (includePromiseCapabilities) {
-        const promiseApi = containedPromiseCapability(expression, scope);
-        if (promiseApi) {
-          result = joinApiBinding(result, promiseApi);
-        }
-      }
-      const api = apiForExpression(candidate, scope);
-      if (api && (includeNamespaces || unresolvedLoaderForApi(api))) {
-        result = joinApiBinding(result, uncertainAlias(api));
-      }
-    }
-    return result;
+    const inheritedApi = inheritedMemberApiForExpression(
+      value,
+      scope,
+      includeInheritedDescendants,
+    );
+    if (inheritedApi) return uncertainAlias(inheritedApi);
+    return capabilityInValueFactsGraph(valueFactsForExpression(value, scope), {
+      includeApi: (api) =>
+        includeNamespaces || unresolvedLoaderForApi(api) !== undefined,
+      includePromises: includePromiseCapabilities,
+      forceUncertain: true,
+    });
   };
 
-  const patternContainsMemberTarget = (pattern: unknown): boolean => {
+  function patternContainsEscapingTarget(
+    pattern: unknown,
+    scope: LexicalScope,
+  ): boolean {
     const target = unwrapTransparentExpression(pattern);
     if (!isNode(target)) return false;
+    const name = identifierName(target);
+    if (name) return closestBindingScope(scope, name) === undefined;
     if (
       target.type === "MemberExpression" ||
       target.type === "OptionalMemberExpression"
@@ -2929,14 +5064,14 @@ function collectModuleBindings(
       return true;
     }
     if (target.type === "AssignmentPattern") {
-      return patternContainsMemberTarget(target.left);
+      return patternContainsEscapingTarget(target.left, scope);
     }
     if (target.type === "RestElement") {
-      return patternContainsMemberTarget(target.argument);
+      return patternContainsEscapingTarget(target.argument, scope);
     }
     if (target.type === "ArrayPattern") {
       return (Array.isArray(target.elements) ? target.elements : []).some(
-        patternContainsMemberTarget,
+        (element) => patternContainsEscapingTarget(element, scope),
       );
     }
     if (target.type === "ObjectPattern") {
@@ -2944,41 +5079,43 @@ function collectModuleBindings(
         (property) => {
           if (!isNode(property)) return false;
           return property.type === "RestElement"
-            ? patternContainsMemberTarget(property.argument)
+            ? patternContainsEscapingTarget(property.argument, scope)
             : property.type === "ObjectProperty" &&
-              patternContainsMemberTarget(property.value);
+              patternContainsEscapingTarget(property.value, scope);
         },
       );
     }
     return false;
-  };
+  }
 
-  const isTrackableLocalPromiseMemberStore = (
+  function isTrackableLocalMemberStore(
     assignment: AstNode,
     scope: LexicalScope,
-  ): boolean => {
+  ): boolean {
     if (
       assignment.type !== "AssignmentExpression" ||
+      assignment.operator !== "=" ||
       !isNode(assignment.left) ||
       (assignment.left.type !== "MemberExpression" &&
         assignment.left.type !== "OptionalMemberExpression")
     ) {
       return false;
     }
-    const ownerName = identifierName(assignment.left.object);
     const property = resolvedMemberProperty(assignment.left, scope);
-    if (ownerName === undefined || property === undefined) return false;
-    const bindingScope = closestBindingScope(scope, ownerName);
-    return bindingScope !== undefined &&
-      locallyOwnedContainers.get(bindingScope)?.has(ownerName) === true &&
-      promiseOriginsForExpression(assignment.right, scope).size > 0;
-  };
+    if (property === undefined) return false;
+    const ownerFacts = valueFactsForExpression(assignment.left.object, scope);
+    return !ownerFacts.unknown &&
+      ownerFacts.containers.size > 0 &&
+      [...ownerFacts.containers].every((identity) =>
+        trustedLocalContainerSites.has(identity.site) &&
+        !unsafeLocalContainerIdentities.has(identity)
+      );
+  }
 
   const loaderEscapeForNode = (
     node: AstNode,
     scope: LexicalScope,
   ): ApiBinding | undefined => {
-    const parent = parentByNode.get(node);
     const writeTarget = outermostTransparentExpression(node);
     const writeParent = parentByNode.get(writeTarget);
     const isWriteOnlyMember = writeParent?.type === "AssignmentExpression" &&
@@ -3014,6 +5151,13 @@ function collectModuleBindings(
         return "uncertain-runtime-loader";
       }
     }
+    if (
+      node.type === "AssignmentPattern" &&
+      patternContainsEscapingTarget(node.left, scope)
+    ) {
+      const api = escapedApiInExpression(node.right, scope, true, true);
+      return api ? uncertainAlias(api) : undefined;
+    }
     if (node.type === "ReturnStatement") {
       const localFunction = functionByScope.get(nearestFunctionScope(scope));
       if (!localFunction) return undefined;
@@ -3036,6 +5180,23 @@ function collectModuleBindings(
     }
     if (node.type === "YieldExpression") {
       const api = escapedApiInExpression(node.argument, scope, true, true);
+      return api ? uncertainAlias(api) : undefined;
+    }
+    if (node.type === "ThrowStatement") {
+      const api = escapedApiInExpression(node.argument, scope, true, true);
+      return api ? uncertainAlias(api) : undefined;
+    }
+    if (node.type === "ForOfStatement") {
+      const target = loopBindingTarget(node);
+      if (!target || !patternContainsEscapingTarget(target, scope)) {
+        return undefined;
+      }
+      const facts = iterableElementValueFacts(
+        node.right,
+        scope,
+        node.await === true,
+      );
+      const api = capabilityForValueFacts(facts);
       return api ? uncertainAlias(api) : undefined;
     }
     if (
@@ -3079,7 +5240,7 @@ function collectModuleBindings(
       if (
         (assignmentTarget.type === "ArrayPattern" ||
           assignmentTarget.type === "ObjectPattern") &&
-        patternContainsMemberTarget(assignmentTarget)
+        patternContainsEscapingTarget(assignmentTarget, scope)
       ) {
         const api = escapedApiInExpression(node.right, scope, true, true);
         return api ? uncertainAlias(api) : undefined;
@@ -3089,9 +5250,10 @@ function collectModuleBindings(
         assignmentTarget.type === "OptionalMemberExpression"
       ) {
         const api = escapedApiInExpression(node.right, scope, true);
-        if (api) return uncertainAlias(api);
+        const isTrustedStore = isTrackableLocalMemberStore(node, scope);
+        if (api && !isTrustedStore) return uncertainAlias(api);
         const promiseApi = containedPromiseCapability(node.right, scope);
-        return promiseApi && !isTrackableLocalPromiseMemberStore(node, scope)
+        return promiseApi && !isTrustedStore
           ? uncertainAlias(promiseApi)
           : undefined;
       }
@@ -3104,40 +5266,31 @@ function collectModuleBindings(
       const api = escapedApiInExpression(node.value, scope, true, true);
       return api ? uncertainAlias(api) : undefined;
     }
-    if (
-      node.type === "ObjectProperty" && parent?.type === "ObjectExpression"
-    ) {
-      const api = escapedApiInExpression(node.value, scope, true);
-      if (api) return uncertainAlias(api);
-      if (promiseOriginsForExpression(node.value, scope).size === 0) {
-        return containedPromiseCapability(node.value, scope);
-      }
-      return undefined;
-    }
-    if (
-      node.type === "SpreadElement" &&
-      (parent?.type === "ObjectExpression" ||
-        parent?.type === "ArrayExpression")
-    ) {
-      const api = escapedApiInExpression(node.argument, scope, true, true);
-      return api ? uncertainAlias(api) : undefined;
-    }
-    if (node.type === "ArrayExpression") {
-      let storedApi: ApiBinding | undefined;
+    if (node.type === "TaggedTemplateExpression") {
+      let escapedApi: ApiBinding | undefined;
+      const tagApi = escapedApiInExpression(node.tag, scope, true, true);
+      if (tagApi) escapedApi = joinApiBinding(escapedApi, tagApi);
       for (
-        const element of Array.isArray(node.elements) ? node.elements : []
+        const expression of isNode(node.quasi) &&
+            Array.isArray(node.quasi.expressions)
+          ? node.quasi.expressions
+          : []
       ) {
-        if (!isNode(element) || element.type === "SpreadElement") continue;
-        const api = escapedApiInExpression(element, scope, true);
-        if (api) storedApi = joinApiBinding(storedApi, uncertainAlias(api));
-        if (promiseOriginsForExpression(element, scope).size === 0) {
-          const nestedPromiseApi = containedPromiseCapability(element, scope);
-          if (nestedPromiseApi) {
-            storedApi = joinApiBinding(storedApi, nestedPromiseApi);
-          }
-        }
+        const api = escapedApiInExpression(expression, scope, true, true);
+        if (api) escapedApi = joinApiBinding(escapedApi, api);
       }
-      if (storedApi) return storedApi;
+      return escapedApi ? uncertainAlias(escapedApi) : undefined;
+    }
+    if (
+      node.type === "JSXExpressionContainer" ||
+      node.type === "JSXSpreadAttribute" ||
+      node.type === "JSXSpreadChild"
+    ) {
+      const value = node.type === "JSXExpressionContainer"
+        ? node.expression
+        : node.argument;
+      const api = escapedApiInExpression(value, scope, true, true);
+      return api ? uncertainAlias(api) : undefined;
     }
     if (
       node.type !== "CallExpression" &&
@@ -3148,9 +5301,25 @@ function collectModuleBindings(
     }
     if (isPromiseAll(node, scope)) {
       let unmodeledInputApi: ApiBinding | undefined;
+      const awaitedInputs = new Map<
+        ValueFacts,
+        { facts: ValueFacts; api?: ApiBinding }
+      >();
       for (const input of promiseAllInputs(node, scope) ?? []) {
-        const projectedApi = awaitedApiForPromiseExpression(input, scope) ??
-          apiForExpression(input, scope);
+        const inputFacts = valueFactsForExpression(input, scope);
+        let awaited = awaitedInputs.get(inputFacts);
+        if (!awaited) {
+          awaited = {
+            facts: awaitedValueFacts(inputFacts),
+            api: awaitedApiForPromiseOrigins(inputFacts.promise),
+          };
+          awaitedInputs.set(inputFacts, awaited);
+        }
+        if (
+          isModeledResolvedApiContainer(awaited.facts) &&
+          isResolvedContainerTree(awaited.facts)
+        ) continue;
+        const projectedApi = awaited.api ?? apiForExpression(input, scope);
         if (projectedApi) continue;
         const nestedPromiseApi = containedPromiseCapability(input, scope);
         if (nestedPromiseApi) {
@@ -3175,9 +5344,9 @@ function collectModuleBindings(
       return undefined;
     }
     let escapedApi: ApiBinding | undefined;
-    if (invocation.explicitThisArgument !== undefined) {
+    for (const capabilityInput of invocation.capabilityInputs) {
       const receiverApi = escapedApiInExpression(
-        invocation.explicitThisArgument,
+        capabilityInput,
         scope,
         true,
         true,
@@ -3189,6 +5358,18 @@ function collectModuleBindings(
       (node.callee.type === "MemberExpression" ||
         node.callee.type === "OptionalMemberExpression")
     ) {
+      if (!apiForExpression(node.callee.object, scope)) {
+        const directReceiverCapability = escapedApiInExpression(
+          node.callee.object,
+          scope,
+          true,
+          false,
+          false,
+        );
+        if (directReceiverCapability) {
+          escapedApi = joinApiBinding(escapedApi, directReceiverCapability);
+        }
+      }
       const receiverOrigins = promiseOriginsForExpression(
         node.callee.object,
         scope,
@@ -3217,7 +5398,7 @@ function collectModuleBindings(
           ? argument.argument
           : argument,
         scope,
-        false,
+        true,
         true,
       );
       if (api) escapedApi = joinApiBinding(escapedApi, api);
@@ -3225,13 +5406,153 @@ function collectModuleBindings(
     return escapedApi;
   };
 
+  const memberApisForExpression = (
+    node: unknown,
+    scope: LexicalScope,
+  ): InheritedMemberApiSnapshot => {
+    const inheritedReference = inheritedMemberReferenceForExpression(
+      node,
+      scope,
+    );
+    if (inheritedReference) {
+      if (
+        inheritedReference.snapshot.truncated ||
+        inheritedReference.uncertain || inheritedReference.indeterminate
+      ) {
+        return { projections: [], truncated: true };
+      }
+      const relative = new Map<string, InheritedMemberApiSeed>();
+      for (const projection of inheritedReference.snapshot.projections) {
+        if (projection.path.length <= inheritedReference.path.length) continue;
+        let matches = true;
+        for (let index = 0; index < inheritedReference.path.length; index++) {
+          const expected = projection.path[index];
+          const actual = inheritedReference.path[index];
+          if (expected === undefined || actual === undefined) {
+            return { projections: [], truncated: true };
+          }
+          if (expected !== actual) {
+            matches = false;
+            break;
+          }
+        }
+        if (!matches) continue;
+        const path = projection.path.slice(inheritedReference.path.length);
+        const key = JSON.stringify(path);
+        const previous = relative.get(key);
+        relative.set(key, {
+          path,
+          api: previous
+            ? joinApiBinding(previous.api, projection.api)
+            : projection.api,
+        });
+      }
+      return {
+        projections: [...relative.values()].sort((left, right) =>
+          compareOrdinal(
+            JSON.stringify(left.path),
+            JSON.stringify(right.path),
+          ) || compareOrdinal(left.api, right.api)
+        ),
+        truncated: false,
+      };
+    }
+
+    const root = valueFactsForExpression(node, scope);
+    const rootCapability = capabilityInValueFactsGraph(root, {
+      includeApi: () => true,
+      includePromises: true,
+      forceUncertain: true,
+    });
+    if (!rootCapability) return { projections: [], truncated: false };
+
+    const projections = new Map<string, InheritedMemberApiSeed>();
+    let truncated = false;
+    let visits = 0;
+    const markTruncated = (): void => {
+      if (truncated) return;
+      truncated = true;
+      analysisDiagnostics.inheritedMemberProjectionTruncations++;
+    };
+    const addProjection = (
+      path: readonly (string | undefined)[],
+      api: ApiBinding,
+    ): void => {
+      if (truncated || path.length === 0) return;
+      const key = JSON.stringify(path);
+      const previous = projections.get(key);
+      if (!previous && projections.size >= MAX_INHERITED_MEMBER_PROJECTIONS) {
+        markTruncated();
+        return;
+      }
+      projections.set(key, {
+        path: [...path],
+        api: previous ? joinApiBinding(previous.api, api) : api,
+      });
+    };
+    const visitFacts = (
+      facts: ValueFacts,
+      path: readonly (string | undefined)[],
+      ancestors: ReadonlySet<ValueContainerIdentity>,
+      depth: number,
+    ): void => {
+      if (truncated) return;
+      if (visits >= MAX_INHERITED_MEMBER_PROJECTION_VISITS) {
+        markTruncated();
+        return;
+      }
+      visits++;
+      analysisDiagnostics.inheritedMemberProjectionVisits++;
+      if (facts.api) addProjection(path, facts.api);
+      if (truncated) return;
+      if (depth >= MAX_INHERITED_MEMBER_PROJECTION_DEPTH) {
+        markTruncated();
+        return;
+      }
+      for (const identity of facts.containers) {
+        if (truncated) return;
+        const container = valueContainerFacts.get(identity);
+        if (!container) continue;
+        if (ancestors.has(identity)) {
+          markTruncated();
+          return;
+        }
+        const nextAncestors = new Set(ancestors);
+        nextAncestors.add(identity);
+        for (const [property, member] of container.members) {
+          visitFacts(member, [...path, property], nextAncestors, depth + 1);
+          if (truncated) return;
+        }
+        if (container.wildcard) {
+          visitFacts(
+            container.wildcard,
+            [...path, undefined],
+            nextAncestors,
+            depth + 1,
+          );
+        }
+      }
+    };
+    visitFacts(root, [], new Set(), 0);
+    return {
+      projections: [...projections.values()].sort((left, right) =>
+        compareOrdinal(JSON.stringify(left.path), JSON.stringify(right.path)) ||
+        compareOrdinal(left.api, right.api)
+      ),
+      truncated,
+    };
+  };
+
   return {
     stringValues,
-    apiBindings,
     resolveApi: apiForExpression,
     resolveMemberProperty: resolvedMemberProperty,
     normalizeInvocation,
     loaderEscapeForNode,
+    capabilityApiForExpression: (node, scope) =>
+      escapedApiInExpression(node, scope, true, true),
+    memberApisForExpression,
+    analysisDiagnostics,
   };
 }
 
@@ -3333,83 +5654,172 @@ function isGlobalMember(
     memberPropertyName(node) === property;
 }
 
-function loaderSourceContainsModuleLoad(
+type ExecutableFunctionKind =
+  | "function"
+  | "async-function"
+  | "generator-function"
+  | "async-generator-function";
+
+type ExecutableSourceMode =
+  | {
+    kind: "classic";
+    inheritedBindings?: readonly InheritedBindingSeed[];
+    allowNewTargetOutsideFunction?: boolean;
+    allowSuperOutsideMethod?: boolean;
+  }
+  | { kind: "module" }
+  | {
+    kind: "function";
+    functionKind: ExecutableFunctionKind;
+    parameters: readonly string[];
+  };
+
+interface SourceDependencyInternalContext {
+  sourceType: "script" | "module" | "unambiguous";
+  allowAwaitOutsideFunction: boolean;
+  allowReturnOutsideFunction: boolean;
+  allowNewTargetOutsideFunction: boolean;
+  allowSuperOutsideMethod: boolean;
+  parserPlugins?: NonNullable<Parameters<typeof parse>[1]>["plugins"];
+  inheritedBindings: readonly InheritedBindingSeed[];
+  executableDepth: number;
+  executableAnalysis: ExecutableSourceAnalysisState;
+}
+
+const MAX_EXECUTABLE_SOURCE_DEPTH = 16;
+const DEFAULT_MAX_EXECUTABLE_SOURCE_ANALYSES = 256;
+const MAX_INHERITED_MEMBER_PROJECTION_DEPTH = 32;
+const MAX_INHERITED_MEMBER_PROJECTIONS = 256;
+const MAX_INHERITED_MEMBER_PROJECTION_VISITS = 4_096;
+
+interface ExecutableSourceAnalysisState {
+  active: Set<string>;
+  memoizedResults: Map<string, boolean>;
+  maximumAnalyses: number;
+  analyses: number;
+  budgetExhaustions: number;
+  cacheHits: number;
+  cycleCuts: number;
+  depthExhaustions: number;
+}
+
+function maximumExecutableSourceAnalyses(
+  options: SourceDependencyCollectionOptions,
+): number {
+  const configured = options.maximumExecutableSourceAnalyses;
+  return typeof configured === "number" && Number.isSafeInteger(configured) &&
+      configured >= 0
+    ? configured
+    : DEFAULT_MAX_EXECUTABLE_SOURCE_ANALYSES;
+}
+
+function executableSourceAnalysisKey(
   source: string,
-  isVisibleLoaderIdentifier: (name: string) => boolean = () => false,
+  mode: ExecutableSourceMode,
+): string {
+  const inheritedBindings = mode.kind === "classic"
+    ? [...(mode.inheritedBindings ?? [])]
+      .map(({ name, api, stringValue, memberApis }) => [
+        name,
+        api ?? null,
+        stringValue ?? null,
+        memberApis?.truncated ?? false,
+        memberApis?.projections.map(({ path, api: memberApi }) => [
+          path.map((segment) => segment ?? null),
+          memberApi,
+        ]) ?? [],
+      ])
+      .sort(([left], [right]) => compareOrdinal(String(left), String(right)))
+    : [];
+  return JSON.stringify([
+    mode.kind,
+    mode.kind === "function" ? mode.functionKind : null,
+    mode.kind === "function" ? mode.parameters : null,
+    mode.kind === "classic"
+      ? mode.allowNewTargetOutsideFunction === true
+      : false,
+    mode.kind === "classic" ? mode.allowSuperOutsideMethod === true : false,
+    inheritedBindings,
+    source,
+  ]);
+}
+
+function executableFunctionPrefix(kind: ExecutableFunctionKind): string {
+  if (kind === "async-function") return "async function";
+  if (kind === "generator-function") return "function*";
+  if (kind === "async-generator-function") return "async function*";
+  return "function";
+}
+
+function executableSourceContainsModuleLoad(
+  source: string,
+  mode: ExecutableSourceMode,
+  options: SourceDependencyCollectionOptions,
+  internal: SourceDependencyInternalContext,
 ): boolean {
-  let generatedAst: AstNode;
-  try {
-    generatedAst = parse(source, {
-      sourceType: "unambiguous",
-      allowAwaitOutsideFunction: true,
-      allowReturnOutsideFunction: true,
-      errorRecovery: false,
-      plugins: ["typescript", "jsx", "importAttributes"],
-    }) as unknown as AstNode;
-  } catch {
+  const state = internal.executableAnalysis;
+  const key = executableSourceAnalysisKey(source, mode);
+  const memoized = state.memoizedResults.get(key);
+  if (memoized !== undefined) {
+    state.cacheHits++;
+    return memoized;
+  }
+  if (state.active.has(key)) {
+    state.cycleCuts++;
     return true;
   }
-  let found = false;
-  const inspect = (node: AstNode): void => {
-    if (found) return;
-    if (node.type === "ImportExpression") {
-      found = true;
-      return;
-    }
-    if (node.type === "Identifier") {
-      const name = identifierName(node) ?? "";
-      if (
-        [
-          "require",
-          "importScripts",
-          "eval",
-          "Function",
-          "Worker",
-          "SharedWorker",
-        ].includes(name) || isVisibleLoaderIdentifier(name)
-      ) {
-        found = true;
-        return;
-      }
-    }
-    if (
-      (node.type === "MemberExpression" ||
-        node.type === "OptionalMemberExpression") &&
-      ["resolve", "addModule", "register", "importScripts"].includes(
-        memberPropertyName(node) ?? "",
-      )
-    ) {
-      found = true;
-      return;
-    }
-    if (
-      node.type === "CallExpression" || node.type === "OptionalCallExpression"
-    ) {
-      const callee = node.callee;
-      const name = identifierName(callee);
-      if (
-        isNode(callee) && callee.type === "Import" ||
-        ["require", "importScripts", "eval", "Function"].includes(name ?? "") ||
-        ["resolve", "addModule", "register"].includes(
-          memberPropertyName(callee) ?? "",
-        )
-      ) {
-        found = true;
-        return;
-      }
-    }
-    if (node.type === "NewExpression") {
-      const name = identifierName(node.callee) ??
-        memberPropertyName(node.callee);
-      if (["Worker", "SharedWorker", "Function"].includes(name ?? "")) {
-        found = true;
-        return;
-      }
-    }
-    for (const child of childNodes(node)) inspect(child);
-  };
-  inspect(generatedAst);
-  return found;
+  if (internal.executableDepth >= MAX_EXECUTABLE_SOURCE_DEPTH) {
+    state.depthExhaustions++;
+    return true;
+  }
+  if (state.analyses >= state.maximumAnalyses) {
+    state.budgetExhaustions++;
+    return true;
+  }
+  state.analyses++;
+  state.active.add(key);
+  const functionSource = mode.kind === "function"
+    ? `${executableFunctionPrefix(mode.functionKind)} __veryfront_generated__(${
+      mode.parameters.join(",")
+    }) {\n${source}\n}`
+    : source;
+  const sourceType = mode.kind === "module" ? "module" : "script";
+  let result = true;
+  try {
+    const dependencies = collectSourceDependenciesInternal(
+      {
+        path: `__veryfront_executable__/${mode.kind}.js`,
+        content: functionSource,
+      },
+      { ...options, onAnalysisDiagnostics: undefined },
+      {
+        sourceType,
+        allowAwaitOutsideFunction: false,
+        allowReturnOutsideFunction: false,
+        allowNewTargetOutsideFunction: mode.kind === "classic" &&
+          mode.allowNewTargetOutsideFunction === true,
+        allowSuperOutsideMethod: mode.kind === "classic" &&
+          mode.allowSuperOutsideMethod === true,
+        parserPlugins: ["importAttributes", "explicitResourceManagement"],
+        inheritedBindings: mode.kind === "classic"
+          ? mode.inheritedBindings ?? []
+          : [],
+        executableDepth: internal.executableDepth + 1,
+        executableAnalysis: state,
+      },
+    );
+    result = dependencies.some(({ kind }) =>
+      kind === "static-import" || kind === "static-export" ||
+      kind === "import-equals" || kind === "dynamic-import" ||
+      kind === "runtime-loader" || kind === "unresolved-runtime-loader"
+    );
+  } catch {
+    result = true;
+  } finally {
+    state.active.delete(key);
+  }
+  state.memoizedResults.set(key, result);
+  return result;
 }
 
 function parserPluginsForPath(
@@ -3526,14 +5936,43 @@ export function collectSourceDependencies(
   file: CoreProductionSourceFile,
   options: SourceDependencyCollectionOptions = {},
 ): SourceDependency[] {
+  const executableAnalysis: ExecutableSourceAnalysisState = {
+    active: new Set(),
+    memoizedResults: new Map(),
+    maximumAnalyses: maximumExecutableSourceAnalyses(options),
+    analyses: 0,
+    budgetExhaustions: 0,
+    cacheHits: 0,
+    cycleCuts: 0,
+    depthExhaustions: 0,
+  };
+  return collectSourceDependenciesInternal(file, options, {
+    sourceType: "unambiguous",
+    allowAwaitOutsideFunction: true,
+    allowReturnOutsideFunction: true,
+    allowNewTargetOutsideFunction: false,
+    allowSuperOutsideMethod: false,
+    inheritedBindings: [],
+    executableDepth: 0,
+    executableAnalysis,
+  });
+}
+
+function collectSourceDependenciesInternal(
+  file: CoreProductionSourceFile,
+  options: SourceDependencyCollectionOptions,
+  internal: SourceDependencyInternalContext,
+): SourceDependency[] {
   let ast: AstNode;
   try {
     ast = parse(file.content, {
-      sourceType: "unambiguous",
-      allowAwaitOutsideFunction: true,
-      allowReturnOutsideFunction: true,
+      sourceType: internal.sourceType,
+      allowAwaitOutsideFunction: internal.allowAwaitOutsideFunction,
+      allowReturnOutsideFunction: internal.allowReturnOutsideFunction,
+      allowNewTargetOutsideFunction: internal.allowNewTargetOutsideFunction,
+      allowSuperOutsideMethod: internal.allowSuperOutsideMethod,
       errorRecovery: false,
-      plugins: parserPluginsForPath(file.path),
+      plugins: internal.parserPlugins ?? parserPluginsForPath(file.path),
     }) as unknown as AstNode;
   } catch (error) {
     throw new SourceImportCollectorError(
@@ -3544,6 +5983,7 @@ export function collectSourceDependencies(
   }
 
   let scopeByNode: WeakMap<AstNode, LexicalScope>;
+  let inheritedScope: LexicalScope | undefined;
   let stringValues: ScopedValues<string>;
   let resolveApi: (
     node: unknown,
@@ -3561,19 +6001,39 @@ export function collectSourceDependencies(
     node: AstNode,
     scope: LexicalScope,
   ) => ApiBinding | undefined;
+  let capabilityApiForExpression: (
+    node: unknown,
+    scope: LexicalScope,
+  ) => ApiBinding | undefined;
+  let memberApisForExpression: (
+    node: unknown,
+    scope: LexicalScope,
+  ) => InheritedMemberApiSnapshot;
+  let analysisDiagnostics: SourceDependencyAnalysisDiagnostics;
   try {
-    ({ scopeByNode } = buildScopeMap(ast));
+    inheritedScope = internal.inheritedBindings.length === 0 ? undefined : {
+      bindings: new Set(
+        internal.inheritedBindings.map(({ name }) => name),
+      ),
+      functionScope: true,
+    } satisfies LexicalScope;
+    ({ scopeByNode } = buildScopeMap(ast, inheritedScope));
     ({
       stringValues,
       resolveApi,
       resolveMemberProperty,
       normalizeInvocation,
       loaderEscapeForNode,
+      capabilityApiForExpression,
+      memberApisForExpression,
+      analysisDiagnostics,
     } = collectModuleBindings(
       ast,
       scopeByNode,
       file.path,
       options,
+      inheritedScope,
+      internal.inheritedBindings,
     ));
   } catch (error) {
     throw new SourceImportCollectorError(
@@ -3607,6 +6067,564 @@ export function collectSourceDependencies(
         : "runtime-loader",
       specifier === undefined ? { loader } : { loader, specifier },
     );
+  };
+
+  interface BoundInitializer {
+    value: unknown;
+    scope: LexicalScope;
+  }
+
+  type KnownPrimitive = string | number | boolean | bigint | null | undefined;
+
+  const bindingInitializers: ScopedValues<BoundInitializer> = new WeakMap();
+  const inspectionParentByNode = new WeakMap<AstNode, AstNode>();
+  const collectBindingInitializers = (
+    node: AstNode,
+    parent?: AstNode,
+  ): void => {
+    if (parent) inspectionParentByNode.set(node, parent);
+    const scope = scopeByNode.get(node);
+    if (!scope) {
+      throw new SourceImportCollectorError(
+        "binding-resolution-failure",
+        file.path,
+        `missing lexical scope for ${node.type}`,
+      );
+    }
+    if (node.type === "VariableDeclaration" && node.kind === "const") {
+      for (
+        const declaration of Array.isArray(node.declarations)
+          ? node.declarations
+          : []
+      ) {
+        if (!isNode(declaration)) continue;
+        const name = identifierName(declaration.id);
+        if (!name || declaration.init === undefined) continue;
+        const declarationScope = scopeByNode.get(declaration) ?? scope;
+        setScopedValue(bindingInitializers, declarationScope, name, {
+          value: declaration.init,
+          scope: declarationScope,
+        });
+      }
+    } else if (
+      node.type === "FunctionDeclaration" || node.type === "ClassDeclaration"
+    ) {
+      const name = identifierName(node.id);
+      const declarationScope = scope.parent;
+      if (name && declarationScope) {
+        setScopedValue(bindingInitializers, declarationScope, name, {
+          value: node,
+          scope,
+        });
+      }
+    }
+    for (const child of childNodes(node)) {
+      collectBindingInitializers(child, node);
+    }
+  };
+  collectBindingInitializers(ast);
+
+  const primitiveForSource = (
+    node: unknown,
+    scope: LexicalScope,
+    seen = new Set<AstNode>(),
+  ): { known: true; value: KnownPrimitive } | { known: false } => {
+    const value = unwrapAwait(node);
+    const text = resolvedString(value, stringValues, scope);
+    if (text !== undefined) return { known: true, value: text };
+    if (!isNode(value)) {
+      return value === undefined
+        ? { known: true, value: undefined }
+        : { known: false };
+    }
+    if (seen.has(value)) return { known: false };
+    seen.add(value);
+    if (value.type === "NullLiteral") return { known: true, value: null };
+    if (value.type === "BooleanLiteral" && typeof value.value === "boolean") {
+      return { known: true, value: value.value };
+    }
+    if (value.type === "NumericLiteral" && typeof value.value === "number") {
+      return { known: true, value: value.value };
+    }
+    if (value.type === "BigIntLiteral" && typeof value.value === "string") {
+      try {
+        return { known: true, value: BigInt(value.value) };
+      } catch {
+        return { known: false };
+      }
+    }
+    const name = identifierName(value);
+    if (name) {
+      if (isUnbound(scope, name)) {
+        if (name === "undefined") return { known: true, value: undefined };
+        if (name === "NaN") return { known: true, value: Number.NaN };
+        if (name === "Infinity") {
+          return { known: true, value: Number.POSITIVE_INFINITY };
+        }
+      }
+      const initializer = getScopedValue(bindingInitializers, scope, name);
+      return initializer
+        ? primitiveForSource(initializer.value, initializer.scope, seen)
+        : { known: false };
+    }
+    if (value.type === "UnaryExpression") {
+      if (value.operator === "void") {
+        return { known: true, value: undefined };
+      }
+      if (value.operator === "+" || value.operator === "-") {
+        const argument = primitiveForSource(value.argument, scope, seen);
+        if (!argument.known) return argument;
+        if (typeof argument.value === "number") {
+          return {
+            known: true,
+            value: value.operator === "+" ? +argument.value : -argument.value,
+          };
+        }
+        if (typeof argument.value === "bigint" && value.operator === "-") {
+          return { known: true, value: -argument.value };
+        }
+      }
+    }
+    return { known: false };
+  };
+
+  const sourceText = (
+    node: unknown,
+    scope: LexicalScope,
+  ): { known: true; text: string; wasString: boolean } | { known: false } => {
+    const primitive = primitiveForSource(node, scope);
+    return primitive.known
+      ? {
+        known: true,
+        text: String(primitive.value),
+        wasString: typeof primitive.value === "string",
+      }
+      : primitive;
+  };
+
+  const callableApis: ReadonlySet<ApiBinding> = new Set([
+    "create-require",
+    "require",
+    "require-alias",
+    "require-resolve",
+    "node-worker",
+    "service-worker-register",
+    "module-register",
+    "import-meta-resolve",
+    "import-scripts",
+    "audio-worklet-add-module",
+    "css-paint-worklet-add-module",
+    "css-layout-worklet-add-module",
+    "css-animation-worklet-add-module",
+    "web-worker",
+    "shared-worker",
+    "Function",
+    "AsyncFunction",
+    "GeneratorFunction",
+    "AsyncGeneratorFunction",
+    "eval",
+    "set-timeout",
+    "set-interval",
+    "node-vm-run-in-context",
+    "node-vm-run-in-new-context",
+    "node-vm-run-in-this-context",
+    "node-vm-compile-function",
+    "node-vm-create-script",
+    "node-vm-script",
+    "node-vm-source-text-module",
+  ]);
+
+  const isDefinitelyCallable = (
+    node: unknown,
+    scope: LexicalScope,
+    seen = new Set<AstNode>(),
+  ): boolean => {
+    const value = unwrapTransparentExpression(node);
+    if (!isNode(value) || seen.has(value)) return false;
+    seen.add(value);
+    if (
+      value.type === "FunctionExpression" ||
+      value.type === "ArrowFunctionExpression" ||
+      value.type === "FunctionDeclaration" ||
+      value.type === "ClassExpression" ||
+      value.type === "ClassDeclaration"
+    ) {
+      return true;
+    }
+    const api = resolveApi(value, scope);
+    if (api && callableApis.has(api)) return true;
+    const name = identifierName(value);
+    if (name) {
+      const initializer = getScopedValue(bindingInitializers, scope, name);
+      return initializer
+        ? isDefinitelyCallable(initializer.value, initializer.scope, seen)
+        : false;
+    }
+    if (value.type === "SequenceExpression") {
+      const expressions = Array.isArray(value.expressions)
+        ? value.expressions
+        : [];
+      return isDefinitelyCallable(expressions.at(-1), scope, seen);
+    }
+    if (value.type === "AssignmentExpression" && value.operator === "=") {
+      return isDefinitelyCallable(value.right, scope, seen);
+    }
+    if (
+      value.type === "ConditionalExpression" ||
+      value.type === "LogicalExpression"
+    ) {
+      const branches = value.type === "ConditionalExpression"
+        ? [value.consequent, value.alternate]
+        : [value.left, value.right];
+      return branches.every((branch) =>
+        isDefinitelyCallable(branch, scope, new Set(seen))
+      );
+    }
+    if (
+      value.type === "CallExpression" ||
+      value.type === "OptionalCallExpression"
+    ) {
+      const callee = unwrapTransparentExpression(value.callee);
+      return isNode(callee) &&
+        (callee.type === "MemberExpression" ||
+          callee.type === "OptionalMemberExpression") &&
+        resolveMemberProperty(callee, scope) === "bind" &&
+        isDefinitelyCallable(callee.object, scope, seen);
+    }
+    return false;
+  };
+
+  const inheritedBindingsForDirectEval = (
+    scope: LexicalScope,
+  ): InheritedBindingSeed[] => {
+    const result: InheritedBindingSeed[] = [];
+    const seen = new Set<string>();
+    const inheritedBindingByName = new Map(
+      internal.inheritedBindings.map((binding) => [binding.name, binding]),
+    );
+    for (
+      let current: LexicalScope | undefined = scope;
+      current;
+      current = current.parent
+    ) {
+      for (const name of current.bindings) {
+        if (seen.has(name)) continue;
+        seen.add(name);
+        const bindingScope = closestBindingScope(scope, name);
+        const inheritedBinding = bindingScope === inheritedScope
+          ? inheritedBindingByName.get(name)
+          : undefined;
+        if (inheritedBinding) {
+          result.push({ ...inheritedBinding });
+          continue;
+        }
+        const identifier = { type: "Identifier", name };
+        result.push({
+          name,
+          api: resolveApi(identifier, scope),
+          stringValue: resolvedString(identifier, stringValues, scope),
+          memberApis: memberApisForExpression(identifier, scope),
+        });
+      }
+    }
+    return result;
+  };
+
+  const directEvalSyntacticContext = (
+    node: AstNode,
+  ): {
+    allowNewTargetOutsideFunction: boolean;
+    allowSuperOutsideMethod: boolean;
+  } => {
+    let descendant = node;
+    for (
+      let current = inspectionParentByNode.get(node);
+      current;
+      current = inspectionParentByNode.get(current)
+    ) {
+      const child = descendant;
+      descendant = current;
+      if (
+        !isFunctionNode(current) || current.type === "ArrowFunctionExpression"
+      ) {
+        if (current.type === "StaticBlock") {
+          return {
+            allowNewTargetOutsideFunction: true,
+            allowSuperOutsideMethod: true,
+          };
+        }
+        if (
+          [
+            "ClassProperty",
+            "ClassPrivateProperty",
+            "PropertyDefinition",
+            "ClassAccessorProperty",
+          ].includes(current.type) && current.value === child
+        ) {
+          return {
+            allowNewTargetOutsideFunction: true,
+            allowSuperOutsideMethod: true,
+          };
+        }
+        continue;
+      }
+      return {
+        allowNewTargetOutsideFunction: true,
+        allowSuperOutsideMethod: current.type === "ObjectMethod" ||
+          current.type === "ClassMethod" ||
+          current.type === "ClassPrivateMethod",
+      };
+    }
+    return {
+      allowNewTargetOutsideFunction: internal.allowNewTargetOutsideFunction,
+      allowSuperOutsideMethod: internal.allowSuperOutsideMethod,
+    };
+  };
+
+  const recordExecutableSource = (
+    node: AstNode,
+    loader: string,
+    source: string | undefined,
+    mode: ExecutableSourceMode,
+    forceIssue = false,
+  ): void => {
+    if (
+      forceIssue ||
+      source === undefined ||
+      executableSourceContainsModuleLoad(
+        source,
+        mode,
+        options,
+        internal,
+      )
+    ) {
+      pushDependency(
+        dependencies,
+        file.path,
+        node,
+        "unresolved-runtime-loader",
+        { loader },
+      );
+    }
+  };
+
+  const functionKindForApi = (
+    api: ApiBinding | undefined,
+  ): ExecutableFunctionKind | undefined => {
+    if (api === "Function") return "function";
+    if (api === "AsyncFunction") return "async-function";
+    if (api === "GeneratorFunction") return "generator-function";
+    if (api === "AsyncGeneratorFunction") return "async-generator-function";
+    return undefined;
+  };
+
+  const parameterList = (
+    node: unknown,
+    scope: LexicalScope,
+    seen = new Set<AstNode>(),
+  ): string[] | undefined => {
+    if (node === undefined) return [];
+    const value = unwrapTransparentExpression(node);
+    if (!isNode(value) || seen.has(value)) return undefined;
+    seen.add(value);
+    const name = identifierName(value);
+    if (name) {
+      const initializer = getScopedValue(bindingInitializers, scope, name);
+      return initializer
+        ? parameterList(initializer.value, initializer.scope, seen)
+        : undefined;
+    }
+    if (value.type !== "ArrayExpression") return undefined;
+    const elements = Array.isArray(value.elements) ? value.elements : [];
+    const result: string[] = [];
+    for (const element of elements) {
+      if (!isNode(element) || element.type === "SpreadElement") {
+        return undefined;
+      }
+      const parameter = sourceText(element, scope);
+      if (!parameter.known) return undefined;
+      result.push(parameter.text);
+    }
+    return result;
+  };
+
+  const inspectExecutableInvocation = (
+    node: AstNode,
+    scope: LexicalScope,
+    invocation: NormalizedInvocation,
+    api: ApiBinding | undefined,
+  ): boolean => {
+    const loader = api ? unresolvedLoaderForApi(api) : undefined;
+    const argumentsContainCapability = (argumentsToInspect: unknown[]) =>
+      argumentsToInspect.some((argument) =>
+        capabilityApiForExpression(
+          isNode(argument) && argument.type === "SpreadElement"
+            ? argument.argument
+            : argument,
+          scope,
+        ) !== undefined
+      );
+    const functionKind = functionKindForApi(api);
+    if (functionKind && loader) {
+      if (!invocation.argumentsKnown) {
+        recordExecutableSource(node, loader, undefined, {
+          kind: "function",
+          functionKind,
+          parameters: [],
+        });
+        return true;
+      }
+      const args = invocation.arguments;
+      const body = args.length === 0
+        ? { known: true as const, text: "", wasString: true }
+        : sourceText(args.at(-1), scope);
+      const parameters: string[] = [];
+      let parametersKnown = true;
+      for (const parameter of args.slice(0, -1)) {
+        const resolved = sourceText(parameter, scope);
+        if (!resolved.known) {
+          parametersKnown = false;
+          break;
+        }
+        parameters.push(resolved.text);
+      }
+      recordExecutableSource(
+        node,
+        loader,
+        body.known && parametersKnown ? body.text : undefined,
+        { kind: "function", functionKind, parameters },
+      );
+      return true;
+    }
+
+    if (api === "eval" && loader && invocation.kind !== "construct") {
+      if (!invocation.argumentsKnown) {
+        recordExecutableSource(node, loader, undefined, { kind: "classic" });
+        return true;
+      }
+      const body = primitiveForSource(invocation.arguments[0], scope);
+      if (!body.known || typeof body.value === "string") {
+        const directEval = node.type === "CallExpression" &&
+          identifierName(node.callee) === "eval" &&
+          isUnbound(scope, "eval") && invocation.kind === "direct";
+        const syntacticContext = directEval
+          ? directEvalSyntacticContext(node)
+          : {
+            allowNewTargetOutsideFunction: false,
+            allowSuperOutsideMethod: false,
+          };
+        recordExecutableSource(
+          node,
+          loader,
+          body.known && typeof body.value === "string" ? body.value : undefined,
+          {
+            kind: "classic",
+            inheritedBindings: directEval
+              ? inheritedBindingsForDirectEval(scope)
+              : [],
+            ...syntacticContext,
+          },
+        );
+      }
+      return true;
+    }
+
+    if (
+      (api === "set-timeout" || api === "set-interval") && loader &&
+      invocation.kind !== "construct"
+    ) {
+      if (!invocation.argumentsKnown) {
+        recordExecutableSource(node, loader, undefined, { kind: "classic" });
+        return true;
+      }
+      const handler = invocation.arguments[0];
+      if (!isDefinitelyCallable(handler, scope)) {
+        const source = sourceText(handler, scope);
+        recordExecutableSource(
+          node,
+          loader,
+          source.known ? source.text : undefined,
+          { kind: "classic" },
+        );
+      }
+      return true;
+    }
+
+    if (
+      api === "node-vm-run-in-context" ||
+      api === "node-vm-run-in-new-context" ||
+      api === "node-vm-run-in-this-context"
+    ) {
+      if (!loader) return true;
+      const source = invocation.argumentsKnown
+        ? sourceText(invocation.arguments[0], scope)
+        : { known: false as const };
+      recordExecutableSource(
+        node,
+        loader,
+        source.known ? source.text : undefined,
+        { kind: "classic" },
+        argumentsContainCapability(invocation.arguments.slice(1)),
+      );
+      return true;
+    }
+
+    if (api === "node-vm-compile-function") {
+      if (!loader) return true;
+      const source = invocation.argumentsKnown
+        ? sourceText(invocation.arguments[0], scope)
+        : { known: false as const };
+      const parameters = invocation.argumentsKnown
+        ? parameterList(invocation.arguments[1], scope)
+        : undefined;
+      recordExecutableSource(
+        node,
+        loader,
+        source.known && parameters !== undefined ? source.text : undefined,
+        {
+          kind: "function",
+          functionKind: "function",
+          parameters: parameters ?? [],
+        },
+        argumentsContainCapability(invocation.arguments.slice(2)),
+      );
+      return true;
+    }
+
+    if (api === "node-vm-create-script") {
+      if (!loader) return true;
+      const source = invocation.argumentsKnown
+        ? sourceText(invocation.arguments[0], scope)
+        : { known: false as const };
+      recordExecutableSource(
+        node,
+        loader,
+        source.known ? source.text : undefined,
+        { kind: "classic" },
+        argumentsContainCapability(invocation.arguments.slice(1)),
+      );
+      return true;
+    }
+
+    if (api === "node-vm-script" || api === "node-vm-source-text-module") {
+      if (invocation.kind !== "construct") return true;
+      if (!loader) return true;
+      const source = invocation.argumentsKnown
+        ? sourceText(invocation.arguments[0], scope)
+        : { known: false as const };
+      recordExecutableSource(
+        node,
+        loader,
+        source.known ? source.text : undefined,
+        api === "node-vm-source-text-module"
+          ? { kind: "module" }
+          : { kind: "classic" },
+        argumentsContainCapability(invocation.arguments.slice(1)),
+      );
+      return true;
+    }
+
+    return false;
   };
 
   const inspect = (node: AstNode): void => {
@@ -3688,18 +6706,35 @@ export function collectSourceDependencies(
         const args = invocation.arguments;
         const directApi = resolveApi(invocation.target, scope);
         const calleeName = identifierName(invocation.target);
+        const generatedFunctionApi = isNode(node.callee) &&
+            (node.callee.type === "CallExpression" ||
+              node.callee.type === "NewExpression")
+          ? resolveApi(node.callee.callee, scope)
+          : undefined;
         const generatedFunctionReceivesLoader = isNode(node.callee) &&
           (node.callee.type === "CallExpression" ||
             node.callee.type === "NewExpression") &&
-          resolveApi(node.callee.callee, scope) === "Function" &&
+          functionKindForApi(generatedFunctionApi) !== undefined &&
           args.some((argument) => resolveApi(argument, scope) !== undefined);
-        if (generatedFunctionReceivesLoader) {
+        if (
+          inspectExecutableInvocation(
+            node,
+            scope,
+            invocation,
+            directApi,
+          )
+        ) {
+          // Executable-source sinks collapse all nested findings to this call.
+        } else if (generatedFunctionReceivesLoader) {
           pushDependency(
             dependencies,
             file.path,
             node,
             "unresolved-runtime-loader",
-            { loader: "Function" },
+            {
+              loader: unresolvedLoaderForApi(generatedFunctionApi!) ??
+                "Function",
+            },
           );
         } else if (directApi === "import-meta-resolve") {
           recordLoader(node, scope, "import.meta.resolve", args[0]);
@@ -3875,62 +6910,12 @@ export function collectSourceDependencies(
               args[0],
             );
           }
-        } else if (
-          (calleeName === "eval" && isUnbound(scope, "eval")) ||
-          directApi === "eval"
-        ) {
-          const body = resolvedString(
-            args[0],
-            stringValues,
-            scope,
-          );
-          const directEval = calleeName === "eval" &&
-            isUnbound(scope, "eval") && invocation.kind === "direct";
-          if (
-            body === undefined ||
-            loaderSourceContainsModuleLoad(
-              body,
-              directEval
-                ? (name) =>
-                  resolveApi({ type: "Identifier", name }, scope) !== undefined
-                : undefined,
-            )
-          ) {
-            pushDependency(
-              dependencies,
-              file.path,
-              node,
-              "unresolved-runtime-loader",
-              {
-                loader: "eval",
-              },
-            );
-          }
-        } else if (
-          (calleeName === "Function" && isUnbound(scope, "Function")) ||
-          directApi === "Function"
-        ) {
-          const body = resolvedString(
-            args.at(-1),
-            stringValues,
-            scope,
-          );
-          if (body === undefined || loaderSourceContainsModuleLoad(body)) {
-            pushDependency(
-              dependencies,
-              file.path,
-              node,
-              "unresolved-runtime-loader",
-              {
-                loader: "Function",
-              },
-            );
-          }
         }
       }
     } else if (node.type === "NewExpression") {
-      const args = Array.isArray(node.arguments) ? node.arguments : [];
-      const api = resolveApi(node.callee, scope);
+      const invocation = normalizeInvocation(node, scope);
+      const args = invocation.arguments;
+      const api = resolveApi(invocation.target, scope);
       const name = identifierName(node.callee);
       const globalWorker = isNode(node.callee) &&
         node.callee.type === "MemberExpression" &&
@@ -3939,7 +6924,9 @@ export function collectSourceDependencies(
         ["Worker", "SharedWorker"].includes(
           memberPropertyName(node.callee) ?? "",
         );
-      if (
+      if (inspectExecutableInvocation(node, scope, invocation, api)) {
+        // Executable-source sinks collapse all nested findings to this call.
+      } else if (
         api === "node-worker" || api === "web-worker" ||
         api === "shared-worker" ||
         ["Worker", "SharedWorker"].includes(name ?? "") &&
@@ -3978,22 +6965,6 @@ export function collectSourceDependencies(
               : "runtime-loader-alias",
           },
         );
-      } else if (
-        (name === "Function" && isUnbound(scope, "Function")) ||
-        api === "Function"
-      ) {
-        const body = resolvedString(args.at(-1), stringValues, scope);
-        if (body === undefined || loaderSourceContainsModuleLoad(body)) {
-          pushDependency(
-            dependencies,
-            file.path,
-            node,
-            "unresolved-runtime-loader",
-            {
-              loader: "Function",
-            },
-          );
-        }
       }
     }
 
@@ -4010,6 +6981,17 @@ export function collectSourceDependencies(
       error instanceof Error ? error.message : String(error),
     );
   }
+  analysisDiagnostics.executableSourceAnalyses =
+    internal.executableAnalysis.analyses;
+  analysisDiagnostics.executableSourceBudgetExhaustions =
+    internal.executableAnalysis.budgetExhaustions;
+  analysisDiagnostics.executableSourceCacheHits =
+    internal.executableAnalysis.cacheHits;
+  analysisDiagnostics.executableSourceCycleCuts =
+    internal.executableAnalysis.cycleCuts;
+  analysisDiagnostics.executableSourceDepthExhaustions =
+    internal.executableAnalysis.depthExhaustions;
+  options.onAnalysisDiagnostics?.({ ...analysisDiagnostics });
   dependencies.sort((left, right) =>
     left.line - right.line || left.column - right.column ||
     compareOrdinal(left.kind, right.kind) ||
