@@ -35,6 +35,7 @@ describe("Push Handler", () => {
       assertEquals(result.data.projectSlug, undefined);
       assertEquals(result.data.branch, "main");
       assertEquals(result.data.force, false);
+      assertEquals(result.data.delete, false);
       assertEquals(result.data.dryRun, false);
       assertEquals(result.data.quiet, false);
     });
@@ -86,6 +87,12 @@ describe("Push Handler", () => {
       assertEquals(result.data.dryRun, true);
     });
 
+    it("should parse --delete flag", () => {
+      const result = parsePushArgs(createArgs({ delete: true }));
+      assertSuccess(result);
+      assertEquals(result.data.delete, true);
+    });
+
     it("should parse --quiet flag", () => {
       const result = parsePushArgs(createArgs({ quiet: true }));
       assertSuccess(result);
@@ -114,12 +121,14 @@ describe("Push Handler", () => {
       const result = parsePushArgs(createArgs({
         branch: "release-v2",
         force: true,
+        delete: true,
         "dry-run": true,
         quiet: true,
       }));
       assertSuccess(result);
       assertEquals(result.data.branch, "release-v2");
       assertEquals(result.data.force, true);
+      assertEquals(result.data.delete, true);
       assertEquals(result.data.dryRun, true);
       assertEquals(result.data.quiet, true);
     });

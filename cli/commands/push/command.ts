@@ -57,6 +57,7 @@ export const getPushArgsSchema = defineSchema((v) =>
     branch: v.string().regex(PREVIEW_BRANCH_PATTERN, PREVIEW_BRANCH_ERROR).default("main"),
     /** Deprecated compatibility flag; invoking push already authorizes the operation. */
     force: v.boolean().default(false),
+    delete: v.boolean().default(false),
     dryRun: v.boolean().default(false),
     quiet: v.boolean().default(false),
   })
@@ -74,6 +75,7 @@ export const parsePushArgs = createArgParser(PushArgsSchema, {
   projectDir: CommonArgs.projectDir,
   branch: CommonArgs.branch,
   force: CommonArgs.force,
+  delete: { keys: ["delete"], type: "boolean" },
   dryRun: CommonArgs.dryRun,
   quiet: CommonArgs.quiet,
 });
@@ -90,6 +92,8 @@ export interface PushOptions {
   branch?: string;
   /** Deprecated compatibility flag; invoking push already authorizes the operation. */
   force?: boolean;
+  /** Delete remote files that are missing locally. */
+  delete?: boolean;
   /** Dry run - show what would be uploaded without uploading */
   dryRun?: boolean;
   /** Quiet mode - suppress spinner/progress output */
@@ -607,6 +611,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         projectSlug: slugOverride,
         projectDir = cwd(),
         branch = "main",
+        delete: deleteRemoteMissing = false,
         dryRun = false,
         quiet = false,
       } = options;
@@ -745,14 +750,18 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           remoteFiles: mainFiles,
           source: { type: "main" } satisfies PullSource,
         };
-      const toDelete = target.remoteFiles
+      const remoteFilesMissingLocally = target.remoteFiles
         .map((file) => file.path)
         .filter((path) => !ignoreChecker.isIgnored(path) && !localPaths.has(path));
+      const toDelete = deleteRemoteMissing ? remoteFilesMissingLocally : [];
+      const deletePaths = new Set(toDelete);
       const preservedRemoteFiles = target.remoteFiles
-        .filter((file) => ignoreChecker.isIgnored(file.path))
+        .filter((file) => !localPaths.has(file.path) && !deletePaths.has(file.path))
         .map((file) => {
           if (typeof file.content !== "string") {
-            throw new Error(`Veryfront returned invalid content for ignored file "${file.path}".`);
+            throw new Error(
+              `Veryfront returned invalid content for preserved remote file "${file.path}".`,
+            );
           }
           return { path: file.path, content: file.content };
         });
