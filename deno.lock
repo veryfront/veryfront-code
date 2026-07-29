@@ -81,6 +81,7 @@
     "npm:mdast-util-to-string@4.0.0": "4.0.0",
     "npm:micromark-extension-mdxjs@3.0.0": "3.0.0",
     "npm:node-fetch@3.3.2": "3.3.2",
+    "npm:parse5@7.3.0": "7.3.0",
     "npm:pdf-lib@1.17.1": "1.17.1",
     "npm:playwright@*": "1.60.0",
     "npm:playwright@1.60.0": "1.60.0",
@@ -2055,7 +2056,7 @@
         "caniuse-lite",
         "electron-to-chromium",
         "node-releases",
-        "update-browserslist-db@1.2.3_browserslist@4.28.7"
+        "update-browserslist-db"
       ],
       "bin": true
     },
@@ -4408,7 +4409,7 @@
     "update-browserslist-db@1.2.3_browserslist@4.28.7": {
       "integrity": "sha512-Js0m9cx+qOgDxo0eMiFGEueWztz+d4+M3rGlmKPT+T4IS/jP4ylw3Nwpu6cpTTP8R1MAC1kF4VbdLt3ARf209w==",
       "dependencies": [
-        "browserslist@4.28.7",
+        "browserslist",
         "escalade",
         "picocolors"
       ],
@@ -6506,6 +6507,13 @@
           "npm:@babel/parser@7.29.2",
           "npm:@babel/traverse@7.29.0",
           "npm:@babel/types@7.29.0"
+        ]
+      },
+      "extensions/ext-parser-parse5": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:parse5@7.3.0"
         ]
       },
       "extensions/ext-sandbox-shell-tools": {
