@@ -99,11 +99,13 @@ function resolveVisibleSkillOrThrow(
   }
 
   if (!isUnresolvedSkillSelectorValid(skillId)) {
+    const expectation = skillId.includes("--")
+      ? "must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters"
+      : "must be lowercase alphanumeric with hyphens, 1-64 characters";
     throw toError(
       createError({
         type: "agent",
-        message:
-          `Invalid skill id "${skillId}": must be lowercase alphanumeric with hyphens, 1-64 characters`,
+        message: `Invalid skill id "${skillId}": ${expectation}`,
       }),
     );
   }

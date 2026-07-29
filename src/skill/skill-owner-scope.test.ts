@@ -271,3 +271,27 @@ Deno.test("load_skill resolves provider-safe owned short names before plain-id v
     await Deno.remove(tempDir, { recursive: true });
   }
 });
+
+Deno.test("load_skill reports provider-safe guidance for invalid owned-looking selectors", async () => {
+  setupRegistry();
+  try {
+    const loadSkill = createLoadSkillTool();
+
+    await assertRejects(
+      () => loadSkill.execute({ skillId: "Bad Name" }, { agentId: "writer" }) as Promise<unknown>,
+      Error,
+      'Invalid skill id "Bad Name": must be lowercase alphanumeric with hyphens, 1-64 characters',
+    );
+
+    await assertRejects(
+      () =>
+        loadSkill.execute({ skillId: "writer--Bad Name" }, { agentId: "writer" }) as Promise<
+          unknown
+        >,
+      Error,
+      'Invalid skill id "writer--Bad Name": must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters',
+    );
+  } finally {
+    skillRegistry.clearAll();
+  }
+});
