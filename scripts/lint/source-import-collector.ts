@@ -1,6 +1,7 @@
 import { parse } from "#babel/parser";
 import { walk } from "#std/fs";
-import { isAbsolute, join, relative, SEPARATOR } from "#std/path";
+import { join, relative } from "#std/path";
+import { isPathContained } from "../lib/path-containment.ts";
 
 export interface CoreProductionSourceFile {
   path: string;
@@ -19,31 +20,8 @@ export interface CoreProductionCollectionOptions {
 
 export interface SourceDependencyCollectionOptions {
   resolveModuleSpecifier?: (specifier: string, importer: string) => string;
+  /** Test seam for forcing the structured non-convergence failure path. */
   maximumBindingPasses?: number;
-}
-
-export interface PathContainmentImplementation {
-  relative: (from: string, to: string) => string;
-  isAbsolute: (path: string) => boolean;
-  separator: string;
-}
-
-const DEFAULT_PATH_CONTAINMENT_IMPLEMENTATION: PathContainmentImplementation = {
-  relative,
-  isAbsolute,
-  separator: SEPARATOR,
-};
-
-export function isPathContained(
-  root: string,
-  candidate: string,
-  implementation: PathContainmentImplementation =
-    DEFAULT_PATH_CONTAINMENT_IMPLEMENTATION,
-): boolean {
-  const relativePath = implementation.relative(root, candidate);
-  return relativePath === "" ||
-    (!implementation.isAbsolute(relativePath) && relativePath !== ".." &&
-      !relativePath.startsWith(`..${implementation.separator}`));
 }
 
 export type SourceDependencyKind =
@@ -90,6 +68,13 @@ export class SourceImportCollectorError extends Error {
 interface AstNode {
   type: string;
   [key: string]: unknown;
+}
+
+interface NormalizedInvocation {
+  target: unknown;
+  arguments: unknown[];
+  kind: "direct" | "call" | "apply" | "construct";
+  argumentsKnown: boolean;
 }
 
 interface LexicalScope {
@@ -384,6 +369,19 @@ function literalString(node: unknown): string | undefined {
     return undefined;
   }
   const value = quasis[0].value;
+  if (typeof value !== "object" || value === null) return undefined;
+  const cooked = (value as { cooked?: unknown }).cooked;
+  const raw = (value as { raw?: unknown }).raw;
+  return typeof cooked === "string"
+    ? cooked
+    : typeof raw === "string"
+    ? raw
+    : undefined;
+}
+
+function templateElementString(node: unknown): string | undefined {
+  if (!isNode(node) || node.type !== "TemplateElement") return undefined;
+  const value = node.value;
   if (typeof value !== "object" || value === null) return undefined;
   const cooked = (value as { cooked?: unknown }).cooked;
   const raw = (value as { raw?: unknown }).raw;
@@ -712,6 +710,62 @@ function joinApiBinding(
     : "uncertain-runtime-loader";
 }
 
+function setScopedApiValue(
+  values: ScopedValues<ApiBinding>,
+  scope: LexicalScope,
+  name: string,
+  incoming: ApiBinding,
+): boolean {
+  return setScopedValue(
+    values,
+    scope,
+    name,
+    joinApiBinding(getScopedValue(values, scope, name), incoming),
+  );
+}
+
+function setScopedMemberApiValue(
+  values: ScopedMemberValues<ApiBinding>,
+  scope: LexicalScope,
+  ownerName: string,
+  property: string,
+  incoming: ApiBinding,
+): boolean {
+  return setScopedMemberValue(
+    values,
+    scope,
+    ownerName,
+    property,
+    joinApiBinding(
+      getScopedMemberValue(values, scope, ownerName, property),
+      incoming,
+    ),
+  );
+}
+
+function copyScopedMemberApiValues(
+  values: ScopedMemberValues<ApiBinding>,
+  scope: LexicalScope,
+  sourceName: string,
+  targetName: string,
+): boolean {
+  const sourceScope = closestBindingScope(scope, sourceName);
+  if (!sourceScope) return false;
+  const members = values.get(sourceScope)?.get(sourceName);
+  if (!members) return false;
+  let changed = false;
+  for (const [property, api] of members) {
+    changed = setScopedMemberApiValue(
+      values,
+      scope,
+      targetName,
+      property,
+      api,
+    ) || changed;
+  }
+  return changed;
+}
+
 function loaderForApi(api: ApiBinding): string | undefined {
   switch (api) {
     case "import-meta-resolve":
@@ -864,6 +918,8 @@ function bindObjectPatternFromOwner(
   owner: ApiBinding | undefined,
   scope: LexicalScope,
   apiBindings: ScopedValues<ApiBinding>,
+  resolvePropertyName: (property: AstNode) => string | undefined =
+    propertyKeyName,
   transform: (api: ApiBinding) => ApiBinding = (api) => api,
 ): boolean {
   let changed = false;
@@ -874,13 +930,14 @@ function bindObjectPatternFromOwner(
       : []
   ) {
     if (!isNode(property) || property.type !== "ObjectProperty") continue;
-    const api = memberApi(owner, propertyKeyName(property));
+    const api = memberApi(owner, resolvePropertyName(property));
     if (isNode(property.value) && property.value.type === "ObjectPattern") {
       changed = bindObjectPatternFromOwner(
         property.value,
         api,
         scope,
         apiBindings,
+        resolvePropertyName,
         transform,
       ) || changed;
       continue;
@@ -891,7 +948,7 @@ function bindObjectPatternFromOwner(
         : undefined);
     if (!local) continue;
     if (api) {
-      changed = setScopedValue(apiBindings, scope, local, transform(api)) ||
+      changed = setScopedApiValue(apiBindings, scope, local, transform(api)) ||
         changed;
     }
   }
@@ -903,6 +960,8 @@ function bindObjectPatternApis(
   moduleName: string,
   scope: LexicalScope,
   apiBindings: ScopedValues<ApiBinding>,
+  resolvePropertyName: (property: AstNode) => string | undefined =
+    propertyKeyName,
   transform: (api: ApiBinding) => ApiBinding = (api) => api,
 ): boolean {
   let changed = false;
@@ -913,7 +972,7 @@ function bindObjectPatternApis(
       : []
   ) {
     if (!isNode(property) || property.type !== "ObjectProperty") continue;
-    const imported = propertyKeyName(property);
+    const imported = resolvePropertyName(property);
     const local = identifierName(property.value) ||
       (isNode(property.value) && property.value.type === "AssignmentPattern"
         ? identifierName(property.value.left)
@@ -921,7 +980,7 @@ function bindObjectPatternApis(
     if (!imported || !local) continue;
     const api = importedApi(moduleName, imported);
     if (api) {
-      changed = setScopedValue(apiBindings, scope, local, transform(api)) ||
+      changed = setScopedApiValue(apiBindings, scope, local, transform(api)) ||
         changed;
     }
   }
@@ -941,6 +1000,10 @@ function collectModuleBindings(
     node: unknown,
     scope: LexicalScope,
   ) => string | undefined;
+  normalizeInvocation: (
+    node: AstNode,
+    scope: LexicalScope,
+  ) => NormalizedInvocation;
   loaderEscapeForNode: (
     node: AstNode,
     scope: LexicalScope,
@@ -949,8 +1012,13 @@ function collectModuleBindings(
   const stringValues: ScopedValues<string> = new WeakMap();
   const apiBindings: ScopedValues<ApiBinding> = new WeakMap();
   const memberBindings: ScopedMemberValues<ApiBinding> = new WeakMap();
+  const parentByNode = new WeakMap<AstNode, AstNode>();
   const functionByScope = new WeakMap<LexicalScope, AstNode>();
   const immediatelyInvokedFunctions = new WeakSet<AstNode>();
+  const returnValuesByFunction = new WeakMap<
+    AstNode,
+    Array<{ value: unknown; scope: LexicalScope }>
+  >();
   const mutatedMemberBindings: WeakMap<LexicalScope, Set<string>> =
     new WeakMap();
   const memberMutations: Array<{ target: AstNode; scope: LexicalScope }> = [];
@@ -1000,14 +1068,6 @@ function collectModuleBindings(
     if (
       node.type === "CallExpression" || node.type === "OptionalCallExpression"
     ) {
-      const invoked = unwrapAwait(node.callee);
-      if (
-        isNode(invoked) &&
-        (invoked.type === "ArrowFunctionExpression" ||
-          invoked.type === "FunctionExpression")
-      ) {
-        immediatelyInvokedFunctions.add(invoked);
-      }
       for (
         const argument of Array.isArray(node.arguments) ? node.arguments : []
       ) {
@@ -1027,6 +1087,15 @@ function collectModuleBindings(
       }
     } else if (node.type === "ReturnStatement") {
       escapedValues.push({ value: node.argument, scope });
+      const localFunction = functionByScope.get(nearestFunctionScope(scope));
+      if (localFunction) {
+        let returnValues = returnValuesByFunction.get(localFunction);
+        if (!returnValues) {
+          returnValues = [];
+          returnValuesByFunction.set(localFunction, returnValues);
+        }
+        returnValues.push({ value: node.argument, scope });
+      }
     }
     if (node.type === "AssignmentPattern") {
       assignmentPatterns.push({ node, scope });
@@ -1059,7 +1128,7 @@ function collectModuleBindings(
               literalString(specifier.imported);
             if (imported) api = importedApi(moduleName, imported);
           }
-          if (api) setScopedValue(apiBindings, scope, local, api);
+          if (api) setScopedApiValue(apiBindings, scope, local, api);
         }
       }
     } else if (
@@ -1077,7 +1146,7 @@ function collectModuleBindings(
         : moduleName === "node:worker_threads"
         ? "worker-threads-namespace"
         : undefined;
-      if (local && api) setScopedValue(apiBindings, scope, local, api);
+      if (local && api) setScopedApiValue(apiBindings, scope, local, api);
     } else if (
       node.type === "VariableDeclaration" &&
       (node.kind === "const" || node.kind === "let" || node.kind === "var")
@@ -1117,7 +1186,10 @@ function collectModuleBindings(
         memberMutations.push({ target: node.argument, scope });
       }
     }
-    for (const child of childNodes(node)) visit(child);
+    for (const child of childNodes(node)) {
+      parentByNode.set(child, node);
+      visit(child);
+    }
   };
   visit(ast);
 
@@ -1139,6 +1211,25 @@ function collectModuleBindings(
       return left === undefined || right === undefined
         ? undefined
         : `${left}${right}`;
+    }
+    if (isNode(value) && value.type === "TemplateLiteral") {
+      const quasis = Array.isArray(value.quasis) ? value.quasis : [];
+      const expressions = Array.isArray(value.expressions)
+        ? value.expressions
+        : [];
+      if (quasis.length !== expressions.length + 1) return undefined;
+      let result = "";
+      for (let index = 0; index < quasis.length; index++) {
+        const quasi = templateElementString(quasis[index]);
+        if (quasi === undefined) return undefined;
+        result += quasi;
+        if (index < expressions.length) {
+          const expression = evaluateString(expressions[index], scope);
+          if (expression === undefined) return undefined;
+          result += expression;
+        }
+      }
+      return result;
     }
     if (isNode(value) && value.type === "NewExpression") {
       const callee = identifierName(value.callee);
@@ -1174,24 +1265,19 @@ function collectModuleBindings(
     return evaluateString(node.property, scope);
   };
 
-  const resolvedMemberPath = (
-    node: unknown,
+  const resolvedPropertyKey = (
+    node: AstNode,
     scope: LexicalScope,
-  ): { ownerName: string; properties: string[] } | undefined => {
-    const properties: string[] = [];
-    let value = unwrapAwait(node);
-    while (
-      isNode(value) &&
-      (value.type === "MemberExpression" ||
-        value.type === "OptionalMemberExpression")
-    ) {
-      const property = resolvedMemberProperty(value, scope);
-      if (property === undefined) return undefined;
-      properties.unshift(property);
-      value = unwrapAwait(value.object);
+  ): string | undefined => {
+    if (node.computed !== true) {
+      return identifierName(node.key) ?? literalString(node.key);
     }
-    const ownerName = identifierName(value);
-    return ownerName ? { ownerName, properties } : undefined;
+    const computed = evaluateString(node.key, scope);
+    if (computed !== undefined) return computed;
+    return isNode(node.key) && node.key.type === "NumericLiteral" &&
+        typeof node.key.value === "number"
+      ? String(node.key.value)
+      : undefined;
   };
 
   const requiredModuleName = (
@@ -1236,21 +1322,103 @@ function collectModuleBindings(
     return undefined;
   };
 
-  const invocationTarget = (
+  const arrayInvocationArguments = (
+    node: unknown,
+  ): { values: unknown[]; known: boolean } => {
+    const value = unwrapAwait(node);
+    if (!isNode(value) || value.type !== "ArrayExpression") {
+      return {
+        values: value === undefined ? [] : [value],
+        known: false,
+      };
+    }
+    const elements = Array.isArray(value.elements) ? value.elements : [];
+    return {
+      values: elements.map((element) =>
+        isNode(element) && element.type === "SpreadElement"
+          ? element.argument
+          : element
+      ),
+      known: elements.every((element) =>
+        !isNode(element) || element.type !== "SpreadElement"
+      ),
+    };
+  };
+
+  const normalizeInvocation = (
     node: AstNode,
     scope: LexicalScope,
-  ): unknown => {
+  ): NormalizedInvocation => {
+    const rawArguments = Array.isArray(node.arguments) ? node.arguments : [];
+    if (node.type === "NewExpression") {
+      return {
+        target: node.callee,
+        arguments: rawArguments,
+        kind: "construct",
+        argumentsKnown: rawArguments.every((argument) =>
+          !isNode(argument) || argument.type !== "SpreadElement"
+        ),
+      };
+    }
     if (
       !isNode(node.callee) ||
       (node.callee.type !== "MemberExpression" &&
         node.callee.type !== "OptionalMemberExpression")
     ) {
-      return node.callee;
+      return {
+        target: node.callee,
+        arguments: rawArguments,
+        kind: "direct",
+        argumentsKnown: rawArguments.every((argument) =>
+          !isNode(argument) || argument.type !== "SpreadElement"
+        ),
+      };
     }
     const method = resolvedMemberProperty(node.callee, scope);
-    return method === "call" || method === "apply"
-      ? node.callee.object
-      : node.callee;
+    const isReflectInvocation =
+      identifierName(node.callee.object) === "Reflect" &&
+      isUnbound(scope, "Reflect");
+    if (
+      isReflectInvocation && (method === "apply" || method === "construct")
+    ) {
+      const forwarded = arrayInvocationArguments(
+        method === "apply" ? rawArguments[2] : rawArguments[1],
+      );
+      return {
+        target: rawArguments[0],
+        arguments: forwarded.values,
+        kind: method,
+        argumentsKnown: forwarded.known,
+      };
+    }
+    if (method === "call") {
+      const effectiveArguments = rawArguments.slice(1);
+      return {
+        target: node.callee.object,
+        arguments: effectiveArguments,
+        kind: "call",
+        argumentsKnown: effectiveArguments.every((argument) =>
+          !isNode(argument) || argument.type !== "SpreadElement"
+        ),
+      };
+    }
+    if (method === "apply") {
+      const forwarded = arrayInvocationArguments(rawArguments[1]);
+      return {
+        target: node.callee.object,
+        arguments: forwarded.values,
+        kind: "apply",
+        argumentsKnown: forwarded.known,
+      };
+    }
+    return {
+      target: node.callee,
+      arguments: rawArguments,
+      kind: "direct",
+      argumentsKnown: rawArguments.every((argument) =>
+        !isNode(argument) || argument.type !== "SpreadElement"
+      ),
+    };
   };
 
   const apiForExpression = (
@@ -1309,7 +1477,8 @@ function collectModuleBindings(
       unwrapped.type === "CallExpression" ||
       unwrapped.type === "OptionalCallExpression"
     ) {
-      const invoked = unwrapAwait(unwrapped.callee);
+      const invocation = normalizeInvocation(unwrapped, scope);
+      const invoked = unwrapAwait(invocation.target);
       if (
         isNode(invoked) &&
         (invoked.type === "ArrowFunctionExpression" ||
@@ -1317,28 +1486,20 @@ function collectModuleBindings(
       ) {
         const returnValues = isNode(invoked.body) &&
             invoked.body.type !== "BlockStatement"
-          ? [invoked.body]
-          : isNode(invoked.body) && Array.isArray(invoked.body.body)
-          ? invoked.body.body.flatMap((statement) =>
-            isNode(statement) && statement.type === "ReturnStatement"
-              ? [statement.argument]
-              : []
-          )
-          : [];
-        const returnedApis = returnValues.map((value) =>
-          apiForExpression(value, scope)
-        ).filter((api): api is ApiBinding => api !== undefined);
-        if (returnedApis.length > 0) {
-          return uncertainAlias(
-            returnedApis.every((api) => api === returnedApis[0])
-              ? returnedApis[0]
-              : "uncertain-runtime-loader",
-          );
+          ? [{
+            value: invoked.body,
+            scope: scopeByNode.get(invoked.body) ?? scope,
+          }]
+          : returnValuesByFunction.get(invoked) ?? [];
+        let returnedApi: ApiBinding | undefined;
+        for (const returned of returnValues) {
+          const api = apiForExpression(returned.value, returned.scope);
+          if (api) returnedApi = joinApiBinding(returnedApi, api);
         }
+        if (returnedApi) return uncertainAlias(returnedApi);
       }
       if (
-        apiForExpression(invocationTarget(unwrapped, scope), scope) ===
-          "create-require"
+        apiForExpression(invocation.target, scope) === "create-require"
       ) {
         return "require";
       }
@@ -1557,7 +1718,7 @@ function collectModuleBindings(
       const name = identifierName(pattern.left);
       const api = apiForExpression(pattern.right, scope);
       if (name && api) {
-        changed = setScopedValue(
+        changed = setScopedApiValue(
           apiBindings,
           scope,
           name,
@@ -1575,6 +1736,7 @@ function collectModuleBindings(
           moduleName,
           scope,
           apiBindings,
+          (property) => resolvedPropertyKey(property, scope),
         ) || changed;
       } else if (moduleName && declaration.id.type === "Identifier") {
         const api = moduleName === "node:module"
@@ -1583,7 +1745,7 @@ function collectModuleBindings(
           ? "worker-threads-namespace"
           : undefined;
         if (api) {
-          changed = setScopedValue(
+          changed = setScopedApiValue(
             apiBindings,
             scope,
             declaration.id.name as string,
@@ -1604,6 +1766,7 @@ function collectModuleBindings(
             : apiForExpression(declaration.init, scope),
           scope,
           apiBindings,
+          (property) => resolvedPropertyKey(property, scope),
         ) || changed;
         const ownerName = identifierName(unwrapAwait(declaration.init));
         if (ownerName) {
@@ -1615,7 +1778,7 @@ function collectModuleBindings(
             if (!isNode(property) || property.type !== "ObjectProperty") {
               continue;
             }
-            const key = propertyKeyName(property);
+            const key = resolvedPropertyKey(property, scope);
             const local = identifierName(property.value) ??
               (isNode(property.value) &&
                   property.value.type === "AssignmentPattern"
@@ -1625,7 +1788,7 @@ function collectModuleBindings(
               ? getScopedMemberValue(memberBindings, scope, ownerName, key)
               : undefined;
             if (local && api) {
-              changed = setScopedValue(
+              changed = setScopedApiValue(
                 apiBindings,
                 scope,
                 local,
@@ -1647,7 +1810,7 @@ function collectModuleBindings(
             if (!isNode(property) || property.type !== "ObjectProperty") {
               continue;
             }
-            const key = propertyKeyName(property);
+            const key = resolvedPropertyKey(property, scope);
             if (key) valuesByKey.set(key, property.value);
           }
           for (
@@ -1658,7 +1821,7 @@ function collectModuleBindings(
             if (!isNode(property) || property.type !== "ObjectProperty") {
               continue;
             }
-            const key = propertyKeyName(property);
+            const key = resolvedPropertyKey(property, scope);
             const value = key ? valuesByKey.get(key) : undefined;
             const local = identifierName(property.value) ??
               (isNode(property.value) &&
@@ -1667,7 +1830,7 @@ function collectModuleBindings(
                 : undefined);
             const api = apiForExpression(value, scope);
             if (local && api) {
-              changed = setScopedValue(
+              changed = setScopedApiValue(
                 apiBindings,
                 scope,
                 local,
@@ -1700,7 +1863,7 @@ function collectModuleBindings(
             )
             : apiForExpression(values[index], scope);
           if (local && api) {
-            changed = setScopedValue(
+            changed = setScopedApiValue(
               apiBindings,
               scope,
               local,
@@ -1711,6 +1874,17 @@ function collectModuleBindings(
       }
 
       const declaredName = identifierName(declaration.id);
+      const aliasedContainerName = identifierName(
+        unwrapAwait(declaration.init),
+      );
+      if (declaredName && aliasedContainerName) {
+        changed = copyScopedMemberApiValues(
+          memberBindings,
+          scope,
+          aliasedContainerName,
+          declaredName,
+        ) || changed;
+      }
       if (
         declaredName && isNode(declaration.init) &&
         declaration.init.type === "ObjectExpression"
@@ -1721,10 +1895,10 @@ function collectModuleBindings(
             : []
         ) {
           if (!isNode(property) || property.type !== "ObjectProperty") continue;
-          const propertyName = propertyKeyName(property);
+          const propertyName = resolvedPropertyKey(property, scope);
           const memberApiBinding = apiForExpression(property.value, scope);
           if (propertyName && memberApiBinding) {
-            changed = setScopedMemberValue(
+            changed = setScopedMemberApiValue(
               memberBindings,
               scope,
               declaredName,
@@ -1744,7 +1918,7 @@ function collectModuleBindings(
         ) {
           const memberApiBinding = apiForExpression(value, scope);
           if (memberApiBinding) {
-            changed = setScopedMemberValue(
+            changed = setScopedMemberApiValue(
               memberBindings,
               scope,
               declaredName,
@@ -1780,6 +1954,7 @@ function collectModuleBindings(
               imported,
               scope,
               apiBindings,
+              (property) => resolvedPropertyKey(property, scope),
             ) || changed;
           }
         });
@@ -1814,11 +1989,23 @@ function collectModuleBindings(
       }
       if (kind !== "const" && api) api = uncertainAlias(api);
       if (api) {
-        changed = setScopedValue(apiBindings, scope, name, api) || changed;
+        changed = setScopedApiValue(apiBindings, scope, name, api) || changed;
       }
     }
     for (const { node: assignment, scope } of assignments) {
       const api = apiForExpression(assignment.right, scope);
+      const assignedName = identifierName(assignment.left);
+      const aliasedContainerName = identifierName(
+        unwrapAwait(assignment.right),
+      );
+      if (assignedName && aliasedContainerName) {
+        changed = copyScopedMemberApiValues(
+          memberBindings,
+          scope,
+          aliasedContainerName,
+          assignedName,
+        ) || changed;
+      }
       if (isNode(assignment.left) && assignment.left.type === "ObjectPattern") {
         const moduleName = importedModuleName(assignment.right, scope) ??
           requiredModuleName(assignment.right, scope);
@@ -1828,6 +2015,7 @@ function collectModuleBindings(
             moduleName,
             scope,
             apiBindings,
+            (property) => resolvedPropertyKey(property, scope),
             uncertainAlias,
           ) || changed;
         } else if (api) {
@@ -1836,15 +2024,16 @@ function collectModuleBindings(
             api,
             scope,
             apiBindings,
+            (property) => resolvedPropertyKey(property, scope),
             uncertainAlias,
           ) || changed;
         }
         continue;
       }
       if (!api) continue;
-      const name = identifierName(assignment.left);
+      const name = assignedName;
       if (name) {
-        changed = setScopedValue(
+        changed = setScopedApiValue(
           apiBindings,
           scope,
           name,
@@ -1860,7 +2049,7 @@ function collectModuleBindings(
         const ownerName = identifierName(assignment.left.object);
         const property = resolvedMemberProperty(assignment.left, scope);
         if (ownerName && property) {
-          changed = setScopedMemberValue(
+          changed = setScopedMemberApiValue(
             memberBindings,
             scope,
             ownerName,
@@ -1872,9 +2061,32 @@ function collectModuleBindings(
     }
   }
 
+  const markImmediatelyInvokedFunctions = (node: AstNode): void => {
+    const scope = scopeByNode.get(node);
+    if (!scope) throw new Error(`missing lexical scope for ${node.type}`);
+    if (
+      node.type === "CallExpression" ||
+      node.type === "OptionalCallExpression"
+    ) {
+      const invoked = unwrapAwait(normalizeInvocation(node, scope).target);
+      if (
+        isNode(invoked) &&
+        (invoked.type === "ArrowFunctionExpression" ||
+          invoked.type === "FunctionExpression")
+      ) {
+        immediatelyInvokedFunctions.add(invoked);
+      }
+    }
+    for (const child of childNodes(node)) {
+      markImmediatelyInvokedFunctions(child);
+    }
+  };
+  markImmediatelyInvokedFunctions(ast);
+
   const escapedApiInExpression = (
     value: unknown,
     scope: LexicalScope,
+    includeNamespaces = false,
   ): ApiBinding | undefined => {
     const pending = [value];
     let result: ApiBinding | undefined;
@@ -1901,8 +2113,22 @@ function collectModuleBindings(
         );
         continue;
       }
+      const containerName = identifierName(expression);
+      const containerScope = containerName
+        ? closestBindingScope(scope, containerName)
+        : undefined;
+      const memberApis = containerName && containerScope
+        ? memberBindings.get(containerScope)?.get(containerName)
+        : undefined;
+      if (memberApis) {
+        for (const api of memberApis.values()) {
+          if (includeNamespaces || unresolvedLoaderForApi(api)) {
+            result = joinApiBinding(result, uncertainAlias(api));
+          }
+        }
+      }
       const api = apiForExpression(expression, scope);
-      if (api && unresolvedLoaderForApi(api)) {
+      if (api && (includeNamespaces || unresolvedLoaderForApi(api))) {
         result = joinApiBinding(result, uncertainAlias(api));
       }
     }
@@ -1913,6 +2139,40 @@ function collectModuleBindings(
     node: AstNode,
     scope: LexicalScope,
   ): ApiBinding | undefined => {
+    const parent = parentByNode.get(node);
+    const isWriteOnlyMember =
+      parent?.type === "AssignmentExpression" && parent.left === node &&
+        parent.operator === "=" ||
+      parent?.type === "UnaryExpression" && parent.argument === node &&
+        parent.operator === "delete";
+    if (
+      (node.type === "MemberExpression" ||
+        node.type === "OptionalMemberExpression") &&
+      node.computed === true && !isWriteOnlyMember &&
+      resolvedMemberProperty(node, scope) === undefined
+    ) {
+      const ownerApi = apiForExpression(node.object, scope);
+      if (
+        ownerApi &&
+        [
+          "require",
+          "require-alias",
+          "node-module-namespace",
+          "worker-threads-namespace",
+          "global-namespace",
+          "navigator-namespace",
+          "service-worker",
+          "import-meta-namespace",
+          "css-namespace",
+          "audio-worklet",
+          "css-paint-worklet",
+          "css-layout-worklet",
+          "css-animation-worklet",
+        ].includes(ownerApi)
+      ) {
+        return "uncertain-runtime-loader";
+      }
+    }
     if (node.type === "ReturnStatement") {
       const localFunction = functionByScope.get(nearestFunctionScope(scope));
       if (
@@ -1920,52 +2180,108 @@ function collectModuleBindings(
       ) {
         return undefined;
       }
-      const api = apiForExpression(node.argument, scope);
+      const api = escapedApiInExpression(node.argument, scope, true);
       return api ? uncertainAlias(api) : undefined;
     }
-    if (node.type === "AssignmentExpression" && node.operator === "=") {
-      const memberPath = isNode(node.left) &&
-          (node.left.type === "MemberExpression" ||
-            node.left.type === "OptionalMemberExpression")
-        ? resolvedMemberPath(node.left, scope)
-        : undefined;
+    if (
+      node.type === "ArrowFunctionExpression" &&
+      isNode(node.body) && node.body.type !== "BlockStatement" &&
+      !immediatelyInvokedFunctions.has(node)
+    ) {
+      const bodyScope = scopeByNode.get(node.body) ?? scope;
+      const api = escapedApiInExpression(node.body, bodyScope, true);
+      return api ? uncertainAlias(api) : undefined;
+    }
+    if (node.type === "YieldExpression") {
+      const api = escapedApiInExpression(node.argument, scope, true);
+      return api ? uncertainAlias(api) : undefined;
+    }
+    if (
+      node.type === "ExportNamedDeclaration" ||
+      node.type === "ExportDefaultDeclaration"
+    ) {
+      const values: unknown[] = [];
       if (
-        !isNode(node.left) ||
-        (node.left.type !== "MemberExpression" &&
-          node.left.type !== "OptionalMemberExpression") ||
-        memberPath !== undefined && memberPath.properties.length <= 1
+        isNode(node.declaration) &&
+        node.declaration.type === "VariableDeclaration"
       ) {
-        return undefined;
+        for (
+          const declaration of Array.isArray(node.declaration.declarations)
+            ? node.declaration.declarations
+            : []
+        ) {
+          if (isNode(declaration)) values.push(declaration.init);
+        }
+      } else if (isNode(node.declaration)) {
+        values.push(node.declaration);
       }
-      const api = apiForExpression(node.right, scope);
+      if (node.type === "ExportNamedDeclaration") {
+        for (
+          const specifier of Array.isArray(node.specifiers)
+            ? node.specifiers
+            : []
+        ) {
+          if (isNode(specifier)) values.push(specifier.local);
+        }
+      }
+      let exportedApi: ApiBinding | undefined;
+      for (const value of values) {
+        const api = escapedApiInExpression(value, scope, true);
+        if (api) exportedApi = joinApiBinding(exportedApi, api);
+      }
+      if (exportedApi) return exportedApi;
+    }
+    if (
+      node.type === "AssignmentExpression" && isNode(node.left) &&
+      (node.left.type === "MemberExpression" ||
+        node.left.type === "OptionalMemberExpression")
+    ) {
+      const api = escapedApiInExpression(node.right, scope, true);
       return api ? uncertainAlias(api) : undefined;
     }
     if (
       (node.type === "ClassProperty" ||
-        node.type === "PropertyDefinition") &&
-      node.static === true
+        node.type === "ClassPrivateProperty" ||
+        node.type === "PropertyDefinition")
     ) {
-      const api = apiForExpression(node.value, scope);
+      const api = escapedApiInExpression(node.value, scope, true);
       return api ? uncertainAlias(api) : undefined;
     }
     if (
+      node.type === "ObjectProperty" && parent?.type === "ObjectExpression"
+    ) {
+      const api = escapedApiInExpression(node.value, scope, true);
+      return api ? uncertainAlias(api) : undefined;
+    }
+    if (
+      node.type === "SpreadElement" &&
+      (parent?.type === "ObjectExpression" ||
+        parent?.type === "ArrayExpression")
+    ) {
+      const api = escapedApiInExpression(node.argument, scope, true);
+      return api ? uncertainAlias(api) : undefined;
+    }
+    if (node.type === "ArrayExpression") {
+      let storedApi: ApiBinding | undefined;
+      for (
+        const element of Array.isArray(node.elements) ? node.elements : []
+      ) {
+        if (!isNode(element) || element.type === "SpreadElement") continue;
+        const api = escapedApiInExpression(element, scope, true);
+        if (api) storedApi = joinApiBinding(storedApi, uncertainAlias(api));
+      }
+      if (storedApi) return storedApi;
+    }
+    if (
       node.type !== "CallExpression" &&
-      node.type !== "OptionalCallExpression"
+      node.type !== "OptionalCallExpression" &&
+      node.type !== "NewExpression"
     ) {
       return undefined;
     }
-    const target = invocationTarget(node, scope);
+    const invocation = normalizeInvocation(node, scope);
+    const target = invocation.target;
     if (apiForExpression(target, scope)) {
-      return undefined;
-    }
-    const reflectMethod = isNode(node.callee) &&
-        (node.callee.type === "MemberExpression" ||
-          node.callee.type === "OptionalMemberExpression") &&
-        identifierName(node.callee.object) === "Reflect" &&
-        isUnbound(scope, "Reflect")
-      ? resolvedMemberProperty(node.callee, scope)
-      : undefined;
-    if (reflectMethod === "apply" || reflectMethod === "construct") {
       return undefined;
     }
     if (
@@ -1976,9 +2292,7 @@ function collectModuleBindings(
       return undefined;
     }
     let escapedApi: ApiBinding | undefined;
-    for (
-      const argument of Array.isArray(node.arguments) ? node.arguments : []
-    ) {
+    for (const argument of invocation.arguments) {
       const api = escapedApiInExpression(
         isNode(argument) && argument.type === "SpreadElement"
           ? argument.argument
@@ -1995,6 +2309,7 @@ function collectModuleBindings(
     apiBindings,
     resolveApi: apiForExpression,
     resolveMemberProperty: resolvedMemberProperty,
+    normalizeInvocation,
     loaderEscapeForNode,
   };
 }
@@ -2030,6 +2345,30 @@ function resolvedString(
     return left === undefined || right === undefined
       ? undefined
       : `${left}${right}`;
+  }
+  if (isNode(value) && value.type === "TemplateLiteral") {
+    const quasis = Array.isArray(value.quasis) ? value.quasis : [];
+    const expressions = Array.isArray(value.expressions)
+      ? value.expressions
+      : [];
+    if (quasis.length !== expressions.length + 1) return undefined;
+    let result = "";
+    for (let index = 0; index < quasis.length; index++) {
+      const quasi = templateElementString(quasis[index]);
+      if (quasi === undefined) return undefined;
+      result += quasi;
+      if (index < expressions.length) {
+        const expression = resolvedString(
+          expressions[index],
+          stringValues,
+          scope,
+          new Set(seen),
+        );
+        if (expression === undefined) return undefined;
+        result += expression;
+      }
+    }
+    return result;
   }
   if (isNode(value) && value.type === "NewExpression") {
     const callee = identifierName(value.callee);
@@ -2293,6 +2632,10 @@ export function collectSourceDependencies(
     node: unknown,
     scope: LexicalScope,
   ) => string | undefined;
+  let normalizeInvocation: (
+    node: AstNode,
+    scope: LexicalScope,
+  ) => NormalizedInvocation;
   let loaderEscapeForNode: (
     node: AstNode,
     scope: LexicalScope,
@@ -2303,6 +2646,7 @@ export function collectSourceDependencies(
       stringValues,
       resolveApi,
       resolveMemberProperty,
+      normalizeInvocation,
       loaderEscapeForNode,
     } = collectModuleBindings(
       ast,
@@ -2419,31 +2763,10 @@ export function collectSourceDependencies(
       if (isNode(node.callee) && node.callee.type === "Import") {
         recordLoader(node, scope, "import", args[0]);
       } else {
-        const directApi = resolveApi(node.callee, scope);
-        const indirectMethod = isNode(node.callee) &&
-            (node.callee.type === "MemberExpression" ||
-              node.callee.type === "OptionalMemberExpression")
-          ? resolveMemberProperty(node.callee, scope)
-          : undefined;
-        const indirectApi =
-          indirectMethod === "call" || indirectMethod === "apply"
-            ? resolveApi((node.callee as AstNode).object, scope)
-            : undefined;
-        const calleeName = identifierName(node.callee);
-        const reflectMethod = isNode(node.callee) &&
-            (node.callee.type === "MemberExpression" ||
-              node.callee.type === "OptionalMemberExpression") &&
-            identifierName(node.callee.object) === "Reflect" &&
-            isUnbound(scope, "Reflect")
-          ? resolveMemberProperty(node.callee, scope)
-          : undefined;
-        const reflectedApi = reflectMethod === "apply" ||
-            reflectMethod === "construct"
-          ? resolveApi(args[0], scope)
-          : undefined;
-        const reflectedLoader = reflectedApi
-          ? unresolvedLoaderForApi(reflectedApi)
-          : undefined;
+        const invocation = normalizeInvocation(node, scope);
+        const args = invocation.arguments;
+        const directApi = resolveApi(invocation.target, scope);
+        const calleeName = identifierName(invocation.target);
         const generatedFunctionReceivesLoader = isNode(node.callee) &&
           (node.callee.type === "CallExpression" ||
             node.callee.type === "NewExpression") &&
@@ -2457,14 +2780,6 @@ export function collectSourceDependencies(
             "unresolved-runtime-loader",
             { loader: "Function" },
           );
-        } else if (reflectedLoader !== undefined) {
-          pushDependency(
-            dependencies,
-            file.path,
-            node,
-            "unresolved-runtime-loader",
-            { loader: reflectedLoader },
-          );
         } else if (directApi === "import-meta-resolve") {
           recordLoader(node, scope, "import.meta.resolve", args[0]);
         } else if (
@@ -2472,29 +2787,6 @@ export function collectSourceDependencies(
           directApi === "require"
         ) {
           recordLoader(node, scope, "require", args[0]);
-        } else if (
-          indirectApi === "require" || indirectApi === "require-alias" ||
-          indirectApi === "require-resolve"
-        ) {
-          pushDependency(
-            dependencies,
-            file.path,
-            node,
-            "unresolved-runtime-loader",
-            {
-              loader: indirectApi === "require-resolve"
-                ? "require.resolve"
-                : "require-alias",
-            },
-          );
-        } else if (indirectApi && loaderForApi(indirectApi)) {
-          pushDependency(
-            dependencies,
-            file.path,
-            node,
-            "unresolved-runtime-loader",
-            { loader: loaderForApi(indirectApi) },
-          );
         } else if (directApi === "require-resolve") {
           recordLoader(node, scope, "require.resolve", args[0]);
         } else if (directApi === "require-alias") {
@@ -2517,6 +2809,11 @@ export function collectSourceDependencies(
               loader: "runtime-loader-alias",
             },
           );
+        } else if (
+          directApi !== "import-scripts" && directApi &&
+          loaderForApi(directApi)
+        ) {
+          recordLoader(node, scope, loaderForApi(directApi)!, args[0]);
         } else if (directApi === "service-worker-register") {
           recordLoader(
             node,
@@ -2659,18 +2956,15 @@ export function collectSourceDependencies(
           }
         } else if (
           (calleeName === "eval" && isUnbound(scope, "eval")) ||
-          directApi === "eval" ||
-          indirectApi === "eval"
+          directApi === "eval"
         ) {
           const body = resolvedString(
-            indirectApi === "eval"
-              ? indirectMethod === "call" ? args[1] : undefined
-              : args[0],
+            args[0],
             stringValues,
             scope,
           );
           const directEval = calleeName === "eval" &&
-            isUnbound(scope, "eval") && indirectApi === undefined;
+            isUnbound(scope, "eval") && invocation.kind === "direct";
           if (
             body === undefined ||
             loaderSourceContainsModuleLoad(
@@ -2693,12 +2987,10 @@ export function collectSourceDependencies(
           }
         } else if (
           (calleeName === "Function" && isUnbound(scope, "Function")) ||
-          directApi === "Function" || indirectApi === "Function"
+          directApi === "Function"
         ) {
           const body = resolvedString(
-            indirectApi === "Function" && indirectMethod === "apply"
-              ? undefined
-              : args.at(-1),
+            args.at(-1),
             stringValues,
             scope,
           );

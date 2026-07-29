@@ -1,4 +1,5 @@
-import { dirname, isAbsolute, join, relative, SEPARATOR } from "#std/path";
+import { dirname, isAbsolute, join, relative } from "#std/path";
+import { isPathContained } from "../lib/path-containment.ts";
 
 export interface ExtensionCheckInvocation {
   command: string;
@@ -19,30 +20,6 @@ export type ExtensionCheckRunner = (
 export interface ExtensionWorkspaceCheckSummary {
   members: number;
   entrypoints: number;
-}
-
-export interface PathContainmentImplementation {
-  relative: (from: string, to: string) => string;
-  isAbsolute: (path: string) => boolean;
-  separator: string;
-}
-
-const DEFAULT_PATH_CONTAINMENT_IMPLEMENTATION: PathContainmentImplementation = {
-  relative,
-  isAbsolute,
-  separator: SEPARATOR,
-};
-
-export function isPathContained(
-  root: string,
-  candidate: string,
-  implementation: PathContainmentImplementation =
-    DEFAULT_PATH_CONTAINMENT_IMPLEMENTATION,
-): boolean {
-  const relativePath = implementation.relative(root, candidate);
-  return relativePath === "" ||
-    (!implementation.isAbsolute(relativePath) && relativePath !== ".." &&
-      !relativePath.startsWith(`..${implementation.separator}`));
 }
 
 function exportedTypeScriptTargets(value: unknown, path = "exports"): string[] {

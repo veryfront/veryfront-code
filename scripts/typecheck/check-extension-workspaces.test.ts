@@ -1,9 +1,9 @@
 import { win32 } from "node:path";
 import { assertEquals, assertRejects } from "#std/assert";
+import { isPathContained as isExtensionPathContained } from "../lib/path-containment.ts";
 import {
   checkExtensionWorkspaces,
   type ExtensionCheckInvocation,
-  isPathContained as isExtensionPathContained,
 } from "./check-extension-workspaces.ts";
 
 Deno.test("extension file containment is separator-agnostic for Windows paths", () => {

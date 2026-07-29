@@ -6,6 +6,7 @@ import {
 } from "#std/assert";
 import { toFileUrl } from "#std/path";
 import { CORE_RUNTIME_ENTRYPOINTS } from "./core-production-roots.ts";
+import { runStrictCoreDependencyAuditCli } from "./audit-core-deps-strict.ts";
 import { collectCoreProductionFiles } from "./source-import-collector.ts";
 
 Deno.test("core dependency collection visits a production file below a real root", async () => {
@@ -1007,6 +1008,281 @@ Deno.test("strict audit fails closed for generic loader provenance escapes", asy
         loader: "require-alias",
       },
     },
+    {
+      name: "concise named function return",
+      content: [
+        "const factory = () => require;",
+        "const load = factory();",
+        'load("npm:concise-return@1");',
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "nested conditional return inside iife",
+      content: [
+        "const load = (() => {",
+        "  if (enabled) { return require; }",
+        "  return undefined;",
+        "})();",
+        'load("npm:nested-iife-return@1");',
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "reflect apply parameter injection",
+      content: [
+        "function use(load: unknown) { return load; }",
+        "Reflect.apply(use, null, [require]);",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "reflect construct parameter injection",
+      content: [
+        "class Use { constructor(load: unknown) { void load; } }",
+        "Reflect.construct(Use, [require]);",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "constant template computed service worker method",
+      content: [
+        'const METHOD_SUFFIX = "ister";',
+        'const target = "npm:template-service-worker@1";',
+        "navigator.serviceWorker[\`reg\${METHOD_SUFFIX}\`](target);",
+      ].join("\n"),
+      expected: {
+        code: "forbidden-external-dependency",
+        loader: "navigator.serviceWorker.register",
+        specifier: "npm:template-service-worker@1",
+      },
+    },
+    {
+      name: "exported loader",
+      content: "export const load = require;",
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "yielded loader",
+      content: "function* loaders() { yield require; }",
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "aliased loader container",
+      content: [
+        "const loaders = { load: require };",
+        "const alias = loaders;",
+        'alias.load("npm:aliased-container@1");',
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "exported aliased loader container",
+      content: [
+        "const loaders = { load: require };",
+        "export { loaders };",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "returned aliased loader container",
+      content: [
+        "function expose() {",
+        "  const loaders = { load: require };",
+        "  return loaders;",
+        "}",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "returned global loader namespace",
+      content: "function expose() { return globalThis; }",
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "runtime-loader-alias",
+      },
+    },
+    {
+      name: "apply with aliased argument container",
+      content: [
+        "function use(load: unknown) { return load; }",
+        "const values = [require];",
+        "const alias = values;",
+        "use.apply(null, alias);",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "instance field loader",
+      content: "class Loaders { load = require; }",
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "constructor parameter injection",
+      content: [
+        "class Use { constructor(load: unknown) { void load; } }",
+        "new Use(require);",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "call parameter injection",
+      content: [
+        "function use(load: unknown) { return load; }",
+        "use.call(null, require);",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "reflect apply createRequire",
+      content: [
+        'import { createRequire } from "node:module";',
+        "const load = Reflect.apply(createRequire, null, [import.meta.url]);",
+        'load("npm:reflect-create-require@1");',
+      ].join("\n"),
+      expected: {
+        code: "forbidden-external-dependency",
+        loader: "require",
+        specifier: "npm:reflect-create-require@1",
+      },
+    },
+    {
+      name: "reflect construct worker",
+      content: 'Reflect.construct(Worker, ["npm:reflect-construct-worker@1"]);',
+      expected: {
+        code: "forbidden-external-dependency",
+        loader: "Worker",
+        specifier: "npm:reflect-construct-worker@1",
+      },
+    },
+    {
+      name: "reverse alias member store",
+      content: [
+        "const original: Record<string, unknown> = {};",
+        "const alias = original;",
+        "alias.load = require;",
+        "original.load(target);",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+        line: 3,
+      },
+    },
+    {
+      name: "escaped original after alias store",
+      content: [
+        "const original: Record<string, unknown> = {};",
+        "const alias = original;",
+        "alias.load = require;",
+        "use(original);",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+        line: 3,
+      },
+    },
+    {
+      name: "object spread",
+      content: [
+        "const original = { load: require };",
+        "const copy = { ...original };",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+        line: 2,
+      },
+    },
+    {
+      name: "array spread",
+      content: [
+        "const original = [require];",
+        "const copy = [...original];",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+        line: 2,
+      },
+    },
+    {
+      name: "constant computed object key",
+      content: [
+        'const LOAD = "load";',
+        "const original = { [LOAD]: require };",
+        "original.load(target);",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "require-alias",
+        line: 3,
+      },
+    },
+    {
+      name: "unknown computed namespace call",
+      content: [
+        'import * as moduleApi from "node:module";',
+        "moduleApi[method](target);",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "runtime-loader-alias",
+        line: 2,
+      },
+    },
+    {
+      name: "unknown computed namespace read",
+      content: [
+        'import * as moduleApi from "node:module";',
+        "const maybeLoad = moduleApi[method];",
+      ].join("\n"),
+      expected: {
+        code: "unresolved-runtime-loader",
+        loader: "runtime-loader-alias",
+        line: 2,
+      },
+    },
   ] as const;
 
   for (const testCase of cases) {
@@ -1025,6 +1301,8 @@ Deno.test("strict audit fails closed for generic loader provenance escapes", asy
             entry.path === "src/index.ts" &&
             entry.code === testCase.expected.code &&
             entry.loader === testCase.expected.loader &&
+            (!("line" in testCase.expected) ||
+              entry.line === testCase.expected.line) &&
             (!("specifier" in testCase.expected) ||
               entry.specifier === testCase.expected.specifier)
           ),
@@ -1035,6 +1313,73 @@ Deno.test("strict audit fails closed for generic loader provenance escapes", asy
         await Deno.remove(root, { recursive: true });
       }
     });
+  }
+});
+
+Deno.test("strict audit gives normalized loader-returning IIFEs one stable issue per context", async (context) => {
+  const cases = [
+    ["direct", "(() => require)()(target);"],
+    ["call", "(() => require).call(null)(target);"],
+    ["apply", "(() => require).apply(null, [])(target);"],
+    ["Reflect.apply", "Reflect.apply(() => require, null, [])(target);"],
+    [
+      "Reflect.construct",
+      "Reflect.construct(function () { return require; }, [])(target);",
+    ],
+  ] as const;
+
+  for (const [name, source] of cases) {
+    await context.step(name, async () => {
+      const root = await auditFixture();
+      const outputPath = `${root}/audit.json`;
+      try {
+        await writeSource(root, "src/index.ts", `${source}\n`);
+        const result = await runAudit(["--root", root, "--output", outputPath]);
+        const report = JSON.parse(await Deno.readTextFile(outputPath));
+        assertEquals(result.code, 2, result.stderr);
+        assertEquals(report.evidenceComplete, true);
+        assertEquals(report.operationalErrors, []);
+        const unresolved = report.issues.filter(
+          (entry: Record<string, unknown>) =>
+            entry.path === "src/index.ts" &&
+            entry.code === "unresolved-runtime-loader" &&
+            entry.loader === "require-alias",
+        );
+        assertEquals(
+          unresolved.map((entry: Record<string, unknown>) => ({
+            contextId: entry.contextId,
+            line: entry.line,
+            column: entry.column,
+          })),
+          [
+            { contextId: "root-deno", line: 1, column: 1 },
+            { contextId: "root-node", line: 1, column: 1 },
+          ],
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+  }
+});
+
+Deno.test("strict audit does not classify pure computed namespace writes as reads", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/audit.json`;
+  try {
+    await writeSource(
+      root,
+      "src/index.ts",
+      "globalThis[key] = 1;\ndelete globalThis[key];\n",
+    );
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(result.code, 0, result.stderr);
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    assertEquals(report.issues, []);
+  } finally {
+    await Deno.remove(root, { recursive: true });
   }
 });
 
@@ -1107,30 +1452,37 @@ Deno.test("strict audit CLI exits 3 with incomplete evidence for parser and mani
   }
 });
 
-Deno.test("strict audit treats binding convergence exhaustion as operational exit 3", async () => {
+Deno.test("strict audit monotonically joins alternating loader facts into policy issues", async () => {
   const root = await auditFixture();
   const outputPath = `${root}/audit.json`;
   try {
     await writeSource(
       root,
       "src/index.ts",
-      "let load = require;\nload = Worker;\n",
+      [
+        "let load = require;",
+        "load = Worker;",
+        "load = require;",
+        "load(target);",
+        "const box = { load: require };",
+        "box.load = Worker;",
+        "box.load = require;",
+        "box.load(memberTarget);",
+      ].join("\n"),
     );
     const result = await runAudit(["--root", root, "--output", outputPath]);
-    assertEquals(result.code, 3, result.stderr);
+    assertEquals(result.code, 2, result.stderr);
     const report = JSON.parse(await Deno.readTextFile(outputPath));
-    assertEquals(report.evidenceComplete, false);
-    assertEquals(report.issues, []);
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
     assertEquals(
-      report.operationalErrors.some((error: Record<string, unknown>) =>
-        error.code === "binding-resolution-failure" &&
-        error.path === "src/index.ts" &&
-        String(error.message).includes(
-          "loader provenance binding analysis did not converge",
-        )
-      ),
+      report.issues.filter((issue: Record<string, unknown>) =>
+        issue.path === "src/index.ts" &&
+        issue.code === "unresolved-runtime-loader" &&
+        issue.loader === "runtime-loader-alias"
+      ).length >= 2,
       true,
-      JSON.stringify(report.operationalErrors, null, 2),
+      JSON.stringify(report.issues, null, 2),
     );
   } finally {
     await Deno.remove(root, { recursive: true });
@@ -1286,6 +1638,52 @@ Deno.test("core dependency collection rejects an empty production root", async (
       () => collectCoreProductionFiles(".", { requiredRoots: ["src"] }),
       Error,
       "Core dependency audit found zero eligible production files",
+    );
+  } finally {
+    Deno.chdir(previousDirectory);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("strict audit CLI writes incomplete atomic evidence and exits 3 for zero eligible files", async () => {
+  const root = await auditFixture();
+  const previousDirectory = Deno.cwd();
+  try {
+    await Deno.mkdir(`${root}/empty`);
+    await Deno.writeTextFile(`${root}/audit.json`, "stale report\n");
+    Deno.chdir(root);
+
+    const code = await runStrictCoreDependencyAuditCli(
+      ["--root", ".", "--output", "audit.json"],
+      {
+        collectProductionFiles: () =>
+          collectCoreProductionFiles(".", { requiredRoots: ["empty"] }),
+      },
+    );
+
+    assertEquals(code, 3);
+    const report = JSON.parse(await Deno.readTextFile("audit.json"));
+    assertEquals(report.evidenceComplete, false);
+    assertEquals(report.issues, []);
+    assertEquals(report.examined.files, 0);
+    assertEquals(
+      report.operationalErrors.some((error: Record<string, unknown>) =>
+        error.code === "traversal-failure" &&
+        String(error.message).includes(
+          "Core dependency audit found zero eligible production files",
+        )
+      ),
+      true,
+      JSON.stringify(report.operationalErrors, null, 2),
+    );
+    const names = (await Array.fromAsync(Deno.readDir("."))).map((entry) =>
+      entry.name
+    );
+    assertEquals(
+      names.some((name) =>
+        name.startsWith(".audit.json.") && name.endsWith(".tmp")
+      ),
+      false,
     );
   } finally {
     Deno.chdir(previousDirectory);

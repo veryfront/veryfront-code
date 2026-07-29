@@ -209,6 +209,8 @@ Deno.test("root scope, extension formatting, and aggregate gates stay aligned", 
     throw new Error("fmt:check must include extension formatting");
   }
   const taskOneScriptFiles = [
+    "scripts/lib/path-containment.ts",
+    "scripts/lib/path-containment.test.ts",
     "scripts/lint/audit-core-deps-strict.ts",
     "scripts/lint/audit-core-deps-strict.test.ts",
     "scripts/lint/core-production-roots.ts",

@@ -1,9 +1,9 @@
 import { win32 } from "node:path";
 import { assertEquals, assertRejects, assertThrows } from "#std/assert";
+import { isPathContained as isSourcePathContained } from "../lib/path-containment.ts";
 import {
   collectCoreProductionFiles,
   collectSourceDependencies,
-  isPathContained as isSourcePathContained,
   type SourceDependency,
   SourceImportCollectorError,
 } from "./source-import-collector.ts";
@@ -455,7 +455,9 @@ Deno.test("source collector propagates default and literal destructuring aliases
     [
       { loader: "require-alias", line: 2 },
       { loader: "runtime-loader-alias", line: 3 },
+      { loader: "require-alias", line: 5 },
       { loader: "require-alias", line: 6 },
+      { loader: "require-alias", line: 7 },
       { loader: "require-alias", line: 8 },
       { loader: "Worker", line: 10 },
     ],
@@ -591,7 +593,7 @@ Deno.test("source collector fails closed for Reflect loader invocation", () => {
     [
       { loader: "eval", line: 1 },
       { loader: "Function", line: 2 },
-      { loader: "require-alias", line: 3 },
+      { loader: "require", line: 3 },
       { loader: "Worker", line: 4 },
     ],
   );
@@ -712,6 +714,7 @@ Deno.test("source collector follows production-shaped dynamic module API binding
     [
       { specifier: "node:worker_threads", loader: "import" },
       { specifier: "node:worker_threads", loader: "import" },
+      { specifier: undefined, loader: "runtime-loader-alias" },
       { specifier: "node:module", loader: "import" },
       { specifier: "react", loader: "require.resolve" },
       {
@@ -929,9 +932,13 @@ Deno.test("source collector follows loader aliases through local containers", ()
       kind === "unresolved-runtime-loader"
     ).map(({ loader, line }) => ({ loader, line })),
     [
+      { loader: "require-alias", line: 1 },
       { loader: "require-alias", line: 3 },
+      { loader: "require-alias", line: 4 },
       { loader: "require-alias", line: 6 },
       { loader: "require-alias", line: 7 },
+      { loader: "require-alias", line: 8 },
+      { loader: "require-alias", line: 8 },
       { loader: "runtime-loader-alias", line: 9 },
       { loader: "CSS.paintWorklet.addModule", line: 11 },
     ],
@@ -1087,6 +1094,192 @@ Deno.test("source collector fails closed across generic loader data-flow boundar
         loader: "require-alias",
       },
     },
+    {
+      name: "concise named function return",
+      content: [
+        "const factory = () => require;",
+        "const load = factory();",
+        'load("npm:concise-return@1");',
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "nested conditional return inside iife",
+      content: [
+        "const load = (() => {",
+        "  if (enabled) { return require; }",
+        "  return undefined;",
+        "})();",
+        'load("npm:nested-iife-return@1");',
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "reflect apply parameter injection",
+      content: [
+        "function use(load: unknown) { return load; }",
+        "Reflect.apply(use, null, [require]);",
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "reflect construct parameter injection",
+      content: [
+        "class Use { constructor(load: unknown) { void load; } }",
+        "Reflect.construct(Use, [require]);",
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "constant template computed service worker method",
+      content: [
+        'const METHOD_SUFFIX = "ister";',
+        'const target = "npm:template-service-worker@1";',
+        "navigator.serviceWorker[\`reg\${METHOD_SUFFIX}\`](target);",
+      ].join("\n"),
+      expected: {
+        kind: "runtime-loader",
+        loader: "navigator.serviceWorker.register",
+        specifier: "npm:template-service-worker@1",
+      },
+    },
+    {
+      name: "exported loader",
+      content: "export const load = require;",
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "yielded loader",
+      content: "function* loaders() { yield require; }",
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "aliased loader container",
+      content: [
+        "const loaders = { load: require };",
+        "const alias = loaders;",
+        'alias.load("npm:aliased-container@1");',
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "exported aliased loader container",
+      content: [
+        "const loaders = { load: require };",
+        "export { loaders };",
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "returned aliased loader container",
+      content: [
+        "function expose() {",
+        "  const loaders = { load: require };",
+        "  return loaders;",
+        "}",
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "returned global loader namespace",
+      content: "function expose() { return globalThis; }",
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "runtime-loader-alias",
+      },
+    },
+    {
+      name: "apply with aliased argument container",
+      content: [
+        "function use(load: unknown) { return load; }",
+        "const values = [require];",
+        "const alias = values;",
+        "use.apply(null, alias);",
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "instance field loader",
+      content: "class Loaders { load = require; }",
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "constructor parameter injection",
+      content: [
+        "class Use { constructor(load: unknown) { void load; } }",
+        "new Use(require);",
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "call parameter injection",
+      content: [
+        "function use(load: unknown) { return load; }",
+        "use.call(null, require);",
+      ].join("\n"),
+      expected: {
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+      },
+    },
+    {
+      name: "reflect apply createRequire",
+      content: [
+        'import { createRequire } from "node:module";',
+        "const load = Reflect.apply(createRequire, null, [import.meta.url]);",
+        'load("npm:reflect-create-require@1");',
+      ].join("\n"),
+      expected: {
+        kind: "runtime-loader",
+        loader: "require",
+        specifier: "npm:reflect-create-require@1",
+      },
+    },
+    {
+      name: "reflect construct worker",
+      content: 'Reflect.construct(Worker, ["npm:reflect-construct-worker@1"]);',
+      expected: {
+        kind: "runtime-loader",
+        loader: "Worker",
+        specifier: "npm:reflect-construct-worker@1",
+      },
+    },
   ] as const;
 
   for (const testCase of cases) {
@@ -1105,6 +1298,129 @@ Deno.test("source collector fails closed across generic loader data-flow boundar
         true,
         JSON.stringify(dependencies, null, 2),
       );
+    });
+  }
+});
+
+Deno.test("source collector fails closed at loader-bearing container stores", async (context) => {
+  const cases = [
+    {
+      name: "reverse alias member store",
+      content: [
+        "const original: Record<string, unknown> = {};",
+        "const alias = original;",
+        "alias.load = require;",
+        "original.load(target);",
+      ].join("\n"),
+      expected: [{ loader: "require-alias", line: 3 }],
+    },
+    {
+      name: "escaped original after alias store",
+      content: [
+        "const original: Record<string, unknown> = {};",
+        "const alias = original;",
+        "alias.load = require;",
+        "use(original);",
+      ].join("\n"),
+      expected: [{ loader: "require-alias", line: 3 }],
+    },
+    {
+      name: "object spread",
+      content: [
+        "const original = { load: require };",
+        "const copy = { ...original };",
+      ].join("\n"),
+      expected: [
+        { loader: "require-alias", line: 1 },
+        { loader: "require-alias", line: 2 },
+      ],
+    },
+    {
+      name: "array spread",
+      content: [
+        "const original = [require];",
+        "const copy = [...original];",
+      ].join("\n"),
+      expected: [
+        { loader: "require-alias", line: 1 },
+        { loader: "require-alias", line: 2 },
+      ],
+    },
+    {
+      name: "constant computed object key",
+      content: [
+        'const LOAD = "load";',
+        "const original = { [LOAD]: require };",
+        "original.load(target);",
+      ].join("\n"),
+      expected: [
+        { loader: "require-alias", line: 2 },
+        { loader: "require-alias", line: 3 },
+      ],
+    },
+    {
+      name: "unknown computed namespace call",
+      content: [
+        'import * as moduleApi from "node:module";',
+        "moduleApi[method](target);",
+      ].join("\n"),
+      expected: [{ loader: "runtime-loader-alias", line: 2 }],
+    },
+    {
+      name: "unknown computed namespace read",
+      content: [
+        'import * as moduleApi from "node:module";',
+        "const maybeLoad = moduleApi[method];",
+      ].join("\n"),
+      expected: [{ loader: "runtime-loader-alias", line: 2 }],
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    await context.step(testCase.name, () => {
+      const unresolved = dependencySummary(collectSourceDependencies({
+        path: `src/${testCase.name.replaceAll(" ", "-")}.ts`,
+        content: testCase.content,
+      })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+      assertEquals(
+        unresolved,
+        testCase.expected.map(({ loader, line }) => ({
+          kind: "unresolved-runtime-loader",
+          specifier: undefined,
+          loader,
+          line,
+        })),
+      );
+    });
+  }
+});
+
+Deno.test("source collector gives normalized loader-returning IIFEs one stable issue", async (context) => {
+  const cases = [
+    ["direct", "(() => require)()(target);"],
+    ["call", "(() => require).call(null)(target);"],
+    ["apply", "(() => require).apply(null, [])(target);"],
+    ["Reflect.apply", "Reflect.apply(() => require, null, [])(target);"],
+    [
+      "Reflect.construct",
+      "Reflect.construct(function () { return require; }, [])(target);",
+    ],
+  ] as const;
+
+  for (const [name, content] of cases) {
+    await context.step(name, () => {
+      const unresolved = collectSourceDependencies({
+        path: `src/normalized-iife-${name.replaceAll(".", "-")}.ts`,
+        content,
+      }).filter(({ kind }) => kind === "unresolved-runtime-loader").map(
+        ({ kind, loader, line, column }) => ({ kind, loader, line, column }),
+      );
+      assertEquals(unresolved, [{
+        kind: "unresolved-runtime-loader",
+        loader: "require-alias",
+        line: 1,
+        column: 1,
+      }]);
     });
   }
 });
@@ -1333,6 +1649,12 @@ Deno.test("source collector fails closed for assignment, object-member, and bind
         kind: "unresolved-runtime-loader",
         specifier: undefined,
         loader: "require-alias",
+        line: 4,
+      },
+      {
+        kind: "unresolved-runtime-loader",
+        specifier: undefined,
+        loader: "require-alias",
         line: 5,
       },
       {
@@ -1500,8 +1822,8 @@ Deno.test("source collector fails closed for indirect require calls", () => {
       kind === "unresolved-runtime-loader"
     ).map(({ loader, line }) => ({ loader, line })),
     [
-      { loader: "require-alias", line: 1 },
-      { loader: "require-alias", line: 2 },
+      { loader: "require", line: 1 },
+      { loader: "require", line: 2 },
       { loader: "require.resolve", line: 3 },
     ],
   );
@@ -1558,6 +1880,7 @@ Deno.test("source collector reports every unresolved runtime loader without iden
     "require",
     "require-alias",
     "require.resolve",
+    "runtime-loader-alias",
     "Worker",
     "navigator.serviceWorker.register",
     "AudioWorklet.addModule",
@@ -1790,6 +2113,84 @@ Deno.test("source collector turns binding convergence exhaustion into a structur
     SourceImportCollectorError,
     "binding-resolution-failure: src/non-converging-bindings.ts: loader provenance binding analysis did not converge",
   );
+});
+
+Deno.test("source collector monotonically joins alternating binding and member loader facts", () => {
+  const dependencies = dependencySummary(collectSourceDependencies({
+    path: "src/alternating-loader-facts.ts",
+    content: [
+      "let load = require;",
+      "load = Worker;",
+      "load = require;",
+      "load(target);",
+      "const box = { load: require };",
+      "box.load = Worker;",
+      "box.load = require;",
+      "box.load(memberTarget);",
+    ].join("\n"),
+  })).filter(({ loader }) => loader === "runtime-loader-alias");
+
+  assertEquals(dependencies, [
+    {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: 4,
+    },
+    {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: 6,
+    },
+    {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: 8,
+    },
+  ]);
+});
+
+Deno.test("source collector keeps direct constructor loader returns fail-closed", () => {
+  const dependencies = dependencySummary(collectSourceDependencies({
+    path: "src/direct-constructor-loader-return.ts",
+    content: "new (function () { return require; })();",
+  })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(dependencies, [{
+    kind: "unresolved-runtime-loader",
+    specifier: undefined,
+    loader: "require-alias",
+    line: 1,
+  }]);
+});
+
+Deno.test("source collector distinguishes unknown namespace reads from pure writes", () => {
+  const dependencies = dependencySummary(collectSourceDependencies({
+    path: "src/computed-namespace-writes.ts",
+    content: [
+      "globalThis[key] = 1;",
+      "delete globalThis[key];",
+      "globalThis[key] += 1;",
+      "globalThis[key] = require;",
+    ].join("\n"),
+  })).filter(({ kind }) => kind === "unresolved-runtime-loader");
+
+  assertEquals(dependencies, [
+    {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "runtime-loader-alias",
+      line: 3,
+    },
+    {
+      kind: "unresolved-runtime-loader",
+      specifier: undefined,
+      loader: "require-alias",
+      line: 4,
+    },
+  ]);
 });
 
 Deno.test("production file collection covers every supported extension and excludes non-production descendants", async () => {

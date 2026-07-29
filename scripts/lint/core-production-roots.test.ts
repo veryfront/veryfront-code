@@ -1,11 +1,11 @@
 import { win32 } from "node:path";
 import { assertEquals, assertRejects, assertThrows } from "#std/assert";
+import { isPathContained as isProductionPathContained } from "../lib/path-containment.ts";
 import {
   collectConfigurationDependencyEdges,
   type CoreProductionContext,
   type CoreProductionRegistry,
   isImportableBuiltin,
-  isPathContained as isProductionPathContained,
   loadCoreProductionRegistry,
   resolveConfigRelativePath,
   resolveImportMapSpecifier,

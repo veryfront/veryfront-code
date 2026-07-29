@@ -55,6 +55,10 @@ export interface StrictAuditReport {
   examined: { roots: number; files: number };
 }
 
+export interface StrictAuditDependencies {
+  collectProductionFiles?: typeof collectCoreProductionFiles;
+}
+
 const SOURCE_EXTENSIONS = [
   ".ts",
   ".tsx",
@@ -592,6 +596,7 @@ function syntheticJsxDependencies(
 
 export async function runStrictCoreDependencyAudit(
   root: string,
+  dependencies: StrictAuditDependencies = {},
 ): Promise<StrictAuditReport> {
   const report: StrictAuditReport = {
     evidenceComplete: false,
@@ -612,7 +617,9 @@ export async function runStrictCoreDependencyAudit(
         ),
       ])),
     ].sort();
-    const collection = await collectCoreProductionFiles(root, {
+    const collection = await (
+      dependencies.collectProductionFiles ?? collectCoreProductionFiles
+    )(root, {
       requiredRoots,
       forcedIncludes: registry.contexts.flatMap((context) =>
         context.entrypoints.map((entrypoint) => entrypoint.path)
@@ -834,13 +841,16 @@ async function writeReportAtomically(
   }
 }
 
-if (import.meta.main) {
+export async function runStrictCoreDependencyAuditCli(
+  args: string[],
+  dependencies: StrictAuditDependencies = {},
+): Promise<number> {
   let root: string;
   let output: string;
   try {
-    ({ root, output } = parseArguments(Deno.args));
+    ({ root, output } = parseArguments(args));
   } catch (error) {
-    const recoveredOutput = recoverOutputPath(Deno.args);
+    const recoveredOutput = recoverOutputPath(args);
     const message = error instanceof Error ? error.message : String(error);
     if (recoveredOutput) {
       const report: StrictAuditReport = {
@@ -859,14 +869,14 @@ if (import.meta.main) {
               : String(writeError)
           }`,
         );
-        Deno.exit(3);
+        return 3;
       }
     }
     console.error(message);
-    Deno.exit(3);
+    return 3;
   }
 
-  const report = await runStrictCoreDependencyAudit(root);
+  const report = await runStrictCoreDependencyAudit(root, dependencies);
   try {
     await writeReportAtomically(output, report);
   } catch (error) {
@@ -875,21 +885,26 @@ if (import.meta.main) {
         error instanceof Error ? error.message : String(error)
       }`,
     );
-    Deno.exit(3);
+    return 3;
   }
   if (!report.evidenceComplete || report.operationalErrors.length > 0) {
     console.error(
       `Strict core dependency audit incomplete: ${report.operationalErrors.length} error(s).`,
     );
-    Deno.exit(3);
+    return 3;
   }
   if (report.issues.length > 0) {
     console.error(
       `Strict core dependency audit found ${report.issues.length} policy issue(s).`,
     );
-    Deno.exit(2);
+    return 2;
   }
   console.log(
     `Strict core dependency audit examined ${report.examined.files} files across ${report.examined.roots} contexts.`,
   );
+  return 0;
+}
+
+if (import.meta.main) {
+  Deno.exit(await runStrictCoreDependencyAuditCli(Deno.args));
 }
