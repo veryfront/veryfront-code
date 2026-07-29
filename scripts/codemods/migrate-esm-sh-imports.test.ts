@@ -349,7 +349,7 @@ Deno.test("mergeEsmShPins: existing exact pin beats URL-derived version", () => 
     { "some-pkg": "2.0.0" },
   );
 
-  // Existing wins — not overwritten.
+  // Existing wins, not overwritten.
   assertEquals(updatedDeps["some-pkg"], "1.0.0");
   assertEquals(conflicts, [{ pkg: "some-pkg", existing: "1.0.0", fromVersion: "2.0.0" }]);
 });
@@ -361,7 +361,7 @@ Deno.test("mergeEsmShPins: existing range entry beats URL-derived exact version"
     { "some-pkg": "1.2.3" },
   );
 
-  // Existing range wins — not overwritten.
+  // Existing range wins, not overwritten.
   assertEquals(updatedDeps["some-pkg"], "^1.0.0");
   assertEquals(conflicts, [{ pkg: "some-pkg", existing: "^1.0.0", fromVersion: "1.2.3" }]);
 });
@@ -480,7 +480,7 @@ Deno.test("esm-sh codemod output is valid parseable TypeScript/JSX", () => {
   const result = migrateEsmShImports(source);
 
   assert(result.changed);
-  // Verify the output is still syntactically valid — parse must not throw.
+  // Verify the output is still syntactically valid: parse must not throw.
   parse(result.code, { sourceType: "module", plugins: ["typescript", "jsx"] });
 });
 
@@ -536,7 +536,7 @@ Deno.test("readProjectPackageJson returns parseError for unreadable file, not nu
 
     const result = await readProjectPackageJson(pkgPath);
 
-    // Must NOT return null — a read error is not "file absent".
+    // Must NOT return null. A read error is not "file absent".
     assert(result.parseError !== null, "expected non-null parseError for unreadable file");
     assertStringIncludes(result.parseError!, "could not be read");
     assertEquals(result.existingDeps, {});
@@ -590,7 +590,7 @@ Deno.test("filterNeedsResolution: package pinned in one file not in needsResolut
 });
 
 // ---------------------------------------------------------------------------
-// main() integration — abort on corrupt/unreadable package.json
+// main() integration: abort on corrupt/unreadable package.json
 // ---------------------------------------------------------------------------
 
 Deno.test("source parse errors identify the file that could not be migrated", async () => {
@@ -618,7 +618,7 @@ Deno.test("source parse errors identify the file that could not be migrated", as
 });
 
 Deno.test(
-  "corrupt package.json aborts run — source files are not modified",
+  "corrupt package.json aborts run: source files are not modified",
   async () => {
     const dir = await Deno.makeTempDir();
     const srcPath = `${dir}/app.ts`;
@@ -636,7 +636,7 @@ Deno.test(
       }
 
       assert(threw, "main() should have thrown due to corrupt package.json");
-      // Source file must be untouched — rewriting it would discard the pin.
+      // Source file must be untouched. Rewriting it would discard the pin.
       assertEquals(await Deno.readTextFile(srcPath), original);
     } finally {
       await Deno.remove(dir, { recursive: true });
@@ -859,7 +859,7 @@ Deno.test(
   async () => {
     // A file imports the same package both without and with a version.  The
     // unversioned import may appear first in the source, so a plain .find()
-    // on result.rewrites would pick "https://esm.sh/lodash" as the specifier —
+    // on result.rewrites would pick "https://esm.sh/lodash" as the specifier,
     // a URL that has nothing to do with the version conflict.  pickSpecifier()
     // must prefer the rewrite whose URL carries the conflicting version.
     const dir = await Deno.makeTempDir();
@@ -1002,7 +1002,7 @@ Deno.test("esm-sh codemod handles a package name that collides with Object.proto
   assertStringIncludes(result.code, 'from "hasOwnProperty"');
   assertStringIncludes(result.code, 'from "toString"');
   assertEquals(result.pins, { hasOwnProperty: "1.0.0", toString: "2.0.0" });
-  // No spurious conflict — these are first-time pins, not duplicates.
+  // No spurious conflict: these are first-time pins, not duplicates.
   assertEquals(result.conflicts, []);
 });
 
@@ -1013,7 +1013,7 @@ Deno.test('mergeEsmShPins: package named "__proto__" is stored as own property, 
   // stored as a plain own property.
   //
   // NOTE: { "__proto__": "1.0.0" } in an object literal is NOT an own property
-  // — JS interprets __proto__ as a prototype setter, so Object.entries returns
+  // JS interprets __proto__ as a prototype setter, so Object.entries returns
   // nothing. Object.fromEntries uses own-property creation semantics, so
   // "__proto__" remains ordinary enumerable data without invoking the legacy
   // prototype setter.

@@ -85,7 +85,7 @@ export interface EsmShFileResult {
   rewrites: Array<{ from: string; to: string }>;
   /** Packages whose versioned URL contributed a pin (pkg -> version). */
   pins: Record<string, string>;
-  /** Packages whose URL carried no version — must be resolved externally. */
+  /** Packages whose URL carried no version, must be resolved externally. */
   needsResolution: string[];
   /**
    * Intra-file version conflicts: same package appeared at two different
@@ -252,7 +252,7 @@ function processStringLiteral(
           specifier: url,
         });
       }
-      // First version seen wins — do not overwrite.
+      // First version seen wins, do not overwrite.
     } else {
       pins[parsed.pkg] = parsed.version;
     }
@@ -272,7 +272,7 @@ function processStringLiteral(
 }
 
 // ---------------------------------------------------------------------------
-// Core transform — pure function, no I/O
+// Core transform: pure function, no I/O
 // ---------------------------------------------------------------------------
 
 function transformEsmShImports(
@@ -375,7 +375,7 @@ export function migrateEsmShImports(source: string): EsmShFileResult {
 }
 
 // ---------------------------------------------------------------------------
-// Pin merge — pure function, testable without I/O
+// Pin merge: pure function, testable without I/O
 // ---------------------------------------------------------------------------
 
 /**
@@ -403,7 +403,7 @@ export function mergeEsmShPins(
       if (existingDeps[pkg] !== version) {
         conflicts.push({ pkg, existing: existingDeps[pkg]!, fromVersion: version });
       }
-      // Existing pin wins — do not overwrite.
+      // Existing pin wins, do not overwrite.
     } else {
       updatedDeps[pkg] = version;
     }
@@ -413,7 +413,7 @@ export function mergeEsmShPins(
 }
 
 // ---------------------------------------------------------------------------
-// I/O helpers — exported for testing
+// I/O helpers: exported for testing
 // ---------------------------------------------------------------------------
 
 function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
@@ -436,11 +436,11 @@ export async function readProjectPackageJson(path: string): Promise<PackageJsonR
     text = await Deno.readTextFile(path);
   } catch (e) {
     if (e instanceof Deno.errors.NotFound) {
-      // File does not exist — treat as absent, start with empty deps.
+      // File does not exist, treat as absent and start with empty deps.
       return { data: {}, existingDeps: {}, parseError: null };
     }
     // Any other error (permission denied, I/O failure, etc.) must not be
-    // silently treated as "absent" — that would risk overwriting a file we
+    // silently treated as "absent", which would risk overwriting a file we
     // could not safely read.  Surface the error so the caller skips the write.
     return {
       data: {},
@@ -563,7 +563,7 @@ async function collectSourceFiles(dir: string, files: string[]): Promise<void> {
  * Select the rewrite specifier for a package, preferring the URL that carries
  * the target version.  When a file imports the same package both with and
  * without a version, a plain `.find()` on rewrites would return whichever URL
- * appeared first — which may be the unversioned one, making conflict reports
+ * appeared first, which may be the unversioned one, making conflict reports
  * point at a URL that has nothing to do with the version mismatch.
  */
 function pickSpecifier(
@@ -624,7 +624,7 @@ async function main(args: string[]): Promise<void> {
       if (existing !== undefined && existing.version !== version) {
         // Two different files disagree on the version; first file seen wins.
         // Prefer the URL in this file that actually carries the conflicting
-        // version — a file may also have an unversioned import of the same
+        // version. A file may also have an unversioned import of the same
         // package, and a plain find() would return whichever appeared first.
         const specifier = pickSpecifier(result.rewrites, pkg, version);
         report.conflicts.push({
@@ -670,7 +670,7 @@ async function main(args: string[]): Promise<void> {
     // recording the corresponding pins would permanently discard version
     // information.  A versioned esm.sh URL would become a bare specifier
     // with no pin entry anywhere, so the platform would later resolve it to
-    // latest — silently destroying the user's pinned version.
+    // latest, silently destroying the user's pinned version.
     report.errors.push(pkgJsonParseError);
     report.filesChanged = 0;
     report.rewrites = [];
