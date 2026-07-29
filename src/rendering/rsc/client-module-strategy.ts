@@ -26,6 +26,8 @@ export interface ClientModuleStrategyOptions {
 export interface ClientRuntimeHydrationData {
   pagePath?: string;
   clientModuleStrategy?: ClientModuleStrategy;
+  /** Production release asset URLs keyed by source module path. */
+  releaseAssetModules?: Record<string, string>;
   isolatedClientPage?: boolean;
   dev?: boolean;
   /** React version used for both server rendering and browser hydration. */
@@ -52,6 +54,7 @@ export interface ClientModuleUrlOptions {
   absPath?: string;
   version?: string;
   dependencyPinningCacheKey?: string;
+  releaseAssetModules?: Record<string, string> | null;
 }
 
 export function determineClientModuleStrategy(
@@ -180,6 +183,44 @@ export function buildRSCActionUrl(
   return `${RSC_PATH_PREFIX}action`;
 }
 
+function normalizeReleaseAssetModulePath(path: string): string {
+  return path
+    .replace(/^\/+_vf_modules\//, "")
+    .replace(/^\/+/, "")
+    .replace(/\.js$/, "");
+}
+
+const RELEASE_ASSET_SOURCE_EXTENSION = /\.(tsx|ts|jsx|mdx|js)$/;
+
+function releaseAssetModuleCandidates(path: string): string[] {
+  const normalized = normalizeReleaseAssetModulePath(path);
+  const candidates = [path, normalized];
+  if (!RELEASE_ASSET_SOURCE_EXTENSION.test(normalized)) {
+    candidates.push(
+      `${normalized}.tsx`,
+      `${normalized}.ts`,
+      `${normalized}.jsx`,
+      `${normalized}.mdx`,
+      `${normalized}.js`,
+    );
+  }
+  return Array.from(new Set(candidates));
+}
+
+export function resolveReleaseAssetModuleUrl(
+  releaseAssetModules: Record<string, string> | null | undefined,
+  path: string,
+): string | null {
+  if (!releaseAssetModules) return null;
+
+  for (const candidate of releaseAssetModuleCandidates(path)) {
+    const url = releaseAssetModules[candidate];
+    if (url) return url;
+  }
+
+  return null;
+}
+
 export function buildClientModuleUrl(options: ClientModuleUrlOptions): string | null {
   if (options.strategy === "fs") {
     const fsPath = options.absPath ?? options.rel;
@@ -190,6 +231,12 @@ export function buildClientModuleUrl(options: ClientModuleUrlOptions): string | 
       )
       : null;
   }
+
+  const releaseAssetUrl = resolveReleaseAssetModuleUrl(
+    options.releaseAssetModules,
+    options.rel,
+  );
+  if (releaseAssetUrl) return releaseAssetUrl;
 
   return buildRSCModuleUrl(
     options.rel,

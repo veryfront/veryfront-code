@@ -16,6 +16,8 @@ import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
@@ -33,6 +35,7 @@ import {
   withServerTimingHeader,
 } from "#veryfront/observability/request-profiler.ts";
 import { profilePhase } from "#veryfront/observability";
+import { captureApplicationError } from "#veryfront/observability/application-errors.ts";
 import { ClientLogHandler } from "../handlers/monitoring/client-log.handler.ts";
 import { MemoryDebugHandler } from "../handlers/monitoring/memory.handler.ts";
 import { DevEndpointsHandler } from "../handlers/dev/endpoints.handler.ts";
@@ -69,6 +72,7 @@ import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
 import {
   endRequestTracing,
   executeWithTracingContext,
+  getRequestTraceContext,
   setProjectAttributes,
   setRequestAttributes,
   SpanNames,
@@ -287,10 +291,18 @@ export function createVeryfrontHandler(
   adapter: RuntimeAdapter,
   opts: RuntimeHandlerOptions = { projectDir },
 ): ((req: Request) => Promise<Response>) & { ready?: Promise<void> } {
-  const isDebugEnabled = !!(opts.debug || adapter.env.get("VERYFRONT_DEBUG"));
+  const isDebugEnabled = (): boolean => {
+    if (opts.debug) return true;
+
+    const hostDebug = getHostEnv("VERYFRONT_DEBUG");
+    if (hostDebug !== undefined) return isTruthyEnvValue(hostDebug);
+
+    const hasBindingBackedEnv = adapter.id === "cloudflare" || adapter.id === "memory";
+    return hasBindingBackedEnv && isTruthyEnvValue(adapter.env.get("VERYFRONT_DEBUG"));
+  };
 
   function logDebug(message: string, extra?: Record<string, unknown>): void {
-    if (!isDebugEnabled) return;
+    if (!isDebugEnabled()) return;
     if (extra) {
       logger.debug(message, extra);
       return;
@@ -310,7 +322,12 @@ export function createVeryfrontHandler(
     });
   }
 
-  const securityLoader = new SecurityConfigLoader(projectDir, adapter, opts.config);
+  const securityLoader = new SecurityConfigLoader(
+    projectDir,
+    adapter,
+    opts.config,
+    opts.defaultEnvironment === "production",
+  );
 
   // Per-project environment variable cache (fetches from API, caches with 60s TTL)
   const apiBaseUrl = adapter.env.get("VERYFRONT_API_BASE_URL") ?? "https://api.veryfront.com/api";
@@ -323,16 +340,11 @@ export function createVeryfrontHandler(
   const configPromise = (async () => {
     const c = opts.config ? opts.config : await getConfig(projectDir, adapter);
     config = c;
-    if (c?.security?.csrf === undefined) {
-      logger.info(
-        "CSRF protection is not configured. Add `security: { csrf: true }` to veryfront.config.ts to enable.",
-      );
-    }
     return c;
   })();
 
   const { registry, apiHandler } = createHandlerRegistry(projectDir, adapter, {
-    debug: opts.debug,
+    debug: Boolean(opts.debug),
   });
 
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
@@ -364,7 +376,7 @@ export function createVeryfrontHandler(
           adapter,
           securityLoader.getSecurityConfig(),
           securityLoader.getCspUserHeader(),
-          opts.debug,
+          isDebugEnabled(),
           config,
         );
 
@@ -413,6 +425,7 @@ export function createVeryfrontHandler(
         preparedRequest.trackingFacts.method,
         preparedRequest.trackingFacts.environment,
         preparedRequest.trackingFacts.releaseId,
+        opts.defaultEnvironment === "production",
       );
 
       startContentMetrics();
@@ -520,7 +533,7 @@ export function createVeryfrontHandler(
                 adapter,
                 securityLoader.getSecurityConfig(),
                 securityLoader.getCspUserHeader(),
-                opts.debug,
+                isDebugEnabled(),
                 config,
               ),
             );
@@ -540,7 +553,7 @@ export function createVeryfrontHandler(
             proxyTrust: { proxyTrusted },
             securityConfig: securityLoader.getSecurityConfig(),
             cspUserHeader: securityLoader.getCspUserHeader(),
-            debug: opts.debug,
+            debug: isDebugEnabled(),
             routeRegistry: registry,
             moduleServerUrl: opts.moduleServerUrl,
             defaultEnvironment: opts.defaultEnvironment,
@@ -648,6 +661,15 @@ export function createVeryfrontHandler(
           req.method,
           { signal: req.signal },
         );
+
+        if (error) {
+          captureApplicationError(error, {
+            boundary: "renderer.request",
+            method: req.method,
+            requestId: lifecycle.requestId,
+            ...getRequestTraceContext(spanInfo.span),
+          });
+        }
 
         endRequestTracing(spanInfo.span, response.status, error);
 

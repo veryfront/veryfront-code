@@ -9,6 +9,7 @@ import {
   determineClientModuleStrategy,
   getHydrationReactImportSpecifiers,
   resolveClientModuleStrategy,
+  resolveReleaseAssetModuleUrl,
 } from "./client-module-strategy.ts";
 
 describe("rendering/rsc/client-module-strategy", () => {
@@ -102,6 +103,39 @@ describe("rendering/rsc/client-module-strategy", () => {
     assertEquals(buildRSCActionUrl(null), "/_veryfront/rsc/action");
     assertEquals(buildRSCTransportHeaders({ dependencyPinningCacheKey: "off" }), {});
     assertEquals(buildRSCTransportHeaders(null), {});
+  });
+
+  it("prefers release asset urls for remote client modules", () => {
+    assertEquals(
+      buildClientModuleUrl({
+        strategy: "rsc-module",
+        rel: "app/page.tsx",
+        releaseAssetModules: {
+          "app/page.tsx": "/_vf/assets/page-hash.js",
+        },
+      }),
+      "/_vf/assets/page-hash.js",
+    );
+  });
+
+  it("resolves release asset urls from module endpoint paths", () => {
+    assertEquals(
+      resolveReleaseAssetModuleUrl(
+        { "app/page.tsx": "/_vf/assets/page-hash.js" },
+        "/_vf_modules/app/page.js",
+      ),
+      "/_vf/assets/page-hash.js",
+    );
+  });
+
+  it("does not fabricate extension variants for source paths that already have one", () => {
+    assertEquals(
+      resolveReleaseAssetModuleUrl(
+        { "app/page.tsx.tsx": "/_vf/assets/bad-path.js" },
+        "app/page.tsx",
+      ),
+      null,
+    );
   });
 
   it("reads the document import map instead of relying on failed imports", () => {

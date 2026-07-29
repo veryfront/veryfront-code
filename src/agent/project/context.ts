@@ -5,6 +5,7 @@ export interface MutableAgentProjectContext {
   runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
   runtimeTargetEnvironmentId?: string | null;
   availableSkillIds?: string[];
+  skillSelectorPolicy?: import("#veryfront/skill/selector.ts").ResolvedSkillSelectorPolicy;
   /** Per-run skill id -> discovered SKILL.md source path (owner-aware catalog). */
   skillSourcePaths?: Readonly<Record<string, string>>;
 }

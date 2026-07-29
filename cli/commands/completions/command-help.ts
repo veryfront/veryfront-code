@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const completionsHelp: CommandHelp = {
   name: "completions",
+  hidden: true,
   category: "development",
   description: "Generate shell completion scripts",
   usage: "veryfront completions <shell>",

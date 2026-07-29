@@ -18,7 +18,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }):
 
   return (
     <>
-      <Head><title>Docs Agent</title></Head>
+      <Head>
+        <title>Docs Agent</title>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+      </Head>
       <ChatThemeScope className="flex flex-col h-screen">
         <ConversationsProvider storageKey="rag-conversations">
           <AppShell className="flex-1 min-h-0">

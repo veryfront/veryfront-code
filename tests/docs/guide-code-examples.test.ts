@@ -434,8 +434,8 @@ describe("Guide: deploying.md", () => {
         "veryfront dev",
         "veryfront build",
         "veryfront serve",
-        "veryfront push --branch main --yes",
-        "veryfront deploy --branch main --env production --yes",
+        "npx veryfront deploy",
+        "npx veryfront deploy --branch feature-x --env staging",
         "veryfront open",
       ]
     ) {
@@ -448,20 +448,22 @@ describe("Guide: deploying.md", () => {
 describe("Guide: deploy-from-ci.md", () => {
   it("uses supported Push and Deploy arguments in the required order", async () => {
     const guide = await readGuide("deploy-from-ci.md");
-    const pushCommand = "veryfront push --branch main --yes";
+    const pushCommand = "veryfront push --branch main --prune --yes";
     const stagingCommand = "veryfront deploy --branch main --env staging --yes";
     const productionCommand = "veryfront deploy --branch main --env production --yes";
 
-    const dryRunArgs = parseCliArgs(["push", "--branch", "main", "--dry-run"]);
+    const dryRunArgs = parseCliArgs(["push", "--branch", "main", "--prune", "--dry-run"]);
     const parsedDryRun = parsePushArgs(dryRunArgs);
     assert(parsedDryRun.success);
     assertEquals(parsedDryRun.data.branch, "main");
+    assertEquals(parsedDryRun.data.prune, true);
     assertEquals(parsedDryRun.data.dryRun, true);
 
-    const pushArgs = parseCliArgs(["push", "--branch", "main", "--yes"]);
+    const pushArgs = parseCliArgs(["push", "--branch", "main", "--prune", "--yes"]);
     const parsedPush = parsePushArgs(pushArgs);
     assert(parsedPush.success);
     assertEquals(parsedPush.data.branch, "main");
+    assertEquals(parsedPush.data.prune, true);
     assertEquals(pushArgs.yes, true);
 
     const deployArgs = parseCliArgs([
@@ -478,7 +480,10 @@ describe("Guide: deploy-from-ci.md", () => {
     assertEquals(parsedDeploy.data.env, "staging");
     assertEquals(deployArgs.yes, true);
 
-    assert(guide.indexOf("veryfront push --branch main --dry-run") < guide.indexOf(pushCommand));
+    assert(
+      guide.indexOf("veryfront push --branch main --prune --dry-run") <
+        guide.indexOf(pushCommand),
+    );
     assert(guide.indexOf(pushCommand) < guide.indexOf(stagingCommand));
     assert(guide.indexOf(stagingCommand) < guide.indexOf(productionCommand));
     assertStringIncludes(guide, "cancel-in-progress: false");
@@ -876,8 +881,8 @@ describe("Guide: deploy-project.md", () => {
       const command of [
         "veryfront build",
         "veryfront serve",
-        "veryfront push --branch main --yes",
-        "veryfront deploy --branch main --env production --yes",
+        "npx veryfront deploy",
+        "npx veryfront push --branch feature-x",
         "veryfront open",
       ]
     ) {

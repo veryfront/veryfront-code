@@ -41,7 +41,7 @@ export async function executeBuild(
   appRoutes: AppRouteInfo[],
   options: BuildExecutorOptions,
 ): Promise<BuildResult> {
-  logger.info(
+  logger.debug(
     `[BUILD] executeBuild: ${pagesRoutes.length} pages routes, ${appRoutes.length} app routes`,
   );
 
@@ -62,12 +62,12 @@ export async function executeBuild(
     dependencyPinningDependencies: dependencySnapshot.dependencies,
   };
 
-  logger.info("Building pages...");
+  logger.debug("Building pages...");
   const pagesStats = await buildPagesRoutes(pagesRoutes, buildOptions);
-  logger.info(`pagesStats: ${pagesStats.pages} pages built`);
+  logger.debug(`pagesStats: ${pagesStats.pages} pages built`);
 
   const appStats = await buildAppRoutes(appRoutes, buildOptions);
-  logger.info(`appStats: ${appStats.pages} pages built`);
+  logger.debug(`appStats: ${appStats.pages} pages built`);
 
   return {
     pages: pagesStats.pages + appStats.pages,

@@ -151,6 +151,7 @@ export function buildPageHydrationModuleUrl(
   return buildClientModuleUrl({
     strategy,
     rel: pagePath,
+    releaseAssetModules: hydrationData?.releaseAssetModules,
     dependencyPinningCacheKey: hydrationData?.dependencyPinningCacheKey,
   });
 }

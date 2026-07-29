@@ -258,7 +258,7 @@ const extEvalReportHttp: ExtensionFactory = (config?: unknown) => {
 
       for (const definition of resolveExporterDefinitions(factoryConfig)) {
         if (!definition.url) {
-          ctx.logger.info(
+          ctx.logger.debug(
             `[ext-eval-report-http] Skipping EvalReportExporter "${definition.id}": no URL configured`,
           );
           continue;
@@ -271,7 +271,7 @@ const extEvalReportHttp: ExtensionFactory = (config?: unknown) => {
           ),
         );
         registeredIds.add(definition.id);
-        ctx.logger.info(`[ext-eval-report-http] EvalReportExporter "${definition.id}" registered`);
+        ctx.logger.debug(`[ext-eval-report-http] EvalReportExporter "${definition.id}" registered`);
       }
     },
     teardown() {

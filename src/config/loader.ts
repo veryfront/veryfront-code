@@ -85,7 +85,7 @@ function getDefaultFsConfig(): VeryfrontConfig["fs"] {
     };
   }
 
-  logger.info("Using local filesystem (no proxy mode)");
+  logger.debug("Using local filesystem (no proxy mode)");
   return { type: "local" };
 }
 

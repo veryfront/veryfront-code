@@ -12,8 +12,6 @@ import { studioTargetOriginHelperSource } from "#veryfront/security/http/studio-
 interface HMRScriptOptions {
   /** Log prefix for console messages */
   logPrefix: string;
-  /** Whether to use debug-gated logging (localStorage VERYFRONT_DEBUG_HMR) */
-  debugMode: boolean;
 }
 
 /**
@@ -35,11 +33,7 @@ function getUpdateJSFunction(logPrefix: string): string {
         const href = link.getAttribute('href');
         if (href && href.includes(changedPath)) {
           link.setAttribute('href', href.split('?')[0] + '?t=' + Date.now());
-          ${
-    logPrefix === "[HMR]"
-      ? `console.log('${logPrefix} Updated stylesheet:', changedPath);`
-      : `dlog('${logPrefix} Updated stylesheet:', changedPath);`
-  }
+          dlog('${logPrefix} Updated stylesheet:', changedPath);
           return true;
         }
       }
@@ -49,11 +43,7 @@ function getUpdateJSFunction(logPrefix: string): string {
     const tailwind = document.getElementById('vf-tailwind-css');
     if (tailwind) {
       tailwind.href = '/_vf_styles/styles.css?t=' + Date.now();
-      ${
-    logPrefix === "[HMR]"
-      ? `console.log('${logPrefix} Tailwind CSS refreshed');`
-      : `dlog('${logPrefix} Tailwind CSS refreshed');`
-  }
+      dlog('${logPrefix} Tailwind CSS refreshed');
       return true;
     }
     return false;
@@ -128,15 +118,11 @@ function getUpdateJSFunction(logPrefix: string): string {
       try {
         const swapped = await swapTailwindStylesheet(styleHref);
         if (swapped) {
-          ${
-    logPrefix === "[HMR]"
-      ? `console.log('${logPrefix} Swapped stylesheet:', styleHref);`
-      : `dlog('${logPrefix} Swapped stylesheet:', styleHref);`
-  }
+          dlog('${logPrefix} Swapped stylesheet:', styleHref);
           return true;
         }
       } catch (error) {
-        console.warn('${logPrefix} Failed to swap stylesheet:', error);
+        dlog('${logPrefix} Failed to swap stylesheet:', error);
       }
     }
 
@@ -148,11 +134,7 @@ function getUpdateJSFunction(logPrefix: string): string {
   }
 
   async function updateJS(path, styleHref) {
-    ${
-    logPrefix === "[HMR]"
-      ? `console.log('${logPrefix} Updating JS module:', path);`
-      : `dlog('${logPrefix} Updating JS module:', path);`
-  }
+    dlog('${logPrefix} Updating JS module:', path);
 
     try {
       const timestamp = Date.now();
@@ -195,18 +177,13 @@ function getUpdateJSFunction(logPrefix: string): string {
 }
 
 function generateHMRClient(opts: HMRScriptOptions): string {
-  const { logPrefix, debugMode } = opts;
+  const { logPrefix } = opts;
 
-  const debugPreamble = debugMode
-    ? `
+  const debugPreamble = `
   const HMR_DEBUG = (() => {
     try { return window.localStorage.getItem('VERYFRONT_DEBUG_HMR') === '1'; } catch (_) { return false; }
   })();
-  const dlog = (...args) => { if (HMR_DEBUG) console.log(...args); };`
-    : "";
-
-  // In debug mode, use dlog for non-critical messages; otherwise use console.log
-  const log = debugMode ? "dlog" : "console.log";
+  const dlog = (...args) => { if (HMR_DEBUG) console.log(...args); };`;
 
   return `
 // Veryfront HMR Client (${logPrefix})
@@ -262,12 +239,12 @@ function generateHMRClient(opts: HMRScriptOptions): string {
   function notifyStudioAndReload(reason) {
     const now = Date.now();
     if (now - lastReloadAt < RELOAD_THROTTLE_MS) {
-      ${log}('${logPrefix} Reload throttled:', reason || 'unknown');
+      dlog('${logPrefix} Reload throttled:', reason || 'unknown');
       return;
     }
     lastReloadAt = now;
 
-    if (reason) console.warn('${logPrefix} Reloading page:', reason);
+    if (reason) dlog('${logPrefix} Reloading page:', reason);
     notifyStudio();
     window.location.reload();
   }
@@ -277,7 +254,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
 
     reconnectAttempts++;
     const delay = getReconnectDelay();
-    ${log}('${logPrefix} Reconnecting in ' + Math.round(delay / 1000) + 's...');
+    dlog('${logPrefix} Reconnecting in ' + Math.round(delay / 1000) + 's...');
 
     reconnectTimerId = setTimeout(() => {
       reconnectTimerId = null;
@@ -291,12 +268,12 @@ function generateHMRClient(opts: HMRScriptOptions): string {
     pingIntervalId = setInterval(() => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       if (Date.now() - lastPongAt > PONG_TIMEOUT_MS) {
-        console.warn('${logPrefix} Pong timeout, reconnecting...');
+        dlog('${logPrefix} Pong timeout, reconnecting...');
         try { ws.close(); } catch (_) { /* expected: socket already closed */ }
         return;
       }
       try { ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() })); }
-      catch (e) { console.warn('${logPrefix} Ping failed:', e && e.message ? e.message : e); }
+      catch (e) { dlog('${logPrefix} Ping failed:', e && e.message ? e.message : e); }
     }, PING_INTERVAL_MS);
   }
 
@@ -318,7 +295,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
         reconnectTimerId = null;
       }
       startPing();
-      ${log}('${logPrefix} Connected to ' + wsUrl);
+      dlog('${logPrefix} Connected to ' + wsUrl);
     };
 
     ws.onmessage = (event) => {
@@ -326,7 +303,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
         const data = JSON.parse(event.data);
         switch (data.type) {
           case 'connected':
-            ${log}('${logPrefix} Server acknowledged connection');
+            dlog('${logPrefix} Server acknowledged connection');
             break;
           case 'pong':
             lastPongAt = Date.now();
@@ -342,7 +319,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
             notifyStudioAndReload('server-reload');
             break;
           default:
-            ${log}('${logPrefix} Unknown message type:', data.type);
+            dlog('${logPrefix} Unknown message type:', data.type);
         }
       } catch (e) {
         console.error('${logPrefix} Failed to parse message:', e);
@@ -350,7 +327,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
     };
 
     ws.onerror = () => {
-      ${log}('${logPrefix} WebSocket error');
+      dlog('${logPrefix} WebSocket error');
     };
 
     ws.onclose = () => {
@@ -368,7 +345,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
 
   async function handleUpdate(update) {
     if (!update.path) {
-      console.warn('${logPrefix} Update message missing path');
+      dlog('${logPrefix} Update message missing path');
       return;
     }
 
@@ -399,7 +376,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
       updateDebounceTimer = null;
 
       if (paths.length > 1) {
-        ${log}('${logPrefix} Processing ' + paths.length + ' batched updates');
+        dlog('${logPrefix} Processing ' + paths.length + ' batched updates');
       }
 
       // Single re-render handles all paths (server propagates timestamps to all imports)
@@ -427,16 +404,16 @@ ${getUpdateJSFunction(logPrefix)}
 
 /**
  * HMR script for local development.
- * Uses console.log for all messages since dev is single-user.
+ * Routine lifecycle messages are available when VERYFRONT_DEBUG_HMR=1.
  */
 export function getHMRScript(_port: number): string {
-  return generateHMRClient({ logPrefix: "[HMR]", debugMode: false });
+  return generateHMRClient({ logPrefix: "[HMR]" });
 }
 
 /**
  * HMR script for preview mode.
- * Uses debug-gated logging (localStorage VERYFRONT_DEBUG_HMR=1) to reduce noise.
+ * Routine lifecycle messages are available when VERYFRONT_DEBUG_HMR=1.
  */
 export function getPreviewHMRScript(): string {
-  return generateHMRClient({ logPrefix: "[Preview HMR]", debugMode: true });
+  return generateHMRClient({ logPrefix: "[Preview HMR]" });
 }

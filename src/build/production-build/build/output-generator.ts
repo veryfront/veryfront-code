@@ -55,7 +55,7 @@ export async function generateClientScripts(
   outputDir: string,
   dryRun: boolean,
 ): Promise<void> {
-  logger.info("Copying client scripts...");
+  logger.debug("Copying client scripts...");
 
   if (dryRun) return;
 

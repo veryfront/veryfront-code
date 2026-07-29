@@ -7,6 +7,7 @@
 
 import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
+import { INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "veryfront/errors";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import { sanitizeRunOutputForLogging } from "../../utils/sanitize-run-output.ts";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
@@ -39,9 +40,9 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
 
   const taskName = options.name;
   if (!taskName) {
-    cliLogger.error("Task name is required. Usage: veryfront task <name>");
-    exitProcess(1);
-    return;
+    throw INVALID_ARGUMENT.create({
+      detail: "Task name is required. Usage: veryfront task <name>",
+    });
   }
 
   const projectDir = Deno.cwd();
@@ -68,7 +69,6 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
 
       const task = findProjectRuntimeTask(discovery, taskName);
       if (!task) {
-        cliLogger.error(`Task "${taskName}" not found.`);
         if (discovery.errors.length > 0 && !options.debug) {
           cliLogger.warn(
             "Some project files could not be loaded. Re-run with --debug for details.",
@@ -84,8 +84,7 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
           cliLogger.info("No tasks found. Create a task file in tasks/ directory:");
           cliLogger.info("  tasks/my-task.ts");
         }
-        exitProcess(1);
-        return;
+        throw RESOURCE_NOT_FOUND.create({ detail: `Task "${taskName}" not found.` });
       }
 
       let taskConfig: Record<string, unknown> = {};
@@ -93,9 +92,9 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
         try {
           taskConfig = JSON.parse(options.config);
         } catch {
-          cliLogger.error("Invalid --config JSON");
-          exitProcess(1);
-          return;
+          throw INVALID_ARGUMENT.create({
+            detail: "Invalid --config JSON: must be a valid JSON object",
+          });
         }
       }
 

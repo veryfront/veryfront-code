@@ -83,10 +83,6 @@ export const evalHelp: CommandHelp = {
       flag: "--max-output-tokens <count>",
       description: "Limit target agent output tokens",
     },
-    {
-      flag: "--debug",
-      description: "Show discovery warnings",
-    },
   ],
   examples: [
     "veryfront eval --list",

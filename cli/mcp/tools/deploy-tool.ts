@@ -46,7 +46,7 @@ export interface TriggerDeployResult {
   deploymentId?: string;
   release?: { id: string; name: string; version: string };
   environment?: { id: string; name: string };
-  commitSha?: string;
+  commitSha?: string | null;
   sourceDigest?: string;
   controlPlane?: string;
   error?: string;
@@ -104,7 +104,6 @@ export async function triggerDeploy(
       projectId: project.id,
       projectSlug: project.slug,
       branch: input.branch,
-      requireClean: input.environment === "production",
     });
 
     const release = await createRelease(client, project.id, {

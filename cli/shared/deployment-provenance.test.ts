@@ -63,7 +63,6 @@ describe("validatePushReceipt", () => {
       projectSlug: RECEIPT.projectSlug,
       branch: "main",
       commitSha: RECEIPT.commitSha,
-      requireClean: true,
     });
 
     assertEquals(result, RECEIPT.commitSha);
@@ -114,11 +113,13 @@ describe("validatePushReceipt", () => {
           })
         ),
       Error,
-      "different branch",
+      'The latest push is for branch "main", but deploy targets "feature-x". ' +
+        "Run veryfront deploy --branch main to deploy the latest push, " +
+        "or veryfront push --branch feature-x to preview feature-x first.",
     );
   });
 
-  it("rejects a different or dirty commit for production", async () => {
+  it("rejects a different commit when one is required", async () => {
     await assertRejects(
       () =>
         Promise.resolve().then(() =>
@@ -133,38 +134,49 @@ describe("validatePushReceipt", () => {
       Error,
       "different commit",
     );
+  });
 
+  it("accepts dirty metadata for the same deployment target and commit", () => {
+    const result = validatePushReceipt({ ...RECEIPT, clean: false }, {
+      controlPlane: RECEIPT.controlPlane,
+      projectId: RECEIPT.projectId,
+      projectSlug: RECEIPT.projectSlug,
+      branch: RECEIPT.branch,
+      commitSha: RECEIPT.commitSha,
+      clean: false,
+    });
+
+    assertEquals(result, RECEIPT.commitSha);
+  });
+
+  it("accepts a digest-only first push when the project has no Git source", () => {
+    const result = validatePushReceipt({ ...RECEIPT, commitSha: null, clean: false }, {
+      controlPlane: RECEIPT.controlPlane,
+      projectId: RECEIPT.projectId,
+      projectSlug: RECEIPT.projectSlug,
+      branch: RECEIPT.branch,
+      commitSha: null,
+      clean: false,
+    });
+
+    assertEquals(result, null);
+  });
+
+  it("rejects a digest-only receipt when the current project has a Git commit", async () => {
     await assertRejects(
       () =>
         Promise.resolve().then(() =>
-          validatePushReceipt({ ...RECEIPT, clean: false }, {
+          validatePushReceipt({ ...RECEIPT, commitSha: null, clean: false }, {
             controlPlane: RECEIPT.controlPlane,
             projectId: RECEIPT.projectId,
             projectSlug: RECEIPT.projectSlug,
             branch: RECEIPT.branch,
             commitSha: RECEIPT.commitSha,
-            requireClean: true,
+            clean: true,
           })
         ),
       Error,
-      "uncommitted changes",
-    );
-
-    await assertRejects(
-      () =>
-        Promise.resolve().then(() =>
-          validatePushReceipt(RECEIPT, {
-            controlPlane: RECEIPT.controlPlane,
-            projectId: RECEIPT.projectId,
-            projectSlug: RECEIPT.projectSlug,
-            branch: RECEIPT.branch,
-            commitSha: RECEIPT.commitSha,
-            clean: false,
-            requireClean: true,
-          })
-        ),
-      Error,
-      "uncommitted changes",
+      "no Git commit SHA",
     );
   });
 });
@@ -194,6 +206,82 @@ describe("push receipt persistence", () => {
     try {
       assertEquals(await readPushReceipt(projectDir), null);
     } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects a malformed existing receipt with recovery guidance", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      await Deno.mkdir(`${projectDir}/.veryfront`);
+      await Deno.writeTextFile(`${projectDir}/.veryfront/push-receipt.json`, "{not json");
+
+      const error = await assertRejects(
+        () => readPushReceipt(projectDir),
+        Error,
+        ".veryfront/push-receipt.json",
+      );
+      assertEquals(String(error).includes(projectDir), false);
+      await assertRejects(
+        () => readPushReceipt(projectDir),
+        Error,
+        "remove it and run veryfront push again",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects an unsupported existing receipt with recovery guidance", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      await Deno.mkdir(`${projectDir}/.veryfront`);
+      await Deno.writeTextFile(
+        `${projectDir}/.veryfront/push-receipt.json`,
+        `${JSON.stringify({ ...RECEIPT, version: 1 }, null, 2)}\n`,
+      );
+
+      await assertRejects(
+        () => readPushReceipt(projectDir),
+        Error,
+        ".veryfront/push-receipt.json",
+      );
+      await assertRejects(
+        () => readPushReceipt(projectDir),
+        Error,
+        "remove it and run veryfront push again",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects an unreadable existing receipt with recovery guidance", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const projectDir = await Deno.makeTempDir();
+    const receiptPath = `${projectDir}/.veryfront/push-receipt.json`;
+    try {
+      await Deno.mkdir(`${projectDir}/.veryfront`);
+      await Deno.writeTextFile(receiptPath, `${JSON.stringify(RECEIPT, null, 2)}\n`);
+      await Deno.chmod(receiptPath, 0);
+
+      await assertRejects(
+        () => readPushReceipt(projectDir),
+        Error,
+        ".veryfront/push-receipt.json",
+      );
+      await assertRejects(
+        () => readPushReceipt(projectDir),
+        Error,
+        "remove it and run veryfront push again",
+      );
+    } finally {
+      try {
+        await Deno.chmod(receiptPath, 0o600);
+      } catch {
+        // Best effort cleanup after permission-focused assertion.
+      }
       await Deno.remove(projectDir, { recursive: true });
     }
   });

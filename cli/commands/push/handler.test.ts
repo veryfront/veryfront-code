@@ -33,8 +33,9 @@ describe("Push Handler", () => {
       const result = parsePushArgs(createArgs());
       assertSuccess(result);
       assertEquals(result.data.projectSlug, undefined);
-      assertEquals(result.data.branch, undefined);
+      assertEquals(result.data.branch, "main");
       assertEquals(result.data.force, false);
+      assertEquals(result.data.prune, false);
       assertEquals(result.data.dryRun, false);
       assertEquals(result.data.quiet, false);
     });
@@ -63,6 +64,11 @@ describe("Push Handler", () => {
       assertEquals(result.data.branch, "hotfix");
     });
 
+    it("rejects branch names that cannot be represented by preview DNS", () => {
+      const result = parsePushArgs(createArgs({ branch: "Feature/auth" }));
+      assertEquals(result.success, false);
+    });
+
     it("should parse --force flag", () => {
       const result = parsePushArgs(createArgs({ force: true }));
       assertSuccess(result);
@@ -79,6 +85,19 @@ describe("Push Handler", () => {
       const result = parsePushArgs(createArgs({ "dry-run": true }));
       assertSuccess(result);
       assertEquals(result.data.dryRun, true);
+    });
+
+    it("should parse --prune flag", () => {
+      const result = parsePushArgs(createArgs({ prune: true }));
+      assertSuccess(result);
+      assertEquals(result.data.prune, true);
+    });
+
+    it("rejects the removed --delete flag with the canonical replacement", () => {
+      const result = parsePushArgs(createArgs({ delete: true }));
+      assertEquals(result.success, false);
+      if (result.success) return;
+      assertEquals(result.error.message, "Unknown push option: --delete. Use --prune.");
     });
 
     it("should parse --quiet flag", () => {
@@ -107,14 +126,16 @@ describe("Push Handler", () => {
 
     it("should parse multiple flags together", () => {
       const result = parsePushArgs(createArgs({
-        branch: "release/v2",
+        branch: "release-v2",
         force: true,
+        prune: true,
         "dry-run": true,
         quiet: true,
       }));
       assertSuccess(result);
-      assertEquals(result.data.branch, "release/v2");
+      assertEquals(result.data.branch, "release-v2");
       assertEquals(result.data.force, true);
+      assertEquals(result.data.prune, true);
       assertEquals(result.data.dryRun, true);
       assertEquals(result.data.quiet, true);
     });

@@ -28,6 +28,18 @@ export interface CommandOptions {
 const COMMAND_TIMEOUT_EXIT_CODE = 124;
 const FORCE_KILL_GRACE_MS = 250;
 
+function createShellCommand(cmd: string, args: string[]): { cmd: string; args: string[] } {
+  if (isWindowsPlatform()) {
+    return { cmd: "cmd.exe", args: ["/d", "/s", "/c", cmd, ...args] };
+  }
+
+  if (args.length === 0) {
+    return { cmd: "sh", args: ["-c", cmd] };
+  }
+
+  return { cmd: "sh", args: ["-c", 'exec "$@"', "sh", cmd, ...args] };
+}
+
 function createTimeoutResult(
   timeoutMs: number,
   stdout?: string,
@@ -131,8 +143,9 @@ export async function runCommand(
 
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   if (deno) {
-    const command = new deno.Command(cmd, {
-      args,
+    const denoCommand = shell ? createShellCommand(cmd, args) : { cmd, args };
+    const command = new deno.Command(denoCommand.cmd, {
+      args: denoCommand.args,
       cwd: cmdCwd,
       env: cmdEnv,
       clearEnv,
@@ -190,14 +203,8 @@ export async function runCommand(
 
     const bunStdio = inherit ? "inherit" : capture ? "pipe" : "ignore";
 
-    const isWindows = isWindowsPlatform();
-    const bunCmd = shell
-      ? args.length === 0
-        ? isWindows ? ["cmd", "/c", cmd] : ["sh", "-c", cmd]
-        : isWindows
-        ? ["cmd", "/c", cmd, ...args]
-        : ["sh", "-c", 'exec "$@"', "sh", cmd, ...args]
-      : [cmd, ...args];
+    const shellCommand = shell ? createShellCommand(cmd, args) : undefined;
+    const bunCmd = shellCommand ? [shellCommand.cmd, ...shellCommand.args] : [cmd, ...args];
 
     const proc = bunGlobal.Bun.spawn({
       cmd: bunCmd,

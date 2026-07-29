@@ -3,12 +3,60 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { injectHTMLContent } from "./html-injection.ts";
 import type { HTMLMetadata } from "#veryfront/transforms/mdx/types.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 const baseTemplate = `<!DOCTYPE html>
 <html><head>{{ meta }}</head>
 <body>{{ content }}</body></html>`;
 
 const minMeta: HTMLMetadata = { title: "Test", description: "Desc" };
+const PAGE_HASH = "a".repeat(64);
+const UNUSED_HASH = "b".repeat(64);
+const ABOUT_HASH = "c".repeat(64);
+
+function releaseManifest(): ReleaseAssetManifest {
+  return {
+    schemaVersion: 1,
+    projectId: "project-id",
+    releaseId: "release-id",
+    releaseVersion: 1,
+    manifestVersion: 1,
+    builderVersion: "0.1.765",
+    sourceContentHash: "",
+    createdAt: "2026-07-27T00:00:00.000Z",
+    assetBasePath: "/_vf/assets",
+    modules: {
+      "app/page.tsx": { contentHash: PAGE_HASH, size: 1, contentType: "text/javascript" },
+      "components/Unused.tsx": {
+        contentHash: UNUSED_HASH,
+        size: 1,
+        contentType: "text/javascript",
+      },
+    },
+    css: [],
+    routes: { "/": { modules: ["app/page.tsx"], css: [] } },
+    dependencies: {},
+    fallback: { mode: "jit", gaps: [] },
+  };
+}
+
+function customDirectoryReleaseManifest(): ReleaseAssetManifest {
+  return {
+    ...releaseManifest(),
+    modules: {
+      "src/site/page.tsx": { contentHash: PAGE_HASH, size: 1, contentType: "text/javascript" },
+      "src/pages/about.tsx": {
+        contentHash: ABOUT_HASH,
+        size: 1,
+        contentType: "text/javascript",
+      },
+    },
+    routes: {
+      "/": { modules: ["src/site/page.tsx"], css: [] },
+      "/about": { modules: ["src/pages/about.tsx"], css: [] },
+    },
+  };
+}
 
 function extractHydrationData(html: string): Record<string, unknown> {
   const match = html.match(
@@ -167,6 +215,49 @@ describe("html/html-injection", () => {
 
       assertEquals(flagOff, unkeyed);
       assertEquals(flagOff.includes("veryfront-hydration-data"), false);
+    });
+
+    it("injects route-scoped release asset modules into full-document client page hydration data", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          pagePath: "/project/app/page.tsx",
+          projectDir: "/project",
+          isClientPage: true,
+          releaseAssetManifest: releaseManifest(),
+        },
+      );
+
+      const hydrationData = extractHydrationData(html);
+      assertEquals(hydrationData.releaseAssetModules, {
+        "app/page.tsx": `/_vf/assets/${PAGE_HASH}.js`,
+      });
+    });
+
+    it("uses configured route directories for route-scoped release asset modules", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "about",
+          pagePath: "/project/src/pages/about.tsx",
+          projectDir: "/project",
+          isClientPage: true,
+          directories: { app: "src/site", pages: "src/pages" },
+          releaseAssetManifest: customDirectoryReleaseManifest(),
+        },
+      );
+
+      const hydrationData = extractHydrationData(html);
+      assertEquals(hydrationData.releaseAssetModules, {
+        "src/pages/about.tsx": `/_vf/assets/${ABOUT_HASH}.js`,
+      });
     });
 
     it("seeds route params into client-page hydration data (issue #2741)", () => {

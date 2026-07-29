@@ -35,6 +35,17 @@ describe("server/handlers/dev/scripts/hmr-scripts", () => {
     assertStringIncludes(script, "type: 'pong'");
   });
 
+  it("does not report routine page reloads as browser warnings", () => {
+    const script = getHMRScript(3000);
+    assertStringIncludes(script, "dlog('[HMR] Reloading page:', reason);");
+    assertStringIncludes(script, "dlog('[HMR] Updating JS module:', path);");
+    assertStringIncludes(script, "dlog('[HMR] Tailwind CSS refreshed');");
+    assertEquals(script.includes("console.warn('[HMR] Reloading page:'"), false);
+    assertEquals(script.includes("console.log('[HMR] Reloading page:'"), false);
+    assertEquals(script.includes("console.log('[HMR] Updating JS module:'"), false);
+    assertEquals(script.includes("console.log('[HMR] Tailwind CSS refreshed'"), false);
+  });
+
   it("targets Studio notifications at a validated parent origin", () => {
     const script = getHMRScript(3000);
     assertStringIncludes(script, "function vfStudioTargetOrigin()");

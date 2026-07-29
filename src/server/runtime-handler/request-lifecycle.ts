@@ -75,6 +75,7 @@ export function startRequestTracking(
   method: string,
   environment: string | undefined,
   releaseId: string | undefined,
+  productionRuntime = false,
 ): void {
   requestTracker.start(
     requestId,
@@ -83,6 +84,7 @@ export function startRequestTracking(
     method,
     environment,
     releaseId,
+    productionRuntime,
   );
 }
 

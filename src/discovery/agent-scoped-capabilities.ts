@@ -215,7 +215,9 @@ async function buildSkillFromDir(input: {
 
   const content = await readDiscoveryTextFile(skillMdPath, input.context);
   const parsed = await parseSkillFrontmatter(content);
-  const metadata = validateSkillMetadata(parsed.frontmatter, input.id);
+  const metadata = validateSkillMetadata(parsed.frontmatter, input.id, {
+    providerSafeName: true,
+  });
 
   return {
     id: input.id,

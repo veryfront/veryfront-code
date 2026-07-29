@@ -71,7 +71,7 @@ export {
 } from "./studio.ts";
 
 export type { DiscoveredEval, EvalDiscoveryOptions, EvalDiscoveryResult } from "./discovery.ts";
-export type { EvalLlmGroundednessJudgeOptions } from "./judges.ts";
+export type { EvalLlmGroundednessJudgeOptions, EvalLlmRubricJudgeOptions } from "./judges.ts";
 
 export type {
   EvalAgentAdapter,

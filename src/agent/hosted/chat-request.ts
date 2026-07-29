@@ -481,6 +481,57 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function getNonEmptyStringField(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function normalizeHostedRuntimeInvocationMessagePart(part: unknown): unknown {
+  if (!isRecord(part) || (part.type !== "file" && part.type !== "image")) {
+    return part;
+  }
+
+  const mediaType = getNonEmptyStringField(part, "mediaType") ??
+    getNonEmptyStringField(part, "media_type");
+  const url = getNonEmptyStringField(part, "url");
+  if (!mediaType || !url) {
+    return part;
+  }
+
+  const uploadId = getNonEmptyStringField(part, "uploadId") ??
+    getNonEmptyStringField(part, "upload_id");
+  const uploadPath = getNonEmptyStringField(part, "uploadPath") ??
+    getNonEmptyStringField(part, "upload_path");
+  const filename = getNonEmptyStringField(part, "filename");
+
+  return {
+    type: "file",
+    mediaType,
+    url,
+    ...(filename ? { filename } : {}),
+    ...(uploadId ? { uploadId } : {}),
+    ...(uploadPath ? { uploadPath } : {}),
+  };
+}
+
+function normalizeHostedRuntimeInvocationMessages(
+  messages: RuntimeAgentRunInvocation["messages"],
+): RuntimeAgentRunInvocation["messages"] {
+  return messages.map((message) => {
+    if (!isRecord(message) || !Array.isArray(message.parts)) {
+      return message;
+    }
+
+    return {
+      ...message,
+      parts: message.parts.map(normalizeHostedRuntimeInvocationMessagePart),
+    };
+  });
+}
+
 function getStudioRuntimeEnvironmentContext(input: RuntimeAgentRunInvocation): string | undefined {
   for (const item of input.context) {
     if (item.type !== "json" || item.title !== "studio_context") continue;
@@ -529,7 +580,7 @@ export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
   const runtimeTargetKind = getRuntimeTargetKind(input.run.project.runtimeTargetKind);
 
   return {
-    messages: input.messages,
+    messages: normalizeHostedRuntimeInvocationMessages(input.messages),
     context: {
       conversationId: input.run.conversationId,
       projectId: input.run.project.projectId,

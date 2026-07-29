@@ -72,7 +72,7 @@ export async function createVCRClient(
 ): Promise<{ client: ApiClient; save: () => Promise<void>; projectSlug: string }> {
   const fs = createFileSystem();
   const recording = env.vcr === "record";
-  const fixturesDir = new URL("../commands/fixtures", import.meta.url).pathname;
+  const fixturesDir = new URL("../test-fixtures", import.meta.url).pathname;
   const cassettePath = `${fixturesDir}/${cassetteName}.json`;
 
   let cassette: VCRCassette = {

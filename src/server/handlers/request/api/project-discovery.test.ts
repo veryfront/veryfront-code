@@ -44,6 +44,19 @@ function createHandlerContext(
   } as HandlerContext;
 }
 
+function assertConfiguredSkillInfrastructure(
+  tools: unknown,
+): asserts tools is Record<string, unknown> {
+  assertExists(tools);
+  if (tools === true || typeof tools !== "object") {
+    throw new Error("Expected a concrete agent tool map");
+  }
+  const toolMap = tools as Record<string, unknown>;
+  assertEquals(typeof toolMap.load_skill, "object");
+  assertEquals(typeof toolMap.load_skill_reference, "object");
+  assertEquals(typeof toolMap.execute_skill_script, "object");
+}
+
 async function writeAgentFile(
   ctx: HandlerContext,
   agentId: string,
@@ -108,6 +121,149 @@ describe(
       const updatedAgent = getAgent(agentId);
       assertExists(updatedAgent);
       assertEquals(updatedAgent.config.system, "SECOND");
+    });
+
+    it("reuses unchanged preview primitive modules across requests", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/preview-module-cache-project",
+        "preview-module-cache-project",
+        "preview",
+      );
+      const counterKey = "__veryfrontPreviewDiscoveryImportCount";
+      const globals = globalThis as typeof globalThis & Record<string, unknown>;
+      delete globals[counterKey];
+
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/tools/counter.ts`,
+        [
+          'import { defineSchema } from "veryfront/schemas";',
+          'import { tool } from "veryfront/tool";',
+          "",
+          `const counterKey = "${counterKey}";`,
+          "const globals = globalThis as typeof globalThis & Record<string, unknown>;",
+          "globals[counterKey] = Number(globals[counterKey] ?? 0) + 1;",
+          "",
+          "export default tool({",
+          '  id: "counter",',
+          '  description: "Count module evaluations.",',
+          "  inputSchema: defineSchema((v) => v.object({}))(),",
+          "  execute: async () => ({ count: globals[counterKey] }),",
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      try {
+        await ensureProjectDiscovery(ctx);
+        await ensureProjectDiscovery(ctx);
+
+        assertEquals(globals[counterKey], 1);
+      } finally {
+        delete globals[counterKey];
+      }
+    });
+
+    it("does not reuse API-backed modules across projects", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const firstCtx = createHandlerContext("/runtime/first", "first-project", "preview");
+      const secondCtx = createHandlerContext("/runtime/second", "second-project", "preview");
+      firstCtx.projectId = "first-project-id";
+      secondCtx.projectId = "second-project-id";
+      firstCtx.config = { fs: { type: "veryfront-api" } } as HandlerContext["config"];
+      secondCtx.config = { fs: { type: "veryfront-api" } } as HandlerContext["config"];
+
+      const counterKey = "__veryfrontCrossProjectDiscoveryImportCount";
+      const globals = globalThis as typeof globalThis & Record<string, unknown>;
+      delete globals[counterKey];
+      const toolSource = [
+        'import { defineSchema } from "veryfront/schemas";',
+        'import { tool } from "veryfront/tool";',
+        "",
+        `const counterKey = "${counterKey}";`,
+        "const globals = globalThis as typeof globalThis & Record<string, unknown>;",
+        "globals[counterKey] = Number(globals[counterKey] ?? 0) + 1;",
+        "",
+        "export default tool({",
+        '  id: "counter",',
+        '  description: "Count module evaluations.",',
+        "  inputSchema: defineSchema((v) => v.object({}))(),",
+        "  execute: async () => ({ count: globals[counterKey] }),",
+        "});",
+        "",
+      ].join("\n");
+
+      await firstCtx.adapter.fs.writeFile("tools/counter.ts", toolSource);
+      await secondCtx.adapter.fs.writeFile("tools/counter.ts", toolSource);
+
+      try {
+        await ensureProjectDiscovery(firstCtx);
+        await ensureProjectDiscovery(secondCtx);
+
+        assertEquals(globals[counterKey], 2);
+      } finally {
+        delete globals[counterKey];
+      }
+    });
+
+    it("invalidates extensionless import resolution after a source snapshot change", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/runtime/resolution",
+        "resolution-project",
+        "preview",
+      );
+      ctx.projectId = "resolution-project-id";
+      ctx.config = { fs: { type: "veryfront-api" } } as HandlerContext["config"];
+      let sourceSnapshotVersion = 1;
+      (
+        ctx.adapter.fs as typeof ctx.adapter.fs & {
+          getSourceSnapshotVersion: () => number;
+        }
+      ).getSourceSnapshotVersion = () => sourceSnapshotVersion;
+      const resolvedConfigBase = `${Deno.cwd()}/tools/config`;
+
+      await ctx.adapter.fs.writeFile(
+        "tools/resolution.ts",
+        [
+          'import { tool } from "veryfront/tool";',
+          'import { defineSchema } from "veryfront/schemas";',
+          'import { description } from "./config";',
+          "",
+          "export default tool({",
+          '  id: "resolution_tool",',
+          "  description,",
+          "  inputSchema: defineSchema((v) => v.object({}))(),",
+          "  execute: async () => ({}),",
+          "});",
+          "",
+        ].join("\n"),
+      );
+      await ctx.adapter.fs.writeFile(
+        `${resolvedConfigBase}.tsx`,
+        'export const description = "TSX candidate";\n',
+      );
+
+      const first = await ensureProjectDiscovery(ctx);
+      assertEquals(first.tools.get("resolution_tool")?.description, "TSX candidate");
+
+      await ctx.adapter.fs.writeFile(
+        `${resolvedConfigBase}.ts`,
+        'export const description = "TypeScript candidate";\n',
+      );
+      sourceSnapshotVersion++;
+
+      const second = await ensureProjectDiscovery(ctx);
+      assertEquals(second.tools.get("resolution_tool")?.description, "TypeScript candidate");
     });
 
     it("reuses preview discovery for one source snapshot generation", async () => {
@@ -835,12 +991,8 @@ describe(
       assertExists(discoveredAgent);
       assertEquals(toolRegistry.has("write-report"), true);
       assertEquals(toolRegistry.has("writeReport"), false);
-      assertEquals(discoveredAgent.config.tools, {
-        "write-report": true,
-        load_skill: true,
-        load_skill_reference: true,
-        execute_skill_script: true,
-      });
+      assertConfiguredSkillInfrastructure(discoveredAgent.config.tools);
+      assertEquals(discoveredAgent.config.tools["write-report"], true);
     });
 
     it("keeps explicit generated-looking tool ids available for request-time project-agent runs", async () => {
@@ -890,12 +1042,8 @@ describe(
       assertExists(discoveredAgent);
       assertEquals(toolRegistry.has("tool_2024_01"), true);
       assertEquals(toolRegistry.has("writeReport"), false);
-      assertEquals(discoveredAgent.config.tools, {
-        tool_2024_01: true,
-        load_skill: true,
-        load_skill_reference: true,
-        execute_skill_script: true,
-      });
+      assertConfiguredSkillInfrastructure(discoveredAgent.config.tools);
+      assertEquals(discoveredAgent.config.tools.tool_2024_01, true);
     });
 
     it("keeps object-spread overridden tool ids available for request-time project-agent runs", async () => {
@@ -946,12 +1094,8 @@ describe(
       assertExists(discoveredAgent);
       assertEquals(toolRegistry.has("my-tool"), true);
       assertEquals(toolRegistry.has("writeReport"), false);
-      assertEquals(discoveredAgent.config.tools, {
-        "my-tool": true,
-        load_skill: true,
-        load_skill_reference: true,
-        execute_skill_script: true,
-      });
+      assertConfiguredSkillInfrastructure(discoveredAgent.config.tools);
+      assertEquals(discoveredAgent.config.tools["my-tool"], true);
     });
   },
 );

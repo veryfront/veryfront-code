@@ -15,6 +15,23 @@ type StructuredProviderPart = Exclude<ProviderModelMessage["content"], string>[n
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
+type RuntimeAttachmentFields = {
+  url: string;
+  mediaType: string;
+  filename?: string;
+  uploadId?: string;
+  uploadPath?: string;
+};
+
+type RuntimeAttachmentPart =
+  | ({ type: "image" } & RuntimeAttachmentFields)
+  | ({ type: "file" } & RuntimeAttachmentFields);
+
+type RuntimeAttachmentLikePart = RuntimeAttachmentPart & {
+  upload_id?: string;
+  upload_path?: string;
+};
+
 type AgentRuntimeMessageLikePart =
   | { type: "text"; text: string }
   | { type: "reasoning"; text?: string; signature?: string; redactedData?: string }
@@ -62,8 +79,7 @@ type AgentRuntimeMessageLikePart =
     result?: unknown;
     output?: unknown;
   }
-  | { type: "image"; url: string; mediaType: string }
-  | { type: "file"; url: string; mediaType: string }
+  | RuntimeAttachmentLikePart
   | ChatSourceUrlUiPart
   | ChatSourceDocumentUiPart;
 
@@ -83,8 +99,7 @@ export type AgentRuntimeMessagePart =
     toolName: string;
     result: unknown;
   }
-  | { type: "image"; url: string; mediaType: string }
-  | { type: "file"; url: string; mediaType: string }
+  | RuntimeAttachmentPart
   | ChatSourceUrlUiPart
   | ChatSourceDocumentUiPart;
 
@@ -151,11 +166,7 @@ function createTextAgentRuntimePart(text: string): AgentRuntimeMessagePart | nul
 function toNativeFilePart(
   type: "image" | "file",
   part: unknown,
-): { type: "image"; url: string; mediaType: string } | {
-  type: "file";
-  url: string;
-  mediaType: string;
-} | null {
+): RuntimeAttachmentPart | null {
   const url = getOptionalStringField(part, "url");
   const mediaType = getOptionalStringField(part, "mediaType");
   // `data:` URLs (inline base64) are kept: guest / no-project attachments ride
@@ -163,9 +174,23 @@ function toNativeFilePart(
   if (!url || !mediaType) {
     return null;
   }
+
+  const filename = getOptionalStringField(part, "filename");
+  const uploadId = getOptionalStringField(part, "uploadId") ??
+    getOptionalStringField(part, "upload_id");
+  const uploadPath = getOptionalStringField(part, "uploadPath") ??
+    getOptionalStringField(part, "upload_path");
+  const sharedFields = {
+    url,
+    mediaType,
+    ...(filename ? { filename } : {}),
+    ...(uploadId ? { uploadId } : {}),
+    ...(uploadPath ? { uploadPath } : {}),
+  };
+
   return type === "file"
-    ? { type: "file" as const, url, mediaType }
-    : { type: "image" as const, url, mediaType };
+    ? { type: "file" as const, ...sharedFields }
+    : { type: "image" as const, ...sharedFields };
 }
 
 function convertStructuredPart(part: StructuredProviderPart): AgentRuntimeMessagePart | null {
@@ -213,8 +238,10 @@ function convertStructuredPart(part: StructuredProviderPart): AgentRuntimeMessag
 function createAttachmentReference(part: StructuredProviderPart): UploadedFileReference | null {
   const filename = getOptionalStringField(part, "filename");
   const mediaType = getOptionalStringField(part, "mediaType");
-  const uploadId = getOptionalStringField(part, "uploadId");
-  const uploadPath = getOptionalStringField(part, "uploadPath");
+  const uploadId = getOptionalStringField(part, "uploadId") ??
+    getOptionalStringField(part, "upload_id");
+  const uploadPath = getOptionalStringField(part, "uploadPath") ??
+    getOptionalStringField(part, "upload_path");
   const url = getOptionalStringField(part, "url");
 
   if (!mediaType) {

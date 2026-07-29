@@ -18,6 +18,7 @@ import {
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { getErrorCollector, profilePhase } from "#veryfront/observability";
+import { captureApplicationError } from "#veryfront/observability/application-errors.ts";
 import { ErrorOverlay, parseErrorLocation } from "../../dev-server/error-overlay/index.ts";
 import { ErrorPages } from "../../utils/error-html.ts";
 import {
@@ -359,10 +360,16 @@ export class SSRService implements SSRServiceLike {
     request: Request,
     nonce?: string,
   ): SSRRenderResult {
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+
     // The page threw and its app-router error.tsx already rendered a full,
     // hydrating document (the boundary UI). Serve it as a 500 without caching.
     const errorBoundaryHtml = (error as { errorBoundaryHtml?: string })?.errorBoundaryHtml;
     if (typeof errorBoundaryHtml === "string") {
+      captureApplicationError(errorObj, {
+        boundary: "ssr.app-router-error-boundary",
+        method: request.method,
+      });
       return {
         status: HTTP_INTERNAL_SERVER_ERROR,
         html: errorBoundaryHtml,
@@ -373,7 +380,6 @@ export class SSRService implements SSRServiceLike {
       };
     }
 
-    const errorObj = error instanceof Error ? error : new Error(String(error));
     // Dev-only overlay (full stack, absolute paths, line numbers) must never
     // be exposed outside a local project, including remote preview, which is
     // internet-reachable. See VULN-SRV-1 / VULN-SRV-2.
@@ -456,6 +462,11 @@ export class SSRService implements SSRServiceLike {
         slug,
       };
     }
+
+    captureApplicationError(errorObj, {
+      boundary: "ssr.render",
+      method: request.method,
+    });
 
     logger.error("Render failed", {
       slug,

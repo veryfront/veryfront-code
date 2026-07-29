@@ -25,6 +25,22 @@ Deno.test("exports agent skill helpers as a public package subpath", async () =>
   assertEquals(imports["veryfront/skill"], "./src/skill/index.ts");
 });
 
+Deno.test("exports CLI framework dependencies as public package subpaths", async () => {
+  const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+  const exports = denoConfig.exports as Record<string, string>;
+  const imports = denoConfig.imports as Record<string, string>;
+
+  for (
+    const [subpath, source] of [
+      ["utils/logger", "./src/utils/logger/index.ts"],
+      ["release-assets", "./src/release-assets/index.ts"],
+    ] as const
+  ) {
+    assertEquals(exports[`./${subpath}`], source);
+    assertEquals(imports[`veryfront/${subpath}`], source);
+  }
+});
+
 Deno.test("npm package provenance metadata points at veryfront-code", async () => {
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
 
@@ -340,6 +356,11 @@ describe("normalizeNpmPackageMetadata", () => {
         "@opentelemetry/exporter-metrics-otlp-http": "0.219.0",
         "@opentelemetry/sdk-metrics": "2.8.0",
         "@opentelemetry/sdk-node": "0.218.0",
+        "@sentry/deno": "10.68.0",
+        "brace-expansion": "5.0.8",
+        "gaxios": "7.2.0",
+        "gcp-metadata": "8.1.2",
+        "protobufjs": "7.6.5",
         "zod": "4.3.6",
       },
       optionalDependencies: {
@@ -598,6 +619,7 @@ describe("npm supply-chain policy", () => {
       "ext-document-kreuzberg",
       "ext-eval-report-mlflow",
       "ext-observability-opentelemetry",
+      "ext-observability-sentry",
       "ext-parser-babel",
       "ext-sandbox-shell-tools",
     ];

@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DevCommandOptions, DevCommandResult, DevOptions } from "./index.ts";
-import { preloadDevAuth } from "./command.ts";
+import { createSelectedProjectPushOptions, preloadDevAuth } from "./command.ts";
 
 describe("cli/commands/dev", () => {
   describe("DevOptions type", () => {
@@ -163,6 +163,24 @@ describe("cli/commands/dev", () => {
     });
   });
 
+  describe("project sync shortcuts", () => {
+    it("targets the project selected in the dev session when pushing", () => {
+      assertEquals(
+        createSelectedProjectPushOptions("/tmp/project", {
+          id: "project-1",
+          slug: "selected-project",
+          name: "Selected Project",
+        }),
+        {
+          projectDir: "/tmp/project",
+          projectSlug: "selected-project",
+          force: true,
+          quiet: true,
+        },
+      );
+    });
+  });
+
   describe("initial authentication", () => {
     it("preloads project sync from a resolved environment API key", async () => {
       const originalFetch = globalThis.fetch;
@@ -193,9 +211,81 @@ describe("cli/commands/dev", () => {
           { id: "project-env", slug: "env-project", name: "Env Project" },
         ]);
         assertEquals(requests, [
-          { authorization: "Bearer vf_env_secret", limit: "1" },
           { authorization: "Bearer vf_env_secret", limit: null },
         ]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("validates a user token once while loading projects", async () => {
+      const originalFetch = globalThis.fetch;
+      const paths: string[] = [];
+
+      try {
+        globalThis.fetch = ((input: string | URL | Request) => {
+          const url = new URL(String(input));
+          paths.push(url.pathname);
+
+          if (url.pathname === "/me") {
+            return Promise.resolve(
+              Response.json({ id: "user-1", email: "dev@example.com" }),
+            );
+          }
+
+          return Promise.resolve(
+            Response.json({
+              data: [{ id: "project-1", slug: "project-one", name: "Project One" }],
+            }),
+          );
+        }) as typeof fetch;
+
+        const result = await preloadDevAuth("user-token");
+
+        assertEquals(result.identity, { id: "user-1", email: "dev@example.com" });
+        assertEquals(result.projects.length, 1);
+        assertEquals(paths, ["/me", "/projects"]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("keeps a validated user identity when project discovery fails", async () => {
+      const originalFetch = globalThis.fetch;
+
+      try {
+        globalThis.fetch = ((input: string | URL | Request) => {
+          const url = new URL(String(input));
+          if (url.pathname === "/me") {
+            return Promise.resolve(
+              Response.json({ id: "user-1", email: "dev@example.com" }),
+            );
+          }
+
+          return Promise.resolve(new Response("Unavailable", { status: 503 }));
+        }) as typeof fetch;
+
+        const result = await preloadDevAuth("user-token");
+
+        assertEquals(result, {
+          identity: { id: "user-1", email: "dev@example.com" },
+          projects: [],
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does not authenticate an API key rejected by project discovery", async () => {
+      const originalFetch = globalThis.fetch;
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.resolve(new Response("Unauthorized", { status: 401 }))) as typeof fetch;
+
+        const result = await preloadDevAuth("vf_invalid");
+
+        assertEquals(result, { identity: null, projects: [] });
       } finally {
         globalThis.fetch = originalFetch;
       }

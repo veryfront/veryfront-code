@@ -13,8 +13,11 @@ import {
   muted,
   reset,
   resetColorCache,
+  setColorOverride,
   setTestColorLevel,
+  shouldUseColor,
   success,
+  underline,
   warning,
 } from "./colors.ts";
 
@@ -33,12 +36,12 @@ describe("colors", () => {
     it("wraps text with ANSI escape codes", () => {
       const result = brand("test");
       assertStringIncludes(result, "test");
-      assertStringIncludes(result, "\x1b[38;2;252;143;93m");
+      assertStringIncludes(result, "\x1b[38;2;238;178;146m");
       assertStringIncludes(result, "\x1b[0m");
     });
 
     it("returns empty string for empty input", () => {
-      assertEquals(brand(""), "\x1b[38;2;252;143;93m\x1b[0m");
+      assertEquals(brand(""), "\x1b[38;2;238;178;146m\x1b[0m");
     });
   });
 
@@ -75,6 +78,19 @@ describe("colors", () => {
 
     it("dim wraps with dim codes", () => {
       assertEquals(dim("faint"), "\x1b[2mfaint\x1b[0m");
+    });
+
+    it("does not emit ANSI when color is disabled", () => {
+      setTestColorLevel(null);
+      setColorOverride(false);
+
+      assertEquals(shouldUseColor(), false);
+      assertEquals(bold("strong"), "strong");
+      assertEquals(dim("faint"), "faint");
+      assertEquals(underline("link"), "link");
+
+      setColorOverride(undefined);
+      setTestColorLevel("truecolor");
     });
   });
 

@@ -55,7 +55,11 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"@opentelemetry/sdk-node",
 	"@opentelemetry/sdk-trace-base",
 	"@opentelemetry/semantic-conventions",
+	"@sentry/deno",
+	"@sentry/node",
+	"ai",
 	"bash-tool",
+	"brace-expansion",
 	"es-module-lexer",
 	"jszip",
 	"pdf-lib",
@@ -63,9 +67,12 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"gaxios",
 	"gcp-metadata",
 	"github-slugger",
+	"gaxios",
+	"gcp-metadata",
 	"jose",
 	"just-bash",
 	"mdast-util-to-string",
+	"protobufjs",
 	"rehype-highlight",
 	"rehype-raw",
 	"rehype-sanitize",
@@ -81,10 +88,6 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"unified",
 	"unist-util-visit",
 	"vfile",
-] as const;
-
-const STALE_DIRECT_DEPENDENCIES = [
-	"ai",
 ] as const;
 
 const STALE_DEV_DEPENDENCIES = [
@@ -107,11 +110,6 @@ export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
 	}
 
 	for (const name of EXTENSION_OWNED_DEPENDENCIES) {
-		delete pkg.dependencies?.[name];
-		delete pkg.optionalDependencies?.[name];
-	}
-
-	for (const name of STALE_DIRECT_DEPENDENCIES) {
 		delete pkg.dependencies?.[name];
 		delete pkg.optionalDependencies?.[name];
 	}

@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const webhooksHelp: CommandHelp = {
   name: "webhooks",
+  hidden: true,
   category: "ai",
   description: "List source-defined webhooks",
   usage: "veryfront webhooks [options]",

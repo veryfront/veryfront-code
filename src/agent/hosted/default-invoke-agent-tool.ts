@@ -108,6 +108,7 @@ export type DefaultHostedChildAgentExecutionConfig = {
   toolNames?: string[];
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   availableSkillIds?: string[];
+  skillSelectorPolicy?: import("#veryfront/skill/selector.ts").ResolvedSkillSelectorPolicy;
   skillSourcePaths?: Readonly<Record<string, string>>;
   loadedSkillResponses?: RuntimeLoadSkillToolContext["loadedSkillResponses"];
   loadedSkillReferenceResponses?: RuntimeLoadSkillToolContext["loadedSkillReferenceResponses"];

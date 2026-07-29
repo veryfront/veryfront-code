@@ -21,7 +21,7 @@ describe("deno-config-generator", () => {
       }
     });
 
-    it("writes dev, build, preview tasks through pinned Deno npm specs", async () => {
+    it("writes standard developer tasks through pinned Deno npm specs", async () => {
       const tmpDir = await Deno.makeTempDir();
       try {
         await createDenoConfig(tmpDir);
@@ -31,9 +31,11 @@ describe("deno-config-generator", () => {
         assertEquals(parsed.tasks.dev, `deno run -A npm:veryfront@${VERSION} dev`);
         assertEquals(parsed.tasks.build, `deno run -A npm:veryfront@${VERSION} build`);
         assertEquals(
-          parsed.tasks.preview,
-          `deno run -A npm:veryfront@${VERSION} preview`,
+          parsed.tasks.start,
+          `deno run -A npm:veryfront@${VERSION} serve`,
         );
+        assertEquals(parsed.tasks.eval, `deno run -A npm:veryfront@${VERSION} eval`);
+        assertEquals(parsed.tasks.preview, undefined);
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }

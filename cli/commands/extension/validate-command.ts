@@ -5,6 +5,7 @@
  */
 
 import { validateExtension } from "veryfront/extensions";
+import { exitProcess, logError, logSuccess } from "#cli/utils";
 
 export interface ValidationReport {
   valid: boolean;
@@ -65,12 +66,12 @@ export async function runExtensionValidate(extensionPath: string): Promise<void>
   const report = await validateExtensionAtPath(extensionPath);
 
   if (report.valid) {
-    console.log("Extension is valid.");
+    logSuccess("Extension is valid.");
   } else {
-    console.error("Extension validation failed:");
+    logError("Extension validation failed:");
     for (const issue of report.issues) {
-      console.error(`  - ${issue}`);
+      logError(issue);
     }
-    Deno.exit(1);
+    exitProcess(1);
   }
 }

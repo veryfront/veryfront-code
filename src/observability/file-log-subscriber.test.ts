@@ -271,8 +271,8 @@ describe("observability/file-log-subscriber", () => {
 
       assertEquals(
         errors.some((line) =>
-          line.includes("[FileLogSubscriber] Failed writing to") &&
-          line.includes("File logging will continue")
+          line.includes("FileLogSubscriber: failed writing to") &&
+          line.includes("file logging will continue")
         ),
         true,
       );

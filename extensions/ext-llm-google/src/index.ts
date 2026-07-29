@@ -23,7 +23,7 @@ const extGoogle: ExtensionFactory = () => {
     setup(ctx) {
       const registry = ctx.require<LLMProviderRegistry>(LLMProviderRegistryName);
       registry.register(provider);
-      ctx.logger.info("[ext-llm-google] Google provider registered");
+      ctx.logger.debug("[ext-llm-google] Google provider registered");
     },
     teardown() {
       // No resources to release.

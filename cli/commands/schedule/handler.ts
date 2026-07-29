@@ -4,6 +4,12 @@ import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import type { ParsedArgs } from "#cli/shared/types";
 import { exitProcess } from "#cli/utils";
 import { defineSchema, lazySchema } from "veryfront/schemas";
+import {
+  DEPLOYMENT_ERROR,
+  DEPLOYMENT_VERIFICATION_TIMEOUT,
+  INVALID_ARGUMENT,
+  RESOURCE_NOT_FOUND,
+} from "veryfront/errors";
 import type { InferSchema } from "veryfront/extensions/schema";
 import {
   createRunsClient,
@@ -11,9 +17,9 @@ import {
   type Run,
   type VeryfrontRunsClient,
 } from "veryfront/runs";
-import { discoverSchedules } from "veryfront/schedule";
+import { discoverSchedules, type ScheduleDefinition } from "veryfront/schedule";
 import { runTriggerTarget, type TriggerTarget } from "veryfront/trigger";
-import { outputTriggerRun, readJsonFile } from "../trigger-utils.ts";
+import { outputTriggerList, outputTriggerRun, readJsonFile } from "../trigger-utils.ts";
 
 const REMOTE_SCHEDULE_POLL_INTERVAL_MS = 1_000;
 const REMOTE_SCHEDULE_TIMEOUT_GRACE_MS = 30_000;
@@ -23,8 +29,8 @@ const REMOTE_SCHEDULE_QUEUE_WAIT_TIMEOUT_MS = 5 * 60_000;
 
 const getScheduleArgsSchema = defineSchema((v) =>
   v.object({
-    action: v.literal("run"),
-    id: v.string(),
+    action: v.enum(["run", "list"]).optional(),
+    id: v.string().optional(),
     input: v.string().optional(),
     remote: v.boolean().default(false),
     debug: v.boolean().default(false),
@@ -42,6 +48,23 @@ const parseScheduleArgs = createArgParser(ScheduleArgsSchema, {
   remote: { keys: ["remote"], type: "boolean" },
   debug: { keys: ["debug"], type: "boolean" },
 });
+
+function formatSchedule(schedule: ScheduleDefinition): string {
+  return `${schedule.id} -> ${schedule.target.kind}:${schedule.target.id} (${schedule.schedule})`;
+}
+
+async function handleScheduleList(_args: ParsedArgs): Promise<void> {
+  const projectDir = Deno.cwd();
+  await withProjectSourceContext(projectDir, async ({ adapter, config }) => {
+    const result = await discoverSchedules({ projectDir, adapter, config });
+    await outputTriggerList({
+      command: "schedules",
+      items: result.items,
+      errors: result.errors,
+      formatItem: formatSchedule,
+    });
+  });
+}
 
 interface RemoteSchedulePollOptions {
   now?: () => number;
@@ -73,10 +96,12 @@ export async function waitForRemoteScheduleRun(
       return run;
     }
     if (run.status === "failed") {
-      throw new Error(run.error?.message ?? `Scheduled run failed: ${runId}`);
+      throw DEPLOYMENT_ERROR.create({
+        detail: run.error?.message ?? `Scheduled run failed: ${runId}`,
+      });
     }
     if (run.status === "cancelled") {
-      throw new Error(`Scheduled run was cancelled: ${runId}`);
+      throw DEPLOYMENT_ERROR.create({ detail: `Scheduled run was cancelled: ${runId}` });
     }
     const recordedTimeoutSeconds = run.timeout_seconds;
     const executionTimeoutSeconds = recordedTimeoutSeconds !== null &&
@@ -88,10 +113,14 @@ export async function waitForRemoteScheduleRun(
       : executionStartedAtMs + executionTimeoutSeconds * 1_000 +
         REMOTE_SCHEDULE_TIMEOUT_GRACE_MS;
     if (executionDeadline !== undefined && observedAt >= executionDeadline) {
-      throw new Error(`Timed out waiting for scheduled run: ${runId}`);
+      throw DEPLOYMENT_VERIFICATION_TIMEOUT.create({
+        detail: `Timed out waiting for scheduled run: ${runId}`,
+      });
     }
     if (executionStartedAtMs === undefined && observedAt >= queueDeadline) {
-      throw new Error(`Timed out waiting for scheduled run to start: ${runId}`);
+      throw DEPLOYMENT_VERIFICATION_TIMEOUT.create({
+        detail: `Timed out waiting for scheduled run to start: ${runId}`,
+      });
     }
     await sleep(REMOTE_SCHEDULE_POLL_INTERVAL_MS);
   }
@@ -118,7 +147,10 @@ export function resolveRemoteScheduleTarget(run: Run, fallback: TriggerTarget): 
   return { kind, id };
 }
 
-async function runRemoteSchedule(projectDir: string, opts: ScheduleArgs): Promise<void> {
+async function runRemoteSchedule(
+  projectDir: string,
+  opts: ScheduleArgs & { id: string },
+): Promise<void> {
   const startedAt = Date.now();
   const cliConfig = await resolveConfigWithAuth(projectDir);
   const client = createRunsClient({
@@ -145,14 +177,27 @@ async function runRemoteSchedule(projectDir: string, opts: ScheduleArgs): Promis
 
 export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
   const opts: ScheduleArgs = parseArgsOrThrow(parseScheduleArgs, "schedule", args);
+
+  // Dispatch "list" (also the default when no action is given)
+  if (!opts.action || opts.action === "list") {
+    await handleScheduleList(args);
+    return;
+  }
+
+  // action === "run"
+  if (!opts.id) {
+    throw INVALID_ARGUMENT.create({ detail: "Usage: veryfront schedule run <id>" });
+  }
+
   const projectDir = Deno.cwd();
   if (opts.remote && opts.input) {
-    throw new Error(
-      "Invalid schedule arguments: remote runs use the source already pushed to Veryfront and do not accept --input.",
-    );
+    throw INVALID_ARGUMENT.create({
+      detail:
+        "Remote schedule runs use the source already pushed to Veryfront and do not accept --input.",
+    });
   }
   if (opts.remote) {
-    await runRemoteSchedule(projectDir, opts);
+    await runRemoteSchedule(projectDir, opts as ScheduleArgs & { id: string });
     exitProcess(0);
     return;
   }
@@ -162,12 +207,14 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
     const input = opts.input ? await readJsonFile(opts.input, "--input JSON file") : undefined;
     const result = await discoverSchedules({ projectDir, adapter, config });
     if (result.errors.length > 0) {
-      throw new Error(`Schedule discovery failed: ${result.errors[0]?.message}`);
+      throw DEPLOYMENT_ERROR.create({
+        detail: `Schedule discovery failed: ${result.errors[0]?.message}`,
+      });
     }
 
     const schedule = result.items.find((candidate) => candidate.id === opts.id);
     if (!schedule) {
-      throw new Error(`Schedule "${opts.id}" not found.`);
+      throw RESOURCE_NOT_FOUND.create({ detail: `Schedule "${opts.id}" not found.` });
     }
 
     const triggerInput = input ?? schedule.input ?? {};
@@ -182,9 +229,9 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
       ? (scheduleTarget as Record<string, unknown>).conversationMode
       : undefined;
     if (schedule.target.kind === "agent" && conversationMode === "existing") {
-      throw new Error(
-        "Local scheduled agent runs cannot attach to an existing cloud conversation.",
-      );
+      throw INVALID_ARGUMENT.create({
+        detail: "Local scheduled agent runs cannot attach to an existing cloud conversation.",
+      });
     }
 
     const agentRunOptions = schedule.target.kind === "agent"

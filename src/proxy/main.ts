@@ -86,6 +86,14 @@ import {
   PROXY_ROUTING_INVALIDATION_PATH,
 } from "./routing-invalidation.ts";
 import { startProxyRoutingInvalidationBus } from "./routing-invalidation-redis.ts";
+import {
+  captureApplicationError,
+  flushApplicationErrors,
+} from "#veryfront/observability/application-errors.ts";
+import { initializeSentryFromEnv } from "#veryfront/observability/sentry.ts";
+import { getTraceContext } from "./tracing.ts";
+
+await initializeSentryFromEnv("veryfront-proxy");
 
 type AuthJwtExtensionModule = {
   createAuthProvider: (options?: Record<string, unknown>) => AuthProvider;
@@ -622,6 +630,11 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
       );
     } catch (error) {
       const ms = Math.round(performance.now() - startTime);
+      captureApplicationError(error, {
+        boundary: "proxy.request",
+        method: req.method,
+        ...getTraceContext(),
+      });
       proxyLogger.error(`500 ${req.method} ${url.pathname}`, { ms }, error as Error);
       lifecycle.end(500, error as Error);
       return withProxyTiming(
@@ -799,9 +812,12 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
     serverResolver.close();
     await proxyHandler.close();
     await shutdownOTLP();
+    await flushApplicationErrors();
     proxyLogger.info("Closed connections");
   } catch (error) {
+    captureApplicationError(error, { boundary: "process.shutdown" });
     proxyLogger.error("Error while shutting down proxy", error);
+    await flushApplicationErrors();
   } finally {
     exit(0);
   }
@@ -809,8 +825,9 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
 
 const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {
   void shutdown(signal).catch((error) => {
+    captureApplicationError(error, { boundary: "process.shutdown" });
     proxyLogger.error("Unhandled shutdown error", { signal }, error);
-    exit(1);
+    void flushApplicationErrors().finally(() => exit(1));
   });
 };
 

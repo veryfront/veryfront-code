@@ -9,6 +9,7 @@ import {
   buildClientModuleUrl,
   buildRSCTransportHeaders,
   type ClientModuleStrategy,
+  type ClientRuntimeHydrationData,
   getHydrationReactImportSpecifiers,
   readHydrationData,
   resolveClientModuleStrategy,
@@ -43,6 +44,7 @@ interface ClientModule {
 interface ClientModuleImportOptions {
   importModule?: (moduleUrl: string) => Promise<ClientModule>;
   recoverSnapshotFailure?: (moduleUrl: string) => Promise<boolean>;
+  releaseAssetModules?: ClientRuntimeHydrationData["releaseAssetModules"];
 }
 
 interface ReactRoot {
@@ -151,7 +153,12 @@ export async function importClientModule(
   strategy: ClientModuleStrategy,
   options: ClientModuleImportOptions = {},
 ): Promise<ClientModule | null> {
-  const moduleUrl = resolveClientBoundaryModuleUrl(manifest, reference, strategy);
+  const moduleUrl = resolveClientBoundaryModuleUrl(
+    manifest,
+    reference,
+    strategy,
+    options.releaseAssetModules,
+  );
   const cacheIdentity = reference.moduleUrl ?? reference.rel;
   if (!cacheIdentity) return null;
   const cacheKey = `${cacheIdentity}#${manifest.hash ?? ""}`;
@@ -188,6 +195,7 @@ export function resolveClientBoundaryModuleUrl(
   manifest: HydrationManifest,
   reference: ParsedClientRef,
   strategy: ClientModuleStrategy,
+  releaseAssetModules?: ClientRuntimeHydrationData["releaseAssetModules"],
 ): string | null {
   if (reference.moduleUrl) {
     return appendClientModuleDependencyPins(
@@ -204,6 +212,7 @@ export function resolveClientBoundaryModuleUrl(
     absPath,
     version: manifest.hash,
     dependencyPinningCacheKey: manifest.dependencyPinningCacheKey,
+    releaseAssetModules,
   });
 }
 
@@ -258,6 +267,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
 
   const hydrationData = readHydrationData(doc);
   const clientModuleStrategy = resolveClientModuleStrategy(hydrationData);
+  const releaseAssetModules = hydrationData?.releaseAssetModules;
 
   try {
     if (globalThis.__VF_TEST_MODE__) {
@@ -285,7 +295,12 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     const parsed = parseClientRef(ref);
     if (!parsed) continue;
 
-    const mod = await importClientModule(manifest, parsed, clientModuleStrategy);
+    const mod = await importClientModule(
+      manifest,
+      parsed,
+      clientModuleStrategy,
+      { releaseAssetModules },
+    );
     if (!mod) continue;
 
     const Cmp = mod[parsed.exportName] ?? mod.default;
@@ -320,6 +335,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
             manifest,
             childReference,
             clientModuleStrategy,
+            { releaseAssetModules },
           );
           if (!childModule) return null;
           const Child = childModule[childReference.exportName] ?? childModule.default;

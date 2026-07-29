@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleStartCommand } from "./handler.ts";
+import { parseCliArgs } from "#cli/shared/args";
+import { handleStartCommand, parseStartArgs } from "./handler.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 
 describe("commands/start/handler", () => {
@@ -31,6 +32,13 @@ describe("commands/start/handler", () => {
       const args: ParsedArgs = { _: ["start"], port: 4000 };
       const port = typeof args.port === "number" ? args.port : 8080;
       assertEquals(port, 4000);
+    });
+
+    it("keeps -p as a compatibility alias for --port", () => {
+      const result = parseStartArgs(parseCliArgs(["start", "-p", "4000"]));
+
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 4000);
     });
   });
 

@@ -56,7 +56,7 @@ function getOrInitPodCache(options: PodCacheOptions): LRUCache<string, string> {
   options.assign(cache);
   registerLRUCache(options.registryName, cache);
 
-  logger.info(options.logMessage, {
+  logger.debug(options.logMessage, {
     maxEntries: options.maxEntries,
     ttlMs: options.ttlMs,
   });
