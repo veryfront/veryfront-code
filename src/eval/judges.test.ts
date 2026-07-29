@@ -106,6 +106,36 @@ describe("eval/judges", () => {
     });
   });
 
+  it("fails a groundedness metric when the judge model errors", async () => {
+    const judge = judges.llm.groundedness({
+      model: {
+        provider: "test",
+        modelId: "test/failing-groundedness-judge",
+        async doGenerate() {
+          throw new Error("provider unavailable");
+        },
+        async doStream() {
+          throw new Error("doStream should not be called");
+        },
+      },
+    });
+
+    const result = await judge({
+      rubric: "The answer must be grounded.",
+      input: "Question",
+      output: { text: "Answer" },
+      metadata: {},
+      evidence: ["Evidence"],
+      sources: [],
+    });
+
+    assertEquals(result, {
+      score: 0,
+      pass: false,
+      explanation: "LLM judge failed: provider unavailable",
+    });
+  });
+
   it("creates an LLM groundedness judge from structured JSON", async () => {
     const calls: unknown[] = [];
     const judge = judges.llm.groundedness({

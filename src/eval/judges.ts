@@ -293,6 +293,15 @@ function parseJudgeResponse(
   }
 }
 
+function judgeFailure(error: unknown): { score: number; pass: false; explanation: string } {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    score: 0,
+    pass: false,
+    explanation: `LLM judge failed: ${message}`,
+  };
+}
+
 function createLlmRubricJudge(
   options: EvalLlmRubricJudgeOptions = {},
 ): RubricJudge {
@@ -321,12 +330,7 @@ function createLlmRubricJudge(
 
       return parseJudgeResponse(response.text, threshold);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return {
-        score: 0,
-        pass: false,
-        explanation: `LLM judge failed: ${message}`,
-      };
+      return judgeFailure(error);
     }
   };
 }
@@ -339,19 +343,23 @@ function createLlmGroundednessJudge(
   const maxOutputTokens = options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
 
   return async (input) => {
-    const model = resolveJudgeModel(options.model);
-    const response = await generateText({
-      model,
-      messages: [{
-        role: "user",
-        content: buildGroundednessPrompt(input, { threshold, maxEvidenceChars }),
-      }],
-      maxOutputTokens,
-      temperature: options.temperature ?? 0,
-      ...(options.providerOptions ? { providerOptions: options.providerOptions } : {}),
-    });
+    try {
+      const model = resolveJudgeModel(options.model);
+      const response = await generateText({
+        model,
+        messages: [{
+          role: "user",
+          content: buildGroundednessPrompt(input, { threshold, maxEvidenceChars }),
+        }],
+        maxOutputTokens,
+        temperature: options.temperature ?? 0,
+        ...(options.providerOptions ? { providerOptions: options.providerOptions } : {}),
+      });
 
-    return parseJudgeResponse(response.text, threshold);
+      return parseJudgeResponse(response.text, threshold);
+    } catch (error) {
+      return judgeFailure(error);
+    }
   };
 }
 
