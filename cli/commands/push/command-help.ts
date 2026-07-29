@@ -23,8 +23,8 @@ export const pushHelp: CommandHelp = {
       description: "Show planned uploads and deletions without changing remote files",
     },
     {
-      flag: "--delete",
-      description: "Delete remote files that are missing locally",
+      flag: "--prune",
+      description: "Delete managed remote files that are missing locally",
     },
     {
       flag: "-q, --quiet",
@@ -35,17 +35,17 @@ export const pushHelp: CommandHelp = {
     "veryfront push",
     "veryfront push --branch feature-header",
     "veryfront push --dry-run",
-    "veryfront push --delete --dry-run",
+    "veryfront push --prune --dry-run",
   ],
   notes: [
     "Pushes main by default and prints its stable cloud preview URL",
     "Use --branch to create or update an isolated branch preview",
     "Preview branch names use lowercase letters, numbers, and hyphens",
     "By default, push uploads local files and preserves remote-only files",
-    "Use --delete to remove remote files that are missing locally",
+    "Use --prune to remove managed remote files that are missing locally",
     "Run veryfront deploy when the preview is ready for an environment",
     ".vfignore excludes matching local files and preserves matching remote files",
-    "--dry-run previews deletions only when --delete is present",
+    "--dry-run previews deletions only when --prune is present",
     "--dry-run never creates a project or branch, changes remote files, or writes a Push receipt",
   ],
 };

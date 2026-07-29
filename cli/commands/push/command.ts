@@ -57,7 +57,7 @@ export const getPushArgsSchema = defineSchema((v) =>
     branch: v.string().regex(PREVIEW_BRANCH_PATTERN, PREVIEW_BRANCH_ERROR).default("main"),
     /** Deprecated compatibility flag; invoking push already authorizes the operation. */
     force: v.boolean().default(false),
-    delete: v.boolean().default(false),
+    prune: v.boolean().default(false),
     dryRun: v.boolean().default(false),
     quiet: v.boolean().default(false),
   })
@@ -70,15 +70,30 @@ export type PushArgs = InferSchema<ReturnType<typeof getPushArgsSchema>>;
 /**
  * Parse push command arguments from CLI args
  */
-export const parsePushArgs = createArgParser(PushArgsSchema, {
+const parseKnownPushArgs = createArgParser(PushArgsSchema, {
   projectSlug: { ...CommonArgs.projectSlug, positional: 0 },
   projectDir: CommonArgs.projectDir,
   branch: CommonArgs.branch,
   force: CommonArgs.force,
-  delete: { keys: ["delete"], type: "boolean" },
+  prune: { keys: ["prune"], type: "boolean" },
   dryRun: CommonArgs.dryRun,
   quiet: CommonArgs.quiet,
 });
+
+export function parsePushArgs(
+  args: Parameters<typeof parseKnownPushArgs>[0],
+): ReturnType<typeof parseKnownPushArgs> {
+  if (Object.hasOwn(args, "delete")) {
+    return {
+      success: false,
+      error: Object.assign(
+        new Error("Unknown push option: --delete. Use --prune."),
+        { issues: [] },
+      ),
+    };
+  }
+  return parseKnownPushArgs(args);
+}
 
 /**
  * Push command options
@@ -92,8 +107,8 @@ export interface PushOptions {
   branch?: string;
   /** Deprecated compatibility flag; invoking push already authorizes the operation. */
   force?: boolean;
-  /** Delete remote files that are missing locally. */
-  delete?: boolean;
+  /** Prune remote files that are missing locally. */
+  prune?: boolean;
   /** Dry run - show what would be uploaded without uploading */
   dryRun?: boolean;
   /** Quiet mode - suppress spinner/progress output */
@@ -611,10 +626,10 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         projectSlug: slugOverride,
         projectDir = cwd(),
         branch = "main",
-        delete: deleteRemoteMissing = false,
         dryRun = false,
         quiet = false,
       } = options;
+      const pruneRemoteMissing = options.prune ?? false;
       assertPreviewBranchName(branch);
       const jsonOutput = isJsonMode();
       const startTime = Date.now();
@@ -753,7 +768,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const remoteFilesMissingLocally = target.remoteFiles
         .map((file) => file.path)
         .filter((path) => !ignoreChecker.isIgnored(path) && !localPaths.has(path));
-      const toDelete = deleteRemoteMissing ? remoteFilesMissingLocally : [];
+      const toDelete = pruneRemoteMissing ? remoteFilesMissingLocally : [];
       const deletePaths = new Set(toDelete);
       const preservedRemoteFiles = target.remoteFiles
         .filter((file) => !localPaths.has(file.path) && !deletePaths.has(file.path))

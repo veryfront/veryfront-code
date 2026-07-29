@@ -448,22 +448,22 @@ describe("Guide: deploying.md", () => {
 describe("Guide: deploy-from-ci.md", () => {
   it("uses supported Push and Deploy arguments in the required order", async () => {
     const guide = await readGuide("deploy-from-ci.md");
-    const pushCommand = "veryfront push --branch main --delete --yes";
+    const pushCommand = "veryfront push --branch main --prune --yes";
     const stagingCommand = "veryfront deploy --branch main --env staging --yes";
     const productionCommand = "veryfront deploy --branch main --env production --yes";
 
-    const dryRunArgs = parseCliArgs(["push", "--branch", "main", "--delete", "--dry-run"]);
+    const dryRunArgs = parseCliArgs(["push", "--branch", "main", "--prune", "--dry-run"]);
     const parsedDryRun = parsePushArgs(dryRunArgs);
     assert(parsedDryRun.success);
     assertEquals(parsedDryRun.data.branch, "main");
-    assertEquals(parsedDryRun.data.delete, true);
+    assertEquals(parsedDryRun.data.prune, true);
     assertEquals(parsedDryRun.data.dryRun, true);
 
-    const pushArgs = parseCliArgs(["push", "--branch", "main", "--delete", "--yes"]);
+    const pushArgs = parseCliArgs(["push", "--branch", "main", "--prune", "--yes"]);
     const parsedPush = parsePushArgs(pushArgs);
     assert(parsedPush.success);
     assertEquals(parsedPush.data.branch, "main");
-    assertEquals(parsedPush.data.delete, true);
+    assertEquals(parsedPush.data.prune, true);
     assertEquals(pushArgs.yes, true);
 
     const deployArgs = parseCliArgs([
@@ -481,7 +481,7 @@ describe("Guide: deploy-from-ci.md", () => {
     assertEquals(deployArgs.yes, true);
 
     assert(
-      guide.indexOf("veryfront push --branch main --delete --dry-run") <
+      guide.indexOf("veryfront push --branch main --prune --dry-run") <
         guide.indexOf(pushCommand),
     );
     assert(guide.indexOf(pushCommand) < guide.indexOf(stagingCommand));

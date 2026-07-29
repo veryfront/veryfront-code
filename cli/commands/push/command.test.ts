@@ -452,7 +452,7 @@ describe("push JSON output", () => {
     }
   });
 
-  it("reports no dry-run deletions unless delete is requested", async () => {
+  it("reports no dry-run deletions unless prune is requested", async () => {
     const originalFetch = globalThis.fetch;
     const originalLog = console.log;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
@@ -487,15 +487,15 @@ describe("push JSON output", () => {
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
         }) as typeof fetch;
 
-        const withoutDeleteOutput: string[] = [];
-        console.log = captureConsoleLog(withoutDeleteOutput);
+        const withoutPruneOutput: string[] = [];
+        console.log = captureConsoleLog(withoutPruneOutput);
         await pushCommand({ projectDir, dryRun: true });
-        assertEquals(JSON.parse(withoutDeleteOutput[0]!).data.wouldDelete, 0);
+        assertEquals(JSON.parse(withoutPruneOutput[0]!).data.wouldDelete, 0);
 
-        const withDeleteOutput: string[] = [];
-        console.log = captureConsoleLog(withDeleteOutput);
-        await pushCommand({ projectDir, dryRun: true, delete: true });
-        assertEquals(JSON.parse(withDeleteOutput[0]!).data.wouldDelete, 1);
+        const withPruneOutput: string[] = [];
+        console.log = captureConsoleLog(withPruneOutput);
+        await pushCommand({ projectDir, dryRun: true, prune: true });
+        assertEquals(JSON.parse(withPruneOutput[0]!).data.wouldDelete, 1);
       });
     } finally {
       setJsonMode(false);
@@ -1588,7 +1588,7 @@ describe("push failure ordering", () => {
             pushCommand({
               projectDir,
               branch: "main",
-              delete: true,
+              prune: true,
               force: true,
               quiet: true,
             }),
@@ -1608,7 +1608,7 @@ describe("push failure ordering", () => {
 });
 
 describe("push deletion ownership", () => {
-  it("preserves remote-only files unless delete is requested", async () => {
+  it("preserves remote-only files unless prune is requested", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
@@ -1702,7 +1702,7 @@ describe("push deletion ownership", () => {
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
         }) as typeof fetch;
 
-        await pushCommand({ projectDir, branch: "main", delete: true, force: true, quiet: true });
+        await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
 
         assertEquals(deleted, ["stale.ts"]);
         const receipt = await readPushReceipt(projectDir);

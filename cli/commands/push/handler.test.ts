@@ -35,7 +35,7 @@ describe("Push Handler", () => {
       assertEquals(result.data.projectSlug, undefined);
       assertEquals(result.data.branch, "main");
       assertEquals(result.data.force, false);
-      assertEquals(result.data.delete, false);
+      assertEquals(result.data.prune, false);
       assertEquals(result.data.dryRun, false);
       assertEquals(result.data.quiet, false);
     });
@@ -87,10 +87,17 @@ describe("Push Handler", () => {
       assertEquals(result.data.dryRun, true);
     });
 
-    it("should parse --delete flag", () => {
-      const result = parsePushArgs(createArgs({ delete: true }));
+    it("should parse --prune flag", () => {
+      const result = parsePushArgs(createArgs({ prune: true }));
       assertSuccess(result);
-      assertEquals(result.data.delete, true);
+      assertEquals(result.data.prune, true);
+    });
+
+    it("rejects the removed --delete flag with the canonical replacement", () => {
+      const result = parsePushArgs(createArgs({ delete: true }));
+      assertEquals(result.success, false);
+      if (result.success) return;
+      assertEquals(result.error.message, "Unknown push option: --delete. Use --prune.");
     });
 
     it("should parse --quiet flag", () => {
@@ -121,14 +128,14 @@ describe("Push Handler", () => {
       const result = parsePushArgs(createArgs({
         branch: "release-v2",
         force: true,
-        delete: true,
+        prune: true,
         "dry-run": true,
         quiet: true,
       }));
       assertSuccess(result);
       assertEquals(result.data.branch, "release-v2");
       assertEquals(result.data.force, true);
-      assertEquals(result.data.delete, true);
+      assertEquals(result.data.prune, true);
       assertEquals(result.data.dryRun, true);
       assertEquals(result.data.quiet, true);
     });

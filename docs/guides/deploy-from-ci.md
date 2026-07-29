@@ -54,7 +54,7 @@ ignored local link in `.veryfront/project.json`.
 ## Define the managed source set
 
 Push uploads supported text files only and preserves remote-only files by
-default. In Git-authoritative CI, use `push --delete` to reconcile remote
+default. In Git-authoritative CI, use `push --prune` to reconcile remote
 deletions. `pull --prune` performs the corresponding destructive local
 reconciliation. The managed set includes TypeScript, JavaScript, JSON,
 stylesheets, HTML, Markdown, MDX, text, SVG, YAML, and TOML.
@@ -75,12 +75,12 @@ recomputing production bytes from the working tree.
 Preview the source reconciliation before it changes Veryfront:
 
 ```bash title="Terminal"
-veryfront push --branch main --delete --dry-run
+veryfront push --branch main --prune --dry-run
 ```
 
 Push dry-run reads the local and remote source needed for the comparison but
 makes no mutation. It does not create a missing project or branch, upload or
-delete files, or write `.veryfront/push-receipt.json`. `--delete` includes
+delete files, or write `.veryfront/push-receipt.json`. `--prune` includes
 remote-only managed files in the preview so CI can verify the exact mirror
 before applying it.
 
@@ -89,7 +89,7 @@ before applying it.
 Run Push and Deploy from the same Git checkout and CI job:
 
 ```bash title="Terminal"
-veryfront push --branch main --delete --yes
+veryfront push --branch main --prune --yes
 veryfront deploy --branch main --env staging --yes
 ```
 
@@ -106,7 +106,7 @@ commands across CI jobs or clean the checkout between them.
 Deploy creates an immutable release from the pushed source, then assigns that
 release to `staging`.
 
-This workflow uses `--delete` because Git `main` is the canonical managed
+This workflow uses `--prune` because Git `main` is the canonical managed
 source. Interactive Pushes should omit it when Studio-only files must remain
 available.
 
@@ -181,7 +181,7 @@ jobs:
             exit 0
           fi
 
-          npx --no-install veryfront push --branch main --delete --yes
+          npx --no-install veryfront push --branch main --prune --yes
           npx --no-install veryfront deploy --branch main --env staging --yes
 ```
 
@@ -220,7 +220,7 @@ After that approval, use the same serialized job pattern with the production
 environment:
 
 ```bash title="Terminal"
-veryfront push --branch main --delete --yes
+veryfront push --branch main --prune --yes
 veryfront deploy --branch main --env production --yes
 ```
 

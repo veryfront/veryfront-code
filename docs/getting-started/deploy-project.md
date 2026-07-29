@@ -48,8 +48,8 @@ npx veryfront push
 `veryfront.json`.
 
 Push preserves remote-only files by default. Use
-`npx veryfront push --delete --dry-run` to preview an exact remote mirror, then
-run `npx veryfront push --delete` only when those deletions are intentional.
+`npx veryfront push --prune --dry-run` to preview an exact remote mirror, then
+run `npx veryfront push --prune` only when those deletions are intentional.
 
 For a preview deployment per branch:
 
