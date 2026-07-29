@@ -20,7 +20,7 @@ export const pushHelp: CommandHelp = {
     },
     {
       flag: "--dry-run",
-      description: "Show what would be uploaded without uploading",
+      description: "Show planned uploads and deletions without changing remote files",
     },
     {
       flag: "--delete",

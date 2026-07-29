@@ -73,6 +73,8 @@ export const pullHelp: CommandHelp = {
     "--prune --dry-run can preview anywhere and never writes or deletes local files",
     "Only supported text files are managed; ignored, unsupported, and binary files remain unchanged",
     "Pull preserves remote bytes exactly, including line endings and a missing final newline",
+    "A successful pull stores the canonical project link and creates missing package.json and tsconfig.json files",
+    "Pull never overwrites downloaded or existing bootstrap files; --dry-run reports planned bootstrap writes",
     "Invalid, duplicate, reserved, or symlink-traversing remote paths fail before local writes",
     "A fetch failure causes no writes or pruning; a local write or delete failure exits with an error",
   ],

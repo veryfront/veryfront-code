@@ -94,6 +94,10 @@ The command creates or links the cloud project, stores that local identity in
 ignored `.veryfront/project.json`, and prints the preview URL. When the preview
 is ready for production, deploy the exact pushed source digest:
 
+Push preserves remote-only files by default. Use
+`npx veryfront push --delete --dry-run` to preview an exact remote mirror, then
+run `npx veryfront push --delete` only when those deletions are intentional.
+
 ```bash
 npx veryfront deploy --env production
 ```
