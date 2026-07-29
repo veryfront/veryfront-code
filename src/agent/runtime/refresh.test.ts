@@ -14,6 +14,7 @@ import type {
   ToolExecutionResultRequest,
 } from "../types.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
+import type { TextGenerationRuntimeMessage } from "./text-generation-runtime-message-types.ts";
 
 function createRuntimeStream(parts: unknown[]) {
   return new ReadableStream<unknown>({
@@ -245,7 +246,7 @@ describe("agent runtime refresh hooks", () => {
   });
 
   it("keeps valid parallel tool results before suppressed-tool recovery guidance", async () => {
-    const observedPrompts: Array<Array<{ role?: string; content?: unknown }>> = [];
+    const observedPrompts: TextGenerationRuntimeMessage[][] = [];
     let callCount = 0;
     const model: ModelRuntime = {
       provider: "hosted",
@@ -260,7 +261,7 @@ describe("agent runtime refresh hooks", () => {
       async doStream(options: unknown) {
         callCount++;
         observedPrompts.push(
-          (options as { prompt?: Array<{ role?: string; content?: unknown }> }).prompt ?? [],
+          (options as { prompt?: TextGenerationRuntimeMessage[] }).prompt ?? [],
         );
 
         if (callCount === 1) {
@@ -325,14 +326,46 @@ describe("agent runtime refresh hooks", () => {
       retryPrompt.slice(-3).map((message) => message.role),
       ["assistant", "tool", "user"],
     );
-    assertEquals(
-      JSON.stringify(retryPrompt.at(-2)?.content).includes("tc-github"),
-      true,
-    );
-    assertEquals(
-      JSON.stringify(retryPrompt.at(-2)?.content).includes("tc-slack"),
-      true,
-    );
+    assertEquals(retryPrompt.at(-3), {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "tc-github",
+          toolName: "get_github",
+          input: { query: "pull requests" },
+        },
+        {
+          type: "tool-call",
+          toolCallId: "tc-slack",
+          toolName: "get_slack",
+          input: { query: "daily channel" },
+        },
+      ],
+    });
+    assertEquals(retryPrompt.at(-2), {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "tc-github",
+          toolName: "get_github",
+          output: {
+            type: "json",
+            value: { integration: "github", query: "pull requests" },
+          },
+        },
+        {
+          type: "tool-result",
+          toolCallId: "tc-slack",
+          toolName: "get_slack",
+          output: {
+            type: "json",
+            value: { integration: "slack", query: "daily channel" },
+          },
+        },
+      ],
+    });
     assertEquals(
       JSON.stringify(retryPrompt.at(-1)?.content).includes(
         "ignored unavailable tool call(s): stale_tool",
