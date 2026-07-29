@@ -24,7 +24,7 @@ import {
   createCtx,
 } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 import { runWithVerifiedCacheApiCredential } from "./verified-api-credential-context.ts";
-import { isValidCacheKey } from "./keys.ts";
+import { buildQueryAwareCacheKey, isValidCacheKey } from "./keys.ts";
 
 const API_CACHE_KEY_MAX_LENGTH = 512;
 const API_CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
@@ -561,18 +561,23 @@ Deno.test("ApiCacheBackend uses custom keyPrefix", async () => {
   assertEquals(cache.type, "api");
 });
 
-Deno.test("ApiCacheBackend sends malformed keys as valid concrete API keys", async () => {
+Deno.test("ApiCacheBackend safely maps query-aware keys without logging key-derived data", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
   const originalAdapter = globals.__vf_multi_project_adapter;
   const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
   const requests: Array<{ url: string; body: Record<string, unknown> | null }> = [];
+  const warnings: string[] = [];
 
   globals.__vf_multi_project_adapter = {
     getCurrentRequestContext: () => ({
       token: "request-token",
       projectSlug: "project-slug",
     }),
+  };
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
   };
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -599,7 +604,14 @@ Deno.test("ApiCacheBackend sends malformed keys as valid concrete API keys", asy
       keyPrefix: "prefix",
       circuitBreakerName: "api-cache-malformed-key-test",
     });
-    const rawKey = "reset/token/secret123?ref=x&access_token=secret value";
+    const rawKey = buildQueryAwareCacheKey(
+      "/reset/token/secret123",
+      new URL(
+        "https://example.test/reset/token/secret123?access_token=secret%20value",
+      ),
+      { policy: "include-all" },
+    );
+    assertEquals(rawKey.includes("*"), true);
 
     await cache.get(rawKey);
     await cache.getBatch([rawKey]);
@@ -635,6 +647,11 @@ Deno.test("ApiCacheBackend sends malformed keys as valid concrete API keys", asy
       assertEquals((key as string).startsWith("prefix:vf-sanitized:"), true);
     }
     assertEquals(new Set(outboundKeys).size, 1);
+    const warningOutput = warnings.join("\n");
+    assertEquals(warningOutput.includes("originalLength"), true);
+    assertEquals(warningOutput.includes("keyHash"), false);
+    assertEquals(warningOutput.includes("access_token"), false);
+    assertEquals(warningOutput.includes("secret123"), false);
   } finally {
     if (originalAdapter === undefined) {
       delete globals.__vf_multi_project_adapter;
@@ -642,6 +659,7 @@ Deno.test("ApiCacheBackend sends malformed keys as valid concrete API keys", asy
       globals.__vf_multi_project_adapter = originalAdapter;
     }
     globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
   }
 });
 

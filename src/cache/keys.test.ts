@@ -547,8 +547,8 @@ describe("cache/keys", () => {
     });
 
     it("flags a del-pattern whose literal segment has invalid characters", () => {
-      // A space in the literal prefix — escaping this would inject `*` wildcards
-      // into the glob, so the backend must refuse it rather than sanitize.
+      // Escaping a space in the literal prefix would inject `*` wildcards into
+      // the glob, so the backend must refuse it rather than sanitize.
       assertEquals(isValidCachePattern("render:proj bad:*"), false);
     });
 

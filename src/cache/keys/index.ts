@@ -40,7 +40,6 @@ export {
   createCacheKeyFilter,
   deleteAllKeysForProject,
   deleteAllKeysForProjectAsync,
-  digestCacheKey,
   filterQueryParams,
   getAllKeysForProject,
   getAllKeysForProjectAsync,

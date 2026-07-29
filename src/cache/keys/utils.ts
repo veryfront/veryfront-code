@@ -148,14 +148,15 @@ function normalizeQueryParamName(param: string): string {
 }
 
 /**
- * Sanitize query params for use in cache keys.
- * Converts query params to a format safe for API cache key validation.
+ * Encode query params for use in internal cache-key construction.
  *
- * API cache key validation only allows: a-z A-Z 0-9 _ : . * - /
+ * This encoding uses `*HH` byte escapes to avoid collisions between query
+ * values. A key containing these escapes is not a valid concrete API cache key;
+ * ApiCacheBackend maps the completed key to the API schema at its boundary.
  *
  * @param url - URL or URLSearchParams to extract query params from
  * @param options - Query param handling options
- * @returns Sanitized query string safe for cache keys, or empty string
+ * @returns Encoded query string for cache-key construction, or an empty string
  */
 export function sanitizeQueryParamsForCacheKey(
   url: URL | URLSearchParams,
@@ -226,7 +227,7 @@ export const CACHE_PATTERN_ALLOWED_PATTERN = /^[a-zA-Z0-9_:.*/-]+$/;
 
 /**
  * True when a concrete cache key is valid for the API cache backend (non-empty
- * and within the key character set — no `*`).
+ * and within the key character set, with no `*`).
  */
 export function isValidCacheKey(key: string): boolean {
   return key.length > 0 &&
@@ -245,19 +246,10 @@ export function isValidCachePattern(pattern: string): boolean {
 }
 
 /**
- * Non-reversible digest of a key, for logs. Cache keys can inadvertently carry
- * secrets (e.g. a raw request URL with an `?access_token=` that leaked into key
- * generation), so we log this hash instead of the key itself.
- */
-export function digestCacheKey(key: string): string {
-  return strongPathHash(key);
-}
-
-/**
  * Guarantee a concrete cache key only contains characters the API cache backend
  * accepts, so a malformed key can never reach the backend and trigger an
  * `HTTP 400: Cache key contains invalid characters` (which, on the control-plane
- * `/execute` path, loops until the request is flagged stuck — see veryfront
+ * `/execute` path, loops until the request is flagged stuck; see veryfront
  * issues #162 / #175).
  *
  * Ordinary valid keys are returned unchanged. Malformed, empty, overlong, and

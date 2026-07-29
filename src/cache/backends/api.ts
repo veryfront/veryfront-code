@@ -2,7 +2,7 @@ import { logger as baseLogger, sanitizeUrlForSpan } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { tryGetCacheKeyContext } from "../cache-key-builder.ts";
-import { digestCacheKey, isValidCachePattern, sanitizeCacheKey } from "../keys/index.ts";
+import { isValidCachePattern, sanitizeCacheKey } from "../keys/index.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import type { CacheBackend } from "../types.ts";
 import { getEnvValue } from "./helpers.ts";
@@ -101,10 +101,9 @@ export class ApiCacheBackend implements CacheBackend {
     // invalid characters`, and on the control-plane /execute path that 400
     // loops until the request is flagged stuck (issues #162 / #175). Sanitize
     // so the request succeeds, and warn so the upstream generation bug stays
-    // visible rather than being silently masked. Log a hash, not the key: a
-    // leaked raw URL can carry credentials (`?access_token=...`).
+    // visible rather than being silently masked. Do not log any key-derived
+    // value because a leaked raw URL can carry credentials.
     logger.warn("Cache key was not API-safe; sanitized before request", {
-      keyHash: digestCacheKey(prefixed),
       originalLength: prefixed.length,
     });
     return sanitized;
@@ -299,7 +298,6 @@ export class ApiCacheBackend implements CacheBackend {
     // the entries to expire on TTL) rather than risk deleting unrelated keys.
     if (!isValidCachePattern(prefixed)) {
       logger.warn("Refusing unsafe del-pattern; skipping", {
-        patternHash: digestCacheKey(prefixed),
         originalLength: prefixed.length,
       });
       return 0;
