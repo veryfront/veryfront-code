@@ -56,6 +56,7 @@ Body text.`;
         "my-skill",
       );
       assertEquals(result.name, "my-skill");
+      assertEquals(result.displayName, undefined);
       assertEquals(result.description, "A skill");
     });
 
@@ -76,11 +77,55 @@ Body text.`;
       }
     });
 
-    it("should throw on invalid name (uppercase)", () => {
+    it("should preserve a legacy display-style frontmatter name as displayName", () => {
+      const result = validateSkillMetadata(
+        { name: "Process Email", description: "desc" },
+        "process-email",
+      );
+      assertEquals(result.name, "process-email");
+      assertEquals(result.displayName, "Process Email");
+    });
+
+    it("should preserve a mismatched frontmatter name as displayName", () => {
+      const result = validateSkillMetadata(
+        { name: "email", description: "desc" },
+        "process-email",
+      );
+      assertEquals(result.name, "process-email");
+      assertEquals(result.displayName, "email");
+    });
+
+    it("should prefer metadata.display_name over a legacy frontmatter display name", () => {
+      const result = validateSkillMetadata(
+        {
+          name: "Process Email",
+          description: "desc",
+          metadata: { display_name: "Email Processor", owner: "ops" },
+        },
+        "process-email",
+      );
+      assertEquals(result.name, "process-email");
+      assertEquals(result.displayName, "Email Processor");
+      assertEquals(result.metadata, { display_name: "Email Processor", owner: "ops" });
+    });
+
+    it("should throw on invalid directory/canonical name", () => {
       try {
         validateSkillMetadata(
-          { name: "MySkill", description: "desc" },
-          "MySkill",
+          { name: "process-email", description: "desc" },
+          "Process Email",
+        );
+        throw new Error("Should have thrown");
+      } catch (e) {
+        assertEquals((e as Error).message.includes("Invalid skill name"), true);
+      }
+    });
+
+    it("should reject whitespace around the directory canonical name", () => {
+      try {
+        validateSkillMetadata(
+          { description: "desc" },
+          " process-email ",
         );
         throw new Error("Should have thrown");
       } catch (e) {
