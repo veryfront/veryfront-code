@@ -73,7 +73,8 @@
     ".deno_cache/",
     "cli/templates/files/",
     "cli/templates/integrations/",
-    "extensions/"
+    "extensions/",
+    "!extensions/ext-parser-parse5/"
   ],
   "exports": {
     ".": "./src/index.ts",
