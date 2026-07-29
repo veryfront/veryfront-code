@@ -31,6 +31,9 @@ describe("agent/agent-service-bootstrap", () => {
     let registeredTraceContext: (() => typeof traceContext) | undefined;
 
     await bootstrapAgentService({
+      initializeApplicationErrors: () => {
+        events.push("initialize-application-errors");
+      },
       initializeTelemetry: () => {
         events.push("initialize-telemetry");
         return true;
@@ -49,6 +52,7 @@ describe("agent/agent-service-bootstrap", () => {
     });
 
     assertEquals(events, [
+      "initialize-application-errors",
       "initialize-telemetry",
       "telemetry-initialized",
       "register-trace-context",
@@ -83,18 +87,35 @@ describe("agent/agent-service-bootstrap", () => {
 
     await runAgentServiceMain({
       processTarget: processTarget.target,
+      initializeApplicationErrors: () => {
+        events.push("initialize-application-errors");
+      },
+      initializeTelemetry: () => {
+        events.push("initialize-telemetry");
+        return true;
+      },
       start: () => {
+        events.push("start");
         throw new Error("startup failed");
       },
       onStartupError: (error) => {
         events.push(error instanceof Error ? error.message : String(error));
+      },
+      onFinally: () => {
+        events.push("cleanup");
       },
       exit: (code) => {
         exitCode = code;
       },
     });
 
-    assertEquals(events, ["startup failed"]);
+    assertEquals(events, [
+      "initialize-application-errors",
+      "initialize-telemetry",
+      "start",
+      "startup failed",
+      "cleanup",
+    ]);
     assertStrictEquals(exitCode, 1);
     assertStrictEquals(processTarget.listenerCount(), 1);
   });

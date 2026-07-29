@@ -4,6 +4,7 @@ export type ApplicationErrorContext = {
   requestId?: string;
   spanId?: string;
   traceId?: string;
+  attributes?: Record<string, string | number | boolean>;
 };
 
 export type ApplicationErrorReporter = {
@@ -24,11 +25,19 @@ export function captureApplicationError(
   context: ApplicationErrorContext,
 ): string | undefined {
   if (isExpectedApplicationError(error)) return undefined;
-  return reporter?.capture(error, context);
+  try {
+    return reporter?.capture(error, context);
+  } catch {
+    return undefined;
+  }
 }
 
 export function flushApplicationErrors(timeoutMs = 2_000): Promise<boolean> {
-  return reporter?.flush(timeoutMs) ?? Promise.resolve(true);
+  try {
+    return reporter?.flush(timeoutMs) ?? Promise.resolve(true);
+  } catch {
+    return Promise.resolve(false);
+  }
 }
 
 export function isExpectedApplicationError(error: unknown): boolean {

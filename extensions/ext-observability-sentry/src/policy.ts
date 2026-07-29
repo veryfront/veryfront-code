@@ -91,6 +91,9 @@ export function applySentryScopePolicy(
       ...(context.spanId ? { span_id: context.spanId } : {}),
     });
   }
+  if (context.attributes && Object.keys(context.attributes).length > 0) {
+    scope.setContext("veryfront_application_error", context.attributes);
+  }
 }
 
 export function prepareSentryEvent<TEvent extends SentryPolicyEvent>(

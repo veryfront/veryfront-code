@@ -116,7 +116,7 @@ type ConsoleLoggerOptions = {
   injectTraceContext?: boolean;
 };
 
-type LogRecordEmitter = (entry: LogEntry) => void;
+export type LogRecordEmitter = (entry: LogEntry) => void;
 
 // ---- Config helpers (must be declared before the eager init below) ----
 
@@ -170,7 +170,8 @@ function getDefaultFormat(
  */
 let loggerConfig: LoggerConfig | null = null;
 
-let logRecordEmitter: LogRecordEmitter | null = null;
+let legacyLogRecordEmitter: LogRecordEmitter | null = null;
+const logRecordSubscribers = new Set<LogRecordEmitter>();
 
 /**
  * Re-read logger configuration from environment variables.
@@ -211,12 +212,21 @@ export const __resetLoggerConfigForTests = refreshLoggerConfig;
 
 /** Register a process-level structured log emitter, for example an OTel bridge. */
 export function __registerLogRecordEmitter(emitter: LogRecordEmitter | null): void {
-  logRecordEmitter = emitter;
+  legacyLogRecordEmitter = emitter;
+}
+
+/** Subscribe to process-level structured log records. Returns an unregister function. */
+export function __subscribeLogRecordEmitter(emitter: LogRecordEmitter): () => void {
+  logRecordSubscribers.add(emitter);
+  return () => {
+    logRecordSubscribers.delete(emitter);
+  };
 }
 
 /** Reset the process-level structured log emitter. Only intended for tests. */
 export function __resetLogRecordEmitterForTests(): void {
-  logRecordEmitter = null;
+  legacyLogRecordEmitter = null;
+  logRecordSubscribers.clear();
 }
 
 function resolveLoggerConfig(): LoggerConfig {
@@ -508,9 +518,18 @@ class ConsoleLogger implements Logger {
       })()
       : this.formatTextLine(level, message, args);
 
-    if (logRecordEmitter) {
+    const emittedEntry = entry ?? this.createEntry(level, message, args);
+    if (legacyLogRecordEmitter) {
       try {
-        logRecordEmitter(entry ?? this.createEntry(level, message, args));
+        legacyLogRecordEmitter(emittedEntry);
+      } catch (_) {
+        /* do not let telemetry export failures affect application logging */
+      }
+    }
+    for (const subscriber of logRecordSubscribers) {
+      if (subscriber === legacyLogRecordEmitter) continue;
+      try {
+        subscriber(emittedEntry);
       } catch (_) {
         /* do not let telemetry export failures affect application logging */
       }
