@@ -938,6 +938,60 @@ Deno.test(
 );
 
 Deno.test(
+  "unversioned subpath containing version text does not mask conflict specifier",
+  async () => {
+    const dir = await Deno.makeTempDir();
+    const source = [
+      'import a from "https://esm.sh/lodash/subpath@4.17.21";',
+      'import b from "https://esm.sh/lodash@4.17.21";',
+      "",
+    ].join("\n");
+    const manifest = JSON.stringify(
+      { name: "test", dependencies: { lodash: "^4.17.0" } },
+      null,
+      2,
+    ) + "\n";
+    try {
+      await Deno.writeTextFile(`${dir}/app.ts`, source);
+      await Deno.writeTextFile(`${dir}/package.json`, manifest);
+
+      let report: unknown;
+      const origLog = console.log.bind(console);
+      console.log = (msg: string) => {
+        try {
+          report = JSON.parse(msg);
+        } catch { /* ignore non-JSON lines */ }
+        origLog(msg);
+      };
+      try {
+        await main(["--", dir]);
+      } finally {
+        console.log = origLog;
+      }
+
+      assertEquals(await Deno.readTextFile(`${dir}/app.ts`), source);
+      assertEquals(await Deno.readTextFile(`${dir}/package.json`), manifest);
+      const conflicts = (report as { conflicts: unknown[] }).conflicts;
+      assert(conflicts.length >= 1, "expected at least one conflict entry");
+      const c = conflicts[0] as {
+        pkg: string;
+        existing: string;
+        fromVersion: string;
+        file: string;
+        specifier: string;
+      };
+      assertEquals(c.pkg, "lodash");
+      assertEquals(c.existing, "^4.17.0");
+      assertEquals(c.fromVersion, "4.17.21");
+      assertStringIncludes(c.file, "app.ts");
+      assertEquals(c.specifier, "https://esm.sh/lodash@4.17.21");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+);
+
+Deno.test(
   "default conflict handling still migrates independent packages",
   async () => {
     const dir = await Deno.makeTempDir();

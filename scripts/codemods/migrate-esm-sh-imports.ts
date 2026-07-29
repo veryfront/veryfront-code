@@ -573,7 +573,10 @@ function pickSpecifier(
 ): string {
   const forPkg = rewrites.filter((r) => r.to === pkg || r.to.startsWith(pkg + "/"));
   return (
-    forPkg.find((r) => r.from.includes(`@${version}`))?.from ??
+    forPkg.find((r) => {
+      const parsed = parseEsmShUrl(r.from);
+      return parsed?.pkg === pkg && parsed.version === version;
+    })?.from ??
       forPkg[0]?.from ??
       `${pkg}@${version}`
   );
