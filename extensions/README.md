@@ -58,10 +58,10 @@ Extension availability is separate from contract requirement:
 
 ### Eval export
 
-| Package                                                               | Contract                     | Description                                             |
-| --------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------- |
-| [`@veryfront/ext-eval-report-http`](./ext-eval-report-http)           | `EvalReportExporterRegistry` | Generic HTTP transport for redacted eval report exports |
-| [`@veryfront/ext-eval-report-mlflow`](./ext-eval-report-mlflow)       | `EvalReportExporterRegistry` | MLflow Tracking exporter for redacted eval reports      |
+| Package                                                         | Contract                     | Description                                             |
+| --------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------- |
+| [`@veryfront/ext-eval-report-http`](./ext-eval-report-http)     | `EvalReportExporterRegistry` | Generic HTTP transport for redacted eval report exports |
+| [`@veryfront/ext-eval-report-mlflow`](./ext-eval-report-mlflow) | `EvalReportExporterRegistry` | MLflow Tracking exporter for redacted eval reports      |
 
 Eval report exporters receive the generic, redacted `EvalReport` shape. Keep
 project-specific extraction in eval adapters or metrics, then select an exporter
@@ -88,7 +88,7 @@ the same contract.
 | Package                                                                           | Contract                                   | Description                                                                  |
 | --------------------------------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------- |
 | [`@veryfront/ext-observability-opentelemetry`](./ext-observability-opentelemetry) | `TracingExporter`, `NodeTelemetryProvider` | OpenTelemetry trace export, metrics API bridge, and Node telemetry bootstrap |
-| [`@veryfront/ext-observability-sentry`](./ext-observability-sentry)                 | Application error reporter                 | Sentry error capture with service and trace correlation                      |
+| [`@veryfront/ext-observability-sentry`](./ext-observability-sentry)               | Application error reporter                 | Sentry error capture with service and trace correlation                      |
 
 ### Sandbox
 
@@ -125,17 +125,17 @@ raw transitive dependencies such as `bash-tool`, `just-bash`, `jose`,
 `better-sqlite3`, `@kreuzberg/node`, `@mdx-js/mdx`, or `tailwindcss` directly
 to satisfy Veryfront runtime features.
 
-| Runtime or service role                    | Install these extension packages                                                                                               |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| CLI, build image, or project server runtime | `@veryfront/ext-bundler-esbuild`, `@veryfront/ext-content-mdx`, `@veryfront/ext-css-tailwind`, `@veryfront/ext-parser-babel`   |
-| Proxy or JWT-authenticated service          | `@veryfront/ext-auth-jwt`                                                                                                      |
-| Document upload or knowledge ingestion      | `@veryfront/ext-document-kreuzberg`                                                                                            |
-| Redis-backed cache or token store           | `@veryfront/ext-cache-redis`                                                                                                   |
-| SQLite-backed persistence                   | `@veryfront/ext-db-sqlite`                                                                                                     |
-| OpenTelemetry export or Node telemetry      | `@veryfront/ext-observability-opentelemetry`                                                                                   |
-| Sentry application error capture            | `@veryfront/ext-observability-sentry`                                                                                          |
-| Local shell-tool agent runtime              | `@veryfront/ext-sandbox-shell-tools`                                                                                           |
-| Eval report export to MLflow                | `@veryfront/ext-eval-report-mlflow`                                                                                            |
+| Runtime or service role                     | Install these extension packages                                                                                             |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| CLI, build image, or project server runtime | `@veryfront/ext-bundler-esbuild`, `@veryfront/ext-content-mdx`, `@veryfront/ext-css-tailwind`, `@veryfront/ext-parser-babel` |
+| Proxy or JWT-authenticated service          | `@veryfront/ext-auth-jwt`                                                                                                    |
+| Document upload or knowledge ingestion      | `@veryfront/ext-document-kreuzberg`                                                                                          |
+| Redis-backed cache or token store           | `@veryfront/ext-cache-redis`                                                                                                 |
+| SQLite-backed persistence                   | `@veryfront/ext-db-sqlite`                                                                                                   |
+| OpenTelemetry export or Node telemetry      | `@veryfront/ext-observability-opentelemetry`                                                                                 |
+| Sentry application error capture            | `@veryfront/ext-observability-sentry`                                                                                        |
+| Local shell-tool agent runtime              | `@veryfront/ext-sandbox-shell-tools`                                                                                         |
+| Eval report export to MLflow                | `@veryfront/ext-eval-report-mlflow`                                                                                          |
 
 An agent runtime needs `@veryfront/ext-sandbox-shell-tools` only when it creates
 local bash or shell tools. MCP-only remote tool execution does not need that
@@ -146,22 +146,22 @@ package unless the service also provides local shell tools.
 Veryfront treats contracts as required at the call site, not at the package list
 level.
 
-| Contract                    | Required when                                   | Default source                        |
-| --------------------------- | ----------------------------------------------- | ------------------------------------- |
-| `SchemaValidator`           | Schema-backed runtime validation runs           | Auto-enabled core extension           |
-| `Bundler`, `ModuleLexer`    | Build, import analysis, or module bundling runs | Auto-enabled core extension           |
-| `CodeParser`                | AST parsing or build-time code analysis runs    | Auto-enabled core extension           |
-| `ContentProcessor`          | MDX or Markdown content compilation runs        | Auto-enabled core extension           |
-| `CSSProcessor`              | Tailwind CSS processing runs                    | Auto-enabled core extension           |
-| `DocumentExtractor`         | Document text extraction runs                   | Auto-enabled native service extension |
-| `SqliteStore`               | SQLite-backed persistence runs                  | Auto-enabled native service extension |
-| `SandboxShellToolsProvider` | Sandbox shell tools are created                 | Auto-enabled core extension           |
-| `LLMProvider:*`             | A matching model provider is selected           | Auto-enabled core extension           |
-| `AuthProvider`              | Auth signing or verification is configured      | User-installed extension              |
-| `TokenCacheStore`           | Redis-backed token cache is configured          | User-installed extension              |
+| Contract                     | Required when                                   | Default source                        |
+| ---------------------------- | ----------------------------------------------- | ------------------------------------- |
+| `SchemaValidator`            | Schema-backed runtime validation runs           | Auto-enabled core extension           |
+| `Bundler`, `ModuleLexer`     | Build, import analysis, or module bundling runs | Auto-enabled core extension           |
+| `CodeParser`                 | AST parsing or build-time code analysis runs    | Auto-enabled core extension           |
+| `ContentProcessor`           | MDX or Markdown content compilation runs        | Auto-enabled core extension           |
+| `CSSProcessor`               | Tailwind CSS processing runs                    | Auto-enabled core extension           |
+| `DocumentExtractor`          | Document text extraction runs                   | Auto-enabled native service extension |
+| `SqliteStore`                | SQLite-backed persistence runs                  | Auto-enabled native service extension |
+| `SandboxShellToolsProvider`  | Sandbox shell tools are created                 | Auto-enabled core extension           |
+| `LLMProvider:*`              | A matching model provider is selected           | Auto-enabled core extension           |
+| `AuthProvider`               | Auth signing or verification is configured      | User-installed extension              |
+| `TokenCacheStore`            | Redis-backed token cache is configured          | User-installed extension              |
 | `EvalReportExporterRegistry` | Eval report exporters are registered            | Auto-enabled core extension           |
-| `TracingExporter`           | OTLP tracing export is configured               | User-installed extension              |
-| `NodeTelemetryProvider`     | Node agent service telemetry is enabled         | Auto-enabled agent service extension  |
+| `TracingExporter`            | OTLP tracing export is configured               | User-installed extension              |
+| `NodeTelemetryProvider`      | Node agent service telemetry is enabled         | Auto-enabled agent service extension  |
 
 ## Architecture
 
@@ -277,15 +277,15 @@ capability list in the extension factory and in `veryfront.capabilities` inside
 the extension manifest. CI runs `deno task lint:extension-capabilities` to
 check for drift and to enforce the sensitive capability policies below.
 
-| Extension                              | Required capabilities                                          | Why it is sensitive                         |
-| -------------------------------------- | -------------------------------------------------------------- | ------------------------------------------- |
-| `ext-sandbox-shell-tools`              | `sandbox:execute` with `tools: ["bash"]`                       | Exposes command execution in a sandbox      |
-| `ext-cache-redis`                      | `net:outbound`, `env:read` for `REDIS_*`                       | Connects to external cache infrastructure   |
-| `ext-db-sqlite`                        | `fs:read`, `fs:write`                                          | Opens native SQLite databases               |
-| `ext-document-kreuzberg`               | `fs:read`                                                      | Parses uploaded or user-provided documents  |
-| `ext-observability-opentelemetry`      | `net:outbound`, `env:read` for `OTEL_*`                        | Exports telemetry and reads collector config |
-| `ext-observability-sentry`             | `net:outbound`                                                 | Sends scrubbed application errors to Sentry |
-| `ext-eval-report-http`                 | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*`         | Exports eval reports to an external endpoint |
+| Extension                         | Required capabilities                                  | Why it is sensitive                          |
+| --------------------------------- | ------------------------------------------------------ | -------------------------------------------- |
+| `ext-sandbox-shell-tools`         | `sandbox:execute` with `tools: ["bash"]`               | Exposes command execution in a sandbox       |
+| `ext-cache-redis`                 | `net:outbound`, `env:read` for `REDIS_*`               | Connects to external cache infrastructure    |
+| `ext-db-sqlite`                   | `fs:read`, `fs:write`                                  | Opens native SQLite databases                |
+| `ext-document-kreuzberg`          | `fs:read`                                              | Parses uploaded or user-provided documents   |
+| `ext-observability-opentelemetry` | `net:outbound`, `env:read` for `OTEL_*`                | Exports telemetry and reads collector config |
+| `ext-observability-sentry`        | `net:outbound`                                         | Sends scrubbed application errors to Sentry  |
+| `ext-eval-report-http`            | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*` | Exports eval reports to an external endpoint |
 
 Use `veryfront.contracts` for contract ownership and dependency ordering. Use
 `veryfront.capabilities` only for runtime resource access and audit metadata.

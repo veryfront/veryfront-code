@@ -67,7 +67,7 @@ runs:
 
     - name: Generate template manifest
       shell: bash
-      run: deno run -A scripts/build/generate-templates-manifest.ts && deno fmt cli/templates/manifest.json
+      run: deno run --frozen -A scripts/build/generate-templates-manifest.ts && deno fmt cli/templates/manifest.json
 
     - name: Warm Redis module cache
       if: inputs.warm-redis-cache == 'true'

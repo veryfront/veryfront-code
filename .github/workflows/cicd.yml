@@ -41,9 +41,9 @@ jobs:
       - name: Run ${{ matrix.check }}
         run: |
           case "${{ matrix.check }}" in
-            format) deno fmt --check ;;
-            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:module-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests && deno task lint:chat-ratchets && deno task lint:test-typecheck && deno task storybook:check ;;
-            typecheck) deno task typecheck ;;
+            format) deno task fmt:check ;;
+            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:module-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests && deno task lint:chat-ratchets && deno task lint:test-typecheck && deno task storybook:check && deno task test:scripts ;;
+            typecheck) deno task typecheck && deno task typecheck:extensions ;;
           esac
 
   # ============================================
@@ -307,6 +307,8 @@ jobs:
           package-manager-cache: false
       - name: Install TypeScript toolchain
         run: npm --prefix storybook ci --ignore-scripts
+      - name: Check extension workspaces
+        run: deno task typecheck:extensions
       - name: Check published package types
         run: deno task typecheck:consumer
       - name: Install minimum-Node source-test dependencies
@@ -461,7 +463,7 @@ jobs:
       - name: Compile binary
         shell: bash
         run: |
-          deno run -A scripts/build/compile-binary.ts \
+          deno run --frozen -A scripts/build/compile-binary.ts \
             --target ${{ matrix.target }} \
             --output ${{ matrix.name }}
 
