@@ -340,8 +340,20 @@ async function stopRuntime(
   stopServer: () => void | Promise<void>,
 ): Promise<void> {
   runtime.setShuttingDown();
-  await stopServer();
-  await runtime.stop();
+  let failure: unknown;
+  try {
+    await stopServer();
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    await runtime.stop();
+  } catch (error) {
+    failure ??= error;
+  }
+  if (failure !== undefined) {
+    throw failure;
+  }
 }
 
 function installSignalHandlers(options: {
