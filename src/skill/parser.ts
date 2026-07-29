@@ -83,7 +83,7 @@ export function validateSkillMetadata(
   directoryName: string,
   options: { providerSafeName?: boolean } = {},
 ): SkillMetadata {
-  const canonicalName = directoryName.trim();
+  const canonicalName = directoryName;
   const nameRegex = options.providerSafeName ? SKILL_PROVIDER_SAFE_ID_REGEX : SKILL_NAME_REGEX;
   const nameExpectation = options.providerSafeName
     ? "must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters"

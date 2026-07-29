@@ -121,6 +121,18 @@ Body text.`;
       }
     });
 
+    it("should reject whitespace around the directory canonical name", () => {
+      try {
+        validateSkillMetadata(
+          { description: "desc" },
+          " process-email ",
+        );
+        throw new Error("Should have thrown");
+      } catch (e) {
+        assertEquals((e as Error).message.includes("Invalid skill name"), true);
+      }
+    });
+
     it("should throw on name too long", () => {
       const longName = "a".repeat(65);
       try {
