@@ -36,7 +36,10 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { getProjectTarget } from "../../shared/deployment-provenance.ts";
-import { ensurePulledProjectBootstrap } from "./project-bootstrap.ts";
+import {
+  ensurePulledProjectBootstrap,
+  preflightPulledProjectBootstrap,
+} from "./project-bootstrap.ts";
 
 /**
  * Schema factory for pull command arguments
@@ -559,6 +562,10 @@ function errorSlug(error: unknown): string | undefined {
   return typeof slug === "string" ? slug : undefined;
 }
 
+function isProjectLinkResolutionError(error: unknown): boolean {
+  return describeError(error).includes(".veryfront/project.json");
+}
+
 function pullProjectListError(projectSlug: string, sourceLabel: string, error: unknown): Error {
   const message = [
     `Failed to list files for project "${projectSlug}" from ${sourceLabel}: ${
@@ -672,6 +679,8 @@ async function pullSingleProject(
   const project = await getProjectTarget(client, projectSlug);
   const pulledPaths = new Set(writeOps.map((op) => op.relativePath));
   const deletedPaths = new Set(deleteOps.map((op) => op.relativePath));
+
+  await preflightPulledProjectBootstrap({ projectDir });
 
   if (writeOps.length === 0 && deleteOps.length === 0) {
     if (!quiet) logInfo(`No files to pull from ${projectSlug}.`);
@@ -814,21 +823,35 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
       } catch (error) {
         spinner.stop();
 
-        if (!projects?.length) throw error;
+        if (slugOverride && isProjectLinkResolutionError(error)) {
+          const env = getEnvironmentConfig();
+          const token = getApiTokenEnv(env) ?? configFile?.apiToken;
+          if (token) {
+            config = {
+              apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
+              apiToken: token,
+              projectSlug: slugOverride,
+            };
+          } else {
+            throw error;
+          }
+        } else {
+          if (!projects?.length) throw error;
 
-        const env = getEnvironmentConfig();
-        const token = getApiTokenEnv(env) ?? configFile?.apiToken;
-        if (!token) {
-          throw new Error(
-            "VERYFRONT_API_TOKEN environment variable or apiToken in veryfront.json is required when using --projects",
-          );
+          const env = getEnvironmentConfig();
+          const token = getApiTokenEnv(env) ?? configFile?.apiToken;
+          if (!token) {
+            throw new Error(
+              "VERYFRONT_API_TOKEN environment variable or apiToken in veryfront.json is required when using --projects",
+            );
+          }
+
+          config = {
+            apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
+            apiToken: token,
+            projectSlug: "",
+          };
         }
-
-        config = {
-          apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
-          apiToken: token,
-          projectSlug: "",
-        };
       }
 
       if (prune && !dryRun) {

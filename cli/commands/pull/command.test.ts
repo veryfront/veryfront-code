@@ -11,6 +11,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { cliLogger } from "#cli/utils";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import {
   buildFileContentUrl,
@@ -697,6 +698,75 @@ describe("pullCommand", () => {
     }
   });
 
+  it("rejects a protected project link path before overwriting pulled files", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const tempDir = await Deno.makeTempDir();
+    const externalDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const requests: string[] = [];
+
+    try {
+      await Deno.mkdir(join(tempDir, "app"), { recursive: true });
+      await Deno.writeTextFile(join(tempDir, "app", "page.tsx"), "local\n");
+      await Deno.writeTextFile(join(externalDir, "project.json"), "external\n");
+      await Deno.symlink(externalDir, join(tempDir, ".veryfront"));
+
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        requests.push(url.pathname);
+
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha-canonical" }));
+        }
+
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(
+            Response.json({
+              data: [{
+                path: "app/page.tsx",
+                content: "remote\n",
+                size: 7,
+                type: "file",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+              }],
+              page_info: {},
+            }),
+          );
+        }
+
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await assertRejects(
+        () =>
+          pullCommand({
+            projectDir: tempDir,
+            projectSlug: "alpha",
+            force: true,
+            quiet: true,
+          }),
+        Error,
+        "symbolic link",
+      );
+
+      assertEquals(requests, ["/projects/alpha/files", "/projects/alpha"]);
+      assertEquals(await Deno.readTextFile(join(tempDir, "app", "page.tsx")), "local\n");
+      assertEquals(await Deno.readTextFile(join(externalDir, "project.json")), "external\n");
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(externalDir, { recursive: true });
+    }
+  });
+
   it("does not write bootstrap files during a dry-run pull", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;
@@ -744,6 +814,68 @@ describe("pullCommand", () => {
       assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
       assertEquals(await exists(join(tempDir, "app", "page.tsx")), false);
     } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("reports planned bootstrap files during dry-run without writing them", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const originalInfo = cliLogger.info;
+    const output: string[] = [];
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+      cliLogger.info = (...args: unknown[]) => output.push(args.map(String).join(" "));
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha-canonical" }));
+        }
+
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(
+            Response.json({
+              data: [{
+                path: "app/page.tsx",
+                content: "export default null;\n",
+                size: 21,
+                type: "file",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+              }],
+              page_info: {},
+            }),
+          );
+        }
+
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir,
+        projectSlug: "alpha",
+        dryRun: true,
+      });
+
+      assertEquals(
+        output.includes("  Would create: .veryfront/project.json"),
+        true,
+      );
+      assertEquals(output.includes("  Would create: package.json"), true);
+      assertEquals(output.includes("  Would create: tsconfig.json"), true);
+      assertEquals(await readProjectLink(tempDir), null);
+      assertEquals(await exists(join(tempDir, "package.json")), false);
+      assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
+    } finally {
+      cliLogger.info = originalInfo;
       globalThis.fetch = originalFetch;
       restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
       _resetEnvironmentConfig();

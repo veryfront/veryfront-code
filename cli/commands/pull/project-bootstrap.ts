@@ -21,6 +21,10 @@ export interface PulledProjectBootstrapOptions {
   quiet: boolean;
 }
 
+export interface PulledProjectBootstrapPreflightOptions {
+  projectDir: string;
+}
+
 async function pathExistsInFinalState(
   projectDir: string,
   relativePath: string,
@@ -46,6 +50,12 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+export async function preflightPulledProjectBootstrap(
+  options: PulledProjectBootstrapPreflightOptions,
+): Promise<void> {
+  await readProjectLink(options.projectDir);
+}
+
 export async function ensurePulledProjectBootstrap(
   options: PulledProjectBootstrapOptions,
 ): Promise<void> {
@@ -64,6 +74,21 @@ export async function ensurePulledProjectBootstrap(
 
   if (options.dryRun) {
     if (!options.quiet) {
+      const projectLink = await readProjectLink(options.projectDir);
+      const plannedProjectLink = {
+        controlPlane: options.config.apiUrl,
+        projectId: options.project.id,
+        projectSlug: options.project.slug,
+      };
+      const projectLinkAction = projectLink ? "update" : "create";
+      if (
+        !projectLink ||
+        projectLink.controlPlane !== plannedProjectLink.controlPlane ||
+        projectLink.projectId !== plannedProjectLink.projectId ||
+        projectLink.projectSlug !== plannedProjectLink.projectSlug
+      ) {
+        cliLogger.info(`  Would ${projectLinkAction}: ${PROJECT_LINK_PATH}`);
+      }
       if (!packageJsonExists) cliLogger.info(`  Would create: ${PACKAGE_JSON_PATH}`);
       if (!tsconfigExists) cliLogger.info(`  Would create: ${TSCONFIG_PATH}`);
     }
