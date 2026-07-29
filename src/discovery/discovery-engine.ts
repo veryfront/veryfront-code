@@ -190,6 +190,7 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
   const context: FileDiscoveryContext = {
     platform: detectPlatform(),
     fsAdapter: config.fsAdapter,
+    cacheNamespace: config.cacheNamespace,
     baseDir,
   };
 
