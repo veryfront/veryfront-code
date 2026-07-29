@@ -1042,6 +1042,95 @@ describe("pullCommand", () => {
     }
   });
 
+  it("skips unmanaged remote files during an ordinary pull", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+    try {
+      await Deno.mkdir(join(tempDir, "app"), { recursive: true });
+      await Deno.mkdir(join(tempDir, "assets"), { recursive: true });
+      await Deno.writeTextFile(join(tempDir, ".vfignore"), "app/local-only.ts\npackage.json\n");
+      await Deno.writeTextFile(join(tempDir, "app", "local-only.ts"), "local\n");
+      await Deno.writeTextFile(join(tempDir, "assets", "image.png"), "local binary\n");
+
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha-canonical" }));
+        }
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(
+            Response.json({
+              data: [
+                {
+                  path: "app/page.tsx",
+                  content: "export default 1;\n",
+                  size: 18,
+                  type: "file",
+                  created_at: "",
+                  updated_at: "",
+                },
+                {
+                  path: "app/local-only.ts",
+                  content: "remote ignored\n",
+                  size: 15,
+                  type: "file",
+                  created_at: "",
+                  updated_at: "",
+                },
+                {
+                  path: "assets/image.png",
+                  content: "remote binary",
+                  size: 13,
+                  type: "file",
+                  created_at: "",
+                  updated_at: "",
+                },
+                {
+                  path: "package.json",
+                  content: '{"name":"remote"}\n',
+                  size: 18,
+                  type: "file",
+                  created_at: "",
+                  updated_at: "",
+                },
+              ],
+              page_info: {},
+            }),
+          );
+        }
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir,
+        projectSlug: "alpha",
+        force: true,
+        quiet: true,
+      });
+
+      assertEquals(
+        await Deno.readTextFile(join(tempDir, "app", "page.tsx")),
+        "export default 1;\n",
+      );
+      assertEquals(await Deno.readTextFile(join(tempDir, "app", "local-only.ts")), "local\n");
+      assertEquals(await Deno.readTextFile(join(tempDir, "assets", "image.png")), "local binary\n");
+      assertEquals(
+        JSON.parse(await Deno.readTextFile(join(tempDir, "package.json"))),
+        expectedBootstrapPackage("alpha-canonical"),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("prunes managed local files missing from the selected Studio branch", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;

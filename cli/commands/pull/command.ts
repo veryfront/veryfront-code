@@ -631,9 +631,7 @@ async function pullSingleProject(
     spinner.stop();
   }
 
-  const pruneIgnoreChecker = prune
-    ? createIgnoreChecker(await loadIgnorePatterns(projectDir))
-    : null;
+  const ignoreChecker = createIgnoreChecker(await loadIgnorePatterns(projectDir));
   const writeOps: WriteOp[] = [];
   const remotePaths = new Set<string>();
   for (const file of files) {
@@ -654,9 +652,8 @@ async function pullSingleProject(
     }
 
     if (
-      pruneIgnoreChecker &&
-      (pruneIgnoreChecker.isIgnored(op.relativePath) ||
-        !pruneIgnoreChecker.isSupportedExtension(op.relativePath))
+      ignoreChecker.isIgnored(op.relativePath) ||
+      !ignoreChecker.isSupportedExtension(op.relativePath)
     ) {
       continue;
     }
@@ -670,9 +667,9 @@ async function pullSingleProject(
   }
 
   let deleteOps: DeleteOp[] = [];
-  if (pruneIgnoreChecker) {
+  if (prune) {
     const managedRemotePaths = new Set(writeOps.map((op) => op.relativePath));
-    const localFiles = await listManagedLocalFiles(projectDir, pruneIgnoreChecker);
+    const localFiles = await listManagedLocalFiles(projectDir, ignoreChecker);
     deleteOps = localFiles.filter((file) => !managedRemotePaths.has(file.relativePath));
   }
 
