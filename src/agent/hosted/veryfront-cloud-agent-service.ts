@@ -186,6 +186,7 @@ export async function startAgentService(
     flush: () => Promise.resolve(true),
     reset: () => {},
   };
+  let startupErrorHandled = false;
   getRuntimeTraceContext = context.infrastructure.getTraceContext;
 
   await runAgentServiceMain({
@@ -222,12 +223,16 @@ export async function startAgentService(
       }
     },
     onStartupError: async (error) => {
-      agentLogger.error("Error in server startup:", { error });
       applicationErrors.captureStartupError(error);
+      agentLogger.error("Error in server startup:", { error });
       await applicationErrors.flush();
+      applicationErrors.reset();
+      startupErrorHandled = true;
     },
     onFinally: async () => {
-      await applicationErrors.flush();
+      if (!startupErrorHandled) {
+        await applicationErrors.flush();
+      }
       applicationErrors.reset();
     },
     exit: processTarget?.exit,

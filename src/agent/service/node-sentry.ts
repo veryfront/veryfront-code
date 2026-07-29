@@ -50,6 +50,10 @@ const EXPECTED_ERROR_CODES = new Set([
   "VALIDATION_ERROR",
 ]);
 
+let currentInitializationId = 0;
+let currentLifecycle: NodeAgentServiceApplicationErrorLifecycle | undefined;
+let currentLifecycleOwner: symbol | undefined;
+
 function readTrimmedEnv(
   env: NodeAgentServiceApplicationErrorEnv,
   key: string,
@@ -189,6 +193,12 @@ function defaultLifecycle(): NodeAgentServiceApplicationErrorLifecycle {
   };
 }
 
+function deactivateCurrentLifecycle(): void {
+  currentLifecycle?.reset();
+  currentLifecycle = undefined;
+  currentLifecycleOwner = undefined;
+}
+
 async function withWallClockTimeout(
   operation: Promise<boolean>,
   timeoutMs: number,
@@ -213,10 +223,15 @@ export async function initializeNodeAgentServiceSentryApplicationErrors(options:
   loadExtension?: SentryExtensionLoader;
   flushTimeoutMs?: number;
 }): Promise<NodeAgentServiceApplicationErrorLifecycle> {
+  const initializationId = ++currentInitializationId;
+  deactivateCurrentLifecycle();
+
   const config = resolveNodeAgentServiceSentryConfig(options.env, options.defaultServiceName);
   if (!config) return defaultLifecycle();
 
   const extension = await (options.loadExtension ?? loadNodeSentryExtension)();
+  if (initializationId !== currentInitializationId) return defaultLifecycle();
+
   const reporter = extension.createNodeSentryApplicationErrorReporter({
     dsn: config.dsn,
     environment: config.environment,
@@ -225,29 +240,45 @@ export async function initializeNodeAgentServiceSentryApplicationErrors(options:
   });
   setApplicationErrorReporter(reporter);
 
-  const unsubscribe = __subscribeLogRecordEmitter(
+  const owner = Symbol("node-agent-service-sentry");
+  const unsubscribeLogCapture = __subscribeLogRecordEmitter(
     createNodeAgentServiceLogApplicationErrorEmitter(),
   );
+  currentLifecycleOwner = owner;
   let active = true;
+  let logCaptureActive = true;
   const flushTimeoutMs = options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS;
 
-  return {
+  const lifecycle: NodeAgentServiceApplicationErrorLifecycle = {
     enabled: true,
     captureStartupError(error) {
-      if (!active) return;
+      if (!active || currentLifecycleOwner !== owner) return;
+      if (logCaptureActive) {
+        logCaptureActive = false;
+        unsubscribeLogCapture();
+      }
       captureApplicationError(error, { boundary: "agent.process.startup" });
     },
     flush(timeoutMs = flushTimeoutMs) {
-      if (!active) return Promise.resolve(true);
+      if (!active || currentLifecycleOwner !== owner) return Promise.resolve(true);
       return withWallClockTimeout(flushApplicationErrors(timeoutMs), timeoutMs);
     },
     reset() {
       if (!active) return;
       active = false;
-      unsubscribe();
-      setApplicationErrorReporter(undefined);
+      if (logCaptureActive) {
+        logCaptureActive = false;
+        unsubscribeLogCapture();
+      }
+      if (currentLifecycleOwner === owner) {
+        currentLifecycleOwner = undefined;
+        currentLifecycle = undefined;
+        setApplicationErrorReporter(undefined);
+      }
     },
   };
+  currentLifecycle = lifecycle;
+  return lifecycle;
 }
 
 async function loadNodeSentryExtension(): Promise<SentryExtensionModule> {

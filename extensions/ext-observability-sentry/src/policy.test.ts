@@ -1,5 +1,10 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { captureWithSentryPolicy, flushWithSentryPolicy, prepareSentryEvent } from "./policy.ts";
+import {
+  captureWithSentryPolicy,
+  flushWithSentryPolicy,
+  prepareSentryEvent,
+  sanitizeApplicationErrorAttributes,
+} from "./policy.ts";
 
 function createSentrySdk(options: {
   captureThrows?: boolean;
@@ -132,6 +137,51 @@ Deno.test("policy captures service and Grafana trace correlation", () => {
   assertEquals(state.contexts, [[
     "grafana_trace",
     { trace_id: "trace-1", span_id: "span-1" },
+  ]]);
+});
+
+Deno.test("policy redacts application error attribute keys and credential-shaped values", () => {
+  assertEquals(
+    sanitizeApplicationErrorAttributes({
+      "auth.token": "synthetic-token-value",
+      apiKey: "synthetic-api-key",
+      normal: "Bearer synthetic-token-value and https://service.test/1?token=synthetic-token-value",
+      serviceUrl: "https://user:pass@example.test/path?access_token=synthetic-token-value",
+      count: 3,
+      enabled: true,
+    }),
+    {
+      "auth.token": "[REDACTED]",
+      apiKey: "[REDACTED]",
+      normal: "[REDACTED] and https://service.test/1?token=[REDACTED]",
+      serviceUrl: "https://[REDACTED]@example.test/path?access_token=[REDACTED]",
+      count: 3,
+      enabled: true,
+    },
+  );
+});
+
+Deno.test("policy applies sanitized application error attributes to Sentry scope", () => {
+  const { sdk, state } = createSentrySdk();
+  const error = new Error("agent failed");
+
+  captureWithSentryPolicy(sdk, "veryfront-agent", error, {
+    boundary: "agent.framework-log",
+    attributes: {
+      task: "build",
+      authToken: "synthetic-token-value",
+      message: "Bearer synthetic-token-value",
+    },
+  });
+
+  assertEquals(state.captured, [error]);
+  assertEquals(state.contexts, [[
+    "veryfront_application_error",
+    {
+      task: "build",
+      authToken: "[REDACTED]",
+      message: "[REDACTED]",
+    },
   ]]);
 });
 
