@@ -174,7 +174,7 @@ describe("cli/templates", () => {
     );
     assertEquals(
       assistantEval.includes(
-        "metrics.answer.regex({ pattern: String.raw`(?<![-\\d.])\\$15\\.21(?![\\d.])` }).gate()",
+        "pattern: String.raw`(?<![-\\d.\\\\])\\\\?\\$15\\.21(?![\\d.])`",
       ),
       true,
     );
@@ -182,22 +182,31 @@ describe("cli/templates", () => {
     assertEquals(assistantEval.includes("metrics.agent.noFailedTools().gate()"), true);
     assertEquals(
       assistantEval.includes(
-        "metrics.answer.regex({ pattern: String.raw`(?<![-\\d.])\\$33\\.24(?![\\d.])` }).gate()",
+        "pattern: String.raw`(?<![-\\d.\\\\])\\\\?\\$33\\.24(?![\\d.])`",
       ),
       true,
     );
     assertEquals(
       assistantEval.includes(
-        "metrics.answer.regex({ pattern: String.raw`(?<![-\\d.])\\$33\\.23(?![\\d.])` }).gate()",
+        "pattern: String.raw`(?<![-\\d.\\\\])\\\\?\\$33\\.23(?![\\d.])`",
       ),
       true,
     );
     assertEquals(assistantEval.includes("metrics.answer.contains("), false);
-    const moneyPattern = new RegExp(String.raw`(?<![-\d.])\$15\.21(?![\d.])`);
+    const moneyPattern = new RegExp(String.raw`(?<![-\d.\\])\\?\$15\.21(?![\d.])`);
     for (const valid of ["$15.21", String.raw`\$15.21`, "($15.21)", "**$15.21**"]) {
       assertEquals(moneyPattern.test(valid), true);
     }
-    for (const invalid of ["-15.21", "-$15.21", "115.21", "$15.210", "$15.21.0"]) {
+    for (
+      const invalid of [
+        "-15.21",
+        "-$15.21",
+        String.raw`-\$15.21`,
+        "115.21",
+        "$15.210",
+        "$15.21.0",
+      ]
+    ) {
       assertEquals(moneyPattern.test(invalid), false);
     }
     assertEquals(assistantEval.includes("judge: judges.llm.rubric()"), true);

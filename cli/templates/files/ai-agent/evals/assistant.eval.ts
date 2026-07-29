@@ -12,10 +12,18 @@ export default evalAgent({
     },
   ]),
   metrics: [
-    metrics.answer.regex({ pattern: String.raw`(?<![-\d.])\$15\.21(?![\d.])` }).gate(),
-    metrics.answer.regex({ pattern: String.raw`(?<![-\d.])\$99\.71(?![\d.])` }).gate(),
-    metrics.answer.regex({ pattern: String.raw`(?<![-\d.])\$33\.24(?![\d.])` }).gate(),
-    metrics.answer.regex({ pattern: String.raw`(?<![-\d.])\$33\.23(?![\d.])` }).gate(),
+    metrics.answer.regex({
+      pattern: String.raw`(?<![-\d.\\])\\?\$15\.21(?![\d.])`,
+    }).gate(),
+    metrics.answer.regex({
+      pattern: String.raw`(?<![-\d.\\])\\?\$99\.71(?![\d.])`,
+    }).gate(),
+    metrics.answer.regex({
+      pattern: String.raw`(?<![-\d.\\])\\?\$33\.24(?![\d.])`,
+    }).gate(),
+    metrics.answer.regex({
+      pattern: String.raw`(?<![-\d.\\])\\?\$33\.23(?![\d.])`,
+    }).gate(),
     metrics.agent.calledTool("calculator").gate(),
     metrics.agent.noFailedTools().gate(),
     metrics.judge.rubric({
