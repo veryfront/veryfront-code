@@ -186,7 +186,8 @@ describe("init command integration", () => {
       assertEquals(result.stdout?.includes("ready!"), false);
       assertEquals(result.stdout?.includes("Deploy:"), true);
       assertEquals(result.stdout?.includes("Project structure"), false);
-      assertEquals(result.stdout?.includes("npx veryfront deploy"), true);
+      assertEquals(result.stdout?.includes("npm run deploy"), true);
+      assertEquals(result.stdout?.includes("npx veryfront deploy"), false);
       assertEquals(result.stdout?.includes("Project files created"), false);
       assertEquals(result.stdout?.includes("Dependencies installed"), false);
       assertEquals(result.stdout?.includes("Git repository initialized"), false);
@@ -583,6 +584,7 @@ describe("init command integration", () => {
             assertEquals(pkg.scripts.build, "veryfront build");
             assertEquals(pkg.scripts.start, "veryfront serve");
             assertEquals(pkg.scripts.eval, "veryfront eval");
+            assertEquals(pkg.scripts.deploy, "veryfront deploy");
             assertEquals(pkg.scripts.preview, undefined);
             assertExists(pkg.dependencies.veryfront);
             assertExists(pkg.dependencies.react);
