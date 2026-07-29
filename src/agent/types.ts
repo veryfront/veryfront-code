@@ -81,6 +81,7 @@ export interface Suggestions {
 /** Source configuration accepted for one suggestion. */
 export type SuggestionConfig =
   | string
+  | Suggestion
   | {
     type?: "prompt";
     title: string;

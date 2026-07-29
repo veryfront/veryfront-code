@@ -25,6 +25,8 @@ const flatSuggestionsConfig: AgentConfig = {
       prompt: "Summarize the latest context.",
     },
     inlinePromptSuggestion,
+    promptReferenceSuggestion,
+    taskReferenceSuggestion,
   ],
 };
 

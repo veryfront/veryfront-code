@@ -767,7 +767,11 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         };
       const remoteFilesMissingLocally = target.remoteFiles
         .map((file) => file.path)
-        .filter((path) => !ignoreChecker.isIgnored(path) && !localPaths.has(path));
+        .filter((path) =>
+          ignoreChecker.isSupportedExtension(path) &&
+          !ignoreChecker.isIgnored(path) &&
+          !localPaths.has(path)
+        );
       const toDelete = pruneRemoteMissing ? remoteFilesMissingLocally : [];
       const deletePaths = new Set(toDelete);
       const preservedRemoteFiles = target.remoteFiles

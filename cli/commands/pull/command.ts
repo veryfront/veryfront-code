@@ -698,7 +698,7 @@ async function pullSingleProject(
   });
   const hasFileOperations = writeOps.length > 0 || deleteOps.length > 0;
 
-  if (!hasFileOperations) {
+  if (!hasFileOperations && bootstrapPlan.writeCount === 0) {
     if (!quiet) logInfo(`No files to pull from ${projectSlug}.`);
   }
 

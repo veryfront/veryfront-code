@@ -1038,6 +1038,57 @@ describe("pullCommand", () => {
     }
   });
 
+  it("does not report an empty pull when bootstrap files would be created", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const originalInfo = cliLogger.info;
+    const originalConsoleLog = console.log;
+    const output: string[] = [];
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+      cliLogger.info = (...args: unknown[]) => output.push(args.map(String).join(" "));
+      console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(Response.json({ data: [], page_info: {} }));
+        }
+
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir,
+        projectSlug: "alpha",
+        dryRun: true,
+      });
+
+      assertEquals(
+        output.some((line) => line.includes("No files to pull from alpha.")),
+        false,
+      );
+      assertEquals(output.includes("  Would create: .veryfront/project.json"), true);
+      assertEquals(output.includes("  Would create: package.json"), true);
+      assertEquals(output.includes("  Would create: tsconfig.json"), true);
+    } finally {
+      console.log = originalConsoleLog;
+      cliLogger.info = originalInfo;
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("writes distinct canonical project links for multi-project pulls", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;
