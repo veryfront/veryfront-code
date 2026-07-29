@@ -4,35 +4,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RenderPipelineConfig } from "./pipeline.ts";
 import { isDotPath, isHiddenSegment } from "./path-helpers.ts";
 import { collectModulesToLoad, hasDataFetchingFunction } from "./module-collection.ts";
-import {
-  extractRenderedCssHash,
-  hasRenderedReleaseAssetCss,
-  serializeLayoutProps,
-  serializeLayouts,
-} from "./pipeline-helpers.ts";
+import { serializeLayoutProps, serializeLayouts } from "./pipeline-helpers.ts";
 
 describe("RenderPipeline helpers", () => {
   describe("pipeline-helpers", () => {
-    it("extractRenderedCssHash returns the page css hash when present", () => {
-      assertEquals(
-        extractRenderedCssHash('<link rel="stylesheet" href="/_vf/css/abc123.css">'),
-        "abc123",
-      );
-    });
-
-    it("hasRenderedReleaseAssetCss recognizes immutable release CSS links", () => {
-      assertEquals(
-        hasRenderedReleaseAssetCss(
-          `<link rel="stylesheet" href="/_vf/assets/${"c".repeat(64)}.css">`,
-        ),
-        true,
-      );
-      assertEquals(
-        hasRenderedReleaseAssetCss('<link rel="stylesheet" href="/_vf/css/abc123.css">'),
-        false,
-      );
-    });
-
     it("serializeLayouts keeps project-relative layout paths", () => {
       const result = serializeLayouts(
         [{

@@ -8,6 +8,11 @@ import {
 } from "./style-scope-profile.ts";
 
 describe("styles-builder/style-scope-profile", () => {
+  it("uses a full lowercase SHA-256 profile identity", () => {
+    const profile = createStyleScopeProfile();
+    assertEquals(profile.hash.match(/^[a-f0-9]{64}$/)?.[0], profile.hash);
+  });
+
   it("ignores knowledge content by default for style scanning", () => {
     const profile = createStyleScopeProfile();
 

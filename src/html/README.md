@@ -254,6 +254,19 @@ provider, versions, custom imports, and release dependencies. The structured
 `{ imports, json }` builder remains private; the barrel intentionally exposes
 only the JSON helper.
 
+### Runtime CSS identities
+
+Runtime CSS uses the full lowercase SHA-256 digest of the exact UTF-8 payload
+in `/_vf/css/<digest>.css` URLs and content-addressed cache records. Cache,
+regeneration, and built-file reads verify the payload against that digest before
+serving it. Candidate sets use a versioned JSON tuple before hashing so commas
+inside individual candidates cannot alias a different set.
+
+Short hashes from earlier builds are deliberately not accepted. A deployment
+that upgrades this identity contract must regenerate HTML and CSS artifacts and
+purge cached HTML that still references a short `/_vf/css/` URL; stale requests
+fail closed instead of reading the legacy collision-prone cache namespace.
+
 ## Security boundary
 
 This module provides context-specific escaping and bounded structural

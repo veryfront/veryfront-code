@@ -9,7 +9,11 @@
 import { serverLogger } from "#veryfront/utils";
 import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
-import { extractCandidatesFromFiles, getProjectCSS } from "./tailwind-compiler.ts";
+import {
+  extractCandidatesFromFiles,
+  getCSSCompilationCacheIdentity,
+  getProjectCSS,
+} from "./tailwind-compiler.ts";
 import {
   createPreparedProjectCSSContext,
   storePreparedProjectCSS,
@@ -83,6 +87,7 @@ export async function buildPreparedCSSArtifactFromFiles(
     projectDir,
     styleProfile,
   });
+  const compilerIdentity = await getCSSCompilationCacheIdentity();
 
   const result = await getProjectCSS(projectSlug, resolvedStylesheet, candidates, {
     minify,
@@ -94,7 +99,7 @@ export async function buildPreparedCSSArtifactFromFiles(
     projectVersion,
     resolvedStylesheet,
     styleProfile.hash,
-    { minify, environment, buildMode },
+    { compilerIdentity, minify, environment, buildMode },
   );
 
   await storePreparedProjectCSS(context, { css: result.css, hash: result.hash });
@@ -186,12 +191,14 @@ export async function warmPreparedCSSArtifactFromFiles(
 ): Promise<boolean> {
   const stylesheet = options.stylesheet ??
     findStylesheetFromFiles(options.files, options.stylesheetPath);
+  const compilerIdentity = await getCSSCompilationCacheIdentity();
   const context = createPreparedProjectCSSContext(
     options.projectSlug,
     options.projectVersion,
     stylesheet,
     options.styleProfile.hash,
     {
+      compilerIdentity,
       minify: options.minify ?? true,
       environment: options.environment ?? "preview",
       buildMode: options.buildMode ?? "production",

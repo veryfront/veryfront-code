@@ -13,16 +13,20 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { getRequestTokenProvenance } from "../../context/request-context.ts";
+import {
+  createCSSAssetPathPattern,
+  extractCSSAssetHash,
+  hashCSS,
+} from "#veryfront/html/styles-builder/css-identity.ts";
 
-/** Pattern to match hashed CSS URLs: /_vf/css/[8-char-hash].css */
-const CSS_URL_PATTERN = /^\/_vf\/css\/([a-z0-9-]{1,16})\.css$/;
+const CSS_URL_PATTERN = createCSSAssetPathPattern();
 
 async function getCSSWithJITFallback(
   cssHash: string,
   projectSlug: string | undefined,
 ): Promise<string | undefined> {
   const cached = await getCSSByHashAsync(cssHash);
-  if (cached) return cached;
+  if (cached !== undefined) return cached;
 
   return regenerateCSSByHash(cssHash, projectSlug);
 }
@@ -35,7 +39,8 @@ async function getBuiltCSSFallback(
   try {
     const exists = await ctx.adapter.fs.exists(builtCSSPath);
     if (!exists) return undefined;
-    return await ctx.adapter.fs.readFile(builtCSSPath);
+    const css = await ctx.adapter.fs.readFile(builtCSSPath);
+    return hashCSS(css) === cssHash ? css : undefined;
   } catch {
     return undefined;
   }
@@ -55,7 +60,7 @@ export class CSSHandler extends BaseHandler {
     const method = req.method.toUpperCase();
     if (method !== "GET" && method !== "HEAD") return this.continue();
 
-    const cssHash = new URL(req.url).pathname.match(CSS_URL_PATTERN)?.[1];
+    const cssHash = extractCSSAssetHash(new URL(req.url).pathname);
     if (!cssHash) return this.continue();
 
     const cacheCtx = extractCacheKeyContext(ctx);
@@ -93,7 +98,7 @@ export class CSSHandler extends BaseHandler {
 
     const resolvedCSS = css ?? await getBuiltCSSFallback(cssHash, ctx);
 
-    if (!resolvedCSS) {
+    if (resolvedCSS === undefined) {
       this.logInfo(
         `CSS not found and JIT regeneration failed: ${cssHash}. ` +
           `Server restart or cache expiry. Reload page to regenerate.`,

@@ -23,6 +23,15 @@ import { join } from "node:path";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
 
 const TEST_SOURCE_INTEGRATION_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
+const PROJECT_STYLESHEET = {
+  kind: "project" as const,
+  hash: "a".repeat(64),
+  css: ".project-stylesheet{color:navy}",
+};
+const RELEASE_STYLESHEET = {
+  kind: "release" as const,
+  hash: "b".repeat(64),
+};
 
 function createMockConfig(overrides: Partial<SSROrchestratorConfig> = {}): SSROrchestratorConfig {
   return {
@@ -41,7 +50,17 @@ function createMockConfig(overrides: Partial<SSROrchestratorConfig> = {}): SSROr
     htmlGenerator: {
       generateFullHTML: async (ctx: { html: string; ssrHash: string }) =>
         `<!DOCTYPE html><html><body>${ctx.html}</body></html>`,
+      generateFullHTMLWithStylesheetArtifact: async (
+        ctx: { html: string; ssrHash: string },
+      ) => ({
+        html: `<!DOCTYPE html><html><body>${ctx.html}</body></html>`,
+        stylesheet: PROJECT_STYLESHEET,
+      }),
       generateHTMLStream: async () => new ReadableStream(),
+      generateHTMLStreamWithStylesheetArtifact: async () => ({
+        stream: new ReadableStream(),
+        stylesheet: PROJECT_STYLESHEET,
+      }),
     } as unknown as SSROrchestratorConfig["htmlGenerator"],
     ...overrides,
   };
@@ -70,7 +89,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
   });
 
   describe("performSSRRendering", () => {
-    it("should render a simple element to full HTML", async () => {
+    it("propagates the linked project stylesheet from main-process string rendering", async () => {
       const config = createMockConfig();
       const orchestrator = new SSROrchestrator(config);
       const element = React.createElement("div", null, "hello") as React.ReactElement;
@@ -93,6 +112,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals(result.fullHtml.includes("<div>rendered</div>"), true);
       assertEquals(typeof result.ssrHash, "string");
       assertEquals(result.ssrHash.length > 0, true);
+      assertEquals(result.stylesheet, PROJECT_STYLESHEET);
     });
 
     it("should return null stream when delivery is not stream", async () => {
@@ -149,7 +169,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals(validatorCalled, true);
     });
 
-    it("should handle streaming mode", async () => {
+    it("propagates the linked release stylesheet from main-process streaming", async () => {
       const mockStream = new ReadableStream({
         start(controller) {
           controller.enqueue(new TextEncoder().encode("<div>streaming</div>"));
@@ -157,6 +177,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
         },
       });
 
+      const finalStream = new ReadableStream();
       const config = createMockConfig({
         ssrRenderer: {
           renderToHTML: async () => ({
@@ -166,7 +187,15 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
         } as unknown as SSROrchestratorConfig["ssrRenderer"],
         htmlGenerator: {
           generateFullHTML: async () => "",
-          generateHTMLStream: async () => new ReadableStream(),
+          generateFullHTMLWithStylesheetArtifact: async () => ({
+            html: "",
+            stylesheet: undefined,
+          }),
+          generateHTMLStream: async () => finalStream,
+          generateHTMLStreamWithStylesheetArtifact: async () => ({
+            stream: finalStream,
+            stylesheet: RELEASE_STYLESHEET,
+          }),
         } as unknown as SSROrchestratorConfig["htmlGenerator"],
       });
 
@@ -188,8 +217,9 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
         { delivery: "stream" },
       );
 
-      assertEquals(result.finalStream instanceof ReadableStream, true);
+      assertEquals(result.finalStream, finalStream);
       assertEquals(typeof result.ssrHash, "string");
+      assertEquals(result.stylesheet, RELEASE_STYLESHEET);
     });
 
     it("preserves stream readiness metadata through HTML shell generation", async () => {
@@ -206,7 +236,15 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
         } as unknown as SSROrchestratorConfig["ssrRenderer"],
         htmlGenerator: {
           generateFullHTML: async () => "",
+          generateFullHTMLWithStylesheetArtifact: async () => ({
+            html: "",
+            stylesheet: undefined,
+          }),
           generateHTMLStream: async () => finalStream,
+          generateHTMLStreamWithStylesheetArtifact: async () => ({
+            stream: finalStream,
+            stylesheet: undefined,
+          }),
         } as unknown as SSROrchestratorConfig["htmlGenerator"],
       });
 
@@ -231,7 +269,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals((result.finalStream as { allReady?: Promise<unknown> }).allReady, allReady);
     });
 
-    it("admits isolated string rendering through WorkerPool.execute", async () => {
+    it("propagates the linked stylesheet from isolated string rendering", async () => {
       let observed:
         | { projectId: string; readPaths: string[]; delivery: string }
         | undefined;
@@ -284,6 +322,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals(evictedWorkerId, observed.projectId);
       assertEquals(result.fullHtml.includes("<main>isolated</main>"), true);
       assertEquals(result.finalStream, null);
+      assertEquals(result.stylesheet, PROJECT_STYLESHEET);
     });
 
     it("reconstructs registered isolated string errors with a sanitized stack", async () => {
@@ -346,7 +385,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals(error.stack?.includes("secret"), false);
     });
 
-    it("admits isolated streaming through WorkerPool.executeStream", async () => {
+    it("propagates the linked stylesheet from isolated streaming", async () => {
       const workerStream = new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(new TextEncoder().encode("<main>isolated stream</main>"));
@@ -375,7 +414,17 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       const config = createMockConfig({
         htmlGenerator: {
           generateFullHTML: async () => "",
+          generateFullHTMLWithStylesheetArtifact: async () => ({
+            html: "",
+            stylesheet: undefined,
+          }),
           generateHTMLStream: async (stream: ReadableStream) => stream,
+          generateHTMLStreamWithStylesheetArtifact: async (
+            stream: ReadableStream,
+          ) => ({
+            stream,
+            stylesheet: RELEASE_STYLESHEET,
+          }),
         } as unknown as SSROrchestratorConfig["htmlGenerator"],
       });
       const orchestrator = new SSROrchestrator(config, {
@@ -406,6 +455,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals(observed.delivery, "stream");
       assertEquals(evictedWorkerId, observed.projectId);
       assertEquals(result.finalStream, workerStream);
+      assertEquals(result.stylesheet, RELEASE_STYLESHEET);
     });
 
     it("snapshots the complete isolated request before resolving its Worker generation", async () => {
@@ -629,6 +679,12 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
     it("finalizes the render session before HTML shell generation", async () => {
       clearAllManifests();
       startRenderSession("render-session-1", "project-slug", "test-page");
+      const generateDocument = async () => {
+        const manifest = getRouteManifest("project-slug", "test-page");
+        assertEquals(manifest?.moduleCount, 1);
+        assertEquals(manifest?.modules[0]?.path, "components/TestWidget.js");
+        return "<!DOCTYPE html><html><body><div>rendered</div></body></html>";
+      };
 
       const config = createMockConfig({
         ssrRenderer: {
@@ -638,13 +694,16 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
           },
         } as unknown as SSROrchestratorConfig["ssrRenderer"],
         htmlGenerator: {
-          generateFullHTML: async () => {
-            const manifest = getRouteManifest("project-slug", "test-page");
-            assertEquals(manifest?.moduleCount, 1);
-            assertEquals(manifest?.modules[0]?.path, "components/TestWidget.js");
-            return "<!DOCTYPE html><html><body><div>rendered</div></body></html>";
-          },
+          generateFullHTML: generateDocument,
+          generateFullHTMLWithStylesheetArtifact: async () => ({
+            html: await generateDocument(),
+            stylesheet: undefined,
+          }),
           generateHTMLStream: async () => new ReadableStream(),
+          generateHTMLStreamWithStylesheetArtifact: async () => ({
+            stream: new ReadableStream(),
+            stylesheet: undefined,
+          }),
         } as unknown as SSROrchestratorConfig["htmlGenerator"],
       });
 
@@ -708,7 +767,15 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
           }),
           generateFullHTML: async (ctx: { html: string }) =>
             `<!doctype html><html><body>${ctx.html}</body></html>`,
+          generateFullHTMLWithStylesheetArtifact: async (ctx: { html: string }) => ({
+            html: `<!doctype html><html><body>${ctx.html}</body></html>`,
+            stylesheet: undefined,
+          }),
           generateHTMLStream: async () => new ReadableStream(),
+          generateHTMLStreamWithStylesheetArtifact: async () => ({
+            stream: new ReadableStream(),
+            stylesheet: undefined,
+          }),
         } as unknown as SSROrchestratorConfig["htmlGenerator"],
         layoutOrchestrator: {
           applyLayoutsAndWrappers: async (

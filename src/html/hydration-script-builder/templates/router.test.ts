@@ -486,6 +486,16 @@ describe("hydration-script-builder/templates/router", () => {
       url: string;
       options: { headers?: Record<string, string>; signal?: AbortSignal };
     }
+    interface RuntimeElement {
+      style: Record<string, unknown>;
+      id: string;
+      textContent: string;
+      setAttribute(): void;
+      getAttribute(): null;
+      prepend(): void;
+      remove(): void;
+      appendChild(): void;
+    }
     interface RuntimeWindow {
       location: RuntimeLocation;
       history: {
@@ -537,6 +547,7 @@ describe("hydration-script-builder/templates/router", () => {
       // The `params` prop handed to the page component during render — must be
       // normalized (joined) so it matches the server render.
       getRenderedPageParams: () => Record<string, string> | null;
+      getRouteCss: () => string | null;
     }
 
     function evaluateRouterRuntime(
@@ -571,8 +582,9 @@ describe("hydration-script-builder/templates/router", () => {
         (listeners[type] ??= []).push(fn);
       };
 
-      const makeEl = () => ({
-        style: {} as Record<string, unknown>,
+      let spaStyleEl: RuntimeElement | null = null;
+      const makeEl = (): RuntimeElement => ({
+        style: {},
         id: "",
         textContent: "",
         setAttribute() {},
@@ -580,7 +592,9 @@ describe("hydration-script-builder/templates/router", () => {
           return null;
         },
         prepend() {},
-        remove() {},
+        remove() {
+          if (spaStyleEl === this) spaStyleEl = null;
+        },
         appendChild() {},
       });
 
@@ -598,13 +612,18 @@ describe("hydration-script-builder/templates/router", () => {
           },
           appendChild() {},
         },
-        head: { appendChild() {} },
+        head: {
+          appendChild(element: RuntimeElement) {
+            if (element.id === "veryfront-spa-css") spaStyleEl = element;
+          },
+        },
         createElement: () => makeEl(),
         querySelector: () => null,
         querySelectorAll: () => [] as unknown[],
         getElementById: (id: string) => {
           if (id === "veryfront-hydration-data") return { textContent: hydrationJson };
           if (id === "root") return rootEl;
+          if (id === "veryfront-spa-css") return spaStyleEl;
           return null;
         },
         addEventListener,
@@ -770,6 +789,7 @@ describe("hydration-script-builder/templates/router", () => {
         moduleResolutionCalls,
         getRenderedParams: () => renderedRouterParams,
         getRenderedPageParams: () => renderedPageParams,
+        getRouteCss: () => spaStyleEl?.textContent ?? null,
       };
     }
 
@@ -810,6 +830,53 @@ describe("hydration-script-builder/templates/router", () => {
         await flushMicrotasks();
       }
     }
+
+    it("replaces prior route CSS with an authoritative empty CSS string", async () => {
+      const runtime = evaluateRouterRuntime();
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      await runtime.navigateSPA(
+        "/styled",
+        "push",
+        false,
+        { pagePath: "page", params: {}, css: ".styled{color:red}" },
+      );
+      assertEquals(runtime.getRouteCss(), ".styled{color:red}");
+
+      await runtime.navigateSPA(
+        "/unstyled",
+        "push",
+        false,
+        { pagePath: "page", params: {}, css: "" },
+      );
+
+      assertEquals(runtime.getRouteCss(), "");
+    });
+
+    it("rejects non-string CSS before honoring an explicit clear action", async () => {
+      const runtime = evaluateRouterRuntime();
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      await runtime.navigateSPA(
+        "/styled",
+        "push",
+        false,
+        { pagePath: "page", params: {}, css: ".styled{color:red}" },
+      );
+      await runtime.navigateSPA(
+        "/release-styled",
+        "push",
+        false,
+        {
+          pagePath: "page",
+          params: {},
+          css: { malformed: true },
+          cssAction: "clear",
+        },
+      );
+
+      assertEquals(runtime.getRouteCss(), null);
+    });
 
     it("seeds router params from hydration data, joining catch-all segments", () => {
       const { router } = evaluateRouterRuntime({

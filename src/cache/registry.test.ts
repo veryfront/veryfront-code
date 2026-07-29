@@ -753,6 +753,7 @@ describe("CacheRegistry", () => {
     }`;
     const projectCssKey = `vf:project-css:${
       createProjectCSSRequestContext("target-slug", undefined, new Set(["flex"]), {
+        compilerIdentity: "test-css-processor@1",
         environment: "preview",
       }).cacheKey
     }`;
@@ -870,11 +871,13 @@ describe("CacheRegistry", () => {
     }`;
     const previewCssKey = `vf:project-css:${
       createProjectCSSRequestContext("target-slug", undefined, new Set(["flex"]), {
+        compilerIdentity: "test-css-processor@1",
         environment: "preview",
       }).cacheKey
     }`;
     const productionCssKey = `vf:project-css:${
       createProjectCSSRequestContext("target-slug", undefined, new Set(["grid"]), {
+        compilerIdentity: "test-css-processor@1",
         environment: "production",
       }).cacheKey
     }`;

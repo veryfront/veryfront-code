@@ -12,6 +12,7 @@ import { joinPath } from "#veryfront/utils/path-utils.ts";
 import {
   formatCSSError,
   getCSSByHashAsync,
+  getCSSCompilationCacheIdentity,
   getProjectCSS,
   regenerateCSSByHash,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
@@ -97,7 +98,7 @@ export class StylesCSSHandler extends BaseHandler {
             error: error instanceof Error ? error.message : String(error),
           });
         }
-        const preparedContext = this.createPreparedCSSContext(
+        const preparedContext = await this.createPreparedCSSContext(
           projectScope,
           rawCss,
           styleProfile.hash,
@@ -311,7 +312,7 @@ body::before {
     return typeof fsAdapter.getClient === "function" ? fsAdapter.getClient() : null;
   }
 
-  private createPreparedCSSContext(
+  private async createPreparedCSSContext(
     projectScope: string | undefined,
     rawCss: string,
     styleProfileHash: string,
@@ -319,6 +320,7 @@ body::before {
     ctx: HandlerContext,
   ) {
     if (!projectScope) return undefined;
+    const compilerIdentity = await getCSSCompilationCacheIdentity();
 
     return createPreparedProjectCSSContext(
       projectScope,
@@ -330,6 +332,7 @@ body::before {
       rawCss,
       styleProfileHash,
       {
+        compilerIdentity,
         minify: true,
         environment: "preview",
         buildMode: "production",

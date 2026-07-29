@@ -4,7 +4,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { afterEach, beforeEach } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { generateHTMLShellParts } from "./html-shell-generator.ts";
+import {
+  generateHTMLShellParts,
+  generateHTMLShellPartsWithStylesheetArtifact,
+} from "./html-shell-generator.ts";
 import type { RenderMetadata } from "#veryfront/types";
 import type { HTMLGenerationOptions } from "./types.ts";
 import {
@@ -162,6 +165,38 @@ describe("html shell release asset manifest consumption", () => {
     assertStringIncludes(result.start, `/_vf/assets/${CSS_HASH}.css`);
     // The JIT project-CSS link is replaced, not duplicated.
     assert(!result.start.includes("/_vf/css/"));
+  });
+
+  it("owns an unused prefetched CSS rejection while the manifest lookup is pending", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    const cssHash = "c".repeat(64);
+    configureReleaseAssetManifestFetcher(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        state: "ready",
+        manifest: {
+          ...manifest(),
+          css: [{
+            contentHash: cssHash,
+            size: 10,
+            contentType: "text/css",
+            styleProfileHash: "sp",
+          }],
+          routes: { "/": { modules: ["pages/index.tsx"], css: [cssHash] } },
+        },
+      };
+    });
+
+    const result = await generateHTMLShellPartsWithStylesheetArtifact(
+      meta(),
+      prodOptions({ releaseId: "rel-1" }),
+      undefined,
+      undefined,
+      "<main></main>",
+      Promise.reject(new Error("unused project CSS failure")),
+    );
+
+    assertEquals(result.stylesheet, { kind: "release", hash: cssHash });
   });
 
   it("keeps covered HTTP import-map dependencies on CDN URLs by default", async () => {

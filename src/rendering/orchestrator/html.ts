@@ -6,11 +6,17 @@ import {
   buildImportMapJson,
   escapeHTML,
   extractHTMLMetadata,
-  generateHTMLShellParts,
   injectHTMLContent,
   isFullHTMLDocument,
 } from "#veryfront/html";
+import {
+  generateHTMLShellPartsWithStylesheetArtifact,
+  type HTMLShellPartsWithStylesheetArtifact,
+  type LinkedStylesheetArtifact,
+} from "#veryfront/html/html-shell-generator.ts";
+export type { LinkedStylesheetArtifact } from "#veryfront/html/html-shell-generator.ts";
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
+import { findHtmlHeadBoundary, insertBeforeHtmlHeadClose } from "#veryfront/html/tag-scanner.ts";
 import {
   HEAD_PROVENANCE_ATTRIBUTE,
   headMetaSingletonKeyFromRecord,
@@ -23,6 +29,7 @@ import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
+import { releaseAssetUrl } from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
@@ -41,21 +48,64 @@ import {
 } from "./html-head.ts";
 import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
 import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
+import { resolveReleaseId } from "./release-id.ts";
 import { toHTMLFrontmatter } from "../frontmatter.ts";
 export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-generator");
 
+export interface GeneratedHTMLWithStylesheetArtifact {
+  html: string;
+  stylesheet: LinkedStylesheetArtifact | undefined;
+}
+
+export interface GeneratedHTMLStreamWithStylesheetArtifact {
+  stream: ReadableStream;
+  stylesheet: LinkedStylesheetArtifact | undefined;
+}
+
+type HTMLGenerationOptionsWithManifestSnapshot = HTMLGenerationOptions & {
+  releaseAssetManifest: ReleaseAssetManifest | null;
+};
+
+type ProjectCSSSettlement =
+  | { status: "fulfilled"; value: ProjectCSSResult }
+  | { status: "rejected"; reason: unknown };
+
+type ProjectCSSObservation = Promise<ProjectCSSSettlement>;
+
+function observeProjectCSSPromise(
+  projectCSSPromise: Promise<ProjectCSSResult>,
+): ProjectCSSObservation {
+  return projectCSSPromise.then(
+    (value): ProjectCSSSettlement => ({ status: "fulfilled", value }),
+    (reason): ProjectCSSSettlement => ({ status: "rejected", reason }),
+  );
+}
+
+async function consumeProjectCSSObservation(
+  projectCSSObservation: ProjectCSSObservation,
+): Promise<ProjectCSSResult> {
+  const settlement = await projectCSSObservation;
+  if (settlement.status === "rejected") throw settlement.reason;
+  return settlement.value;
+}
+
+function stylesheetArtifactHref(stylesheet: LinkedStylesheetArtifact): string {
+  return stylesheet.kind === "release"
+    ? releaseAssetUrl(stylesheet.hash, "css")
+    : `/_vf/css/${stylesheet.hash}.css`;
+}
+
 function injectHeadScriptsAfterCharset(html: string, scripts: string): string {
-  const headOpen = html.indexOf("<head>");
-  const headClose = headOpen < 0 ? -1 : html.indexOf("</head>", headOpen);
-  if (headOpen >= 0 && headClose >= 0) {
-    let cursor = headOpen + "<head>".length;
-    while (cursor < headClose) {
+  const head = findHtmlHeadBoundary(html);
+  if (head) {
+    let cursor = head.openingTagEnd;
+    while (cursor < head.closingTagStart) {
       const metaStart = html.indexOf("<meta", cursor);
-      if (metaStart < 0 || metaStart >= headClose) break;
+      if (metaStart < 0 || metaStart >= head.closingTagStart) break;
       const metaEnd = html.indexOf(">", metaStart + "<meta".length);
-      if (metaEnd < 0 || metaEnd >= headClose) break;
+      if (metaEnd < 0 || metaEnd >= head.closingTagStart) break;
       const tag = html.slice(metaStart, metaEnd + 1).toLowerCase();
       if (tag.includes(" charset=")) {
         return html.slice(0, metaEnd + 1) +
@@ -64,24 +114,12 @@ function injectHeadScriptsAfterCharset(html: string, scripts: string): string {
       }
       cursor = metaEnd + 1;
     }
-  }
-  return html.replace("<head>", `<head>\n  ${scripts}`);
-}
 
-/**
- * Resolve the release ID for manifest consumption from render options.
- *
- * Prefers an explicit `releaseId`, then derives it from a production
- * `contentSourceId` of the form `release-<id>`. Returns undefined for
- * preview/local renders so manifest consumption stays inert there.
- */
-function resolveReleaseId(
-  options: { releaseId?: string; contentSourceId?: string } | undefined,
-): string | undefined {
-  if (options?.releaseId) return options.releaseId;
-  const source = options?.contentSourceId;
-  if (source && source.startsWith("release-")) return source.slice("release-".length);
-  return undefined;
+    return html.slice(0, head.openingTagEnd) +
+      `\n  ${scripts}` +
+      html.slice(head.openingTagEnd);
+  }
+  return html;
 }
 
 type OptionsWithReleaseAssetManifest = {
@@ -184,7 +222,7 @@ function injectThemePersistenceScript(
   enabled: boolean | undefined,
   nonce?: string,
 ): string {
-  if (!enabled || !colorScheme || !/<\/head>/i.test(html)) return html;
+  if (!enabled || !colorScheme) return html;
   if (html.includes(`localStorage.setItem('theme','${colorScheme}')`)) return html;
 
   const nonceAttr = buildNonceAttribute(nonce);
@@ -192,7 +230,7 @@ function injectThemePersistenceScript(
 (function(){try{localStorage.setItem('theme','${colorScheme}')}catch(e){/* SILENT: localStorage may be unavailable */}})();
 </script>`;
 
-  return html.replace(/<\/head>/i, `${script}\n</head>`);
+  return insertBeforeHtmlHeadClose(html, `${script}\n`);
 }
 
 export class HTMLGenerator {
@@ -203,19 +241,40 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
-    let html: string;
+    const { html } = await this.generateFullHTMLWithStylesheetArtifact(context);
+    return html;
+  }
+
+  async generateFullHTMLWithStylesheetArtifact(
+    context: HTMLGenerationContext,
+  ): Promise<GeneratedHTMLWithStylesheetArtifact> {
+    let result: GeneratedHTMLWithStylesheetArtifact;
     if (isFullHTMLDocument(context.html)) {
-      html = await this.handleFullHTMLDocument(context);
+      result = await this.handleFullHTMLDocument(context);
     } else {
-      html = await this.wrapHTMLFragment(context);
+      result = await this.wrapHTMLFragment(context);
     }
-    return this.finalizeHTML(html, context.options);
+    return {
+      html: this.finalizeHTML(result.html, context.options),
+      stylesheet: result.stylesheet,
+    };
   }
 
   async generateHTMLStream(
     reactStream: ReadableStream,
     context: Omit<HTMLGenerationContext, "html">,
   ): Promise<ReadableStream> {
+    const { stream } = await this.generateHTMLStreamWithStylesheetArtifact(
+      reactStream,
+      context,
+    );
+    return stream;
+  }
+
+  async generateHTMLStreamWithStylesheetArtifact(
+    reactStream: ReadableStream,
+    context: Omit<HTMLGenerationContext, "html">,
+  ): Promise<GeneratedHTMLStreamWithStylesheetArtifact> {
     const fullContext = context as HTMLGenerationContext;
     let reactContent: string;
     try {
@@ -231,31 +290,33 @@ export class HTMLGenerator {
 
     if (isFullHTMLDocument(reactContent)) {
       const encoder = new TextEncoder();
+      const generated = await this.handleFullHTMLDocument({
+        ...fullContext,
+        html: reactContent,
+      });
       const fullHtml = this.finalizeHTML(
-        await this.handleFullHTMLDocument({
-          ...fullContext,
-          html: reactContent,
-        }),
+        generated.html,
         context.options,
       );
 
-      return new ReadableStream({
-        start(controller) {
-          controller.enqueue(encoder.encode(fullHtml));
-          controller.close();
-        },
-      });
+      return {
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(fullHtml));
+            controller.close();
+          },
+        }),
+        stylesheet: generated.stylesheet,
+      };
     }
 
     const mergedFrontmatter = mergeCollectedFrontmatter(fullContext);
-    const htmlOptions = await profilePhase(
-      "html.build_options",
-      () => this.buildHTMLOptions(fullContext, mergedFrontmatter),
+    const { htmlOptions, projectCSSPromise } = await this.prepareShellCSS(
+      fullContext,
+      mergedFrontmatter,
     );
-    const projectCSSPromise = startProjectCSSPreparation(fullContext, htmlOptions);
-    startPreparedCSSWarmup(this.config, fullContext, htmlOptions);
 
-    const { start, end } = await profilePhase(
+    const { start, end, stylesheet } = await profilePhase(
       "html.generate_shell_parts",
       () =>
         this.generateShellParts(
@@ -273,23 +334,25 @@ export class HTMLGenerator {
       context.options,
     );
 
-    return new ReadableStream({
-      start(controller) {
-        controller.enqueue(encoder.encode(fullHtml));
-        controller.close();
-      },
-    });
+    return {
+      stream: new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(fullHtml));
+          controller.close();
+        },
+      }),
+      stylesheet,
+    };
   }
 
   private async handleFullHTMLDocument(
     context: HTMLGenerationContext,
-  ): Promise<string> {
+  ): Promise<GeneratedHTMLWithStylesheetArtifact> {
     const mergedFrontmatter = mergeCollectedFrontmatter(context);
     const htmlOptions = await profilePhase(
       "html.build_options",
       () => this.buildHTMLOptions(context, mergedFrontmatter),
     );
-    const projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
     const metadata = extractHTMLMetadata(
       mergedFrontmatter,
       toHTMLFrontmatter(context.layoutBundle?.frontmatter),
@@ -300,6 +363,13 @@ export class HTMLGenerator {
       this.detectUseClientDirective(pagePath),
       resolveReleaseAssetManifestForHTML(context.options),
     ]);
+    const releaseStylesheet = releaseAssetManifest?.css?.[0];
+    const projectCSSPromise = releaseStylesheet
+      ? undefined
+      : startProjectCSSPreparation(context, htmlOptions);
+    const projectCSSObservation = projectCSSPromise
+      ? observeProjectCSSPromise(projectCSSPromise)
+      : undefined;
     const importMapJson = await buildImportMapJson({
       projectDir: this.config.projectDir,
       config: this.config.config,
@@ -316,11 +386,14 @@ export class HTMLGenerator {
       context.options?.colorSchemeFromParam,
       context.options?.nonce,
     );
+    const hasExplicitHeadBoundary = findHtmlHeadBoundary(themedHtml) !== undefined;
 
-    const projectStylesheetHref = await this.resolveProjectStylesheetHref(
+    const stylesheet = await this.resolveStylesheetArtifact(
       context,
-      projectCSSPromise,
+      projectCSSObservation,
+      releaseAssetManifest,
     );
+    const projectStylesheetHref = stylesheet ? stylesheetArtifactHref(stylesheet) : undefined;
 
     const injectedHtml = injectHTMLContent(themedHtml, "", metadata, {
       mode: this.config.mode,
@@ -343,9 +416,14 @@ export class HTMLGenerator {
       directories: this.config.config.directories,
     });
 
-    if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) return injectedHtml;
+    const html = injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")
+      ? injectedHtml
+      : `<!DOCTYPE html>\n${injectedHtml}`;
 
-    return `<!DOCTYPE html>\n${injectedHtml}`;
+    return {
+      html,
+      stylesheet: projectStylesheetHref && hasExplicitHeadBoundary ? stylesheet : undefined,
+    };
   }
 
   private finalizeHTML(
@@ -357,15 +435,28 @@ export class HTMLGenerator {
     return addNonceToHtmlTags(withStudioSelectors, options?.nonce);
   }
 
-  private async resolveProjectStylesheetHref(
+  private async resolveStylesheetArtifact(
     context: HTMLGenerationContext,
-    projectCSSPromise?: Promise<ProjectCSSResult>,
-  ): Promise<string | undefined> {
-    if (!projectCSSPromise) return undefined;
+    projectCSSObservation?: ProjectCSSObservation,
+    releaseAssetManifest?: ReleaseAssetManifest | null,
+  ): Promise<LinkedStylesheetArtifact | undefined> {
+    const useProductionCSS = this.config.isLocalProject !== true &&
+      context.options?.environment === "production";
+    if (!useProductionCSS) return undefined;
 
-    const projectCSS = await profilePhase("html.project_css", () => projectCSSPromise);
-    const cssHash = projectCSS?.hash ?? "";
-    if (cssHash) return `/_vf/css/${cssHash}.css`;
+    const releaseStylesheet = releaseAssetManifest?.css?.[0];
+    if (releaseStylesheet) {
+      return { kind: "release", hash: releaseStylesheet.contentHash };
+    }
+    if (!projectCSSObservation) return undefined;
+
+    const projectCSS = await profilePhase(
+      "html.project_css",
+      () => consumeProjectCSSObservation(projectCSSObservation),
+    );
+    if (projectCSS?.hash) {
+      return { kind: "project", hash: projectCSS.hash, css: projectCSS.css };
+    }
 
     logger.error("Project CSS hash is empty for full-document HTML", {
       slug: context.slug,
@@ -385,17 +476,17 @@ export class HTMLGenerator {
     return isClientPage;
   }
 
-  private async wrapHTMLFragment(context: HTMLGenerationContext): Promise<string> {
+  private async wrapHTMLFragment(
+    context: HTMLGenerationContext,
+  ): Promise<GeneratedHTMLWithStylesheetArtifact> {
     const mergedFrontmatter = mergeCollectedFrontmatter(context);
-    const htmlOptions = await profilePhase(
-      "html.build_options",
-      () => this.buildHTMLOptions(context, mergedFrontmatter),
+    const { htmlOptions, projectCSSPromise } = await this.prepareShellCSS(
+      context,
+      mergedFrontmatter,
     );
-    const projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
-    startPreparedCSSWarmup(this.config, context, htmlOptions);
     const reactContent = context.html.trim();
 
-    const { start, end } = await profilePhase(
+    const { start, end, stylesheet } = await profilePhase(
       "html.generate_shell_parts",
       () =>
         this.generateShellParts(
@@ -407,7 +498,32 @@ export class HTMLGenerator {
         ),
     );
 
-    return `${start}${reactContent}${end}`;
+    return { html: `${start}${reactContent}${end}`, stylesheet };
+  }
+
+  private async prepareShellCSS(
+    context: HTMLGenerationContext,
+    mergedFrontmatter: MDXFrontmatter,
+  ): Promise<{
+    htmlOptions: HTMLGenerationOptionsWithManifestSnapshot;
+    projectCSSPromise: Promise<ProjectCSSResult> | undefined;
+  }> {
+    const [baseOptions, releaseAssetManifest] = await Promise.all([
+      profilePhase(
+        "html.build_options",
+        () => this.buildHTMLOptions(context, mergedFrontmatter),
+      ),
+      resolveReleaseAssetManifestForHTML(context.options),
+    ]);
+    const htmlOptions: HTMLGenerationOptionsWithManifestSnapshot = {
+      ...baseOptions,
+      releaseAssetManifest,
+    };
+    const projectCSSPromise = releaseAssetManifest?.css?.[0]
+      ? undefined
+      : startProjectCSSPreparation(context, htmlOptions);
+    startPreparedCSSWarmup(this.config, context, htmlOptions);
+    return { htmlOptions, projectCSSPromise };
   }
 
   private async generateShellParts(
@@ -416,7 +532,7 @@ export class HTMLGenerator {
     htmlOptions: HTMLGenerationOptions,
     reactContent: string,
     projectCSSPromise?: Promise<ProjectCSSResult>,
-  ): Promise<{ start: string; end: string }> {
+  ): Promise<HTMLShellPartsWithStylesheetArtifact> {
     const head = context.collectedHead;
     const layoutFrontmatter = toHTMLFrontmatter(
       context.layoutBundle?.frontmatter,
@@ -431,7 +547,7 @@ export class HTMLGenerator {
       head,
     );
 
-    const { start, end } = await generateHTMLShellParts(
+    const { start, end, stylesheet } = await generateHTMLShellPartsWithStylesheetArtifact(
       {
         slug: context.slug,
         frontmatter: enrichedFrontmatter,
@@ -483,7 +599,7 @@ export class HTMLGenerator {
     }
 
     const { scripts, other } = buildCollectedHeadElements(emissionHead);
-    if (!scripts && !other) return { start: modifiedStart, end };
+    if (!scripts && !other) return { start: modifiedStart, end, stylesheet };
 
     // Keep the encoding declaration first, then inject blocking scripts before
     // the remaining metadata and CSS.
@@ -491,18 +607,12 @@ export class HTMLGenerator {
       modifiedStart = injectHeadScriptsAfterCharset(modifiedStart, scripts);
     }
 
-    // Inject other head elements at BOTTOM of <head> (before closing tag)
-    // Use lastIndexOf to avoid matching </head> inside inline script content
+    // Inject other head elements at the bottom of the structural head.
     if (other) {
-      const headCloseIdx = modifiedStart.lastIndexOf("</head>");
-      if (headCloseIdx !== -1) {
-        modifiedStart = modifiedStart.slice(0, headCloseIdx) +
-          `  ${other}\n` +
-          modifiedStart.slice(headCloseIdx);
-      }
+      modifiedStart = insertBeforeHtmlHeadClose(modifiedStart, `  ${other}\n`);
     }
 
-    return { start: modifiedStart, end };
+    return { start: modifiedStart, end, stylesheet };
   }
 
   private resolveAppPath(): Promise<string | null> {

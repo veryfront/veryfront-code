@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/css-processor-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   cacheCSSAsync,
@@ -8,10 +8,12 @@ import {
   clearCSSCache,
   generateTailwindCSS,
   getCompilerCacheStats,
+  getCSSByHash,
   hashCSS,
   invalidateCompiler,
   regenerateCSSByHash,
 } from "./tailwind-compiler.ts";
+import { persistRegeneratedCSSEntry } from "./css-hash-cache.ts";
 
 const MOCK_TAILWIND_BASE_CSS = "@layer theme, base, components, utilities;";
 
@@ -47,7 +49,83 @@ describe("styles-builder/tailwind-compiler regressions", () => {
     invalidateCompiler();
   });
 
+  describe("candidate snapshot determinism", () => {
+    it("matches a fresh build after another candidate snapshot compiled for the same project", async () => {
+      const restoreFetch = mockTailwindFetch();
+
+      try {
+        const stylesheet = `
+          @theme {
+            --color-red-500: #ef4444;
+            --color-blue-500: #3b82f6;
+          }
+          @tailwind utilities;
+        `;
+        const projectSlug = "vf-candidate-snapshot-determinism";
+
+        const first = await generateTailwindCSS(stylesheet, ["text-red-500"], {
+          projectSlug,
+        });
+        const sequential = await generateTailwindCSS(stylesheet, ["text-blue-500"], {
+          projectSlug,
+        });
+
+        invalidateCompiler();
+
+        const fresh = await generateTailwindCSS(stylesheet, ["text-blue-500"], {
+          projectSlug,
+        });
+
+        assertEquals(first.error, undefined);
+        assertEquals(sequential.error, undefined);
+        assertEquals(fresh.error, undefined);
+        assertEquals(sequential.css, fresh.css);
+        assertEquals(hashCSS(sequential.css), hashCSS(fresh.css));
+      } finally {
+        restoreFetch();
+      }
+    });
+  });
+
   describe("regenerateCSSByHash", () => {
+    it("rejects a caller-supplied hash that is not the CSS content identity", async () => {
+      await assertRejects(
+        () => cacheCSSAsync(".trusted{color:green}", "a".repeat(64)),
+        TypeError,
+        "does not match",
+      );
+    });
+
+    it("rejects a regenerated entry whose content does not match its identity", async () => {
+      await assertRejects(
+        () =>
+          persistRegeneratedCSSEntry("b".repeat(64), {
+            css: ".substituted{color:red}",
+            candidates: ["substituted"],
+            stylesheet: '@import "tailwindcss";',
+          }),
+        TypeError,
+        "does not match",
+      );
+    });
+
+    it("keeps legacy-colliding project CSS payloads separate in the shared content cache", async () => {
+      const projectACSS = ".vf-36{--vf-token:10}";
+      const projectBCSS = ".vf-74183{--vf-token:1l8n}";
+      const projectAHash = await cacheCSSAsync(projectACSS, undefined, {
+        candidates: ["vf-36"],
+        stylesheet: "/* project-a */",
+      });
+      const projectBHash = await cacheCSSAsync(projectBCSS, undefined, {
+        candidates: ["vf-74183"],
+        stylesheet: "/* project-b */",
+      });
+
+      assertEquals(projectAHash !== projectBHash, true);
+      assertEquals(getCSSByHash(projectAHash), projectACSS);
+      assertEquals(getCSSByHash(projectBHash), projectBCSS);
+    });
+
     it("regenerates CSS when inputs exist in unified CSS cache entry", async () => {
       const restoreFetch = mockTailwindFetch();
 

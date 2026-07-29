@@ -7,7 +7,8 @@
 import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 
-import factory from "./index.ts";
+import tailwindPackage from "tailwindcss/package.json" with { type: "json" };
+import factory, { TailwindCSSProcessor } from "./index.ts";
 
 const noopLogger = {
   debug: () => {},
@@ -27,6 +28,12 @@ describe("ext-css-tailwind factory", () => {
 });
 
 describe("ext-css-tailwind CSSProcessor", () => {
+  it("derives its cache identity from the installed Tailwind compiler", () => {
+    const processor = new TailwindCSSProcessor();
+
+    assertEquals(processor.cacheIdentity, `tailwindcss@${tailwindPackage.version}`);
+  });
+
   it("registers CSSProcessor on setup", async () => {
     const provided = new Map<string, unknown>();
     const ctx = {

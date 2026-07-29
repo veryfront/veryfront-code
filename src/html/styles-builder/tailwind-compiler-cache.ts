@@ -1,9 +1,9 @@
 /**
  * Tailwind compiler LRU cache management.
  *
- * Manages a bounded cache of compiled Tailwind CSS compilers, keyed by
- * stylesheet hash. Prevents race conditions when concurrent requests use
- * different stylesheets.
+ * Manages a bounded cache of compiled Tailwind CSS compilers, keyed by the
+ * processor, project, stylesheet, and exact candidate snapshot. Prevents
+ * stateful build sessions from leaking candidates across CSS identities.
  *
  * The actual tailwindcss `compile()` call is routed through the
  * `CSSProcessor` extension contract (default implementation:
@@ -25,7 +25,7 @@ import { serverLogger } from "#veryfront/utils";
 import { DEPENDENCY_MISSING, INITIALIZATION_ERROR, NETWORK_ERROR } from "#veryfront/errors";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
-import { hashString } from "./candidate-extractor.ts";
+import { hashCandidates, hashString } from "./css-identity.ts";
 import { loadPlugin } from "./plugin-loader.ts";
 
 const logger = serverLogger.component("tailwind");
@@ -35,7 +35,7 @@ type CssTailwindExtensionModule = {
 };
 
 /**
- * LRU cache for Tailwind compilers, keyed by stylesheet hash.
+ * LRU cache for Tailwind compilers, keyed by every compilation identity input.
  * Each entry stores the compiler and its associated plugin state.
  */
 interface CompilerCacheEntry {
@@ -47,6 +47,9 @@ interface CompilerCacheEntry {
 
 const compilerCache = new Map<string, CompilerCacheEntry>();
 const MAX_CACHED_COMPILERS = 10;
+const CSS_COMPILATION_IDENTITY_SCHEMA = "veryfront.css-compilation.v1";
+const NOOP_PROCESSOR_IDENTITY = "veryfront.css-processor.none.v1";
+const MAX_PROCESSOR_CACHE_IDENTITY_LENGTH = 256;
 
 let tailwindBaseCSS: string | null = null;
 
@@ -116,6 +119,34 @@ async function resolveCSSProcessor(): Promise<CSSProcessor | undefined> {
   return tryResolveContract<CSSProcessor>("CSSProcessor");
 }
 
+function createCSSCompilationCacheIdentity(processor: CSSProcessor | undefined): string {
+  if (!processor) {
+    return JSON.stringify([CSS_COMPILATION_IDENTITY_SCHEMA, NOOP_PROCESSOR_IDENTITY]);
+  }
+
+  const processorIdentity = processor.cacheIdentity;
+  if (
+    typeof processorIdentity !== "string" ||
+    processorIdentity.length === 0 ||
+    processorIdentity.length > MAX_PROCESSOR_CACHE_IDENTITY_LENGTH ||
+    processorIdentity.trim() !== processorIdentity ||
+    /\p{Cc}/u.test(processorIdentity)
+  ) {
+    throw new TypeError("Resolved CSSProcessor must declare a bounded stable cacheIdentity");
+  }
+
+  return JSON.stringify([
+    CSS_COMPILATION_IDENTITY_SCHEMA,
+    processorIdentity,
+    getTailwindCSSUrl(),
+  ]);
+}
+
+/** Identity of every processor and base-stylesheet input that can change emitted CSS. */
+export async function getCSSCompilationCacheIdentity(): Promise<string> {
+  return createCSSCompilationCacheIdentity(await resolveCSSProcessor());
+}
+
 function evictOldestCompiler(): void {
   if (compilerCache.size < MAX_CACHED_COMPILERS) return;
 
@@ -137,13 +168,19 @@ function evictOldestCompiler(): void {
 
 export async function getCompiler(
   stylesheet: string,
-  projectSlug?: string,
+  projectSlug: string | undefined,
+  candidates: readonly string[],
 ): Promise<CSSCompiler> {
-  // Tailwind v4's compile().build() is stateful — it accumulates candidates
-  // across calls. Without per-project isolation, projects sharing the same
-  // stylesheet on the shared pool contaminate each other's CSS output.
+  // Tailwind v4's compile().build() is stateful and accumulates candidates.
+  // Scope each compiler to the exact immutable candidate snapshot so a later
+  // build cannot inherit utilities that are absent from its cache identity.
   const stylesheetHash = hashString(stylesheet);
-  const hash = projectSlug ? `${projectSlug}:${stylesheetHash}` : stylesheetHash;
+  const projectIdentity = projectSlug ? hashString(projectSlug) : "shared";
+  const candidatesHash = hashCandidates(new Set(candidates));
+  const processor = await resolveCSSProcessor();
+  const compilationIdentityHash = hashString(createCSSCompilationCacheIdentity(processor));
+  const hash =
+    `v4:${compilationIdentityHash}:${projectIdentity}:${stylesheetHash}:${candidatesHash}`;
 
   const cached = compilerCache.get(hash);
   if (cached) {
@@ -153,7 +190,6 @@ export async function getCompiler(
 
   logger.debug("Creating new compiler", { hash, projectSlug });
 
-  const processor = await resolveCSSProcessor();
   if (!processor) {
     logger.warn(
       "No CSSProcessor extension registered — CSS output will be empty. Install it with: deno add @veryfront/ext-css-tailwind",

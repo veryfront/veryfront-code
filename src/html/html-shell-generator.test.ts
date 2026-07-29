@@ -11,7 +11,10 @@ import {
   clearAllManifests,
   recordSSRModules,
 } from "#veryfront/modules/manifest/route-module-manifest.ts";
-import { wrapInHTMLShell } from "./html-shell-generator.ts";
+import {
+  generateHTMLShellPartsWithStylesheetArtifact,
+  wrapInHTMLShell,
+} from "./html-shell-generator.ts";
 import type { RenderMetadata } from "#veryfront/types";
 import type { HTMLGenerationOptions } from "./types.ts";
 import { getProdHydrationModulePath } from "./hydration-script-builder/prod-scripts.ts";
@@ -461,6 +464,187 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(
         result,
         "<!-- Tailwind CSS: Server-side JIT compiled -->",
+      );
+    });
+
+    it("reports the exact project stylesheet artifact linked by the shell", async () => {
+      const css = ".artifact-test{color:navy}";
+      const hash = "a".repeat(64);
+
+      const result = await generateHTMLShellPartsWithStylesheetArtifact(
+        createMeta(),
+        createOptions({
+          mode: "production",
+          environment: "production",
+          isLocalProject: false,
+          projectSlug: "artifact-test",
+        }),
+        undefined,
+        undefined,
+        '<main class="artifact-test"></main>',
+        Promise.resolve({ css, hash, fromCache: false }),
+      );
+
+      assertEquals(result.stylesheet, { kind: "project", hash, css });
+      assertStringIncludes(
+        result.start,
+        `<link rel="stylesheet" href="/_vf/css/${hash}.css">`,
+      );
+    });
+
+    it("reports the exact release stylesheet artifact linked by the shell", async () => {
+      const hash = "b".repeat(64);
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 1,
+        projectId: "project",
+        releaseId: "release",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "test",
+        sourceContentHash: "c".repeat(64),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {},
+        css: [{
+          contentHash: hash,
+          size: 1,
+          contentType: "text/css",
+          styleProfileHash: null,
+        }],
+        routes: { "/": { modules: [], css: [hash] } },
+        dependencies: {},
+        fallback: { mode: "jit", gaps: [] },
+      };
+
+      const result = await generateHTMLShellPartsWithStylesheetArtifact(
+        createMeta(),
+        {
+          ...createOptions({
+            mode: "production",
+            environment: "production",
+            isLocalProject: false,
+            projectSlug: "artifact-test",
+          }),
+          releaseAssetManifest: manifest,
+        } as HTMLGenerationOptions,
+      );
+
+      assertEquals(result.stylesheet, { kind: "release", hash });
+      assertStringIncludes(
+        result.start,
+        `<link rel="stylesheet" href="/_vf/assets/${hash}.css">`,
+      );
+    });
+
+    it("owns an unused prefetched CSS rejection when release CSS is authoritative", async () => {
+      const hash = "b".repeat(64);
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 1,
+        projectId: "project",
+        releaseId: "release",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "test",
+        sourceContentHash: "c".repeat(64),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {},
+        css: [{
+          contentHash: hash,
+          size: 1,
+          contentType: "text/css",
+          styleProfileHash: null,
+        }],
+        routes: { "/": { modules: [], css: [hash] } },
+        dependencies: {},
+        fallback: { mode: "jit", gaps: [] },
+      };
+
+      const result = await generateHTMLShellPartsWithStylesheetArtifact(
+        createMeta(),
+        {
+          ...createOptions({
+            mode: "production",
+            environment: "production",
+            isLocalProject: false,
+            projectSlug: "artifact-test",
+          }),
+          releaseAssetManifest: manifest,
+        } as HTMLGenerationOptions,
+        undefined,
+        undefined,
+        "<main></main>",
+        Promise.reject(new Error("unused project CSS failure")),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assertEquals(result.stylesheet, { kind: "release", hash });
+    });
+
+    it("propagates a prefetched CSS rejection when project CSS is authoritative", async () => {
+      await assertRejects(
+        () =>
+          generateHTMLShellPartsWithStylesheetArtifact(
+            createMeta(),
+            {
+              ...createOptions({
+                mode: "production",
+                environment: "production",
+                isLocalProject: false,
+                projectSlug: "artifact-test",
+              }),
+              releaseAssetManifest: null,
+            } as HTMLGenerationOptions,
+            undefined,
+            undefined,
+            "<main></main>",
+            Promise.reject(new Error("project CSS preparation failed")),
+          ),
+        Error,
+        "project CSS preparation failed",
+      );
+    });
+
+    it("rejects malformed release stylesheet identities before linking them", async () => {
+      const hostileHash = 'x"><script>globalThis.pwned=1</script>';
+      const manifest = {
+        schemaVersion: 1,
+        projectId: "project",
+        releaseId: "release",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "test",
+        sourceContentHash: "c".repeat(64),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {},
+        css: [{
+          contentHash: hostileHash,
+          size: 1,
+          contentType: "text/css",
+          styleProfileHash: null,
+        }],
+        routes: { "/": { modules: [], css: [hostileHash] } },
+        dependencies: {},
+        fallback: { mode: "jit", gaps: [] },
+      } as unknown as ReleaseAssetManifest;
+
+      await assertRejects(
+        () =>
+          generateHTMLShellPartsWithStylesheetArtifact(
+            createMeta(),
+            {
+              ...createOptions({
+                mode: "production",
+                environment: "production",
+                isLocalProject: false,
+                projectSlug: "artifact-test",
+              }),
+              releaseAssetManifest: manifest,
+            } as HTMLGenerationOptions,
+          ),
+        TypeError,
+        "64 lowercase hexadecimal characters",
       );
     });
 

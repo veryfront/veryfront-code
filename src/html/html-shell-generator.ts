@@ -11,6 +11,7 @@ import {
 import {
   RELEASE_MODULE_RUNTIME_VERSION_PARAM,
   RELEASE_MODULE_VERSION_PARAM,
+  releaseAssetUrl,
 } from "#veryfront/release-assets/constants.ts";
 import {
   resolveManifestModuleUrl,
@@ -140,6 +141,53 @@ function getRelativePagePath(
 
 type ProjectCSSResult = Awaited<ReturnType<typeof getProjectCSS>> | null;
 
+type ProjectCSSSettlement =
+  | { status: "fulfilled"; value: ProjectCSSResult }
+  | { status: "rejected"; reason: unknown };
+
+type ProjectCSSObservation = Promise<ProjectCSSSettlement>;
+
+function observeProjectCSSPromise(
+  projectCSSPromise: Promise<ProjectCSSResult>,
+): ProjectCSSObservation {
+  return projectCSSPromise.then(
+    (value): ProjectCSSSettlement => ({ status: "fulfilled", value }),
+    (reason): ProjectCSSSettlement => ({ status: "rejected", reason }),
+  );
+}
+
+function reportUnusedProjectCSSObservation(
+  projectCSSObservation: ProjectCSSObservation,
+  reason: "release" | "non-production",
+): void {
+  void projectCSSObservation.then((settlement) => {
+    if (settlement.status === "fulfilled") return;
+    const error = settlement.reason;
+    serverLogger.debug("Unused prefetched project CSS preparation failed", {
+      reason,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
+async function consumeProjectCSSObservation(
+  projectCSSObservation: ProjectCSSObservation,
+): Promise<ProjectCSSResult> {
+  const settlement = await projectCSSObservation;
+  if (settlement.status === "rejected") throw settlement.reason;
+  return settlement.value;
+}
+
+export type LinkedStylesheetArtifact =
+  | { kind: "project"; hash: string; css: string }
+  | { kind: "release"; hash: string };
+
+export interface HTMLShellPartsWithStylesheetArtifact {
+  start: string;
+  end: string;
+  stylesheet: LinkedStylesheetArtifact | undefined;
+}
+
 function resolveProjectCSSScope(
   options: HTMLGenerationOptions,
   metaSlug?: string,
@@ -210,6 +258,46 @@ export async function generateHTMLShellParts(
   contentForTailwind?: string,
   projectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<{ start: string; end: string }> {
+  const { start, end } = await generateHTMLShellPartsWithStylesheetArtifact(
+    meta,
+    options,
+    params,
+    props,
+    contentForTailwind,
+    projectCSSPromise,
+  );
+  return { start, end };
+}
+
+export async function generateHTMLShellPartsWithStylesheetArtifact(
+  meta: HTMLRenderMetadata,
+  options: HTMLGenerationOptions,
+  params?: Record<string, string | string[]>,
+  props?: ComponentProps,
+  contentForTailwind?: string,
+  projectCSSPromise?: Promise<ProjectCSSResult>,
+): Promise<HTMLShellPartsWithStylesheetArtifact> {
+  const projectCSSObservation = projectCSSPromise
+    ? observeProjectCSSPromise(projectCSSPromise)
+    : undefined;
+  return await generateHTMLShellPartsWithObservedStylesheetArtifact(
+    meta,
+    options,
+    params,
+    props,
+    contentForTailwind,
+    projectCSSObservation,
+  );
+}
+
+async function generateHTMLShellPartsWithObservedStylesheetArtifact(
+  meta: HTMLRenderMetadata,
+  options: HTMLGenerationOptions,
+  params?: Record<string, string | string[]>,
+  props?: ComponentProps,
+  contentForTailwind?: string,
+  projectCSSObservation?: ProjectCSSObservation,
+): Promise<HTMLShellPartsWithStylesheetArtifact> {
   const safeMeta = snapshotShellInput(meta, "HTML shell metadata");
   const safeOptions = snapshotShellInput(options, "HTML shell options");
   return await withSpan(
@@ -221,7 +309,7 @@ export async function generateHTMLShellParts(
         params,
         props,
         contentForTailwind,
-        projectCSSPromise,
+        projectCSSObservation,
       ),
     {
       "html.slug": safeMeta.slug || "",
@@ -238,8 +326,8 @@ async function generateHTMLShellPartsImpl(
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
   contentForTailwind?: string,
-  prefetchedProjectCSSPromise?: Promise<ProjectCSSResult>,
-): Promise<{ start: string; end: string }> {
+  prefetchedProjectCSSObservation?: ProjectCSSObservation,
+): Promise<HTMLShellPartsWithStylesheetArtifact> {
   const stylesheetContent = options.globalCSS;
 
   const isLocalProject = options.isLocalProject ?? false;
@@ -253,14 +341,6 @@ async function generateHTMLShellPartsImpl(
   }
 
   const projectSlug = resolveProjectCSSScope(options, meta.slug);
-  const projectCSSPromise = prefetchedProjectCSSPromise ??
-    (useProductionCSS && projectSlug !== "default"
-      ? getProjectCSS(projectSlug, stylesheetContent, candidates, {
-        minify: true,
-        environment: options.environment,
-        buildMode: options.mode as "development" | "production",
-      })
-      : Promise.resolve(null));
 
   const {
     effectiveTitle,
@@ -296,6 +376,25 @@ async function generateHTMLShellPartsImpl(
     ? explicitReleaseManifest
     : await profilePhase("html.release_asset_manifest", () =>
       getReadyManifestForRenderAsync(options.releaseId));
+  const manifestCssEntry = useProductionCSS ? releaseManifest?.css?.[0] : undefined;
+  const shouldUseProjectCSS = useProductionCSS && !manifestCssEntry;
+  if (prefetchedProjectCSSObservation && !shouldUseProjectCSS) {
+    reportUnusedProjectCSSObservation(
+      prefetchedProjectCSSObservation,
+      manifestCssEntry ? "release" : "non-production",
+    );
+  }
+  const projectCSSObservation = shouldUseProjectCSS
+    ? prefetchedProjectCSSObservation ?? observeProjectCSSPromise(
+      projectSlug !== "default"
+        ? getProjectCSS(projectSlug, stylesheetContent, candidates, {
+          minify: true,
+          environment: options.environment,
+          buildMode: options.mode as "development" | "production",
+        })
+        : Promise.resolve(null),
+    )
+    : undefined;
 
   const importMapPromise = buildImportMap({
     projectDir: options.projectDir,
@@ -387,18 +486,24 @@ async function generateHTMLShellPartsImpl(
     : "";
 
   let tailwindCSSBlock = "";
+  let stylesheet: LinkedStylesheetArtifact | undefined;
   // Manifest-consumed CSS: when a ready release asset manifest carries a
   // compiled CSS entry, serve it from the immutable asset path (no renderer
   // involvement). Per-entry fallback: no manifest CSS → existing JIT link.
-  const manifestCssEntry = useProductionCSS ? releaseManifest?.css?.[0] : undefined;
   if (manifestCssEntry) {
-    tailwindCSSBlock =
-      `<link rel="stylesheet" href="/_vf/assets/${manifestCssEntry.contentHash}.css">`;
+    const stylesheetHref = releaseAssetUrl(manifestCssEntry.contentHash, "css");
+    tailwindCSSBlock = `<link rel="stylesheet" href="${stylesheetHref}">`;
+    stylesheet = { kind: "release", hash: manifestCssEntry.contentHash };
   } else if (useProductionCSS) {
-    const projectCSS = await profilePhase("html.project_css", () => projectCSSPromise);
-    const cssHash = projectCSS?.hash ?? "";
-    if (cssHash) {
-      tailwindCSSBlock = `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
+    const projectCSS = projectCSSObservation
+      ? await profilePhase(
+        "html.project_css",
+        () => consumeProjectCSSObservation(projectCSSObservation),
+      )
+      : null;
+    if (projectCSS?.hash) {
+      tailwindCSSBlock = `<link rel="stylesheet" href="/_vf/css/${projectCSS.hash}.css">`;
+      stylesheet = { kind: "project", hash: projectCSS.hash, css: projectCSS.css };
     } else {
       // CSS generation failed — log error prominently and omit link to avoid /_vf/css/.css 404
       serverLogger.error(
@@ -488,7 +593,7 @@ async function generateHTMLShellPartsImpl(
 </body>
 </html>`;
 
-  return { start, end };
+  return { start, end, stylesheet };
 }
 
 export async function wrapInHTMLShell(
@@ -499,19 +604,22 @@ export async function wrapInHTMLShell(
   props?: ComponentProps,
   projectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<string> {
+  const projectCSSObservation = projectCSSPromise
+    ? observeProjectCSSPromise(projectCSSPromise)
+    : undefined;
   const safeMeta = snapshotShellInput(meta, "HTML shell metadata");
   const safeOptions = snapshotShellInput(options, "HTML shell options");
   return await withSpan(
     SpanNames.HTML_WRAP_IN_SHELL,
     async () => {
       const cleanedContent = content.trim();
-      const { start, end } = await generateHTMLShellParts(
+      const { start, end } = await generateHTMLShellPartsWithObservedStylesheetArtifact(
         safeMeta,
         safeOptions,
         params,
         props,
         cleanedContent,
-        projectCSSPromise,
+        projectCSSObservation,
       );
       return `${start}${cleanedContent}${end}`;
     },

@@ -1,9 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../../html/styles-builder/__tests__/css-processor-setup.ts";
+import {
+  registerTailwindExtension,
+} from "../../html/styles-builder/__tests__/css-processor-setup.ts";
 import {
   assertEquals,
   assertExists,
   assertRejects,
+  assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -18,7 +21,12 @@ import {
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/index.ts";
+import {
+  clearCSSCache,
+  getCSSByHash,
+  invalidateCompiler,
+} from "#veryfront/html/styles-builder/index.ts";
+import { register as registerContract } from "#veryfront/extensions/contracts.ts";
 import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
 import { mergeImportedCSS } from "./html-imported-css.ts";
@@ -36,6 +44,7 @@ type Head = {
 };
 
 const REACT_HASH = "e".repeat(64);
+const RELEASE_CSS_HASH = "f".repeat(64);
 const REACT_CDN_URL = "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3";
 
 function extractBridgeConfig(html: string): Record<string, unknown> {
@@ -66,6 +75,19 @@ function releaseManifest(): ReleaseAssetManifest {
       },
     },
     fallback: { mode: "jit", gaps: [] },
+  };
+}
+
+function releaseManifestWithCSS(): ReleaseAssetManifest {
+  return {
+    ...releaseManifest(),
+    css: [{
+      contentHash: RELEASE_CSS_HASH,
+      size: 1,
+      contentType: "text/css",
+      styleProfileHash: null,
+    }],
+    routes: { "/": { modules: [], css: [RELEASE_CSS_HASH] } },
   };
 }
 
@@ -718,6 +740,246 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(/<link rel="stylesheet" href="\/_vf\/css\/[^"]+\.css">/.test(html), true);
       assertEquals(html.includes('id="vf-tailwind-css"'), false);
     });
+
+    it("owns a rejecting project CSS task when full-document import-map construction fails", async () => {
+      const cssFailure = new Error("project CSS preparation failed");
+      const importMapFailure = new Error("import map construction failed");
+      const unhandledReasons: unknown[] = [];
+      const onUnhandled = (event: PromiseRejectionEvent) => {
+        unhandledReasons.push(event.reason);
+        event.preventDefault();
+      };
+      const config: Record<string, unknown> = {};
+      Object.defineProperty(config, "client", {
+        get() {
+          throw importMapFailure;
+        },
+      });
+      registerContract("CSSProcessor", {
+        get cacheIdentity(): string {
+          throw cssFailure;
+        },
+        compile: () => Promise.reject(cssFailure),
+      });
+      invalidateCompiler();
+      globalThis.addEventListener("unhandledrejection", onUnhandled);
+
+      try {
+        const generator = new HTMLGenerator({
+          projectDir: "/project",
+          adapter: createMockAdapter(async (path: string) =>
+            path.endsWith("/globals.css") ? ".promise-owner { color: navy; }" : ""
+          ) as never,
+          config: config as never,
+          mode: "production",
+        });
+
+        const rejection = await assertRejects(
+          () =>
+            generator.generateFullHTML(createHTMLContext({
+              options: {
+                environment: "production",
+                projectSlug: "full-document-promise-owner-import-map-failure",
+              },
+            })),
+          Error,
+          importMapFailure.message,
+        );
+        assertStrictEquals(rejection, importMapFailure);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        assertEquals(unhandledReasons, []);
+      } finally {
+        globalThis.removeEventListener("unhandledrejection", onUnhandled);
+        await registerTailwindExtension();
+        invalidateCompiler();
+      }
+    });
+
+    it("propagates an authoritative project CSS failure without a transient unhandled rejection", async () => {
+      const cssFailure = new Error("authoritative project CSS failure");
+      const unhandledReasons: unknown[] = [];
+      const onUnhandled = (event: PromiseRejectionEvent) => {
+        unhandledReasons.push(event.reason);
+        event.preventDefault();
+      };
+      registerContract("CSSProcessor", {
+        get cacheIdentity(): string {
+          throw cssFailure;
+        },
+        compile: () => Promise.reject(cssFailure),
+      });
+      invalidateCompiler();
+      globalThis.addEventListener("unhandledrejection", onUnhandled);
+
+      try {
+        const generator = createHTMLGenerator({
+          readFile: async (path: string) =>
+            path.endsWith("/globals.css") ? ".promise-consumer { color: teal; }" : "",
+        });
+
+        const rejection = await assertRejects(
+          () =>
+            generator.generateFullHTML(createHTMLContext({
+              options: {
+                environment: "production",
+                projectSlug: "full-document-promise-owner-css-failure",
+              },
+            })),
+          Error,
+          cssFailure.message,
+        );
+        assertStrictEquals(rejection, cssFailure);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        assertEquals(unhandledReasons, []);
+      } finally {
+        globalThis.removeEventListener("unhandledrejection", onUnhandled);
+        await registerTailwindExtension();
+        invalidateCompiler();
+      }
+    });
+
+    it("reports the exact project stylesheet despite authored href-like decoys", async () => {
+      const decoyHash = "d".repeat(64);
+      const mockAdapter = createMockAdapter(async (path: string) => {
+        if (path.endsWith("/app/page.tsx")) return `'use client';`;
+        if (path.endsWith("/globals.css")) return ".artifact-page { color: navy; }";
+        return "";
+      });
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
+      });
+
+      const result = await generator.generateFullHTMLWithStylesheetArtifact(createHTMLContext({
+        html: `<!DOCTYPE html><html><head>
+          <a href="/_vf/css/${decoyHash}.css">decoy</a>
+          <div data-href="/_vf/css/${decoyHash}.css"></div>
+          <link rel="preload" href="/_vf/css/${decoyHash}.css">
+        </head><body><main class="artifact-page">Hello</main></body></html>`,
+        options: { environment: "production" },
+      }));
+
+      assertEquals(result.stylesheet?.kind, "project");
+      assertEquals(result.stylesheet?.hash.length, 64);
+      assertEquals(
+        result.stylesheet?.kind === "project" && result.stylesheet.css.length !== 0,
+        true,
+      );
+      assertStringIncludes(
+        result.html,
+        `<link rel="stylesheet" href="/_vf/css/${result.stylesheet?.hash}.css">`,
+      );
+      assertStringIncludes(result.html, `<a href="/_vf/css/${decoyHash}.css">decoy</a>`);
+    });
+
+    it("reports the exact release stylesheet linked into a full HTML document", async () => {
+      const generator = createHTMLGenerator({
+        readFile: async (path: string) => path.endsWith("/app/page.tsx") ? `'use client';` : "",
+      });
+
+      const result = await generator.generateFullHTMLWithStylesheetArtifact(
+        createHTMLContext({
+          html: "<!DOCTYPE html><html><head></head><body><main>Release</main></body></html>",
+          options: {
+            environment: "production",
+            releaseAssetManifest: releaseManifestWithCSS(),
+          },
+        }),
+      );
+
+      assertEquals(result.stylesheet, { kind: "release", hash: RELEASE_CSS_HASH });
+      assertStringIncludes(
+        result.html,
+        `<link rel="stylesheet" href="/_vf/assets/${RELEASE_CSS_HASH}.css">`,
+      );
+      assertEquals(result.html.includes("/_vf/css/"), false);
+    });
+
+    it("reports the exact project stylesheet linked around an HTML fragment", async () => {
+      const mockAdapter = createMockAdapter(async (path: string) => {
+        if (path.endsWith("/globals.css")) return ".fragment-artifact { color: teal; }";
+        return "";
+      });
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
+      });
+
+      const result = await generator.generateFullHTMLWithStylesheetArtifact(
+        createHTMLContext({
+          html: '<main class="fragment-artifact">Fragment</main>',
+          options: { environment: "production" },
+        }),
+      );
+
+      assertEquals(result.stylesheet?.kind, "project");
+      assertEquals(result.stylesheet?.hash.length, 64);
+      assertEquals(
+        result.stylesheet?.kind === "project" && result.stylesheet.css.length !== 0,
+        true,
+      );
+      assertStringIncludes(
+        result.html,
+        `<link rel="stylesheet" href="/_vf/css/${result.stylesheet?.hash}.css">`,
+      );
+    });
+
+    it("reports the exact release stylesheet linked around an HTML fragment", async () => {
+      const generator = createHTMLGenerator();
+
+      const result = await generator.generateFullHTMLWithStylesheetArtifact(
+        createHTMLContext({
+          html: "<main>Release fragment</main>",
+          options: {
+            environment: "production",
+            releaseAssetManifest: releaseManifestWithCSS(),
+          },
+        }),
+      );
+
+      assertEquals(result.stylesheet, { kind: "release", hash: RELEASE_CSS_HASH });
+      assertStringIncludes(
+        result.html,
+        `<link rel="stylesheet" href="/_vf/assets/${RELEASE_CSS_HASH}.css">`,
+      );
+      assertEquals(result.html.includes("/_vf/css/"), false);
+    });
+
+    it("does not start project CSS when release CSS covers an HTML fragment", async () => {
+      let compileCalls = 0;
+      registerContract("CSSProcessor", {
+        compile: () => {
+          compileCalls++;
+          return Promise.reject(new Error("project CSS must not start"));
+        },
+      });
+      invalidateCompiler();
+
+      try {
+        const generator = createHTMLGenerator({
+          readFile: async (path: string) =>
+            path.endsWith("/globals.css") ? ".release-only { color: red; }" : "",
+        });
+        const result = await generator.generateFullHTMLWithStylesheetArtifact(
+          createHTMLContext({
+            html: '<main class="release-only">Release fragment</main>',
+            options: {
+              environment: "production",
+              projectSlug: "release-fragment-no-jit",
+              releaseAssetManifest: releaseManifestWithCSS(),
+            },
+          }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        assertEquals(result.stylesheet, { kind: "release", hash: RELEASE_CSS_HASH });
+        assertEquals(compileCalls, 0);
+      } finally {
+        await registerTailwindExtension();
+        invalidateCompiler();
+      }
+    });
+
     it("uses optional file reads when probing the global stylesheet", async () => {
       const calls: string[] = [];
       const generator = new HTMLGenerator({
@@ -868,6 +1130,30 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes('data-theme="dark"'), true);
       assertEquals(html.includes("color-scheme: dark;"), true);
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
+    });
+
+    it("places theme persistence after authored head-close text", async () => {
+      const authoredTail = "</script><!-- authored head-close: </head> -->";
+      const html = await createHTMLGenerator().generateFullHTML(
+        createHTMLContext({
+          html: `<!DOCTYPE html><html><head>` +
+            `<script>globalThis.fakeHeadClose = "</head>";</script>` +
+            `<!-- authored head-close: </head> -->` +
+            `</head><body><main>Hello</main></body></html>`,
+          options: {
+            colorScheme: "dark",
+            colorSchemeFromParam: true,
+          },
+        }),
+      );
+
+      const authoredTailEnd = html.indexOf(authoredTail) + authoredTail.length;
+      const themeScriptIndex = html.indexOf("localStorage.setItem('theme','dark')");
+      const structuralHeadCloseIndex = html.lastIndexOf("</head>");
+
+      assertEquals(authoredTailEnd >= authoredTail.length, true);
+      assertEquals(themeScriptIndex > authoredTailEnd, true);
+      assertEquals(themeScriptIndex < structuralHeadCloseIndex, true);
     });
 
     it("escapes nonce values before injecting theme persistence scripts", async () => {
@@ -1267,6 +1553,95 @@ describe("HTMLGenerator helpers", () => {
   });
 
   describe("generateHTMLStream", () => {
+    it("reports the exact project stylesheet linked around a streamed fragment", async () => {
+      const mockAdapter = createMockAdapter(async (path: string) => {
+        if (path.endsWith("/globals.css")) return ".stream-artifact { color: purple; }";
+        return "";
+      });
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
+      });
+
+      const result = await generator.generateHTMLStreamWithStylesheetArtifact(
+        createSingleChunkStream('<main class="stream-artifact">Stream</main>'),
+        createHTMLContext({ options: { environment: "production" } }),
+      );
+      const html = await new Response(result.stream).text();
+
+      assertEquals(result.stylesheet?.kind, "project");
+      assertEquals(result.stylesheet?.hash.length, 64);
+      assertEquals(
+        result.stylesheet?.kind === "project" && result.stylesheet.css.length !== 0,
+        true,
+      );
+      assertStringIncludes(
+        html,
+        `<link rel="stylesheet" href="/_vf/css/${result.stylesheet?.hash}.css">`,
+      );
+    });
+
+    it("reports the exact release stylesheet linked into a streamed full document", async () => {
+      const generator = createHTMLGenerator({
+        readFile: async (path: string) => path.endsWith("/app/page.tsx") ? `'use client';` : "",
+      });
+
+      const result = await generator.generateHTMLStreamWithStylesheetArtifact(
+        createSingleChunkStream(
+          "<!DOCTYPE html><html><head></head><body><main>Release</main></body></html>",
+        ),
+        createHTMLContext({
+          options: {
+            environment: "production",
+            releaseAssetManifest: releaseManifestWithCSS(),
+          },
+        }),
+      );
+      const html = await new Response(result.stream).text();
+
+      assertEquals(result.stylesheet, { kind: "release", hash: RELEASE_CSS_HASH });
+      assertStringIncludes(
+        html,
+        `<link rel="stylesheet" href="/_vf/assets/${RELEASE_CSS_HASH}.css">`,
+      );
+      assertEquals(html.includes("/_vf/css/"), false);
+    });
+
+    it("does not start project CSS when release CSS covers a streamed fragment", async () => {
+      let compileCalls = 0;
+      registerContract("CSSProcessor", {
+        compile: () => {
+          compileCalls++;
+          return Promise.reject(new Error("project CSS must not start"));
+        },
+      });
+      invalidateCompiler();
+
+      try {
+        const generator = createHTMLGenerator({
+          readFile: async (path: string) =>
+            path.endsWith("/globals.css") ? ".release-stream { color: red; }" : "",
+        });
+        const result = await generator.generateHTMLStreamWithStylesheetArtifact(
+          createSingleChunkStream('<main class="release-stream">Release stream</main>'),
+          createHTMLContext({
+            options: {
+              environment: "production",
+              projectSlug: "release-stream-no-jit",
+              releaseAssetManifest: releaseManifestWithCSS(),
+            },
+          }),
+        );
+        await new Response(result.stream).text();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        assertEquals(result.stylesheet, { kind: "release", hash: RELEASE_CSS_HASH });
+        assertEquals(compileCalls, 0);
+      } finally {
+        await registerTailwindExtension();
+        invalidateCompiler();
+      }
+    });
+
     it("finalizes Studio selectors and bridge scripts for both streamed document shapes", async () => {
       const generator = createHTMLGenerator();
       for (

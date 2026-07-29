@@ -7,6 +7,7 @@ import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEFAULT_STYLESHEET } from "./css-hash-cache.ts";
 import { resolveStylesheet } from "./tailwind-compiler-utils.ts";
+import { assertCSSContentIdentity, hashCSS, hashString, isCSSContentHash } from "./css-identity.ts";
 
 const logger = serverLogger.component("prepared-project-css-cache");
 
@@ -20,6 +21,7 @@ interface PreparedProjectCSSLocalEntry extends PreparedProjectCSSCacheEntry {
 }
 
 interface PreparedProjectCSSProfile {
+  compilerIdentity: string;
   minify?: boolean;
   environment?: string;
   buildMode?: "development" | "production";
@@ -39,6 +41,7 @@ export interface PreparedProjectCSSRequestContext {
 const PREPARED_PROJECT_CSS_CACHE_TTL_SECONDS = 24 * 3600;
 const PREPARED_PROJECT_CSS_LOCAL_MAX = 50;
 const PREPARED_PROJECT_CSS_LOCAL_TTL_MS = PREPARED_PROJECT_CSS_CACHE_TTL_SECONDS * 1000;
+const PREPARED_PROJECT_CSS_CACHE_SCHEMA = "v2";
 
 let preparedProjectCSSBackend: CacheBackend | null = null;
 let preparedProjectCSSInitialized = false;
@@ -52,15 +55,6 @@ registerCache("prepared-project-css-cache", () => ({
   maxEntries: PREPARED_PROJECT_CSS_LOCAL_MAX,
   backend: preparedProjectCSSBackend?.type ?? "uninitialized",
 }));
-
-function hashValue(input: string): string {
-  let hash = 0;
-  for (let index = 0; index < input.length; index++) {
-    hash = ((hash << 5) - hash) + input.charCodeAt(index);
-    hash |= 0;
-  }
-  return hash.toString(36);
-}
 
 function setLocalEntry(key: string, entry: PreparedProjectCSSCacheEntry): void {
   localPreparedProjectCSS.set(key, {
@@ -83,7 +77,11 @@ function parsePreparedProjectCSSCacheEntry(
 ): PreparedProjectCSSCacheEntry | null {
   try {
     const parsed = JSON.parse(raw) as Partial<PreparedProjectCSSCacheEntry>;
-    if (typeof parsed.css !== "string" || typeof parsed.hash !== "string") return null;
+    if (
+      typeof parsed.css !== "string" ||
+      !isCSSContentHash(parsed.hash) ||
+      hashCSS(parsed.css) !== parsed.hash
+    ) return null;
     return { css: parsed.css, hash: parsed.hash };
   } catch {
     return null;
@@ -120,16 +118,22 @@ export function createPreparedProjectCSSContext(
   projectVersion: string,
   stylesheet: string | undefined,
   styleProfileHash: string,
-  profile?: PreparedProjectCSSProfile,
+  profile: PreparedProjectCSSProfile,
 ): PreparedProjectCSSRequestContext {
+  if (!isCSSContentHash(styleProfileHash)) {
+    throw new TypeError("Style profile hash must be a full lowercase SHA-256 digest");
+  }
+
   const resolvedStylesheet = resolveStylesheet(stylesheet, DEFAULT_STYLESHEET);
-  const stylesheetHash = hashValue(resolvedStylesheet);
-  const environment = profile?.environment ?? "preview";
-  const profileHash = hashValue(
+  const stylesheetHash = hashString(resolvedStylesheet);
+  const projectVersionHash = hashString(projectVersion);
+  const environment = profile.environment ?? "preview";
+  const profileHash = hashString(
     JSON.stringify({
-      cacheSchema: "v1",
-      minify: profile?.minify ?? false,
-      buildMode: profile?.buildMode ?? "production",
+      cacheSchema: PREPARED_PROJECT_CSS_CACHE_SCHEMA,
+      compilerIdentity: profile.compilerIdentity,
+      minify: profile.minify ?? false,
+      buildMode: profile.buildMode ?? "production",
       environment,
     }),
   );
@@ -143,7 +147,7 @@ export function createPreparedProjectCSSContext(
     environment,
     profileHash,
     cacheKey:
-      `${projectSlug}:${environment}:prepared:${projectVersion}:${stylesheetHash}:${styleProfileHash}:${profileHash}`,
+      `${projectSlug}:${environment}:prepared:${PREPARED_PROJECT_CSS_CACHE_SCHEMA}:${projectVersionHash}:${stylesheetHash}:${styleProfileHash}:${profileHash}`,
   };
 }
 
@@ -187,6 +191,8 @@ export async function storePreparedProjectCSS(
   context: PreparedProjectCSSRequestContext,
   entry: PreparedProjectCSSCacheEntry,
 ): Promise<void> {
+  assertCSSContentIdentity(entry.css, entry.hash);
+
   if (!preparedProjectCSSInitialized) {
     await initializePreparedProjectCSSCache();
   }

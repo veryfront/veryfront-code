@@ -6,7 +6,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { ElementValidator } from "../element-validator/index.ts";
 import type { SSRRenderer } from "../ssr-renderer.ts";
 import { computeHash } from "../utils/index.ts";
-import type { HTMLGenerationContext, HTMLGenerator } from "./html.ts";
+import type { HTMLGenerationContext, HTMLGenerator, LinkedStylesheetArtifact } from "./html.ts";
 import type { LayoutOrchestrator } from "./layout.ts";
 import type { RenderOptions } from "./types.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
@@ -61,6 +61,7 @@ export interface SSRRenderingResult {
   fullHtml: string;
   finalStream: ReadableStream | null;
   ssrHash: string;
+  stylesheet?: LinkedStylesheetArtifact;
 }
 
 /** @internal Construction seam for isolated-rendering lifecycle tests. */
@@ -388,24 +389,32 @@ export class SSROrchestrator {
         ssrHash,
       });
 
-      const finalStream = await this.config.htmlGenerator.generateHTMLStream(stream, {
-        ...generationContext,
-        ssrHash,
-        options: mergedOptions,
-        collectedHead,
-      });
+      const generated = await this.config.htmlGenerator.generateHTMLStreamWithStylesheetArtifact(
+        stream,
+        {
+          ...generationContext,
+          ssrHash,
+          options: mergedOptions,
+          collectedHead,
+        },
+      );
 
-      return { fullHtml: html, finalStream: attachAllReady(finalStream, stream), ssrHash };
+      return {
+        fullHtml: html,
+        finalStream: attachAllReady(generated.stream, stream),
+        ssrHash,
+        stylesheet: generated.stylesheet,
+      };
     }
 
     const ssrHash = await withSpan(SpanNames.SSR_CONTENT_HASH, () => computeHash(html), {
       "ssr.html_length": html.length,
     });
 
-    const fullHtml = await withSpan(
+    const generated = await withSpan(
       SpanNames.SSR_HTML_GENERATE,
       () =>
-        this.config.htmlGenerator.generateFullHTML({
+        this.config.htmlGenerator.generateFullHTMLWithStylesheetArtifact({
           ...generationContext,
           html,
           ssrHash,
@@ -414,6 +423,7 @@ export class SSROrchestrator {
         }),
       { "ssr.hash": ssrHash },
     );
+    const fullHtml = generated.html;
 
     if (errorBoundaryPath) {
       // The page threw and its app-router error.tsx rendered as the response
@@ -432,6 +442,7 @@ export class SSROrchestrator {
       fullHtml,
       finalStream: wantsStream ? this.createStream(fullHtml) : null,
       ssrHash,
+      stylesheet: generated.stylesheet,
     };
   }
 
@@ -555,14 +566,23 @@ export class SSROrchestrator {
           const ssrHash = `stream-isolated-${Date.now()}`;
 
           // Generate HTML stream using the framework's HTML generator
-          const finalStream = await this.config.htmlGenerator.generateHTMLStream(stream, {
-            ...generationContext,
-            ssrHash,
-            options: { ...generationContext.options, ...options },
-            collectedHead: undefined,
-          });
+          const generated = await this.config.htmlGenerator
+            .generateHTMLStreamWithStylesheetArtifact(
+              stream,
+              {
+                ...generationContext,
+                ssrHash,
+                options: { ...generationContext.options, ...options },
+                collectedHead: undefined,
+              },
+            );
 
-          return { fullHtml: "", finalStream, ssrHash };
+          return {
+            fullHtml: "",
+            finalStream: generated.stream,
+            ssrHash,
+            stylesheet: generated.stylesheet,
+          };
         }
 
         // String mode: render to HTML in Worker, get result back
@@ -599,15 +619,21 @@ export class SSROrchestrator {
         const html = workerResponse.html;
         const ssrHash = await computeHash(html);
 
-        const fullHtml = await this.config.htmlGenerator.generateFullHTML({
-          ...generationContext,
-          html,
-          ssrHash,
-          options: { ...generationContext.options, ...options },
-          collectedHead: undefined,
-        });
+        const generated = await this.config.htmlGenerator
+          .generateFullHTMLWithStylesheetArtifact({
+            ...generationContext,
+            html,
+            ssrHash,
+            options: { ...generationContext.options, ...options },
+            collectedHead: undefined,
+          });
 
-        return { fullHtml, finalStream: null, ssrHash };
+        return {
+          fullHtml: generated.html,
+          finalStream: null,
+          ssrHash,
+          stylesheet: generated.stylesheet,
+        };
       },
       {
         "ssr.isolated": true,

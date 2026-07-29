@@ -1017,7 +1017,7 @@ export const getRouterScript = () => `
         metaDesc?.setAttribute('content', pageData.frontmatter.description);
       }
 
-      if (pageData.css) {
+      if (typeof pageData.css === 'string') {
         const existingStyle = document.getElementById('veryfront-spa-css');
         if (existingStyle) {
           existingStyle.textContent = pageData.css;

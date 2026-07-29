@@ -1,4 +1,5 @@
 import type { VeryfrontConfig } from "#veryfront/config";
+import { hashString } from "./css-identity.ts";
 
 const DEFAULT_IGNORED_ROOTS = [
   "knowledge",
@@ -58,15 +59,6 @@ function getParentDirectory(path: string): string | null {
   return normalized.slice(0, slashIndex);
 }
 
-function stableHash(input: string): string {
-  let hash = 0;
-  for (let index = 0; index < input.length; index++) {
-    hash = ((hash << 5) - hash) + input.charCodeAt(index);
-    hash |= 0;
-  }
-  return hash.toString(36);
-}
-
 function addNormalizedPath(target: Set<string>, value: string | null | undefined): void {
   if (!value) return;
   const normalized = normalizeRelativePath(value);
@@ -109,7 +101,7 @@ export function createStyleScopeProfile(config?: VeryfrontConfig): StyleScopePro
     ignoredRoots: sortedIgnoredRoots,
     protectedRoots: sortedProtectedRoots,
     protectedPaths: sortedProtectedPaths,
-    hash: stableHash(
+    hash: hashString(
       JSON.stringify({
         ignoredRoots: sortedIgnoredRoots,
         protectedRoots: sortedProtectedRoots,

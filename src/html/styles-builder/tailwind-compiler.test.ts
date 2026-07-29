@@ -13,6 +13,7 @@ import {
   hashCSS,
   loadModuleFromEsmSh,
 } from "./tailwind-compiler.ts";
+import { hashCandidates, hashString } from "./candidate-extractor.ts";
 
 describe("styles-builder/tailwind-compiler", () => {
   describe("extractCandidates", () => {
@@ -202,10 +203,16 @@ describe("styles-builder/tailwind-compiler", () => {
   });
 
   describe("hashCSS", () => {
-    it("should return a string hash", () => {
-      const hash = hashCSS("body { color: red; }");
-      assertEquals(typeof hash, "string");
-      assertEquals(hash.length > 0, true);
+    it("returns the full lowercase SHA-256 content identity", () => {
+      assertEquals(
+        hashCSS("body { color: red; }"),
+        "5de625c36355cce7c1d5408826a0b21abfb49fb6c0e1f16c945a6f2aef38200c",
+      );
+      assertEquals(hashCSS("").match(/^[a-f0-9]{64}$/)?.[0], hashCSS(""));
+      assertEquals(
+        hashString(""),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      );
     });
 
     it("should return consistent hash for same input", () => {
@@ -219,14 +226,26 @@ describe("styles-builder/tailwind-compiler", () => {
       assertEquals(hash1 !== hash2, true);
     });
 
-    it("should return max 8 characters", () => {
-      const hash = hashCSS("some long css content with many rules .a .b .c {}");
-      assertEquals(hash.length <= 8, true);
+    it("separates CSS payloads that collided under the legacy 32-bit hash", () => {
+      assertEquals(
+        hashCSS(".vf-36{--vf-token:10}") !== hashCSS(".vf-74183{--vf-token:1l8n}"),
+        true,
+      );
     });
 
-    it("should handle empty string", () => {
-      const hash = hashCSS("");
-      assertEquals(typeof hash, "string");
+    it("serializes candidate sets unambiguously and independently of insertion order", () => {
+      const commaInFirst = new Set(["a,b", "c"]);
+      const commaInSecond = new Set(["a", "b,c"]);
+
+      assertEquals(hashCandidates(commaInFirst) !== hashCandidates(commaInSecond), true);
+      assertEquals(
+        hashCandidates(new Set(["c", "a,b"])),
+        hashCandidates(commaInFirst),
+      );
+      assertEquals(
+        hashCandidates(commaInFirst).match(/^[a-f0-9]{64}$/)?.[0],
+        hashCandidates(commaInFirst),
+      );
     });
   });
 

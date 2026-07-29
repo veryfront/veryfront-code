@@ -6,12 +6,11 @@ import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
 import type { RenderOptions } from "./types.ts";
 import { markBuildFailure } from "./module-loader/build-failure.ts";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
-import { cacheCSSAsync } from "#veryfront/html/styles-builder/index.ts";
+import { cacheCSSAsync, hashCSS } from "#veryfront/html/styles-builder/index.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
-  getReadyManifestForRender,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
@@ -141,11 +140,11 @@ function primeCssCache(slug: string, projectId: string): void {
   cachePageCss(cssKey, "/* cached css */");
 }
 
-function releaseManifestWithCss(): ReleaseAssetManifest {
+function releaseManifestWithCss(releaseId = "rel-css"): ReleaseAssetManifest {
   return {
     schemaVersion: 1,
     projectId: "p",
-    releaseId: "rel-css",
+    releaseId,
     releaseVersion: 1,
     manifestVersion: 1,
     builderVersion: "0.1.793",
@@ -163,15 +162,6 @@ function releaseManifestWithCss(): ReleaseAssetManifest {
     dependencies: {},
     fallback: { mode: "jit", gaps: [] },
   };
-}
-
-async function primeReadyReleaseCssManifest(): Promise<void> {
-  configureReleaseAssetManifestFetcher(() =>
-    Promise.resolve({ state: "ready", manifest: releaseManifestWithCss() })
-  );
-  setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-  getReadyManifestForRender("rel-css");
-  await new Promise((r) => setTimeout(r, 0));
 }
 
 describe("RenderPipeline behavior", () => {
@@ -2341,8 +2331,8 @@ describe("RenderPipeline behavior", () => {
     const projectId = "proj-css-data-reuse";
     const pagePath = "/project/pages/behavior-css-data-reuse.tsx";
     const layoutPath = "/project/layouts/root.tsx";
-    const cssHash = "cssdata1";
     const expectedCss = ".from-data{color:blue}";
+    const cssHash = hashCSS(expectedCss);
     let pageDataCalls = 0;
     let layoutDataCalls = 0;
     let ssrOptions: Record<string, unknown> | undefined;
@@ -2391,18 +2381,18 @@ describe("RenderPipeline behavior", () => {
           ssrOptions = options as Record<string, unknown>;
           return {
             fullHtml:
-              `<!DOCTYPE html><html><head><link rel="stylesheet" href="/_vf/css/${cssHash}.css"></head><body><div class="from-data">ok</div></body></html>`,
+              `<!DOCTYPE html><html><head></head><body><div class="from-data">ok</div></body></html>`,
             finalStream: null,
             ssrHash: "test-hash",
+            stylesheet: {
+              kind: "project" as const,
+              hash: cssHash,
+              css: expectedCss,
+            },
           };
         },
         resolveErrorComponentPath: async () => null,
       } as any,
-    });
-
-    await cacheCSSAsync(expectedCss, cssHash, {
-      candidates: ["from-data"],
-      stylesheet: '@import "tailwindcss";',
     });
 
     (pipeline as any).loadModule = async (path: string) => {
@@ -2447,22 +2437,18 @@ describe("RenderPipeline behavior", () => {
     assertEquals(appliedLayoutProps?.get(layoutPath), { theme: "from-layout" });
   });
 
-  it("resolvePageData reuses the SSR hashed stylesheet for SPA CSS", async () => {
-    const slug = "/behavior-ssr-css";
-    const projectId = "proj-ssr-css";
-    const pipeline = createPipeline("/project/pages/behavior-ssr-css.tsx");
-    const cssHash = "abc12345";
-    const expectedCss = ".from-ssr{color:red}";
-
-    await cacheCSSAsync(expectedCss, cssHash, {
-      candidates: ["from-ssr"],
-      stylesheet: '@import "tailwindcss";',
-    });
+  it("resolvePageData trusts structured SSR CSS instead of stylesheet-like HTML", async () => {
+    const slug = "/behavior-structured-css";
+    const projectId = "proj-structured-css";
+    const pipeline = createPipeline("/project/pages/behavior-structured-css.tsx");
+    const expectedCss = ".from-structured-result{color:red}";
 
     (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).generatePageCssFromHtml = async () => ".candidate-fallback{}";
     (pipeline as any).renderPage = async () => ({
       html:
-        `<!DOCTYPE html><html><head><link rel="stylesheet" href="/_vf/css/${cssHash}.css"></head><body></body></html>`,
+        `<!DOCTYPE html><html><head><link rel="stylesheet" href="/_vf/assets/${RELEASE_CSS_HASH}.css"></head><body></body></html>`,
+      css: expectedCss,
     });
 
     const pageData = await pipeline.resolvePageData(slug, {
@@ -2470,21 +2456,28 @@ describe("RenderPipeline behavior", () => {
       request: new Request(`http://localhost${slug}`),
       url: new URL(`http://localhost${slug}`),
       environment: "production",
+      releaseAssetManifest: null,
     });
 
     assertEquals(pageData.css, expectedCss);
+    assertEquals(pageData.cssAction, undefined);
     assertEquals(pageData.cssError, undefined);
   });
 
-  it("resolvePageData skips SPA CSS fallback when SSR uses a release CSS asset", async () => {
-    const slug = "/behavior-release-css";
-    const projectId = "proj-release-css";
-    const pipeline = createPipeline("/project/pages/behavior-release-css.tsx");
+  it("resolvePageData preserves an explicit empty structured SSR stylesheet", async () => {
+    const slug = "/behavior-empty-structured-css";
+    const projectId = "proj-empty-structured-css";
+    const pipeline = createPipeline("/project/pages/behavior-empty-structured-css.tsx");
+    let fallbackCalls = 0;
 
     (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).generatePageCssFromHtml = async () => {
+      fallbackCalls++;
+      return ".candidate-fallback{}";
+    };
     (pipeline as any).renderPage = async () => ({
-      html:
-        `<!DOCTYPE html><html><head><link rel="stylesheet" href="/_vf/assets/${RELEASE_CSS_HASH}.css"></head><body><button class="hidden dark:block">theme</button></body></html>`,
+      html: "<!DOCTYPE html><html><head></head><body></body></html>",
+      css: "",
     });
 
     const pageData = await pipeline.resolvePageData(slug, {
@@ -2492,30 +2485,126 @@ describe("RenderPipeline behavior", () => {
       request: new Request(`http://localhost${slug}`),
       url: new URL(`http://localhost${slug}`),
       environment: "production",
+      releaseAssetManifest: null,
     });
 
-    assertEquals(pageData.css, undefined);
-    assertEquals(pageData.cssAction, "clear");
+    assertEquals(pageData.css, "");
+    assertEquals(pageData.cssAction, undefined);
     assertEquals(pageData.cssError, undefined);
+    assertEquals(fallbackCalls, 0);
   });
 
-  it("resolvePageData ignores stale cached SPA CSS when ready release CSS is authoritative", async () => {
-    const slug = "/behavior-release-css";
-    const projectId = "proj-release-css";
-    const pipeline = createPipeline("/project/pages/behavior-release-css.tsx");
+  it("resolvePageData never derives CSS authority from rendered HTML", async () => {
+    const maliciousCss = ".malicious-cache-selection{display:block}";
+    const maliciousProjectHash = hashCSS(maliciousCss);
+    const projectHref = `/_vf/css/${maliciousProjectHash}.css`;
+    const releaseHref = `/_vf/assets/${RELEASE_CSS_HASH}.css`;
+    const cases: Array<{
+      label: string;
+      render: (href: string) => string;
+    }> = [
+      {
+        label: "anchor",
+        render: (href) => `<head></head><body><a rel="stylesheet" href="${href}">asset</a>`,
+      },
+      {
+        label: "data-href",
+        render: (href) => `<head><link rel="stylesheet" data-href="${href}"></head><body>`,
+      },
+      {
+        label: "comment",
+        render: (href) => `<head><!-- <link rel="stylesheet" href="${href}"> --></head><body>`,
+      },
+      {
+        label: "disabled",
+        render: (href) => `<head><link rel="stylesheet" href="${href}" disabled></head><body>`,
+      },
+      {
+        label: "non-screen media",
+        render: (href) => `<head><link rel="stylesheet" href="${href}" media="print"></head><body>`,
+      },
+      {
+        label: "alternate stylesheet",
+        render: (href) => `<head><link rel="alternate stylesheet" href="${href}"></head><body>`,
+      },
+      {
+        label: "reopened head",
+        render: (href) =>
+          `<head></head><body></body><head><link rel="stylesheet" href="${href}"></head><body>`,
+      },
+    ];
+
+    await cacheCSSAsync(maliciousCss, maliciousProjectHash, {
+      candidates: ["malicious-cache-selection"],
+      stylesheet: '@import "tailwindcss";',
+    });
+
+    for (const [assetKind, href] of [["project", projectHref], ["release", releaseHref]] as const) {
+      for (const testCase of cases) {
+        const caseName = testCase.label.replaceAll(" ", "-");
+        const slug = `/behavior-html-css-spoof-${assetKind}-${caseName}`;
+        const projectId = `proj-html-css-spoof-${assetKind}-${caseName}`;
+        const pipeline = createPipeline(`/project/pages${slug}.tsx`);
+        const fallbackCss = `.${assetKind}-${caseName}{display:none}`;
+        let fallbackCalls = 0;
+
+        (pipeline as any).loadModule = async () => ({});
+        (pipeline as any).generatePageCssFromHtml = async () => {
+          fallbackCalls++;
+          return fallbackCss;
+        };
+        (pipeline as any).renderPage = async () => ({
+          html: `<!DOCTYPE html><html>${
+            testCase.render(href)
+          }<div class="candidate">ok</div></body></html>`,
+        });
+
+        const pageData = await pipeline.resolvePageData(slug, {
+          projectId,
+          request: new Request(`http://localhost${slug}`),
+          url: new URL(`http://localhost${slug}`),
+          environment: "production",
+          releaseAssetManifest: null,
+        });
+
+        assertEquals(pageData.css, fallbackCss, `${assetKind}: ${testCase.label}`);
+        assertEquals(pageData.cssAction, undefined, `${assetKind}: ${testCase.label}`);
+        assertEquals(pageData.cssError, undefined, `${assetKind}: ${testCase.label}`);
+        assertEquals(fallbackCalls, 1, `${assetKind}: ${testCase.label}`);
+      }
+    }
+  });
+
+  it("resolvePageData awaits one ready manifest snapshot before consulting stale CSS", async () => {
+    const slug = "/behavior-release-css-cold-snapshot";
+    const projectId = "proj-release-css-cold-snapshot";
+    const releaseId = "rel-css-cold-snapshot";
+    const pipeline = createPipeline("/project/pages/behavior-release-css-cold-snapshot.tsx");
     const cssKey = getPageCssCacheKey(projectId, "production", slug, undefined);
     cachePageCss(cssKey, '.dark\\:block{&:is(.dark,[data-theme="dark"])*{display:block}}');
+    let fetchCalls = 0;
+    let renderCalls = 0;
 
-    await primeReadyReleaseCssManifest();
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(async (requestedReleaseId) => {
+      fetchCalls++;
+      assertEquals(requestedReleaseId, releaseId);
+      await Promise.resolve();
+      return { state: "ready", manifest: releaseManifestWithCss(releaseId) };
+    });
 
     (pipeline as any).loadModule = async () => ({});
     (pipeline as any).renderPage = async () => {
-      throw new Error("renderPage should not run when ready release CSS is cached");
+      renderCalls++;
+      return {
+        html: "<!DOCTYPE html><html><head></head><body></body></html>",
+        css: ".should-not-render{}",
+      };
     };
 
     const pageData = await pipeline.resolvePageData(slug, {
       projectId,
-      releaseId: "rel-css",
+      releaseId,
       request: new Request(`http://localhost${slug}`),
       url: new URL(`http://localhost${slug}`),
       environment: "production",
@@ -2524,42 +2613,130 @@ describe("RenderPipeline behavior", () => {
     assertEquals(pageData.css, undefined);
     assertEquals(pageData.cssAction, "clear");
     assertEquals(pageData.cssError, undefined);
+    assertEquals(fetchCalls, 1);
+    assertEquals(renderCalls, 0);
   });
 
-  it("resolvePageData falls back to candidate extraction when no CSS link in HTML", async () => {
-    const pipeline = createPipeline("/project/pages/behavior-css-fallback.tsx");
+  it("resolvePageData derives the manifest release ID from contentSourceId", async () => {
+    const slug = "/behavior-derived-release-css-snapshot";
+    const projectId = "proj-derived-release-css-snapshot";
+    const releaseId = "rel-derived-css-snapshot";
+    const contentSourceId = `release-${releaseId}`;
+    const pipeline = createPipeline("/project/pages/behavior-derived-release-css-snapshot.tsx");
+    const cssKey = getPageCssCacheKey(projectId, "production", slug, contentSourceId);
+    cachePageCss(cssKey, ".stale-derived-release-css{display:block}");
+    let fetchCalls = 0;
+    let renderCalls = 0;
 
-    (pipeline as any).loadModule = async () => ({});
-    (pipeline as any).renderPage = async () => ({
-      html:
-        `<!DOCTYPE html><html><head></head><body><div class="fallback">hello</div></body></html>`,
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(async (requestedReleaseId) => {
+      fetchCalls++;
+      assertEquals(requestedReleaseId, releaseId);
+      return { state: "ready", manifest: releaseManifestWithCss(releaseId) };
     });
 
-    // Intercept resolveCssFromRenderedHtml to confirm it returns undefined (no hash in HTML)
-    const originalResolve = (pipeline as any).resolveCssFromRenderedHtml.bind(pipeline);
-    (pipeline as any).resolveCssFromRenderedHtml = async (html: string) => {
-      const result = await originalResolve(html);
-      assertEquals(result, undefined, "Should not find CSS hash in HTML without /_vf/css/ link");
-      return result;
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).renderPage = async () => {
+      renderCalls++;
+      return {
+        html: "<!DOCTYPE html><html><head></head><body></body></html>",
+        css: ".should-not-render{}",
+      };
     };
 
-    // Pre-cache the CSS that generateTailwindCSS would produce for our candidates
-    // so we don't depend on the Tailwind compiler actually working in CI
-    const { extractCandidates } = await import("#veryfront/html/styles-builder/index.ts");
-    const html =
-      `<!DOCTYPE html><html><head></head><body><div class="fallback">hello</div></body></html>`;
-    const candidatesReceived = extractCandidates(html);
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      contentSourceId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      environment: "production",
+    });
 
-    // Verify candidates were actually extracted from the HTML
-    assertEquals(
-      Array.isArray(candidatesReceived),
-      true,
-      "extractCandidates should return an array",
-    );
-    assertEquals(
-      candidatesReceived!.length > 0,
-      true,
-      "Should extract at least one candidate from HTML",
-    );
+    assertEquals(pageData.css, undefined);
+    assertEquals(pageData.cssAction, "clear");
+    assertEquals(pageData.cssError, undefined);
+    assertEquals(fetchCalls, 1);
+    assertEquals(renderCalls, 0);
+  });
+
+  it("resolvePageData passes one awaited null manifest snapshot to the auxiliary render", async () => {
+    const slug = "/behavior-null-release-snapshot";
+    const projectId = "proj-null-release-snapshot";
+    const releaseId = "rel-null-snapshot";
+    const pipeline = createPipeline("/project/pages/behavior-null-release-snapshot.tsx");
+    const expectedCss = ".structured-after-null-snapshot{display:block}";
+    let fetchCalls = 0;
+    let observedManifest: ReleaseAssetManifest | null | undefined;
+    let observedOwnManifestProperty = false;
+
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(async (requestedReleaseId) => {
+      fetchCalls++;
+      assertEquals(requestedReleaseId, releaseId);
+      await Promise.resolve();
+      return { state: "building", manifest: null };
+    });
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).renderPage = async (_slug: string, options: RenderOptions) => {
+      observedOwnManifestProperty = Object.hasOwn(options, "releaseAssetManifest");
+      observedManifest = options.releaseAssetManifest;
+      return {
+        html: "<!DOCTYPE html><html><head></head><body></body></html>",
+        css: expectedCss,
+      };
+    };
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      releaseId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      environment: "production",
+    });
+
+    assertEquals(fetchCalls, 1);
+    assertEquals(observedOwnManifestProperty, true);
+    assertEquals(observedManifest, null);
+    assertEquals(pageData.css, expectedCss);
+    assertEquals(pageData.cssAction, undefined);
+    assertEquals(pageData.cssError, undefined);
+  });
+
+  it("resolvePageData preserves an explicit null manifest without fetching", async () => {
+    const slug = "/behavior-explicit-null-release-snapshot";
+    const projectId = "proj-explicit-null-release-snapshot";
+    const pipeline = createPipeline("/project/pages/behavior-explicit-null-release-snapshot.tsx");
+    let fetchCalls = 0;
+    let observedManifest: ReleaseAssetManifest | null | undefined;
+
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(async () => {
+      fetchCalls++;
+      return { state: "ready", manifest: releaseManifestWithCss("rel-must-not-load") };
+    });
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).renderPage = async (_slug: string, options: RenderOptions) => {
+      observedManifest = options.releaseAssetManifest;
+      return {
+        html: "<!DOCTYPE html><html><head></head><body></body></html>",
+        css: ".explicit-null{display:block}",
+      };
+    };
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      releaseId: "rel-must-not-load",
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      environment: "production",
+      releaseAssetManifest: null,
+    });
+
+    assertEquals(fetchCalls, 0);
+    assertEquals(observedManifest, null);
+    assertEquals(pageData.css, ".explicit-null{display:block}");
+    assertEquals(pageData.cssAction, undefined);
   });
 });

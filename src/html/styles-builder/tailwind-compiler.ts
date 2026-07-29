@@ -3,9 +3,9 @@ import { COMPILATION_ERROR } from "#veryfront/errors";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
-import { hashCSS } from "./candidate-extractor.ts";
+import { hashCSS, isCSSContentHash } from "./css-identity.ts";
 import { formatCSSErrorMessage } from "./tailwind-compiler-utils.ts";
-import { getCompiler } from "./tailwind-compiler-cache.ts";
+import { getCompiler, getCSSCompilationCacheIdentity } from "./tailwind-compiler-cache.ts";
 import {
   type CSSCacheEntry,
   DEFAULT_STYLESHEET,
@@ -27,6 +27,7 @@ export { loadModuleFromEsmSh } from "./plugin-loader.ts";
 export {
   clearPluginCache,
   getCompilerCacheStats,
+  getCSSCompilationCacheIdentity,
   invalidateCompiler,
 } from "./tailwind-compiler-cache.ts";
 export {
@@ -78,7 +79,9 @@ export async function getProjectCSS(
   candidates: Set<string>,
   options?: GenerateOptions,
 ): Promise<{ css: string; hash: string; fromCache: boolean }> {
+  const compilerIdentity = await getCSSCompilationCacheIdentity();
   const context = createProjectCSSRequestContext(projectSlug, stylesheet, candidates, {
+    compilerIdentity,
     minify: options?.minify,
     environment: options?.environment,
     buildMode: options?.buildMode,
@@ -167,6 +170,8 @@ export async function regenerateCSSByHash(
   expectedHash: string,
   projectSlug: string | undefined,
 ): Promise<string | undefined> {
+  if (!isCSSContentHash(expectedHash)) return undefined;
+
   const inFlight = inFlightRegeneration.get(expectedHash);
   if (inFlight) return await inFlight;
 
@@ -237,7 +242,7 @@ export async function generateTailwindCSS(
   candidates: string[] | Set<string>,
   options?: GenerateOptions,
 ): Promise<TailwindResult> {
-  const candidateArray = Array.isArray(candidates) ? candidates : [...candidates];
+  const candidateArray = [...new Set(candidates)].sort();
 
   return await withSpan(
     SpanNames.HTML_GENERATE_TAILWIND_CSS,
@@ -245,7 +250,7 @@ export async function generateTailwindCSS(
       const css = stylesheet ?? DEFAULT_STYLESHEET;
 
       try {
-        const comp = await getCompiler(css, options?.projectSlug);
+        const comp = await getCompiler(css, options?.projectSlug, candidateArray);
         let output = comp.build(candidateArray);
 
         if (options?.minify) output = await minifyCSS(output);

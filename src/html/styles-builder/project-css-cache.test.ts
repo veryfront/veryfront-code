@@ -9,11 +9,58 @@ import {
   invalidateCompiler,
   invalidateProjectCSS,
 } from "./tailwind-compiler.ts";
+import { createProjectCSSRequestContext } from "./project-css-cache.ts";
 
 // Simple stylesheet without plugins — avoids loading @tailwindcss/typography from esm.sh in tests
 const TEST_STYLESHEET = `@import "tailwindcss";`;
 
 describe("styles-builder/project-css-cache", () => {
+  it("builds versioned, collision-resistant identities isolated by project and candidate tuple", () => {
+    const profile = {
+      environment: "production",
+      minify: true,
+      compilerIdentity: "tailwindcss@installed:base-css@audited",
+    } as const;
+    const first = createProjectCSSRequestContext(
+      "project-a",
+      TEST_STYLESHEET,
+      new Set(["a,b", "c"]),
+      profile,
+    );
+    const reordered = createProjectCSSRequestContext(
+      "project-a",
+      TEST_STYLESHEET,
+      new Set(["c", "a,b"]),
+      profile,
+    );
+    const differentCandidates = createProjectCSSRequestContext(
+      "project-a",
+      TEST_STYLESHEET,
+      new Set(["a", "b,c"]),
+      profile,
+    );
+    const differentProject = createProjectCSSRequestContext(
+      "project-b",
+      TEST_STYLESHEET,
+      new Set(["a,b", "c"]),
+      profile,
+    );
+    const differentCompiler = createProjectCSSRequestContext(
+      "project-a",
+      TEST_STYLESHEET,
+      new Set(["a,b", "c"]),
+      { ...profile, compilerIdentity: "tailwindcss@next:base-css@audited" },
+    );
+
+    assertEquals(first.cacheKey, reordered.cacheKey);
+    assertEquals(first.cacheKey !== differentCandidates.cacheKey, true);
+    assertEquals(first.cacheKey !== differentProject.cacheKey, true);
+    assertEquals(first.cacheKey !== differentCompiler.cacheKey, true);
+    assertEquals(first.cacheKey.includes(":v3:"), true);
+    assertEquals(first.candidatesHash.match(/^[a-f0-9]{64}$/)?.[0], first.candidatesHash);
+    assertEquals(first.profileHash.match(/^[a-f0-9]{64}$/)?.[0], first.profileHash);
+  });
+
   it("populates hash-level cache on fresh generation so other pods can serve CSS", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = ((input: URL | Request | string) => {

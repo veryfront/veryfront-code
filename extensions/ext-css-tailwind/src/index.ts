@@ -19,10 +19,11 @@
 import type { ExtensionFactory } from "veryfront/extensions";
 import type { CSSCompileOptions, CSSCompiler, CSSProcessor } from "veryfront/extensions/css";
 
-import { compile } from "tailwindcss";
+import { compile } from "tailwindcss/";
 import plugin from "tailwindcss/plugin";
 import defaultTheme from "tailwindcss/defaultTheme";
 import colors from "tailwindcss/colors";
+import tailwindPackage from "tailwindcss/package.json" with { type: "json" };
 
 type ShimGlobal = Record<string, unknown>;
 
@@ -34,6 +35,8 @@ function installTailwindPluginShims(): void {
 }
 
 class TailwindCSSProcessor implements CSSProcessor {
+  readonly cacheIdentity = `tailwindcss@${tailwindPackage.version}`;
+
   async compile(stylesheet: string, options: CSSCompileOptions): Promise<CSSCompiler> {
     const native = await compile(stylesheet, {
       base: options.base,

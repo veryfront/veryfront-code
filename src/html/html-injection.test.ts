@@ -573,6 +573,24 @@ describe("html/html-injection", () => {
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
 
+    it("does not let authored project-style hrefs suppress the canonical preview stylesheet", () => {
+      const authoredHref = `/_vf/css/${"b".repeat(64)}.css`;
+      const html = injectHTMLContent(
+        `<!DOCTYPE html><html><head><div data-href="${authoredHref}"></div></head>` +
+          "<body>{{ content }}</body></html>",
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          environment: "preview",
+          slug: "test",
+        },
+      );
+
+      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
+    });
+
     it("injects production project stylesheet links for full HTML documents", () => {
       const html = injectHTMLContent(
         baseTemplate,
@@ -587,6 +605,236 @@ describe("html/html-injection", () => {
       );
 
       assertEquals(html.includes('<link rel="stylesheet" href="/_vf/css/abc123.css">'), true);
+    });
+
+    it("does not let authored href-like text suppress the canonical project stylesheet", () => {
+      const canonicalHref = `/_vf/css/${"a".repeat(64)}.css`;
+      const html = injectHTMLContent(
+        `<!DOCTYPE html><html><head>
+          <a href="${canonicalHref}">not a stylesheet</a>
+          <div data-href="${canonicalHref}"></div>
+          <link rel="preload" href="${canonicalHref}">
+          <script>globalThis.example = '<link rel="stylesheet" href="${canonicalHref}">'</script>
+        </head><body>{{ content }}</body></html>`,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          environment: "production",
+          slug: "test",
+          projectStylesheetHref: canonicalHref,
+        },
+      );
+
+      assertEquals(
+        html.includes(`<link rel="stylesheet" href="${canonicalHref}">\n</head>`),
+        true,
+      );
+    });
+
+    it("places framework head assets after authored head-close text", () => {
+      const canonicalHref = `/_vf/css/${"a".repeat(64)}.css`;
+      const authoredTail = "</script><!-- authored head-close: </head> -->";
+      const html = injectHTMLContent(
+        `<!DOCTYPE html><html><head>` +
+          `<script>globalThis.fakeHeadClose = "</head>";</script>` +
+          `<!-- authored head-close: </head> -->` +
+          `</head><body>{{ content }}</body></html>`,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          environment: "preview",
+          slug: "test",
+          importMapJson: '{"imports":{}}',
+          projectStylesheetHref: canonicalHref,
+        },
+      );
+
+      const authoredTailEnd = html.indexOf(authoredTail) + authoredTail.length;
+      const importMapIndex = html.indexOf('<script type="importmap">');
+      const projectStylesheetIndex = html.indexOf(
+        `<link rel="stylesheet" href="${canonicalHref}">`,
+      );
+      const previewStylesheetIndex = html.indexOf('id="vf-tailwind-css"');
+      const structuralHeadCloseIndex = html.lastIndexOf("</head>");
+
+      assertEquals(authoredTailEnd >= authoredTail.length, true);
+      for (
+        const injectedIndex of [
+          importMapIndex,
+          projectStylesheetIndex,
+          previewStylesheetIndex,
+        ]
+      ) {
+        assertEquals(injectedIndex >= authoredTailEnd, true);
+        assertEquals(injectedIndex < structuralHeadCloseIndex, true);
+      }
+    });
+
+    it("recognizes only a genuine head close across HTML lexical states", () => {
+      const canonicalHref = `/_vf/css/${"b".repeat(64)}.css`;
+      const html = injectHTMLContent(
+        `<!DOCTYPE html><html><head data-marker="</head>">` +
+          `<title>title </head> text</title>` +
+          `<style>.marker::before { content: "</head>"; }</style>` +
+          `<script>globalThis.marker = "</head>";</script>` +
+          `<textarea>textarea </head> text</textarea>` +
+          `<noscript>noscript </head> text</noscript>` +
+          `<template><span></head></span><!-- template </head> --></template>` +
+          `<!-- comment </head> --!>` +
+          `</HEAD ><body>{{ content }}</body></html>`,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          environment: "production",
+          slug: "test",
+          projectStylesheetHref: canonicalHref,
+        },
+      );
+
+      assertStringIncludes(
+        html,
+        `<link rel="stylesheet" href="${canonicalHref}">\n</HEAD >`,
+      );
+      assertEquals(
+        html.indexOf(`<link rel="stylesheet" href="${canonicalHref}">`) >
+          html.indexOf("<!-- comment </head> --!>"),
+        true,
+      );
+    });
+
+    it("recognizes head structure after abruptly closed empty comments", () => {
+      const canonicalHref = `/_vf/css/${"f".repeat(64)}.css`;
+
+      for (const comment of ["<!-->", "<!--->"]) {
+        const html = injectHTMLContent(
+          `<!DOCTYPE html><html><head>${comment}</head>` +
+            `<body>{{ content }}</body></html>`,
+          "<p>content</p>",
+          minMeta,
+          {
+            mode: "production",
+            environment: "production",
+            slug: "test",
+            projectStylesheetHref: canonicalHref,
+          },
+        );
+
+        const stylesheetIndex = html.indexOf(
+          `<link rel="stylesheet" href="${canonicalHref}">`,
+        );
+        assertEquals(stylesheetIndex > html.indexOf(comment), true);
+        assertEquals(stylesheetIndex < html.lastIndexOf("</head>"), true);
+      }
+    });
+
+    it("does not treat head-name lookalikes as structural tags", () => {
+      const canonicalHref = `/_vf/css/${"1".repeat(64)}.css`;
+      const falseOpeningHead = injectHTMLContent(
+        `<!DOCTYPE html><html><head!fake><div>body</div></head>` +
+          `<body>{{ content }}</body></html>`,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          environment: "production",
+          slug: "test",
+          projectStylesheetHref: canonicalHref,
+        },
+      );
+      assertEquals(falseOpeningHead.includes(canonicalHref), false);
+
+      const authoredTail = `</head!fake><style>.tail{color:navy}</style>`;
+      const falseClosingHead = injectHTMLContent(
+        `<!DOCTYPE html><html><head>${authoredTail}</head>` +
+          `<body>{{ content }}</body></html>`,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          environment: "production",
+          slug: "test",
+          projectStylesheetHref: canonicalHref,
+        },
+      );
+      const stylesheetIndex = falseClosingHead.indexOf(
+        `<link rel="stylesheet" href="${canonicalHref}">`,
+      );
+      assertEquals(stylesheetIndex > falseClosingHead.indexOf(authoredTail), true);
+      assertEquals(stylesheetIndex < falseClosingHead.lastIndexOf("</head>"), true);
+    });
+
+    it("does not treat head-close text in double-escaped script data as structure", () => {
+      const canonicalHref = `/_vf/css/${"d".repeat(64)}.css`;
+      const doubleEscapedScript =
+        `<script><!--<script></script>globalThis.marker = "</head>";</script>`;
+      const html = injectHTMLContent(
+        `<!DOCTYPE html><html><head>${doubleEscapedScript}</head>` +
+          `<body>{{ content }}</body></html>`,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          environment: "production",
+          slug: "test",
+          projectStylesheetHref: canonicalHref,
+        },
+      );
+
+      const scriptEnd = html.indexOf(doubleEscapedScript) + doubleEscapedScript.length;
+      const stylesheetIndex = html.indexOf(
+        `<link rel="stylesheet" href="${canonicalHref}">`,
+      );
+      assertEquals(scriptEnd >= doubleEscapedScript.length, true);
+      assertEquals(stylesheetIndex >= scriptEnd, true);
+      assertEquals(stylesheetIndex < html.lastIndexOf("</head>"), true);
+    });
+
+    it("does not treat self-closing syntax as closing non-void head elements", () => {
+      const canonicalHref = `/_vf/css/${"e".repeat(64)}.css`;
+      const authoredHead = `<script/>globalThis.marker = "</head>";</script>` +
+        `<template/><span></head></span></template>`;
+      const html = injectHTMLContent(
+        `<!DOCTYPE html><html><head>${authoredHead}</head>` +
+          `<body>{{ content }}</body></html>`,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          environment: "production",
+          slug: "test",
+          projectStylesheetHref: canonicalHref,
+        },
+      );
+
+      const authoredHeadEnd = html.indexOf(authoredHead) + authoredHead.length;
+      const stylesheetIndex = html.indexOf(
+        `<link rel="stylesheet" href="${canonicalHref}">`,
+      );
+      assertEquals(authoredHeadEnd >= authoredHead.length, true);
+      assertEquals(stylesheetIndex >= authoredHeadEnd, true);
+      assertEquals(stylesheetIndex < html.lastIndexOf("</head>"), true);
+    });
+
+    it("fails closed when raw text or comments leave the head boundary ambiguous", () => {
+      const canonicalHref = `/_vf/css/${"c".repeat(64)}.css`;
+      for (
+        const template of [
+          `<!DOCTYPE html><html><head><script>globalThis.marker = "</head>";`,
+          `<!DOCTYPE html><html><head><!-- authored </head>`,
+        ]
+      ) {
+        const html = injectHTMLContent(template, "", minMeta, {
+          mode: "production",
+          environment: "production",
+          slug: "test",
+          projectStylesheetHref: canonicalHref,
+        });
+
+        assertEquals(html.includes(canonicalHref), false);
+      }
     });
 
     it("escapes production project stylesheet hrefs before injecting them", () => {

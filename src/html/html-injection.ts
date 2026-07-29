@@ -27,6 +27,7 @@ import {
 } from "#veryfront/release-assets/route-path.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
+import { insertBeforeHtmlHeadClose } from "./tag-scanner.ts";
 
 const MAX_INJECTION_INPUT_PROPERTIES = 128;
 
@@ -150,12 +151,6 @@ function toProjectRelativePath(absolutePath: string, projectDir?: string): strin
   return resolveRelativePath(normalizedPath, projectDir);
 }
 
-function hasProjectStylesheet(html: string): boolean {
-  return /id=["']vf-tailwind-css["']/i.test(html) ||
-    /href=["'][^"']*\/_vf_styles\/styles\.css(?:\?[^"']*)?["']/i.test(html) ||
-    /href=["'][^"']*\/_vf\/css\/[^"']+\.css["']/i.test(html);
-}
-
 export function injectHTMLContent(
   template: string,
   content: string,
@@ -217,34 +212,38 @@ export function injectHTMLContent(
     );
   }
 
+  const frameworkHeadAssets: string[] = [];
+
   // Inject import map into <head> for ESM module resolution (must be before any module scripts)
-  if (options.importMapJson && /<\/head>/i.test(html)) {
+  if (options.importMapJson) {
     const nonceAttr = buildNonceAttribute(options.nonce);
     const importMapTag = `<script type="importmap"${nonceAttr}>\n${
       escapeInlineJsonText(options.importMapJson)
     }\n</script>`;
-    html = replaceLiteral(html, /<\/head>/i, `${importMapTag}\n</head>`);
+    frameworkHeadAssets.push(importMapTag);
   }
 
-  if (options.projectStylesheetHref && /<\/head>/i.test(html) && !hasProjectStylesheet(html)) {
+  // Authored markup is not authoritative for framework CSS. Always inject the
+  // caller-selected stylesheet instead of letting href-like text suppress it.
+  if (options.projectStylesheetHref) {
     const projectStylesheetTag = `<link rel="stylesheet" href="${
       escapeHTML(options.projectStylesheetHref)
     }">`;
-    html = replaceLiteral(
-      html,
-      /<\/head>/i,
-      `${projectStylesheetTag}\n</head>`,
-    );
+    frameworkHeadAssets.push(projectStylesheetTag);
   }
 
   const shouldUsePreviewStylesheet = options.mode === "development" ||
     options.environment === "preview";
 
-  if (shouldUsePreviewStylesheet && /<\/head>/i.test(html) && !hasProjectStylesheet(html)) {
-    html = replaceLiteral(
+  // Preview CSS follows the same rule: only this boundary selects the link.
+  if (shouldUsePreviewStylesheet) {
+    frameworkHeadAssets.push(getPreviewStylesheetLink());
+  }
+
+  if (frameworkHeadAssets.length > 0) {
+    html = insertBeforeHtmlHeadClose(
       html,
-      /<\/head>/i,
-      `${getPreviewStylesheetLink()}\n</head>`,
+      `${frameworkHeadAssets.join("\n")}\n`,
     );
   }
 

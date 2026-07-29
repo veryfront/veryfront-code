@@ -11,14 +11,19 @@
 import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "#veryfront/cache/backend.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
-import { hashCandidates, hashString } from "./candidate-extractor.ts";
+import {
+  assertCSSContentIdentity,
+  hashCandidates,
+  hashCSS,
+  hashString,
+  isCSSContentHash,
+} from "./css-identity.ts";
 import {
   evaluateProjectCSSLocalCacheState,
   parseProjectCSSCacheEntry,
   resolveStylesheet,
 } from "./tailwind-compiler-utils.ts";
 import { cacheCSSAsync, DEFAULT_STYLESHEET } from "./css-hash-cache.ts";
-import { TAILWIND_VERSION } from "#veryfront/utils/constants/cdn.ts";
 
 const projectCssCacheLog = logger.component("project-css-cache");
 const tailwindLog = logger.component("tailwind");
@@ -47,6 +52,7 @@ interface ProjectCSSRequestContext {
 }
 
 interface ProjectCSSProfile {
+  compilerIdentity: string;
   minify?: boolean;
   environment?: string;
   buildMode?: "development" | "production";
@@ -59,6 +65,7 @@ interface ProjectCSSProfile {
 const PROJECT_CSS_CACHE_TTL_SECONDS = 24 * 3600;
 const PROJECT_CSS_LOCAL_FALLBACK_MAX = 50;
 const PROJECT_CSS_LOCAL_TTL_MS = PROJECT_CSS_CACHE_TTL_SECONDS * 1000;
+const PROJECT_CSS_CACHE_SCHEMA = "v3";
 
 // ============================================================================
 // State
@@ -125,18 +132,18 @@ export function createProjectCSSRequestContext(
   projectSlug: string,
   stylesheet: string | undefined,
   candidates: Set<string>,
-  profile?: ProjectCSSProfile,
+  profile: ProjectCSSProfile,
 ): ProjectCSSRequestContext {
   const resolvedStylesheet = resolveStylesheet(stylesheet, DEFAULT_STYLESHEET);
   const stylesheetHash = hashString(resolvedStylesheet);
   const candidatesHash = hashCandidates(candidates);
-  const environment = profile?.environment ?? "preview";
+  const environment = profile.environment ?? "preview";
   const profileHash = hashString(
     JSON.stringify({
-      cacheSchema: "v2",
-      tailwindVersion: TAILWIND_VERSION,
-      minify: profile?.minify ?? false,
-      buildMode: profile?.buildMode ?? "production",
+      cacheSchema: PROJECT_CSS_CACHE_SCHEMA,
+      compilerIdentity: profile.compilerIdentity,
+      minify: profile.minify ?? false,
+      buildMode: profile.buildMode ?? "production",
       environment,
     }),
   );
@@ -147,7 +154,8 @@ export function createProjectCSSRequestContext(
     candidatesHash,
     profileHash,
     environment,
-    cacheKey: `${projectSlug}:${environment}:${stylesheetHash}:${candidatesHash}:${profileHash}`,
+    cacheKey:
+      `${projectSlug}:${environment}:${PROJECT_CSS_CACHE_SCHEMA}:${stylesheetHash}:${candidatesHash}:${profileHash}`,
   };
 }
 
@@ -160,6 +168,12 @@ function setProjectCSSLocalFallback(key: string, entry: ProjectCSSCacheEntry): v
   if (projectCSSLocalFallback.size > PROJECT_CSS_LOCAL_FALLBACK_MAX) {
     pruneProjectCSSLocalFallback();
   }
+}
+
+function isValidProjectCSSCacheEntry(entry: ProjectCSSCacheEntry): boolean {
+  return isCSSContentHash(entry.hash) &&
+    isCSSContentHash(entry.candidatesHash) &&
+    hashCSS(entry.css) === entry.hash;
 }
 
 function pruneProjectCSSLocalFallback(): void {
@@ -199,6 +213,10 @@ export async function tryGetProjectCSSFromLocalFallback(
   }
 
   if (localState !== "hit" || !localCached) return undefined;
+  if (!isValidProjectCSSCacheEntry(localCached)) {
+    projectCSSLocalFallback.delete(context.cacheKey);
+    return undefined;
+  }
 
   tailwindLog.debug("Project CSS cache hit (local)", {
     projectSlug: context.projectSlug,
@@ -222,6 +240,13 @@ export async function tryGetProjectCSSFromDistributedCache(
     const entry = parseProjectCSSCacheEntry(raw);
     if (!entry) {
       tailwindLog.debug("Project CSS cache entry was malformed", {
+        cacheKey: context.cacheKey,
+      });
+      return undefined;
+    }
+
+    if (!isValidProjectCSSCacheEntry(entry)) {
+      tailwindLog.warn("Rejected project CSS cache entry with mismatched identity", {
         cacheKey: context.cacheKey,
       });
       return undefined;
@@ -262,6 +287,11 @@ export async function storeProjectCSS(
   entry: ProjectCSSCacheEntry,
   candidates: Set<string>,
 ): Promise<void> {
+  assertCSSContentIdentity(entry.css, entry.hash);
+  if (entry.candidatesHash !== context.candidatesHash) {
+    throw new TypeError("Project CSS candidate identity does not match the request context");
+  }
+
   if (projectCSSBackend) {
     projectCSSBackend.set(context.cacheKey, JSON.stringify(entry), PROJECT_CSS_CACHE_TTL_SECONDS)
       .catch((error) => {

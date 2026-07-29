@@ -28,12 +28,7 @@ import {
   extractRouterBasePath,
   type RouterDirectories,
 } from "#veryfront/utils/route-path-utils.ts";
-import {
-  extractRenderedCssHash,
-  hasRenderedReleaseAssetCss,
-  serializeLayoutProps,
-  serializeLayouts,
-} from "./pipeline-helpers.ts";
+import { serializeLayoutProps, serializeLayouts } from "./pipeline-helpers.ts";
 import { join } from "#veryfront/compat/path";
 import type { EntityInfo, MdxBundle, PageBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -70,11 +65,7 @@ import {
 } from "../utils/stream-utils.ts";
 import { extractCandidates, generateTailwindCSS } from "#veryfront/html/styles-builder/index.ts";
 import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
-import {
-  getCSSByHashAsync,
-  regenerateCSSByHash,
-} from "#veryfront/html/styles-builder/tailwind-compiler.ts";
-import { getReadyManifestForRender } from "#veryfront/release-assets/manifest-cache.ts";
+import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
 import { isBuildFailure } from "./module-loader/build-failure.ts";
 import type { ModuleLoaderConfig } from "./module-loader/index.ts";
@@ -115,6 +106,7 @@ import {
   type ModuleToLoad,
   SSR_RENDER_TIMEOUT_MS,
 } from "./module-collection.ts";
+import { resolveReleaseId } from "./release-id.ts";
 import { RENDER_OPTIONS_SNAPSHOT, snapshotRenderOptions } from "./request-snapshot.ts";
 
 const renderPageLog = logger.component("render-page");
@@ -506,19 +498,6 @@ export class RenderPipeline {
     moduleLoaderConfig: ModuleLoaderConfig,
   ): Promise<Record<string, unknown>> {
     return loadModule(filePath, moduleLoaderConfig);
-  }
-
-  private async resolveCssFromRenderedHtml(
-    html: string,
-    projectSlug: string | undefined,
-  ): Promise<string | undefined> {
-    const cssHash = extractRenderedCssHash(html);
-    if (!cssHash) return undefined;
-
-    const cachedCss = await getCSSByHashAsync(cssHash);
-    if (cachedCss) return cachedCss;
-
-    return await regenerateCSSByHash(cssHash, projectSlug);
   }
 
   /**
@@ -1474,7 +1453,18 @@ export class RenderPipeline {
     projectUpdatedAt: string | undefined,
     dataResolution: DataResolutionResult,
   ): Promise<PageCssResult> {
-    if (this.hasReadyReleaseCss(options)) {
+    const releaseId = resolveReleaseId(options);
+    const releaseAssetManifest = options?.releaseAssetManifest !== undefined
+      ? options.releaseAssetManifest
+      : await profilePhase(
+        "page_data.css.release_asset_manifest",
+        () => getReadyManifestForRenderAsync(releaseId),
+      );
+
+    if (
+      options?.environment === "production" &&
+      (releaseAssetManifest?.css?.length ?? 0) > 0
+    ) {
       return { css: undefined, cssAction: "clear", cssError: undefined };
     }
 
@@ -1486,7 +1476,7 @@ export class RenderPipeline {
     );
 
     const cachedCss = getCachedPageCss(cssCacheKey);
-    if (cachedCss) {
+    if (cachedCss !== undefined) {
       resolvePageDataLog.debug("CSS cache hit", { slug, cssLength: cachedCss.length });
       return { css: cachedCss, cssAction: undefined, cssError: undefined };
     }
@@ -1497,6 +1487,7 @@ export class RenderPipeline {
         delivery: "string",
         skipCacheCheck: true,
         skipCachePersist: true,
+        releaseAssetManifest,
         [PRE_RESOLVED_DATA]: dataResolution,
         [PIPELINE_REQUEST_IDENTITY]: identity,
       };
@@ -1511,40 +1502,27 @@ export class RenderPipeline {
           ),
       );
 
-      if (!renderResult?.html) {
+      if (!renderResult) {
         return { css: undefined, cssAction: undefined, cssError: undefined };
       }
 
-      let cssAction: PageDataResponse["cssAction"] | undefined;
-      let css = await profilePhase(
-        "page_data.css.extract_from_html",
-        () =>
-          this.resolveCssFromRenderedHtml(
-            renderResult.html,
-            options?.projectSlug ?? identity.projectId,
-          ),
-      );
-
-      if (css) {
+      let css: string | undefined;
+      if (renderResult.css !== undefined) {
+        css = renderResult.css;
         resolvePageDataLog.debug("Reused SSR CSS for page data", {
           slug,
           cssLength: css.length,
-          source: "rendered-html-hash",
+          source: "render-result",
         });
-      } else if (hasRenderedReleaseAssetCss(renderResult.html)) {
-        cssAction = "clear";
-        resolvePageDataLog.debug("Skipped SPA CSS fallback; rendered HTML uses release CSS asset", {
-          slug,
-        });
-      } else {
+      } else if (renderResult.html) {
         css = await profilePhase(
           "page_data.css.generate_from_html",
           () => this.generatePageCssFromHtml(slug, renderResult.html, options),
         );
       }
 
-      if (css) cachePageCss(cssCacheKey, css);
-      return { css, cssAction, cssError: undefined };
+      if (css !== undefined) cachePageCss(cssCacheKey, css);
+      return { css, cssAction: undefined, cssError: undefined };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       // Surface CSS generation failures instead of silently swallowing them.
@@ -1560,14 +1538,6 @@ export class RenderPipeline {
         cssError: `CSS generation failed: ${errorMessage}`,
       };
     }
-  }
-
-  private hasReadyReleaseCss(options: RenderOptions | undefined): boolean {
-    if (options?.environment !== "production") return false;
-    const releaseManifest = options.releaseAssetManifest !== undefined
-      ? options.releaseAssetManifest
-      : getReadyManifestForRender(options?.releaseId);
-    return (releaseManifest?.css?.length ?? 0) > 0;
   }
 
   private async generatePageCssFromHtml(

@@ -6,7 +6,13 @@ import {
   tryResolve as tryResolveContract,
 } from "#veryfront/extensions/contracts.ts";
 import type { CSSProcessor } from "#veryfront/extensions/css/index.ts";
-import { generateTailwindCSS, invalidateCompiler } from "./tailwind-compiler.ts";
+import { TailwindCSSProcessor } from "../../../extensions/ext-css-tailwind/src/index.ts";
+import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
+import {
+  generateTailwindCSS,
+  getCSSCompilationCacheIdentity,
+  invalidateCompiler,
+} from "./tailwind-compiler.ts";
 
 const MOCK_TAILWIND_BASE_CSS = "@layer theme, base, components, utilities;";
 
@@ -56,5 +62,12 @@ describe("styles-builder/tailwind default CSSProcessor", () => {
 
     assertEquals(result.error, undefined);
     assertEquals(tryResolveContract<CSSProcessor>("CSSProcessor") !== undefined, true);
+  });
+
+  it("derives compilation identity from the registered processor and base stylesheet", async () => {
+    const identity = await getCSSCompilationCacheIdentity();
+
+    assertEquals(identity.includes(new TailwindCSSProcessor().cacheIdentity), true);
+    assertEquals(identity.includes(getTailwindCSSUrl()), true);
   });
 });

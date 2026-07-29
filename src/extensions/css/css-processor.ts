@@ -8,8 +8,8 @@
  * compiler is constructed once per stylesheet and emits CSS output for the
  * set of class-name candidates discovered at render time. Core scans the
  * rendered HTML for candidates and calls `CSSCompiler.build(candidates)`
- * on each request; the compiler accumulates state across calls, so per-
- * project isolation is the caller's responsibility (see
+ * on each request; the compiler accumulates state across calls, so exact
+ * candidate-snapshot isolation is the caller's responsibility (see
  * `tailwind-compiler-cache.ts`).
  *
  * @module extensions/css/css-processor
@@ -57,5 +57,7 @@ export interface CSSCompiler {
  * underlying engine directly.
  */
 export interface CSSProcessor {
+  /** Stable identity for every processor/compiler input that can change emitted CSS. */
+  readonly cacheIdentity: string;
   compile(stylesheet: string, options: CSSCompileOptions): Promise<CSSCompiler>;
 }

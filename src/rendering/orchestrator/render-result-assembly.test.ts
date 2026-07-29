@@ -14,6 +14,11 @@ describe("render-result-assembly", () => {
         fullHtml: "<!doctype html><html><body>ok</body></html>",
         finalStream: null,
         ssrHash: "ssr-hash",
+        stylesheet: {
+          kind: "project",
+          hash: "project-css-hash",
+          css: ".prose { color: rebeccapurple; }",
+        },
       },
       pageBundle: {
         compiledCode: "export default function Page() {}",
@@ -32,11 +37,66 @@ describe("render-result-assembly", () => {
     assertEquals(result.nodeMap, nodeMap);
     assertEquals(result.stream, null);
     assertEquals(result.ssrHash, "ssr-hash");
+    assertEquals(result.css, ".prose { color: rebeccapurple; }");
     assertEquals(result.pageModule, {
       slug: "/blog",
       code: "export default function ClientPage() {}",
       type: "mdx",
     });
+  });
+
+  it("preserves an empty project stylesheet as an explicit CSS payload", () => {
+    const result = assembleRenderResult({
+      slug: "/empty-stylesheet",
+      ssrResult: {
+        fullHtml: "<html></html>",
+        stylesheet: {
+          kind: "project",
+          hash: "empty-project-css-hash",
+          css: "",
+        },
+      },
+      pageBundle: {
+        compiledCode: "",
+      },
+      shouldCache: false,
+    });
+
+    assertEquals(result.css, "");
+  });
+
+  it("does not expose a release stylesheet as an inline CSS payload", () => {
+    const result = assembleRenderResult({
+      slug: "/release-stylesheet",
+      ssrResult: {
+        fullHtml: "<html></html>",
+        stylesheet: {
+          kind: "release",
+          hash: "release-css-hash",
+        },
+      },
+      pageBundle: {
+        compiledCode: "",
+      },
+      shouldCache: false,
+    });
+
+    assertEquals(result.css, undefined);
+  });
+
+  it("leaves CSS undefined when SSR produced no stylesheet artifact", () => {
+    const result = assembleRenderResult({
+      slug: "/no-stylesheet",
+      ssrResult: {
+        fullHtml: "<html></html>",
+      },
+      pageBundle: {
+        compiledCode: "",
+      },
+      shouldCache: false,
+    });
+
+    assertEquals(result.css, undefined);
   });
 
   it("persists cacheable results without waiting for persistence", () => {

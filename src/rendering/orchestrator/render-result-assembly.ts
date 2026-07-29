@@ -1,5 +1,6 @@
 import type { PageBundle, RenderResult } from "#veryfront/types";
 import { toMDXFrontmatter } from "../frontmatter.ts";
+import type { LinkedStylesheetArtifact } from "./html.ts";
 
 interface RenderResultAssemblyCache {
   persistResult(result: RenderResult, slug: string, cacheKey?: string): Promise<void>;
@@ -13,6 +14,7 @@ interface SSRResult {
   fullHtml: string;
   finalStream?: ReadableStream | null;
   ssrHash?: string;
+  stylesheet?: LinkedStylesheetArtifact;
 }
 
 export interface AssembleRenderResultOptions {
@@ -36,9 +38,13 @@ export function assembleRenderResult(options: AssembleRenderResultOptions): Rend
       type: options.pageModuleType,
     }
     : undefined;
+  const css = options.ssrResult.stylesheet?.kind === "project"
+    ? options.ssrResult.stylesheet.css
+    : undefined;
 
   const result: RenderResult = {
     html: options.ssrResult.fullHtml,
+    ...(css !== undefined ? { css } : {}),
     frontmatter: toMDXFrontmatter(options.pageBundle.frontmatter),
     headings: options.pageBundle.headings || [],
     nodeMap: options.pageBundle.nodeMap,
