@@ -6,7 +6,7 @@ import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { startCliDevServer, startCliProxyModeServer } from "#cli/shared/server-startup";
-import { applyRuntimeAuthContext } from "#cli/shared/runtime-auth";
+import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 
 const logger = cliLogger.component("global");
 
@@ -127,6 +127,14 @@ export function selectStartProject(
   return { projectDir: fallbackDir, projectSlug: undefined };
 }
 
+export async function hydrateStartRuntimeAuth(
+  selectedProject: StartProjectSelection,
+): Promise<string | undefined> {
+  const linkedProjectSlug = await resolveLinkedProjectSlug(selectedProject.projectDir);
+  await applyRuntimeAuthContext({ linkedProjectSlug });
+  return linkedProjectSlug;
+}
+
 async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxySetup> {
   try {
     // Proxy is only available in local dev, not in the npm package
@@ -224,11 +232,7 @@ export async function startCommand(options: StartOptions): Promise<void> {
 
   const selectedProject = selectStartProject(discovered, cwd());
   const projectDir = selectedProject.projectDir;
-  const runtimeAuth = await applyRuntimeAuthContext({
-    projectDir,
-    projectSlug: selectedProject.projectSlug,
-  });
-  const fallbackProjectSlug = runtimeAuth.projectSlug;
+  const linkedProjectSlug = await hydrateStartRuntimeAuth(selectedProject);
 
   const allProjects = new Map([...discovered.projects, ...discovered.examples]);
   const proxy = await trySetupProxy(allProjects);
@@ -246,9 +250,8 @@ export async function startCommand(options: StartOptions): Promise<void> {
       projectDir,
       signal: shutdownController.signal,
       requestInterceptor,
-      defaultProjectSlug: defaultProjectId,
       defaultProjectId,
-      fallbackProjectSlug,
+      linkedProjectSlug,
     });
   } else {
     server = await startCliDevServer({

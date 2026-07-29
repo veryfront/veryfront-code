@@ -182,15 +182,20 @@ export async function resolveAdapter(
     // because proceeding without config causes silent 404s for valid projects.
     try {
       effectiveConfig = await timeAsync("config:load-proxy-project", () => {
+        const loadCurrentConfig = async (): Promise<VeryfrontConfig> => {
+          // Config controls route and primitive discovery, so it must be read
+          // from the same current snapshot that those consumers will retain.
+          await effectiveAdapter.fs.ensureSourceSnapshotFresh?.("config-load");
+          return await getConfig(effectiveProjectDir, effectiveAdapter, {
+            cacheKey: opts.projectId ?? opts.projectSlug,
+          });
+        };
+
         if (isExtendedFSAdapter(effectiveAdapter.fs) && effectiveAdapter.fs.runWithContext) {
           return effectiveAdapter.fs.runWithContext(
             opts.projectSlug!,
             opts.proxyToken!,
-            async () => {
-              return await getConfig(effectiveProjectDir, effectiveAdapter, {
-                cacheKey: opts.projectId ?? opts.projectSlug,
-              });
-            },
+            loadCurrentConfig,
             opts.projectId,
             {
               productionMode: opts.proxyEnv === "production",
@@ -201,9 +206,7 @@ export async function resolveAdapter(
           );
         }
 
-        return getConfig(effectiveProjectDir, effectiveAdapter, {
-          cacheKey: opts.projectId ?? opts.projectSlug,
-        });
+        return loadCurrentConfig();
       });
 
       logger.debug("Loaded config in proxy mode", {

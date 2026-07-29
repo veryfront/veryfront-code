@@ -44,7 +44,7 @@ export function getColorLevel(): ColorLevel {
 }
 
 export function shouldUseColor(): boolean {
-  return getColorLevel() !== "none";
+  return getCachedColorLevel() !== "none";
 }
 
 let cachedColorLevel: ColorLevel | null = null;
@@ -184,8 +184,11 @@ function bgRgb(r: number, g: number, b: number): (text: string) => string {
   return (text: string) => applyColor(text, r, g, b, true);
 }
 
-export const brand = rgb(252, 143, 93);
-export const brandBg = bgRgb(252, 143, 93);
+export const BRAND_RGB = { r: 238, g: 178, b: 146 } as const;
+export const BRAND_TRUECOLOR = `${ESC}[38;2;${BRAND_RGB.r};${BRAND_RGB.g};${BRAND_RGB.b}m`;
+
+export const brand = rgb(BRAND_RGB.r, BRAND_RGB.g, BRAND_RGB.b);
+export const brandBg = bgRgb(BRAND_RGB.r, BRAND_RGB.g, BRAND_RGB.b);
 
 export const success = rgb(34, 197, 94);
 export const error = rgb(239, 68, 68);
@@ -196,10 +199,15 @@ export const green = success;
 export const yellow = warning;
 export const red = error;
 
-export const bold = (text: string) => `${ESC}[1m${text}${RESET}`;
-export const dim = (text: string) => `${ESC}[2m${text}${RESET}`;
-export const italic = (text: string) => `${ESC}[3m${text}${RESET}`;
-export const underline = (text: string) => `${ESC}[4m${text}${RESET}`;
+function applyStyle(text: string, code: number): string {
+  if (!shouldUseColor()) return text;
+  return `${ESC}[${code}m${text}${RESET}`;
+}
+
+export const bold = (text: string) => applyStyle(text, 1);
+export const dim = (text: string) => applyStyle(text, 2);
+export const italic = (text: string) => applyStyle(text, 3);
+export const underline = (text: string) => applyStyle(text, 4);
 
 export const brandBold = (text: string) => bold(brand(text));
 export const successBold = (text: string) => bold(success(text));
@@ -215,9 +223,9 @@ export { RESET as reset };
  * @returns Text with shimmer effect applied
  */
 export function shimmer(text: string, frame: number, waveWidth = 3): string {
-  const bright = (char: string) => applyColor(char, 255, 180, 140, false);
-  const normal = (char: string) => applyColor(char, 252, 143, 93, false);
-  const dimmed = (char: string) => applyColor(char, 180, 100, 65, false);
+  const bright = (char: string) => applyColor(char, 255, 211, 188, false);
+  const normal = (char: string) => applyColor(char, BRAND_RGB.r, BRAND_RGB.g, BRAND_RGB.b, false);
+  const dimmed = (char: string) => applyColor(char, 180, 120, 90, false);
 
   const len = text.length;
   const wavePos = frame % (len + waveWidth * 2);

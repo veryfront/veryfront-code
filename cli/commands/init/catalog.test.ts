@@ -21,12 +21,16 @@ describe("catalog", () => {
   afterEach(() => Deno.env.delete(EXPERIMENTAL_INTEGRATIONS_ENV));
 
   describe("TEMPLATES", () => {
+    it("uses ai-agent as the default template", () => {
+      assertEquals(TEMPLATES[0]?.id, "ai-agent");
+    });
+
     it("contains expected templates", () => {
       assertEquals(TEMPLATES.length, 7);
       const ids = TEMPLATES.map((t) => t.id);
       assertEquals(ids, [
-        "minimal",
         "ai-agent",
+        "minimal",
         "docs-agent",
         "agentic-workflow",
         "multi-agent-system",

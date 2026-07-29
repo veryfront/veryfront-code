@@ -1772,11 +1772,13 @@ const METHOD_DESCRIPTIONS: Record<
       },
     },
     executeCommand: {
-      desc: "Execute a command and return buffered stdout/stderr + exit code.",
+      desc:
+        "Execute a bash command in the sandbox and return buffered stdout/stderr plus the exit code.",
       params: { command: "Bash command string to execute in the sandbox." },
     },
     executeStream: {
-      desc: "Execute a command and stream output events as they arrive.",
+      desc:
+        "Execute a bash command in the sandbox and stream newline-delimited JSON (NDJSON) output events as they arrive.",
       params: { command: "Bash command string to execute in the sandbox." },
     },
     readFile: {
@@ -1805,7 +1807,8 @@ const METHOD_DESCRIPTIONS: Record<
       params: { pattern: "URL pattern to match", "": "Middleware handler" },
     },
     onTeardown: {
-      desc: "Register a cleanup callback that runs after the response is sent.",
+      desc:
+        "Register a cleanup callback that runs once per request after each `execute()`/`handle()` response body closes, is canceled, or errors. Bodyless, locked, or already-read responses and handler/middleware exceptions clean up before the call resolves.",
       params: { cb: "Cleanup callback" },
     },
     compose: {
@@ -1821,7 +1824,8 @@ const METHOD_DESCRIPTIONS: Record<
       },
     },
     teardown: {
-      desc: "Run all registered teardown callbacks.",
+      desc:
+        "Drain and discard all registered teardown callbacks. Unlike the per-request cleanup run by `execute()` / `handle()`, this clears callbacks so they never run again.",
     },
     getMiddleware: {
       desc: "List registered middleware with metadata.",
@@ -1844,7 +1848,7 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     allowedModels:
       'Restrict runtime model overrides to these "provider/model" strings',
     skills:
-      "Enable all discovered skills (`true`) or only selected skill IDs (`string[]`)",
+      "Select visible skill IDs or this agent's own short names for prompts and `load_skill`",
   },
   SandboxOptions: {
     apiUrl:
@@ -2195,10 +2199,9 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           );
           lines.push("");
 
-          // Method description: upstream JSDoc first, then curated fallback
-          const methodDesc = method.jsDoc?.doc
-            ? oneLineDoc(method.jsDoc.doc)
-            : methodMeta[method.name]?.desc ?? "";
+          // Method description: curated public copy first, then upstream JSDoc.
+          const methodDesc = methodMeta[method.name]?.desc ??
+            (method.jsDoc?.doc ? oneLineDoc(method.jsDoc.doc) : "");
           if (methodDesc) {
             lines.push(methodDesc);
             lines.push("");
@@ -2270,9 +2273,8 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           lines.push(`### \`${signature}\``);
           lines.push("");
 
-          const methodDesc = method.jsDoc?.doc
-            ? oneLineDoc(method.jsDoc.doc)
-            : methodMeta[method.name]?.desc ?? "";
+          const methodDesc = methodMeta[method.name]?.desc ??
+            (method.jsDoc?.doc ? oneLineDoc(method.jsDoc.doc) : "");
           if (methodDesc) {
             lines.push(methodDesc);
             lines.push("");

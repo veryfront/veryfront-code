@@ -35,7 +35,7 @@ import {
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { validateCachedBundlesByManifestOrCode } from "../esm/cached-bundle-validation.ts";
-import { extractFrameworkBundlePaths } from "../shared/framework-bundle-paths.ts";
+import { findMissingFrameworkBundlePaths } from "../shared/framework-bundle-paths.ts";
 
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
@@ -92,30 +92,20 @@ async function validateFrameworkBundles(
     return false;
   }
 
-  const bundlePaths = extractFrameworkBundlePaths(code);
-  if (bundlePaths.length === 0) return true;
-
-  const missing: string[] = [];
-  for (const path of bundlePaths) {
-    try {
-      if (!(await exists(path))) {
-        missing.push(path);
-      }
-    } catch (error) {
-      rendererLogger.error("Framework bundle validation error", {
+  const missing = await findMissingFrameworkBundlePaths(code, exists, {
+    onError: (path, error) => {
+      logger.error("Framework bundle validation error", {
         path,
         error: error instanceof Error ? error.message : String(error),
       });
-      missing.push(path);
-    }
-  }
+    },
+  });
 
   if (missing.length === 0) return true;
 
   logger.debug("Framework bundle validation failed", {
     cacheKey: cacheKey.slice(-40),
     failedCount: missing.length,
-    totalBundles: bundlePaths.length,
     firstMissing: missing[0]?.split("/").pop(),
   });
   return false;
@@ -166,6 +156,9 @@ export function runPipeline(
       const configHash = await computeConfigHash({
         reactVersion: ctx.reactVersion,
         jsxImportSource: ctx.jsxImportSource,
+        moduleServerUrl: ctx.moduleServerUrl,
+        vendorBundleHash: ctx.vendorBundleHash,
+        apiBaseUrl: ctx.apiBaseUrl,
         studioEmbed: ctx.studioEmbed,
         dev: ctx.dev,
       });

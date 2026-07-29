@@ -10,7 +10,8 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
-import { getStringArg } from "../../shared/parsed-args.ts";
+import { printJson } from "../../shared/json-output.ts";
+import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
 import { downloadUploadToFile, listAllUploads, type UploadItem } from "../uploads/command.ts";
 import { putRemoteFileFromLocal } from "../files/command.ts";
 import * as commandHelpers from "./command-helpers.ts";
@@ -97,14 +98,6 @@ const getKnowledgeIngestArgsSchema = defineSchema((v) =>
 const KnowledgeIngestArgsSchema = lazySchema(getKnowledgeIngestArgsSchema);
 
 export type KnowledgeIngestOptions = InferSchema<ReturnType<typeof getKnowledgeIngestArgsSchema>>;
-
-function getBooleanArg(args: ParsedArgs, ...keys: string[]): boolean {
-  return keys.some((key) => Boolean(args[key]));
-}
-
-function printJson(value: unknown): void {
-  console.log(JSON.stringify(value, null, 2));
-}
 
 function createKnowledgeIngestEventLogger(): Logger | null {
   const projectId = getEnv("TENANT_PROJECT_ID");

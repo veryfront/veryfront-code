@@ -5,6 +5,7 @@ import { join } from "#veryfront/compat/path";
 import {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
+  getUserDependencies,
   isSpecifierResolutionError,
   loadHandlerModule,
   resolveEsmUserDependencies,
@@ -178,6 +179,52 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     const route = await loadHandlerModule({
       projectDir: virtualBase,
       modulePath: join(virtualBase, "pages", "api", "aliased.ts"),
+      adapter: virtualAdapter,
+      config: undefined,
+    });
+
+    assertEquals(typeof route?.GET, "function");
+  });
+
+  it("resolves npm dependencies declared by adapter-backed virtual projects", async () => {
+    const realDir = await makeTempDir();
+    await fs.mkdir(join(realDir, "lib"), { recursive: true });
+    await fs.mkdir(join(realDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(realDir, "package.json"),
+      JSON.stringify({ dependencies: { zod: "4.3.6" } }),
+    );
+    await fs.writeTextFile(
+      join(realDir, "lib", "schema.ts"),
+      [
+        `import { z } from "zod";`,
+        `export const result = z.object({ ok: z.boolean() }).parse({ ok: true }).ok;`,
+      ].join("\n"),
+    );
+    await fs.writeTextFile(
+      join(realDir, "pages", "api", "activity.ts"),
+      [
+        `import { result } from "@/lib/schema.ts";`,
+        `export function GET() { return new Response(result ? "parsed" : "bad"); }`,
+      ].join("\n"),
+    );
+
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
+    const toReal = (path: string): string => path.replace(virtualBase, realDir);
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => fs.readTextFile(toReal(path)),
+        exists: (path: string) => fs.exists(toReal(path)),
+      },
+    };
+
+    const route = await loadHandlerModule({
+      projectDir: virtualBase,
+      modulePath: join(virtualBase, "pages", "api", "activity.ts"),
       adapter: virtualAdapter,
       config: undefined,
     });
@@ -483,6 +530,23 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
 
     assertEquals(packages, ["zod", "pdf-parse", "another-lib"]);
+  });
+
+  it("keeps zod as a user dependency for compiled binary resolution (#217)", () => {
+    const dependencies = new Map([
+      ["zod", "^3.22.0"],
+      ["pdf-parse", "^1.1.1"],
+    ]);
+
+    // A compiled binary needs zod in this list so a handler's `import { z } from
+    // "zod"` is rewritten to resolve from node_modules instead of 500ing (#217).
+    assertEquals(
+      [...getUserDependencies(dependencies)],
+      [
+        ["zod", "^3.22.0"],
+        ["pdf-parse", "^1.1.1"],
+      ],
+    );
   });
 
   it("rewrites bare veryfront imports using the package export map", async () => {

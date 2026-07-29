@@ -5,8 +5,11 @@ import {
   createDocumentStub,
   createElementClass,
   createElementStub,
+  createObserverClass,
   createWindowStub,
 } from "./dom-stubs.ts";
+import { resetSSRGlobalsState } from "./context.ts";
+import { setupSSRGlobals } from "./index.ts";
 
 describe("rendering/ssr-globals/dom-stubs", () => {
   describe("createElementStub", () => {
@@ -46,6 +49,29 @@ describe("rendering/ssr-globals/dom-stubs", () => {
       const el = createElementStub();
       el.classList.add();
       assertEquals(el.classList.contains(), false);
+    });
+
+    // Regression: `style` is a bag AND carries CSSOM methods. Libraries set CSS
+    // custom properties during render (Floating UI, Radix Presence, vaul); a
+    // bare {} would throw "el.style.setProperty is not a function" on SSR.
+    it("should expose style.setProperty/getPropertyValue/removeProperty", () => {
+      const el = createElementStub();
+      assertEquals(typeof el.style.setProperty, "function");
+      assertEquals(typeof el.style.getPropertyValue, "function");
+      assertEquals(typeof el.style.removeProperty, "function");
+      el.style.setProperty("--x", "1"); // must not throw
+      (el.style as Record<string, unknown>).color = "red"; // still a bag
+    });
+
+    // Regression: methods focus/scroll-lock/click-outside libs call during render.
+    it("should expose closest/matches/contains/focus/remove/scrollIntoView", () => {
+      const el = createElementStub();
+      assertEquals(el.closest(), null);
+      assertEquals(el.matches(), false);
+      assertEquals(el.contains(), false);
+      for (const m of ["focus", "blur", "click", "scrollIntoView", "remove"] as const) {
+        assertEquals(typeof el[m], "function");
+      }
     });
 
     it("should clone to a new element stub", () => {
@@ -99,6 +125,18 @@ describe("rendering/ssr-globals/dom-stubs", () => {
       }
     });
 
+    // Regression: CSS-in-JS libraries insert <style> tags through document.head
+    // during SSR, so the head stub must keep the element insertion API.
+    it("head exposes the full element-stub insertion API", () => {
+      const doc = createDocumentStub();
+      const style = doc.createElement();
+      const anchor = doc.createElement();
+      assertEquals(typeof doc.head.insertBefore, "function");
+      assertEquals(typeof doc.head.appendChild, "function");
+      assertEquals(Reflect.apply(doc.head.insertBefore, doc.head, [style, anchor]), undefined);
+      assertEquals(Reflect.apply(doc.head.appendChild, doc.head, [style]), undefined);
+    });
+
     it("should have complete readyState", () => {
       const doc = createDocumentStub();
       assertEquals(doc.readyState, "complete");
@@ -120,6 +158,38 @@ describe("rendering/ssr-globals/dom-stubs", () => {
       const doc = createDocumentStub();
       assertEquals(doc.fullscreenElement, null);
       assertEquals(doc.exitFullscreen, undefined);
+    });
+
+    // Regression: CSS-in-JS (emotion, styled-components) query/insert <style> in
+    // <head> during SSR; the head stub must carry querySelector, not just append.
+    it("head exposes querySelector/querySelectorAll/contains", () => {
+      const doc = createDocumentStub();
+      assertEquals(typeof doc.head.querySelector, "function");
+      assertEquals(doc.head.querySelector(), null);
+      assertEquals(doc.head.querySelectorAll().length, 0);
+      assertEquals(doc.head.contains(), false);
+    });
+
+    it("exposes activeElement/createDocumentFragment/createComment/visibilityState", () => {
+      const doc = createDocumentStub();
+      assertEquals(doc.activeElement, null);
+      assertEquals(doc.visibilityState, "visible");
+      assertEquals(typeof doc.createDocumentFragment().setAttribute, "function");
+      assertEquals(doc.createComment().textContent, "");
+    });
+  });
+
+  describe("createObserverClass", () => {
+    // Regression: libs constructing an observer at render/module scope (not in an
+    // effect) threw "ResizeObserver is not defined" during SSR.
+    it("constructs and exposes observe/unobserve/disconnect/takeRecords", () => {
+      const RO = createObserverClass("ResizeObserver");
+      assertEquals(RO.name, "ResizeObserver");
+      const ro = new RO();
+      ro.observe();
+      ro.unobserve();
+      ro.disconnect();
+      assertEquals(ro.takeRecords().length, 0);
     });
   });
 
@@ -188,6 +258,88 @@ describe("rendering/ssr-globals/dom-stubs", () => {
       assertEquals(win.URL, globalThis.URL);
       assertEquals(win.TextEncoder, globalThis.TextEncoder);
       assertEquals(win.TextDecoder, globalThis.TextDecoder);
+    });
+
+    it("should provide observer constructors", () => {
+      const win = createWindowStub();
+      assertEquals(typeof win.ResizeObserver, "function");
+      assertEquals(typeof win.IntersectionObserver, "function");
+      assertEquals(typeof win.MutationObserver, "function");
+    });
+  });
+
+  describe("setupSSRGlobals", () => {
+    type ObserverStubConstructor = new (callback?: unknown) => {
+      observe: () => void;
+      unobserve: () => void;
+      disconnect: () => void;
+      takeRecords: () => [];
+    };
+
+    const globalNames = [
+      "window",
+      "document",
+      "navigator",
+      "location",
+      "history",
+      "localStorage",
+      "sessionStorage",
+      "matchMedia",
+      "getComputedStyle",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+      "self",
+      "__VERYFRONT_SSR__",
+      "Element",
+      "HTMLElement",
+      "SVGElement",
+      "Node",
+      "Text",
+      "Comment",
+      "DocumentFragment",
+      "ResizeObserver",
+      "IntersectionObserver",
+      "MutationObserver",
+    ] as const;
+
+    it("should mirror observer constructors onto window", () => {
+      const originalDescriptors = new Map<PropertyKey, PropertyDescriptor | undefined>();
+      for (const name of globalNames) {
+        originalDescriptors.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+        Reflect.deleteProperty(globalThis, name);
+      }
+
+      try {
+        resetSSRGlobalsState();
+        setupSSRGlobals();
+
+        const globalRecord = globalThis as Record<string, unknown>;
+        const windowStub = globalRecord.window as {
+          ResizeObserver: ObserverStubConstructor;
+          IntersectionObserver: ObserverStubConstructor;
+          MutationObserver: ObserverStubConstructor;
+        };
+
+        for (
+          const name of ["ResizeObserver", "IntersectionObserver", "MutationObserver"] as const
+        ) {
+          assertEquals(windowStub[name], globalRecord[name]);
+          const observer = new windowStub[name]();
+          observer.observe();
+          observer.disconnect();
+          assertEquals(observer.takeRecords().length, 0);
+        }
+      } finally {
+        resetSSRGlobalsState();
+        for (const name of globalNames) {
+          const descriptor = originalDescriptors.get(name);
+          if (descriptor) {
+            Object.defineProperty(globalThis, name, descriptor);
+          } else {
+            Reflect.deleteProperty(globalThis, name);
+          }
+        }
+      }
     });
   });
 

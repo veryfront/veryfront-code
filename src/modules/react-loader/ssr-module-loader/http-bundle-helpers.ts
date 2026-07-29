@@ -142,16 +142,17 @@ export function extractHttpBundlePaths(code: string): Array<{ path: string; hash
  */
 export function extractAllFilePaths(code: string): string[] {
   // Create regex per call to avoid shared lastIndex state across concurrent calls.
-  const allFilePathsPattern = /file:\/\/([^"'\s]+\.(?:mjs|js|tsx|ts|jsx)(?:\?[^"'\s]*)?)/gi;
+  const allFilePathsPattern = /file:\/\/(\/[^"'\s]+)/gi;
+  const supportedPathPattern = /\.(?:mjs|js|tsx|ts|jsx)(?:\.src)?$/i;
 
   const paths: string[] = [];
   const seen = new Set<string>();
 
   let match: RegExpExecArray | null;
   while ((match = allFilePathsPattern.exec(code)) !== null) {
-    const path = match[1]?.replace(/\?.*$/, "");
+    const path = match[1]?.replace(/[?#].*$/, "");
 
-    if (!path || seen.has(path)) continue;
+    if (!path || !supportedPathPattern.test(path) || seen.has(path)) continue;
 
     seen.add(path);
     paths.push(path);

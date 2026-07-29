@@ -13,6 +13,11 @@
  */
 
 import type { Skill } from "./types.ts";
+import {
+  assertResolvedSkillSelector,
+  type ResolvedSkillSelectorSnapshot,
+  resolveSkillSelector,
+} from "./selector.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
@@ -30,6 +35,31 @@ export function isSkillVisibleTo(skill: Skill, scope?: AgentCapabilityScope): bo
 }
 
 class SkillRegistryClass extends ScopedRegistryFacade<Skill> {
+  /**
+   * Resolve a presence-aware, execution-facing skill selector snapshot.
+   *
+   * Omitted and `true` resolve to all visible skills, `[]` resolves to none,
+   * and explicit entries must resolve to this caller's own short names or
+   * exact visible ids. Explicit misses fail closed with a generic error.
+   */
+  resolveSelectorForAgent(
+    skillsConfig: true | string[] | undefined,
+    scope?: AgentCapabilityScope,
+  ): ResolvedSkillSelectorSnapshot<Skill> {
+    const snapshot = resolveSkillSelector({
+      definitions: [...this.getAll().values()],
+      selector: skillsConfig,
+      getId: (skill) => skill.id,
+      isVisible: (skill) => isSkillVisibleTo(skill, scope),
+      getShortName: (skill) => skill.shortName,
+      isOwnShortNameCandidate: (skill) =>
+        scope?.agentId !== undefined && skill.ownerAgentId === scope.agentId,
+      getSourcePath: (skill) => `${skill.rootPath}/SKILL.md`,
+    });
+    assertResolvedSkillSelector(snapshot);
+    return snapshot;
+  }
+
   /**
    * Resolve skills for an agent configuration.
    *

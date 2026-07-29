@@ -3,10 +3,11 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
-import { join } from "#veryfront/compat/path/index.ts";
+import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
 import {
   isCyclePlaceholder,
   reactReExportToEsmUrl,
+  resolveAndTransformVeryfrontImport,
   stripJsonAttributesFromModuleImports,
   transformFrameworkCode,
 } from "./transform.ts";
@@ -18,6 +19,7 @@ import {
   veryfrontTransformCache,
 } from "./constants.ts";
 import { buildReactUrl } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { resolveVeryfrontSourcePath } from "./path-resolver.ts";
 
 describe("reactReExportToEsmUrl", () => {
   const reactPath = (name: string) => join(FRAMEWORK_ROOT, "react", name);
@@ -497,6 +499,40 @@ describe("transformFrameworkCode depth-limit fallback", {
       assertStringIncludes(written, "X = 42");
     } finally {
       frameworkFileCache.delete(depCacheKey);
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("rematerializes a cached #veryfront file URL when the target file is missing", async () => {
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-stale-url-" });
+    const specifier = "#veryfront/utils/hash-utils.ts";
+    const sourcePath = await resolveVeryfrontSourcePath(specifier);
+    assert(sourcePath, `${specifier} did not resolve to a framework source file`);
+    const content = await Deno.readTextFile(sourcePath);
+    const transformKey = buildFrameworkTransformCacheKey(
+      `${specifier}:${sourcePath}`,
+      "19.2.4",
+      tmp,
+      content,
+    );
+    const missingPath = `${tmp}/framework/vfmod-vf-framework-stale.mjs`;
+    const staleFileUrl = `file://${missingPath}`;
+    veryfrontTransformCache.set(transformKey, staleFileUrl);
+
+    try {
+      const resolved = await resolveAndTransformVeryfrontImport(specifier, {
+        reactVersion: "19.2.4",
+        projectDir: tmp,
+        fs: createFileSystem(),
+      });
+
+      assert(resolved, "resolver did not return a file URL");
+      assertEquals(resolved === staleFileUrl, false);
+      const resolvedPath = fromFileUrl(resolved);
+      const stat = await Deno.stat(resolvedPath);
+      assertEquals(stat.isFile, true);
+    } finally {
+      veryfrontTransformCache.delete(transformKey);
       await Deno.remove(tmp, { recursive: true });
     }
   });

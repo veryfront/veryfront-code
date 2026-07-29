@@ -7,18 +7,19 @@ order: -1
 ## Prerequisites
 
 - Node.js 18.18 or later.
-- The Veryfront CLI installed. See [Installation](./installation.md).
+
+The examples use `veryfront` commands. If you have not installed the CLI
+globally, run them with `npx veryfront ...`.
 
 ## Create the app
 
 ```bash
-veryfront init support-agent --template ai-agent
+npm create veryfront@latest support-agent
 cd support-agent
 ```
 
-The quickstart uses `--template ai-agent` so the command creates the exact app
-shown below. Omit `--template` when you want the interactive template picker
-instead.
+The `ai-agent` starter is the default. Pass `-- --template <template>` when you
+want a different starting point.
 
 The `ai-agent` template creates a runnable chat app:
 
@@ -80,3 +81,31 @@ curl -N -X POST http://localhost:3000/api/ag-ui \
 ```
 
 The answer should stream. The curl response should emit `data:` lines.
+
+## Preview and deploy it
+
+From the project directory, push the source to its cloud preview:
+
+```bash
+npx veryfront push
+```
+
+The command creates or links the cloud project, stores that local identity in
+ignored `.veryfront/project.json`, and prints the preview URL. When the preview
+is ready for production, deploy the exact pushed source digest:
+
+Push preserves remote-only files by default. Use
+`npx veryfront push --prune --dry-run` to preview an exact remote mirror, then
+run `npx veryfront push --prune` only when those deletions are intentional.
+
+```bash
+npx veryfront deploy --env production
+```
+
+Deploy uses the last verified Push receipt. If no receipt exists yet, it first
+runs a quiet Push so the first production deploy still works as one command.
+
+Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
+configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
+lower-level tenant or project-ID environment references, then the ignored local
+link.

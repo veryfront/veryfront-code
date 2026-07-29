@@ -3,7 +3,7 @@ import type { CommandHelp } from "../../help/types.ts";
 export const pushHelp: CommandHelp = {
   name: "push",
   category: "deploy",
-  description: "Upload local source files to a Veryfront branch",
+  description: "Push source to a cloud preview",
   usage: "veryfront push [options]",
   options: [
     {
@@ -11,20 +11,20 @@ export const pushHelp: CommandHelp = {
       description: "Source directory (default: current directory)",
     },
     {
-      flag: "-p, --project-slug <slug>",
+      flag: "-p, --project <slug>",
       description: "Project slug to push to (overrides inferred project)",
     },
     {
       flag: "-b, --branch <name>",
-      description: "Branch name (default: cli/push-<timestamp>, use 'main' for direct push)",
-    },
-    {
-      flag: "-f, --force",
-      description: "Skip confirmation for compatibility (prefer global --yes)",
+      description: "Preview branch to update (default: main)",
     },
     {
       flag: "--dry-run",
-      description: "Show what would be uploaded without uploading",
+      description: "Show planned uploads and deletions without changing remote files",
+    },
+    {
+      flag: "--prune",
+      description: "Delete managed remote files that are missing locally",
     },
     {
       flag: "-q, --quiet",
@@ -33,20 +33,19 @@ export const pushHelp: CommandHelp = {
   ],
   examples: [
     "veryfront push",
-    "veryfront push -p my-project",
-    "veryfront push --dir ./my-project",
     "veryfront push --branch feature-header",
-    "veryfront push --branch main             # Push directly to main",
-    "veryfront push --branch main --yes       # Non-interactive CI push",
     "veryfront push --dry-run",
+    "veryfront push --prune --dry-run",
   ],
   notes: [
-    "Requires VERYFRONT_API_TOKEN env var or veryfront.json config",
-    "Without --branch, creates a timestamped branch that you can review in Studio",
-    "Use --branch main to update the existing Veryfront main branch",
-    "Uploads supported text source files using their relative paths",
+    "Pushes main by default and prints its stable cloud preview URL",
+    "Use --branch to create or update an isolated branch preview",
+    "Preview branch names use lowercase letters, numbers, and hyphens",
+    "By default, push uploads local files and preserves remote-only files",
+    "Use --prune to remove managed remote files that are missing locally",
+    "Run veryfront deploy when the preview is ready for an environment",
     ".vfignore excludes matching local files and preserves matching remote files",
+    "--dry-run previews deletions only when --prune is present",
     "--dry-run never creates a project or branch, changes remote files, or writes a Push receipt",
-    "If an upload fails, Push does not delete remote files",
   ],
 };

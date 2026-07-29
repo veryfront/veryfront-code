@@ -255,7 +255,7 @@ function createBuiltinLLMProviderExtension(
         );
         didRegister = registerBuiltinLLMProvider(registry, provider);
         if (didRegister) {
-          ctx.logger.info(
+          ctx.logger.debug(
             `[${definition.extensionName}] ${provider.id} provider registered`,
           );
         }

@@ -39,7 +39,7 @@ const extDbSqlite: ExtensionFactory = () => {
 
     setup(ctx) {
       ctx.provide("SqliteStore", store);
-      ctx.logger.info("[ext-db-sqlite] SQLite store registered");
+      ctx.logger.debug("[ext-db-sqlite] SQLite store registered");
     },
   };
 };

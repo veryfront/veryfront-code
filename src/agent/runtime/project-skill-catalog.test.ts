@@ -241,6 +241,36 @@ Deno.test("catalog includes colocated skills with owner metadata and source path
   assertEquals(own?.sourcePath, "agents/researcher/SKILL.md");
 });
 
+Deno.test("catalog accepts provider-safe colocated skill ids for dotted agent ids", async () => {
+  const { catalog } = createSkillCatalog({
+    paths: [
+      "agents/a.b/AGENT.md",
+      "agents/a.b/skills/x_y/SKILL.md",
+      "agents/a.b/skills/x_y/references/styles.md",
+    ],
+    contentsByPath: {
+      "agents/a.b/skills/x_y/SKILL.md": `---
+name: X Y
+description: Owned underscore helper
+metadata:
+  display_name: X Y
+---
+Use X Y.
+`,
+    },
+  });
+
+  const skills = await catalog();
+  assertEquals(skills.map((skill) => skill.id), ["a_b--x_y"]);
+  const nested = skills[0];
+  assertEquals(nested?.name, "a_b--x_y");
+  assertEquals(nested?.displayName, "X Y");
+  assertEquals(nested?.ownerAgentId, "a.b");
+  assertEquals(nested?.shortName, "x_y");
+  assertEquals(nested?.sourcePath, "agents/a.b/skills/x_y/SKILL.md");
+  assertEquals(nested?.references, ["references/styles.md"]);
+});
+
 Deno.test("catalog keeps global skills unowned and carries their source paths", async () => {
   const { catalog } = createSkillCatalog({
     paths: ["skills/gmail/SKILL.md"],

@@ -56,3 +56,4 @@ export {
   type CompileProjectCssResult,
   createCompileProjectCss,
 } from "./css-compile.ts";
+export { routeForPage } from "./route-path.ts";

@@ -14,16 +14,53 @@ export interface SelectOption {
   description?: string;
 }
 
+export interface PromptDisplayOptions {
+  showMarker?: boolean;
+  showInstructions?: boolean;
+  showDescriptions?: boolean;
+  clearOnCancel?: boolean;
+  interruptOnCtrlC?: boolean;
+}
+
+export class PromptInterruptedError extends Error {
+  override name = "PromptInterruptedError";
+}
+
 // ANSI escape codes
 const CLEAR_LINE = "\x1b[2K";
 const MOVE_UP = "\x1b[1A";
 const HIDE_CURSOR = "\x1b[?25l";
 const SHOW_CURSOR = "\x1b[?25h";
+const PROMPT_INTERRUPTED = Symbol("prompt-interrupted");
 
 function clearOptions(count: number): void {
   for (let i = 0; i < count; i++) {
     writeStdout(MOVE_UP + CLEAR_LINE);
   }
+}
+
+export function formatPrompt(
+  question: string,
+  showMarker = false,
+  instructions = "Use arrow keys to navigate, Enter to select",
+): [string, string] {
+  const marker = showMarker ? `${brand("?")} ` : "";
+  return [
+    `${marker}${question}`,
+    muted(`  ${instructions}`),
+  ];
+}
+
+export function formatSelectOption(
+  option: SelectOption,
+  selected: boolean,
+  showDescription = true,
+): string {
+  const marker = selected ? brand("●") : " ";
+  const description = showDescription && option.description
+    ? muted(` - ${option.description}`)
+    : "";
+  return `  ${marker} ${option.label}${description}`;
 }
 
 /**
@@ -33,24 +70,27 @@ export async function select(
   question: string,
   options: SelectOption[],
   defaultIndex = 0,
+  display: PromptDisplayOptions = {},
 ): Promise<string | null> {
   let selectedIndex = defaultIndex;
+  const [heading, instructions] = formatPrompt(question, display.showMarker ?? false);
 
-  console.log("");
-  console.log(brand("?") + " " + question);
-  console.log(muted("  Use arrow keys to navigate, Enter to select"));
-  console.log("");
+  console.log(heading);
+  if (display.showInstructions ?? true) console.log(instructions);
+  console.log();
 
   function renderOptions(): void {
     for (let i = 0; i < options.length; i++) {
       const opt = options[i];
       if (!opt) continue;
 
-      const isSelected = i === selectedIndex;
-      const prefix = isSelected ? brand("❯") : " ";
-      const label = isSelected ? brand(opt.label) : opt.label;
-      const desc = opt.description ? muted(` - ${opt.description}`) : "";
-      console.log(`  ${prefix} ${label}${desc}`);
+      console.log(
+        formatSelectOption(
+          opt,
+          i === selectedIndex,
+          display.showDescriptions ?? true,
+        ),
+      );
     }
   }
 
@@ -77,13 +117,27 @@ export async function select(
 
       if (key === "enter") return options[selectedIndex]?.value ?? null;
       if (key === "escape") return null;
+      if (key === "ctrl-c") {
+        return display.interruptOnCtrlC ? PROMPT_INTERRUPTED : null;
+      }
 
       return undefined;
     });
 
     clearOptions(options.length);
+    if (result === PROMPT_INTERRUPTED) {
+      if (display.clearOnCancel) {
+        clearOptions((display.showInstructions ?? true) ? 4 : 3);
+      }
+      throw new PromptInterruptedError();
+    }
+
     const selected = options[selectedIndex];
-    if (selected) console.log(`  ${brand("✓")} ${selected.label}`);
+    if (result === null && display.clearOnCancel) {
+      clearOptions((display.showInstructions ?? true) ? 4 : 3);
+    } else if (selected) {
+      console.log(`  ✓ ${selected.label}`);
+    }
 
     return result;
   } finally {
@@ -103,7 +157,7 @@ export async function multiSelect(
   const selected = new Set(preselected);
 
   console.log("");
-  console.log(brand("?") + " " + question);
+  console.log(question);
   console.log(muted("  Use arrow keys, Space to toggle, Enter to confirm"));
   console.log("");
 
@@ -162,7 +216,7 @@ export async function multiSelect(
 
     clearOptions(options.length);
     for (const opt of options) {
-      if (selected.has(opt.value)) console.log(`  ${brand("✓")} ${opt.label}`);
+      if (selected.has(opt.value)) console.log(`  ✓ ${opt.label}`);
     }
     if (selected.size === 0) console.log(muted("  No items selected"));
 
@@ -178,13 +232,19 @@ export async function multiSelect(
 export async function textInput(
   question: string,
   defaultValue = "",
+  display: PromptDisplayOptions = {},
 ): Promise<string | null> {
   let value = defaultValue;
   let cursorPos = value.length;
+  const [heading, instructions] = formatPrompt(
+    question,
+    display.showMarker ?? false,
+    "Type your answer, Enter to submit, Esc to cancel",
+  );
 
   console.log("");
-  console.log(brand("?") + " " + question);
-  console.log(muted("  Type your answer, Enter to submit, Esc to cancel"));
+  console.log(heading);
+  if (display.showInstructions ?? true) console.log(instructions);
   console.log("");
 
   function renderInput(): void {
@@ -251,7 +311,7 @@ export async function textInput(
 
     clearOptions(1);
     if (result !== null) {
-      console.log(`  ${brand("✓")} ${result}`);
+      console.log(`  ✓ ${result}`);
     } else {
       console.log(muted("  Cancelled"));
     }

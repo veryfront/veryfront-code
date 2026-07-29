@@ -7,26 +7,30 @@ import {
   onSignal,
   promptSync,
   readStdinByteSync,
+  readStdinLine,
   setRawMode,
   writeStdout,
 } from "veryfront/platform";
+import { isTruthyEnvValue } from "veryfront/utils";
 import { DEFAULT_DEV_PORT } from "../shared/constants.ts";
-import {
-  bold,
-  brand,
-  dim,
-  error as errorColor,
-  muted,
-  shouldUseColor,
-  success as successColor,
-  warning as warningColor,
-} from "../ui/colors.ts";
+import { bold, brand, dim, error as errorColor, warning as warningColor } from "../ui/colors.ts";
 import { isJsonMode } from "../shared/json-output.ts";
+import {
+  cliLogger as _canonicalCliLogger,
+  LogLevel,
+  refreshLoggerConfig as _refreshCanonicalLoggerConfig,
+  setLogLevel as _setCanonicalLogLevel,
+} from "veryfront/utils/logger";
 
 type LoggerMethod = (...args: unknown[]) => void;
 
 function debugEnabled(): boolean {
-  return _verboseMode || getEnv("VERYFRONT_DEBUG") === "1";
+  return _verboseMode || isTruthyEnvValue(getEnv("VERYFRONT_DEBUG"));
+}
+
+function firstAsString(args: unknown[]): string {
+  const [first] = args;
+  return typeof first === "string" ? first : String(first);
 }
 
 export const cliLogger: {
@@ -38,14 +42,14 @@ export const cliLogger: {
   component: (_name: string) => typeof cliLogger;
 } = {
   debug: (...args) => {
-    if (!debugEnabled()) return;
-    console.debug(...args);
+    if (isJsonMode() || !debugEnabled()) return;
+    _canonicalCliLogger.debug(firstAsString(args), ...args.slice(1));
   },
-  info: (...args) => console.log(...args),
-  warn: (...args) => console.warn(...args),
-  error: (...args) => console.error(...args),
+  info: (...args) => _canonicalCliLogger.info(firstAsString(args), ...args.slice(1)),
+  warn: (...args) => _canonicalCliLogger.warn(firstAsString(args), ...args.slice(1)),
+  error: (...args) => _canonicalCliLogger.error(firstAsString(args), ...args.slice(1)),
   child: () => cliLogger,
-  // CLI logger uses plain text output; component names are intentionally ignored.
+  // CLI logger ignores component names — no structured tag in CLI output.
   component: () => cliLogger,
 };
 
@@ -79,25 +83,20 @@ export function isTTY(): boolean {
   return isStdoutTTY();
 }
 
-export function showLogo(): void {
+export function showHeader(): void {
   if (isJsonMode()) return;
 
-  if (!shouldUseColor()) {
-    cliLogger.info(`
-⚡ Veryfront v${VERSION}
-──────────────────────
-`);
-    return;
-  }
-
-  cliLogger.info(`
-${brand("⚡")} ${bold(brand("Veryfront"))} ${dim(`v${VERSION}`)}
-${muted("──────────────────────")}
-`);
+  // Raw brand output is written directly to stdout, not through the canonical
+  // logger, so it never picks up a timestamp/tag/glyph prefix.
+  console.log(`${bold(brand("Veryfront"))} ${dim(`(v${VERSION})`)}`);
+  console.log();
 }
 
+/** @deprecated Use {@link showHeader}. */
+export const showLogo = showHeader;
+
 export function logSuccess(message: string): void {
-  console.log(`  ${successColor("✓")} ${message}`);
+  console.log(`  ✓ ${message}`);
 }
 
 export function logError(message: string): void {
@@ -106,6 +105,13 @@ export function logError(message: string): void {
 
 export function logWarning(message: string): void {
   console.warn(`  ${warningColor("!")} ${message}`);
+}
+
+export function logUsageError(message: string, hint?: string): void {
+  logError(message);
+  if (hint) {
+    console.error(`  ${dim(hint)}`);
+  }
 }
 
 export function logInfo(message: string): void {
@@ -138,14 +144,26 @@ export function registerTerminationSignals(
 let _verboseMode = false;
 let _quietMode = false;
 
+function syncCanonicalLogLevel(): void {
+  if (_verboseMode) {
+    _setCanonicalLogLevel(LogLevel.DEBUG);
+  } else if (_quietMode) {
+    _setCanonicalLogLevel(LogLevel.WARN);
+  } else {
+    _refreshCanonicalLoggerConfig();
+  }
+}
+
 export function setVerboseMode(enabled: boolean): void {
   _verboseMode = enabled;
   if (enabled) _quietMode = false;
+  syncCanonicalLogLevel();
 }
 
 export function setQuietMode(enabled: boolean): void {
   _quietMode = enabled;
   if (enabled) _verboseMode = false;
+  syncCanonicalLogLevel();
 }
 
 export function isVerbose(): boolean {
@@ -156,9 +174,20 @@ export function isQuiet(): boolean {
   return _quietMode;
 }
 
-export function promptUser(message: string): Promise<string> {
-  const input = promptSync(message);
-  return Promise.resolve(input?.trim() ?? "");
+export async function promptUser(message: string): Promise<string> {
+  const { isInteractive } = await import("../shared/interactive.ts");
+  if (!isInteractive()) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Interactive input is disabled. Pass the required value as a flag or argument.",
+    });
+  }
+
+  if (typeof globalThis.prompt === "function") {
+    return promptSync(message)?.trim() ?? "";
+  }
+
+  writeStdout(message);
+  return (await readStdinLine())?.trim() ?? "";
 }
 
 const CTRL_C = 0x03;

@@ -3,10 +3,22 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests for build stats display
  */
 
-import "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { displayBuildSuccess } from "./stats-display.ts";
 import type { BuildStats } from "./types.ts";
+
+function captureOutput(run: () => void): string {
+  const originalLog = console.log;
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => lines.push(args.join(" "));
+  try {
+    run();
+  } finally {
+    console.log = originalLog;
+  }
+  return lines.join("\n");
+}
 
 describe("build/stats-display", () => {
   describe("displayBuildSuccess", () => {
@@ -87,7 +99,10 @@ describe("build/stats-display", () => {
         duration: 10,
       };
 
-      displayBuildSuccess(stats, Date.now(), "dist", false);
+      const output = captureOutput(() => displayBuildSuccess(stats, Date.now(), "dist", false));
+
+      assertEquals(output.includes("1 page, 1 chunk, 1 asset"), true);
+      assertEquals(output.includes("1 pages"), false);
     });
   });
 });

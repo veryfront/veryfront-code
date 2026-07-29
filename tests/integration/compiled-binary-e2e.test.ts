@@ -2679,7 +2679,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     });
   });
 
-  // Test: Layout at components/layouts/ path via config (mimics codersociety production setup)
+  // Test: Layout at components/layouts/ path via config (mirrors a production setup)
   // Regression test: layout at components/layouts/DefaultLayout.tsx was not found due to
   // path normalization double-stripping in getEntityInfo (components/ prefix matched, then
   // layouts/ prefix matched again, corrupting the path).
@@ -2925,7 +2925,7 @@ export default function Home() {
   });
 
   // Test: MDX layout at components/layouts/ path via config
-  // Tests the exact codersociety pattern: config layout using .mdx file in components/layouts/
+  // Tests the production pattern: config layout using .mdx file in components/layouts/
   it("should render MDX layout from components/layouts/ via config", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-mdx-components-layout-test-" });
 

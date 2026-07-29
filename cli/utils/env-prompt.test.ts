@@ -5,7 +5,8 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { generateGitignoreContent } from "./env-prompt.ts";
+import { generateGitignoreContent, promptForEnvVars } from "./env-prompt.ts";
+import { resetInteractiveMode, setNonInteractive } from "../shared/interactive.ts";
 
 describe("env-prompt", () => {
   describe("generateGitignoreContent", () => {
@@ -70,6 +71,23 @@ describe("env-prompt", () => {
     });
   });
 
-  // Note: promptForEnvVars is async and requires user input
-  // Full testing would require mocking stdin and environment detection
+  it("does not read sensitive input when the CLI is non-interactive", async () => {
+    try {
+      setNonInteractive(true);
+      const result = await promptForEnvVars(
+        [{
+          name: "SECRET_TOKEN",
+          description: "Test token",
+          required: true,
+          sensitive: true,
+        }],
+        { interactive: true },
+      );
+
+      assertEquals(result.values.SECRET_TOKEN, "");
+      assertStringIncludes(result.envContent, "# SECRET_TOKEN=");
+    } finally {
+      resetInteractiveMode();
+    }
+  });
 });

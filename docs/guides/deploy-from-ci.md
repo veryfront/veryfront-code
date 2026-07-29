@@ -38,55 +38,77 @@ Use these operating controls:
 - A protected `staging` environment in Veryfront.
 - A protected `production` environment in Veryfront before promotion.
 - A CI job that runs after changes merge to `main`.
-- `.veryfront/` in `.gitignore` so local Push receipts are never committed.
+- `.veryfront/` in `.gitignore` so local project links and Push receipts are
+  never committed.
 
 See [Configuration](./configuration.md) for the Cloud bootstrap environment
 variables.
 
+CI should use explicit project configuration, such as `VERYFRONT_PROJECT_SLUG`
+or committed config. Project reference precedence is
+`VERYFRONT_PROJECT_SLUG` or environment configuration, then
+`veryfront.config.ts`, then legacy `veryfront.json`, then lower-level tenant or
+project-ID environment references such as `VERYFRONT_PROJECT_ID`, then the
+ignored local link in `.veryfront/project.json`.
+
 ## Define the managed source set
 
-Push and `pull --prune` reconcile supported text files only. The managed set
-includes TypeScript, JavaScript, JSON, stylesheets, HTML, Markdown, MDX, text,
-SVG, YAML, and TOML. Binary images, fonts, archives, and other unsupported
-files remain outside this handoff. Manage those files through another reviewed
-delivery path.
+Push uploads supported text files only and preserves remote-only files by
+default. In Git-authoritative CI, use `push --prune` to reconcile remote
+deletions. `pull --prune` performs the corresponding destructive local
+reconciliation. The managed set includes TypeScript, JavaScript, JSON,
+stylesheets, HTML, Markdown, MDX, text, SVG, YAML, and TOML.
+Binary images, fonts, archives, and other unsupported files remain outside
+this handoff. Manage those files through another reviewed delivery path.
 
 Both commands use the same `.vfignore` rules. Ignored files and unsupported
 extensions are not reconciled with Veryfront.
 
 If the project has a `.vfignore`, keep it as a regular file inside the project
-and commit it to Git. An untracked, Git-ignored, or symlinked `.vfignore` cannot
-provide clean production provenance, so Deploy will stop instead of treating
-the checkout as the reviewed commit.
+and commit it to Git so the managed source set is reproducible. Symlinked
+`.vfignore` files are rejected. Git cleanliness is recorded as provenance
+metadata; Deploy promotes the source digest recorded by Push rather than
+recomputing production bytes from the working tree.
 
 ## Preview the Push
 
 Preview the source reconciliation before it changes Veryfront:
 
 ```bash title="Terminal"
-veryfront push --branch main --dry-run
+veryfront push --branch main --prune --dry-run
 ```
 
 Push dry-run reads the local and remote source needed for the comparison but
 makes no mutation. It does not create a missing project or branch, upload or
-delete files, or write `.veryfront/push-receipt.json`.
+delete files, or write `.veryfront/push-receipt.json`. `--prune` includes
+remote-only managed files in the preview so CI can verify the exact mirror
+before applying it.
 
 ## Start with staging
 
 Run Push and Deploy from the same Git checkout and CI job:
 
 ```bash title="Terminal"
-veryfront push --branch main --yes
+veryfront push --branch main --prune --yes
 veryfront deploy --branch main --env staging --yes
 ```
 
 Push records the checked-out commit and source digest in
-`.veryfront/push-receipt.json`. Deploy requires that receipt to match the same
-project, branch, commit, and checkout. Do not split the two commands across CI
-jobs or clean the checkout between them.
+`.veryfront/push-receipt.json`. Deploy uses that last verified Push receipt,
+requires it to match the same project, branch, and Git commit, then verifies the
+release source digest before assigning it to the environment. Uncommitted edits
+made after Push are not promoted and do not invalidate that receipt; run Push
+again to update the preview before deploying those bytes. If no receipt exists,
+Deploy bootstraps one with a quiet Push, but CI should keep the explicit Push
+step so review and production promotion remain separate. Do not split the two
+commands across CI jobs or clean the checkout between them.
 
 Deploy creates an immutable release from the pushed source, then assigns that
 release to `staging`.
+
+This workflow uses `--prune` because Git `main` is the canonical managed
+source. Interactive Pushes should omit it when Studio-only files must remain
+available.
 
 The current directory is the Veryfront project directory. It maps to the Git
 repository root by default. For a monorepo, run both commands from the same
@@ -159,7 +181,7 @@ jobs:
             exit 0
           fi
 
-          npx --no-install veryfront push --branch main --yes
+          npx --no-install veryfront push --branch main --prune --yes
           npx --no-install veryfront deploy --branch main --env staging --yes
 ```
 
@@ -198,12 +220,13 @@ After that approval, use the same serialized job pattern with the production
 environment:
 
 ```bash title="Terminal"
-veryfront push --branch main --yes
+veryfront push --branch main --prune --yes
 veryfront deploy --branch main --env production --yes
 ```
 
-Keep Push and Deploy in the same checkout and job after promotion. Do not add a
-second unsynchronized writer for production.
+Keep Push and Deploy in the same checkout and job after promotion so production
+is deployed from the exact source digest pushed by that job. Do not add a second
+unsynchronized writer for production.
 
 ## Capture deployment evidence
 
@@ -211,8 +234,8 @@ Deploy prints human-readable output by default. Add `--json` only when the CI
 system needs machine-readable audit evidence. JSON mode emits NDJSON records
 for each step and a final result.
 
-Write the audit file outside the Git checkout so it does not make the source
-dirty before Deploy verifies the Push receipt:
+Write the audit file outside the Git checkout so a later Push cannot include it
+in the managed source set:
 
 ```bash title="GitHub Actions deployment step"
 set -o pipefail

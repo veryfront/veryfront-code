@@ -374,6 +374,47 @@ export function resolveAgentSkills(agent: Agent): RuntimeAgentSkill[] {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeConfiguredSuggestion(value: unknown): unknown {
+  if (typeof value === "string") {
+    return {
+      type: "prompt",
+      title: value,
+      prompt: value,
+    };
+  }
+
+  if (
+    isRecord(value) &&
+    value.type === undefined &&
+    typeof value.title === "string" &&
+    typeof value.prompt === "string"
+  ) {
+    return {
+      type: "prompt",
+      title: value.title,
+      prompt: value.prompt,
+    };
+  }
+
+  return value;
+}
+
+function normalizeConfiguredSuggestions(value: unknown): unknown {
+  const wrapped = Array.isArray(value) ? { suggestions: value } : value;
+  if (!isRecord(wrapped) || !Array.isArray(wrapped.suggestions)) {
+    return wrapped;
+  }
+
+  return {
+    ...wrapped,
+    suggestions: wrapped.suggestions.map(normalizeConfiguredSuggestion),
+  };
+}
+
 /** Get browser-safe runtime metadata for an agent. */
 export function getRuntimeAgentPublicMetadata(
   id: string,
@@ -382,7 +423,9 @@ export function getRuntimeAgentPublicMetadata(
   const rawConfig = agent.config as unknown as Record<string, unknown>;
   const suggestionsParseResult = rawConfig.suggestions === undefined
     ? null
-    : RuntimeSuggestionsSchema.safeParse(rawConfig.suggestions);
+    : RuntimeSuggestionsSchema.safeParse(
+      normalizeConfiguredSuggestions(rawConfig.suggestions),
+    );
   const suggestions = suggestionsParseResult?.success ? suggestionsParseResult.data : undefined;
   const avatarUrl = typeof rawConfig.avatarUrl === "string" && rawConfig.avatarUrl.trim().length > 0
     ? rawConfig.avatarUrl

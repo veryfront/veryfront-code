@@ -21,10 +21,13 @@ const noopLogger = {
   error() {},
 } satisfies ExtensionContext["logger"];
 
-function createContext(registry: EvalReportExporterRegistry): ExtensionContext {
+function createContext(
+  registry: EvalReportExporterRegistry,
+  logger: ExtensionContext["logger"] = noopLogger,
+): ExtensionContext {
   return {
     config: {},
-    logger: noopLogger,
+    logger,
     provide() {},
     get: <T>(name: string) => name === EvalReportExporterRegistryName ? registry as T : undefined,
     require: <T>(name: string) => {
@@ -218,9 +221,20 @@ describe("ext-eval-report-http", () => {
   it("does not register an exporter when no URL is configured", async () => {
     const registry = createEvalReportExporterRegistry();
     const extension = factory({ exporters: [{ id: "missing-url" }] });
+    const debug: string[] = [];
+    const info: string[] = [];
 
-    await extension.setup?.(createContext(registry));
+    await extension.setup?.(
+      createContext(registry, {
+        debug: (message) => debug.push(message),
+        info: (message) => info.push(message),
+        warn() {},
+        error() {},
+      }),
+    );
 
     assertEquals(registry.list(), []);
+    assertEquals(info, []);
+    assertEquals(debug.some((message) => message.includes("no URL configured")), true);
   });
 });

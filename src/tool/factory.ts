@@ -59,7 +59,7 @@ function tryConvert(
 }
 
 function logSchemaResult(logPrefix: string, toolId: string, method: string, schema: JsonSchema) {
-  agentLogger.info(
+  agentLogger.debug(
     `[${logPrefix}] ${method} schema for "${toolId}": ${
       Object.keys(schema.properties || {}).length
     } properties`,

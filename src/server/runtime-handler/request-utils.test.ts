@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   HTTP_GATEWAY_TIMEOUT,
+  isHMRWebSocketUpgrade,
   isInternalHost,
   isLightweightPath,
   isMonitoringPath,
@@ -131,6 +132,21 @@ describe("request-utils", () => {
       assertEquals(isWebSocketPath("/"), false);
       assertEquals(isWebSocketPath("/_ws/sub"), false);
       assertEquals(isWebSocketPath("/_wss"), false);
+    });
+  });
+
+  describe("isHMRWebSocketUpgrade", () => {
+    it("preserves only exact HMR websocket upgrade requests", () => {
+      const upgradeRequest = new Request("http://localhost/_ws", {
+        headers: { upgrade: "websocket" },
+      });
+
+      assertEquals(isHMRWebSocketUpgrade(upgradeRequest, "/_ws"), true);
+      assertEquals(isHMRWebSocketUpgrade(upgradeRequest, "/api/slow"), false);
+      assertEquals(
+        isHMRWebSocketUpgrade(new Request("http://localhost/_ws"), "/_ws"),
+        false,
+      );
     });
   });
 

@@ -38,7 +38,7 @@ import {
   getVeryfrontCloudBootstrap,
   runWithVeryfrontCloudContextAsync,
 } from "veryfront/provider";
-import { applyRuntimeAuthContext } from "#cli/shared/runtime-auth";
+import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 import { cliLogger, exitProcess, VERSION } from "#cli/utils";
 import {
   discoverProjectAgentRuntime,
@@ -567,8 +567,10 @@ export async function hydrateEvalRuntimeAuth(
   config: EvalRuntimeAuthConfig | null | undefined,
 ) {
   return await applyRuntimeAuthContext({
-    projectDir,
-    projectSlug: resolveEvalRuntimeProjectSlug(config),
+    linkedProjectSlug: await resolveLinkedProjectSlug(
+      projectDir,
+      resolveEvalRuntimeProjectSlug(config),
+    ),
   });
 }
 

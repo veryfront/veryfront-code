@@ -1,29 +1,20 @@
-import { bold, cyan, dim, red } from "#cli/ui";
-import { cliLogger } from "#cli/utils";
+import { brand, dim } from "#cli/ui";
+import { cliLogger, isVerbose, logError } from "#cli/utils";
 import { exit, getStdout } from "veryfront/platform";
 
 export function handleBuildError(error: unknown): never {
   getStdout()?.write?.(`\r${" ".repeat(80)}\r`);
 
-  cliLogger.error(`\n${red("✗")}${bold(red(" Build failed!\n"))}`);
+  const message = error instanceof Error ? error.message : String(error);
+  console.log();
+  logError(message);
 
-  if (!(error instanceof Error)) {
-    cliLogger.error(`${red("Error: ")}${String(error)}`);
-    cliLogger.error(`\n${dim("For help, run: ")}${cyan("veryfront build --help")}`);
-
-    if (import.meta.main) exit(1);
-    throw error;
-  }
-
-  cliLogger.error(`${red("Error: ")}${error.message}`);
-
-  const stack = error.stack;
-  if (stack) {
+  if (isVerbose() && error instanceof Error && error.stack) {
     cliLogger.error(`\n${dim("Stack trace:")}`);
-    cliLogger.error(dim(stack.split("\n").slice(1, 5).join("\n")));
+    cliLogger.error(dim(error.stack.split("\n").slice(1, 5).join("\n")));
   }
-
-  cliLogger.error(`\n${dim("For help, run: ")}${cyan("veryfront build --help")}`);
+  cliLogger.error(`  Run ${brand("veryfront build --help")} for usage.`);
+  cliLogger.error("");
 
   if (import.meta.main) exit(1);
   throw error;

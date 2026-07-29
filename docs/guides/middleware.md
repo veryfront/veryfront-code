@@ -135,13 +135,25 @@ For anything that must be correct across requests, instances, and deploys, such 
 
 ### Cleanup callbacks
 
-Register teardown logic that runs after the response is sent:
+Register teardown logic that runs once per request, after the response body has
+finished, been canceled, or errored:
 
 ```ts
 pipeline.onTeardown(async () => {
   await flushMetrics();
 });
 ```
+
+`onTeardown` callbacks run for every `handle()` and `execute()` call, so a
+module-scoped route pipeline fires them on each request. For streamed responses,
+cleanup waits until the body reaches EOF, is canceled by the consumer, or
+errors. Bodyless, locked, or already-read responses and handler or middleware
+exceptions clean up before the `handle()`/`execute()` promise resolves. Callback
+errors are logged and swallowed, never surfaced to the client.
+
+For long-lived pipelines that need one-shot cleanup on shutdown rather than per
+request, call `pipeline.teardown()` explicitly. Unlike the per-request run,
+`teardown()` drains and discards the callbacks so they never fire again.
 
 ## Custom middleware
 

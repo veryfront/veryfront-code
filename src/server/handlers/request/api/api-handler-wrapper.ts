@@ -5,10 +5,15 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "../../types.ts";
-import { getApiHandler, withApiHandler } from "./pages-api-handler.ts";
+import {
+  ensurePreviewSourceSnapshotFresh,
+  getApiHandler,
+  withApiHandler,
+} from "./pages-api-handler.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
+import { PageResolver } from "#veryfront/rendering/page-resolution/page-resolver.ts";
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -107,7 +112,7 @@ export class ApiHandlerWrapper extends BaseHandler {
     );
   }
 
-  private handleWithContext(
+  private async handleWithContext(
     req: Request,
     ctx: HandlerContext,
     pathname: string,
@@ -116,11 +121,33 @@ export class ApiHandlerWrapper extends BaseHandler {
       "api.handleWithContext",
       async () => {
         try {
+          // WebSocket pokes update mutable previews immediately. This bounded,
+          // coalesced check is the fallback for missed pokes and establishes
+          // one source snapshot for route and primitive discovery.
+          await ensurePreviewSourceSnapshotFresh(ctx);
+
+          const canResolveAsPage = pathname !== "/api" &&
+            !pathname.startsWith("/api/") &&
+            (req.method === "GET" || req.method === "HEAD");
+
+          let isPageRequest = false;
+          if (canResolveAsPage) {
+            isPageRequest = await this.isPageRequest(pathname, ctx);
+          }
+
+          if (isPageRequest) {
+            return this.continue();
+          }
+
           // Lazy per-project primitive discovery (agents, tools) on first access.
           // Must run within runWithContext so VFS and registry scope are correct.
           await ensureProjectDiscovery(ctx);
 
-          const apiRes = await withApiHandler(ctx, (api) => api.handle(req, ctx));
+          const apiRes = await withApiHandler(
+            ctx,
+            (api) => api.handle(req, ctx),
+            { sourceSnapshotReady: true },
+          );
 
           if (!apiRes) {
             this.logDebug(
@@ -165,5 +192,29 @@ export class ApiHandlerWrapper extends BaseHandler {
         "api.projectSlug": ctx.projectSlug ?? "unknown",
       },
     );
+  }
+
+  private async isPageRequest(pathname: string, ctx: HandlerContext): Promise<boolean> {
+    const slug = pathname === "/" ? "" : pathname.replace(/^\/+|\/+$/g, "");
+    const pageResolver = new PageResolver({
+      projectDir: ctx.projectDir,
+      projectId: ctx.projectId,
+      config: ctx.config ?? {},
+      adapter: ctx.adapter,
+    });
+
+    try {
+      return await pageResolver.pageExists(slug);
+    } catch (error) {
+      this.logDebug(
+        "[API-Wrapper] Page ownership is indeterminate; preserving API discovery",
+        {
+          pathname,
+          error: this.getErrorMessage(error),
+        },
+        ctx,
+      );
+      return false;
+    }
   }
 }

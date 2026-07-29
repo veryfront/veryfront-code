@@ -572,7 +572,11 @@ export class RenderPipeline {
             );
 
             try {
-              const skipLayouts = isDotPath(slug, pageInfo.entity.path);
+              const skipLayouts = isDotPath({
+                slug,
+                filePath: pageInfo.entity.path,
+                projectDir: this.config.projectDir,
+              });
 
               const layoutCollectStart = performance.now();
               const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await profilePhase(
@@ -862,7 +866,11 @@ export class RenderPipeline {
       () => this.config.pageResolver.resolvePage(slug),
     );
 
-    const skipLayouts = isDotPath(slug, pageInfo.entity.path);
+    const skipLayouts = isDotPath({
+      slug,
+      filePath: pageInfo.entity.path,
+      projectDir: this.config.projectDir,
+    });
     const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await profilePhase(
       "page_data.collect_layouts",
       () => this.config.layoutOrchestrator.collectLayouts(pageInfo),

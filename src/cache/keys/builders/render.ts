@@ -120,7 +120,9 @@ export function buildProxyManagerCacheKey(
 }
 
 /**
- * Build a query-aware cache key that is safe for multi-tenant caching.
+ * Build a query-aware key that preserves query semantics for multi-tenant
+ * caching. The result can contain internal `*HH` byte escapes; ApiCacheBackend
+ * maps completed concrete keys to the API cache schema at its boundary.
  *
  * @param slug - Base page slug
  * @param url - Optional URL with query params

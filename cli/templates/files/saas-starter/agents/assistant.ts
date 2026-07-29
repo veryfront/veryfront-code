@@ -8,18 +8,16 @@ export default agent({
   tools: true,
   memory: { type: "conversation", maxMessages: 50 },
   maxSteps: 10,
-  suggestions: {
-    suggestions: [
-      {
-        type: "prompt",
-        title: "Summarize account",
-        prompt: "Summarize the latest account activity.",
-      },
-      {
-        type: "prompt",
-        title: "Find customers",
-        prompt: "Find customers who need attention.",
-      },
-    ],
-  },
+  suggestions: [
+    {
+      type: "prompt",
+      title: "Summarize account",
+      prompt: "Summarize the latest account activity.",
+    },
+    {
+      type: "prompt",
+      title: "Find customers",
+      prompt: "Find customers who need attention.",
+    },
+  ],
 });

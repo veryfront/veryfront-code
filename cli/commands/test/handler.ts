@@ -1,7 +1,7 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
-import { exitProcess } from "#cli/utils";
+import { exitProcess, logSuccess } from "#cli/utils";
 import { runCommand } from "veryfront/platform";
 import {
   createErrorEnvelope,
@@ -67,7 +67,7 @@ export async function handleTestCommand(args: ParsedArgs): Promise<void> {
     }
   } else {
     if (noTestModules) {
-      console.log("No test modules found.");
+      logSuccess("No test modules found.");
     } else {
       if (stdout) console.log(stdout);
       if (stderr) console.error(stderr);

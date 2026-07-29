@@ -7,16 +7,16 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
-  assertMatch,
   assertRejects,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import {
+  buildPushUrls,
   capturePushSourceSnapshot,
   createBranch,
   ensureBranch,
-  generateBranchName,
   pushCommand,
   recordPushReceipt,
   resolvePushRemoteFiles,
@@ -34,6 +34,9 @@ import {
   readPushReceipt,
   writePushReceipt,
 } from "../../shared/deployment-provenance.ts";
+import { setJsonMode } from "../../shared/json-output.ts";
+import { readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
+import { stripAnsi } from "../../ui/ansi.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -105,6 +108,10 @@ function restoreEnv(key: string, value: string | undefined): void {
   else Deno.env.set(key, value);
 }
 
+function captureConsoleLog(output: string[]): (...args: unknown[]) => void {
+  return (...args: unknown[]) => output.push(args.map(String).join(" "));
+}
+
 async function assertMissingProjectDryRunDoesNotMutate(branch: string): Promise<void> {
   const originalFetch = globalThis.fetch;
   const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
@@ -156,22 +163,347 @@ async function assertMissingProjectDryRunDoesNotMutate(branch: string): Promise<
   }
 }
 
-describe("generateBranchName", () => {
-  it("should generate a branch name with push- prefix", () => {
-    const name = generateBranchName();
-    assertMatch(name, /^push-/);
+describe("buildPushUrls", () => {
+  it("uses the stable project preview for main", () => {
+    assertEquals(buildPushUrls("my-project", "main"), {
+      studio: "https://veryfront.com/projects/my-project?branch=main",
+      preview: "https://my-project.preview.veryfront.com",
+    });
   });
 
-  it("should generate a branch name with timestamp", () => {
-    const name = generateBranchName();
-    assertMatch(name, /^push-\d{8}T\d{6}$/);
+  it("uses the exact branch name in named preview URLs", () => {
+    assertEquals(buildPushUrls("my-project", "feature-auth"), {
+      studio: "https://veryfront.com/projects/my-project?branch=feature-auth",
+      preview: "https://my-project--feature-auth.preview.veryfront.com",
+    });
   });
 
-  it("should generate unique names on successive calls", () => {
-    const name1 = generateBranchName();
-    const name2 = generateBranchName();
-    assertMatch(name1, /^push-\d{8}T\d{6}$/);
-    assertMatch(name2, /^push-\d{8}T\d{6}$/);
+  it("rejects branch names that cannot round-trip through preview DNS", () => {
+    assertThrows(
+      () => buildPushUrls("my-project", "Feature/auth"),
+      Error,
+      'Preview branch "Feature/auth" is not DNS-safe. Use "feature-auth" instead.',
+    );
+  });
+
+  it("keeps suggested branch names DNS-safe after truncation", () => {
+    const branch = `${"A".repeat(62)}-extra`;
+    const suggestion = "a".repeat(62);
+
+    assertThrows(
+      () => buildPushUrls("my-project", branch),
+      Error,
+      `Preview branch "${branch}" is not DNS-safe. Use "${suggestion}" instead.`,
+    );
+  });
+
+  it("rejects combined project and branch labels over the DNS limit", () => {
+    assertThrows(
+      () => buildPushUrls("p".repeat(40), "b".repeat(22)),
+      Error,
+      "Preview hostname is too long. Shorten the project slug or branch name.",
+    );
+  });
+});
+
+describe("push JSON output", () => {
+  it("uses the canonical project slug for project-ID targets", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalLog = console.log;
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("TENANT_PROJECT_SLUG");
+      Deno.env.set("VERYFRONT_PROJECT_ID", "project-123");
+      Deno.env.delete("TENANT_PROJECT_ID");
+      _resetEnvironmentConfig();
+      setJsonMode(true);
+
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname === "/projects/project-123/files") {
+          return Response.json({ data: [], page_info: {} });
+        }
+        if (request.method === "GET" && url.pathname === "/projects/project-123") {
+          return Response.json({ id: "project-123", slug: "canonical-slug" });
+        }
+        throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+      }) as typeof fetch;
+
+      for (const dryRun of [true, false]) {
+        const projectDir = await Deno.makeTempDir();
+        const output: string[] = [];
+        console.log = captureConsoleLog(output);
+        try {
+          await pushCommand({ projectDir, dryRun });
+
+          const result = JSON.parse(output.at(-1)!);
+          assertEquals(result.data.projectSlug, "canonical-slug");
+          assertEquals(
+            result.data.previewUrl,
+            "https://canonical-slug.preview.veryfront.com",
+          );
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      }
+
+      setJsonMode(false);
+      const projectDir = await Deno.makeTempDir();
+      const output: string[] = [];
+      console.log = captureConsoleLog(output);
+      try {
+        await pushCommand({ projectDir, dryRun: false });
+
+        const humanOutput = output.map(stripAnsi);
+        assertEquals(
+          humanOutput.includes(
+            "  Studio:  https://veryfront.com/projects/canonical-slug?branch=main",
+          ),
+          true,
+        );
+        assertEquals(
+          humanOutput.includes(
+            "  Preview: https://canonical-slug.preview.veryfront.com",
+          ),
+          true,
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    } finally {
+      setJsonMode(false);
+      console.log = originalLog;
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("keeps an up-to-date dry run on the dry-run schema", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalLog = console.log;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const projectDir = await Deno.makeTempDir();
+    const output: string[] = [];
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+      Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
+      _resetEnvironmentConfig();
+      setJsonMode(true);
+      console.log = captureConsoleLog(output);
+
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
+          return Response.json({ data: [], page_info: {} });
+        }
+        throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+      }) as typeof fetch;
+
+      await pushCommand({ projectDir, dryRun: true });
+
+      assertEquals(output.length, 1);
+      assertEquals(JSON.parse(output[0]!), {
+        type: "result",
+        success: true,
+        data: {
+          projectSlug: "json-project",
+          branch: "main",
+          dryRun: true,
+          projectExists: true,
+          wouldUpload: 0,
+          wouldDelete: 0,
+          studioUrl: "https://veryfront.com/projects/json-project?branch=main",
+          previewUrl: "https://json-project.preview.veryfront.com",
+        },
+      });
+    } finally {
+      setJsonMode(false);
+      console.log = originalLog;
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("emits one result line and no human output for a dry run", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalLog = console.log;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const output: string[] = [];
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
+        _resetEnvironmentConfig();
+        setJsonMode(true);
+        console.log = captureConsoleLog(output);
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
+            return Response.json({ data: [], page_info: {} });
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, dryRun: true });
+      });
+
+      assertEquals(output.length, 1);
+      assertEquals(JSON.parse(output[0]!), {
+        type: "result",
+        success: true,
+        data: {
+          projectSlug: "json-project",
+          branch: "main",
+          dryRun: true,
+          projectExists: true,
+          wouldUpload: 1,
+          wouldDelete: 0,
+          studioUrl: "https://veryfront.com/projects/json-project?branch=main",
+          previewUrl: "https://json-project.preview.veryfront.com",
+        },
+      });
+    } finally {
+      setJsonMode(false);
+      console.log = originalLog;
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("emits one result line and no human output after a successful push", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalLog = console.log;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const output: string[] = [];
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
+        _resetEnvironmentConfig();
+        setJsonMode(true);
+        console.log = captureConsoleLog(output);
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
+            return Response.json({ data: [], page_info: {} });
+          }
+          if (
+            request.method === "PUT" &&
+            url.pathname === "/projects/json-project/files/app.ts"
+          ) {
+            return Response.json({});
+          }
+          if (request.method === "GET" && url.pathname === "/projects/json-project") {
+            return Response.json({ id: "project-123", slug: "json-project" });
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir });
+      });
+
+      assertEquals(output.length, 1);
+      const result = JSON.parse(output[0]!);
+      assertEquals(result.type, "result");
+      assertEquals(result.success, true);
+      assertEquals(result.data.projectSlug, "json-project");
+      assertEquals(result.data.branch, "main");
+      assertEquals(result.data.dryRun, false);
+      assertEquals(result.data.uploaded, 1);
+      assertEquals(result.data.deleted, 0);
+      assertEquals(result.data.previewUrl, "https://json-project.preview.veryfront.com");
+    } finally {
+      setJsonMode(false);
+      console.log = originalLog;
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("reports no dry-run deletions unless prune is requested", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalLog = console.log;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
+        _resetEnvironmentConfig();
+        setJsonMode(true);
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
+            return Response.json({
+              data: [
+                {
+                  path: "remote-only.ts",
+                  content: "remote\n",
+                  size: 8,
+                  type: "file",
+                  created_at: "",
+                  updated_at: "",
+                },
+              ],
+              page_info: {},
+            });
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        const withoutPruneOutput: string[] = [];
+        console.log = captureConsoleLog(withoutPruneOutput);
+        await pushCommand({ projectDir, dryRun: true });
+        assertEquals(JSON.parse(withoutPruneOutput[0]!).data.wouldDelete, 0);
+
+        const withPruneOutput: string[] = [];
+        console.log = captureConsoleLog(withPruneOutput);
+        await pushCommand({ projectDir, dryRun: true, prune: true });
+        assertEquals(JSON.parse(withPruneOutput[0]!).data.wouldDelete, 1);
+      });
+    } finally {
+      setJsonMode(false);
+      console.log = originalLog;
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
   });
 });
 
@@ -583,7 +915,7 @@ describe("push receipt source snapshot", () => {
     });
   });
 
-  it("persists a renamed inferred slug for later push and deploy commands", async () => {
+  it("persists a renamed inferred project link for later push and deploy commands", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = [
       "VERYFRONT_API_TOKEN",
@@ -599,8 +931,193 @@ describe("push receipt source snapshot", () => {
     await withGitProject(async ({ projectDir }) => {
       let reservedSlug = "";
       let projectCreateRequests = 0;
+      const requests: string[] = [];
       const uploaded = new Map<string, string>();
 
+      try {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.delete("VERYFRONT_API_BASE_URL");
+        for (const key of envKeys.slice(3)) Deno.env.delete(key);
+        await Deno.writeTextFile(
+          `${projectDir}/package.json`,
+          `${JSON.stringify({ name: "my-project" }, null, 2)}\n`,
+        );
+        _resetEnvironmentConfig();
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          requests.push(`${request.method} ${url.pathname}`);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/project-123/files") {
+            return Response.json({ data: [], page_info: {} });
+          }
+          if (request.method === "POST" && url.pathname === "/projects") {
+            projectCreateRequests++;
+            const body = await request.json() as { slug: string };
+            if (body.slug === "my-project") {
+              return Response.json({ error: "slug taken" }, { status: 409 });
+            }
+            reservedSlug = body.slug;
+            return Response.json({ id: "project-123" }, { status: 201 });
+          }
+          if (
+            request.method === "GET" &&
+            url.pathname === `/projects/${reservedSlug}/files`
+          ) {
+            return Response.json({ data: [], page_info: {} });
+          }
+          if (
+            request.method === "PUT" &&
+            (url.pathname.startsWith(`/projects/${reservedSlug}/files/`) ||
+              url.pathname.startsWith("/projects/project-123/files/"))
+          ) {
+            const path = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
+            const body = await request.json() as { content: string };
+            uploaded.set(path, body.content);
+            return Response.json({});
+          }
+          if (
+            request.method === "GET" &&
+            (url.pathname === `/projects/${reservedSlug}` ||
+              url.pathname === "/projects/project-123")
+          ) {
+            return Response.json({ id: "project-123", slug: reservedSlug });
+          }
+
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, quiet: true });
+
+        const link = await readProjectLink(projectDir);
+        assertEquals(link?.projectId, "project-123");
+        assertEquals(link?.projectSlug, reservedSlug);
+        assertEquals((await resolveConfig(projectDir)).projectId, "project-123");
+        assertEquals((await resolveConfig(projectDir)).projectSlug, reservedSlug);
+        await assertRejects(
+          () => Deno.stat(`${projectDir}/veryfront.json`),
+          Deno.errors.NotFound,
+        );
+
+        const projectCreateRequestsAfterFirstPush = projectCreateRequests;
+        await pushCommand({ projectDir, quiet: true });
+
+        assertEquals(projectCreateRequests, projectCreateRequestsAfterFirstPush);
+        assertEquals(
+          requests.filter((request) => request === "GET /projects/project-123/files").length > 0,
+          true,
+        );
+        assertEquals([...uploaded.keys()].sort(), ["app.ts", "package.json"]);
+        assertEquals((await readPushReceipt(projectDir))?.projectSlug, reservedSlug);
+      } finally {
+        globalThis.fetch = originalFetch;
+        envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+        _resetEnvironmentConfig();
+      }
+    });
+  });
+
+  it("creates a new project instead of linking an inferred existing-project slug", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_API_BASE_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    await withGitProject(async ({ projectDir }) => {
+      const createSlugs: string[] = [];
+      let reservedSlug = "";
+
+      try {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.delete("VERYFRONT_API_BASE_URL");
+        for (const key of envKeys.slice(3)) Deno.env.delete(key);
+        await Deno.writeTextFile(
+          `${projectDir}/package.json`,
+          `${JSON.stringify({ name: "my-project" }, null, 2)}\n`,
+        );
+        _resetEnvironmentConfig();
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "POST" && url.pathname === "/projects") {
+            const body = await request.json() as { slug: string };
+            createSlugs.push(body.slug);
+            if (body.slug === "my-project") {
+              return Response.json({ error: "slug taken" }, { status: 409 });
+            }
+            reservedSlug = body.slug;
+            return Response.json({ id: "project-123" }, { status: 201 });
+          }
+          if (
+            request.method === "GET" &&
+            url.pathname === `/projects/${reservedSlug}/files`
+          ) {
+            return Response.json({ data: [], page_info: {} });
+          }
+          if (
+            request.method === "PUT" &&
+            (url.pathname.startsWith(`/projects/${reservedSlug}/files/`) ||
+              url.pathname.startsWith("/projects/project-123/files/"))
+          ) {
+            return Response.json({ error: "upload failed" }, { status: 500 });
+          }
+
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await assertRejects(
+          () => pushCommand({ projectDir, quiet: true }),
+          Error,
+          "failed",
+        );
+
+        assertEquals(createSlugs[0], "my-project");
+        assertEquals(createSlugs.length, 2);
+        assertEquals(/^my-project-[a-z0-9]{6}$/.test(reservedSlug), true);
+        const link = await readProjectLink(projectDir);
+        assertEquals(link?.projectId, "project-123");
+        assertEquals(link?.projectSlug, reservedSlug);
+        await assertRejects(
+          () => Deno.stat(`${projectDir}/veryfront.json`),
+          Deno.errors.NotFound,
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+        envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+        _resetEnvironmentConfig();
+      }
+    });
+  });
+
+  it("persists an accepted inferred slug before uploading project files", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_API_BASE_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    await withGitProject(async ({ projectDir }) => {
       try {
         Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
         Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
@@ -620,61 +1137,40 @@ describe("push receipt source snapshot", () => {
             return Response.json({ error: "not found" }, { status: 404 });
           }
           if (request.method === "POST" && url.pathname === "/projects") {
-            projectCreateRequests++;
-            const body = await request.json() as { slug: string };
-            if (body.slug === "my-project") {
-              return Response.json({ error: "slug taken" }, { status: 409 });
-            }
-            reservedSlug = body.slug;
+            assertEquals((await request.json() as { slug: string }).slug, "my-project");
             return Response.json({ id: "project-123" }, { status: 201 });
           }
           if (
-            request.method === "GET" &&
-            url.pathname === `/projects/${reservedSlug}/files`
-          ) {
-            return Response.json({ data: [], page_info: {} });
-          }
-          if (
             request.method === "PUT" &&
-            url.pathname.startsWith(`/projects/${reservedSlug}/files/`)
+            (url.pathname.startsWith("/projects/my-project/files/") ||
+              url.pathname.startsWith("/projects/project-123/files/"))
           ) {
-            const path = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
-            const body = await request.json() as { content: string };
-            uploaded.set(path, body.content);
-            return Response.json({});
-          }
-          if (
-            request.method === "GET" &&
-            url.pathname === `/projects/${reservedSlug}`
-          ) {
-            return Response.json({ id: "project-123", slug: reservedSlug });
+            const link = await readProjectLink(projectDir);
+            assertEquals(link?.projectId, "project-123");
+            assertEquals(link?.projectSlug, "my-project");
+            await assertRejects(
+              () => Deno.stat(`${projectDir}/veryfront.json`),
+              Deno.errors.NotFound,
+            );
+            return Response.json({ error: "upload failed" }, { status: 500 });
           }
 
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
         }) as typeof fetch;
 
-        await pushCommand({
-          projectDir,
-          branch: "main",
-          force: true,
-          quiet: true,
-        });
+        await assertRejects(
+          () => pushCommand({ projectDir, quiet: true }),
+          Error,
+          "failed",
+        );
 
-        const config = JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`));
-        assertEquals(config.projectSlug, reservedSlug);
-        assertEquals((await resolveConfig(projectDir)).projectSlug, reservedSlug);
-
-        await pushCommand({
-          projectDir,
-          branch: "main",
-          force: true,
-          quiet: true,
-        });
-
-        assertEquals(projectCreateRequests, 2);
-        assertEquals([...uploaded.keys()].sort(), ["app.ts", "package.json", "veryfront.json"]);
-        assertEquals(JSON.parse(uploaded.get("veryfront.json") ?? "{}").projectSlug, reservedSlug);
-        assertEquals((await readPushReceipt(projectDir))?.projectSlug, reservedSlug);
+        const link = await readProjectLink(projectDir);
+        assertEquals(link?.projectId, "project-123");
+        assertEquals(link?.projectSlug, "my-project");
+        await assertRejects(
+          () => Deno.stat(`${projectDir}/veryfront.json`),
+          Deno.errors.NotFound,
+        );
       } finally {
         globalThis.fetch = originalFetch;
         envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
@@ -733,7 +1229,7 @@ describe("push receipt source snapshot", () => {
             return Promise.resolve();
           },
           options: { projectSlug: "my-project" },
-          message: "Use a different --project-slug value",
+          message: "Use a different --project value",
         },
       ];
 
@@ -763,6 +1259,56 @@ describe("push receipt source snapshot", () => {
       _resetEnvironmentConfig();
     }
   });
+
+  it("fails closed when an explicit project ID is missing", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const requests: string[] = [];
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("TENANT_PROJECT_SLUG");
+      Deno.env.set("VERYFRONT_PROJECT_ID", "missing-project-id");
+      Deno.env.delete("TENANT_PROJECT_ID");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        requests.push(`${request.method} ${url.pathname}`);
+        return Response.json({ error: "not found" }, { status: 404 });
+      }) as typeof fetch;
+
+      for (const dryRun of [true, false]) {
+        await withGitProject(async ({ projectDir }) => {
+          await assertRejects(
+            () => pushCommand({ projectDir, dryRun, quiet: true }),
+            Error,
+            'Project "missing-project-id" was not found',
+          );
+        });
+      }
+
+      assertEquals(requests, [
+        "GET /projects/missing-project-id/files",
+        "GET /projects/missing-project-id/files",
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
 });
 
 describe("push dry-run project bootstrap", () => {
@@ -772,6 +1318,60 @@ describe("push dry-run project bootstrap", () => {
 
   it("does not create a missing project or branch when targeting a named branch", async () => {
     await assertMissingProjectDryRunDoesNotMutate("feature-x");
+  });
+
+  it("does not rewrite an existing local project link", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        for (const key of envKeys.slice(2)) Deno.env.delete(key);
+        _resetEnvironmentConfig();
+
+        await writeProjectLink(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "stale-slug",
+        });
+        const linkPath = `${projectDir}/.veryfront/project.json`;
+        const originalLink = await Deno.readTextFile(linkPath);
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/project-123/files") {
+            return Response.json({ data: [], page_info: {} });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/project-123") {
+            return Response.json({ id: "project-123", slug: "canonical-slug" });
+          }
+
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({
+          projectDir,
+          dryRun: true,
+          quiet: true,
+        });
+
+        assertEquals(await Deno.readTextFile(linkPath), originalLink);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
   });
 });
 
@@ -988,6 +1588,7 @@ describe("push failure ordering", () => {
             pushCommand({
               projectDir,
               branch: "main",
+              prune: true,
               force: true,
               quiet: true,
             }),
@@ -1007,6 +1608,58 @@ describe("push failure ordering", () => {
 });
 
 describe("push deletion ownership", () => {
+  it("preserves remote-only files unless prune is requested", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const requests: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          requests.push(`${request.method} ${url.pathname}`);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [{ path: "remote-only.ts", content: "remote\n" }],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "PUT") return Response.json({});
+          if (request.method === "DELETE") return Response.json({});
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "main", quiet: true });
+
+        assertEquals(requests.some((request) => request.startsWith("DELETE ")), false);
+        const receipt = await readPushReceipt(projectDir);
+        assertExists(receipt);
+        assertEquals(
+          receipt.sourceDigest,
+          await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "remote-only.ts", content: "remote\n" },
+          ]),
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("does not delete remote files protected by .vfignore", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
@@ -1049,7 +1702,7 @@ describe("push deletion ownership", () => {
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
         }) as typeof fetch;
 
-        await pushCommand({ projectDir, branch: "main", force: true, quiet: true });
+        await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
 
         assertEquals(deleted, ["stale.ts"]);
         const receipt = await readPushReceipt(projectDir);
@@ -1060,6 +1713,64 @@ describe("push deletion ownership", () => {
             { path: "app.ts", content: "export const value = 1;\n" },
             { path: "inbox/seen/runtime.json", content: '{"seen":true}\n' },
             { path: "submissions/submitted/runtime.md", content: "runtime\n" },
+          ]),
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("preserves unsupported remote files during prune", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const deleted: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [
+                { path: "app.ts", content: "stale app" },
+                { path: "stale.ts", content: "stale source" },
+                { path: "assets/logo.png", content: "<PNG>" },
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "PUT") return Response.json({});
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
+
+        assertEquals(deleted, ["stale.ts"]);
+        const receipt = await readPushReceipt(projectDir);
+        assertExists(receipt);
+        assertEquals(
+          receipt.sourceDigest,
+          await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "assets/logo.png", content: "<PNG>" },
           ]),
         );
       });

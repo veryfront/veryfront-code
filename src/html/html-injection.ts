@@ -19,6 +19,12 @@ import {
   getProdScripts,
   getStudioScripts,
 } from "./dev-scripts.ts";
+import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
+import {
+  type ConfiguredRouteDirectories,
+  routeForConfiguredPage,
+} from "#veryfront/release-assets/route-path.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 export interface InjectHTMLContentOptions {
   mode: string;
@@ -57,6 +63,10 @@ export interface InjectHTMLContentOptions {
   importMapJson?: string;
   /** Framework-generated project stylesheet for production shells */
   projectStylesheetHref?: string;
+  /** Ready release asset manifest used to hydrate full HTML client pages */
+  releaseAssetManifest?: ReleaseAssetManifest | null;
+  /** Configured route directories used to map physical page paths to route keys */
+  directories?: ConfiguredRouteDirectories;
 }
 
 function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
@@ -129,18 +139,22 @@ export function injectHTMLContent(
 
   // Inject hydration data for 'use client' pages (before scripts, so client.js can find it)
   if (options.pagePath && options.isClientPage && hasBodyClose) {
+    const pagePath = toProjectRelativePath(options.pagePath, options.projectDir);
     // Serialize with jsonForInlineScript, not raw JSON.stringify: route params
     // (and slug) are URL-derived and decoded, so a segment like `%3C/script%3E`
     // would otherwise break out of the <script> tag (reflected XSS). This escapes
     // `<`, `>`, `&`, and line separators, matching the main shell hydration path.
     const hydrationData = jsonForInlineScript({
-      pagePath: toProjectRelativePath(options.pagePath, options.projectDir),
+      pagePath,
       slug: options.slug,
       isClientPage: true,
       params: options.params ?? {},
       clientModuleStrategy: determineClientModuleStrategy({
         isLocalProject: options.isLocalProject ?? options.mode === "development",
         environment: options.environment,
+      }),
+      releaseAssetModules: buildReleaseAssetModules(options.releaseAssetManifest, {
+        route: routeForConfiguredPage(pagePath, options.directories),
       }),
     });
     const nonceAttr = buildNonceAttribute(options.nonce);

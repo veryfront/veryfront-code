@@ -11,6 +11,7 @@ import {
   AnimatedDotMatrix,
   bold,
   brand,
+  BRAND_TRUECOLOR,
   dim,
   error,
   formatDuration,
@@ -22,7 +23,7 @@ import {
   typeCommand,
   typeLine,
 } from "#cli/ui";
-import { exitProcess, isTTY } from "#cli/utils";
+import { exitProcess, isTTY, logError } from "#cli/utils";
 import {
   createOAuthAuthorizationUrl,
   createOAuthState,
@@ -32,14 +33,20 @@ import {
 } from "../../auth/index.ts";
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
 import { getCallbackUrl, startCallbackServer } from "../../auth/callback-server.ts";
-import { DEFAULT_CALLBACK_PORT, DEFAULT_LOGIN_TIMEOUT_MS } from "#cli/shared/constants";
+import {
+  DEFAULT_CALLBACK_PORT,
+  DEFAULT_LOGIN_TIMEOUT_MS,
+  resolveCliApiUrl,
+} from "#cli/shared/constants";
 import { initCommand } from "../init/index.ts";
-import { writeProjectSlug } from "#cli/shared/config";
+import { writeProjectLink } from "../../shared/project-link.ts";
 import { randomSuffix } from "#cli/shared/slug";
 import { deployCommand } from "../deploy/index.ts";
 import { pushCommand } from "../push/index.ts";
 import { devCommand } from "../dev/index.ts";
-import { reserveProjectSlug } from "#cli/shared/reserve-slug";
+import { type ApiClient, createApiClient } from "#cli/shared/config";
+import { getProjectTarget, type ProjectTarget } from "../../shared/deployment-provenance.ts";
+import { reserveProjectSlug, type ReserveResult } from "#cli/shared/reserve-slug";
 import { DEMO_STEPS, type DemoStep } from "./steps.ts";
 
 // ANSI escape codes
@@ -63,6 +70,22 @@ const AUTH_OPTIONS: { id: AuthMethod; label: string }[] = [
   { id: "microsoft", label: "Microsoft" },
   { id: "token", label: "API Token" },
 ];
+
+export async function resolveDemoReservedProject(
+  reserveResult: ReserveResult,
+  token: string,
+  client: ApiClient = createApiClient({
+    apiUrl: resolveCliApiUrl(),
+    apiToken: token,
+    projectSlug: reserveResult.slug,
+  }),
+): Promise<ProjectTarget> {
+  if (reserveResult.projectId) {
+    return { id: reserveResult.projectId, slug: reserveResult.slug };
+  }
+
+  return getProjectTarget(client, reserveResult.slug);
+}
 
 function clearCountdownLine(): void {
   write(`\r  ${" ".repeat(30)}\r`);
@@ -178,7 +201,7 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
 
     await saveToken(tokenInput);
     console.log();
-    console.log(`  ${success("✓")} Logged in as ${brand(userInfo.email)}`);
+    console.log(`  ✓ Logged in as ${brand(userInfo.email)}`);
     return true;
   }
 
@@ -232,7 +255,7 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
     await saveToken(result.token);
 
     console.log();
-    console.log(`  ${success("✓")} Logged in as ${brand(userInfo.email)}`);
+    console.log(`  ✓ Logged in as ${brand(userInfo.email)}`);
     return true;
   } catch (e) {
     console.log();
@@ -320,7 +343,7 @@ async function executeStepAction(
         const userInfo = await validateToken(existingToken);
         if (userInfo) {
           console.log();
-          console.log(`  ${success("✓")} Already logged in as ${brand(userInfo.email)}`);
+          console.log(`  ✓ Already logged in as ${brand(userInfo.email)}`);
           return;
         }
       }
@@ -341,7 +364,6 @@ async function executeStepAction(
 
       const projectDir = join(cwd(), projectName);
       const slug = `${projectName}-${randomSuffix()}`;
-      await writeProjectSlug(projectDir, slug);
       actualProjectSlug = slug;
 
       const token = await readToken();
@@ -352,11 +374,14 @@ async function executeStepAction(
 
       try {
         const reserveResult = await reserveProjectSlug(slug, token);
-        if (reserveResult.slug !== slug) {
-          await writeProjectSlug(projectDir, reserveResult.slug);
-          actualProjectSlug = reserveResult.slug;
-        }
-        console.log(`  ${success("✓")} Project registered`);
+        const project = await resolveDemoReservedProject(reserveResult, token);
+        await writeProjectLink(projectDir, {
+          controlPlane: resolveCliApiUrl(),
+          projectId: project.id,
+          projectSlug: project.slug,
+        });
+        actualProjectSlug = project.slug;
+        console.log("  ✓ Project registered");
 
         console.log(`  ${dim("Pushing code...")}`);
         chdir(projectDir);
@@ -367,7 +392,7 @@ async function executeStepAction(
           dryRun: false,
           quiet: true,
         });
-        console.log(`  ${success("✓")} Code pushed`);
+        console.log("  ✓ Code pushed");
       } catch (e) {
         console.log(`  ${error("✗")} ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -381,7 +406,7 @@ async function executeStepAction(
         console.log();
         console.log(`  ${dim("Skipping dev server in auto mode...")}`);
         console.log();
-        console.log(`  ${success("✓")} Dev server skipped`);
+        console.log("  ✓ Dev server skipped");
         return;
       }
 
@@ -423,7 +448,7 @@ async function executeStepAction(
 
       await delay(500);
       console.log();
-      console.log(`  ${success("✓")} Dev server stopped`);
+      console.log("  ✓ Dev server stopped");
       return;
     }
 
@@ -441,7 +466,7 @@ async function executeStepAction(
         });
 
         const deployedUrl = `https://${actualProjectSlug ?? projectName}.production.veryfront.com`;
-        console.log(`  ${success("✓")} Deployed to ${brand(deployedUrl)}`);
+        console.log(`  ✓ Deployed to ${brand(deployedUrl)}`);
       } catch (e) {
         console.log(
           `  ${error("✗")} Deploy failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -500,7 +525,7 @@ function renderProgress(currentStepIndex: number, steps: DemoStep[]): string {
 
     if (i < currentStepIndex) {
       const durationText = duration ? dim(` (${formatDuration(duration)})`) : "";
-      lines.push(`  ${success("✓")} ${dim(step.title) + durationText}`);
+      lines.push(`  ✓ ${dim(step.title) + durationText}`);
       continue;
     }
 
@@ -529,7 +554,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
   autoMode = auto;
 
   if (!isTTY()) {
-    console.log("Demo requires an interactive terminal.");
+    logError("Demo requires an interactive terminal.");
     return;
   }
 
@@ -539,7 +564,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
     write(CLEAR_SCREEN + MOVE_HOME);
     console.log();
 
-    const matrix = new AnimatedDotMatrix({ litColor: "\x1b[38;2;252;143;93m" });
+    const matrix = new AnimatedDotMatrix({ litColor: BRAND_TRUECOLOR });
     const textLines = [
       bold(brand("Veryfront")),
       muted(`Interactive Demo${autoMode ? " (Auto Mode)" : ""}`),

@@ -15,6 +15,7 @@ import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import { resolveCliApiUrl } from "./constants.ts";
+import { readProjectLinkForControlPlane } from "./project-link.ts";
 import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
@@ -50,6 +51,7 @@ export const getResolvedConfigSchema = defineSchema((v) =>
     apiToken: v.string(),
     apiTokenSource: v.enum(["env", "env-file", "config-file", "token-store"]).optional(),
     projectSlug: v.string(),
+    projectId: v.string().optional(),
   })
 );
 export const ResolvedConfigSchema = lazySchema(getResolvedConfigSchema);
@@ -64,17 +66,27 @@ interface ConfigFileResolution {
 }
 
 export type ProjectReferenceSource =
-  | { kind: "argument"; name: "--project-slug" }
+  | { kind: "argument"; name: "--project" }
   | { kind: "environment"; name: "environment configuration" }
   | { kind: "module-config"; name: string }
   | { kind: "json-config"; name: "veryfront.json" }
   | { kind: "tenant-environment"; name: string }
+  | { kind: "local-link"; name: ".veryfront/project.json" }
   | { kind: "inferred"; name: "project files" };
 
 export interface ResolvedConfigDetails {
   config: ResolvedConfig;
   projectReferenceSource: ProjectReferenceSource;
 }
+
+export const ENVIRONMENT_PROJECT_REFERENCE_NAMES = [
+  "VERYFRONT_PROJECT_SLUG",
+  "TENANT_PROJECT_SLUG",
+  "VERYFRONT_PROJECT_ID",
+  "TENANT_PROJECT_ID",
+] as const;
+
+export type EnvironmentProjectReferenceName = typeof ENVIRONMENT_PROJECT_REFERENCE_NAMES[number];
 
 async function readConfigFileResolution(projectDir: string): Promise<ConfigFileResolution> {
   const fs = createFileSystem();
@@ -170,15 +182,10 @@ async function inferProjectSlug(projectDir: string): Promise<string | null> {
   return dirName ? slugify(dirName) : null;
 }
 
-function resolveTenantProjectReference(): { reference: string; name: string } | undefined {
-  for (
-    const name of [
-      "VERYFRONT_PROJECT_SLUG",
-      "TENANT_PROJECT_SLUG",
-      "VERYFRONT_PROJECT_ID",
-      "TENANT_PROJECT_ID",
-    ] as const
-  ) {
+export function resolveEnvironmentProjectReference():
+  | { reference: string; name: EnvironmentProjectReferenceName }
+  | undefined {
+  for (const name of ENVIRONMENT_PROJECT_REFERENCE_NAMES) {
     const reference = getEnv(name);
     if (reference) return { reference, name };
   }
@@ -251,6 +258,7 @@ async function resolveConfigBase(
   }
 
   let projectSlug: string | null | undefined;
+  let projectId: string | undefined;
   let projectReferenceSource: ProjectReferenceSource;
   if (env.projectSlug !== undefined) {
     projectSlug = env.projectSlug;
@@ -265,13 +273,26 @@ async function resolveConfigBase(
     projectSlug = configFileResolution.jsonProjectSlug;
     projectReferenceSource = { kind: "json-config", name: "veryfront.json" };
   } else {
-    const tenantReference = resolveTenantProjectReference();
+    const tenantReference = resolveEnvironmentProjectReference();
     if (tenantReference) {
       projectSlug = tenantReference.reference;
+      if (
+        tenantReference.name === "VERYFRONT_PROJECT_ID" ||
+        tenantReference.name === "TENANT_PROJECT_ID"
+      ) {
+        projectId = tenantReference.reference;
+      }
       projectReferenceSource = { kind: "tenant-environment", name: tenantReference.name };
     } else {
-      projectSlug = await inferProjectSlug(dir);
-      projectReferenceSource = { kind: "inferred", name: "project files" };
+      const projectLink = await readProjectLinkForControlPlane(dir, apiUrl);
+      if (projectLink) {
+        projectSlug = projectLink.projectSlug;
+        projectId = projectLink.projectId;
+        projectReferenceSource = { kind: "local-link", name: ".veryfront/project.json" };
+      } else {
+        projectSlug = await inferProjectSlug(dir);
+        projectReferenceSource = { kind: "inferred", name: "project files" };
+      }
     }
   }
   if (!projectSlug) {
@@ -281,7 +302,13 @@ async function resolveConfigBase(
   }
 
   return {
-    config: { apiUrl, apiToken, ...(apiTokenSource ? { apiTokenSource } : {}), projectSlug },
+    config: {
+      apiUrl,
+      apiToken,
+      ...(apiTokenSource ? { apiTokenSource } : {}),
+      projectSlug,
+      ...(projectId ? { projectId } : {}),
+    },
     projectReferenceSource,
   };
 }
@@ -326,13 +353,22 @@ export interface ApiClient {
 
 export const getApiErrorSchema = defineSchema((v) =>
   v.object({
-    error: v.string(),
+    error: v.string().optional(),
     message: v.string().optional(),
+    detail: v.string().optional(),
+    title: v.string().optional(),
+    suggestion: v.string().optional(),
     code: v.string().optional(),
+    slug: v.string().optional(),
   })
 );
 export const ApiErrorSchema = lazySchema(getApiErrorSchema);
 export type ApiError = InferSchema<ReturnType<typeof getApiErrorSchema>>;
+
+export function formatApiError(data: ApiError, fallback: string): string {
+  const message = data.message || data.detail || data.error || data.title || fallback;
+  return data.suggestion ? `${message.replace(/[.?!]+$/, "")}. ${data.suggestion}` : message;
+}
 
 export function createApiClient(config: ResolvedConfig): ApiClient {
   const { apiUrl, apiToken } = config;
@@ -366,7 +402,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
       try {
         const parsed = ApiErrorSchema.safeParse(await response.json());
         if (parsed.success) {
-          errorMessage = parsed.data.message || parsed.data.error || errorMessage;
+          errorMessage = formatApiError(parsed.data, errorMessage);
         }
       } catch {
         // Keep default error message if JSON parsing fails

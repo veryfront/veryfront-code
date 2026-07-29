@@ -157,7 +157,7 @@ function createImportMapPlugin(
 
   if (importMapEntries.length === 0) return { name: "import-map", setup() {} };
 
-  logger.info(`Using import map with ${importMapEntries.length} entries`);
+  logger.debug(`Using import map with ${importMapEntries.length} entries`);
 
   return {
     name: "import-map",
@@ -430,19 +430,26 @@ function loadAndTranspileModule(
       const allowedHosts = await loadSecurityConfig(projectDir, adapter);
       validateHTTPImports(source, allowedHosts);
 
-      const allDeps = await readProjectDependencies(projectDir, fs);
+      const projectSourceReader = {
+        readTextFile: (filePath: string) => adapter.fs.readFile(filePath),
+      };
+      const allDeps = await readProjectDependencies(projectDir, projectSourceReader);
 
       // Filter out framework-managed packages from user deps. These are already
       // handled by the framework's own external/rewrite logic and should not be
       // treated as user npm packages.
-      const frameworkPackages = new Set(["zod", "veryfront", "react", "react-dom", "path"]);
-      const frameworkPrefixes = ["@opentelemetry/", "node:", "veryfront/"];
-      const userDeps = new Map<string, string>();
-      for (const [name, version] of allDeps) {
-        if (frameworkPackages.has(name)) continue;
-        if (frameworkPrefixes.some((p) => name.startsWith(p))) continue;
-        userDeps.set(name, version);
-      }
+      //
+      // `zod` is kept as a user dep on every runtime — Node, the Deno source-run,
+      // AND the compiled binary — so a handler's own `import { z } from "zod"` is
+      // rewritten to a resolvable specifier. Excluding it left a bare `import "zod"`
+      // in the temp handler that Deno cannot resolve → "not a dependency and not in
+      // import map" → 500. (The Node path already always-resolves zod via
+      // getNodeExternalPackagesToResolve.) On the compiled binary, keeping zod in
+      // userDeps routes it through rewriteCompiledBinaryUserDependencyImports like
+      // any other npm package, so its import resolves from the project's
+      // node_modules via the createRequire shim. zod is still force-externalized
+      // below, never bundled inline. See veryfront-issue-inbox#217.
+      const userDeps = getUserDependencies(allDeps);
 
       // Always externalize user npm dependencies. The bundled handler is loaded
       // from a temp file and user deps are resolved at runtime:
@@ -514,7 +521,7 @@ function loadAndTranspileModule(
         );
       }
 
-      logger.info(`built handler ${resolvedPath}`);
+      logger.debug(`built handler ${resolvedPath}`);
       const js = result.outputFiles?.[0]?.text ?? "export {}";
       logger.debug(`transpiled size ${js.length} bytes`);
 
@@ -561,6 +568,21 @@ async function readFileWithExtensions(
       message: `File not found: ${basePath}`,
     }),
   );
+}
+
+export function getUserDependencies(
+  allDeps: ReadonlyMap<string, string>,
+): Map<string, string> {
+  const frameworkPackages = new Set(["veryfront", "react", "react-dom", "path"]);
+
+  const frameworkPrefixes = ["@opentelemetry/", "node:", "veryfront/"];
+  const userDeps = new Map<string, string>();
+  for (const [name, version] of allDeps) {
+    if (frameworkPackages.has(name)) continue;
+    if (frameworkPrefixes.some((prefix) => name.startsWith(prefix))) continue;
+    userDeps.set(name, version);
+  }
+  return userDeps;
 }
 
 async function loadModuleFromCode(

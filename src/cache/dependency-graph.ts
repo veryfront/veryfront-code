@@ -211,7 +211,7 @@ export function normalizeSpecifierToPath(
   projectDir: string,
 ): string {
   if (specifier.startsWith("@/")) {
-    return normalizeExtension(`${projectDir}/${specifier.slice(2)}`);
+    return normalizeDependencyPath(`${projectDir}/${specifier.slice(2)}`, fromFile);
   }
 
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
@@ -223,14 +223,26 @@ export function normalizeSpecifierToPath(
       else if (part !== ".") parts.push(part);
     }
 
-    return normalizeExtension(`/${parts.join("/")}`);
+    return normalizeDependencyPath(`/${parts.join("/")}`, fromFile);
   }
 
   if (specifier.startsWith("file://")) {
-    return normalizeExtension(specifier.slice(7));
+    return normalizeDependencyPath(specifier.slice(7), fromFile);
   }
 
   return specifier;
+}
+
+function normalizeDependencyPath(path: string, fromFile: string): string {
+  if (
+    fromFile.endsWith(".src") &&
+    !path.endsWith(".src") &&
+    /\.(?:[cm]?[jt]sx?|mdx?)$/.test(path)
+  ) {
+    return `${path}.src`;
+  }
+
+  return normalizeExtension(path);
 }
 
 function normalizeExtension(path: string): string {

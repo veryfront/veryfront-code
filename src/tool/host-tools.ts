@@ -2,6 +2,7 @@ import { dynamicTool, tool } from "./factory.ts";
 import { agentLogger } from "#veryfront/utils";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts";
+import { getRemoteToolProvenance, markRemoteToolProvenance } from "./remote-tool-provenance.ts";
 
 type HostToolExecute = {
   bivarianceHack: (input: unknown, options?: ToolExecutionContext) => Promise<unknown> | unknown;
@@ -119,8 +120,9 @@ export function createToolsFromHostDefinitions(
       await definition.execute(input, normalizeExecutionContext(toolName, context, options));
 
     try {
+      let materializedTool: Tool | undefined;
       if (definition.inputSchemaJson) {
-        tools[toolName] = dynamicTool({
+        materializedTool = dynamicTool({
           id: toolName,
           description: definition.description,
           inputSchema: definition.inputSchema,
@@ -129,13 +131,19 @@ export function createToolsFromHostDefinitions(
           mcp: definition.mcp,
         });
       } else if (isSchemaLike(definition.inputSchema)) {
-        tools[toolName] = tool({
+        materializedTool = tool({
           id: toolName,
           description: definition.description,
           inputSchema: definition.inputSchema,
           execute,
           mcp: definition.mcp,
         });
+      }
+      if (materializedTool) {
+        const canonicalRemoteToolName = getRemoteToolProvenance(definition);
+        tools[toolName] = canonicalRemoteToolName
+          ? markRemoteToolProvenance(materializedTool, canonicalRemoteToolName)
+          : materializedTool;
       }
     } catch (error) {
       agentLogger.warn("Skipping host tool: schema conversion failed", {

@@ -1,11 +1,13 @@
 import type { ParsedArgs } from "#cli/shared/types";
-import { cliLogger } from "#cli/utils";
 import { getEnv } from "veryfront/platform";
+import {
+  ENVIRONMENT_PROJECT_REFERENCE_NAMES,
+  resolveEnvironmentProjectReference,
+} from "#cli/shared/config";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { bold, dim } from "../../ui/colors.ts";
 
 const ENV_OVERRIDES: Record<string, string> = {
-  projectSlug: "VERYFRONT_PROJECT_SLUG",
   apiBaseUrl: "VERYFRONT_API_BASE_URL",
   apiToken: "VERYFRONT_API_TOKEN",
   nodeEnv: "NODE_ENV",
@@ -29,11 +31,17 @@ export async function detectConfigSource(
   ) {
     if (await fs.exists(join(projectDir, name))) return name;
   }
+  if (await fs.exists(join(projectDir, ".veryfront", "project.json"))) {
+    return ".veryfront/project.json";
+  }
   return null;
 }
 
 export function getEnvOverrides(): string[] {
   const overrides: string[] = [];
+  for (const envVar of ENVIRONMENT_PROJECT_REFERENCE_NAMES) {
+    if (getEnv(envVar)) overrides.push(`projectSlug (${envVar})`);
+  }
   for (const [field, envVar] of Object.entries(ENV_OVERRIDES)) {
     if (getEnv(envVar)) overrides.push(`${field} (${envVar})`);
   }
@@ -56,20 +64,38 @@ export async function getConfigCommandData(projectDir: string): Promise<ConfigCo
   const { getEnvironmentConfig } = await import("veryfront/config");
   const config = getEnvironmentConfig();
   const { readConfigFile } = await import("#cli/shared/config");
+  const { resolveCliApiUrl } = await import("../../shared/constants.ts");
+  const {
+    PROJECT_LINK_RELATIVE_PATH,
+    readProjectLinkForControlPlane,
+  } = await import("../../shared/project-link.ts");
 
-  const configSource = await detectConfigSource(projectDir);
+  const detectedConfigSource = await detectConfigSource(projectDir);
   const envOverrides = getEnvOverrides();
   const fileConfig = await readConfigFile(projectDir);
+  const environmentProjectReference = resolveEnvironmentProjectReference()?.reference;
+  const linkedProjectSlug = !config.projectSlug && !fileConfig?.projectSlug &&
+      !environmentProjectReference
+    ? (await readProjectLinkForControlPlane(
+      projectDir,
+      resolveCliApiUrl(config, fileConfig?.apiUrl),
+    ))?.projectSlug
+    : undefined;
 
   return {
-    projectSlug: config.projectSlug ?? fileConfig?.projectSlug ?? null,
+    projectSlug: config.projectSlug ?? fileConfig?.projectSlug ?? environmentProjectReference ??
+      linkedProjectSlug ?? null,
     nodeEnv: config.nodeEnv,
     veryfrontEnv: config.veryfrontEnv || null,
     apiBaseUrl: config.apiBaseUrl,
     debug: config.debug,
     ci: config.ci,
     hasApiToken: !!(config.apiToken ?? fileConfig?.apiToken),
-    configSource,
+    configSource: linkedProjectSlug
+      ? PROJECT_LINK_RELATIVE_PATH
+      : detectedConfigSource === ".veryfront/project.json"
+      ? null
+      : detectedConfigSource,
     envOverrides,
   };
 }
@@ -84,25 +110,27 @@ export async function handleConfigCommand(_args: ParsedArgs): Promise<void> {
     return;
   }
 
-  cliLogger.info(`\n  ${bold("Project Configuration")}\n`);
-  cliLogger.info(
+  console.log();
+  console.log(`  ${bold("Project Configuration")}`);
+  console.log();
+  console.log(
     `  ${dim("Project slug:")}  ${configData.projectSlug ?? "(not set)"}`,
   );
-  cliLogger.info(`  ${dim("Environment:")}   ${configData.nodeEnv}`);
-  cliLogger.info(
+  console.log(`  ${dim("Environment:")}   ${configData.nodeEnv}`);
+  console.log(
     `  ${dim("VF Environment:")} ${configData.veryfrontEnv ?? "(not set)"}`,
   );
-  cliLogger.info(`  ${dim("API endpoint:")}  ${configData.apiBaseUrl}`);
-  cliLogger.info(`  ${dim("Debug:")}         ${configData.debug}`);
-  cliLogger.info(`  ${dim("CI:")}            ${configData.ci}`);
-  cliLogger.info(
+  console.log(`  ${dim("API endpoint:")}  ${configData.apiBaseUrl}`);
+  console.log(`  ${dim("Debug:")}         ${configData.debug}`);
+  console.log(`  ${dim("CI:")}            ${configData.ci}`);
+  console.log(
     `  ${dim("Authenticated:")} ${configData.hasApiToken ? "yes" : "no"}`,
   );
-  cliLogger.info(
+  console.log(
     `  ${dim("Config file:")}   ${configData.configSource ?? "(none)"}`,
   );
   if (configData.envOverrides.length > 0) {
-    cliLogger.info(`  ${dim("Env overrides:")}  ${configData.envOverrides.join(", ")}`);
+    console.log(`  ${dim("Env overrides:")}  ${configData.envOverrides.join(", ")}`);
   }
-  cliLogger.info("");
+  console.log();
 }

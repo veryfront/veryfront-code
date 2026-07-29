@@ -11,7 +11,7 @@ export const studioHelp: CommandHelp = {
       description: "Branch name to select",
     },
     {
-      flag: "-f, --file <path>",
+      flag: "--file <path>",
       description: "File path to open",
     },
   ],

@@ -515,6 +515,16 @@ function decodeCursor(cursor: string): ProjectKnowledgeLookupCursorState {
   }
 }
 
+function normalizeKnowledgeLookupCursor(cursor: unknown): string | undefined {
+  if (cursor === undefined || cursor === null) return undefined;
+  if (typeof cursor !== "string") {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge lookup cursor" });
+  }
+
+  const normalizedCursor = cursor.trim();
+  return normalizedCursor.length > 0 ? normalizedCursor : undefined;
+}
+
 function scoreEntry(
   entry: SearchableProjectKnowledgeManifestEntry,
   query: string,
@@ -715,7 +725,8 @@ function lookupKnowledgeManifest(
   manifest: ProjectKnowledgeManifestEntry[],
   input: ProjectKnowledgeLookupInput,
 ): ProjectKnowledgeLookupOutput {
-  const cursorState = input.cursor ? decodeCursor(input.cursor) : null;
+  const normalizedCursor = normalizeKnowledgeLookupCursor(input.cursor);
+  const cursorState = normalizedCursor ? decodeCursor(normalizedCursor) : null;
   const providedQuery = input.query?.trim() ?? "";
   const resolvedQuery = (cursorState?.query ?? providedQuery).trim();
   const lookupTargetPath = cursorState ? null : getLookupTargetPath(input.lookup_target);
@@ -811,7 +822,7 @@ function lookupKnowledgeManifest(
     mode,
     data: pageEntries.map(({ entry, matchedFields }) => createLookupItem(entry, matchedFields)),
     page_info: {
-      self: input.cursor ?? null,
+      self: normalizedCursor ?? null,
       first: null,
       next: nextCursor,
       prev: null,
@@ -839,7 +850,9 @@ function coerceSearchKnowledgeInput(
       ? value.project_reference
       : undefined,
     query: typeof value.query === "string" ? value.query : undefined,
-    cursor: typeof value.cursor === "string" ? value.cursor : undefined,
+    cursor: typeof value.cursor === "string"
+      ? normalizeKnowledgeLookupCursor(value.cursor)
+      : undefined,
     lookup_target: value.lookup_target,
     limit: typeof value.limit === "number" ? value.limit : undefined,
     shard_count: typeof value.shard_count === "number" ? value.shard_count : undefined,

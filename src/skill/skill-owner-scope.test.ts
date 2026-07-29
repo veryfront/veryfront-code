@@ -7,7 +7,7 @@
  */
 
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { registerSkill, skillRegistry } from "./registry.ts";
 import {
   createExecuteSkillScriptTool,
@@ -88,6 +88,37 @@ Deno.test("explicit selector cannot reach another agent's owned skill by full id
   try {
     const resolved = skillRegistry.resolveForAgent(["researcher--cite"], { agentId: "writer" });
     assertEquals(resolved.size, 0);
+  } finally {
+    skillRegistry.clearAll();
+  }
+});
+
+Deno.test("strict explicit selector rejects another agent's owned skill without owner-id leakage", () => {
+  setupRegistry();
+  try {
+    const error = assertThrows(
+      () => skillRegistry.resolveSelectorForAgent(["researcher--cite"], { agentId: "writer" }),
+      Error,
+      "configured skills are not available",
+    );
+    const message = String(error);
+    assertEquals(message.includes("researcher--cite"), false);
+    assertEquals(message.includes("writer--style"), false);
+  } finally {
+    skillRegistry.clearAll();
+  }
+});
+
+Deno.test("strict explicit selector resolves own short name before exact visible id", () => {
+  setupRegistry();
+  try {
+    registerSkill("cite", makeSkill({ id: "cite" }));
+
+    const resolved = skillRegistry.resolveSelectorForAgent(["cite", "global-howto", "cite"], {
+      agentId: "researcher",
+    });
+
+    assertEquals(resolved.allowedSkillIds, ["researcher--cite", "global-howto"]);
   } finally {
     skillRegistry.clearAll();
   }
@@ -236,5 +267,62 @@ Deno.test("load_skill loads the caller's own skill via its short name", async ()
   } finally {
     skillRegistry.clearAll();
     await Deno.remove(tempDir, { recursive: true });
+  }
+});
+
+Deno.test("load_skill resolves provider-safe owned short names before plain-id validation", async () => {
+  const tempDir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(
+      `${tempDir}/SKILL.md`,
+      `---\nname: X Y\ndescription: Owned helper\n---\n\nUse the owned helper.\n`,
+    );
+
+    skillRegistry.clearAll();
+    registerSkill(
+      "a_b--x_y",
+      makeSkill({
+        id: "a_b--x_y",
+        rootPath: tempDir,
+        ownerAgentId: "a.b",
+        shortName: "x_y",
+      }),
+    );
+
+    const loadSkill = createLoadSkillTool();
+    const content = await loadSkill.execute(
+      { skillId: "x_y" },
+      { agentId: "a.b" },
+    ) as { instructions: string; skillId: string };
+
+    assertEquals(content.skillId, "a_b--x_y");
+    assertEquals(content.instructions.trim(), "Use the owned helper.");
+  } finally {
+    skillRegistry.clearAll();
+    await Deno.remove(tempDir, { recursive: true });
+  }
+});
+
+Deno.test("load_skill reports provider-safe guidance for invalid owned-looking selectors", async () => {
+  setupRegistry();
+  try {
+    const loadSkill = createLoadSkillTool();
+
+    await assertRejects(
+      () => loadSkill.execute({ skillId: "Bad Name" }, { agentId: "writer" }) as Promise<unknown>,
+      Error,
+      'Invalid skill id "Bad Name": must be lowercase alphanumeric with hyphens, 1-64 characters',
+    );
+
+    await assertRejects(
+      () =>
+        loadSkill.execute({ skillId: "writer--Bad Name" }, { agentId: "writer" }) as Promise<
+          unknown
+        >,
+      Error,
+      'Invalid skill id "writer--Bad Name": must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters',
+    );
+  } finally {
+    skillRegistry.clearAll();
   }
 });

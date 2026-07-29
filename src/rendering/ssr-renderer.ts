@@ -91,6 +91,14 @@ function pipeToReadableStream(
   });
 }
 
+function attachAllReady<T extends ReadableStream<Uint8Array>>(
+  stream: T,
+  allReady?: Promise<unknown>,
+): T {
+  if (!allReady) return stream;
+  return Object.assign(stream, { allReady });
+}
+
 export interface SSRRenderOptions {
   mode: string;
   wantsStream: boolean;
@@ -203,7 +211,7 @@ export class SSRRenderer {
     if (renderResult.stream) {
       if (options.wantsStream) {
         logger.debug("True streaming SSR - returning stream without buffering");
-        return { html: "", stream: renderResult.stream };
+        return { html: "", stream: attachAllReady(renderResult.stream, renderResult.allReady) };
       }
 
       const html = await streamToString(renderResult.stream);
@@ -218,7 +226,8 @@ export class SSRRenderer {
     if (renderResult.pipe) {
       if (options.wantsStream) {
         logger.debug("Converting pipeable stream to ReadableStream for true streaming");
-        return { html: "", stream: pipeToReadableStream(renderResult.pipe, renderResult.abort) };
+        const stream = pipeToReadableStream(renderResult.pipe, renderResult.abort);
+        return { html: "", stream: attachAllReady(stream, renderResult.allReady) };
       }
 
       logger.debug("Converting pipeable stream to string (Node.js renderToPipeableStream)");
