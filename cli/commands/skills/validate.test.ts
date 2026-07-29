@@ -24,6 +24,16 @@ async function withTempSkill(
   }
 }
 
+async function withTempCwd(dir: string, fn: () => Promise<void>): Promise<void> {
+  const previous = Deno.cwd();
+  try {
+    Deno.chdir(dir);
+    await fn();
+  } finally {
+    Deno.chdir(previous);
+  }
+}
+
 describe("Skills Validate", () => {
   it("accepts a project skill with SKILL.md frontmatter", async () => {
     await withTempSkill({
@@ -43,6 +53,25 @@ Review the submitted changes.
     }, "code-review");
   });
 
+  it("uses the current directory basename when validating the default path", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: code-review
+description: Review code changes.
+---
+
+# Code Review
+
+Review the submitted changes.
+`,
+    }, async (dir) => {
+      await withTempCwd(dir, async () => {
+        const issues = await validateSkillDirectory(".");
+        assertEquals(issues, []);
+      });
+    }, "code-review");
+  });
+
   it("reports a missing SKILL.md", async () => {
     await withTempSkill({}, async (dir) => {
       const issues = await validateSkillDirectory(dir);
@@ -50,11 +79,10 @@ Review the submitted changes.
     });
   });
 
-  it("reports invalid SKILL.md frontmatter", async () => {
+  it("reports invalid canonical directory names", async () => {
     await withTempSkill({
       "SKILL.md": `---
-name: BadName
-description: Invalid name.
+description: Invalid directory name.
 ---
 
 # Bad
@@ -63,8 +91,25 @@ description: Invalid name.
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues.length, 1);
       assertEquals(issues[0]?.severity, "error");
-      assertEquals(issues[0]?.message.includes('Invalid skill name "BadName"'), true);
-    }, "bad-name");
+      assertEquals(issues[0]?.message.includes('Invalid skill name "Bad Name"'), true);
+    }, "Bad Name");
+  });
+
+  it("preserves a legacy display-style frontmatter name", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: Process Email
+description: Process inbound email.
+---
+
+# Process Email
+
+Process inbound email.
+`,
+    }, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues, []);
+    }, "process-email");
   });
 
   it("reports SKILL.md frontmatter name mismatch with directory", async () => {

@@ -8,7 +8,7 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { exitProcess, logError, logSuccess, logWarning } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
-import { basename } from "#std/path.ts";
+import { basename, resolve } from "#std/path.ts";
 import { parseSkillFrontmatter, SKILL_NAME_REGEX, validateSkillMetadata } from "veryfront/skill";
 
 interface ValidationIssue {
@@ -36,7 +36,7 @@ export async function validateSkillDirectory(dir: string): Promise<ValidationIss
 
   try {
     const parsed = await parseSkillFrontmatter(content);
-    const directoryName = basename(dir);
+    const directoryName = basename(resolve(dir));
     validateCanonicalFrontmatterName(parsed.frontmatter, directoryName);
     validateSkillMetadata(parsed.frontmatter, directoryName);
     if (!parsed.body.trim()) {
@@ -58,9 +58,7 @@ function validateCanonicalFrontmatterName(
 
   const name = frontmatter.name.trim();
   if (!SKILL_NAME_REGEX.test(name)) {
-    throw new Error(
-      `Invalid skill name "${name}": must be lowercase alphanumeric with hyphens, 1-64 characters`,
-    );
+    return;
   }
 
   if (name !== directoryName) {
