@@ -121,7 +121,8 @@ const report = await runEval(definition, {
 | `EvalKnowledgeExpectedSource` | Expected knowledge source or passage for retrieval-quality metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L192) |
 | `EvalKnowledgeMrrMetricOptions` | Options for mean reciprocal rank over retrieved knowledge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L214) |
 | `EvalKnowledgeRetrievalMetricOptions` | Options shared by knowledge retrieval metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L206) |
-| `EvalLlmGroundednessJudgeOptions` | Options for the built-in LLM groundedness judge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/judges.ts#L10) |
+| `EvalLlmGroundednessJudgeOptions` | Options for the built-in LLM groundedness judge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/judges.ts#L32) |
+| `EvalLlmRubricJudgeOptions` | Options for the built-in general-purpose LLM rubric judge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/judges.ts#L18) |
 | `EvalMetric` | Metric contract used by eval definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L327) |
 | `EvalMetricContext` | Optional runtime context passed to metric evaluators. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L322) |
 | `EvalMetricDeltaSummary` | Per-metric delta between a current eval report and a baseline report. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/types.ts#L589) |
@@ -184,7 +185,7 @@ const report = await runEval(definition, {
 | `getEvalSourceReferenceSchema` | Schema for an Eval source reference. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L33) |
 | `getEvalStudioCapabilitySchema` | Schema for Eval Studio capabilities. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L7) |
 | `getEvalTargetKindSchema` | Schema for an Eval target primitive kind. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/studio.ts#L12) |
-| `judges` | Built-in judge factories for semantic eval metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/judges.ts#L260) |
+| `judges` | Built-in judge factories for semantic eval metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/judges.ts#L345) |
 | `metrics` | Metric factories for deterministic answers, agent behavior, operations, and judges. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/eval/metrics.ts#L705) |
 
 ## Deep imports

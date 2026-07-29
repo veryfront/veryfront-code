@@ -5,7 +5,7 @@ export default agent({
   name: "Assistant",
   description: "Turn a rough idea into a clear next move.",
   system:
-    "Be direct and practical. Structure complex answers clearly, use tools when they improve accuracy, and state assumptions that affect the result.",
+    "Be direct and practical. Structure complex answers clearly. Use the calculator tool for arithmetic instead of calculating mentally. Use other tools when they improve accuracy, and state assumptions that affect the result.",
   tools: true,
   maxSteps: 10,
   suggestions: {
