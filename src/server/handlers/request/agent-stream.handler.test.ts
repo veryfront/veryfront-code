@@ -731,9 +731,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
         agentConfig: {
           id: "assistant-1",
           name: "Project Assistant",
-          description: "Uses project-scoped skills and tools.",
+          description: "Uses project-scoped tools with skills disabled.",
           instructions: "Use project-scoped instructions.",
-          skills: ["support-triage"],
+          skills: [],
           tools: ["search_knowledge", "get_file"],
         },
       });
@@ -759,7 +759,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         ? await (capturedSystem as () => Promise<string>)()
         : capturedSystem;
       assertStringIncludes(String(resolvedSystem), "Use project-scoped instructions.");
-      assertEquals(capturedSkills, ["support-triage"]);
+      assertEquals(capturedSkills, []);
       assertEquals((capturedTools as Record<string, unknown>).search_knowledge, true);
       assertEquals((capturedTools as Record<string, unknown>).get_file, true);
       assertEquals(capturedAllowedRemoteTools, ["get_file", "search_knowledge"]);

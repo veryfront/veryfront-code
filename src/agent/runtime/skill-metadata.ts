@@ -1,5 +1,10 @@
 import { extract } from "#std/front-matter/yaml.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import {
+  assertResolvedSkillSelector,
+  type ResolvedSkillSelectorSnapshot,
+  resolveSkillSelector,
+} from "#veryfront/skill/selector.ts";
 
 function normalizeAllowedTools(value: string | string[] | undefined): string[] {
   if (value === undefined) {
@@ -134,6 +139,34 @@ export function resolveRuntimeSkillsForAgent(input: {
   }
 
   return [...selectedSkills.values()];
+}
+
+/** Resolve a presence-aware runtime skill selector snapshot without throwing on explicit misses. */
+export function resolveRuntimeSkillSelectorSnapshotForAgent(input: {
+  skills: readonly RuntimeSkillDefinition[];
+  agentId: string;
+  selector: true | string[] | undefined;
+}): ResolvedSkillSelectorSnapshot<RuntimeSkillDefinition> {
+  return resolveSkillSelector({
+    definitions: input.skills,
+    selector: input.selector,
+    getId: (skill) => skill.id,
+    isVisible: (skill) => isRuntimeSkillVisibleTo(skill, { agentId: input.agentId }),
+    getShortName: (skill) => skill.shortName,
+    isOwnShortNameCandidate: (skill) => skill.ownerAgentId === input.agentId,
+    getSourcePath: (skill) => skill.sourcePath,
+  });
+}
+
+/** Resolve a presence-aware runtime skill selector snapshot and reject explicit misses. */
+export function resolveRuntimeSkillSelectorForAgent(input: {
+  skills: readonly RuntimeSkillDefinition[];
+  agentId: string;
+  selector: true | string[] | undefined;
+}): ResolvedSkillSelectorSnapshot<RuntimeSkillDefinition> {
+  const snapshot = resolveRuntimeSkillSelectorSnapshotForAgent(input);
+  assertResolvedSkillSelector(snapshot);
+  return snapshot;
 }
 
 /** Public API contract for runtime loaded skill response messages. */

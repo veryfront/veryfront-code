@@ -29,6 +29,7 @@ import {
   initializeNodeVeryfrontCloudAgentServiceContext,
 } from "./cloud-agent-config.ts";
 import {
+  buildHostedChildGlobalTools,
   buildHostedChildToolContext,
   getDiscoveredHostTools,
   resolveHostedChildAgentExecutionConfig,
@@ -138,6 +139,7 @@ export { getDiscoveredHostTools };
 
 /** Internal test seams for hosted project-agent materialization. */
 export const veryfrontCloudAgentServiceInternals = {
+  buildHostedChildGlobalTools,
   buildHostedChildToolContext,
   resolveHostedDelegationBinding,
   resolveHostedChildAgentExecutionConfig,

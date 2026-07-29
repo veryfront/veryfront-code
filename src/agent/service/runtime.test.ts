@@ -1,5 +1,6 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import {
   combineAgentServiceLifecycle,
   createAgentServiceRuntime,
@@ -83,6 +84,13 @@ describe("agent/agent-service-runtime", () => {
   });
 
   it("preserves configured skills and tools on the service agent", () => {
+    skillRegistry.clearAll();
+    registerSkill("support-triage", {
+      id: "support-triage",
+      metadata: { name: "support-triage", description: "Triage support requests" },
+      rootPath: "/test/skills/support-triage",
+    });
+
     const bundle = createAgentServiceRuntime({
       serviceName: "test-agent-service",
       getConfig: () => ({
@@ -108,13 +116,13 @@ describe("agent/agent-service-runtime", () => {
     const serviceAgent = bundle.runtime.contract.agents.assistant;
 
     assertEquals(serviceAgent?.config.skills, ["support-triage"]);
-    assertEquals(serviceAgent?.config.tools, {
-      search_knowledge: true,
-      get_file: true,
-      load_skill: true,
-      load_skill_reference: true,
-      execute_skill_script: true,
-    });
+    const tools = serviceAgent?.config.tools;
+    assert(tools && tools !== true);
+    assertEquals(tools?.search_knowledge, true);
+    assertEquals(tools?.get_file, true);
+    assertEquals(typeof tools?.load_skill, "object");
+    assertEquals(typeof tools?.load_skill_reference, "object");
+    assertEquals(typeof tools?.execute_skill_script, "object");
   });
 
   it("starts the node agent service server from the assembled runtime", async () => {

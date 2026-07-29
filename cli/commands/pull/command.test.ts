@@ -11,7 +11,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { cliLogger } from "#cli/utils";
+import { cliLogger, VERSION } from "#cli/utils";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import {
   buildFileContentUrl,
@@ -117,7 +117,7 @@ function expectedBootstrapPackage(name: string): Record<string, unknown> {
     dependencies: {
       react: "^19.2.4",
       "react-dom": "^19.2.4",
-      veryfront: "^0.1.1175",
+      veryfront: `^${VERSION}`,
     },
   };
 }
@@ -153,7 +153,7 @@ const EXPECTED_BOOTSTRAP_PACKAGE = {
   dependencies: {
     react: "^19.2.4",
     "react-dom": "^19.2.4",
-    veryfront: "^0.1.1175",
+    veryfront: `^${VERSION}`,
   },
 };
 

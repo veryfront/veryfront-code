@@ -212,7 +212,7 @@ Plan carefully.`,
       projectId: null,
       authToken: "auth-token",
       branchId: null,
-      availableSkillIds: [],
+      availableSkillIds: ["plan"],
       availableToolNames: [],
     });
     const result = await tool.execute({ skillId: "plan" });
