@@ -61,6 +61,7 @@ import { clearDomainCache } from "./utils/domain-lookup.ts";
 const bootstrapLog = logger.component("bootstrap");
 const bootstrapDevLog = logger.component("bootstrap-dev");
 const bootstrapProdLog = logger.component("bootstrap-prod");
+const LOCAL_CLI_PROXY_MODE_ENV = "VERYFRONT_CLI_LOCAL_PROXY_MODE";
 
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */
@@ -501,7 +502,7 @@ export async function bootstrapProd(
 
   // Validate NODE_ENV in proxy mode to prevent dev behavior in production
   // @see plans/architecture-audit/014.1-node-env-missing.md
-  validateProductionEnvironment(adapter);
+  validateProductionEnvironment();
 
   try {
     const result = await bootstrap(projectDir, adapter);
@@ -527,13 +528,23 @@ export async function bootstrapProd(
  *
  * @see plans/architecture-audit/014.1-node-env-missing.md
  */
-function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
+function validateProductionEnvironment(): void {
   const nodeEnv = getEnv("NODE_ENV") ?? getEnv("DENO_ENV");
   const proxyMode = getEnv("PROXY_MODE");
+  const localCliProxyMode = getHostEnv(LOCAL_CLI_PROXY_MODE_ENV) === "1" &&
+    getEnvSource(LOCAL_CLI_PROXY_MODE_ENV).source === "process";
   const controlPlanePublicKey = getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
 
   // In proxy mode (deployed pods), NODE_ENV must be explicitly set to production
   if (proxyMode === "1") {
+    if (localCliProxyMode) {
+      bootstrapProdLog.debug("Environment configuration", {
+        nodeEnv: nodeEnv ?? "(unset)",
+        proxyMode,
+      });
+      return;
+    }
+
     if (!nodeEnv) {
       logger.error(
         "[Bootstrap:Prod] CRITICAL: NODE_ENV is not set in proxy mode. " +
@@ -546,18 +557,12 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
 
     if (nodeEnv !== "production") {
       logger.warn(
-        "[Bootstrap:Prod] NODE_ENV is set to '%s' in proxy mode. " +
+        `[Bootstrap:Prod] NODE_ENV is set to '${nodeEnv}' in proxy mode. ` +
           "Expected 'production'. This may enable dev features.",
-        nodeEnv,
       );
     }
 
-    if (!controlPlanePublicKey && nodeEnv === "development") {
-      logger.warn(
-        "[Bootstrap:Prod] CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY is not set. " +
-          "Channel dispatch verification will be unavailable (local dev mode).",
-      );
-    } else if (!controlPlanePublicKey) {
+    if (!controlPlanePublicKey) {
       logger.error(
         "[Bootstrap:Prod] CRITICAL: CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY is not set in proxy mode. " +
           "Hosted runtimes cannot verify control-plane requests without it.",
@@ -574,4 +579,8 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
     nodeEnv: nodeEnv ?? "(unset)",
     proxyMode: proxyMode ?? "0",
   });
+}
+
+export function validateProductionEnvironmentForTests(): void {
+  validateProductionEnvironment();
 }

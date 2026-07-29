@@ -451,6 +451,60 @@ describe("push JSON output", () => {
       _resetEnvironmentConfig();
     }
   });
+
+  it("reports no dry-run deletions unless prune is requested", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalLog = console.log;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
+        _resetEnvironmentConfig();
+        setJsonMode(true);
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
+            return Response.json({
+              data: [
+                {
+                  path: "remote-only.ts",
+                  content: "remote\n",
+                  size: 8,
+                  type: "file",
+                  created_at: "",
+                  updated_at: "",
+                },
+              ],
+              page_info: {},
+            });
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        const withoutPruneOutput: string[] = [];
+        console.log = captureConsoleLog(withoutPruneOutput);
+        await pushCommand({ projectDir, dryRun: true });
+        assertEquals(JSON.parse(withoutPruneOutput[0]!).data.wouldDelete, 0);
+
+        const withPruneOutput: string[] = [];
+        console.log = captureConsoleLog(withPruneOutput);
+        await pushCommand({ projectDir, dryRun: true, prune: true });
+        assertEquals(JSON.parse(withPruneOutput[0]!).data.wouldDelete, 1);
+      });
+    } finally {
+      setJsonMode(false);
+      console.log = originalLog;
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
 });
 
 describe("createBranch", () => {
@@ -1534,6 +1588,7 @@ describe("push failure ordering", () => {
             pushCommand({
               projectDir,
               branch: "main",
+              prune: true,
               force: true,
               quiet: true,
             }),
@@ -1553,6 +1608,58 @@ describe("push failure ordering", () => {
 });
 
 describe("push deletion ownership", () => {
+  it("preserves remote-only files unless prune is requested", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const requests: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          requests.push(`${request.method} ${url.pathname}`);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [{ path: "remote-only.ts", content: "remote\n" }],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "PUT") return Response.json({});
+          if (request.method === "DELETE") return Response.json({});
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "main", quiet: true });
+
+        assertEquals(requests.some((request) => request.startsWith("DELETE ")), false);
+        const receipt = await readPushReceipt(projectDir);
+        assertExists(receipt);
+        assertEquals(
+          receipt.sourceDigest,
+          await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "remote-only.ts", content: "remote\n" },
+          ]),
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("does not delete remote files protected by .vfignore", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
@@ -1595,7 +1702,7 @@ describe("push deletion ownership", () => {
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
         }) as typeof fetch;
 
-        await pushCommand({ projectDir, branch: "main", force: true, quiet: true });
+        await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
 
         assertEquals(deleted, ["stale.ts"]);
         const receipt = await readPushReceipt(projectDir);
@@ -1606,6 +1713,64 @@ describe("push deletion ownership", () => {
             { path: "app.ts", content: "export const value = 1;\n" },
             { path: "inbox/seen/runtime.json", content: '{"seen":true}\n' },
             { path: "submissions/submitted/runtime.md", content: "runtime\n" },
+          ]),
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("preserves unsupported remote files during prune", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const deleted: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [
+                { path: "app.ts", content: "stale app" },
+                { path: "stale.ts", content: "stale source" },
+                { path: "assets/logo.png", content: "<PNG>" },
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "PUT") return Response.json({});
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
+
+        assertEquals(deleted, ["stale.ts"]);
+        const receipt = await readPushReceipt(projectDir);
+        assertExists(receipt);
+        assertEquals(
+          receipt.sourceDigest,
+          await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "assets/logo.png", content: "<PNG>" },
           ]),
         );
       });

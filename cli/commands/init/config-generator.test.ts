@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createPackageJson } from "./config-generator.ts";
+import { createPackageJson, createTypeScriptConfig } from "./config-generator.ts";
 import { join } from "veryfront/platform/path";
 
 describe("config-generator", () => {
@@ -39,6 +39,7 @@ describe("config-generator", () => {
           build: "veryfront build",
           start: "veryfront serve",
           eval: "veryfront eval",
+          deploy: "veryfront deploy",
         });
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
@@ -144,6 +145,33 @@ describe("config-generator", () => {
         const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
         // First declaration wins; second is skipped with a warning logged by the impl.
         assertEquals(pkg.dependencies.shared, "^1.0.0");
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+  });
+
+  describe("createTypeScriptConfig", () => {
+    it("writes the starter-compatible TypeScript defaults", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      try {
+        await createTypeScriptConfig(tmpDir);
+        const config = JSON.parse(await Deno.readTextFile(join(tmpDir, "tsconfig.json")));
+
+        assertEquals(config, {
+          compilerOptions: {
+            target: "ES2022",
+            module: "ESNext",
+            moduleResolution: "bundler",
+            strict: true,
+            jsx: "react-jsx",
+            skipLibCheck: true,
+            esModuleInterop: true,
+            paths: { "@/*": ["./*"] },
+          },
+          include: ["**/*.ts", "**/*.tsx"],
+          exclude: ["node_modules"],
+        });
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }

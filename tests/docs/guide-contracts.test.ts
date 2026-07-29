@@ -235,8 +235,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "./deploying.md",
     ],
     snippets: [
-      "veryfront push --branch main --dry-run",
-      "veryfront push --branch main --yes",
+      "veryfront push --branch main --prune --dry-run",
+      "veryfront push --branch main --prune --yes",
       "veryfront deploy --branch main --env staging --yes",
       "veryfront deploy --branch main --env production --yes",
       ".veryfront/push-receipt.json",

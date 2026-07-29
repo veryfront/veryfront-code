@@ -28,6 +28,21 @@ export interface StartCliProxyModeServerOptions {
   linkedProjectSlug?: string;
 }
 
+const LOCAL_CLI_PROXY_MODE_ENV = "VERYFRONT_CLI_LOCAL_PROXY_MODE";
+
+export function prepareCliProxyModeEnvironment(): void {
+  // Proxy mode must be set before config loading/bootstrap.
+  setEnv("PROXY_MODE", "1");
+  setEnv(LOCAL_CLI_PROXY_MODE_ENV, "1");
+
+  // Ensure NODE_ENV is set for local proxy mode (the `start` command uses
+  // startProductionServer with PROXY_MODE=1, but this is a local dev scenario,
+  // not a deployed pod). Without this, validateProductionEnvironment throws.
+  if (!getEnv("NODE_ENV") && !getEnv("DENO_ENV")) {
+    setEnv("NODE_ENV", "development");
+  }
+}
+
 export function buildProxyRuntimeProjectIdentity(
   options: Pick<StartCliProxyModeServerOptions, "defaultProjectId" | "linkedProjectSlug">,
 ): Pick<StartProductionServerOptions, "defaultProjectSlug" | "defaultProjectId"> {
@@ -52,15 +67,7 @@ export function buildDiscoveryConfig(options: StartCliProxyModeServerOptions): D
 export async function startCliProxyModeServer(
   options: StartCliProxyModeServerOptions,
 ): Promise<Awaited<ReturnType<typeof startProductionServer>>> {
-  // Proxy mode must be set before config loading/bootstrap.
-  setEnv("PROXY_MODE", "1");
-
-  // Ensure NODE_ENV is set for local proxy mode (the `start` command uses
-  // startProductionServer with PROXY_MODE=1, but this is a local dev scenario,
-  // not a deployed pod). Without this, validateProductionEnvironment throws.
-  if (!getEnv("NODE_ENV") && !getEnv("DENO_ENV")) {
-    setEnv("NODE_ENV", "development");
-  }
+  prepareCliProxyModeEnvironment();
 
   prefetchBuiltinContentProcessor();
   const result = await startProductionServer({

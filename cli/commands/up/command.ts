@@ -5,14 +5,17 @@ import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { brand, createNoopSpinner, dim } from "#cli/ui";
-import { ensureAuthenticated, readToken } from "../../auth/index.ts";
+import { ensureAuthenticated } from "../../auth/index.ts";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { createSpinner } from "#cli/ui";
 import { isTTY, promptUser } from "#cli/utils";
 import { logSuccess, logWarning } from "#cli/utils";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
-import { readConfigFile, type VeryfrontConfig } from "#cli/shared/config";
-import { resolveCliApiUrl } from "#cli/shared/constants";
+import {
+  resolveConfigWithAuthDetails,
+  type ResolvedConfig,
+  type VeryfrontConfig,
+} from "#cli/shared/config";
 import { reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { normalizeProjectSlug } from "#cli/shared/slug";
 import { pushCommand } from "../push/index.ts";
@@ -42,14 +45,22 @@ export const parseUpArgs = createArgParser(UpArgsSchema, {
 
 type ProjectContext =
   | { type: "empty" }
-  | { type: "has-project"; config: VeryfrontConfig }
-  | { type: "has-code"; suggestedSlug: string };
+  | { type: "has-project"; config: ResolvedConfig }
+  | { type: "has-code"; config: ResolvedConfig; suggestedSlug: string };
 
-async function analyzeDirectory(projectDir: string): Promise<ProjectContext> {
+async function analyzeDirectory(
+  projectDir: string,
+  env: EnvironmentConfig,
+): Promise<ProjectContext> {
   const fs = createFileSystem();
 
-  const config = await readConfigFile(projectDir);
-  if (config?.projectSlug) return { type: "has-project", config };
+  const resolved = await resolveConfigWithAuthDetails(projectDir, env);
+  if (resolved.projectReferenceSource.kind !== "inferred") {
+    return {
+      type: "has-project",
+      config: resolved.config,
+    };
+  }
 
   const entries: string[] = [];
   for await (const entry of fs.readDir(projectDir)) {
@@ -81,7 +92,7 @@ async function analyzeDirectory(projectDir: string): Promise<ProjectContext> {
   } catch (error) {
     cliLogger.debug("Failed to read package.json for project slug:", error);
   }
-  return { type: "has-code", suggestedSlug };
+  return { type: "has-code", config: resolved.config, suggestedSlug };
 }
 
 async function saveConfig(projectDir: string, config: VeryfrontConfig): Promise<void> {
@@ -117,7 +128,7 @@ export async function upCommand(
   }
 
   const spinner = jsonOutput ? createNoopSpinner() : createSpinner("Analyzing project...");
-  const context = await analyzeDirectory(projectDir);
+  const context = await analyzeDirectory(projectDir, env);
   spinner.stop();
 
   if (context.type === "empty") {
@@ -145,7 +156,7 @@ export async function upCommand(
   let projectSlug: string;
 
   if (context.type === "has-project") {
-    projectSlug = context.config.projectSlug!;
+    projectSlug = context.config.projectSlug;
   } else {
     if (!jsonOutput) {
       console.log();
@@ -168,17 +179,18 @@ export async function upCommand(
         : createSpinner(`Creating project "${slug}"...`);
 
       try {
-        const apiUrl = resolveCliApiUrl(env);
-        const resolvedToken = env.apiToken ?? (await readToken(env));
-
-        if (!resolvedToken) {
+        if (!context.config.apiToken) {
           projectSpinner.stop();
           throw new Error("Not authenticated");
         }
 
-        const reserved = await reserveProjectSlug(slug, resolvedToken, env, apiUrl, {
-          allowAlternativeSlug: false,
-        });
+        const reserved = await reserveProjectSlug(
+          slug,
+          context.config.apiToken,
+          env,
+          context.config.apiUrl,
+          { allowAlternativeSlug: false },
+        );
         slug = reserved.slug;
         projectSpinner.stop();
 

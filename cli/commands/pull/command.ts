@@ -35,6 +35,13 @@ import {
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { createIgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
+import { getProjectTarget } from "../../shared/deployment-provenance.ts";
+import {
+  ensurePulledProjectBootstrap,
+  isPulledProjectBootstrapPath,
+  planPulledProjectBootstrap,
+  preflightPulledProjectBootstrap,
+} from "./project-bootstrap.ts";
 
 /**
  * Schema factory for pull command arguments
@@ -557,6 +564,10 @@ function errorSlug(error: unknown): string | undefined {
   return typeof slug === "string" ? slug : undefined;
 }
 
+function isProjectLinkResolutionError(error: unknown): boolean {
+  return describeError(error).includes(".veryfront/project.json");
+}
+
 function pullProjectListError(projectSlug: string, sourceLabel: string, error: unknown): Error {
   const message = [
     `Failed to list files for project "${projectSlug}" from ${sourceLabel}: ${
@@ -580,6 +591,7 @@ async function confirmPullWrite(
   projectDir: string,
   writeCount: number,
   deleteCount: number,
+  bootstrapWriteCount: number,
 ): Promise<boolean> {
   if (isInteractive() && !isTTY()) {
     throw INVALID_ARGUMENT.create({
@@ -590,8 +602,11 @@ async function confirmPullWrite(
   }
 
   const actions: string[] = [];
-  if (writeCount > 0) actions.push(`overwrite ${writeCount} local files`);
+  if (writeCount > 0) actions.push(`write ${writeCount} managed local files`);
   if (deleteCount > 0) actions.push(`delete ${deleteCount} managed local files`);
+  if (bootstrapWriteCount > 0) {
+    actions.push(`create or update ${bootstrapWriteCount} local project files`);
+  }
   const action = actions.join(" and ");
   return await confirmPrompt(`This will ${action} in ${projectDir}. Continue?`, false);
 }
@@ -622,9 +637,7 @@ async function pullSingleProject(
     spinner.stop();
   }
 
-  const pruneIgnoreChecker = prune
-    ? createIgnoreChecker(await loadIgnorePatterns(projectDir))
-    : null;
+  const ignoreChecker = createIgnoreChecker(await loadIgnorePatterns(projectDir));
   const writeOps: WriteOp[] = [];
   const remotePaths = new Set<string>();
   for (const file of files) {
@@ -645,9 +658,8 @@ async function pullSingleProject(
     }
 
     if (
-      pruneIgnoreChecker &&
-      (pruneIgnoreChecker.isIgnored(op.relativePath) ||
-        !pruneIgnoreChecker.isSupportedExtension(op.relativePath))
+      ignoreChecker.isIgnored(op.relativePath) ||
+      !ignoreChecker.isSupportedExtension(op.relativePath)
     ) {
       continue;
     }
@@ -661,18 +673,36 @@ async function pullSingleProject(
   }
 
   let deleteOps: DeleteOp[] = [];
-  if (pruneIgnoreChecker) {
+  if (prune) {
     const managedRemotePaths = new Set(writeOps.map((op) => op.relativePath));
-    const localFiles = await listManagedLocalFiles(projectDir, pruneIgnoreChecker);
-    deleteOps = localFiles.filter((file) => !managedRemotePaths.has(file.relativePath));
+    const localFiles = await listManagedLocalFiles(projectDir, ignoreChecker);
+    deleteOps = localFiles.filter((file) =>
+      !managedRemotePaths.has(file.relativePath) &&
+      !isPulledProjectBootstrapPath(file.relativePath)
+    );
   }
 
-  if (writeOps.length === 0 && deleteOps.length === 0) {
+  const project = await getProjectTarget(client, projectSlug);
+  const pulledPaths = new Set(writeOps.map((op) => op.relativePath));
+  const deletedPaths = new Set(deleteOps.map((op) => op.relativePath));
+
+  await preflightPulledProjectBootstrap({ projectDir });
+  const bootstrapPlan = await planPulledProjectBootstrap({
+    projectDir,
+    config,
+    project,
+    pulledPaths,
+    deletedPaths,
+    dryRun,
+    quiet,
+  });
+  const hasFileOperations = writeOps.length > 0 || deleteOps.length > 0;
+
+  if (!hasFileOperations && bootstrapPlan.writeCount === 0) {
     if (!quiet) logInfo(`No files to pull from ${projectSlug}.`);
-    return { written: 0, deleted: 0, cancelled: false };
   }
 
-  if (!quiet) {
+  if (!quiet && hasFileOperations) {
     const deleteSummary = deleteOps.length > 0 ? ` and ${deleteOps.length} to delete` : "";
     cliLogger.info(
       `\nFound ${writeOps.length} files to ${
@@ -681,12 +711,35 @@ async function pullSingleProject(
     );
   }
 
-  if (!force && !dryRun) {
-    const confirmed = await confirmPullWrite(projectDir, writeOps.length, deleteOps.length);
+  if (
+    !force &&
+    !dryRun &&
+    (hasFileOperations || bootstrapPlan.writeCount > 0)
+  ) {
+    const confirmed = await confirmPullWrite(
+      projectDir,
+      writeOps.length,
+      deleteOps.length,
+      bootstrapPlan.writeCount,
+    );
     if (!confirmed) {
       cliLogger.info("Pull cancelled.");
       return { written: 0, deleted: 0, cancelled: true };
     }
+  }
+
+  if (!hasFileOperations) {
+    await ensurePulledProjectBootstrap({
+      projectDir,
+      config,
+      project,
+      pulledPaths,
+      deletedPaths,
+      dryRun,
+      quiet,
+      plan: bootstrapPlan,
+    });
+    return { written: 0, deleted: 0, cancelled: false };
   }
 
   spinner = quiet ? createNoopSpinner() : createSpinner(`Writing files to ${projectDir}...`);
@@ -713,6 +766,17 @@ async function pullSingleProject(
       }. Some files may have changed. Review git status and restore a clean worktree before retrying.`,
     );
   }
+
+  await ensurePulledProjectBootstrap({
+    projectDir,
+    config,
+    project,
+    pulledPaths,
+    deletedPaths,
+    dryRun,
+    quiet,
+    plan: bootstrapPlan,
+  });
 
   if (!quiet) {
     if (dryRun) {
@@ -789,21 +853,35 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
       } catch (error) {
         spinner.stop();
 
-        if (!projects?.length) throw error;
+        if (slugOverride && isProjectLinkResolutionError(error)) {
+          const env = getEnvironmentConfig();
+          const token = getApiTokenEnv(env) ?? configFile?.apiToken;
+          if (token) {
+            config = {
+              apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
+              apiToken: token,
+              projectSlug: slugOverride,
+            };
+          } else {
+            throw error;
+          }
+        } else {
+          if (!projects?.length) throw error;
 
-        const env = getEnvironmentConfig();
-        const token = getApiTokenEnv(env) ?? configFile?.apiToken;
-        if (!token) {
-          throw new Error(
-            "VERYFRONT_API_TOKEN environment variable or apiToken in veryfront.json is required when using --projects",
-          );
+          const env = getEnvironmentConfig();
+          const token = getApiTokenEnv(env) ?? configFile?.apiToken;
+          if (!token) {
+            throw new Error(
+              "VERYFRONT_API_TOKEN environment variable or apiToken in veryfront.json is required when using --projects",
+            );
+          }
+
+          config = {
+            apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
+            apiToken: token,
+            projectSlug: "",
+          };
         }
-
-        config = {
-          apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
-          apiToken: token,
-          projectSlug: "",
-        };
       }
 
       if (prune && !dryRun) {
