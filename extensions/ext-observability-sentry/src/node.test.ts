@@ -54,6 +54,7 @@ Deno.test("Node adapter uses error-only configuration without tracing or log cap
   assertEquals(state.initOptions?.defaultIntegrations, false);
   assertEquals(state.initOptions?.enableLogs, false);
   assertEquals(state.initOptions?.sendDefaultPii, false);
+  assertEquals(state.initOptions?.skipOpenTelemetrySetup, true);
   assertEquals("tracesSampleRate" in (state.initOptions ?? {}), false);
   assertEquals("tracesSampler" in (state.initOptions ?? {}), false);
   assertEquals(state.initOptions?.dataCollection?.httpBodies, []);

@@ -35,6 +35,7 @@ export function createNodeSentryApplicationErrorReporter(
     defaultIntegrations: false,
     enableLogs: false,
     sendDefaultPii: false,
+    skipOpenTelemetrySetup: true,
   });
 
   return {
