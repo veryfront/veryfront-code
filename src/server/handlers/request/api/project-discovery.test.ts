@@ -44,6 +44,19 @@ function createHandlerContext(
   } as HandlerContext;
 }
 
+function assertConfiguredSkillInfrastructure(
+  tools: unknown,
+): asserts tools is Record<string, unknown> {
+  assertExists(tools);
+  if (tools === true || typeof tools !== "object") {
+    throw new Error("Expected a concrete agent tool map");
+  }
+  const toolMap = tools as Record<string, unknown>;
+  assertEquals(typeof toolMap.load_skill, "object");
+  assertEquals(typeof toolMap.load_skill_reference, "object");
+  assertEquals(typeof toolMap.execute_skill_script, "object");
+}
+
 async function writeAgentFile(
   ctx: HandlerContext,
   agentId: string,
@@ -835,12 +848,8 @@ describe(
       assertExists(discoveredAgent);
       assertEquals(toolRegistry.has("write-report"), true);
       assertEquals(toolRegistry.has("writeReport"), false);
-      assertEquals(discoveredAgent.config.tools, {
-        "write-report": true,
-        load_skill: true,
-        load_skill_reference: true,
-        execute_skill_script: true,
-      });
+      assertConfiguredSkillInfrastructure(discoveredAgent.config.tools);
+      assertEquals(discoveredAgent.config.tools["write-report"], true);
     });
 
     it("keeps explicit generated-looking tool ids available for request-time project-agent runs", async () => {
@@ -890,12 +899,8 @@ describe(
       assertExists(discoveredAgent);
       assertEquals(toolRegistry.has("tool_2024_01"), true);
       assertEquals(toolRegistry.has("writeReport"), false);
-      assertEquals(discoveredAgent.config.tools, {
-        tool_2024_01: true,
-        load_skill: true,
-        load_skill_reference: true,
-        execute_skill_script: true,
-      });
+      assertConfiguredSkillInfrastructure(discoveredAgent.config.tools);
+      assertEquals(discoveredAgent.config.tools.tool_2024_01, true);
     });
 
     it("keeps object-spread overridden tool ids available for request-time project-agent runs", async () => {
@@ -946,12 +951,8 @@ describe(
       assertExists(discoveredAgent);
       assertEquals(toolRegistry.has("my-tool"), true);
       assertEquals(toolRegistry.has("writeReport"), false);
-      assertEquals(discoveredAgent.config.tools, {
-        "my-tool": true,
-        load_skill: true,
-        load_skill_reference: true,
-        execute_skill_script: true,
-      });
+      assertConfiguredSkillInfrastructure(discoveredAgent.config.tools);
+      assertEquals(discoveredAgent.config.tools["my-tool"], true);
     });
   },
 );

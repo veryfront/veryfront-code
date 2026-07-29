@@ -72,7 +72,7 @@ describe("resolveHostedRuntimeAllowedToolNames", () => {
       assertEquals(result?.size, 0);
     });
 
-    it("keeps skill loading but not discovery tools for a config-derived empty selector", () => {
+    it("removes skill infrastructure for a config-derived empty selector with a known empty skill manifest", () => {
       // A sandboxed agent with tools: [] must not gain load_tools/search_tools
       // even when the config-derived essential-tools flag is set. Activating tools
       // is a broader capability than running pre-configured skills (load_skill), so
@@ -86,12 +86,37 @@ describe("resolveHostedRuntimeAllowedToolNames", () => {
           "load_skill_reference",
         ],
         includeRuntimeEssentialToolsWhenEmpty: true,
+        availableSkillIds: [],
       });
 
       assertEquals(result?.has("search_tools"), false);
       assertEquals(result?.has("load_tools"), false);
+      assertEquals(result?.has("load_skill"), false);
+      assertEquals(result?.has("load_skill_reference"), false);
+    });
+
+    it("keeps skill loading for legacy unscoped config-derived empty selectors", () => {
+      const result = resolveHostedRuntimeAllowedToolNames({
+        allowedToolNames: new Set(),
+        localToolNames: ["load_skill", "load_skill_reference"],
+        includeRuntimeEssentialToolsWhenEmpty: true,
+      });
+
       assertEquals(result?.has("load_skill"), true);
       assertEquals(result?.has("load_skill_reference"), true);
+    });
+
+    it("removes execute_skill_script from model-visible tools for known empty skill manifests", () => {
+      const result = resolveHostedRuntimeAllowedToolNames({
+        allowedToolNames: new Set(["execute_skill_script", "sleep"]),
+        localToolNames: ["execute_skill_script", "load_skill", "invoke_agent", "sleep"],
+        availableSkillIds: [],
+      });
+
+      assertEquals(result?.has("execute_skill_script"), false);
+      assertEquals(result?.has("load_skill"), false);
+      assertEquals(result?.has("invoke_agent"), false);
+      assertEquals(result?.has("sleep"), true);
     });
   });
 });

@@ -5,6 +5,7 @@ import {
   buildRuntimeSkillDefinition,
   normalizeRuntimeSkillReferencePath,
   parseRuntimeSkillMetadata,
+  resolveRuntimeSkillSelectorForAgent,
   resolveRuntimeSkillsForAgent,
 } from "./skill-metadata.ts";
 
@@ -109,6 +110,167 @@ Deno.test("resolveRuntimeSkillsForAgent applies owner visibility and short-name 
     }).map((skill) => skill.id),
     ["cite", "researcher--helper"],
   );
+});
+
+Deno.test("resolveRuntimeSkillSelectorForAgent returns a deterministic strict snapshot", () => {
+  const globalCite = buildRuntimeSkillDefinition({
+    id: "cite",
+    content: "---\ndescription: Global citations\n---\nUse global citations.",
+    sourcePath: "skills/cite/SKILL.md",
+  })!;
+  const ownedCite = buildRuntimeSkillDefinition({
+    id: "researcher--helper",
+    content: "---\ndescription: Research citations\n---\nUse research citations.",
+    ownerAgentId: "researcher",
+    shortName: "cite",
+    sourcePath: "agents/researcher/skills/cite/SKILL.md",
+  })!;
+  const otherOwned = buildRuntimeSkillDefinition({
+    id: "writer--style",
+    content: "---\ndescription: Writer style\n---\nUse writer style.",
+    ownerAgentId: "writer",
+    shortName: "style",
+    sourcePath: "agents/writer/skills/style/SKILL.md",
+  })!;
+
+  const selected = resolveRuntimeSkillSelectorForAgent({
+    skills: [globalCite, ownedCite, otherOwned],
+    agentId: "researcher",
+    selector: ["cite", "cite"],
+  });
+
+  assertEquals(selected.policy, { kind: "allowlist", entries: ["cite", "cite"] });
+  assertEquals(selected.allowedSkillIds, ["researcher--helper"]);
+  assertEquals(selected.skillSourcePaths, {
+    "researcher--helper": "agents/researcher/skills/cite/SKILL.md",
+  });
+  assertEquals(selected.definitions.map((skill) => skill.id), ["researcher--helper"]);
+
+  const none = resolveRuntimeSkillSelectorForAgent({
+    skills: [globalCite, ownedCite, otherOwned],
+    agentId: "researcher",
+    selector: [],
+  });
+  assertEquals(none.policy, { kind: "none" });
+  assertEquals(none.allowedSkillIds, []);
+});
+
+Deno.test("resolveRuntimeSkillSelectorForAgent rejects unresolved explicit entries generically", () => {
+  const otherOwned = buildRuntimeSkillDefinition({
+    id: "writer--style",
+    content: "---\ndescription: Writer style\n---\nUse writer style.",
+    ownerAgentId: "writer",
+    shortName: "style",
+  })!;
+
+  let rejected = false;
+  try {
+    resolveRuntimeSkillSelectorForAgent({
+      skills: [otherOwned],
+      agentId: "researcher",
+      selector: ["writer--style"],
+    });
+  } catch (error) {
+    rejected = true;
+    const message = String(error);
+    assertEquals(message.includes("configured skills are not available"), true);
+    assertEquals(message.includes("writer--style"), false);
+  }
+  assertEquals(rejected, true);
+});
+
+Deno.test("resolveRuntimeSkillSelectorForAgent matches the canonical selector matrix", () => {
+  const global = buildRuntimeSkillDefinition({
+    id: "global",
+    content: "---\ndescription: Global\n---\nGlobal.",
+    sourcePath: "skills/global/SKILL.md",
+  })!;
+  const bundled = buildRuntimeSkillDefinition({
+    id: "bundled",
+    content: "---\ndescription: Bundled\n---\nBundled.",
+    sourcePath: "bundled/skills/bundled/SKILL.md",
+  })!;
+  const ownCite = buildRuntimeSkillDefinition({
+    id: "agent--cite",
+    content: "---\ndescription: Own cite\n---\nCite.",
+    ownerAgentId: "agent",
+    shortName: "cite",
+    sourcePath: "agents/agent/skills/cite/SKILL.md",
+  })!;
+  const otherStyle = buildRuntimeSkillDefinition({
+    id: "other--style",
+    content: "---\ndescription: Other style\n---\nStyle.",
+    ownerAgentId: "other",
+    shortName: "style",
+    sourcePath: "agents/other/skills/style/SKILL.md",
+  })!;
+  const globalCite = buildRuntimeSkillDefinition({
+    id: "cite",
+    content: "---\ndescription: Global cite\n---\nGlobal cite.",
+    sourcePath: "skills/cite/SKILL.md",
+  })!;
+
+  const skills = [global, bundled, ownCite, otherStyle, globalCite];
+  const cases: Array<{
+    selector: true | string[] | undefined;
+    expectedPolicy: object;
+    expectedIds: string[];
+  }> = [
+    {
+      selector: undefined,
+      expectedPolicy: { kind: "all-visible", source: "omitted" },
+      expectedIds: ["global", "bundled", "agent--cite", "cite"],
+    },
+    {
+      selector: true,
+      expectedPolicy: { kind: "all-visible", source: "true" },
+      expectedIds: ["global", "bundled", "agent--cite", "cite"],
+    },
+    {
+      selector: [],
+      expectedPolicy: { kind: "none" },
+      expectedIds: [],
+    },
+    {
+      selector: ["bundled", "cite", "global", "bundled"],
+      expectedPolicy: { kind: "allowlist", entries: ["bundled", "cite", "global", "bundled"] },
+      expectedIds: ["bundled", "agent--cite", "global"],
+    },
+  ];
+
+  for (const testCase of cases) {
+    const snapshot = resolveRuntimeSkillSelectorForAgent({
+      skills,
+      agentId: "agent",
+      selector: testCase.selector,
+    });
+    assertEquals(snapshot.policy, testCase.expectedPolicy);
+    assertEquals(snapshot.allowedSkillIds, testCase.expectedIds);
+    assertEquals(snapshot.definitions.map((skill) => skill.id), testCase.expectedIds);
+  }
+});
+
+Deno.test("resolveRuntimeSkillSelectorForAgent keeps the first visible duplicate id once", () => {
+  const projectSkill = buildRuntimeSkillDefinition({
+    id: "create",
+    content: "---\ndescription: Project create\n---\nProject.",
+    sourcePath: "skills/create/SKILL.md",
+  })!;
+  const bundledSkill = buildRuntimeSkillDefinition({
+    id: "create",
+    content: "---\ndescription: Bundled create\n---\nBundled.",
+    sourcePath: "bundled/skills/create/SKILL.md",
+  })!;
+
+  const snapshot = resolveRuntimeSkillSelectorForAgent({
+    skills: [projectSkill, bundledSkill],
+    agentId: "agent",
+    selector: ["create", "create"],
+  });
+
+  assertEquals(snapshot.allowedSkillIds, ["create"]);
+  assertEquals(snapshot.definitions[0], projectSkill);
+  assertEquals(snapshot.skillSourcePaths, { create: "skills/create/SKILL.md" });
 });
 
 Deno.test("buildRuntimeSkillDefinition includes optional runtime fields", () => {

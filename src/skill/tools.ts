@@ -32,6 +32,9 @@ import {
 const MAX_SCRIPT_TIMEOUT_MS = 300_000;
 
 type SkillFileKind = "reference" | "script";
+type SkillSelectorToolOptions = {
+  resolveAllowedSkillIds?: (context: ToolExecutionContext | undefined) => readonly string[];
+};
 
 const getLoadSkillInputSchema = defineSchema((v) =>
   v.object({
@@ -89,6 +92,7 @@ async function readSkillFile(skill: Skill, path: string): Promise<string> {
 function resolveVisibleSkillOrThrow(
   skillId: string,
   context: ToolExecutionContext | undefined,
+  options: SkillSelectorToolOptions = {},
 ): Skill {
   const scope = { agentId: context?.agentId };
   const skill = skillRegistry.resolveVisibleSkill(skillId, scope);
@@ -101,7 +105,43 @@ function resolveVisibleSkillOrThrow(
       }),
     );
   }
+  assertSkillAllowedBySelector(skill, context, options);
   return skill;
+}
+
+function getSelectorAllowedSkillIds(
+  context: ToolExecutionContext | undefined,
+  options: SkillSelectorToolOptions,
+): readonly string[] | undefined {
+  const resolved = options.resolveAllowedSkillIds?.(context);
+  if (resolved !== undefined) return resolved;
+
+  const contextAllowed = context?.allowedSkillIds;
+  if (
+    Array.isArray(contextAllowed) &&
+    contextAllowed.every((entry): entry is string => typeof entry === "string")
+  ) {
+    return contextAllowed;
+  }
+  return undefined;
+}
+
+function assertSkillAllowedBySelector(
+  skill: Skill,
+  context: ToolExecutionContext | undefined,
+  options: SkillSelectorToolOptions,
+): void {
+  const allowedSkillIds = getSelectorAllowedSkillIds(context, options);
+  if (allowedSkillIds === undefined || allowedSkillIds.includes(skill.id)) {
+    return;
+  }
+
+  throw toError(
+    createError({
+      type: "agent",
+      message: `Skill "${skill.id}" is not available to this agent.`,
+    }),
+  );
 }
 
 function hasRuntimeSkillBoundary(
@@ -162,14 +202,14 @@ function assertActiveSkillFileAvailable(
  * Create the load_skill tool.
  * Loads a skill's full instructions, available references, and scripts.
  */
-export function createLoadSkillTool(): Tool {
+export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Tool {
   return tool({
     id: "load_skill",
     description: "Load a skill's full instructions. Returns the skill's markdown instructions, " +
       "allowed tools policy, and lists of available reference files and scripts.",
     inputSchema: getLoadSkillInputSchema(),
     execute: async (input, context): Promise<SkillContent> => {
-      const skill = resolveVisibleSkillOrThrow(input.skillId, context);
+      const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
 
       // Read SKILL.md
       const skillMdPath = join(skill.rootPath, SKILL_MD_FILENAME);
@@ -218,14 +258,14 @@ export function createLoadSkillTool(): Tool {
  * Create the load_skill_reference tool.
  * Reads a reference file from a skill's references/, resources/, or assets/ directory.
  */
-export function createLoadSkillReferenceTool(): Tool {
+export function createLoadSkillReferenceTool(options: SkillSelectorToolOptions = {}): Tool {
   return tool({
     id: "load_skill_reference",
     description: "Read a reference file from a skill. Only files in the skill's " +
       "references/, resources/, and assets/ directories are accessible.",
     inputSchema: getLoadSkillReferenceInputSchema(),
     execute: async (input, context): Promise<{ content: string; path: string }> => {
-      const skill = resolveVisibleSkillOrThrow(input.skillId, context);
+      const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
       assertActiveSkillFileAvailable(
         {
           toolName: "load_skill_reference",
@@ -256,7 +296,7 @@ export function createLoadSkillReferenceTool(): Tool {
  * Executes a script from a skill's scripts/ directory.
  */
 export function createExecuteSkillScriptTool(
-  options: { executor?: SkillScriptExecutor } = {},
+  options: { executor?: SkillScriptExecutor } & SkillSelectorToolOptions = {},
 ): Tool {
   return tool({
     id: "execute_skill_script",
@@ -264,7 +304,7 @@ export function createExecuteSkillScriptTool(
       "Execute a script from a skill's scripts/ directory. Returns stdout, stderr, and exit code.",
     inputSchema: getExecuteSkillScriptInputSchema(),
     execute: async (input, context) => {
-      const skill = resolveVisibleSkillOrThrow(input.skillId, context);
+      const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
       assertActiveSkillFileAvailable(
         {
           toolName: "execute_skill_script",

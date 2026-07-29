@@ -11,12 +11,16 @@ import type {
 import type { HostedChatRuntimePreparationSteering } from "./chat-preparation.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import {
-  resolveRuntimeSkillsForAgent,
+  resolveRuntimeSkillSelectorSnapshotForAgent,
   type RuntimeSkillDefinition,
 } from "../runtime/skill-metadata.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
 import type { HostedChatRuntimeInstructionsInput } from "./chat-preparation.ts";
+import {
+  createNoneSkillSelectorSnapshot,
+  type ResolvedSkillSelectorPolicy,
+} from "#veryfront/skill/selector.ts";
 
 /** Public API contract for default hosted project steering refresh logger. */
 export type DefaultHostedProjectSteeringRefreshLogger = {
@@ -165,6 +169,46 @@ async function fetchSkillsWithFallback(input: {
   }
 }
 
+function resolveRefreshedSkillSnapshot(input: {
+  skills: readonly RuntimeSkillDefinition[];
+  agentId: string;
+  selector: true | false | readonly string[] | undefined;
+  policy: ResolvedSkillSelectorPolicy | undefined;
+}) {
+  if (
+    !input.policy &&
+    (input.selector === false || (Array.isArray(input.selector) && input.selector.length === 0))
+  ) {
+    return createNoneSkillSelectorSnapshot<RuntimeSkillDefinition>();
+  }
+
+  if (!input.policy && Array.isArray(input.selector)) {
+    return resolveRuntimeSkillSelectorSnapshotForAgent({
+      skills: input.skills,
+      agentId: input.agentId,
+      selector: [...input.selector],
+    });
+  }
+
+  if (!input.policy || input.policy.kind === "all-visible") {
+    return resolveRuntimeSkillSelectorSnapshotForAgent({
+      skills: input.skills,
+      agentId: input.agentId,
+      selector: input.policy?.source === "true" ? true : undefined,
+    });
+  }
+
+  if (input.policy.kind === "none") {
+    return createNoneSkillSelectorSnapshot<RuntimeSkillDefinition>(input.policy);
+  }
+
+  return resolveRuntimeSkillSelectorSnapshotForAgent({
+    skills: input.skills,
+    agentId: input.agentId,
+    selector: input.policy.entries,
+  });
+}
+
 /** Create default hosted project steering refresh. */
 export function createDefaultHostedProjectSteeringRefresh(
   options: CreateDefaultHostedProjectSteeringRefreshOptions,
@@ -200,11 +244,19 @@ export function createDefaultHostedProjectSteeringRefresh(
       }),
     ]);
 
-    const advertisedSkills = resolveRuntimeSkillsForAgent({
+    const skillSelectorSnapshot = resolveRefreshedSkillSnapshot({
       skills,
       agentId: input.liveProjectSteering.agent.id,
       selector: input.liveProjectSteering.agent.skills,
+      policy: input.taskContext.skillSelectorPolicy ??
+        input.liveProjectSteering.skillSelectorPolicy,
     });
+    input.taskContext.availableSkillIds = skillSelectorSnapshot.allowedSkillIds;
+    input.taskContext.skillSelectorPolicy = skillSelectorSnapshot.policy;
+    input.taskContext.skillSourcePaths =
+      Object.keys(skillSelectorSnapshot.skillSourcePaths).length > 0
+        ? skillSelectorSnapshot.skillSourcePaths
+        : undefined;
     const sourceAllowedRemoteToolNames = applySourceIntegrationPolicy(
       remoteToolNames,
       input.toolAssembly.sourceIntegrationPolicy,
@@ -228,7 +280,7 @@ export function createDefaultHostedProjectSteeringRefresh(
       branchId,
       environmentContext: input.liveProjectSteering.environmentContext,
       instructions: projectInstructions,
-      skills: advertisedSkills,
+      skills: skillSelectorSnapshot.definitions,
       availableToolNames: toolNames,
     });
 

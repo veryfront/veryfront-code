@@ -223,6 +223,55 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     assertEquals(system.includes("Fresh instructions:"), true);
   });
 
+  it("refreshes omitted selectors dynamically but does not broaden explicit allowlists", async () => {
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([createSkill("build"), createSkill("new-skill")]),
+      buildInstructions: (input) =>
+        `${input.instructions}:${input.skills.map((skill) => skill.id).join(",")}`,
+    });
+
+    const dynamicInput = createRefreshInput();
+    dynamicInput.taskContext.skillSelectorPolicy = { kind: "all-visible", source: "omitted" };
+    dynamicInput.taskContext.availableSkillIds = ["build"];
+
+    const dynamicSystem = await refresh(dynamicInput);
+
+    assertStringIncludes(dynamicSystem, "Fresh instructions:build,new-skill");
+    assertEquals(dynamicInput.taskContext.availableSkillIds, ["build", "new-skill"]);
+
+    const explicitInput = createRefreshInput();
+    explicitInput.liveProjectSteering.agent.skills = ["build"];
+    explicitInput.taskContext.skillSelectorPolicy = { kind: "allowlist", entries: ["build"] };
+    explicitInput.taskContext.availableSkillIds = ["build"];
+
+    const explicitSystem = await refresh(explicitInput);
+
+    assertStringIncludes(explicitSystem, "Fresh instructions:build");
+    assertEquals(explicitSystem.includes("new-skill"), false);
+    assertEquals(explicitInput.taskContext.availableSkillIds, ["build"]);
+  });
+
+  it("removes deleted explicit skill selections during refresh", async () => {
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([createSkill("new-skill")]),
+      buildInstructions: (input) =>
+        `${input.instructions}:${input.skills.map((skill) => skill.id).join(",")}`,
+    });
+    const input = createRefreshInput();
+    input.liveProjectSteering.agent.skills = ["build"];
+    input.taskContext.skillSelectorPolicy = { kind: "allowlist", entries: ["build"] };
+    input.taskContext.availableSkillIds = ["build"];
+
+    const system = await refresh(input);
+
+    assertStringIncludes(system, "Fresh instructions:");
+    assertEquals(system.includes("build"), false);
+    assertEquals(system.includes("new-skill"), false);
+    assertEquals(input.taskContext.availableSkillIds, []);
+  });
+
   it("keeps provider-native tools in refreshed runtime inventory", async () => {
     const refresh = createDefaultHostedProjectSteeringRefresh({
       fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),

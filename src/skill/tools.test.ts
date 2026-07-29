@@ -113,6 +113,39 @@ Review the asset files.`,
     assertEquals(result.references, ["assets/checklist.txt"]);
   });
 
+  it("load_skill should reject skills outside the selector before reading storage", async () => {
+    let readCount = 0;
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/SKILL.md": `---
+name: my-skill
+description: Skill from adapter
+---
+# Instructions
+Do work.`,
+    });
+    const countingAdapter: FileSystemAdapter = {
+      ...fsAdapter,
+      async readFile(path) {
+        readCount++;
+        return await fsAdapter.readFile(path);
+      },
+    };
+    registerSkill("my-skill", createTestSkill(countingAdapter));
+
+    const tool = createLoadSkillTool();
+
+    await assertRejects(
+      () =>
+        tool.execute({ skillId: "my-skill" }, {
+          agentId: "agent",
+          allowedSkillIds: [],
+        }),
+      Error,
+      "not available to this agent",
+    );
+    assertEquals(readCount, 0);
+  });
+
   it("load_skill should omit prompt notes for unavailable file tools", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/SKILL.md": `---
@@ -289,6 +322,43 @@ Do work.`,
         }),
       Error,
     );
+  });
+
+  it("load_skill_reference should reject stale active skill state outside the selector", async () => {
+    let readCount = 0;
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/references/guide.md": "Guide",
+    });
+    const countingAdapter: FileSystemAdapter = {
+      ...fsAdapter,
+      async readFile(path) {
+        readCount++;
+        return await fsAdapter.readFile(path);
+      },
+    };
+    registerSkill("my-skill", createNamedTestSkill("my-skill", countingAdapter));
+
+    const tool = createLoadSkillReferenceTool();
+
+    await assertRejects(
+      () =>
+        tool.execute({
+          skillId: "my-skill",
+          reference: "references/guide.md",
+        }, {
+          agentId: "agent",
+          allowedSkillIds: [],
+          activeSkillId: "my-skill",
+          activeSkillToolAvailability: {
+            hasActiveSkill: true,
+            references: ["references/guide.md"],
+            scripts: [],
+          },
+        }),
+      Error,
+      "not available to this agent",
+    );
+    assertEquals(readCount, 0);
   });
 
   it("execute_skill_script should run a local script from the skill directory", async () => {

@@ -28,9 +28,10 @@ import type { AgentMcpToolPolicy } from "../types.ts";
 import type { RuntimeLoadSkillToolContext } from "../runtime/load-skill-tool.ts";
 import type { RuntimeProjectSteeringLookup } from "../runtime/project-skill-catalog.ts";
 import {
-  resolveRuntimeSkillsForAgent,
+  resolveRuntimeSkillSelectorForAgent,
   type RuntimeSkillDefinition,
 } from "../runtime/skill-metadata.ts";
+import type { ResolvedSkillSelectorSnapshot } from "#veryfront/skill/selector.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import { buildAgentDelegateTools } from "../runtime/agent-delegation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
@@ -55,6 +56,7 @@ import {
 
 const HOSTED_CHILD_LOCAL_SKILL_TOOL_NAMES = new Set([
   "execute_skill_script",
+  "load_skill",
   "load_skill_reference",
 ]);
 
@@ -68,6 +70,7 @@ export type ChildRunContext =
     RuntimeLoadSkillToolContext,
     | "agentId"
     | "availableSkillIds"
+    | "skillSelectorPolicy"
     | "skillSourcePaths"
     | "loadedSkillResponses"
     | "loadedSkillReferenceResponses"
@@ -229,11 +232,17 @@ function shouldRethrowInvokeAgentError(error: unknown): boolean {
 /** Resolves the effective tool name allowlist for a hosted child agent run. */
 export function resolveHostedChildToolNames(
   agentConfig: RuntimeAgentMarkdownDefinition,
+  skillSelectorSnapshot?: Pick<
+    ResolvedSkillSelectorSnapshot<RuntimeSkillDefinition>,
+    "allowedSkillIds"
+  >,
 ): string[] | undefined {
   if (agentConfig.tools === true) {
     return undefined;
   }
 
+  const hasAuthorizedSkills = skillSelectorSnapshot === undefined ||
+    skillSelectorSnapshot.allowedSkillIds.length > 0;
   return [
     ...new Set([
       ...(agentConfig.tools ?? []).filter((toolName) =>
@@ -241,9 +250,33 @@ export function resolveHostedChildToolNames(
       ),
       ...(agentConfig.providerTools ?? []),
       ...(agentConfig.delegates ?? []).map((id) => `agent_${id}`),
-      "load_skill",
+      ...(hasAuthorizedSkills ? ["load_skill"] : []),
     ]),
   ];
+}
+
+/** Builds host tools for a configured hosted child run. */
+export function buildHostedChildGlobalTools(
+  context: NodeVeryfrontCloudAgentServiceContext,
+  input: {
+    childAgentId: string;
+    childConfig?: DefaultHostedChildAgentExecutionConfig;
+    childToolContext: ChildRunContext;
+  },
+): HostToolSet {
+  return {
+    ...(input.childConfig ? getDiscoveredHostTools({ agentId: input.childAgentId }) : {}),
+    ...(!input.childConfig || (input.childConfig.availableSkillIds?.length ?? 0) > 0
+      ? { load_skill: createLoadSkillTool(context, input.childToolContext) }
+      : {}),
+    ...(input.childConfig?.delegateIds?.length
+      ? buildHostedDelegateTools(context, {
+        delegates: input.childConfig.delegateIds,
+        selfId: input.childAgentId,
+        taskContext: input.childToolContext,
+      })
+      : {}),
+  };
 }
 
 /** Builds the child run context for a nested hosted agent invocation. */
@@ -256,7 +289,12 @@ export function buildHostedChildToolContext(
   return {
     ...globalToolContext,
     agentId: childAgentId,
-    ...(childConfig?.availableSkillIds ? { availableSkillIds: childConfig.availableSkillIds } : {}),
+    ...(childConfig?.availableSkillIds !== undefined
+      ? { availableSkillIds: childConfig.availableSkillIds }
+      : {}),
+    ...(childConfig?.skillSelectorPolicy
+      ? { skillSelectorPolicy: childConfig.skillSelectorPolicy }
+      : {}),
     ...(childConfig?.skillSourcePaths ? { skillSourcePaths: childConfig.skillSourcePaths } : {}),
     ...(childConfig?.toolNames ? { availableToolNames: childConfig.toolNames } : {}),
     loadedSkillResponses: {},
@@ -304,22 +342,12 @@ export async function resolveHostedChildAgentExecutionConfig(
     authToken: taskContext.authToken,
     branchId,
   }, childAgentId);
-  const advertisedSkills = resolveRuntimeSkillsForAgent({
+  const skillSelectorSnapshot = resolveRuntimeSkillSelectorForAgent({
     skills: steering.skills,
     agentId: childAgentId,
-    selector: agentConfig.skills,
+    selector: agentConfig.skills === false ? [] : agentConfig.skills,
   });
-  const loadableSkills = resolveRuntimeSkillsForAgent({
-    skills: steering.skills,
-    agentId: childAgentId,
-    selector: true,
-  });
-  const skillSourcePaths = Object.fromEntries(
-    loadableSkills
-      .filter((skill) => skill.sourcePath)
-      .map((skill) => [skill.id, skill.sourcePath as string]),
-  );
-  const toolNames = resolveHostedChildToolNames(agentConfig);
+  const toolNames = resolveHostedChildToolNames(agentConfig, skillSelectorSnapshot);
   const thinking = agentConfig.thinking?.enabled === false ? 0 : agentConfig.thinking?.budgetTokens;
 
   return {
@@ -328,7 +356,7 @@ export async function resolveHostedChildAgentExecutionConfig(
       projectId: projectId || null,
       branchId,
       instructions: steering.instructions,
-      skills: advertisedSkills,
+      skills: skillSelectorSnapshot.definitions,
       availableToolNames: toolNames,
     })),
     ...(agentConfig.model ? { model: agentConfig.model } : {}),
@@ -337,8 +365,11 @@ export async function resolveHostedChildAgentExecutionConfig(
     ...(thinking === undefined ? {} : { thinking }),
     ...(toolNames === undefined ? {} : { toolNames }),
     mcpServers: resolveMcpServers(context.options, agentConfig),
-    availableSkillIds: loadableSkills.map((skill) => skill.id),
-    ...(Object.keys(skillSourcePaths).length > 0 ? { skillSourcePaths } : {}),
+    availableSkillIds: skillSelectorSnapshot.allowedSkillIds,
+    skillSelectorPolicy: skillSelectorSnapshot.policy,
+    ...(Object.keys(skillSelectorSnapshot.skillSourcePaths).length > 0
+      ? { skillSourcePaths: skillSelectorSnapshot.skillSourcePaths }
+      : {}),
     ...(agentConfig.delegates === undefined ? {} : { delegateIds: agentConfig.delegates }),
   };
 }
@@ -369,17 +400,11 @@ export function createInvokeAgentTool(
         childConfig,
         durableChildRun,
       );
-      return {
-        ...(childConfig ? getDiscoveredHostTools({ agentId: childAgentId }) : {}),
-        load_skill: createLoadSkillTool(context, childToolContext),
-        ...(childConfig?.delegateIds?.length
-          ? buildHostedDelegateTools(context, {
-            delegates: childConfig.delegateIds,
-            selfId: childAgentId,
-            taskContext: childToolContext,
-          })
-          : {}),
-      };
+      return buildHostedChildGlobalTools(context, {
+        childAgentId,
+        childConfig,
+        childToolContext,
+      });
     },
     resolveChildAgentExecutionConfig: (childAgentId, projectId) =>
       resolveHostedChildAgentExecutionConfig(context, childContext, childAgentId, projectId),
