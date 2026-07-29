@@ -1,4 +1,4 @@
-import { workflow, step, parallel, waitForApproval } from "veryfront/workflow";
+import { parallel, step, waitForApproval, workflow } from "veryfront/workflow";
 
 export default workflow({
   id: "content-pipeline",

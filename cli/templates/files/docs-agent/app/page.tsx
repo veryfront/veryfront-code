@@ -1,6 +1,6 @@
-'use client'
+"use client";
 
-import { Chat } from 'veryfront/chat'
+import { Chat } from "veryfront/chat";
 
 export default function DocsChat() {
   return (
@@ -10,5 +10,5 @@ export default function DocsChat() {
       className="flex-1 min-h-0"
       placeholder="Ask anything about your documents..."
     />
-  )
+  );
 }

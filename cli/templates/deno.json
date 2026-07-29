@@ -1,0 +1,15 @@
+{
+  "workspace": [],
+  "fmt": {
+    "include": [
+      "files/**/*.ts",
+      "files/**/*.tsx"
+    ],
+    "useTabs": false,
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "proseWrap": "preserve"
+  }
+}

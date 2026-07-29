@@ -4,8 +4,7 @@ export default agent({
   id: "rag",
   name: "Docs Agent",
   description: "Upload files and ask questions.",
-  system:
-    `You answer questions using the provided documents. ` +
+  system: `You answer questions using the provided documents. ` +
     `Always cite your sources by referencing the document title. ` +
     `If the search results don't contain a clear answer, say so honestly.`,
   suggestions: {

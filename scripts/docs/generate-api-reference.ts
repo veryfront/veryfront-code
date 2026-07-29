@@ -22,18 +22,39 @@ const ROOT = Deno.cwd();
 // ---------------------------------------------------------------------------
 
 const args = parseArgs(Deno.args, {
+  boolean: ["check"],
   string: ["output", "source-base-url"],
   default: {
+    check: false,
     output: "docs/api-reference",
     "source-base-url": "https://github.com/veryfront/veryfront-code/blob/main",
   },
 });
 
-const OUTPUT_DIR = args.output.startsWith("/")
+const CHECK_MODE = args.check;
+const TARGET_OUTPUT_DIR = args.output.startsWith("/")
   ? args.output
   : `${ROOT}/${args.output}`;
-const VERYFRONT_DIR = `${OUTPUT_DIR}/veryfront`;
 const SOURCE_BASE_URL = String(args["source-base-url"]).replace(/\/+$/, "");
+
+const DIAGNOSTIC_CONTEXT_LIMIT = 512;
+const DRIFT_PATH_LIMIT = 10;
+const DRIFT_PATH_CHARACTER_LIMIT = 160;
+
+type ApiReferenceGenerationErrorCode =
+  | "API_REFERENCE_DRIFT"
+  | "DENO_DOC_FAILED"
+  | "DENO_DOC_INVALID_JSON";
+
+class ApiReferenceGenerationError extends Error {
+  constructor(
+    readonly code: ApiReferenceGenerationErrorCode,
+    message: string,
+  ) {
+    super(`[${code}] ${message}`);
+    this.name = "ApiReferenceGenerationError";
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -133,6 +154,11 @@ interface FunctionDef {
   typeParams?: Array<{ name: string; default?: TsType }>;
 }
 
+interface DenoJSDoc {
+  doc?: string;
+  tags?: Array<{ kind?: string; doc?: string }>;
+}
+
 interface InterfaceProperty {
   name: string;
   optional: boolean;
@@ -192,7 +218,7 @@ interface ClassDef {
 interface DocNode {
   name: string;
   kind: string;
-  jsDoc?: { doc?: string };
+  jsDoc?: DenoJSDoc;
   functionDef?: FunctionDef;
   interfaceDef?: InterfaceDef;
   typeAliasDef?: { tsType?: TsType };
@@ -219,6 +245,7 @@ interface ExportSummary {
   name: string;
   description: string;
   sourceHref: string;
+  deprecated: boolean;
 }
 
 interface CategorizedExports {
@@ -797,7 +824,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
  */
 const SYNTHETIC_PARENTS: Record<string, { description: string }> = {
   channels: {
-    description: "Signed control-plane discovery and channel invocation contracts.",
+    description:
+      "Signed control-plane discovery and channel invocation contracts.",
   },
 };
 
@@ -805,7 +833,8 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront": "Core app config and routing.",
   "veryfront/agent": "Agents, AG-UI handlers, and memory.",
   "veryfront/chat": "Chat components and hooks.",
-  "veryfront/channels": "Signed control-plane and channel invocation contracts.",
+  "veryfront/channels":
+    "Signed control-plane and channel invocation contracts.",
   "veryfront/cli": "CLI runtime helpers.",
   "veryfront/context": "Page context.",
   "veryfront/embedding": "Embedding and retrieval helpers.",
@@ -826,7 +855,8 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/prompt": "MCP prompt definitions.",
   "veryfront/provider": "Model provider registry.",
   "veryfront/resource": "MCP resource definitions.",
-  "veryfront/release-assets": "Content-addressed release assets and manifest contracts.",
+  "veryfront/release-assets":
+    "Content-addressed release assets and manifest contracts.",
   "veryfront/router": "Client navigation and route context.",
   "veryfront/sandbox": "Isolated execution.",
   "veryfront/schemas": "Validation schemas.",
@@ -1044,7 +1074,7 @@ function finalizeExample(
 async function getDenoDoc(filePath: string): Promise<DocNode[]> {
   const absPath = filePath.startsWith("./") ? filePath.slice(2) : filePath;
   const cmd = new Deno.Command("deno", {
-    args: ["doc", "--json", absPath],
+    args: ["doc", "--frozen", "--json", absPath],
     cwd: ROOT,
     stdout: "piped",
     stderr: "piped",
@@ -1052,17 +1082,74 @@ async function getDenoDoc(filePath: string): Promise<DocNode[]> {
 
   const { code, stdout, stderr } = await cmd.output();
   if (code !== 0) {
-    const errText = new TextDecoder().decode(stderr);
-    console.warn(`  deno doc failed for ${filePath}: ${errText.slice(0, 200)}`);
-    return [];
+    throw new ApiReferenceGenerationError(
+      "DENO_DOC_FAILED",
+      `deno doc failed for ${
+        sanitizeDiagnosticText(filePath)
+      } with exit code ${code}. ` +
+        `Diagnostic: ${sanitizeDiagnosticBytes(stderr)}`,
+    );
   }
 
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(new TextDecoder().decode(stdout));
-    return normalizeDenoDoc(parsed);
+    parsed = JSON.parse(new TextDecoder().decode(stdout));
   } catch {
-    return [];
+    throw new ApiReferenceGenerationError(
+      "DENO_DOC_INVALID_JSON",
+      `deno doc returned malformed JSON for ${
+        sanitizeDiagnosticText(filePath)
+      }. ` +
+        `Output: ${sanitizeDiagnosticBytes(stdout)}`,
+    );
   }
+
+  return normalizeDenoDoc(parsed);
+}
+
+function sanitizeDiagnosticBytes(value: Uint8Array): string {
+  return sanitizeDiagnosticText(new TextDecoder().decode(value));
+}
+
+function sanitizeDiagnosticText(value: string): string {
+  const sanitized = stripUnsafeDiagnosticCharacters(
+    value.replaceAll(ROOT, "<project-root>"),
+  ).trim();
+  if (!sanitized) return "<empty>";
+  return sanitized.length > DIAGNOSTIC_CONTEXT_LIMIT
+    ? `${sanitized.slice(0, DIAGNOSTIC_CONTEXT_LIMIT)}…`
+    : sanitized;
+}
+
+function stripUnsafeDiagnosticCharacters(value: string): string {
+  let sanitized = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 0x1b && value.charCodeAt(index + 1) === 0x5b) {
+      index += 2;
+      while (index < value.length) {
+        const sequenceCode = value.charCodeAt(index);
+        if (sequenceCode >= 0x40 && sequenceCode <= 0x7e) break;
+        index += 1;
+      }
+      continue;
+    }
+    if (code === 0x0d) {
+      if (value.charCodeAt(index + 1) === 0x0a) index += 1;
+      sanitized += "\n";
+      continue;
+    }
+    if (
+      (code <= 0x08) || code === 0x0b || code === 0x0c ||
+      (code >= 0x0e && code <= 0x1f) ||
+      (code >= 0x7f && code <= 0x9f)
+    ) {
+      sanitized += "�";
+      continue;
+    }
+    sanitized += value[index];
+  }
+  return sanitized;
 }
 
 function normalizeDenoDoc(parsed: unknown): DocNode[] {
@@ -1440,6 +1527,7 @@ function categorizeNodes(nodes: DocNode[]): CategorizedExports {
     const name = node.name;
     const desc = getNodeDescription(node);
     const sourceHref = getNodeSourceHref(node);
+    const deprecated = getNodeDeprecation(node) !== undefined;
 
     switch (node.kind) {
       case "function": {
@@ -1448,23 +1536,29 @@ function categorizeNodes(nodes: DocNode[]): CategorizedExports {
           name,
           desc,
           sourceHref,
+          deprecated,
         );
         break;
       }
       case "interface":
       case "typeAlias":
       case "enum":
-        pushNodeSummary(result.types, name, desc, sourceHref);
+        pushNodeSummary(result.types, name, desc, sourceHref, deprecated);
         break;
       case "class":
-        pushNodeSummary(result.classes, name, desc, sourceHref);
+        pushNodeSummary(result.classes, name, desc, sourceHref, deprecated);
         break;
       case "variable":
         pushNodeSummary(
-          isComponentLikeName(name) ? result.components : result.constants,
+          isConstantLikeName(name)
+            ? result.constants
+            : isComponentLikeName(name)
+            ? result.components
+            : result.constants,
           name,
           desc,
           sourceHref,
+          deprecated,
         );
         break;
       default:
@@ -1480,7 +1574,21 @@ function categorizeNodes(nodes: DocNode[]): CategorizedExports {
 }
 
 function getNodeDescription(node: DocNode): string {
-  return node.jsDoc?.doc ? oneLineDoc(node.jsDoc.doc) : "";
+  const description = node.jsDoc?.doc ? oneLineDoc(node.jsDoc.doc) : "";
+  const deprecation = getNodeDeprecation(node);
+  if (deprecation === undefined) return description;
+  const note = deprecation.length > 0
+    ? `**Deprecated:** ${deprecation}`
+    : "**Deprecated.**";
+  return description.length > 0 ? `${note} ${description}` : note;
+}
+
+function getNodeDeprecation(node: DocNode): string | undefined {
+  const tag = node.jsDoc?.tags?.find((candidate) =>
+    candidate.kind === "deprecated"
+  );
+  if (!tag) return undefined;
+  return tag.doc ? oneLineDoc(tag.doc) : "";
 }
 
 function getNodeSourceHref(node: DocNode): string {
@@ -1495,7 +1603,9 @@ function getSourceHref(location: DenoDocLocation | undefined): string {
   // The Deno version pinned by CI reports one-based source lines, matching
   // GitHub anchors. Preserve the first-line anchor without shifting later
   // declarations away from their source.
-  const line = typeof lineNumber === "number" && lineNumber > 0 ? `#L${lineNumber}` : "";
+  const line = typeof lineNumber === "number" && lineNumber > 0
+    ? `#L${lineNumber}`
+    : "";
   return `${SOURCE_BASE_URL}/${relativePath}${line}`;
 }
 
@@ -1550,13 +1660,18 @@ function isComponentLikeName(name: string): boolean {
   return /^[A-Z]/.test(name);
 }
 
+function isConstantLikeName(name: string): boolean {
+  return /^[A-Z][A-Z0-9_]*$/.test(name);
+}
+
 function pushNodeSummary(
   target: ExportSummary[],
   name: string,
   description: string,
   sourceHref: string,
+  deprecated: boolean,
 ): void {
-  target.push({ name, description, sourceHref });
+  target.push({ name, description, sourceHref, deprecated });
 }
 
 // ---------------------------------------------------------------------------
@@ -1715,6 +1830,17 @@ const API_DOCS: Record<string, APIDocs> = {
       "UseChatResult",
       "UseAgentOptions",
       "UseAgentResult",
+      "UseConversationOptions",
+      "UseConversationResult",
+      "UseConversationPersistenceState",
+      "ConversationStoreError",
+      "ConversationStoreOperation",
+      "ConversationStorageLimits",
+      "UseConversationsOptions",
+      "UseConversationsResult",
+      "UseConversationsPersistenceState",
+      "ActiveConversationLoadFailure",
+      "UseConversationsActiveLoadState",
     ],
   },
   "veryfront/workflow": {
@@ -1988,6 +2114,57 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     thinking: "Current reasoning text",
     toolCalls: "Active tool calls",
   },
+  UseConversationOptions: {
+    store: "Conversation persistence adapter",
+    storageKey: "Namespace for the default local storage adapter",
+    onError: "Load failure callback",
+  },
+  UseConversationResult: {
+    conversation: "Loaded conversation or null",
+    isLoading: "Whether the conversation is loading",
+    reload: "Reload the conversation",
+  },
+  UseConversationPersistenceState: {
+    error: "Most recent load failure",
+    clearError: "Clear the reported load failure",
+  },
+  UseConversationsOptions: {
+    id: "Controlled active conversation id",
+    onSelect: "Active conversation change callback",
+    store: "Conversation persistence adapter",
+    storageKey: "Namespace for the default local storage adapter",
+    onError: "Persistence failure callback",
+  },
+  UseConversationsResult: {
+    conversations: "Conversation summaries ordered newest first",
+    activeConversation: "Full active conversation or null",
+    active: "Deprecated alias for activeConversation",
+    activeConversationId: "Active conversation id or null",
+    activeId: "Deprecated alias for activeConversationId",
+    isLoading: "Whether the initial list is loading",
+    select: "Select a conversation",
+    create: "Create or reuse an empty conversation",
+    rename: "Rename a conversation",
+    remove: "Delete a conversation",
+    update: "Patch a conversation",
+    save: "Persist a complete conversation",
+    bind: "Persist messages from a live chat session",
+  },
+  UseConversationsPersistenceState: {
+    isActiveConversationLoading:
+      "Whether the active conversation record is loading",
+    error: "Most recent persistence failure",
+    clearError: "Clear the reported persistence failure",
+  },
+  ActiveConversationLoadFailure: {
+    id: "Conversation id whose active-record load failed",
+    error: "Normalized failure for the specific load attempt",
+  },
+  UseConversationsActiveLoadState: {
+    activeConversationError: "Most recent id-scoped active-record load failure",
+    clearActiveConversationError: "Clear only the active-record load failure",
+    reloadActiveConversation: "Reload the current active conversation",
+  },
   WorkflowOptions: {
     id: "Unique workflow identifier",
     description: "Human-readable description",
@@ -2083,7 +2260,8 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     id: "Unique prompt identifier",
     description: "Human-readable description",
     content: "Static prompt text with optional `{name}` placeholders",
-    generate: "Function that resolves prompt text from caller-supplied variables",
+    generate:
+      "Function that resolves prompt text from caller-supplied variables",
     suggestion: "Example message text suitable for a chat suggestion",
   },
   WorkConfig: {
@@ -2374,6 +2552,7 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
 
     const node = findNode(nodes, typeName);
     let properties: InterfaceProperty[] | undefined;
+    let aliasType: TsType | undefined;
 
     if (node?.interfaceDef?.properties) {
       properties = node.interfaceDef.properties;
@@ -2387,9 +2566,13 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
         jsDoc: p.jsDoc,
         location: p.location,
       }));
+    } else if (node?.classDef?.properties) {
+      properties = node.classDef.properties;
+    } else if (node?.typeAliasDef?.tsType) {
+      aliasType = node.typeAliasDef.tsType;
     }
 
-    if (!properties || properties.length === 0) continue;
+    if ((!properties || properties.length === 0) && !aliasType) continue;
 
     if (!hasContent) {
       lines.push("## Type Reference");
@@ -2408,7 +2591,11 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
       lines.push("");
     }
 
-    lines.push(...renderPropertyTable(typeName, properties, node?.location));
+    if (properties && properties.length > 0) {
+      lines.push(...renderPropertyTable(typeName, properties, node?.location));
+    } else if (aliasType) {
+      lines.push(`**Type:** ${mdxType(renderType(aliasType))}`);
+    }
     lines.push("");
   }
 
@@ -2520,10 +2707,18 @@ function generateMD(
   // Import snippet: use curated priority list
   const priorityNames = IMPORT_PRIORITY[entry.importPath];
   const allExportNames = new Set([
-    ...exports.functions.map((e) => e.name),
-    ...exports.components.map((e) => e.name),
-    ...exports.classes.map((e) => e.name),
-    ...exports.constants.map((e) => e.name),
+    ...exports.functions.filter((entry) => !entry.deprecated).map((entry) =>
+      entry.name
+    ),
+    ...exports.components.filter((entry) => !entry.deprecated).map((entry) =>
+      entry.name
+    ),
+    ...exports.classes.filter((entry) => !entry.deprecated).map((entry) =>
+      entry.name
+    ),
+    ...exports.constants.filter((entry) => !entry.deprecated).map((entry) =>
+      entry.name
+    ),
   ]);
 
   // Explicit empty array = skip import section (e.g. CLI executable)
@@ -2678,7 +2873,7 @@ function pickDeepImportSample(exports: CategorizedExports): string[] {
     ...exports.components,
     ...exports.classes,
     ...exports.constants,
-  ].map((e) => e.name);
+  ].filter((entry) => !entry.deprecated).map((entry) => entry.name);
   return all.slice(0, 3);
 }
 
@@ -2726,15 +2921,16 @@ function generateReadmeMD(
 
 async function removeStaleReferencePages(
   expectedSlugs: Set<string>,
+  veryfrontDir: string,
 ): Promise<void> {
   const staleFiles: string[] = [];
 
   try {
-    for await (const entry of Deno.readDir(VERYFRONT_DIR)) {
+    for await (const entry of Deno.readDir(veryfrontDir)) {
       if (!entry.isFile || !entry.name.endsWith(".md")) continue;
       const slug = entry.name.replace(/\.md$/, "");
       if (!expectedSlugs.has(slug)) {
-        staleFiles.push(`${VERYFRONT_DIR}/${entry.name}`);
+        staleFiles.push(`${veryfrontDir}/${entry.name}`);
       }
     }
   } catch (err) {
@@ -2752,14 +2948,48 @@ async function removeStaleReferencePages(
 // ---------------------------------------------------------------------------
 
 async function main() {
+  if (!CHECK_MODE) {
+    await generateApiReference(TARGET_OUTPUT_DIR);
+    return;
+  }
+
+  const generatedOutputDir = await Deno.makeTempDir({
+    prefix: "veryfront-api-reference-check-",
+  });
+  try {
+    await generateApiReference(generatedOutputDir);
+    const drift = await compareDirectoryTrees(
+      generatedOutputDir,
+      TARGET_OUTPUT_DIR,
+    );
+    if (
+      drift.missing.length > 0 || drift.extra.length > 0 ||
+      drift.changed.length > 0
+    ) {
+      throw new ApiReferenceGenerationError(
+        "API_REFERENCE_DRIFT",
+        formatApiReferenceDrift(drift),
+      );
+    }
+    console.log(
+      `Generated API reference is current (${drift.fileCount} files).`,
+    );
+  } finally {
+    await Deno.remove(generatedOutputDir, { recursive: true });
+  }
+}
+
+async function generateApiReference(outputDir: string): Promise<void> {
+  const veryfrontDir = `${outputDir}/veryfront`;
   console.log("Reading deno.json exports...");
   const groups = getModuleGroups();
   console.log(`Found ${groups.length} module groups.`);
 
-  await ensureDir(OUTPUT_DIR);
-  await ensureDir(VERYFRONT_DIR);
+  await ensureDir(outputDir);
+  await ensureDir(veryfrontDir);
   await removeStaleReferencePages(
     new Set(groups.map((group) => group.parent.slug)),
+    veryfrontDir,
   );
 
   const indexData: Array<{ entry: ExportEntry; jsdoc: BarrelJSDoc }> = [];
@@ -2829,33 +3059,164 @@ async function main() {
     const md = normalizeGeneratedMarkdown(
       generateMD(entry, jsdoc, exports, nodes, order, deepRenders),
     );
-    const outPath = `${VERYFRONT_DIR}/${entry.slug}.md`;
+    const outPath = `${veryfrontDir}/${entry.slug}.md`;
     await Deno.writeTextFile(outPath, md);
     console.log(`  Wrote ${outPath}`);
   }
 
   // Write the public section landing page at the docs/api-reference root.
   const indexMD = normalizeGeneratedMarkdown(generateReadmeMD(indexData));
-  const indexPath = `${OUTPUT_DIR}/index.md`;
+  const indexPath = `${outputDir}/index.md`;
   await Deno.writeTextFile(indexPath, indexMD);
   try {
-    await Deno.remove(`${OUTPUT_DIR}/overview.md`);
+    await Deno.remove(`${outputDir}/overview.md`);
   } catch (err) {
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
   try {
-    await Deno.remove(`${OUTPUT_DIR}/README.md`);
+    await Deno.remove(`${outputDir}/README.md`);
   } catch (err) {
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
   console.log(`\nWrote ${indexPath}`);
-  console.log(`Generated ${groups.length} MD files in ${VERYFRONT_DIR}`);
+  console.log(`Generated ${groups.length} MD files in ${veryfrontDir}`);
   console.log(
     `Source JSDoc coverage: ${sourceDocStats.documented}/${sourceDocStats.total} public declarations documented (${sourceDocStats.missing} missing).`,
   );
 }
 
-main();
+interface DirectoryDrift {
+  readonly missing: readonly string[];
+  readonly extra: readonly string[];
+  readonly changed: readonly string[];
+  readonly fileCount: number;
+}
+
+type DirectoryEntryValue = Uint8Array | null;
+
+async function compareDirectoryTrees(
+  expectedRoot: string,
+  actualRoot: string,
+): Promise<DirectoryDrift> {
+  const expected = await collectDirectoryTree(expectedRoot);
+  const actual = await collectDirectoryTree(actualRoot);
+  const missing: string[] = [];
+  const extra: string[] = [];
+  const changed: string[] = [];
+
+  for (const [path, expectedValue] of expected) {
+    const actualValue = actual.get(path);
+    if (actualValue === undefined) {
+      missing.push(path);
+    } else if (!directoryEntryValuesEqual(expectedValue, actualValue)) {
+      changed.push(path);
+    }
+  }
+  for (const path of actual.keys()) {
+    if (!expected.has(path)) extra.push(path);
+  }
+
+  missing.sort(compareStrings);
+  extra.sort(compareStrings);
+  changed.sort(compareStrings);
+  return { missing, extra, changed, fileCount: expected.size };
+}
+
+async function collectDirectoryTree(
+  root: string,
+): Promise<Map<string, DirectoryEntryValue>> {
+  const entries = new Map<string, DirectoryEntryValue>();
+  await collectDirectoryTreeEntries(root, "", entries, true);
+  return entries;
+}
+
+async function collectDirectoryTreeEntries(
+  root: string,
+  relativeDirectory: string,
+  files: Map<string, DirectoryEntryValue>,
+  allowMissing: boolean,
+): Promise<void> {
+  const directory = relativeDirectory ? `${root}/${relativeDirectory}` : root;
+  const entries: Deno.DirEntry[] = [];
+  try {
+    for await (const entry of Deno.readDir(directory)) entries.push(entry);
+  } catch (error) {
+    if (allowMissing && error instanceof Deno.errors.NotFound) return;
+    throw error;
+  }
+  entries.sort((left, right) => compareStrings(left.name, right.name));
+
+  for (const entry of entries) {
+    const relativePath = relativeDirectory
+      ? `${relativeDirectory}/${entry.name}`
+      : entry.name;
+    if (entry.isDirectory) {
+      await collectDirectoryTreeEntries(root, relativePath, files, false);
+    } else if (entry.isFile) {
+      files.set(relativePath, await Deno.readFile(`${root}/${relativePath}`));
+    } else {
+      // Symlinks and special entries are inventory, but can never equal a
+      // regular generated file.
+      files.set(relativePath, null);
+    }
+  }
+}
+
+function directoryEntryValuesEqual(
+  expected: DirectoryEntryValue,
+  actual: DirectoryEntryValue,
+): boolean {
+  if (expected === null || actual === null) return expected === actual;
+  if (expected.length !== actual.length) return false;
+  for (let index = 0; index < expected.length; index += 1) {
+    if (expected[index] !== actual[index]) return false;
+  }
+  return true;
+}
+
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function formatApiReferenceDrift(drift: DirectoryDrift): string {
+  return [
+    "Generated API reference differs from the tracked tree.",
+    formatDriftPaths("Missing", drift.missing),
+    formatDriftPaths("Extra", drift.extra),
+    formatDriftPaths("Changed", drift.changed),
+    "Run `deno task docs` to regenerate.",
+  ].filter(Boolean).join("\n");
+}
+
+function formatDriftPaths(
+  label: string,
+  paths: readonly string[],
+): string {
+  if (paths.length === 0) return "";
+  const visiblePaths = paths.slice(0, DRIFT_PATH_LIMIT).map((path) =>
+    `  - ${sanitizeDriftPath(path)}`
+  );
+  const omitted = paths.length - visiblePaths.length;
+  if (omitted > 0) visiblePaths.push(`  ... ${omitted} more`);
+  return `${label}:\n${visiblePaths.join("\n")}`;
+}
+
+function sanitizeDriftPath(path: string): string {
+  const sanitized = sanitizeDiagnosticText(path).replace(/\n/g, "�");
+  return sanitized.length > DRIFT_PATH_CHARACTER_LIMIT
+    ? `${sanitized.slice(0, DRIFT_PATH_CHARACTER_LIMIT)}…`
+    : sanitized;
+}
+
+if (import.meta.main) {
+  try {
+    await main();
+  } catch (error) {
+    if (!(error instanceof ApiReferenceGenerationError)) throw error;
+    console.error(`${error.name}: ${error.message}`);
+    Deno.exitCode = 1;
+  }
+}
 
 function normalizeGeneratedMarkdown(markdown: string): string {
   return markdown.replace(/[\u2013\u2014]/g, "-");

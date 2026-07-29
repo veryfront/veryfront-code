@@ -12,11 +12,13 @@ function isWithin(root: string, target: string): boolean {
 export default tool({
   id: "edit-file",
   description: "Edit a file by replacing a specific string with new content",
-  inputSchema: defineSchema((v) => v.object({
-    path: v.string().describe("File path relative to the project root"),
-    search: v.string().describe("Exact string to find in the file"),
-    replace: v.string().describe("String to replace it with"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      path: v.string().describe("File path relative to the project root"),
+      search: v.string().describe("Exact string to find in the file"),
+      replace: v.string().describe("String to replace it with"),
+    })
+  )(),
   execute: async ({ path, search, replace }) => {
     let projectDir: string;
     let absolute: string;

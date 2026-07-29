@@ -4,11 +4,13 @@ import { defineSchema } from "veryfront/schemas";
 export default tool({
   id: "calculator",
   description: "Perform basic arithmetic operations",
-  inputSchema: defineSchema((v) => v.object({
-    operation: v.enum(["add", "subtract", "multiply", "divide"]),
-    a: v.number(),
-    b: v.number(),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      operation: v.enum(["add", "subtract", "multiply", "divide"]),
+      a: v.number(),
+      b: v.number(),
+    })
+  )(),
   execute: ({ operation, a, b }) => {
     if (operation === "divide" && b === 0) {
       throw new Error("Cannot divide by zero");

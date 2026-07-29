@@ -12,10 +12,7 @@ export const POST = createAgUiHandler("rag", {
 
       const contextBlock = results
         .map(
-          (result) =>
-            `[${result.title}] (score: ${
-              result.score.toFixed(2)
-            })\n${result.text}`,
+          (result) => `[${result.title}] (score: ${result.score.toFixed(2)})\n${result.text}`,
         )
         .join("\n\n---\n\n");
 

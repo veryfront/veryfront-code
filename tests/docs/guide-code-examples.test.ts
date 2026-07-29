@@ -21,12 +21,21 @@ import {
   ChatContextProvider,
   ChatThemeScope,
   ComposerContextProvider,
+  CONVERSATION_STORAGE_LIMITS,
+  ConversationsProvider,
+  ConversationStoreError,
+  localConversationStore,
+  memoryConversationStore,
   Message,
   MessageContextProvider,
   useAgent,
   useChat,
   useChatContextOptional,
   useCompletion,
+  useConversation,
+  useConversations,
+  type UseConversationsOptions,
+  type UseConversationsPersistenceState,
   useUploadsRegistry,
 } from "../../src/chat/index.ts";
 import { createUploadHandler, ragStore } from "../../src/embedding/index.ts";
@@ -322,6 +331,8 @@ describe("Guide: chat-ui.md", () => {
     assertExists(ComposerContextProvider);
     assertExists(MessageContextProvider);
     assertEquals(typeof useChatContextOptional, "function");
+    assertEquals(typeof ConversationsProvider, "function");
+    assertEquals(typeof memoryConversationStore, "function");
 
     const chatComponents = Chat as unknown as Record<
       string,
@@ -371,10 +382,76 @@ describe("Guide: memory-and-streaming.md", () => {
 });
 
 describe("Guide: chat-hooks.md", () => {
-  it("uses exported headless chat hooks", () => {
+  it("uses exported headless chat and conversation hooks", async () => {
     assertEquals(typeof useChat, "function");
     assertEquals(typeof useAgent, "function");
     assertEquals(typeof useCompletion, "function");
+    assertEquals(typeof useConversations, "function");
+    assertEquals(typeof useConversation, "function");
+    assertEquals(typeof localConversationStore, "function");
+    assertEquals(typeof memoryConversationStore, "function");
+
+    const error = new ConversationStoreError("save", new Error("blocked"));
+    assertEquals(error.operation, "save");
+    const onError: NonNullable<UseConversationsOptions["onError"]> = (
+      nextError: ConversationStoreError,
+    ) => void nextError.operation;
+    onError(error);
+    const expectPersistenceError = (
+      nextError: UseConversationsPersistenceState["error"],
+    ): ConversationStoreError | null => nextError;
+    assertEquals(expectPersistenceError(error)?.operation, "save");
+
+    const store = memoryConversationStore();
+    await store.save({
+      id: "guide-conversation",
+      title: "Guide conversation",
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    assertEquals((await store.load("guide-conversation"))?.title, "Guide conversation");
+
+    const guide = await readGuide("chat-hooks.md");
+    const normalizedGuide = guide.replace(/\s+/g, " ");
+    assertStringIncludes(guide, "PERSISTENCE_MESSAGES[error.operation]");
+    assertStringIncludes(guide, "There is no unlocked fallback.");
+    const formatCount = (value: number): string => value.toLocaleString("en-US");
+    const formatKiB = (value: number): string => `${value / 1024} KiB`;
+    const formatMiB = (value: number): string => `${value / (1024 * 1024)} MiB`;
+    assertStringIncludes(
+      normalizedGuide,
+      `${formatMiB(CONVERSATION_STORAGE_LIMITS.maxIndexBytes)} per serialized index and ${
+        formatMiB(CONVERSATION_STORAGE_LIMITS.maxConversationBytes)
+      } per serialized conversation`,
+    );
+    assertStringIncludes(
+      normalizedGuide,
+      `${formatCount(CONVERSATION_STORAGE_LIMITS.maxConversations)} conversations per store, ${
+        formatCount(CONVERSATION_STORAGE_LIMITS.maxMessagesPerConversation)
+      } messages per conversation, and ${
+        formatCount(CONVERSATION_STORAGE_LIMITS.maxPartsPerMessage)
+      } parts per message`,
+    );
+    assertStringIncludes(
+      normalizedGuide,
+      `${formatKiB(CONVERSATION_STORAGE_LIMITS.maxIdentifierBytes)} per identifier or storage-key component and ${
+        formatKiB(CONVERSATION_STORAGE_LIMITS.maxTitleBytes)
+      } per title`,
+    );
+    assertStringIncludes(
+      normalizedGuide,
+      `${formatMiB(CONVERSATION_STORAGE_LIMITS.maxJsonStringBytes)} per JSON string, nesting depth ${
+        formatCount(CONVERSATION_STORAGE_LIMITS.maxJsonDepth)
+      }, ${formatCount(CONVERSATION_STORAGE_LIMITS.maxJsonNodes)} JSON nodes, and ${
+        formatCount(CONVERSATION_STORAGE_LIMITS.maxContainerEntries)
+      } entries per object or array`,
+    );
+    assertEquals(
+      CONVERSATION_STORAGE_LIMITS.maxStorageKeyComponentBytes,
+      CONVERSATION_STORAGE_LIMITS.maxIdentifierBytes,
+      "the guide combines storage-key and identifier limits only while they are equal",
+    );
   });
 });
 

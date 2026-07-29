@@ -17,8 +17,7 @@ export default agent({
       {
         type: "prompt",
         title: "Split a bill",
-        prompt:
-          "Calculate an 18% tip on $84.50, then split the total evenly among three people.",
+        prompt: "Calculate an 18% tip on $84.50, then split the total evenly among three people.",
       },
     ],
   },

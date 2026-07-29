@@ -4,8 +4,7 @@ export default agent({
   id: "orchestrator",
   name: "Agent Team",
   description: "Coordinate research and writing agents.",
-  system:
-    "You coordinate a team of AI agents. " +
+  system: "You coordinate a team of AI agents. " +
     "Delegate research tasks to the researcher and writing tasks to the writer. " +
     "Combine their outputs into a polished response.",
   tools: getAgentsAsTools(["researcher", "writer"]),

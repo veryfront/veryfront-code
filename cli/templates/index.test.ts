@@ -336,6 +336,9 @@ describe("cli/templates", () => {
     }
     assertEquals(layout.includes("<ChatSidebar.Root"), true);
     assertEquals(layout.includes("<ChatSidebar fill"), false);
+    assertEquals(layout.includes("onError={setConversationError}"), true);
+    assertEquals(layout.includes('role="alert"'), true);
+    assertEquals(layout.includes("conversationError.operation"), true);
 
     assertEquals(page.includes("useChat"), false);
     assertEquals(page.includes('agentId="rag"'), true);

@@ -4,7 +4,8 @@ export default agent({
   id: "coder",
   name: "Code Agent",
   description: "Read, search, and edit project files.",
-  system: `You are an expert coding assistant. You can read, search, and modify code files in the project.
+  system:
+    `You are an expert coding assistant. You can read, search, and modify code files in the project.
 
 When asked to make changes:
 1. First read the relevant files to understand the codebase

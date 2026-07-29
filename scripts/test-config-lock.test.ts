@@ -17,7 +17,61 @@ Deno.test("script tooling uses an isolated lockfile", async () => {
     throw new Error("test:scripts must reject changes to the scripts lockfile");
   }
   if (!scriptsTask.includes("scripts/test-config-lock.test.ts")) {
-    throw new Error("test:scripts must enforce its lockfile isolation contract");
+    throw new Error(
+      "test:scripts must enforce its lockfile isolation contract",
+    );
+  }
+  if (!scriptsTask.includes("scripts/build/framework-candidates.test.ts")) {
+    throw new Error(
+      "test:scripts must run the framework candidate regression suite",
+    );
+  }
+  if (!scriptsTask.includes("deno task check:scripts:framework-candidates")) {
+    throw new Error(
+      "test:scripts must type-check the framework candidate import graph",
+    );
+  }
+
+  const frameworkCandidateCheck =
+    rootConfig.tasks?.["check:scripts:framework-candidates"] ?? "";
+  if (
+    !frameworkCandidateCheck.includes("--config=scripts/test.deno.json") ||
+    !frameworkCandidateCheck.includes("--frozen") ||
+    !frameworkCandidateCheck.includes(
+      "scripts/build/framework-candidates.ts",
+    ) ||
+    !frameworkCandidateCheck.includes(
+      "scripts/build/framework-candidates.test.ts",
+    )
+  ) {
+    throw new Error(
+      "framework candidate scripts must type-check against the frozen scripts configuration",
+    );
+  }
+
+  const generatedFrameworkCandidateCheck =
+    rootConfig.tasks?.["generate:framework-candidates:check"] ?? "";
+  if (!generatedFrameworkCandidateCheck.includes("--frozen")) {
+    throw new Error(
+      "generate:framework-candidates:check must reject root lockfile drift",
+    );
+  }
+
+  const templateFormatCheck = rootConfig.tasks?.["fmt:templates:check"] ?? "";
+  if (
+    !templateFormatCheck.includes("--check") ||
+    !templateFormatCheck.includes("--config=cli/templates/deno.json")
+  ) {
+    throw new Error(
+      "fmt:templates:check must enforce the isolated template formatter configuration",
+    );
+  }
+
+  const rootFormatCheck = rootConfig.tasks?.["fmt:check"] ?? "";
+  if (!rootFormatCheck.includes("deno task fmt:templates:check")) {
+    throw new Error(
+      "fmt:check must include the production template source formatter gate",
+    );
   }
 
   const npmBuildTask = rootConfig.tasks?.["build:npm"] ?? "";

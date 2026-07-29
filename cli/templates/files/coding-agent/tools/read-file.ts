@@ -12,9 +12,11 @@ function isWithin(root: string, target: string): boolean {
 export default tool({
   id: "read-file",
   description: "Read the contents of a file in the project",
-  inputSchema: defineSchema((v) => v.object({
-    path: v.string().describe("File path relative to the project root"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      path: v.string().describe("File path relative to the project root"),
+    })
+  )(),
   execute: async ({ path }) => {
     let projectDir: string;
     let absolute: string;

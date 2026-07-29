@@ -12,16 +12,18 @@ function isWithin(root: string, target: string): boolean {
 export default tool({
   id: "list-files",
   description: "List files in a project directory",
-  inputSchema: defineSchema((v) => v.object({
-    directory: v
-      .string()
-      .default(".")
-      .describe("Directory path relative to project root"),
-    extensions: v
-      .array(v.string())
-      .optional()
-      .describe("Filter by file extensions (e.g. ['.ts', '.tsx'])"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      directory: v
+        .string()
+        .default(".")
+        .describe("Directory path relative to project root"),
+      extensions: v
+        .array(v.string())
+        .optional()
+        .describe("Filter by file extensions (e.g. ['.ts', '.tsx'])"),
+    })
+  )(),
   execute: async ({ directory, extensions }) => {
     let projectDir: string;
     let absolute: string;
@@ -44,9 +46,7 @@ export default tool({
       .map((e) => e.name);
 
     if (extensions?.length) {
-      files = files.filter((f) =>
-        extensions.some((ext) => f.endsWith(ext))
-      );
+      files = files.filter((f) => extensions.some((ext) => f.endsWith(ext)));
     }
 
     return { directory, files, count: files.length };
