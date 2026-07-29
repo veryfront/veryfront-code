@@ -33,7 +33,6 @@
   "src/cache/registry.test.ts",
   "src/chat/upload-handler.test.ts",
   "src/config/env.test.ts",
-  "src/discovery/agent-scoped-capabilities.test.ts",
   "src/embedding/chunk.test.ts",
   "src/embedding/rag-store.test.ts",
   "src/errors/middleware/wrap-unknown.test.ts",
