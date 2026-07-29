@@ -18,9 +18,9 @@ import {
 
 ## Parts index
 
-- [`InlineCitation` (Root)](#inlinecitation-root--kept) - `kept`
-- [`.Trigger`](#inlinecitationtrigger--changed) - `changed`: `<button>` + span wrapper → `<a>`; `data-open` added
-- [`.Card`](#inlinecitationcard--changed) - `changed`: `data-open` added (today open state = mounted)
+- [`InlineCitation` (Root)](#inlinecitation-root---kept) - `kept`
+- [`.Trigger`](#inlinecitationtrigger---changed) - `changed`: `<button>` + span wrapper → `<a>`; `data-open` added
+- [`.Card`](#inlinecitationcard---changed) - `changed`: `data-open` added (today open state = mounted)
 
 ## Anatomy
 

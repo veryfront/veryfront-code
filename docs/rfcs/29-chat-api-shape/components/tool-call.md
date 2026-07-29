@@ -16,12 +16,12 @@ import { ToolCall, ToolCallTrigger, type ToolCallTriggerProps } from "veryfront/
 
 ## Parts index
 
-- [`.Root`](#toolcallroot--changed) - `changed`: `tool` → `part` rename; `icon` deleted; `data-state` approval lifecycle; auto-open on completion
-- [`.Trigger`](#toolcalltrigger--changed) - `changed`: `icon` deleted - children replace the default content
-- [`.Body`](#toolcallbody--kept) - `kept`
-- [`.Input`](#toolcallinput--changed) - `changed`: bespoke regex-highlighted `<pre>` → `RichCodeBlock`
-- [`.Output`](#toolcalloutput--changed) - `changed`: becomes `Markdown`/`RichCodeBlock`-backed
-- [`.Error`](#toolcallerror--changed) - `changed`: `role="alert"` proposed (today's Alert renders no role)
+- [`.Root`](#toolcallroot---changed) - `changed`: `tool` → `part` rename; `icon` deleted; `data-state` approval lifecycle; auto-open on completion
+- [`.Trigger`](#toolcalltrigger---changed) - `changed`: `icon` deleted - children replace the default content
+- [`.Body`](#toolcallbody---kept) - `kept`
+- [`.Input`](#toolcallinput---changed) - `changed`: bespoke regex-highlighted `<pre>` → `RichCodeBlock`
+- [`.Output`](#toolcalloutput---changed) - `changed`: becomes `Markdown`/`RichCodeBlock`-backed
+- [`.Error`](#toolcallerror---changed) - `changed`: `role="alert"` proposed (today's Alert renders no role)
 
 ## Anatomy
 

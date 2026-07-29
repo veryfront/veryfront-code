@@ -17,11 +17,11 @@ import { ChatActions, ChatActionsItem, type ChatActionsItemProps } from "veryfro
 
 ## Parts index
 
-- [`.Root`](#chatactionsroot--changed) - `changed`: `trigger` render prop + Root `className` alias removed
-- [`.Trigger`](#chatactionstrigger--changed) - `changed`: `data-open` proposed; absorbs the deleted `trigger` prop as children
-- [`.Content`](#chatactionscontent--kept) - `kept`
-- [`.Item`](#chatactionsitem--changed) - `changed`: `icon` prop removed; `disabled` also as `data-disabled`
-- [`.Preset`](#chatactionspreset--kept) - `kept`
+- [`.Root`](#chatactionsroot---changed) - `changed`: `trigger` render prop + Root `className` alias removed
+- [`.Trigger`](#chatactionstrigger---changed) - `changed`: `data-open` proposed; absorbs the deleted `trigger` prop as children
+- [`.Content`](#chatactionscontent---kept) - `kept`
+- [`.Item`](#chatactionsitem---changed) - `changed`: `icon` prop removed; `disabled` also as `data-disabled`
+- [`.Preset`](#chatactionspreset---kept) - `kept`
 
 ## Anatomy
 

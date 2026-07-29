@@ -17,17 +17,17 @@ import { ChatSidebar, ChatSidebarItemTitle, type ChatSidebarItemTitleProps } fro
 
 ## Parts index
 
-- [`.Root`](#chatsidebarroot--changed) - `changed`: `<div>` → `<nav>`; `isOpen`/`fill`/`renderItem` deleted, `loading` → `data-loading`
-- [`.NewButton`](#chatsidebarnewbutton--changed) - `changed`: two nodes → one `<button>`; `icon` deleted
-- [`.List`](#chatsidebarlist--changed) - `changed`: `<div>` → `<ul>`; `renderItem` deleted
-- [`.Group`](#chatsidebargroup--kept) - `kept`
-- [`.Item`](#chatsidebaritem--changed) - `changed`: `<div>` → `<li>`; `children` replaces the whole row; `data-active` means selection
-- [`.Item.Title`](#chatsidebaritemtitle-proposed--2977--new) - `new`: no addressable title leaf exists today (#2977)
-- [`.Item.Menu`](#chatsidebaritemmenu--changed) - `changed`: trigger `icon` prop deleted - replaced by `.Item.Menu.Trigger`
-- [`.Item.Menu.Trigger`](#chatsidebaritemmenutrigger--new) - `new`: the addressable trigger button (the icon-slot replacement)
-- [`.Item.Rename`](#chatsidebaritemrename--changed) - `changed`: `icon` deleted
-- [`.Item.Delete`](#chatsidebaritemdelete--changed) - `changed`: `icon` deleted
-- [`.Empty`](#chatsidebarempty--changed) - `changed`: self-gates on an empty list (today gated by `.List`)
+- [`.Root`](#chatsidebarroot---changed) - `changed`: `<div>` → `<nav>`; `isOpen`/`fill`/`renderItem` deleted, `loading` → `data-loading`
+- [`.NewButton`](#chatsidebarnewbutton---changed) - `changed`: two nodes → one `<button>`; `icon` deleted
+- [`.List`](#chatsidebarlist---changed) - `changed`: `<div>` → `<ul>`; `renderItem` deleted
+- [`.Group`](#chatsidebargroup---kept) - `kept`
+- [`.Item`](#chatsidebaritem---changed) - `changed`: `<div>` → `<li>`; `children` replaces the whole row; `data-active` means selection
+- [`.Item.Title`](#chatsidebaritemtitle-_proposed---2977_---new) - `new`: no addressable title leaf exists today (#2977)
+- [`.Item.Menu`](#chatsidebaritemmenu---changed) - `changed`: trigger `icon` prop deleted - replaced by `.Item.Menu.Trigger`
+- [`.Item.Menu.Trigger`](#chatsidebaritemmenutrigger---new) - `new`: the addressable trigger button (the icon-slot replacement)
+- [`.Item.Rename`](#chatsidebaritemrename---changed) - `changed`: `icon` deleted
+- [`.Item.Delete`](#chatsidebaritemdelete---changed) - `changed`: `icon` deleted
+- [`.Empty`](#chatsidebarempty---changed) - `changed`: self-gates on an empty list (today gated by `.List`)
 
 ## Anatomy
 
@@ -201,7 +201,7 @@ One `<span>`: the conversation's title, truncating. Does not exist today - the t
 
 ### `ChatSidebar.Item.Menu` - `changed`
 
-_Changed: the trigger-glyph `icon` prop is deleted per the icon-prop ban - its replacement is the new [`.Item.Menu.Trigger`](#chatsidebaritemmenutrigger--new) sub-part; entries and behavior are otherwise as today._
+_Changed: the trigger-glyph `icon` prop is deleted per the icon-prop ban - its replacement is the new [`.Item.Menu.Trigger`](#chatsidebaritemmenutrigger---new) sub-part; entries and behavior are otherwise as today._
 
 The row's `⋯` actions menu, built on the `veryfront/ui` `DropdownMenu` (not a from-scratch popover). Two pieces: the **trigger** - an icon-ghost `<button>` (`aria-label="More actions for <title>"`, three-dots glyph) sitting in the row's action slot, addressable as `.Item.Menu.Trigger` - and the **content** - a portalled popover (`align="end"`, min-width 160px) holding the entries. Default entries: `.Rename` then `.Delete`; children replace the _entries_ (the default trigger stays unless you render `.Trigger` yourself), so you can add or reorder actions without re-implementing the row. Open state lives on the item context (`menuOpen` / `setMenuOpen`) - which is how the row stays highlighted while the menu is open.
 

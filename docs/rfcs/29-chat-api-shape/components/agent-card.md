@@ -17,11 +17,11 @@ import { AgentCard, AgentCardHeader, type AgentCardHeaderProps } from "veryfront
 
 ## Parts index
 
-- [`.Root`](#agentcardroot--changed) - `changed`: status surfaces as `data-agent-status`
-- [`.Header`](#agentcardheader--kept) - `kept`
-- [`.Reasoning`](#agentcardreasoning--kept) - `kept`
-- [`.Tools`](#agentcardtools--kept) - `kept`
-- [`.Body`](#agentcardbody--kept) - `kept`
+- [`.Root`](#agentcardroot---changed) - `changed`: status surfaces as `data-agent-status`
+- [`.Header`](#agentcardheader---kept) - `kept`
+- [`.Reasoning`](#agentcardreasoning---kept) - `kept`
+- [`.Tools`](#agentcardtools---kept) - `kept`
+- [`.Body`](#agentcardbody---kept) - `kept`
 
 ## Anatomy
 

@@ -14,16 +14,16 @@ import { ChatInput, ChatInputField, type ChatInputFieldProps } from "veryfront/c
 
 ## Parts index
 
-- [`.Root`](#chatinputroot--changed) - `changed`: two hidden wrapper divs deleted - one `<form>`; ~19 state props collapse into `chat`/`upload`/`voice`
-- [`.Field`](#chatinputfield--changed) - `changed`: IME guard + `submitMode` + paste-to-attach added; full native surface opened
-- [`.Submit`](#chatinputsubmit--changed) - `changed`: single always-rendered node (no Send-delegation null-render); `icon`/`stopIcon` removed
-- [`.Send`](#chatinputsend--changed) - `changed`: `icon` + `WrapClick` `onClick` removed
-- [`.Stop`](#chatinputstop--changed) - `changed`: `icon` + `WrapClick` `onClick` removed
-- [`.Voice`](#chatinputvoice--changed) - `changed`: baked listening styles → `data-listening`; `icon`/`WrapClick` removed
-- [`.Model`](#chatinputmodel--changed) - `changed`: `models` config moves here from the Root; `data-open` added
-- [`.Attach`](#chatinputattach--changed) - `changed`: multi-node (wrapper + hidden input + menu) → one `<button>`; `icon`/`WrapClick` removed
-- [`.Export`](#chatinputexport--changed) - `changed`: `icon` removed; `messages` defaults to the Root's resolved chat; tooltip wrapper collapses to one `<button>`
-- [`.Toolbar`](#chatinputtoolbar--kept) - `kept`
+- [`.Root`](#chatinputroot---changed) - `changed`: two hidden wrapper divs deleted - one `<form>`; ~19 state props collapse into `chat`/`upload`/`voice`
+- [`.Field`](#chatinputfield---changed) - `changed`: IME guard + `submitMode` + paste-to-attach added; full native surface opened
+- [`.Submit`](#chatinputsubmit---changed) - `changed`: single always-rendered node (no Send-delegation null-render); `icon`/`stopIcon` removed
+- [`.Send`](#chatinputsend---changed) - `changed`: `icon` + `WrapClick` `onClick` removed
+- [`.Stop`](#chatinputstop---changed) - `changed`: `icon` + `WrapClick` `onClick` removed
+- [`.Voice`](#chatinputvoice---changed) - `changed`: baked listening styles → `data-listening`; `icon`/`WrapClick` removed
+- [`.Model`](#chatinputmodel---changed) - `changed`: `models` config moves here from the Root; `data-open` added
+- [`.Attach`](#chatinputattach---changed) - `changed`: multi-node (wrapper + hidden input + menu) → one `<button>`; `icon`/`WrapClick` removed
+- [`.Export`](#chatinputexport---changed) - `changed`: `icon` removed; `messages` defaults to the Root's resolved chat; tooltip wrapper collapses to one `<button>`
+- [`.Toolbar`](#chatinputtoolbar---kept) - `kept`
 
 ## Anatomy
 

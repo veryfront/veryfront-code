@@ -14,12 +14,12 @@ import { AttachmentPill, AttachmentPillRetry, type AttachmentPillRetryProps } fr
 
 ## Parts index
 
-- [`.Root`](#attachmentpillroot--changed) - `changed`: lifecycle surfaces as `data-upload-state` / `data-error`; gains `upload?` (defaults to the nearest `ChatInput` context's upload)
-- [`.Thumbnail`](#attachmentpillthumbnail--changed) - `changed`: wrapper `<div>` + `<img>` → one `<span>` background thumbnail
-- [`.Icon`](#attachmentpillicon--changed) - `changed`: `<div>` → `<span>`
-- [`.Label`](#attachmentpilllabel--changed) - `changed`: `<div>` → `<span>`
-- [`.Retry`](#attachmentpillretry--changed) - `changed`: `icon` prop removed
-- [`.Remove`](#attachmentpillremove--changed) - `changed`: `icon` prop removed
+- [`.Root`](#attachmentpillroot---changed) - `changed`: lifecycle surfaces as `data-upload-state` / `data-error`; gains `upload?` (defaults to the nearest `ChatInput` context's upload)
+- [`.Thumbnail`](#attachmentpillthumbnail---changed) - `changed`: wrapper `<div>` + `<img>` → one `<span>` background thumbnail
+- [`.Icon`](#attachmentpillicon---changed) - `changed`: `<div>` → `<span>`
+- [`.Label`](#attachmentpilllabel---changed) - `changed`: `<div>` → `<span>`
+- [`.Retry`](#attachmentpillretry---changed) - `changed`: `icon` prop removed
+- [`.Remove`](#attachmentpillremove---changed) - `changed`: `icon` prop removed
 
 ## Anatomy
 

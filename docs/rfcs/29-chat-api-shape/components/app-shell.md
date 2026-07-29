@@ -16,15 +16,15 @@ import { AppShell } from "veryfront/ui";
 
 ## Parts index
 
-- [`AppShell` (root)](#appshell-root--kept) - `kept`
-- [`.Sidebar`](#appshellsidebar--kept) - `kept`
-- [`.SidebarHeader`](#appshellsidebarheader--kept) - `kept`
-- [`.SidebarContent`](#appshellsidebarcontent--kept) - `kept`
-- [`.SidebarFooter`](#appshellsidebarfooter--kept) - `kept`
-- [`.Main`](#appshellmain--kept) - `kept`
-- [`.Header`](#appshellheader--kept) - `kept`
-- [`.Content`](#appshellcontent--kept) - `kept`
-- [`.Trigger`](#appshelltrigger--kept) - `kept`: `ui` surface documented for comparison; no chat-RFC change
+- [`AppShell` (root)](#appshell-root---kept) - `kept`
+- [`.Sidebar`](#appshellsidebar---kept) - `kept`
+- [`.SidebarHeader`](#appshellsidebarheader---kept) - `kept`
+- [`.SidebarContent`](#appshellsidebarcontent---kept) - `kept`
+- [`.SidebarFooter`](#appshellsidebarfooter---kept) - `kept`
+- [`.Main`](#appshellmain---kept) - `kept`
+- [`.Header`](#appshellheader---kept) - `kept`
+- [`.Content`](#appshellcontent---kept) - `kept`
+- [`.Trigger`](#appshelltrigger---changed) - `kept`: `ui` surface documented for comparison; no chat-RFC change
 
 ## Anatomy
 

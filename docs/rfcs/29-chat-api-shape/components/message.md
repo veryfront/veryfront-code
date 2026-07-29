@@ -16,27 +16,27 @@ import { Message, MessageAvatar, type MessageAvatarProps } from "veryfront/chat"
 
 ## Parts index
 
-- [`.Root`](#messageroot--changed) - `changed`: `<div>`→`<article>`; per-message session props deleted
-- [`.Avatar`](#messageavatar--changed) - `changed`: per-branch node (`<img>` / `<div>` fallback) → one node
-- [`.Header`](#messageheader--changed) - `changed`: `<div>`→`<header>`
-- [`.Name`](#messagename--changed) - `changed`: renamed from `Message.Header.Name`
-- [`.Timestamp`](#messagetimestamp--changed) - `changed`: `<span>`→`<time>`
-- [`.Content`](#messagecontent--changed) - `changed`: function-child moves to `.Parts`; `codeBlock` / `markdownComponents` deleted
-- [`.Parts`](#messageparts--changed) - `changed`: replaces `Message.Part` + `.Content`'s function-child
-- [`.Text`](#messagetext--changed) - `changed`: markdown exception, `components` map, streaming ownership
-- [`.Reasoning`](#messagereasoning--kept) - `kept`
-- [`.Source`](#messagesource--changed) - `changed`: `<button>`-in-`<span>` → `<a>` (same delta as `Sources.Pill`)
-- [`.File`](#messagefile-proposed--no-current-source--new) - `new`: attachment part leaf
-- [`.Image`](#messageimage-proposed--no-current-source--new) - `new`: image part leaf
-- [`.Sources`](#messagesources--changed) - `changed`: `<section>`; `renderItem` deleted; `data-empty`
-- [`.Actions`](#messageactions--changed) - `changed`: baked hover-reveal classes → `data-floating`
-- [`.CopyAction`](#messagecopyaction--changed) - `changed`: `icon` deleted; composed `onClick`; `data-copied`
-- [`.RegenerateAction`](#messageregenerateaction--changed) - `changed`: same leaf deltas as `.CopyAction`
-- [`.EditAction`](#messageeditaction--changed) - `changed`: immediate `editMessage` → edit mode (`startEdit`)
-- [`.Feedback`](#messagefeedback-cut--removed) - `removed`: cut from v1 (no backend endpoint)
-- [`.BranchPicker`](#messagebranchpicker--kept) - `kept`
-- [`.Tokens`](#messagetokens--changed) - `changed`: popover pair → display-only `<span>` (settled); `renderItem` deleted
-- [`.Continuing`](#messagecontinuing--changed) - `changed`: `<div>`→`<span>`
+- [`.Root`](#messageroot---changed) - `changed`: `<div>`→`<article>`; per-message session props deleted
+- [`.Avatar`](#messageavatar---changed) - `changed`: per-branch node (`<img>` / `<div>` fallback) → one node
+- [`.Header`](#messageheader---changed) - `changed`: `<div>`→`<header>`
+- [`.Name`](#messagename---changed) - `changed`: renamed from `Message.Header.Name`
+- [`.Timestamp`](#messagetimestamp---changed) - `changed`: `<span>`→`<time>`
+- [`.Content`](#messagecontent---changed) - `changed`: function-child moves to `.Parts`; `codeBlock` / `markdownComponents` deleted
+- [`.Parts`](#messageparts---changed) - `changed`: replaces `Message.Part` + `.Content`'s function-child
+- [`.Text`](#messagetext---changed) - `changed`: markdown exception, `components` map, streaming ownership
+- [`.Reasoning`](#messagereasoning---kept) - `kept`
+- [`.Source`](#messagesource---changed) - `changed`: `<button>`-in-`<span>` → `<a>` (same delta as `Sources.Pill`)
+- [`.File`](#messagefile-_proposed---no-current-source_---new) - `new`: attachment part leaf
+- [`.Image`](#messageimage-_proposed---no-current-source_---new) - `new`: image part leaf
+- [`.Sources`](#messagesources---changed) - `changed`: `<section>`; `renderItem` deleted; `data-empty`
+- [`.Actions`](#messageactions---changed) - `changed`: baked hover-reveal classes → `data-floating`
+- [`.CopyAction`](#messagecopyaction---changed) - `changed`: `icon` deleted; composed `onClick`; `data-copied`
+- [`.RegenerateAction`](#messageregenerateaction---changed) - `changed`: same leaf deltas as `.CopyAction`
+- [`.EditAction`](#messageeditaction---changed) - `changed`: immediate `editMessage` → edit mode (`startEdit`)
+- [`.Feedback`](#messagefeedback-_cut_---removed) - `removed`: cut from v1 (no backend endpoint)
+- [`.BranchPicker`](#messagebranchpicker---kept) - `kept`
+- [`.Tokens`](#messagetokens---changed) - `changed`: popover pair → display-only `<span>` (settled); `renderItem` deleted
+- [`.Continuing`](#messagecontinuing---changed) - `changed`: `<div>`→`<span>`
 
 ## Anatomy
 

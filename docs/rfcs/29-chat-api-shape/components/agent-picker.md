@@ -15,14 +15,14 @@ import { AgentPicker, AgentPickerItem, type AgentPickerItemProps } from "veryfro
 
 ## Parts index
 
-- [`.Root`](#agentpickerroot--changed) - `changed`: `inputStyle`/`invalid`/`isLoading`/`className` removed; uses the positioning-anchor exception while `ui` requires a wrapper
-- [`.Trigger`](#agentpickertrigger--changed) - `changed`: `inputStyle`/`invalid`/`icon` removed; `data-open` proposed
-- [`.Content`](#agentpickercontent--changed) - `changed`: Command shell `<div>` collapses to one node
-- [`.Search`](#agentpickersearch--changed) - `changed`: one `<input>` node; search icon/clear affordances are removed from the public default
-- [`.List`](#agentpickerlist--changed) - `changed`: `<div>` → `<ul>`; `isLoading` prop → `data-loading`
-- [`.Item`](#agentpickeritem--changed) - `changed`: `<div role="option">` → `<button>`; `selected` → `data-active`
-- [`.Create`](#agentpickercreate--changed) - `changed`: `CommandItem` → `<button>`; `icon` removed
-- [`.Manage`](#agentpickermanage--changed) - `changed`: same contract deltas as `.Create`
+- [`.Root`](#agentpickerroot---changed) - `changed`: `inputStyle`/`invalid`/`isLoading`/`className` removed; uses the positioning-anchor exception while `ui` requires a wrapper
+- [`.Trigger`](#agentpickertrigger---changed) - `changed`: `inputStyle`/`invalid`/`icon` removed; `data-open` proposed
+- [`.Content`](#agentpickercontent---changed) - `changed`: Command shell `<div>` collapses to one node
+- [`.Search`](#agentpickersearch---changed) - `changed`: one `<input>` node; search icon/clear affordances are removed from the public default
+- [`.List`](#agentpickerlist---changed) - `changed`: `<div>` → `<ul>`; `isLoading` prop → `data-loading`
+- [`.Item`](#agentpickeritem---changed) - `changed`: `<div role="option">` → `<button>`; `selected` → `data-active`
+- [`.Create`](#agentpickercreate---changed) - `changed`: `CommandItem` → `<button>`; `icon` removed
+- [`.Manage`](#agentpickermanage---changed) - `changed`: same contract deltas as `.Create`
 
 ## Anatomy
 

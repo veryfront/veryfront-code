@@ -16,10 +16,10 @@ Every other primitive in `veryfront/chat` renders exactly one DOM node. `Markdow
 
 ## Parts index
 
-- [`Markdown`](#markdown--changed) - `changed`: `renderCodeBlock` deleted; hardening props + streaming ownership proposed
-- [`components`](#components--the-override-map--changed) - `changed`: block-code hook moves from `pre` interception to the `code` key; virtual `citation` slot
-- [Streaming](#streaming-proposed--owned-here--new) - `new`: incremental parsing, mid-stream repair, URL hardening
-- [`RichCodeBlock`](#richcodeblock--changed) - `changed`: deprecated plain-`<pre>` fork collapses onto the `ui` `CodeBlock`; `copyIcon` / `collapseIcon` deleted
+- [`Markdown`](#markdown---changed) - `changed`: `renderCodeBlock` deleted; hardening props + streaming ownership proposed
+- [`components`](#components---the-override-map---changed) - `changed`: block-code hook moves from `pre` interception to the `code` key; virtual `citation` slot
+- [Streaming](#streaming-proposed---owned-here---new) - `new`: incremental parsing, mid-stream repair, URL hardening
+- [`RichCodeBlock`](#richcodeblock---changed) - `changed`: deprecated plain-`<pre>` fork collapses onto the `ui` `CodeBlock`; `copyIcon` / `collapseIcon` deleted
 
 ## Anatomy
 
@@ -143,7 +143,7 @@ is keyed `code` and adds the virtual `citation` slot.
 The react-markdown convention: a map from emitted element type to the component that renders it.
 
 - **Every emitted element type is replaceable.** Pass a component for any element `Markdown` emits and yours renders instead - including the built-in defaults for `pre`/`code`, `table`, `th`, `td`, `a`, and `blockquote` documented in the DOM above.
-- **`code`** - defaults to [`RichCodeBlock`](#richcodeblock--changed). The default renderer receives `{ language, code }` extracted from the fence.
+- **`code`** - defaults to [`RichCodeBlock`](#richcodeblock---changed). The default renderer receives `{ language, code }` extracted from the fence.
 - **Inline code** also uses the `code` key with `inline: true`; the built-in
   renderer returns a styled `<code>` and never routes inline code through
   `RichCodeBlock`.

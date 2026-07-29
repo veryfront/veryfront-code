@@ -26,14 +26,14 @@ import {
 
 ## Parts index
 
-- [`.Root`](#chatroot--changed) - `changed`: container `<div>` deleted - zero nodes
-- [`.MessageList`](#chatmessagelist--changed) - `changed`: scroll state surfaces as imperative `data-*`
-- [`.Input`](#chatinput--changed) - `changed`: hidden centering div deleted - one `<form>`
-- [`.Empty`](#chatempty--changed) - `changed`: `icon`/content props → agent-derived defaults + composition
-- [`.Skeleton`](#chatskeleton--kept) - `kept`
-- [`.If`](#chatif--changed) - `changed`: `condition` → `test` selector; raw-boolean form dropped
-- [`.Message`](#chatmessage--changed) - `changed`: `<div>` → `<article>`; row state as `data-*`
-- [`.ErrorBanner`](#chaterrorbanner--changed) - `changed`: `error` optional with context fallback; `icon`/`retryLabel` removed
+- [`.Root`](#chatroot---changed) - `changed`: container `<div>` deleted - zero nodes
+- [`.MessageList`](#chatmessagelist---changed) - `changed`: scroll state surfaces as imperative `data-*`
+- [`.Input`](#chatinput---changed) - `changed`: hidden centering div deleted - one `<form>`
+- [`.Empty`](#chatempty---changed) - `changed`: `icon`/content props → agent-derived defaults + composition
+- [`.Skeleton`](#chatskeleton---kept) - `kept`
+- [`.If`](#chatif---changed) - `changed`: `condition` → `test` selector; raw-boolean form dropped
+- [`.Message`](#chatmessage---changed) - `changed`: `<div>` → `<article>`; row state as `data-*`
+- [`.ErrorBanner`](#chaterrorbanner---changed) - `changed`: `error` optional with context fallback; `icon`/`retryLabel` removed
 
 ## Anatomy
 

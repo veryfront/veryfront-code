@@ -16,9 +16,9 @@ import { Sources, SourcesPill, type SourcesPillProps } from "veryfront/chat";
 
 ## Parts index
 
-- [`.Root`](#sourcesroot--changed) - `changed`: `renderItem` deleted; no `data-open` (the row has no disclosure); empty collections mount with `data-empty`
-- [`.List`](#sourceslist--changed) - `changed`: `<div>` → `<ul>`; `renderItem` deleted
-- [`.Pill`](#sourcespill--changed) - `changed`: `<button>` → `<a>`
+- [`.Root`](#sourcesroot---changed) - `changed`: `renderItem` deleted; no `data-open` (the row has no disclosure); empty collections mount with `data-empty`
+- [`.List`](#sourceslist---changed) - `changed`: `<div>` → `<ul>`; `renderItem` deleted
+- [`.Pill`](#sourcespill---changed) - `changed`: `<button>` → `<a>`
 
 ## Anatomy
 

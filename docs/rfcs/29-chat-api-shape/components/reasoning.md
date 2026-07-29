@@ -16,9 +16,9 @@ import { Reasoning, ReasoningTrigger, type ReasoningTriggerProps } from "veryfro
 
 ## Parts index
 
-- [`.Root`](#reasoningroot--changed) - `changed`: `icon` / `labels` props deleted; `data-open` / `data-streaming` proposed
-- [`.Trigger`](#reasoningtrigger--changed) - `changed`: `icon` / `labels` props deleted - children own the content
-- [`.Content`](#reasoningcontent--kept) - `kept`
+- [`.Root`](#reasoningroot---changed) - `changed`: `icon` / `labels` props deleted; `data-open` / `data-streaming` proposed
+- [`.Trigger`](#reasoningtrigger---changed) - `changed`: `icon` / `labels` props deleted - children own the content
+- [`.Content`](#reasoningcontent---kept) - `kept`
 
 ## Anatomy
 

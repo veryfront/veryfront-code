@@ -23,18 +23,18 @@ import {
 
 ## Parts index
 
-- [`.Root`](#attachmentspanelroot--changed) - `changed`: `loading` boolean → `data-loading` / `data-empty`; `uploads` defaults from `useAttachments`
-- [`.Header`](#attachmentspanelheader--changed) - `changed`: `<div>` → `<header>`
-- [`.List`](#attachmentspanellist--changed) - `changed`: `<div>` → `<ul>`
-- [`.Item`](#attachmentspanelitem--changed) - `changed`: pill `<div>` → `<li>`; `data-upload-state` / `data-active` / `data-error` proposed
-- [`.Item.Icon`](#attachmentspanelitemicon--changed) - `changed`: `<div>` → `<span>`
-- [`.Item.Preview`](#attachmentspanelitempreview--changed) - `changed`: wrapper square → one `<span>` background thumbnail
-- [`.Item.Name`](#attachmentspanelitemname-proposed--2975--new) - `new`: no source today (#2975)
-- [`.Item.Size`](#attachmentspanelitemsize-proposed--2975--new) - `new`: no source today (#2975)
-- [`.Item.Remove`](#attachmentspanelitemremove--changed) - `changed`: `icon` prop deleted
-- [`.Loading`](#attachmentspanelloading--changed) - `changed`: self-gates on fetch state (today Root-gated)
-- [`.Empty`](#attachmentspanelempty--changed) - `changed`: self-gates on zero files (today Root-gated)
-- [`.Action`](#attachmentspanelaction--changed) - `changed`: centering wrapper dropped - one `<button>`; `variant` deleted
+- [`.Root`](#attachmentspanelroot---changed) - `changed`: `loading` boolean → `data-loading` / `data-empty`; `uploads` defaults from `useAttachments`
+- [`.Header`](#attachmentspanelheader---changed) - `changed`: `<div>` → `<header>`
+- [`.List`](#attachmentspanellist---changed) - `changed`: `<div>` → `<ul>`
+- [`.Item`](#attachmentspanelitem---changed) - `changed`: pill `<div>` → `<li>`; `data-upload-state` / `data-active` / `data-error` proposed
+- [`.Item.Icon`](#attachmentspanelitemicon---changed) - `changed`: `<div>` → `<span>`
+- [`.Item.Preview`](#attachmentspanelitempreview---changed) - `changed`: wrapper square → one `<span>` background thumbnail
+- [`.Item.Name`](#attachmentspanelitemname-_proposed---2975_---new) - `new`: no source today (#2975)
+- [`.Item.Size`](#attachmentspanelitemsize-_proposed---2975_---new) - `new`: no source today (#2975)
+- [`.Item.Remove`](#attachmentspanelitemremove---changed) - `changed`: `icon` prop deleted
+- [`.Loading`](#attachmentspanelloading---changed) - `changed`: self-gates on fetch state (today Root-gated)
+- [`.Empty`](#attachmentspanelempty---changed) - `changed`: self-gates on zero files (today Root-gated)
+- [`.Action`](#attachmentspanelaction---changed) - `changed`: centering wrapper dropped - one `<button>`; `variant` deleted
 
 ## Anatomy
 

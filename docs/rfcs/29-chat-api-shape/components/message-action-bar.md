@@ -22,10 +22,10 @@ import { Message, MessageCopyAction, type MessageCopyActionProps } from "veryfro
 
 ## Parts index
 
-- [`.Actions`](#messageactions--changed) - `changed`: `content` / handler props deleted; baked hover-reveal → `data-floating`
-- [`.CopyAction`](#messagecopyaction--changed) - `changed`: `icon` deleted; composed `onClick`; `data-copied`
-- [`.RegenerateAction`](#messageregenerateaction--changed) - `changed`: same leaf deltas as `.CopyAction`
-- [`.EditAction`](#messageeditaction--changed) - `changed`: immediate `editMessage` → edit mode (`startEdit`)
+- [`.Actions`](#messageactions---changed) - `changed`: `content` / handler props deleted; baked hover-reveal → `data-floating`
+- [`.CopyAction`](#messagecopyaction---changed) - `changed`: `icon` deleted; composed `onClick`; `data-copied`
+- [`.RegenerateAction`](#messageregenerateaction---changed) - `changed`: same leaf deltas as `.CopyAction`
+- [`.EditAction`](#messageeditaction---changed) - `changed`: immediate `editMessage` → edit mode (`startEdit`)
 - [`.Copied`](#deleted-parts) - `removed`: folded into `.CopyAction`'s `data-copied`
 
 ## Anatomy

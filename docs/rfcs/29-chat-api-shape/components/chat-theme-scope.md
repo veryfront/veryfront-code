@@ -15,7 +15,7 @@ import { ChatThemeScope, type ChatThemeScopeProps } from "veryfront/chat";
 
 ## Parts index
 
-- [`ChatThemeScope`](#chatthemescope--kept) - `kept`
+- [`ChatThemeScope`](#chatthemescope---kept) - `kept`
 
 ## Anatomy
 

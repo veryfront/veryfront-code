@@ -14,9 +14,9 @@ import { StepIndicator, StepIndicatorLabel, type StepIndicatorLabelProps } from 
 
 ## Parts index
 
-- [`.Root`](#stepindicatorroot--changed) - `changed`: `isComplete` boolean → `data-state`; `icon` deleted
-- [`.Rule`](#stepindicatorrule--changed) - `changed`: named one-node rule part
-- [`.Label`](#stepindicatorlabel--changed) - `changed`: `<div>` → `<span>`; `icon` override → children
+- [`.Root`](#stepindicatorroot---changed) - `changed`: `isComplete` boolean → `data-state`; `icon` deleted
+- [`.Rule`](#stepindicatorrule---changed) - `changed`: named one-node rule part
+- [`.Label`](#stepindicatorlabel---changed) - `changed`: `<div>` → `<span>`; `icon` override → children
 
 ## Anatomy
 

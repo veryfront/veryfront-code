@@ -20,10 +20,10 @@ import { BranchPicker, BranchPickerCount, type BranchPickerCountProps } from "ve
 
 ## Parts index
 
-- [`.Root`](#branchpickerroot--changed) - `changed`: controlled `current`/`total`/`onPrev`/`onNext` props removed - context-driven
-- [`.Previous`](#branchpickerprevious--changed) - `changed`: `icon` prop deleted; `data-disabled` proposed
-- [`.Count`](#branchpickercount--kept) - `kept`
-- [`.Next`](#branchpickernext--changed) - `changed`: `icon` prop deleted; `data-disabled` proposed
+- [`.Root`](#branchpickerroot---changed) - `changed`: controlled `current`/`total`/`onPrev`/`onNext` props removed - context-driven
+- [`.Previous`](#branchpickerprevious---changed) - `changed`: `icon` prop deleted; `data-disabled` proposed
+- [`.Count`](#branchpickercount---kept) - `kept`
+- [`.Next`](#branchpickernext---changed) - `changed`: `icon` prop deleted; `data-disabled` proposed
 
 ## Anatomy
 

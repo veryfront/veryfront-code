@@ -17,12 +17,12 @@ import { ModelSelector, ModelSelectorItem, type ModelSelectorItemProps } from "v
 
 ## Parts index
 
-- [`.Root`](#modelselectorroot--changed) - `changed`: `renderItem` + root `className` deleted; `onChange` renamed `onValueChange`; `models` moves leaf-first
-- [`.Trigger`](#modelselectortrigger--changed) - `changed`: gains leaf-first `models`; `data-open` / `data-disabled`
-- [`.Content`](#modelselectorcontent--changed) - `changed`: Command shell `<div>` collapses to one node
-- [`.Search`](#modelselectorsearch--changed) - `changed`: `CommandInput` row → one `<input>`
-- [`.List`](#modelselectorlist--changed) - `changed`: `<div>` scroll container → `<ul>`
-- [`.Item`](#modelselectoritem--changed) - `changed`: `role="option"` `<div>` → `<button>`; `selected` prop → `data-active`
+- [`.Root`](#modelselectorroot---changed) - `changed`: `renderItem` + root `className` deleted; `onChange` renamed `onValueChange`; `models` moves leaf-first
+- [`.Trigger`](#modelselectortrigger---changed) - `changed`: gains leaf-first `models`; `data-open` / `data-disabled`
+- [`.Content`](#modelselectorcontent---changed) - `changed`: Command shell `<div>` collapses to one node
+- [`.Search`](#modelselectorsearch---changed) - `changed`: `CommandInput` row → one `<input>`
+- [`.List`](#modelselectorlist---changed) - `changed`: `<div>` scroll container → `<ul>`
+- [`.Item`](#modelselectoritem---changed) - `changed`: `role="option"` `<div>` → `<button>`; `selected` prop → `data-active`
 
 ## Anatomy
 

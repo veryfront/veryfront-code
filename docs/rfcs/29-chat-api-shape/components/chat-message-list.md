@@ -22,9 +22,9 @@ import {
 
 ## Parts index
 
-- [`.Root`](#chatmessagelist-root--changed) - `changed`: today's two nodes collapse to one scroll container; data/render props deleted; imperative `data-*` scroll state added
-- [`.Content`](#chatmessagelistcontent--changed) - `changed`: `role="log"` + streaming a11y contract move here from the scroll container
-- [`.ScrollButton`](#chatmessagelistscrollbutton--changed) - `changed`: stays mounted, inert + unfocusable at bottom (today it unmounts)
+- [`.Root`](#chatmessagelist-root---changed) - `changed`: today's two nodes collapse to one scroll container; data/render props deleted; imperative `data-*` scroll state added
+- [`.Content`](#chatmessagelistcontent---changed) - `changed`: `role="log"` + streaming a11y contract move here from the scroll container
+- [`.ScrollButton`](#chatmessagelistscrollbutton---changed) - `changed`: stays mounted, inert + unfocusable at bottom (today it unmounts)
 
 ## Anatomy
 

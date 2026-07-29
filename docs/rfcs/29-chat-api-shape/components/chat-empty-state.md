@@ -21,11 +21,11 @@ import {
 
 ## Parts index
 
-- [`.Root`](#chatemptystateroot--kept) - `kept`
-- [`.Avatar`](#chatemptystateavatar--changed) - `changed`: `isCreating` styling boolean → `data-creating`
-- [`.Heading`](#chatemptystateheading--changed) - `changed`: `level` removed; use `asChild` for custom heading levels
-- [`.Suggestions`](#chatemptystatesuggestions--changed) - `changed`: `data-empty` state attribute added
-- [`.Suggestion`](#chatemptystatesuggestion--kept) - `kept`
+- [`.Root`](#chatemptystateroot---kept) - `kept`
+- [`.Avatar`](#chatemptystateavatar---changed) - `changed`: `isCreating` styling boolean → `data-creating`
+- [`.Heading`](#chatemptystateheading---changed) - `changed`: `level` removed; use `asChild` for custom heading levels
+- [`.Suggestions`](#chatemptystatesuggestions---changed) - `changed`: `data-empty` state attribute added
+- [`.Suggestion`](#chatemptystatesuggestion---kept) - `kept`
 
 ## Anatomy
 

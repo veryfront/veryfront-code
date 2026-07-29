@@ -15,7 +15,7 @@ import { ChatRoot, type ChatRootProps } from "veryfront/chat";
 
 ## Parts index
 
-- [`ChatRoot`](#chatroot--changed) - `changed`: today's token-scope `<div>` + `<style>` are deleted - context only, zero nodes; 25 props collapse into `chat`
+- [`ChatRoot`](#chatroot---changed) - `changed`: today's token-scope `<div>` + `<style>` are deleted - context only, zero nodes; 25 props collapse into `chat`
 
 ## Anatomy
 

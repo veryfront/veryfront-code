@@ -17,7 +17,7 @@ import { ChatErrorBoundary, type ChatErrorBoundaryProps } from "veryfront/chat";
 
 ## Parts index
 
-- [`ChatErrorBoundary`](#chaterrorboundary--kept) - `kept`
+- [`ChatErrorBoundary`](#chaterrorboundary---kept) - `kept`
 
 ## Anatomy
 
@@ -30,7 +30,7 @@ import { ChatErrorBoundary, type ChatErrorBoundaryProps } from "veryfront/chat";
 </ChatErrorBoundary>;
 ```
 
-Don't confuse the two error surfaces: **stream/session errors** (a failed completion) render inline via [`Chat.ErrorBanner`](./chat.md#chaterrorbanner) and never trip the boundary; the boundary catches **thrown render errors** - a bad custom part renderer, malformed message data.
+Don't confuse the two error surfaces: **stream/session errors** (a failed completion) render inline via [`Chat.ErrorBanner`](./chat.md#chaterrorbanner---changed) and never trip the boundary; the boundary catches **thrown render errors** - a bad custom part renderer, malformed message data.
 
 ## Default DOM (childless render)
 

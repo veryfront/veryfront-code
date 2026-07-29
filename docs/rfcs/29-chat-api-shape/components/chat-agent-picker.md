@@ -15,7 +15,7 @@ import { ChatAgentPicker, type ChatAgentPickerProps } from "veryfront/chat";
 
 ## Parts index
 
-- [`ChatAgentPicker`](#chatagentpicker--changed) - `changed`: `className` trigger alias removed; boolean state props → `data-*` (via `AgentPicker`)
+- [`ChatAgentPicker`](#chatagentpicker---changed) - `changed`: `className` trigger alias removed; boolean state props → `data-*` (via `AgentPicker`)
 
 ## Anatomy
 
