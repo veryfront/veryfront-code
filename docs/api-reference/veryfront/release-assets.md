@@ -31,24 +31,6 @@ if (!manifest) throw new Error("Invalid release asset manifest");
 
 ## Exports
 
-### Components
-
-| Name | Description | Source |
-|------|-------------|--------|
-| `RELEASE_ASSET_BASE_PATH` | Public asset base path served on the project's own domain (proxy-owned). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L11) |
-| `RELEASE_ASSET_CONTENT_TYPE_ALLOWLIST` | Allowlist of accepted content types (upstream + upload validation). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L27) |
-| `RELEASE_ASSET_CONTENT_TYPES` | Content types permitted for release assets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L14) |
-| `RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG` | Env flag that enables manifest dependency import-map rewrites (default OFF). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L75) |
-| `RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS` | Immutable cache max-age in seconds (1 year). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L60) |
-| `RELEASE_ASSET_MANIFEST_ENV_FLAG` | Env flag that enables HTML manifest consumption in production (default OFF). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L72) |
-| `RELEASE_ASSET_MANIFEST_LIMITS` | Work and memory bounds enforced by every manifest producer and consumer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L40) |
-| `RELEASE_ASSET_MANIFEST_SCHEMA_VERSION` | Current manifest body schema version. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L8) |
-| `RELEASE_ASSET_MAX_PENDING_BYTES` | Maximum aggregate bytes retained while preparing one asset generation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L37) |
-| `RELEASE_ASSET_MAX_SIZE_BYTES` | Maximum size (bytes) for a single uploaded asset (10 MB). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L34) |
-| `RELEASE_ASSET_UPLOAD_CONCURRENCY` | Bounded upload concurrency when posting assets during a build. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L69) |
-| `RELEASE_MODULE_RUNTIME_VERSION_PARAM` | Query param that scopes fallback module URLs to the Veryfront runtime build. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L66) |
-| `RELEASE_MODULE_VERSION_PARAM` | Query param that scopes fallback module URLs to an immutable release. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L63) |
-
 ### Functions
 
 | Name | Description | Source |
@@ -106,3 +88,16 @@ if (!manifest) throw new Error("Invalid release asset manifest");
 | Name | Description | Source |
 |------|-------------|--------|
 | `getReleaseAssetManifestSchema` | Extension-backed validator for the strict release asset manifest v1 body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L208) |
+| `RELEASE_ASSET_BASE_PATH` | Public asset base path served on the project's own domain (proxy-owned). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L11) |
+| `RELEASE_ASSET_CONTENT_TYPE_ALLOWLIST` | Allowlist of accepted content types (upstream + upload validation). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L27) |
+| `RELEASE_ASSET_CONTENT_TYPES` | Content types permitted for release assets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L14) |
+| `RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG` | Env flag that enables manifest dependency import-map rewrites (default OFF). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L75) |
+| `RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS` | Immutable cache max-age in seconds (1 year). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L60) |
+| `RELEASE_ASSET_MANIFEST_ENV_FLAG` | Env flag that enables HTML manifest consumption in production (default OFF). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L72) |
+| `RELEASE_ASSET_MANIFEST_LIMITS` | Work and memory bounds enforced by every manifest producer and consumer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L40) |
+| `RELEASE_ASSET_MANIFEST_SCHEMA_VERSION` | Current manifest body schema version. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L8) |
+| `RELEASE_ASSET_MAX_PENDING_BYTES` | Maximum aggregate bytes retained while preparing one asset generation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L37) |
+| `RELEASE_ASSET_MAX_SIZE_BYTES` | Maximum size (bytes) for a single uploaded asset (10 MB). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L34) |
+| `RELEASE_ASSET_UPLOAD_CONCURRENCY` | Bounded upload concurrency when posting assets during a build. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L69) |
+| `RELEASE_MODULE_RUNTIME_VERSION_PARAM` | Query param that scopes fallback module URLs to the Veryfront runtime build. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L66) |
+| `RELEASE_MODULE_VERSION_PARAM` | Query param that scopes fallback module URLs to an immutable release. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L63) |

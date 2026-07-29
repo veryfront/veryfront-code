@@ -39,6 +39,7 @@ order: 1
 | [`veryfront/sandbox`](./veryfront/sandbox.md) | Isolated execution. |
 | [`veryfront/schedule`](./veryfront/schedule.md) | Source-defined recurring schedules for Veryfront projects. |
 | [`veryfront/schemas`](./veryfront/schemas.md) | Validation schemas. |
+| [`veryfront/security`](./veryfront/security.md) | Security layer - input validation with size limits, CORS configuration, CSP and security headers, path traversal prevention, and secure filesystem access. |
 | [`veryfront/server`](./veryfront/server.md) | Server runtime helpers. |
 | [`veryfront/skill`](./veryfront/skill.md) | Agent skills. Public API for the agent skills system. Skills are project-level capabilities defined as SKILL.md files using the Agent Skills metadata format and Veryfront's documented, fail-closed allowed-tools subset. |
 | [`veryfront/task`](./veryfront/task.md) | Source-defined tasks for Veryfront projects. |

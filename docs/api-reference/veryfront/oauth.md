@@ -34,6 +34,20 @@ export const GET = createOAuthInitHandler(gmailConfig, {
 export const GET = createOAuthCallbackHandler(gmailConfig, { tokenStore });
 ```
 
+## Type Reference
+
+### `OAuthProviderConfig`
+
+Configuration used by oauth provider.
+
+**Type:** <code>InferSchema&lt;ReturnType&lt;getOAuthProviderConfigSchema&gt;&gt;</code>
+
+### `OAuthServiceConfig`
+
+Configuration used by oauth service.
+
+**Type:** <code>InferSchema&lt;ReturnType&lt;getOAuthServiceConfigSchema&gt;&gt;</code>
+
 ## Exports
 
 ### Components

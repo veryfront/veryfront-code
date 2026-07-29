@@ -227,8 +227,9 @@ import { captureApplicationError, flushApplicationErrors, initializeSentry } fro
 | `flushApplicationErrors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L44) |
 | `initializeSentry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L70) |
 | `initializeSentryFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L63) |
-| `resetSentryForTests` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L109) |
+| `resetSentryForTests` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L120) |
 | `resolveSentryConfigFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L34) |
+| `shutdownSentry` | Invalidate in-flight initialization and remove the active reporter. Callers that need delivery guarantees must flush application errors first. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L113) |
 
 #### Types
 

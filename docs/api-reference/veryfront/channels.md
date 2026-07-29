@@ -22,10 +22,6 @@ import { compareRuntimeAgentMetadata, getRuntimeAgentPublicMetadata, isConfigOpt
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `CONTROL_PLANE_AGENTS_LIST_PATH` | Shared control plane agents list path value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L43) |
-| `CONTROL_PLANE_RUN_STREAM_PATH` | Shared control plane run stream path value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L47) |
-| `CONTROL_PLANE_RUNS_PATH_PREFIX` | Shared control plane runs path prefix value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L45) |
-| `CONTROL_PLANE_SURFACES` | Allowed control-plane surfaces - source of truth for the schema and `ControlPlaneSurface`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L85) |
 | `ControlPlaneAgentsListRequestSchema` | Zod schema for control plane agents list request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L101) |
 | `ControlPlaneSurfaceSchema` | Zod schema for control plane surface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L90) |
 | `RuntimeAgentListResponseSchema` | Zod schema for runtime agent list response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L172) |
@@ -68,6 +64,10 @@ import { compareRuntimeAgentMetadata, getRuntimeAgentPublicMetadata, isConfigOpt
 
 | Name | Description | Source |
 |------|-------------|--------|
+| `CONTROL_PLANE_AGENTS_LIST_PATH` | Shared control plane agents list path value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L43) |
+| `CONTROL_PLANE_RUN_STREAM_PATH` | Shared control plane run stream path value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L47) |
+| `CONTROL_PLANE_RUNS_PATH_PREFIX` | Shared control plane runs path prefix value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L45) |
+| `CONTROL_PLANE_SURFACES` | Allowed control-plane surfaces - source of truth for the schema and `ControlPlaneSurface`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L85) |
 | `getControlPlaneAgentsListRequestSchema` | Zod schema for get control plane agents list request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L93) |
 | `getControlPlaneSurfaceSchema` | Zod schema for get control plane surface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L88) |
 | `getRuntimeAgentListResponseSchema` | Zod schema for get runtime agent list response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L166) |

@@ -1,7 +1,7 @@
 ---
 title: "veryfront/tool"
 description: "Define tools with schema-backed inputs for agents and MCP."
-order: 35
+order: 36
 ---
 
 ## Import
@@ -115,12 +115,6 @@ Create a typed tool definition.
 
 ## Exports
 
-### Components
-
-| Name | Description | Source |
-|------|-------------|--------|
-| `DEFAULT_SLEEP_TOOL_MAX_SECONDS` | Default value for sleep tool max seconds. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L7) |
-
 ### Functions
 
 | Name | Description | Source |
@@ -188,5 +182,6 @@ Create a typed tool definition.
 
 | Name | Description | Source |
 |------|-------------|--------|
+| `DEFAULT_SLEEP_TOOL_MAX_SECONDS` | Default value for sleep tool max seconds. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L7) |
 | `sleepTool` | Default sleep tool (max 60 s) exposed as a property accessor so the underlying `tool({...})` materialization is deferred until first use. Preserves the existing `sleepTool.execute(...)` call shape. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L103) |
 | `toolRegistry` | Project-scoped tool registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/registry.ts#L84) |

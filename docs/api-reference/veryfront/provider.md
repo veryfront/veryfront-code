@@ -61,17 +61,6 @@ Clear model providers registered in the current project source scope.
 
 ## Exports
 
-### Components
-
-| Name | Description | Source |
-|------|-------------|--------|
-| `DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL` | Catalog-backed default model descriptor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L241) |
-| `DEFAULT_VERYFRONT_CLOUD_MODEL_ID` | Default Veryfront Cloud model ID used when no model is configured. Update this when the current default is deprecated - otherwise the default path silently breaks for users who have not set an explicit model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L48) |
-| `DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID` | Canonical direct provider/model ID for the default chat model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L243) |
-| `DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID` | Canonical hosted runtime ID for the default chat model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L245) |
-| `VERYFRONT_CLOUD_CHAT_MODELS` | Shared Veryfront Cloud chat models value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L217) |
-| `VERYFRONT_CLOUD_MODEL_PREFIX` | Shared Veryfront Cloud model prefix value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L50) |
-
 ### Functions
 
 | Name | Description | Source |
@@ -122,7 +111,13 @@ Clear model providers registered in the current project source scope.
 
 | Name | Description | Source |
 |------|-------------|--------|
+| `DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL` | Catalog-backed default model descriptor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L241) |
+| `DEFAULT_VERYFRONT_CLOUD_MODEL_ID` | Default Veryfront Cloud model ID used when no model is configured. Update this when the current default is deprecated - otherwise the default path silently breaks for users who have not set an explicit model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L48) |
+| `DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID` | Canonical direct provider/model ID for the default chat model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L243) |
+| `DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID` | Canonical hosted runtime ID for the default chat model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L245) |
 | `resolveHostedVeryfrontCloudModelId` | Resolves hosted Veryfront Cloud model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L470) |
+| `VERYFRONT_CLOUD_CHAT_MODELS` | Shared Veryfront Cloud chat models value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L217) |
+| `VERYFRONT_CLOUD_MODEL_PREFIX` | Shared Veryfront Cloud model prefix value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L50) |
 
 ## Deep imports
 
@@ -135,13 +130,6 @@ Shared plumbing consumed by the `@veryfront/ext-*` provider extensions. This bar
 ```ts
 import { buildProviderError, createAnthropicRequestInit, createGoogleRequestInit } from "veryfront/provider/shared";
 ```
-
-#### Components
-
-| Name | Description | Source |
-|------|-------------|--------|
-| `MAX_PROVIDER_SSE_BUFFER_CODE_UNITS` | Maximum decoded provider SSE data retained or parsed in one pass. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-sse.ts#L4) |
-| `TOOL_INPUT_PENDING_THRESHOLD_MS` | Shared tool input pending threshold ms value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/tool-input-status.ts#L4) |
 
 #### Functions
 
@@ -205,6 +193,13 @@ import { buildProviderError, createAnthropicRequestInit, createGoogleRequestInit
 | `RuntimeReasoningOption` | Provider-neutral reasoning controls accepted by model runtimes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L131) |
 | `RuntimeResponseFormat` | Provider-neutral structured-output request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L153) |
 | `RuntimeUsage` | Canonical provider-neutral usage reported by text-generation runtimes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-usage.ts#L21) |
+
+#### Constants
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `MAX_PROVIDER_SSE_BUFFER_CODE_UNITS` | Maximum decoded provider SSE data retained or parsed in one pass. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-sse.ts#L4) |
+| `TOOL_INPUT_PENDING_THRESHOLD_MS` | Shared tool input pending threshold ms value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/tool-input-status.ts#L4) |
 
 ### `veryfront/provider/types`
 
