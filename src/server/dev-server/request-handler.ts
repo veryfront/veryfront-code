@@ -26,7 +26,6 @@ export class RequestHandler {
     private projectDir: string,
     private adapter: RuntimeAdapter,
     private isReady: () => boolean,
-    private isDebug: () => boolean,
     private config?: VeryfrontConfig,
     private defaultProjectSlug?: string,
     private defaultProjectId?: string,
@@ -135,7 +134,6 @@ export class RequestHandler {
       const { createVeryfrontHandler } = await import("../runtime-handler/index.ts");
       this.runtimeHandler = createVeryfrontHandler(this.projectDir, this.adapter, {
         projectDir: this.projectDir,
-        debug: this.isDebug(),
         moduleServerUrl: "/_vf_modules",
         config: this.config,
         defaultProjectSlug: this.defaultProjectSlug,

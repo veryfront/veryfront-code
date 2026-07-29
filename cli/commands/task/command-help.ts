@@ -10,14 +10,9 @@ export const taskHelp: CommandHelp = {
       flag: "--config <json>",
       description: "JSON config to pass to the task's ctx.config",
     },
-    {
-      flag: "--debug",
-      description: "Enable debug logging",
-    },
   ],
   examples: [
     "veryfront task sync-data",
     'veryfront task send-report --config \'{"to": "team@example.com"}\'',
-    "veryfront task cleanup --debug",
   ],
 };

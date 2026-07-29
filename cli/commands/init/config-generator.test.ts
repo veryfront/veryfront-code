@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createPackageJson } from "./config-generator.ts";
+import { createPackageJson, createTypeScriptConfig } from "./config-generator.ts";
 import { join } from "veryfront/platform/path";
 
 describe("config-generator", () => {
@@ -18,12 +18,29 @@ describe("config-generator", () => {
       assertEquals(createPackageJson.constructor.name, "AsyncFunction");
     });
 
-    it("includes pnpm.onlyBuiltDependencies for esbuild and veryfront", async () => {
+    it("allows only the transitive esbuild install script under pnpm", async () => {
       const tmpDir = await Deno.makeTempDir();
       try {
         await createPackageJson(tmpDir, "test-project");
         const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
-        assertEquals(pkg.pnpm?.onlyBuiltDependencies, ["esbuild", "veryfront"]);
+        assertEquals(pkg.pnpm?.onlyBuiltDependencies, ["esbuild"]);
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("includes the standard local developer commands", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      try {
+        await createPackageJson(tmpDir, "test-project");
+        const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
+        assertEquals(pkg.scripts, {
+          dev: "veryfront dev",
+          build: "veryfront build",
+          start: "veryfront serve",
+          eval: "veryfront eval",
+          deploy: "veryfront deploy",
+        });
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }
@@ -41,18 +58,16 @@ describe("config-generator", () => {
       }
     });
 
-    it("includes first-party extension packages required by npm CLI dev and build", async () => {
+    it("keeps framework-owned runtime extensions out of the app manifest", async () => {
       const tmpDir = await Deno.makeTempDir();
       try {
         await createPackageJson(tmpDir, "test-project");
         const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
-        assertEquals(
-          pkg.dependencies["@veryfront/ext-bundler-esbuild"],
-          pkg.dependencies.veryfront,
-        );
-        assertEquals(pkg.dependencies["@veryfront/ext-content-mdx"], pkg.dependencies.veryfront);
-        assertEquals(pkg.dependencies["@veryfront/ext-css-tailwind"], pkg.dependencies.veryfront);
-        assertEquals(pkg.dependencies["@veryfront/ext-parser-babel"], pkg.dependencies.veryfront);
+        assertEquals(pkg.dependencies["@veryfront/ext-bundler-esbuild"], undefined);
+        assertEquals(pkg.dependencies["@veryfront/ext-content-mdx"], undefined);
+        assertEquals(pkg.dependencies["@veryfront/ext-css-tailwind"], undefined);
+        assertEquals(pkg.dependencies["@veryfront/ext-parser-babel"], undefined);
+        assertEquals(pkg.dependencies.zod, undefined);
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }
@@ -109,14 +124,9 @@ describe("config-generator", () => {
         });
         const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
         assertEquals(Object.keys(pkg.dependencies).sort(), [
-          "@veryfront/ext-bundler-esbuild",
-          "@veryfront/ext-content-mdx",
-          "@veryfront/ext-css-tailwind",
-          "@veryfront/ext-parser-babel",
           "react",
           "react-dom",
           "veryfront",
-          "zod",
         ]);
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
@@ -135,6 +145,33 @@ describe("config-generator", () => {
         const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
         // First declaration wins; second is skipped with a warning logged by the impl.
         assertEquals(pkg.dependencies.shared, "^1.0.0");
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+  });
+
+  describe("createTypeScriptConfig", () => {
+    it("writes the starter-compatible TypeScript defaults", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      try {
+        await createTypeScriptConfig(tmpDir);
+        const config = JSON.parse(await Deno.readTextFile(join(tmpDir, "tsconfig.json")));
+
+        assertEquals(config, {
+          compilerOptions: {
+            target: "ES2022",
+            module: "ESNext",
+            moduleResolution: "bundler",
+            strict: true,
+            jsx: "react-jsx",
+            skipLibCheck: true,
+            esModuleInterop: true,
+            paths: { "@/*": ["./*"] },
+          },
+          include: ["**/*.ts", "**/*.tsx"],
+          exclude: ["node_modules"],
+        });
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }

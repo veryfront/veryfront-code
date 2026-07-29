@@ -3,7 +3,6 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   calculateMaxLength,
-  formatAsciiLogo,
   formatCommandHeader,
   formatCommandList,
   formatExample,
@@ -13,7 +12,9 @@ import {
   formatSectionHeader,
   formatUsage,
 } from "./formatters.ts";
-import type { CommandOption } from "./types.ts";
+import type { CommandHelp, CommandOption } from "./types.ts";
+import { VERSION } from "#cli/utils";
+import { BRAND_TRUECOLOR, setTestColorLevel } from "../ui/colors.ts";
 
 describe("cli/help/formatters", () => {
   describe("formatUsage", () => {
@@ -83,24 +84,6 @@ describe("cli/help/formatters", () => {
     });
   });
 
-  describe("formatAsciiLogo", () => {
-    it("should return a non-empty string", () => {
-      const logo = formatAsciiLogo();
-      assertEquals(typeof logo, "string");
-      assertEquals(logo.length > 0, true);
-    });
-
-    it("should contain veryfront text", () => {
-      const logo = formatAsciiLogo();
-      assertEquals(logo.includes("veryfront"), true);
-    });
-
-    it("should contain React meta-framework text", () => {
-      const logo = formatAsciiLogo();
-      assertEquals(logo.includes("React meta-framework"), true);
-    });
-  });
-
   describe("calculateMaxLength", () => {
     it("should return the maximum length", () => {
       assertEquals(calculateMaxLength([{ length: 3 }, { length: 7 }, { length: 5 }]), 7);
@@ -116,23 +99,31 @@ describe("cli/help/formatters", () => {
   });
 
   describe("formatHeader", () => {
-    it("should return a non-empty string", () => {
-      const header = formatHeader();
-      assertEquals(typeof header, "string");
-      assertEquals(header.length > 0, true);
+    it("uses a compact product and version line without decorative art", () => {
+      setTestColorLevel("none");
+
+      assertEquals(formatHeader(), `Veryfront (v${VERSION})`);
+
+      setTestColorLevel(null);
     });
 
-    it("should contain veryfront", () => {
+    it("keeps the product in the terminal foreground and dims the parenthesized version", () => {
+      setTestColorLevel("truecolor");
+
       const header = formatHeader();
-      assertEquals(header.includes("veryfront"), true);
+      assertEquals(header.includes("\x1b[1mVeryfront\x1b[0m"), true);
+      assertEquals(header.includes(`\x1b[2m(v${VERSION})\x1b[0m`), true);
+      assertEquals(header.includes(BRAND_TRUECOLOR), false);
+
+      setTestColorLevel(null);
     });
   });
 
   describe("formatCommandList", () => {
     it("should format a list of commands", () => {
-      const commands = [
-        { name: "dev", description: "Start dev server", usage: "" },
-        { name: "build", description: "Build for production", usage: "" },
+      const commands: CommandHelp[] = [
+        { name: "dev", category: "development", description: "Start dev server", usage: "" },
+        { name: "build", category: "development", description: "Build for production", usage: "" },
       ];
       const result = formatCommandList(commands);
       assertEquals(result.length, 2);
@@ -141,9 +132,9 @@ describe("cli/help/formatters", () => {
     });
 
     it("should align command names", () => {
-      const commands = [
-        { name: "a", description: "Short name", usage: "" },
-        { name: "longname", description: "Long name", usage: "" },
+      const commands: CommandHelp[] = [
+        { name: "a", category: "development", description: "Short name", usage: "" },
+        { name: "longname", category: "development", description: "Long name", usage: "" },
       ];
       const result = formatCommandList(commands);
       assertEquals(result.length, 2);

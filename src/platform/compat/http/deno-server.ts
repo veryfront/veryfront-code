@@ -11,8 +11,6 @@ export class DenoHttpServer implements HttpServer {
     this.abortController = new AbortController();
     const serveSignal = signal ?? this.abortController.signal;
 
-    onListen?.({ hostname, port });
-
     // Access native Deno.serve via `self` to bypass dnt shim transform.
     const nativeDeno = getNativeDeno()!;
 
@@ -27,7 +25,14 @@ export class DenoHttpServer implements HttpServer {
     };
 
     const httpServer = nativeDeno.serve(
-      { port, hostname, signal: serveSignal },
+      {
+        port,
+        hostname,
+        signal: serveSignal,
+        onListen: ({ hostname: boundHostname, port: boundPort }) => {
+          onListen?.({ hostname: boundHostname, port: boundPort });
+        },
+      },
       wrappedHandler,
     );
 

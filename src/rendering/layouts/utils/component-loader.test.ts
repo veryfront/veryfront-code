@@ -1,16 +1,34 @@
 import "#veryfront/schemas/_test-setup.ts";
 import * as React from "react";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   createLayoutComponentCache,
   loadMDXLayout,
+  loadTSXComponent,
   shouldUnwrapAppRouterDocumentLayout,
   unwrapAppRouterDocumentLayout,
 } from "./component-loader.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { MdxBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("Timed out waiting for condition");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+function layoutAdapter(source: string): RuntimeAdapter {
+  return {
+    fs: {
+      readFile: () => Promise.resolve(source),
+    },
+  } as unknown as RuntimeAdapter;
+}
 
 describe("rendering/layouts/utils/component-loader", () => {
   describe("createLayoutComponentCache", () => {
@@ -289,6 +307,165 @@ describe("rendering/layouts/utils/component-loader", () => {
       assertEquals(result.type, "main");
       const child = React.Children.only(result.props.children) as React.ReactElement;
       assertEquals(child.type, "button");
+    });
+  });
+
+  describe("loadTSXComponent", () => {
+    it("shares one component load for concurrent cold misses", async () => {
+      const cache = createLayoutComponentCache();
+      const loaded = Promise.withResolvers<React.ComponentType>();
+      let loadCalls = 0;
+      function Layout() {
+        return null;
+      }
+
+      const first = loadTSXComponent(
+        "/project/app/layout.tsx",
+        "/project",
+        cache,
+        layoutAdapter("export default function Layout() { return null; }"),
+        "project-1",
+        "project-slug",
+        "release-1",
+        "19.1.0",
+        {
+          loadComponentFromSource: () => {
+            loadCalls++;
+            return loaded.promise;
+          },
+        },
+      );
+      const second = loadTSXComponent(
+        "/project/app/layout.tsx",
+        "/project",
+        cache,
+        layoutAdapter("export default function Layout() { return null; }"),
+        "project-1",
+        "project-slug",
+        "release-1",
+        "19.1.0",
+        {
+          loadComponentFromSource: () => {
+            loadCalls++;
+            return loaded.promise;
+          },
+        },
+      );
+
+      await waitFor(() => loadCalls > 0);
+      assertEquals(loadCalls, 1);
+
+      loaded.resolve(Layout);
+
+      assertEquals(await Promise.all([first, second]), [Layout, Layout]);
+      assertEquals(loadCalls, 1);
+    });
+
+    it("retries after a failed component load", async () => {
+      const cache = createLayoutComponentCache();
+      const failedLoad = Promise.withResolvers<React.ComponentType>();
+      let loadCalls = 0;
+      function Layout() {
+        return null;
+      }
+      const deps = {
+        loadComponentFromSource: () => {
+          loadCalls++;
+          return loadCalls === 1 ? failedLoad.promise : Promise.resolve(Layout);
+        },
+      };
+
+      const first = loadTSXComponent(
+        "/project/app/retry-layout.tsx",
+        "/project",
+        cache,
+        layoutAdapter("export default function Layout() { return null; }"),
+        "project-1",
+        "project-slug",
+        "release-1",
+        "19.1.0",
+        deps,
+      );
+      await waitFor(() => loadCalls > 0);
+      const rejected = assertRejects(() => first, Error, "load failed");
+      failedLoad.reject(new Error("load failed"));
+      await rejected;
+
+      assertEquals(
+        await loadTSXComponent(
+          "/project/app/retry-layout.tsx",
+          "/project",
+          cache,
+          layoutAdapter("export default function Layout() { return null; }"),
+          "project-1",
+          "project-slug",
+          "release-1",
+          "19.1.0",
+          deps,
+        ),
+        Layout,
+      );
+      assertEquals(loadCalls, 2);
+    });
+
+    it("does not let a stale load overwrite its replacement cache entry", async () => {
+      using time = new FakeTime();
+      const cache = createLayoutComponentCache();
+      const staleLoad = Promise.withResolvers<React.ComponentType>();
+      const loadStarted = Promise.withResolvers<void>();
+      let loadCalls = 0;
+      function StaleLayout() {
+        return null;
+      }
+      function ReplacementLayout() {
+        return null;
+      }
+      function UnexpectedLayout() {
+        return null;
+      }
+      const args = [
+        "/project/app/stale-layout.tsx",
+        "/project",
+        cache,
+        layoutAdapter("export default function Layout() { return null; }"),
+        "project-1",
+        "project-slug",
+        "release-1",
+        "19.1.0",
+      ] as const;
+
+      const stale = loadTSXComponent(...args, {
+        loadComponentFromSource: () => {
+          loadCalls++;
+          loadStarted.resolve(undefined);
+          return staleLoad.promise;
+        },
+      });
+      await loadStarted.promise;
+
+      await time.tickAsync(5 * 60_000);
+      assertEquals(
+        await loadTSXComponent(...args, {
+          loadComponentFromSource: () => {
+            loadCalls++;
+            return Promise.resolve(ReplacementLayout);
+          },
+        }),
+        ReplacementLayout,
+      );
+
+      staleLoad.resolve(StaleLayout);
+      assertEquals(await stale, StaleLayout);
+      assertEquals(
+        await loadTSXComponent(...args, {
+          loadComponentFromSource: () => {
+            loadCalls++;
+            return Promise.resolve(UnexpectedLayout);
+          },
+        }),
+        ReplacementLayout,
+      );
+      assertEquals(loadCalls, 2);
     });
   });
 

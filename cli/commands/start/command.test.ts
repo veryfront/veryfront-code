@@ -1,12 +1,41 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { readTextFile } from "veryfront/platform";
-import { selectStartProject, shouldSkipProjectDirectory, startCommand } from "./command.ts";
+import { saveToken } from "../../auth/token-store.ts";
+import {
+  hydrateStartRuntimeAuth,
+  selectStartProject,
+  shouldSkipProjectDirectory,
+  startCommand,
+} from "./command.ts";
 import { startHelp } from "./command-help.ts";
 import type { StartOptions } from "./command.ts";
 
+const ENV_KEYS = [
+  "VERYFRONT_API_TOKEN",
+  "VERYFRONT_PROJECT_SLUG",
+  "VERYFRONT_SERVICE_LAYER",
+  "XDG_CONFIG_HOME",
+] as const;
+const originalEnv = new Map(ENV_KEYS.map((key) => [key, Deno.env.get(key)]));
+let tempDirs: string[] = [];
+
+function restoreEnv(): void {
+  for (const key of ENV_KEYS) {
+    const value = originalEnv.get(key);
+    if (value === undefined) Deno.env.delete(key);
+    else Deno.env.set(key, value);
+  }
+}
+
 describe("commands/start/command", () => {
+  afterEach(async () => {
+    restoreEnv();
+    await Promise.all(tempDirs.map((dir) => Deno.remove(dir, { recursive: true })));
+    tempDirs = [];
+  });
+
   describe("startCommand", () => {
     it("is exported as a function", () => {
       assertExists(startCommand);
@@ -121,6 +150,48 @@ describe("commands/start/command", () => {
         projectDir: "/repo",
         projectSlug: undefined,
       });
+    });
+  });
+
+  describe("hydrateStartRuntimeAuth", () => {
+    async function setupProject(): Promise<string> {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-start-project-" });
+      const configHome = await Deno.makeTempDir({ prefix: "vf-start-config-" });
+      tempDirs.push(projectDir, configHome);
+      for (const key of ENV_KEYS) Deno.env.delete(key);
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      await saveToken("stored-token");
+      return projectDir;
+    }
+
+    it("does not turn a discovered directory slug into cloud authorization scope", async () => {
+      const projectDir = await setupProject();
+
+      const linkedProjectSlug = await hydrateStartRuntimeAuth({
+        projectDir,
+        projectSlug: "directory-slug",
+      });
+
+      assertEquals(linkedProjectSlug, undefined);
+      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "stored-token");
+      assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), undefined);
+      assertEquals(Deno.env.get("VERYFRONT_SERVICE_LAYER"), "cloud");
+    });
+
+    it("uses a persisted project link for cloud authorization scope", async () => {
+      const projectDir = await setupProject();
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.json`,
+        JSON.stringify({ projectSlug: "linked-project" }),
+      );
+
+      const linkedProjectSlug = await hydrateStartRuntimeAuth({
+        projectDir,
+        projectSlug: "directory-slug",
+      });
+
+      assertEquals(linkedProjectSlug, "linked-project");
+      assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "linked-project");
     });
   });
 

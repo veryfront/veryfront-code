@@ -72,22 +72,29 @@ export function logError(
   };
 
   if (isProduction()) {
-    // Direct JSON output — this module owns its own structured format
-    // (slug, category, status, docs) which differs from the logger envelope.
-    console.error(JSON.stringify(entry));
+    // Route through the canonical logger so the JSON envelope, redaction pipeline,
+    // and OTel log-record bridge all apply. Error-specific fields (slug, category,
+    // status, docs) travel as structured context.
+    serverLogger.error(error.title, {
+      ...(safeContext ?? {}),
+      slug: error.slug,
+      category: error.category,
+      ...(error.detail && { detail: error.detail }),
+      ...(error.suggestion && { suggestion: error.suggestion }),
+      status: error.status,
+      docs: entry.docs,
+    });
   } else {
-    // Human-readable format for development
-    serverLogger.error(`[ERROR] ${error.slug} (${error.category}) — ${error.title}`);
-    if (error.detail) {
-      serverLogger.error(`  Detail: ${error.detail}`);
-    }
-    if (error.suggestion) {
-      serverLogger.error(`  💡 Suggestion: ${error.suggestion}`);
-    }
-    serverLogger.error(`  📚 Docs: ${entry.docs}`);
-    if (safeContext) {
-      serverLogger.error(`  Context: ${JSON.stringify(safeContext, null, 2)}`);
-    }
+    // Single-line summary always visible at error level.
+    const summary = error.suggestion ? `${error.title} - ${error.suggestion}` : error.title;
+    serverLogger.error(summary);
+
+    // Full diagnostic detail at debug level - visible with --debug / LOG_LEVEL=DEBUG.
+    serverLogger.debug(`[${error.slug}] ${error.category}`, {
+      ...(error.detail && { detail: error.detail }),
+      docs: entry.docs,
+      ...(safeContext ? { context: safeContext } : {}),
+    });
   }
 }
 

@@ -2,6 +2,7 @@ import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { bootstrapAgentService, runAgentServiceMain } from "./bootstrap.ts";
 import type { AbortRejectionProcessTarget } from "./abort-rejection-guard.ts";
+import type { AgentServiceTraceContextGetter } from "./bootstrap.ts";
 
 function createProcessTarget(): {
   target: AbortRejectionProcessTarget;
@@ -28,9 +29,12 @@ describe("agent/agent-service-bootstrap", () => {
   it("runs generic service startup steps in order", async () => {
     const events: string[] = [];
     const traceContext = { traceId: "trace-1", spanId: "span-1" };
-    let registeredTraceContext: (() => typeof traceContext) | undefined;
+    let registeredTraceContext: AgentServiceTraceContextGetter | undefined;
 
     await bootstrapAgentService({
+      initializeApplicationErrors: () => {
+        events.push("initialize-application-errors");
+      },
       initializeTelemetry: () => {
         events.push("initialize-telemetry");
         return true;
@@ -49,6 +53,7 @@ describe("agent/agent-service-bootstrap", () => {
     });
 
     assertEquals(events, [
+      "initialize-application-errors",
       "initialize-telemetry",
       "telemetry-initialized",
       "register-trace-context",
@@ -83,18 +88,35 @@ describe("agent/agent-service-bootstrap", () => {
 
     await runAgentServiceMain({
       processTarget: processTarget.target,
+      initializeApplicationErrors: () => {
+        events.push("initialize-application-errors");
+      },
+      initializeTelemetry: () => {
+        events.push("initialize-telemetry");
+        return true;
+      },
       start: () => {
+        events.push("start");
         throw new Error("startup failed");
       },
       onStartupError: (error) => {
         events.push(error instanceof Error ? error.message : String(error));
+      },
+      onFinally: () => {
+        events.push("cleanup");
       },
       exit: (code) => {
         exitCode = code;
       },
     });
 
-    assertEquals(events, ["startup failed"]);
+    assertEquals(events, [
+      "initialize-application-errors",
+      "initialize-telemetry",
+      "start",
+      "startup failed",
+      "cleanup",
+    ]);
     assertStrictEquals(exitCode, 1);
     assertStrictEquals(processTarget.listenerCount(), 1);
   });

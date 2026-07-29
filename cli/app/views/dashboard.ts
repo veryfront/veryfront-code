@@ -4,10 +4,8 @@
  * Main view showing server status, projects, and quick actions.
  */
 
-import { box } from "#cli/ui/box";
 import { brand, dim, error, muted } from "../../ui/colors.ts";
 import { getTerminalWidth } from "../../ui/layout.ts";
-import { getAgentFaceWithText } from "../../ui/dot-matrix.ts";
 import { renderList } from "../components/list-select.ts";
 import type { AppState } from "../state.ts";
 
@@ -19,7 +17,7 @@ export function renderDashboard(state: AppState): string {
   const maxListWidth = termWidth - 4;
   const lines: string[] = [];
 
-  lines.push(renderBanner(state), "");
+  lines.push(renderStatus(state), "");
 
   const hasProjects = state.projects.items.length > 0;
   const hasRemoteProjects = !!state.remote.user && state.remote.projects.length > 0;
@@ -79,24 +77,11 @@ function getShortcut(displayNum: number): string {
   return String.fromCharCode(96 + displayNum - 9);
 }
 
-/**
- * Render the banner with agent face and server info inside a box
- */
-function renderBanner(state: AppState): string {
-  const termWidth = Math.min(getTerminalWidth() - 4, 80);
-  const textLines: string[] = [];
-
-  textLines.push("");
-  textLines.push(`${brand("Veryfront")} ${dim("is now running")}`);
-  textLines.push("");
-
-  // Server URL and MCP URL, always reserve both lines to prevent jumps.
-  textLines.push(`${dim("Url")} ${brand(state.server.url)}`);
+function renderStatus(state: AppState): string {
+  const lines = [`  ✓ Server ready at ${brand(state.server.url)}`];
 
   if (state.mcp.enabled && state.mcp.transport === "http" && state.mcp.httpPort !== undefined) {
-    textLines.push(`${dim("Mcp")} ${brand(`http://veryfront.me:${state.mcp.httpPort}/mcp`)}`);
-  } else {
-    textLines.push("");
+    lines.push(`  ✓ MCP ready at ${brand(`http://veryfront.me:${state.mcp.httpPort}/mcp`)}`);
   }
 
   const { errors, warnings } = state.server;
@@ -104,25 +89,10 @@ function renderBanner(state: AppState): string {
     const parts: string[] = [];
     if (errors > 0) parts.push(error(`${errors} errors`));
     if (warnings > 0) parts.push(muted(`${warnings} warnings`));
-    textLines.push(parts.join("  "));
+    lines.push(`  ${parts.join("  ")}`);
   }
 
-  // Pad to 7 text lines (matching avatar height) for consistent title position
-  while (textLines.length < 7) {
-    textLines.push("");
-  }
-
-  const content = getAgentFaceWithText(textLines, {
-    litColor: "\x1b[38;2;252;143;93m", // Veryfront brand orange
-  });
-
-  return box(content, {
-    style: "rounded",
-    width: termWidth,
-    paddingX: 2,
-    paddingY: 1,
-    borderColor: "\x1b[2m", // Dim to match footer
-  });
+  return lines.join("\n");
 }
 
 /**
@@ -142,7 +112,7 @@ function renderHelpBar(state: AppState): string {
     (!!state.remote.user && state.remote.projects.length > 0);
 
   if (!state.showHelp) {
-    const userInfo = state.remote.user ? `  ${dim("-")}  ${brand(state.remote.user.email)}` : "";
+    const userInfo = state.remote.user ? `  ${dim("-")}  ${dim(state.remote.user.email)}` : "";
     if (!hasItems) {
       const authHint = state.remote.user
         ? `${dim("x")} ${dim("logout")}`
@@ -180,7 +150,7 @@ function renderHelpBar(state: AppState): string {
 export function renderEmptyState(state: AppState): string {
   const lines: string[] = [];
 
-  lines.push(renderBanner(state), "");
+  lines.push(renderStatus(state), "");
   lines.push(`  ${dim("No projects.")} ${brand("n")} ${dim("to create")}`, "");
   lines.push(renderHelpBar(state));
 

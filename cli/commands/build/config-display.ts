@@ -1,5 +1,5 @@
-import { bold, cyan, dim, green, red, yellow } from "#cli/ui";
-import { cliLogger } from "#cli/utils";
+import { dim, warning } from "#cli/ui";
+import { cliLogger, isVerbose } from "#cli/utils";
 import type { BuildOptions } from "./types.ts";
 
 export function displayBuildConfig(options: BuildOptions): void {
@@ -15,34 +15,28 @@ export function displayBuildConfig(options: BuildOptions): void {
     dryRun = false,
   } = options;
 
-  cliLogger.info(bold(cyan("\n🚀 Veryfront Production Build\n")));
-  cliLogger.info("Starting production build");
+  if (isVerbose()) {
+    const features = [
+      splitting && "splitting",
+      compress && "compression",
+      prefetch && "prefetch",
+      ssg && "SSG",
+    ].filter(Boolean).join(", ") || "none";
 
-  cliLogger.info(yellow("\nBuild Configuration:"));
-  cliLogger.info(`  ${dim("Project:")}    ${projectDir}`);
-  cliLogger.info(`  ${dim("Output:")}     ${outputDir ?? "dist"}`);
-  cliLogger.info(`  ${dim("Features:")}`);
-  cliLogger.info(`    ${splitting ? green("✓") : red("✗")} Code splitting`);
-  cliLogger.info(`    ${compress ? green("✓") : red("✗")} Compression`);
-  cliLogger.info(`    ${prefetch ? green("✓") : red("✗")} Prefetch hints`);
-  cliLogger.info(`    ${ssg ? green("✓") : red("✗")} Static generation`);
-
-  if (include?.length) {
-    cliLogger.info(`\n  ${dim("Include:")} ${include.join(", ")}`);
-  }
-
-  if (exclude?.length) {
-    cliLogger.info(`  ${dim("Exclude:")} ${exclude.join(", ")}`);
+    cliLogger.info(`  ${dim("Project:")} ${projectDir}`);
+    cliLogger.info(`  ${dim("Output:")} ${outputDir ?? "dist"}`);
+    cliLogger.info(`  ${dim("Features:")} ${features}`);
+    if (include?.length) cliLogger.info(`  ${dim("Include:")} ${include.join(", ")}`);
+    if (exclude?.length) cliLogger.info(`  ${dim("Exclude:")} ${exclude.join(", ")}`);
+    cliLogger.info("");
   }
 
   if (dryRun) {
-    cliLogger.info(`\n  ${yellow("⚠")}  ${yellow("Dry run mode - no files will be written")}`);
-    cliLogger.info("dry-run");
+    cliLogger.info(`  ${warning("!")} Dry run: no files will be written`);
+    cliLogger.info("");
   }
-
-  cliLogger.info("");
 }
 
 export function displayBuildStart(): void {
-  cliLogger.info(cyan("Building your application...\n"));
+  cliLogger.info("Building...");
 }

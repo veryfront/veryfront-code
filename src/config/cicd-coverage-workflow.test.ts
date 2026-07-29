@@ -52,7 +52,7 @@ Deno.test("deno tasks expose shard and merge coverage entrypoints", () => {
   );
   assertEquals(
     denoJson.tasks["coverage:ci:merge"],
-    "deno run --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts merge",
+    "deno run --no-npm --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts merge",
   );
 });
 

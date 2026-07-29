@@ -8,6 +8,14 @@ export const UNKNOWN_ERROR = defineError({
   suggestion: "Check logs for more details",
 });
 
+export const AUTHENTICATION_REQUIRED = defineError({
+  slug: "authentication-required",
+  category: "GENERAL",
+  status: 401,
+  title: "Authentication required",
+  suggestion: "Set VERYFRONT_API_TOKEN or run 'veryfront login'",
+});
+
 export const PERMISSION_DENIED = defineError({
   slug: "permission-denied",
   category: "GENERAL",
@@ -38,6 +46,7 @@ export const INVALID_ARGUMENT = defineError({
   status: 400,
   title: "Invalid function argument",
   suggestion: "Check argument types and values",
+  exitCode: 2,
 });
 
 export const TIMEOUT_ERROR = defineError({
@@ -82,6 +91,14 @@ export const INPUT_VALIDATION_FAILED = defineError({
   suggestion: "Check request input against validation rules",
 });
 
+export const PROJECT_SOURCE_EMPTY = defineError({
+  slug: "project-source-empty",
+  category: "GENERAL",
+  status: 400,
+  title: "Project source is empty",
+  suggestion: "Add project files or run 'veryfront init'",
+});
+
 // =============================================================================
 // Registry exports
 // =============================================================================
@@ -93,6 +110,7 @@ export const INPUT_VALIDATION_FAILED = defineError({
 /** Registry fragment for GENERAL errors (slug → definition). */
 export const GENERAL_REGISTRY = {
   "unknown-error": UNKNOWN_ERROR,
+  "authentication-required": AUTHENTICATION_REQUIRED,
   "permission-denied": PERMISSION_DENIED,
   "file-not-found": FILE_NOT_FOUND,
   "resource-not-found": RESOURCE_NOT_FOUND,
@@ -102,4 +120,5 @@ export const GENERAL_REGISTRY = {
   "not-supported": NOT_SUPPORTED,
   "security-violation": SECURITY_VIOLATION,
   "input-validation-failed": INPUT_VALIDATION_FAILED,
+  "project-source-empty": PROJECT_SOURCE_EMPTY,
 } as const;

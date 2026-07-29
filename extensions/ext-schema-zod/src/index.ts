@@ -27,7 +27,7 @@ const extZod: ExtensionFactory = () => {
     capabilities: [],
     setup(ctx) {
       ctx.provide("SchemaValidator", impl);
-      ctx.logger.info("[ext-schema-zod] SchemaValidator registered");
+      ctx.logger.debug("[ext-schema-zod] SchemaValidator registered");
     },
     teardown() {
       // No resources to release.

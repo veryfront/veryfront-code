@@ -39,14 +39,22 @@ function groupByCategory(commands: CommandHelp[]): Map<CommandCategory, CommandH
   return groups;
 }
 
-export function showMainHelp(): void {
+export function showMainHelp(showAll = false): void {
   console.log(formatHeader());
   console.log();
   console.log(`  ${bold("Usage:")} veryfront <command> [options]`);
   console.log();
 
-  const commands = Object.values(COMMANDS);
-  const maxLength = calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
+  const allCommands = Object.values(COMMANDS);
+  const commands = showAll ? allCommands : allCommands.filter((c) => !c.hidden);
+  const maxLength = calculateMaxLength(
+    commands.map((c) => {
+      const display = c.aliases && c.aliases.length > 0
+        ? `${c.name} (${c.aliases.join(", ")})`
+        : c.name;
+      return { length: display.length };
+    }),
+  );
   const grouped = groupByCategory(commands);
 
   for (const category of CATEGORY_ORDER) {
@@ -71,8 +79,29 @@ export function showMainHelp(): void {
     `    ${formatCommandName("--json", maxLength)} ${formatDescription("Output as JSON")}`,
   );
   console.log(
+    `    ${formatCommandName("-q, --quiet", maxLength)} ${formatDescription("Suppress output")}`,
+  );
+  console.log(
+    `    ${formatCommandName("--verbose", maxLength)} ${
+      formatDescription("Show diagnostic detail")
+    }`,
+  );
+  console.log(
     `    ${formatCommandName("--yes", maxLength)} ${
       formatDescription("Skip confirmation prompts")
+    }`,
+  );
+  console.log(
+    `    ${formatCommandName("--no-input", maxLength)} ${
+      formatDescription("Disable interactive prompts")
+    }`,
+  );
+  console.log(
+    `    ${formatCommandName("--no-color", maxLength)} ${formatDescription("Disable color")}`,
+  );
+  console.log(
+    `    ${formatCommandName("--no-animation", maxLength)} ${
+      formatDescription("Disable animation")
     }`,
   );
 
@@ -81,6 +110,11 @@ export function showMainHelp(): void {
   console.log(`    ${dim("$")} veryfront init my-app`);
   console.log(`    ${dim("$")} cd my-app`);
   console.log(`    ${dim("$")} veryfront dev`);
+
+  console.log();
+  console.log(`  ${formatSectionHeader("Preview & Deploy")}`);
+  console.log(`    ${dim("$")} veryfront push`);
+  console.log(`    ${dim("$")} veryfront deploy`);
 
   console.log();
   console.log(`  ${formatSectionHeader("Coding Agents (MCP)")}`);
@@ -92,7 +126,13 @@ export function showMainHelp(): void {
 
   console.log();
   console.log(`  ${formatSectionHeader("Learn More")}`);
-  console.log(`    ${dim("Docs:")}  https://github.com/veryfront/veryfront`);
-  console.log(`    ${dim("Tips:")}  veryfront <command> --help`);
+  console.log(`    ${dim("Docs:")}    https://veryfront.com/docs`);
+  console.log(`    ${dim("Support:")} https://github.com/veryfront/veryfront-code/issues`);
+  console.log(`    ${dim("Help:")}    veryfront <command> --help`);
   console.log();
+
+  if (!showAll && allCommands.some((c) => c.hidden)) {
+    console.log(`  ${dim("Run veryfront help --all to include internal commands")}`);
+    console.log();
+  }
 }

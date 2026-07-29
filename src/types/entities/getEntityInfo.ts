@@ -405,9 +405,6 @@ async function findDynamicPageEntity(
       : pathHelper.join(projectDir, pagesDirectory);
 
     try {
-      const canReadDirectory = await pagesDirectoryExists(pagesDir, adapter);
-      if (!canReadDirectory) continue;
-
       const entries = await readDirectoryEntries(pagesDir, adapter);
       const dynamicEntries = entries.filter(
         (entry) =>
@@ -439,25 +436,6 @@ function withResolvedSlug(info: EntityInfo, normalizedSlug: string): EntityInfo 
       slug: normalizedSlug === "index" ? "" : normalizedSlug,
     },
   };
-}
-
-async function pagesDirectoryExists(
-  pagesDir: string,
-  adapter?: RuntimeAdapter,
-): Promise<boolean> {
-  if (!adapter) return await fs.exists(pagesDir);
-
-  try {
-    const stat = await withFallback(
-      () => adapter.fs.stat(pagesDir),
-      () => fs.stat(pagesDir),
-      { operationName: "stat:getEntityBySlug", logError: false },
-    );
-    return stat.isDirectory;
-  } catch (_) {
-    /* expected: stat may fail for non-existent directories */
-    return false;
-  }
 }
 
 async function readDirectoryEntries(

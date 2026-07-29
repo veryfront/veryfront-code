@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const workerHelp: CommandHelp = {
   name: "worker",
+  hidden: true,
   category: "ai",
   description: "Start workflow run worker",
   usage: "veryfront worker [options]",
@@ -31,14 +32,10 @@ export const workerHelp: CommandHelp = {
       description: "Path to workflow run entrypoint script",
       default: "./workflow-run.ts",
     },
-    {
-      flag: "--debug",
-      description: "Enable debug logging",
-    },
   ],
   examples: [
     "veryfront worker",
     "veryfront worker --redis-url redis://prod:6379 --concurrency 5",
-    "veryfront worker --entrypoint ./src/runs/workflow-runner.ts --debug",
+    "veryfront worker --entrypoint ./src/runs/workflow-runner.ts",
   ],
 };

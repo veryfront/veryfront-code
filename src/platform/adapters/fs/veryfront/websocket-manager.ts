@@ -1,7 +1,7 @@
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import type { FileCache } from "../cache/file-cache.ts";
-import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
+import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type {
   ContentSource,
   InvalidationCallbacks,
@@ -60,13 +60,12 @@ interface WebSocketDeps {
   getContentSource: () => ContentSource;
   getProjectDir: () => string | undefined;
   clearMemoryCaches: () => void;
-  clearFileListIndex: () => void;
-  setFileListCache: (
+  replaceSourceSnapshot: (
     cacheKey: string,
-    files: Array<{ path: string; content?: string }>,
+    files: ProjectFile[],
   ) => Promise<void>;
   pregenerateStyles?: (
-    files: Array<{ path: string; content?: string }>,
+    files: ProjectFile[],
   ) => Promise<PreviewStyleArtifactInfo | undefined>;
 }
 
@@ -688,9 +687,10 @@ export class WebSocketManager {
         prefixes: ["file:", "stat:", "dir:"],
       });
 
-      this.deps.invalidationCallbacks.invalidateModulePaths?.(changedPaths);
-
       const projectId = this.deps.client.getProjectId();
+      const invalidations: Array<void | Promise<void>> = [
+        this.deps.invalidationCallbacks.invalidateModulePaths?.(changedPaths),
+      ];
       logger.debug("Clearing SSR module cache for HMR", {
         changedPaths,
         projectId,
@@ -698,17 +698,42 @@ export class WebSocketManager {
       });
 
       if (this.deps.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
-        this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId),
+        );
       } else {
-        this.deps.invalidationCallbacks.clearSSRModuleCache?.();
+        invalidations.push(this.deps.invalidationCallbacks.clearSSRModuleCache?.());
+      }
+      if (projectId) {
+        if (this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject) {
+          invalidations.push(
+            this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject(projectId),
+          );
+        }
+        if (this.deps.invalidationCallbacks.clearProjectDiscoveryCacheForProject) {
+          invalidations.push(
+            this.deps.invalidationCallbacks.clearProjectDiscoveryCacheForProject(projectId),
+          );
+        }
       }
 
       if (this.deps.invalidationCallbacks.clearRendererCacheForProject && projectId) {
-        await this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId),
+        );
       }
 
       if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-        this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug),
+        );
+      }
+
+      const pendingInvalidations = invalidations.filter(
+        (invalidation): invalidation is Promise<void> => invalidation !== undefined,
+      );
+      if (pendingInvalidations.length > 0) {
+        await Promise.all(pendingInvalidations);
       }
 
       if (contentContext?.sourceType === "branch") {
@@ -716,8 +741,7 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          await this.deps.setFileListCache(cacheKey, files);
-          this.deps.clearFileListIndex();
+          await this.deps.replaceSourceSnapshot(cacheKey, files);
           preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
 
           logger.debug("Fresh files cached (memory + Redis)", {
@@ -817,29 +841,54 @@ export class WebSocketManager {
       this.deps.invalidationCallbacks.clearDomainCache?.();
 
       const projectId = this.deps.client.getProjectId();
+      const invalidations: Array<void | Promise<void>> = [];
 
       if (this.deps.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
-        this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearSSRModuleCacheForProject(projectId),
+        );
       } else {
-        this.deps.invalidationCallbacks.clearSSRModuleCache?.();
+        invalidations.push(this.deps.invalidationCallbacks.clearSSRModuleCache?.());
       }
 
-      if (this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject && projectId) {
-        this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject(projectId);
+      if (projectId) {
+        if (this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject) {
+          invalidations.push(
+            this.deps.invalidationCallbacks.clearRouterDetectionCacheForProject(projectId),
+          );
+        }
+        if (this.deps.invalidationCallbacks.clearProjectDiscoveryCacheForProject) {
+          invalidations.push(
+            this.deps.invalidationCallbacks.clearProjectDiscoveryCacheForProject(projectId),
+          );
+        }
       }
 
-      this.deps.invalidationCallbacks.clearModulePathCache?.();
+      invalidations.push(this.deps.invalidationCallbacks.clearModulePathCache?.());
 
       if (this.deps.invalidationCallbacks.clearSnippetCacheForProject && this.deps.projectSlug) {
-        this.deps.invalidationCallbacks.clearSnippetCacheForProject(this.deps.projectSlug);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearSnippetCacheForProject(this.deps.projectSlug),
+        );
       }
 
       if (this.deps.invalidationCallbacks.clearRendererCacheForProject && projectId) {
-        await this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearRendererCacheForProject(projectId),
+        );
       }
 
       if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-        this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
+        invalidations.push(
+          this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug),
+        );
+      }
+
+      const pendingInvalidations = invalidations.filter(
+        (invalidation): invalidation is Promise<void> => invalidation !== undefined,
+      );
+      if (pendingInvalidations.length > 0) {
+        await Promise.all(pendingInvalidations);
       }
 
       const totalFileCount = fileBranchCount + fileReleaseCount + fileEnvCount;
@@ -858,8 +907,7 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          await this.deps.setFileListCache(cacheKey, files);
-          this.deps.clearFileListIndex();
+          await this.deps.replaceSourceSnapshot(cacheKey, files);
           preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
 
           logger.debug("FRESH FILES FETCHED", {

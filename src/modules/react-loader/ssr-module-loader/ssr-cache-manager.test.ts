@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import {
   makeTempDir,
@@ -37,6 +37,37 @@ class FakeDistributedCache implements CacheBackend {
 }
 
 describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("separates SSR module cache identity by API base URL", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
+    const baseOptions = {
+      projectDir,
+      projectId: "project-a",
+      contentSourceId: "preview-main",
+      adapter: denoAdapter,
+      dev: true,
+      reactVersion: "19.1.1",
+    };
+
+    try {
+      const registryA = new SSRCacheManager({
+        ...baseOptions,
+        apiBaseUrl: "https://registry-a.example.com/api",
+      });
+      const registryB = new SSRCacheManager({
+        ...baseOptions,
+        apiBaseUrl: "https://registry-b.example.com/api",
+      });
+
+      assertNotEquals(registryA.getConfigHash(), registryB.getConfigHash());
+      assertNotEquals(
+        registryA.getCacheKey("/project/pages/index.tsx"),
+        registryB.getCacheKey("/project/pages/index.tsx"),
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
   it("recovers missing vfmod dependencies for redis cache entries", async () => {
     const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
     const distributedCache = new FakeDistributedCache();
@@ -121,6 +152,47 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
       );
 
       assertEquals(isValid, false);
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("accepts cache entries that reference existing compiled framework sources", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
+    const embeddedSourcePath = join(
+      projectDir,
+      "dist",
+      "framework-src",
+      "react",
+      "runtime",
+      "core.ts.src",
+    );
+
+    try {
+      await mkdir(join(projectDir, "dist", "framework-src", "react", "runtime"), {
+        recursive: true,
+      });
+      await writeTextFile(embeddedSourcePath, `export const core = "compiled";`);
+
+      const cacheManager = new SSRCacheManager({
+        projectDir,
+        projectId: `project-${crypto.randomUUID()}`,
+        contentSourceId: `preview-${crypto.randomUUID()}`,
+        adapter: denoAdapter,
+        dev: true,
+      });
+
+      const isValid = await cacheManager.validateCachedCode(
+        `import { core } from "${toFileUrl(embeddedSourcePath).href}"; export default core;`,
+        join(projectDir, "pages", "index.tsx"),
+        "memory-cache",
+        {
+          checkLocalPaths: true,
+          checkInvalidEsmShPath: false,
+        },
+      );
+
+      assertEquals(isValid, true);
     } finally {
       await remove(projectDir, { recursive: true });
     }

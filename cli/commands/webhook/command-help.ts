@@ -3,23 +3,21 @@ import type { CommandHelp } from "../../help/types.ts";
 export const webhookHelp: CommandHelp = {
   name: "webhook",
   category: "ai",
-  description: "Run a source-defined webhook locally with a fixture payload",
-  usage: "veryfront webhook run <id> --payload <file> [options]",
+  description: "List or run source-defined webhooks",
+  usage: "veryfront webhook <list|run> [options]",
   options: [
     {
       flag: "--payload <file>",
-      description: "JSON payload fixture",
+      description: "JSON payload fixture (run only)",
     },
     {
       flag: "--json",
-      description: "Output the run result as JSON",
-    },
-    {
-      flag: "--debug",
-      description: "Enable debug logging",
+      description: "Output as JSON",
     },
   ],
   examples: [
+    "veryfront webhook list",
+    "veryfront webhook list --json",
     "veryfront webhook run ticket-created --payload fixtures/ticket-created.json",
     "veryfront webhook run ticket-created --payload fixtures/ticket-created.json --json",
   ],

@@ -200,7 +200,6 @@ describe("cli/shared/args", () => {
     });
 
     it("should have projectSlug spec with multiple keys", () => {
-      assertEquals(CommonArgs.projectSlug.keys.includes("project-slug"), true);
       assertEquals(CommonArgs.projectSlug.keys.includes("project"), true);
       assertEquals(CommonArgs.projectSlug.keys.includes("p"), true);
     });
@@ -245,6 +244,13 @@ describe("cli/shared/args", () => {
       assertEquals(parseCliArgs(["--help"]).help, true);
     });
 
+    it("should parse --no-input without consuming the command", () => {
+      const args = parseCliArgs(["--no-input", "init", "my-project"]);
+
+      assertEquals(args["no-input"], true);
+      assertEquals(args._, ["init", "my-project"]);
+    });
+
     it("should not consume commands or positionals after documented boolean flags", () => {
       const globalFlag = parseCliArgs(["--json", "config"]);
       assertEquals(globalFlag.json, true);
@@ -255,8 +261,9 @@ describe("cli/shared/args", () => {
       assertEquals(commandFlag._, ["init", "my-project"]);
     });
 
-    it("should resolve short aliases", () => {
-      assertEquals(parseCliArgs(["-p", "9000"]).port, "9000");
+    it("should not map -p to port (global alias removed)", () => {
+      assertEquals(parseCliArgs(["-p", "9000"]).port, undefined);
+      assertEquals(parseCliArgs(["-p", "9000"]).p, "9000");
     });
 
     it("should preserve the raw short key for command-specific parsers", () => {

@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Browser } from "npm:playwright@1.60.0";
 import {
   CHROMIUM_LAUNCH_TIMEOUT_MS,
+  cleanupBrowserBridgeProcess,
   launchChromiumWith,
   parseBrowserBridgeMessage,
 } from "./playwright.ts";
@@ -69,5 +70,30 @@ describe("launchChromiumWith", () => {
     });
 
     assertEquals(browser, null);
+  });
+});
+
+describe("cleanupBrowserBridgeProcess", () => {
+  it("force-kills a bridge that does not exit after stdin closes", async () => {
+    let resolveStatus: (status: Deno.CommandStatus) => void = () => {};
+    const statusPromise = new Promise<Deno.CommandStatus>((resolve) => {
+      resolveStatus = resolve;
+    });
+    const signals: Deno.Signal[] = [];
+
+    await cleanupBrowserBridgeProcess(
+      {
+        stdin: new WritableStream<Uint8Array>(),
+        kill(signal) {
+          signals.push(signal);
+          resolveStatus({ success: false, code: 137, signal });
+        },
+      },
+      statusPromise,
+      Promise.resolve(""),
+      10,
+    );
+
+    assertEquals(signals, ["SIGKILL"]);
   });
 });

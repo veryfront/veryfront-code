@@ -10,10 +10,6 @@ export const workflowHelp: CommandHelp = {
       flag: "--input <json>",
       description: "JSON input to pass to the workflow",
     },
-    {
-      flag: "--debug",
-      description: "Enable debug logging",
-    },
   ],
   examples: [
     "veryfront workflow run publish-site",

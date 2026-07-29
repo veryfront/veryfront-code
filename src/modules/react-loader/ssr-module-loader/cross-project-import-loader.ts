@@ -11,6 +11,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { globalCrossProjectCache } from "./cache/index.ts";
 import type { SSRModuleLoaderOptions } from "./types.ts";
 import { readLimitedCrossProjectSource } from "#veryfront/modules/server/cross-project-source-limit.ts";
+import { base64urlEncode } from "#veryfront/utils/base64url.ts";
 
 interface CrossProjectImportCache {
   hashContentAsync(content: string): Promise<string>;
@@ -41,6 +42,21 @@ function getRegistryBaseUrl(apiBaseUrl?: string): string {
   return resolvedApiBaseUrl.replace(/\/api\/?$/, "");
 }
 
+interface CrossProjectImportCacheKeyOptions {
+  specifier: string;
+  projectId: string;
+  reactVersion?: string;
+  registryBaseUrl: string;
+}
+
+export function buildCrossProjectImportCacheKey(
+  options: CrossProjectImportCacheKeyOptions,
+): string {
+  const reactVersion = options.reactVersion ?? "default";
+  const registryKey = base64urlEncode(options.registryBaseUrl);
+  return `${options.specifier}:${options.projectId}:${reactVersion}:registry:${registryKey}`;
+}
+
 export async function transformCrossProjectImportFlow(
   flowOptions: TransformCrossProjectImportFlowOptions,
 ): Promise<string> {
@@ -57,13 +73,17 @@ export async function transformCrossProjectImportFlow(
   } = flowOptions;
 
   const { specifier, projectSlug, version, path } = crossProjectImport;
-  const reactVersion = options.reactVersion ?? "default";
-  const cacheKey = `${specifier}:${options.projectId}:${reactVersion}`;
+  const registryBaseUrl = getRegistryBaseUrl(options.apiBaseUrl);
+  const cacheKey = buildCrossProjectImportCacheKey({
+    specifier,
+    projectId: options.projectId,
+    reactVersion: options.reactVersion,
+    registryBaseUrl,
+  });
 
   const cachedEntry = globalCrossProjectCache.get(cacheKey);
   if (cachedEntry) return cachedEntry.tempPath;
 
-  const registryBaseUrl = getRegistryBaseUrl(options.apiBaseUrl);
   const projectRef = `${projectSlug}@${version}`;
   const registryUrl = `${registryBaseUrl}/${projectRef}/@/${path}`;
 

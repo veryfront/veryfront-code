@@ -39,19 +39,24 @@ interface CapturedLog {
 
 function capturingLogger(): {
   logger: ExtensionLogger;
+  debug: CapturedLog[];
   info: CapturedLog[];
   warn: CapturedLog[];
   error: CapturedLog[];
 } {
+  const debug: CapturedLog[] = [];
   const info: CapturedLog[] = [];
   const warn: CapturedLog[] = [];
   const error: CapturedLog[] = [];
   return {
+    debug,
     info,
     warn,
     error,
     logger: {
-      debug: () => {},
+      debug: (message: string, ...args: unknown[]) => {
+        debug.push({ message, args });
+      },
       info: (message: string, ...args: unknown[]) => {
         info.push({ message, args });
       },
@@ -241,6 +246,29 @@ describe("ext-cache-redis extension", () => {
       await ext.teardown!();
     });
 
+    it("keeps missing optional Redis configuration at debug level", async () => {
+      const previousRedisUrl = Deno.env.get("REDIS_URL");
+      Deno.env.delete("REDIS_URL");
+
+      try {
+        const ext = factory();
+        const provides = new Map<string, unknown>();
+        const { logger, debug, info } = capturingLogger();
+
+        await ext.setup!(buildCtx({}, provides, logger));
+
+        assertEquals(provides.has("TokenCacheStore"), false);
+        assertEquals(info, []);
+        assertEquals(
+          debug.some((entry) => entry.message.includes("REDIS_URL not configured")),
+          true,
+        );
+      } finally {
+        if (previousRedisUrl === undefined) Deno.env.delete("REDIS_URL");
+        else Deno.env.set("REDIS_URL", previousRedisUrl);
+      }
+    });
+
     it("redacts credentials from the url before logging", async () => {
       const ext = factory();
       const provides = new Map<string, unknown>();
@@ -287,22 +315,6 @@ describe("ext-cache-redis extension", () => {
       assertEquals(line!.message.includes("<redacted>"), true);
 
       await ext.teardown!();
-    });
-
-    it("skips registration when no url is configured", async () => {
-      const ext = factory();
-      const provides = new Map<string, unknown>();
-      // Ensure no REDIS_URL env leaks into this test.
-      const prev = Deno.env.get("REDIS_URL");
-      if (prev !== undefined) Deno.env.delete("REDIS_URL");
-      try {
-        const ctx = buildCtx({}, provides);
-        await ext.setup!(ctx);
-        assertEquals(provides.has("TokenCacheStore"), false);
-        await ext.teardown!();
-      } finally {
-        if (prev !== undefined) Deno.env.set("REDIS_URL", prev);
-      }
     });
   });
 });

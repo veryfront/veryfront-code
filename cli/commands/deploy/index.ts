@@ -15,16 +15,20 @@ export {
   getRelease,
   getReleaseSourceDigest,
   parseDeployArgs,
-  requiresExplicitDeployConfirmation,
   resolvePushedSource,
   verifyDeployment,
   verifyReleaseSource,
+  waitForEnvironmentReady,
+  waitForReleaseAssetManifest,
 } from "./command.ts";
 export type {
   Deployment,
   DeploymentRoutingConvergence,
   DeploymentVerification,
   DeployOptions,
+  DeployResult,
+  EnvironmentReadinessOptions,
+  EnvironmentReadinessTarget,
   ReleaseSourceVerification,
 } from "./command.ts";
 export { handleDeployCommand } from "./handler.ts";

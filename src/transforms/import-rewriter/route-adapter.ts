@@ -50,7 +50,7 @@ export const NODE_BUILTINS = [
 
 export async function readProjectDependenciesForRoute(
   projectDir: string,
-  fs: FileSystem,
+  fs: Pick<FileSystem, "readTextFile">,
 ): Promise<Map<string, string>> {
   try {
     const content = await fs.readTextFile(pathHelper.join(projectDir, "package.json"));

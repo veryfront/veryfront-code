@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const generateHelp: CommandHelp = {
   name: "generate",
+  aliases: ["g"],
   category: "development",
   description: "Generate code scaffolds",
   usage: "veryfront generate <type> [name]",

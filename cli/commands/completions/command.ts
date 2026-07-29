@@ -54,7 +54,7 @@ const GLOBAL_FLAGS = [
 ];
 
 export function generateBashCompletions(): string {
-  const commands = Object.values(COMMANDS);
+  const commands = Object.values(COMMANDS).filter((c) => !c.hidden);
   const cmdNames = commands.map((c) => c.name).join(" ");
 
   let script = `# Veryfront CLI bash completions\n_veryfront_completions() {\n`;
@@ -83,7 +83,7 @@ export function generateBashCompletions(): string {
 }
 
 export function generateZshCompletions(): string {
-  const commands = Object.values(COMMANDS);
+  const commands = Object.values(COMMANDS).filter((c) => !c.hidden);
   let script = `#compdef veryfront\n# Veryfront CLI zsh completions\n\n`;
   script += `_veryfront() {\n`;
   script += `  local -a commands\n`;
@@ -129,7 +129,7 @@ export function generateZshCompletions(): string {
 }
 
 export function generateFishCompletions(): string {
-  const commands = Object.values(COMMANDS);
+  const commands = Object.values(COMMANDS).filter((c) => !c.hidden);
   let script = `# Veryfront CLI fish completions\n`;
 
   for (const cmd of commands) {

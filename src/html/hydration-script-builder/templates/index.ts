@@ -5,6 +5,7 @@
  */
 
 export { getRouterScript } from "./router.ts";
+export { getNavigationStoreCompatibilityScript } from "./navigation-store.ts";
 export { getLoaderScript } from "./loader.ts";
 export { getRendererScript } from "./renderer.ts";
 export { getSpaLoaderScript, getSpaRendererScript } from "./spa-renderer.ts";

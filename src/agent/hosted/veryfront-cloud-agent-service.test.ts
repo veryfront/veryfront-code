@@ -1,12 +1,23 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
+import {
+  type ApplicationErrorContext,
+  type ApplicationErrorReporter,
+  setApplicationErrorReporter,
+} from "#veryfront/observability/application-errors.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
 import { tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
@@ -15,6 +26,7 @@ import { agentRegistry } from "../composition/index.ts";
 import {
   createNodeVeryfrontCloudAgentServiceRuntime,
   getDiscoveredHostTools,
+  startAgentService,
   startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
   veryfrontCloudAgentServiceInternals,
@@ -22,6 +34,105 @@ import {
 } from "./veryfront-cloud-agent-service.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
+import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
+
+type CaptureRecord = {
+  error: unknown;
+  context: ApplicationErrorContext;
+};
+
+type TestDenoRuntime = {
+  serve: typeof Deno.serve;
+  addSignalListener: typeof Deno.addSignalListener;
+  removeSignalListener: typeof Deno.removeSignalListener;
+  exit: typeof Deno.exit;
+};
+
+function createReporter(options: {
+  flush?: () => Promise<boolean>;
+} = {}): ApplicationErrorReporter & {
+  captured: CaptureRecord[];
+  flushTimeouts: Array<number | undefined>;
+} {
+  const reporter = {
+    captured: [] as CaptureRecord[],
+    flushTimeouts: [] as Array<number | undefined>,
+    capture(error: unknown, context: ApplicationErrorContext) {
+      reporter.captured.push({ error, context });
+      return "event-id";
+    },
+    async flush(timeoutMs?: number) {
+      reporter.flushTimeouts.push(timeoutMs);
+      return await (options.flush?.() ?? Promise.resolve(true));
+    },
+  };
+  return reporter;
+}
+
+async function withMockDenoServiceServer(
+  fn: (
+    input: {
+      events: string[];
+      signalHandlers: Map<string, () => void>;
+      waitForExit: () => Promise<number>;
+    },
+  ) => Promise<void>,
+): Promise<void> {
+  const denoRuntime = Deno as unknown as TestDenoRuntime;
+  const originalServe = denoRuntime.serve;
+  const originalAddSignalListener = denoRuntime.addSignalListener;
+  const originalRemoveSignalListener = denoRuntime.removeSignalListener;
+  const originalExit = denoRuntime.exit;
+  const events: string[] = [];
+  const signalHandlers = new Map<string, () => void>();
+  let resolveExit: ((code: number) => void) | undefined;
+  const exitPromise = new Promise<number>((resolveExitPromise) => {
+    resolveExit = resolveExitPromise;
+  });
+
+  denoRuntime.serve = ((options: Parameters<typeof Deno.serve>[0]) => {
+    events.push("serve");
+    return {
+      addr: { port: "port" in options && typeof options.port === "number" ? options.port : 0 },
+      shutdown: () => {
+        events.push("server-shutdown");
+      },
+    };
+  }) as typeof Deno.serve;
+  denoRuntime.addSignalListener = ((signal: string, handler: () => void) => {
+    signalHandlers.set(signal, handler);
+  }) as typeof Deno.addSignalListener;
+  denoRuntime.removeSignalListener = ((signal: string) => {
+    signalHandlers.delete(signal);
+  }) as typeof Deno.removeSignalListener;
+  denoRuntime.exit = ((code: number) => {
+    events.push(`exit:${code}`);
+    resolveExit?.(code);
+  }) as typeof Deno.exit;
+
+  try {
+    await fn({
+      events,
+      signalHandlers,
+      waitForExit: () => exitPromise,
+    });
+  } finally {
+    denoRuntime.serve = originalServe;
+    denoRuntime.addSignalListener = originalAddSignalListener;
+    denoRuntime.removeSignalListener = originalRemoveSignalListener;
+    denoRuntime.exit = originalExit;
+  }
+}
+
+function withMutedConsole<T>(fn: () => T): T {
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    return fn();
+  } finally {
+    console.error = originalError;
+  }
+}
 
 async function withTempDir(
   fn: (dir: string) => Promise<void> | void,
@@ -153,9 +264,327 @@ Deno.test("hosted child project agents request only materialized skill and deleg
       ],
       providerTools: ["web_search"],
       delegates: ["validation-agent"],
-    }),
-    ["get_file", "load_skill", "web_search", "agent_validation-agent"],
+    })?.toSorted(),
+    ["agent_validation-agent", "get_file", "load_skill", "web_search"],
   );
+});
+
+Deno.test("hosted child project agents omit skill tools for an empty skill selector snapshot", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract an application",
+      instructions: "Extract the application.",
+      skills: [],
+      tools: [
+        "get_file",
+        "execute_skill_script",
+        "load_skill",
+        "load_skill_reference",
+      ],
+    }, { allowedSkillIds: [] }),
+    ["get_file"],
+  );
+});
+
+Deno.test("hosted child project agents keep delegation tools for an empty skill selector snapshot", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract an application",
+      instructions: "Extract the application.",
+      skills: [],
+      tools: [
+        "get_file",
+        "execute_skill_script",
+        "load_skill",
+        "load_skill_reference",
+      ],
+      providerTools: ["web_search"],
+      delegates: ["validation-agent"],
+    }, { allowedSkillIds: [] })?.toSorted(),
+    ["agent_validation-agent", "get_file", "web_search"],
+  );
+});
+
+Deno.test("hosted child project agents keep load_skill for a non-empty exact skill allowlist", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract an application",
+      instructions: "Extract the application.",
+      skills: ["extract"],
+      tools: ["get_file"],
+    }, { allowedSkillIds: ["extraction-agent--extract"] }),
+    ["get_file", "load_skill"],
+  );
+});
+
+Deno.test("startAgentService keeps application-error reporting active after readiness and cleans up on graceful shutdown", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    const reporter = createReporter();
+    const events: string[] = [];
+    const restoreInitializeApplicationErrors = veryfrontCloudAgentServiceInternals
+      .setInitializeApplicationErrorsForTests(async () => {
+        const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
+          env: {
+            SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
+          },
+          flushTimeoutMs: 5,
+          loadExtension: () =>
+            Promise.resolve({
+              createNodeSentryApplicationErrorReporter: () => reporter,
+            }),
+        });
+        return {
+          ...lifecycle,
+          flush: async (timeoutMs?: number) => {
+            events.push(`flush:${timeoutMs ?? "default"}`);
+            return await lifecycle.flush(timeoutMs);
+          },
+          reset: () => {
+            events.push("reset");
+            lifecycle.reset();
+          },
+        };
+      });
+
+    try {
+      await withMockDenoServiceServer(async ({ signalHandlers, waitForExit }) => {
+        await startAgentService({
+          serviceName: "agent-application-errors-test",
+          agentId: "support",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+          signals: ["SIGTERM"],
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            VERYFRONT_AGENT_SERVICE_REGISTRATION: "disabled",
+            PORT: "0",
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        });
+
+        assertEquals(events, []);
+        withMutedConsole(() => {
+          agentLogger.error("framework error after readiness");
+        });
+        assertEquals(reporter.captured.length, 1);
+        assertEquals(reporter.captured[0]?.context.boundary, "agent.framework-log");
+
+        signalHandlers.get("SIGTERM")?.();
+        assertEquals(await waitForExit(), 0);
+      });
+
+      assertEquals(events, ["flush:default", "reset"]);
+      assertEquals(reporter.flushTimeouts, [5]);
+      withMutedConsole(() => {
+        agentLogger.error("framework error after shutdown");
+      });
+      assertEquals(reporter.captured.length, 1);
+    } finally {
+      restoreInitializeApplicationErrors();
+      __resetLogRecordEmitterForTests();
+      setApplicationErrorReporter(undefined);
+    }
+  });
+});
+
+Deno.test("startAgentService resets application-error reporting when shutdown flush fails", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    const events: string[] = [];
+    const restoreInitializeApplicationErrors = veryfrontCloudAgentServiceInternals
+      .setInitializeApplicationErrorsForTests(() => ({
+        enabled: true,
+        captureStartupError: () => {},
+        flush: () => {
+          events.push("flush");
+          return Promise.reject(new Error("flush failed"));
+        },
+        reset: () => {
+          events.push("reset");
+        },
+      }));
+
+    try {
+      await withMockDenoServiceServer(async ({ signalHandlers, waitForExit }) => {
+        await startAgentService({
+          serviceName: "agent-application-error-flush-failure-test",
+          agentId: "support",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+          signals: ["SIGTERM"],
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            VERYFRONT_AGENT_SERVICE_REGISTRATION: "disabled",
+            PORT: "0",
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        });
+
+        assertEquals(events, []);
+        signalHandlers.get("SIGTERM")?.();
+        assertEquals(await waitForExit(), 1);
+      });
+
+      assertEquals(events, ["flush", "reset"]);
+    } finally {
+      restoreInitializeApplicationErrors();
+      __resetLogRecordEmitterForTests();
+      setApplicationErrorReporter(undefined);
+    }
+  });
+});
+
+Deno.test("startAgentService captures, flushes, and resets terminal startup failures", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    const startupError = new Error("listen failed");
+    const reporter = createReporter();
+    const events: string[] = [];
+    const exitCodes: number[] = [];
+    const restoreInitializeApplicationErrors = veryfrontCloudAgentServiceInternals
+      .setInitializeApplicationErrorsForTests(async () => {
+        const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
+          env: {
+            SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
+          },
+          flushTimeoutMs: 5,
+          loadExtension: () =>
+            Promise.resolve({
+              createNodeSentryApplicationErrorReporter: () => reporter,
+            }),
+        });
+        return {
+          ...lifecycle,
+          captureStartupError: (error: unknown) => {
+            events.push("capture-startup");
+            lifecycle.captureStartupError(error);
+          },
+          flush: async (timeoutMs?: number) => {
+            events.push(`flush:${timeoutMs ?? "default"}`);
+            return await lifecycle.flush(timeoutMs);
+          },
+          reset: () => {
+            events.push("reset");
+            lifecycle.reset();
+          },
+        };
+      });
+
+    try {
+      const denoRuntime = Deno as unknown as TestDenoRuntime;
+      const originalServe = denoRuntime.serve;
+      denoRuntime.serve = (() => {
+        throw startupError;
+      }) as typeof Deno.serve;
+      try {
+        await startAgentService({
+          serviceName: "agent-startup-application-errors-test",
+          agentId: "support",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+          signals: [],
+          processTarget: {
+            env: {},
+            on: () => {},
+            off: () => {},
+            exit: (code) => {
+              exitCodes.push(code);
+            },
+          },
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            VERYFRONT_AGENT_SERVICE_REGISTRATION: "disabled",
+            PORT: "0",
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        });
+      } finally {
+        denoRuntime.serve = originalServe;
+      }
+
+      assertEquals(events, ["capture-startup", "flush:default", "reset"]);
+      assertEquals(reporter.captured, [
+        { error: startupError, context: { boundary: "agent.process.startup" } },
+      ]);
+      assertEquals(reporter.flushTimeouts, [5]);
+      assertEquals(exitCodes, [1]);
+    } finally {
+      restoreInitializeApplicationErrors();
+      __resetLogRecordEmitterForTests();
+      setApplicationErrorReporter(undefined);
+    }
+  });
+});
+
+Deno.test("startAgentService resets and exits when startup error flush rejects", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    const startupError = new Error("listen failed");
+    const events: string[] = [];
+    const exitCodes: number[] = [];
+    const restoreInitializeApplicationErrors = veryfrontCloudAgentServiceInternals
+      .setInitializeApplicationErrorsForTests(() => ({
+        enabled: true,
+        captureStartupError: (error: unknown) => {
+          assertStrictEquals(error, startupError);
+          events.push("capture-startup");
+        },
+        flush: () => {
+          events.push("flush");
+          return Promise.reject(new Error("flush failed"));
+        },
+        reset: () => {
+          events.push("reset");
+        },
+      }));
+
+    try {
+      const denoRuntime = Deno as unknown as TestDenoRuntime;
+      const originalServe = denoRuntime.serve;
+      denoRuntime.serve = (() => {
+        throw startupError;
+      }) as typeof Deno.serve;
+      try {
+        await startAgentService({
+          serviceName: "agent-startup-flush-failure-test",
+          agentId: "support",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+          signals: [],
+          processTarget: {
+            env: {},
+            on: () => {},
+            off: () => {},
+            exit: (code) => {
+              exitCodes.push(code);
+            },
+          },
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            VERYFRONT_AGENT_SERVICE_REGISTRATION: "disabled",
+            PORT: "0",
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        });
+      } finally {
+        denoRuntime.serve = originalServe;
+      }
+
+      assertEquals(events, ["capture-startup", "flush", "reset"]);
+      assertEquals(exitCodes, [1]);
+    } finally {
+      restoreInitializeApplicationErrors();
+      __resetLogRecordEmitterForTests();
+      setApplicationErrorReporter(undefined);
+    }
+  });
 });
 
 Deno.test("hosted generic invocation is only replaced by explicit delegates", () => {
@@ -258,6 +687,67 @@ Deno.test("hosted nested delegates inherit child scope and durable lineage", () 
   assertEquals(context.conversationId, "child-conversation");
   assertEquals(context.parentRunId, "child-run");
   assertEquals(context.parentMessageId, "child-message");
+});
+
+Deno.test("hosted nested delegates clear inherited skill catalog state for empty child selectors", () => {
+  const context = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+    {
+      authToken: "token-1",
+      projectId: "project-1",
+      branchId: "branch-1",
+      agentId: "orchestrator",
+      availableSkillIds: ["root-skill"],
+      skillSelectorPolicy: { kind: "allowlist", entries: ["root-skill"] },
+      skillSourcePaths: {
+        "root-skill": "skills/root/SKILL.md",
+      },
+      conversationId: "root-conversation",
+      parentRunId: "root-run",
+      parentMessageId: "root-message",
+    },
+    "extraction-agent",
+    {
+      system: "Extract applications.",
+      toolNames: ["get_file", "agent_validation-agent"],
+      availableSkillIds: [],
+      skillSelectorPolicy: { kind: "none" },
+      delegateIds: ["validation-agent"],
+      mcpServers: [],
+    },
+  );
+
+  assertEquals(context.agentId, "extraction-agent");
+  assertEquals(context.availableSkillIds, []);
+  assertEquals(context.skillSelectorPolicy, { kind: "none" });
+  assertEquals(context.skillSourcePaths, undefined);
+});
+
+Deno.test("hosted generic delegates preserve inherited skill catalog state", () => {
+  const context = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+    {
+      authToken: "token-1",
+      projectId: "project-1",
+      branchId: "branch-1",
+      agentId: "orchestrator",
+      availableSkillIds: ["root-skill"],
+      skillSelectorPolicy: { kind: "allowlist", entries: ["root-skill"] },
+      skillSourcePaths: {
+        "root-skill": "skills/root/SKILL.md",
+      },
+      conversationId: "root-conversation",
+      parentRunId: "root-run",
+      parentMessageId: "root-message",
+    },
+    "generic-agent",
+    undefined,
+  );
+
+  assertEquals(context.agentId, "generic-agent");
+  assertEquals(context.availableSkillIds, ["root-skill"]);
+  assertEquals(context.skillSelectorPolicy, { kind: "allowlist", entries: ["root-skill"] });
+  assertEquals(context.skillSourcePaths, {
+    "root-skill": "skills/root/SKILL.md",
+  });
 });
 
 Deno.test("hosted nested delegates preserve trusted root invocation context", () => {
@@ -635,6 +1125,79 @@ Deno.test("startNodeVeryfrontCloudAgentService registers the service with the co
   });
 });
 
+Deno.test("startNodeVeryfrontCloudAgentService preserves startup error when registration rollback fails", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    const originalFetch = globalThis.fetch;
+    const originalClearInterval = globalThis.clearInterval;
+    const rollbackError = new Error("registration stop failed");
+    globalThis.fetch = () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            service: {
+              id: "22222222-2222-4222-a222-222222222222",
+              service_name: "registered-rollback-test",
+              service_key: "registered-rollback-test:key",
+              scope_kind: "project",
+              scope_key: "11111111-1111-4111-a111-111111111111",
+              project_id: "11111111-1111-4111-a111-111111111111",
+              agent_id: "support",
+              base_url: "https://agent.example.com",
+              invoke_url: "https://agent.example.com/api/runs",
+              status: "active",
+              capabilities: null,
+              metadata: null,
+              version: "0.1.0",
+              runtime: "node",
+              region: null,
+              last_heartbeat_at: "2026-05-13T00:00:00.000Z",
+              created_at: "2026-05-13T00:00:00.000Z",
+              updated_at: "2026-05-13T00:00:00.000Z",
+            },
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    globalThis.clearInterval = ((timerId) => {
+      originalClearInterval(timerId);
+      throw rollbackError;
+    }) as typeof globalThis.clearInterval;
+
+    try {
+      const rejected = await assertRejects(
+        () =>
+          startNodeVeryfrontCloudAgentService({
+            serviceName: "registered-rollback-test",
+            agentId: "support",
+            runtimeSource: { type: "release", releaseId: "release-42" },
+            entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+            signals: [],
+            env: {
+              NODE_ENV: "test",
+              VERYFRONT_API_URL: "https://api.example.com",
+              VERYFRONT_API_TOKEN: "token-1",
+              VERYFRONT_PROJECT_ID: "11111111-1111-4111-a111-111111111111",
+              VERYFRONT_AGENT_SERVICE_URL: "https://agent.example.com",
+              VERYFRONT_AGENT_SERVICE_KEY: "registered-rollback-test:key",
+              VERYFRONT_AGENT_SERVICE_REGISTRATION: "enabled",
+              VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: "60000",
+              PORT: "-1",
+              ALLOWED_ORIGINS: "https://studio.example.com",
+            },
+          }),
+        Error,
+      );
+
+      assertStrictEquals(rejected === rollbackError, false);
+      assertEquals(rejected instanceof Error && rejected.message.includes("options.port"), true);
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.clearInterval = originalClearInterval;
+    }
+  });
+});
+
 Deno.test("startNodeVeryfrontCloudAgentService rejects registration without an immutable source binding", async () => {
   await withTempDir(async (rootDir) => {
     writeMarkdownAgentDefinition(rootDir, "support");
@@ -802,6 +1365,202 @@ Deno.test("hosted child execution config resolves steering against the target pr
     { projectId: "target-project", authToken: "token-1", branchId: null },
     { projectId: "target-project", authToken: "token-1", branchId: null },
   ]);
+});
+
+Deno.test("hosted child execution config hides skill infrastructure for skills empty and false", async () => {
+  for (const skills of [[], false] as const) {
+    try {
+      toolRegistry.registerShared(
+        "get_file",
+        tool({
+          id: "get_file",
+          description: "Get file",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ ok: true }),
+        }),
+      );
+      toolRegistry.registerShared("load_skill_reference", createLoadSkillReferenceTool());
+      toolRegistry.registerShared("execute_skill_script", createExecuteSkillScriptTool());
+
+      const childAgent = {
+        id: "extraction-agent",
+        name: "Extraction agent",
+        description: "Extract job applications",
+        instructions: "Extract the application.",
+        skills,
+        tools: [
+          "get_file",
+          "load_skill",
+          "load_skill_reference",
+          "execute_skill_script",
+        ],
+      };
+      const context = {
+        options: { mcpServers: [] },
+        discoveryResult: { agents: new Map([["extraction-agent", null]]) },
+        agentConfigs: new Map([["extraction-agent", childAgent]]),
+        projectSteeringByAgentId: new Map([["extraction-agent", {
+          getProjectInstructions: () => Promise.resolve("Use extraction policy."),
+          getSkillsConfig: () =>
+            Promise.resolve([{
+              id: "global-skill",
+              name: "Global skill",
+              description: "Global skill",
+              instructions: "Use global skill.",
+              allowedTools: [],
+            }]),
+          createLoadSkillTool: () =>
+            tool({
+              id: "load_skill",
+              description: "Load skill",
+              inputSchema: defineSchema((v) => v.object({}))(),
+              execute: () => ({ ok: true }),
+            }),
+        }]]),
+        trace: (_name: string, operation: () => unknown) => operation(),
+      } as never;
+      const config = await veryfrontCloudAgentServiceInternals
+        .resolveHostedChildAgentExecutionConfig(
+          context,
+          {
+            authToken: "token-1",
+            projectId: "project-1",
+            branchId: "branch-1",
+            agentId: "orchestrator",
+          },
+          "extraction-agent",
+          "project-1",
+        );
+
+      assertEquals(config?.availableSkillIds, []);
+      assertEquals(config?.toolNames, ["get_file"]);
+      assertEquals(config?.system.includes("global-skill"), false);
+      assertEquals(config?.system.includes("load_skill"), false);
+      assertEquals(config?.system.includes("load_skill_reference"), false);
+      assertEquals(config?.system.includes("execute_skill_script"), false);
+      const childToolContext = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+        {
+          authToken: "token-1",
+          projectId: "project-1",
+          branchId: "branch-1",
+          agentId: "orchestrator",
+        },
+        "extraction-agent",
+        config,
+      );
+      const hostTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+        context,
+        {
+          childAgentId: "extraction-agent",
+          childConfig: config,
+          childToolContext,
+        },
+      );
+
+      assertEquals("get_file" in hostTools, true);
+      assertEquals("load_skill" in hostTools, false);
+      assertEquals("load_skill_reference" in hostTools, false);
+      assertEquals("execute_skill_script" in hostTools, false);
+    } finally {
+      toolRegistry.clearAll();
+    }
+  }
+});
+
+Deno.test("hosted child execution config keeps exact non-empty skill authorization", async () => {
+  try {
+    toolRegistry.registerShared(
+      "get_file",
+      tool({
+        id: "get_file",
+        description: "Get file",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ ok: true }),
+      }),
+    );
+    const childAgent = {
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract job applications",
+      instructions: "Extract the application.",
+      skills: ["extract"],
+      tools: ["get_file"],
+    };
+    const context = {
+      options: { mcpServers: [] },
+      discoveryResult: { agents: new Map([["extraction-agent", null]]) },
+      agentConfigs: new Map([["extraction-agent", childAgent]]),
+      projectSteeringByAgentId: new Map([["extraction-agent", {
+        getProjectInstructions: () => Promise.resolve("Use extraction policy."),
+        getSkillsConfig: () =>
+          Promise.resolve([{
+            id: "extraction-agent--extract",
+            name: "Extract",
+            description: "Extract skill",
+            instructions: "Extract with skill.",
+            allowedTools: [],
+            ownerAgentId: "extraction-agent",
+            shortName: "extract",
+            sourcePath: "agents/extraction-agent/skills/extract/SKILL.md",
+          }, {
+            id: "global-skill",
+            name: "Global skill",
+            description: "Global skill",
+            instructions: "Use global skill.",
+            allowedTools: [],
+          }]),
+        createLoadSkillTool: () =>
+          tool({
+            id: "load_skill",
+            description: "Load skill",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => ({ ok: true }),
+          }),
+      }]]),
+      trace: (_name: string, operation: () => unknown) => operation(),
+    } as never;
+    const config = await veryfrontCloudAgentServiceInternals
+      .resolveHostedChildAgentExecutionConfig(
+        context,
+        {
+          authToken: "token-1",
+          projectId: "project-1",
+          branchId: "branch-1",
+          agentId: "orchestrator",
+        },
+        "extraction-agent",
+        "project-1",
+      );
+
+    assertEquals(config?.availableSkillIds, ["extraction-agent--extract"]);
+    assertEquals(config?.toolNames, ["get_file", "load_skill"]);
+    assert(config?.system.includes("extraction-agent--extract"));
+    assertEquals(config?.system.includes("global-skill"), false);
+
+    const childToolContext = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+      {
+        authToken: "token-1",
+        projectId: "project-1",
+        branchId: "branch-1",
+        agentId: "orchestrator",
+      },
+      "extraction-agent",
+      config,
+    );
+    const hostTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+      context,
+      {
+        childAgentId: "extraction-agent",
+        childConfig: config,
+        childToolContext,
+      },
+    );
+
+    assertEquals("get_file" in hostTools, true);
+    assertEquals("load_skill" in hostTools, true);
+  } finally {
+    toolRegistry.clearAll();
+  }
 });
 
 Deno.test({

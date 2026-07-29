@@ -5,9 +5,9 @@
  */
 
 import { cliErrorBoundary } from "veryfront/errors";
-import { cliLogger, VERSION } from "#cli/utils";
+import { cliLogger, isVerbose, VERSION } from "#cli/utils";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
-import { setColorOverride } from "./ui/colors.ts";
+import { setColorOverride, shouldUseColor } from "./ui/colors.ts";
 import { exitProcess, setQuietMode, setVerboseMode } from "./utils/index.ts";
 import { ensureCliSchemaValidator } from "./shared/default-contracts.ts";
 import {
@@ -115,12 +115,12 @@ const commands: Record<string, CommandLoader> = {
 /**
  * Show help for a specific command or main help
  */
-function showHelp(command?: string): void {
+function showHelp(command?: string, showAll = false): void {
   if (command) {
     showCommandHelp(command);
     return;
   }
-  showMainHelp();
+  showMainHelp(showAll);
 }
 
 function commandNameForJson(args: ParsedArgs): string {
@@ -162,7 +162,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   else if (typeof args.o === "string") setOutputPath(args.o as string);
 
   const autoConfirm = args.yes === true || args.y === true;
-  setNonInteractive(autoConfirm || detectCI());
+  setNonInteractive(args["no-input"] === true || autoConfirm || detectCI());
   setAutoConfirm(autoConfirm);
 
   if (args["no-animation"]) {
@@ -204,7 +204,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   const command = args._[0] as string | undefined;
 
   if (args.help || args.h) {
-    showHelp(command);
+    showHelp(command, args.all === true);
     await updateCheck;
     exitProcess(0);
     return;
@@ -212,7 +212,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
   if (command === "help") {
     const topic = args._[1];
-    showHelp(typeof topic === "string" ? topic : undefined);
+    showHelp(typeof topic === "string" ? topic : undefined, args.all === true);
     await updateCheck;
     exitProcess(0);
     return;
@@ -259,21 +259,27 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     const handler = await handlerLoader();
     await handler(args);
   }, {
-    onError: async (error) => {
+    onError: async (error, vfError) => {
       if (!isJsonMode()) {
-        console.log((await import("veryfront/errors")).formatCLIError(error));
+        console.error((await import("veryfront/errors")).formatCLIError(error, {
+          color: shouldUseColor(),
+          verbose: isVerbose(),
+        }));
         return;
       }
 
       const message = errorMessage(error);
-      const isUsageError = message.startsWith("Invalid ");
+      const isUsageError = vfError.exitCode === 2 || message.startsWith("Invalid ");
       await outputCliJsonError(commandNameForJson(args), {
         code: isUsageError ? "USAGE_ERROR" : "RUNTIME_ERROR",
-        slug: isUsageError ? "invalid-arguments" : "command-failed",
-        message,
+        slug: vfError.slug !== "unknown-error"
+          ? vfError.slug
+          : (isUsageError ? "invalid-argument" : "command-failed"),
+        message: vfError.detail ?? message,
       });
     },
-    getExitCode: (error) => errorMessage(error).startsWith("Invalid ") ? 2 : 1,
+    getExitCode: (_error, vfError) =>
+      vfError.exitCode ?? (errorMessage(vfError).startsWith("Invalid ") ? 2 : 1),
   });
 
   // Wait for update check to finish (with timeout to avoid hanging)

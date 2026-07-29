@@ -70,7 +70,7 @@ export function toolToProviderDefinition(tool: Tool): ToolDefinition {
   const hasPreConvertedSchema = tool.inputSchemaJson != null;
   const jsonSchema = tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema);
 
-  agentLogger.info(
+  agentLogger.debug(
     `[TOOL] Using ${
       hasPreConvertedSchema ? "pre-converted" : "runtime-converted"
     } schema for "${tool.id}"`,

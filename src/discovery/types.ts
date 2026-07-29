@@ -23,6 +23,8 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 export interface FileDiscoveryContext {
   platform: Platform;
   fsAdapter?: FileSystemAdapter;
+  /** Stable project or source-snapshot identity for transpiled module reuse. */
+  cacheNamespace?: string;
   nodeDeps?: {
     fs: typeof import("node:fs");
     path: typeof import("node:path");
@@ -35,6 +37,8 @@ export interface FileDiscoveryContext {
  */
 export interface DiscoveryConfig {
   baseDir: string;
+  /** Stable project or source-snapshot identity for transpiled module reuse. */
+  cacheNamespace?: string;
   toolDirs?: string[];
   agentDirs?: string[];
   skillDirs?: string[];

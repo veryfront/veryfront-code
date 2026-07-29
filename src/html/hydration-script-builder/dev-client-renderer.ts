@@ -1,4 +1,9 @@
-import { getLoaderScript, getRendererScript, getRouterScript } from "./templates/index.ts";
+import {
+  getLoaderScript,
+  getNavigationStoreCompatibilityScript,
+  getRendererScript,
+  getRouterScript,
+} from "./templates/index.ts";
 import { buildNonceAttribute } from "../html-escape.ts";
 
 export function generateDevClientRendererScript(nonce?: string): string {
@@ -8,8 +13,10 @@ export function generateDevClientRendererScript(nonce?: string): string {
   <script type="module"${nonceAttr}>
     import * as React from 'react';
     import { createRoot } from 'react-dom/client';
-    import { RouterProvider, useRouter as useRouterFromModule, getNavigationStore } from 'veryfront/router';
+    import { RouterProvider, useRouter as useRouterFromModule } from 'veryfront/router';
+    import * as RouterRuntime from 'veryfront/router';
     import { PageContextProvider } from 'veryfront/context';
+    ${getNavigationStoreCompatibilityScript()}
 
     ${getRouterScript()}
     ${getLoaderScript()}

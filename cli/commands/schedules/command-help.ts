@@ -2,6 +2,7 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const schedulesHelp: CommandHelp = {
   name: "schedules",
+  hidden: true,
   category: "ai",
   description: "List source-defined schedules",
   usage: "veryfront schedules [options]",

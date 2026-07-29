@@ -12,6 +12,7 @@ import {
 const ENV_KEYS = [
   "VERYFRONT_PROJECT_SLUG",
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_SERVICE_LAYER",
   "VERYFRONT_PROJECT_ID",
   "VERYFRONT_BRANCH_REF",
   "TENANT_BRANCH_ID",
@@ -77,6 +78,7 @@ describe("project source runtime auth", () => {
     try {
       Deno.env.delete("VERYFRONT_API_TOKEN");
       Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_SERVICE_LAYER");
       Deno.env.set("XDG_CONFIG_HOME", configHome);
       await saveToken("stored-token");
 
@@ -88,6 +90,7 @@ describe("project source runtime auth", () => {
 
       assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "stored-token");
       assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-fs-project");
+      assertEquals(Deno.env.get("VERYFRONT_SERVICE_LAYER"), "cloud");
     } finally {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
@@ -101,6 +104,7 @@ describe("project source runtime auth", () => {
     try {
       Deno.env.delete("VERYFRONT_API_TOKEN");
       Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_SERVICE_LAYER");
       Deno.env.set("XDG_CONFIG_HOME", configHome);
       await saveToken("stored-token");
       await Deno.writeTextFile(

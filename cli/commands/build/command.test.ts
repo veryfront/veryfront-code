@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildCommand, runWithBundlerShutdown } from "./command.ts";
+import { buildCommand, formatBuildOutputPath, runWithBundlerShutdown } from "./command.ts";
 import type { BuildOptions } from "./types.ts";
 
 describe("commands/build/command", () => {
@@ -52,6 +52,22 @@ describe("commands/build/command", () => {
 
       assertEquals(error, buildError);
       assertEquals(stopped, true);
+    });
+  });
+
+  describe("formatBuildOutputPath", () => {
+    it("reports the default output relative to the project", () => {
+      assertEquals(
+        formatBuildOutputPath("/workspace/project", "/workspace/project/dist"),
+        "dist",
+      );
+    });
+
+    it("preserves the location of output outside the project", () => {
+      assertEquals(
+        formatBuildOutputPath("/workspace/project", "/workspace/shared/dist"),
+        "../shared/dist",
+      );
     });
   });
 

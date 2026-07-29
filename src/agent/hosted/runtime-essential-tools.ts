@@ -15,6 +15,11 @@ export type ResolveHostedRuntimeAllowedToolNamesInput = {
 // project-provided script remains a direct execution capability.
 const SKILL_RUNTIME_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
 const SKILL_DELEGATION_TOOL_NAMES = ["invoke_agent"] as const;
+const SKILL_SCRIPT_TOOL_NAMES = ["execute_skill_script"] as const;
+const EMPTY_SKILL_MANIFEST_TOOL_NAMES = [
+  ...SKILL_RUNTIME_TOOL_NAMES,
+  ...SKILL_SCRIPT_TOOL_NAMES,
+] as const;
 
 /**
  * Tool discovery tools are unconditionally essential: they must never be
@@ -38,15 +43,33 @@ export function resolveHostedRuntimeAllowedToolNames(
   input: ResolveHostedRuntimeAllowedToolNamesInput,
 ): ReadonlySet<string> | null {
   const allowedToolNames = normalizeHostedRuntimeAllowedToolNames(input.allowedToolNames);
-  if (
-    !allowedToolNames ||
-    (allowedToolNames.size === 0 && !input.includeRuntimeEssentialToolsWhenEmpty)
-  ) {
+  const localToolNames = new Set(input.localToolNames);
+  const hasKnownSkillManifest = input.availableSkillIds !== undefined;
+  const hasAuthorizedSkills = (input.availableSkillIds?.length ?? 0) > 0;
+
+  if (!allowedToolNames) {
+    if (!hasKnownSkillManifest || hasAuthorizedSkills) {
+      return null;
+    }
+
+    const resolvedToolNames = new Set(localToolNames);
+    for (const toolName of EMPTY_SKILL_MANIFEST_TOOL_NAMES) {
+      resolvedToolNames.delete(toolName);
+    }
+    return resolvedToolNames;
+  }
+
+  if (allowedToolNames.size === 0 && !input.includeRuntimeEssentialToolsWhenEmpty) {
     return allowedToolNames;
   }
 
-  const localToolNames = new Set(input.localToolNames);
   const resolvedToolNames = new Set(allowedToolNames);
+
+  if (hasKnownSkillManifest && !hasAuthorizedSkills) {
+    for (const toolName of EMPTY_SKILL_MANIFEST_TOOL_NAMES) {
+      resolvedToolNames.delete(toolName);
+    }
+  }
 
   // Tool discovery is essential only when the agent already has at least one
   // tool in its resolved set. Under deny-all (empty allowedToolNames), discovery
@@ -65,7 +88,10 @@ export function resolveHostedRuntimeAllowedToolNames(
   // Hosted cloud supplies load_skill; other adapters may also supply the
   // reference tool. Explicit request-level empty allowlists return above and
   // remain deny-all.
-  if (resolvedToolNames.size > 0 || input.includeRuntimeEssentialToolsWhenEmpty) {
+  if (
+    (resolvedToolNames.size > 0 || input.includeRuntimeEssentialToolsWhenEmpty) &&
+    (!hasKnownSkillManifest || hasAuthorizedSkills)
+  ) {
     for (const toolName of SKILL_RUNTIME_TOOL_NAMES) {
       if (localToolNames.has(toolName)) {
         resolvedToolNames.add(toolName);
@@ -73,7 +99,7 @@ export function resolveHostedRuntimeAllowedToolNames(
     }
   }
 
-  if (!input.availableSkillIds?.length) {
+  if (!hasAuthorizedSkills) {
     return resolvedToolNames;
   }
 

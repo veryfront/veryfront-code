@@ -1,6 +1,7 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
+import { exitProcess, logUsageError } from "#cli/utils";
 import type { CommandCategory } from "../../help/types.ts";
 import { generateCommandSchema, generateSchema } from "./command.ts";
 
@@ -23,8 +24,9 @@ export async function handleSchemaCommand(args: ParsedArgs): Promise<void> {
   if (commandName) {
     const schema = generateCommandSchema(commandName);
     if (!schema) {
-      console.error(`Unknown command: ${commandName}`);
-      Deno.exit(1);
+      logUsageError(`Unknown command: ${commandName}`);
+      exitProcess(2);
+      return;
     }
     console.log(JSON.stringify(schema, null, 2));
     return;
