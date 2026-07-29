@@ -1856,6 +1856,32 @@ describe("stream lifecycle shadow mode", () => {
     assertEquals(shadow.report, { count: 0, categories: [] });
   });
 
+  it("keeps omitted available tool names unrestricted in shadow mode", async () => {
+    const { controller, encoder } = createSSECollector();
+    const state = createStreamState();
+    let report: StreamLifecycleShadowReport | undefined;
+
+    await processStream(
+      createMockResult([
+        { type: "tool-input-start", id: "local-1", toolName: "project_tool" },
+        { type: "tool-input-delta", id: "local-1", delta: '{"path":"a.md"}' },
+        { type: "tool-input-end", id: "local-1" },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]),
+      state,
+      controller,
+      encoder,
+      "text-1",
+      {
+        streamLifecycleMode: "shadow",
+        onLifecycleShadowReport: (next) => report = next,
+      },
+      undefined,
+    );
+
+    assertEquals(report, { count: 0, categories: [] });
+  });
+
   it("does not build a shadow or report in legacy mode", async () => {
     const legacy = await runTextFixture({ mode: "legacy" });
     assertEquals(legacy.report, undefined);

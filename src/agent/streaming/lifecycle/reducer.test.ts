@@ -119,6 +119,29 @@ describe("stream lifecycle reducer", () => {
     ]);
   });
 
+  it("keeps bare empty-object placeholder input incomplete on tool-calls finish", () => {
+    const state = reduceEvents([
+      {
+        type: "tool_input_start",
+        toolCallId: "placeholder",
+        toolName: "create_file",
+      },
+      {
+        type: "tool_input_content",
+        toolCallId: "placeholder",
+        delta: "{}",
+      },
+      { type: "step_finish", finishReason: "tool-calls" },
+    ]);
+
+    assertEquals(state.snapshot.phase, "failed");
+    assertEquals(state.terminalError?.code, "TOOL_INPUT_INCOMPLETE");
+    assertEquals(state.snapshot.tools.map((tool) => [tool.id, tool.phase, tool.rejectionReason]), [
+      ["placeholder", "input_rejected", "invalid"],
+    ]);
+    assertEquals(collectCommittedLocalToolCalls(state.snapshot), []);
+  });
+
   it("commits object-ready tool input as serialized arguments when no deltas streamed", () => {
     const state = reduceEvents([
       {

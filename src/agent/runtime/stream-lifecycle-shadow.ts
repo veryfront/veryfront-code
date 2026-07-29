@@ -35,13 +35,15 @@ export interface StreamLifecycleShadow {
 }
 
 export function createStreamLifecycleShadow(options: {
-  availableToolNames: readonly string[];
+  availableToolNames: readonly string[] | null;
   providerExecutedToolNames: readonly string[];
 }): StreamLifecycleShadow {
   let reducer = createInitialReducerState();
   let failed = false;
   const decodeOptions = {
-    availableToolNames: new Set(options.availableToolNames),
+    availableToolNames: options.availableToolNames === null
+      ? null
+      : new Set(options.availableToolNames),
     providerExecutedToolNames: new Set(options.providerExecutedToolNames),
   };
   return {

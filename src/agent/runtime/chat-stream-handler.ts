@@ -554,7 +554,7 @@ export function processStreamInternal(
     let eventCount = 0;
     let shadowLifecycle = callbacks?.streamLifecycleMode === "shadow"
       ? internals.createShadow({
-        availableToolNames: callbacks?.availableToolNames ?? [],
+        availableToolNames: callbacks?.availableToolNames ?? null,
         providerExecutedToolNames: callbacks?.providerExecutedToolNames ?? [],
       })
       : null;

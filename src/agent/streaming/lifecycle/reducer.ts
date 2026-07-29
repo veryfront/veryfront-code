@@ -499,6 +499,11 @@ function serializeToolInput(input: unknown): string | null {
   }
 }
 
+function isBareEmptyObjectPlaceholder(inputText: string): boolean {
+  const stripped = stripLeadingEmptyObjectPlaceholder(inputText);
+  return stripped === "" || stripped === "{}";
+}
+
 function syncToolSnapshot(
   state: StreamReducerState,
   phase: StreamLifecyclePhase,
@@ -544,6 +549,24 @@ function commitPendingLocalInputs(
       tool.providerExecuted === true ||
       (tool.phase !== "input_open" && tool.phase !== "input_streaming")
     ) continue;
+
+    if (isBareEmptyObjectPlaceholder(tool.inputText)) {
+      state.tools.set(toolCallId, {
+        ...tool,
+        phase: "input_rejected",
+        rejectionReason: "invalid",
+      });
+      emit({
+        class: "semantic",
+        event: {
+          type: "tool_input_rejected",
+          toolCallId,
+          toolName: tool.name,
+          reason: "invalid",
+        },
+      });
+      continue;
+    }
 
     const parsed = parseCanonicalToolInput(tool.inputText);
     if (parsed.ok) {
@@ -612,6 +635,25 @@ export function resolveLocalToolDeadline(
     }
     const hadInput = stripLeadingEmptyObjectPlaceholder(tool.inputText).length > 0;
     if (hadInput) receivedInput = true;
+    if (isBareEmptyObjectPlaceholder(tool.inputText)) {
+      state.tools.set(toolCallId, {
+        ...tool,
+        phase: "input_rejected",
+        rejectionReason: "invalid",
+      });
+      if (hadInput) {
+        emit({
+          class: "semantic",
+          event: {
+            type: "tool_input_rejected",
+            toolCallId,
+            toolName: tool.name,
+            reason: "invalid",
+          },
+        });
+      }
+      continue;
+    }
     const parsed = parseCanonicalToolInput(tool.inputText);
     if (parsed.ok) {
       state.tools.set(toolCallId, {
