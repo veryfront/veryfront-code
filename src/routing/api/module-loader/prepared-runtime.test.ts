@@ -157,6 +157,7 @@ async function executePreparedFixture(fixture: PreparedFixture): Promise<string>
     projectId: `prepared-runtime-${crypto.randomUUID()}`,
     permissions: buildWorkerPermissions([fixture.projectDir]),
     requestTimeoutMs: 30_000,
+    allowInternalEgress: false,
   });
   worker.start();
 

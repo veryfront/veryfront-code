@@ -1,18 +1,9 @@
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createContext, normalizeParams, parseCookies } from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
-import {
-  createError,
-  ERROR_REGISTRY,
-  errorToRFC9457Response,
-  NOT_SUPPORTED,
-  type RegisteredError,
-  toError,
-} from "#veryfront/errors";
+import { createError, errorToRFC9457Response, NOT_SUPPORTED, toError } from "#veryfront/errors";
 import {
   detachThrowableForBoundary,
-  sanitizeDiagnosticText,
-  sanitizeStackDiagnosticText,
   snapshotThrowableDiagnostic,
 } from "#veryfront/errors/safe-diagnostics.ts";
 import type {
@@ -33,6 +24,7 @@ import {
   getWorkerPool,
   isWorkerIsolationEnabled,
 } from "#veryfront/security/sandbox/worker-pool.ts";
+import { deserializeWorkerError } from "#veryfront/security/sandbox/worker-error-boundary.ts";
 import {
   MAX_WORKER_BODY_BYTES,
   type PreparedWorkerModule,
@@ -77,6 +69,9 @@ const objectKeys = Object.keys;
 const objectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ownKeys = Reflect.ownKeys;
 const objectPrototype = Object.prototype;
+const EMPTY_PROJECT_ENV = objectFreeze(
+  objectCreate(null) as Record<string, string>,
+);
 const numberIsSafeInteger = Number.isSafeInteger;
 const NativePromise = Promise;
 const promiseResolve = NativePromise.resolve;
@@ -659,23 +654,6 @@ function workerResponseToResponse(
   throw NOT_SUPPORTED.create({ detail: `Unexpected worker response type: ${workerResponse.type}` });
 }
 
-function applySerializedStack(error: Error, stack: unknown): void {
-  if (typeof stack !== "string") return;
-  try {
-    apply(objectDefineProperty, Object, [
-      error,
-      "stack",
-      {
-        configurable: true,
-        value: stack,
-        writable: true,
-      },
-    ]);
-  } catch {
-    // The shared boundary still returns a safe response without a stack.
-  }
-}
-
 const INVALID_WORKER_FIELD = Symbol("invalid-worker-field");
 type InvalidWorkerField = typeof INVALID_WORKER_FIELD;
 
@@ -776,116 +754,6 @@ function dataField(
   const descriptor = descriptors[key];
   if (!descriptor) return undefined;
   return "value" in descriptor ? descriptor.value : INVALID_WORKER_FIELD;
-}
-
-function optionalDiagnostic(
-  descriptors: PropertyDescriptorMap,
-  key: string,
-): string | undefined | InvalidWorkerField {
-  const value = dataField(descriptors, key);
-  if (value === INVALID_WORKER_FIELD) return value;
-  if (value === undefined) return undefined;
-  return typeof value === "string" ? sanitizeDiagnosticText(value) : INVALID_WORKER_FIELD;
-}
-
-interface WorkerErrorSnapshot {
-  readonly message: string;
-  readonly name: string;
-  readonly stack?: string;
-  readonly definition?: RegisteredError;
-  readonly status?: number;
-  readonly detail?: string;
-  readonly cause?: string;
-  readonly instance?: string;
-}
-
-function snapshotSerializedWorkerError(serialized: unknown): WorkerErrorSnapshot {
-  const descriptors = getDataDescriptors(serialized);
-  if (!descriptors) {
-    return { message: "Unknown error", name: "Error" };
-  }
-
-  const rawMessage = dataField(descriptors, "message");
-  const rawName = dataField(descriptors, "name");
-  const rawStack = dataField(descriptors, "stack");
-  const message = typeof rawMessage === "string"
-    ? sanitizeDiagnosticText(rawMessage)
-    : "Unknown error";
-  const name = typeof rawName === "string" ? sanitizeDiagnosticText(rawName) : "Error";
-  const stack = typeof rawStack === "string" ? sanitizeStackDiagnosticText(rawStack) : undefined;
-
-  const problem = dataField(descriptors, "problem");
-  const problemDescriptors = getDataDescriptors(problem);
-  if (!problemDescriptors) return { message, name, stack };
-
-  const slug = dataField(problemDescriptors, "slug");
-  if (
-    typeof slug !== "string" ||
-    !apply(objectPrototypeHasOwnProperty, ERROR_REGISTRY, [slug])
-  ) {
-    return { message, name, stack };
-  }
-
-  const definition = ERROR_REGISTRY[slug as keyof typeof ERROR_REGISTRY];
-  const category = dataField(problemDescriptors, "category");
-  const status = dataField(problemDescriptors, "status");
-  const title = dataField(problemDescriptors, "title");
-  const suggestion = dataField(problemDescriptors, "suggestion");
-  if (
-    category !== definition.category ||
-    title !== definition.title ||
-    suggestion !== definition.suggestion ||
-    typeof status !== "number" ||
-    !numberIsSafeInteger(status) ||
-    status < 400 ||
-    status >= 600
-  ) {
-    return { message, name, stack };
-  }
-
-  const detail = optionalDiagnostic(problemDescriptors, "detail");
-  const cause = optionalDiagnostic(problemDescriptors, "cause");
-  const instance = optionalDiagnostic(problemDescriptors, "instance");
-  if (
-    detail === INVALID_WORKER_FIELD ||
-    cause === INVALID_WORKER_FIELD ||
-    instance === INVALID_WORKER_FIELD
-  ) {
-    return { message, name, stack };
-  }
-
-  return {
-    message,
-    name,
-    stack,
-    definition,
-    status,
-    detail,
-    cause,
-    instance,
-  };
-}
-
-function deserializeWorkerError(
-  serialized: unknown,
-): Error {
-  const snapshot = snapshotSerializedWorkerError(serialized);
-  if (snapshot.definition) {
-    const error = snapshot.definition.create({
-      message: snapshot.message,
-      status: snapshot.status,
-      detail: snapshot.detail,
-      cause: snapshot.cause,
-      instance: snapshot.instance,
-    });
-    applySerializedStack(error, snapshot.stack);
-    return error;
-  }
-
-  const error = new Error(snapshot.message);
-  error.name = snapshot.name;
-  applySerializedStack(error, snapshot.stack);
-  return error;
 }
 
 // ---------------------------------------------------------------------------
@@ -1175,7 +1043,10 @@ export function executeAppRoute(
 
         if (!resolvedFn) return createAppRouteMethodNotAllowed(handlerModule);
 
-        const appContext: AppRouteContext = { params: normalizeParams(match.params) };
+        const appContext: AppRouteContext = {
+          params: normalizeParams(match.params),
+          env: snapshotProjectEnvForWorker() ?? EMPTY_PROJECT_ENV,
+        };
         const pendingResult = resolvedFn(request, appContext);
         const result = isTrustedRouteResponsePromise(pendingResult)
           ? await pendingResult
@@ -1254,7 +1125,12 @@ export function executePagesRoute(
         }
 
         const fs = projectDir ? createProjectScopedFs(adapter.fs, projectDir) : adapter.fs;
-        const ctx = createContext(request, match, fs);
+        const ctx = createContext(
+          request,
+          match,
+          fs,
+          snapshotProjectEnvForWorker() ?? EMPTY_PROJECT_ENV,
+        );
         const pendingResult = (methodHandler as PagesRouteHandler)(ctx);
         const result = isTrustedRouteResponsePromise(pendingResult)
           ? await pendingResult

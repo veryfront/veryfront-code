@@ -803,6 +803,31 @@ describe("routing/api/route-executor", () => {
       assertEquals(capturedCtx?.params.id, "123");
     });
 
+    it("should pass immutable request env to the app handler context", async () => {
+      let capturedEnv: Readonly<Record<string, string>> | undefined;
+      const handler = {
+        GET: (_req: Request, context: unknown) => {
+          capturedEnv = (context as { env?: Readonly<Record<string, string>> }).env;
+          return new Response("ok");
+        },
+      };
+
+      await runWithProjectEnv(
+        { TENANT_SECRET: "app-value" },
+        () =>
+          executeAppRoute(
+            handler,
+            new Request("http://localhost/api/env"),
+            makeMatch(),
+            "/api/env",
+            makeAdapter(),
+          ),
+      );
+
+      assertEquals(capturedEnv?.TENANT_SECRET, "app-value");
+      assertEquals(Object.isFrozen(capturedEnv), true);
+    });
+
     it("should normalize catch-all params to slash-separated strings", async () => {
       let capturedCtx: { params: Record<string, string> } | undefined;
 
@@ -840,6 +865,31 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 200);
       assertEquals(await response.text(), "pages get");
+    });
+
+    it("should pass immutable request env to the pages handler context", async () => {
+      let capturedEnv: Readonly<Record<string, string>> | undefined;
+      const handler = {
+        GET: (context: unknown) => {
+          capturedEnv = (context as { env?: Readonly<Record<string, string>> }).env;
+          return new Response("ok");
+        },
+      };
+
+      await runWithProjectEnv(
+        { TENANT_SECRET: "pages-value" },
+        () =>
+          executePagesRoute(
+            handler,
+            new Request("http://localhost/api/env"),
+            makeMatch(),
+            "/api/env",
+            makeAdapter(),
+          ),
+      );
+
+      assertEquals(capturedEnv?.TENANT_SECRET, "pages-value");
+      assertEquals(Object.isFrozen(capturedEnv), true);
     });
 
     it("should fall back to default handler", async () => {
@@ -2253,7 +2303,7 @@ describe("routing/api/route-executor", () => {
       try {
         const response = await withRealWorkerRoute(
           `
-            export function GET() {
+            export function GET(_request, { env }) {
               let hostValue = null;
               try {
                 hostValue = Deno.env.get(${JSON.stringify(hostKey)}) ?? null;
@@ -2261,8 +2311,9 @@ describe("routing/api/route-executor", () => {
                 hostValue = null;
               }
               return Response.json({
-                tenantValue: Deno.env.get(${JSON.stringify(tenantKey)}) ?? null,
+                tenantValue: env[${JSON.stringify(tenantKey)}] ?? null,
                 hostValue,
+                envFrozen: Object.isFrozen(env),
               });
             }
           `,
@@ -2285,6 +2336,7 @@ describe("routing/api/route-executor", () => {
         assertEquals(await response.json(), {
           tenantValue: "tenant-only-value",
           hostValue: null,
+          envFrozen: true,
         });
       } finally {
         if (previousHostValue === undefined) {
@@ -2300,9 +2352,8 @@ describe("routing/api/route-executor", () => {
 
       await withRealWorkerRoute(
         `
-          const capturedTenantValue = Deno.env.get(${JSON.stringify(tenantKey)}) ?? null;
-          export function GET() {
-            return Response.json({ capturedTenantValue });
+          export function GET(_request, { env }) {
+            return Response.json({ tenantValue: env[${JSON.stringify(tenantKey)}] ?? null });
           }
         `,
         async (_modulePath, _projectDir, options) => {
@@ -2333,9 +2384,9 @@ describe("routing/api/route-executor", () => {
             const second = await executeWithValue("tenant-b");
 
             assertEquals(first.status, 200);
-            assertEquals(await first.json(), { capturedTenantValue: "tenant-a" });
+            assertEquals(await first.json(), { tenantValue: "tenant-a" });
             assertEquals(second.status, 200);
-            assertEquals(await second.json(), { capturedTenantValue: "tenant-b" });
+            assertEquals(await second.json(), { tenantValue: "tenant-b" });
 
             const generationPrefix = `${options.executionScopeId}:generation:`;
             const generationKeys = Object.keys(getWorkerPool().getStats().workers)

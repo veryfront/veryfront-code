@@ -20,6 +20,7 @@ import {
 import { createImportMapIdentity } from "#veryfront/modules/import-map/index.ts";
 import { __resetPoolForTests, getWorkerPool } from "#veryfront/security/sandbox/worker-pool.ts";
 import { join } from "node:path";
+import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
 
 const TEST_SOURCE_INTEGRATION_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
 
@@ -283,6 +284,66 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals(evictedWorkerId, observed.projectId);
       assertEquals(result.fullHtml.includes("<main>isolated</main>"), true);
       assertEquals(result.finalStream, null);
+    });
+
+    it("reconstructs registered isolated string errors with a sanitized stack", async () => {
+      const workerPool: ReturnType<
+        NonNullable<SSROrchestratorDependencies["getWorkerPool"]>
+      > = {
+        execute: async (_projectId, _readPaths, request) => ({
+          type: "error",
+          id: request.id,
+          error: {
+            name: "VeryfrontError",
+            message: "project dependency overloaded",
+            stack:
+              "VeryfrontError: project dependency overloaded\n    at postgres://admin:secret@db.internal/query:1:1",
+            problem: {
+              slug: SERVICE_OVERLOADED.slug,
+              category: SERVICE_OVERLOADED.category,
+              status: 429,
+              title: SERVICE_OVERLOADED.title,
+              suggestion: SERVICE_OVERLOADED.suggestion,
+              detail: "capacity exhausted",
+            },
+          },
+        }),
+        executeStream: () => {
+          throw new Error("stream execution must not be used");
+        },
+        evictWorker: () => {},
+      };
+      const orchestrator = new SSROrchestrator(createMockConfig(), {
+        getWorkerPool: () => workerPool,
+        isSSRIsolationEnabled: () => true,
+      });
+
+      const error = await runWithExactSourceIntegrationPolicy(
+        TEST_SOURCE_INTEGRATION_POLICY,
+        () =>
+          orchestrator.performSSRRendering(
+            React.createElement("div"),
+            createGenerationContext(),
+            undefined,
+            {
+              projectDir: "/tmp/project",
+              pageModulePath: "/tmp/project/page.tsx",
+              layoutModulePaths: [],
+              pageProps: {},
+              layoutProps: [],
+            },
+          ),
+      ).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+
+      assert(error instanceof VeryfrontError);
+      assertEquals(error.slug, SERVICE_OVERLOADED.slug);
+      assertEquals(error.status, 429);
+      assertEquals(error.detail, "capacity exhausted");
+      assert(error.stack?.includes("postgres://admin:[REDACTED]@db.internal/query"));
+      assertEquals(error.stack?.includes("secret"), false);
     });
 
     it("admits isolated streaming through WorkerPool.executeStream", async () => {

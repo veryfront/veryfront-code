@@ -16,6 +16,7 @@ import {
   type WorkerPool,
 } from "#veryfront/security/sandbox/worker-pool.ts";
 import type { WorkerResponse } from "#veryfront/security/sandbox/worker-types.ts";
+import { deserializeWorkerError } from "#veryfront/security/sandbox/worker-error-boundary.ts";
 import {
   resolveWorkerGeneration,
   snapshotWorkerGenerationIdentity,
@@ -588,9 +589,7 @@ export class SSROrchestrator {
         }
 
         if (workerResponse.type === "error") {
-          const err = new Error(workerResponse.error.message);
-          err.name = workerResponse.error.name;
-          throw err;
+          throw deserializeWorkerError(workerResponse.error);
         }
 
         if (workerResponse.type !== "ssr-result") {
