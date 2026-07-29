@@ -78,6 +78,18 @@ export interface Suggestions {
   suggestions: Suggestion[];
 }
 
+/** Source configuration accepted for one suggestion. */
+export type SuggestionConfig =
+  | string
+  | {
+    type?: "prompt";
+    title: string;
+    prompt: string;
+  };
+
+/** Source configuration accepted for an agent's suggestions. */
+export type SuggestionsConfig = Suggestions | SuggestionConfig[];
+
 /** Policy for tools exposed by one MCP server. */
 export interface AgentMcpToolPolicy {
   allow?: string[];
@@ -220,7 +232,13 @@ export interface AgentConfig {
    * available to every agent regardless of this catalog selection.
    */
   skills?: true | false | string[];
-  suggestions?: Suggestions;
+  /**
+   * Prompt starters shown on an empty chat.
+   *
+   * Use a flat array for source and Studio compatibility. The wrapped
+   * `{ welcomeMessage, suggestions }` form remains supported.
+   */
+  suggestions?: SuggestionsConfig;
   /** Set to false to disable the default security middleware */
   security?: false;
 }

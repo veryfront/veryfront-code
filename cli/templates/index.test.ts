@@ -142,6 +142,26 @@ describe("cli/templates", () => {
     );
   });
 
+  it("uses Studio-aligned flat suggestions in the ai-agent starter", async () => {
+    const { default: assistant } = await import(
+      "./files/ai-agent/agents/assistant.ts"
+    );
+
+    assertEquals(assistant.config.suggestions, [
+      {
+        type: "prompt",
+        title: "Shape an idea",
+        prompt: "Turn this rough idea into a focused plan with the first three steps: ",
+      },
+      {
+        type: "prompt",
+        title: "Run the numbers",
+        prompt:
+          "Calculate an 18% tip on $84.50, split the total among three people, and explain the result briefly.",
+      },
+    ]);
+  });
+
   it("accepts sentence punctuation without accepting longer monetary values", async () => {
     const { default: assistantEval } = await import(
       "./files/ai-agent/evals/assistant.eval.ts"

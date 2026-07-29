@@ -1,4 +1,4 @@
-import type { Suggestion } from "./types.ts";
+import type { AgentConfig, Suggestion } from "./types.ts";
 
 const inlinePromptSuggestion: Suggestion = {
   type: "prompt",
@@ -16,9 +16,22 @@ const taskReferenceSuggestion: Suggestion = {
   type: "task",
 };
 
+const flatSuggestionsConfig: AgentConfig = {
+  system: "Help the user.",
+  suggestions: [
+    "Review status",
+    {
+      title: "Summarize",
+      prompt: "Summarize the latest context.",
+    },
+    inlinePromptSuggestion,
+  ],
+};
+
 void inlinePromptSuggestion;
 void promptReferenceSuggestion;
 void taskReferenceSuggestion;
+void flatSuggestionsConfig;
 
 // @ts-expect-error Prompt references cannot carry inline prompt fields.
 const promptReferenceWithInlineFields: Suggestion = {
