@@ -115,10 +115,40 @@ const paths: StaticPathsResult = {
 };
 ```
 
-`fallback` accepts `false`, `true`, or `"blocking"`. The framework validates
-every path and parameter, snapshots arrays and parameter records, and rejects
-malformed results. A nullish legacy result normalizes to
-`{ paths: [], fallback: false }`.
+The data-hook boundary accepts `false`, `true`, or `"blocking"` and snapshots
+arrays and parameter records. A nullish legacy result normalizes to
+`{ paths: [], fallback: false }`. Pages Router production static builds require
+`fallback: false`; `true` and `"blocking"` reject the build. App Router
+`generateStaticParams` is not implemented by the production static builder.
+
+For Pages Router production builds, each result entry must provide exactly the
+parameters named by its route template. Dynamic parameters are non-empty
+strings. Catch-all parameters are dense plain string arrays; required
+catch-alls cannot be empty. Accessor-backed, prototype-backed, sparse, extra,
+missing, traversal, control-character, and non-losslessly-encodable values are
+rejected. Every parameter segment is encoded with `encodeURIComponent` for the
+output URL; its original decoded value is passed to `getStaticData` and page
+rendering.
+
+Production build limits are:
+
+| Limit                                    | Value  |
+| ---------------------------------------- | ------ |
+| Materialized Pages paths per build       | 10,000 |
+| Characters per output route path         | 2,048  |
+| Segments per catch-all parameter         | 1,024  |
+| Aggregate UTF-8 bytes across Pages paths | 16 MiB |
+
+The raw result path count and catch-all lengths are admitted before arrays are
+copied. The final Pages path set also rejects exact duplicates and portable
+filesystem collisions after percent-decoding, separator normalization, Unicode
+NFC normalization, and case folding. Output ordering is deterministic.
+Generated manifest entries map each encoded concrete `path` to its source
+`template`.
+
+Static-path expansion and validation complete before the build allocates its
+publication directory. A rejected hook result does not modify an existing
+output tree or publish a partial manifest.
 
 ## Internal programmatic execution
 
@@ -160,15 +190,15 @@ unbounded behavior.
 The framework passes `FetchDataOptions` to establish execution identity and
 caller authority. Worker paths are required only when isolation is enabled:
 
-| Option               | Meaning                                                         |
-| -------------------- | --------------------------------------------------------------- |
-| `modulePath`         | Absolute path of the loaded page or layout module               |
-| `projectDir`         | Project root used to scope an isolated worker                   |
-| `projectId`          | Trusted identity used for breaker and fairness isolation        |
-| `cacheScope`         | Exact project, mode, and content version; `null` disables cache |
-| `signal`             | Caller cancellation; shared work may continue for other callers |
-| `workerScopeId`      | Host-owned worker lifetime scope                                |
-| `workerGenerationId` | Immutable source identity within `workerScopeId`                |
+| Option               | Meaning                                                          |
+| -------------------- | ---------------------------------------------------------------- |
+| `modulePath`         | Absolute page/layout path; absent or empty disables static cache |
+| `projectDir`         | Project root used to scope an isolated worker                    |
+| `projectId`          | Trusted identity used for breaker and fairness isolation         |
+| `cacheScope`         | Exact project, mode, and content version; `null` disables cache  |
+| `signal`             | Caller cancellation; shared work may continue for other callers  |
+| `workerScopeId`      | Host-owned worker lifetime scope                                 |
+| `workerGenerationId` | Immutable source identity within `workerScopeId`                 |
 
 Do not derive `projectId` from an untrusted request header in custom
 integrations. Explicit scopes are validated, read once, and frozen before they
@@ -189,15 +219,18 @@ before retirement. Scope and generation IDs are validated as non-empty strings
 of at most 1,024 characters and are snapshotted before asynchronous work.
 
 `getStaticPaths(pageModule, { projectId, signal })` accepts the same trusted
-project identity and caller cancellation. `destroy()` is idempotent and
-prevents later use, but it cannot forcibly terminate project code that has
+project identity and caller cancellation. Internal callers may also supply
+non-negative `maxPaths` and `maxArrayParamSegments` admission limits. The
+production renderer supplies the build limits above. `destroy()` is idempotent
+and prevents later use, but it cannot forcibly terminate project code that has
 already started.
 
 ## Cache and revalidation behavior
 
-Static data caching requires an active production cache context established by
-the framework. Preview requests and standalone calls without that context skip
-the static cache.
+Static data caching requires both an active production cache context established
+by the framework and a non-empty `modulePath`. Preview requests, calls without a
+cache context, and calls without a module identity execute without cache lookup
+or publication.
 
 Production cache identity includes:
 
@@ -228,12 +261,23 @@ The cache defaults to 500 entries and 50 MiB process-wide, with a ceiling of
 100 entries and 10 MiB for one project. All releases and content versions for
 the same project share that project quota. A project that reaches its ceiling
 evicts its own least-recently-used entries before it can displace a peer.
-Entry and retained-byte limits can be configured with:
+Entry limits and insertion-time estimated-byte quotas can be configured with:
 
 - `DATA_FETCHING_MAX_ENTRIES`
 - `DATA_FETCHING_MAX_ENTRIES_PER_PROJECT`
 - `DATA_FETCHING_MAX_SIZE_MB`
 - `DATA_FETCHING_MAX_SIZE_MB_PER_PROJECT`
+
+The byte quotas use a bounded, best-effort estimate of data observable at
+insertion time, including own data properties and recognized backing stores.
+They are not a hard retained-memory cap: later mutation and memory reachable
+only through closures, accessors, custom prototypes, proxies, or opaque engine
+state can exceed the accounting. The estimator reads property descriptors
+rather than deliberately invoking accessors, although reflecting on a proxy
+can execute its traps under the reference-preserving cache contract. Hard
+containment requires a separately approved restricted-value or snapshot and
+serialization contract; the current public cache intentionally preserves
+result references.
 
 The per-project values must not exceed their global values. Malformed or
 out-of-range data-safety overrides fail during startup instead of silently
@@ -251,17 +295,29 @@ pattern writes remain eligible to populate their entries.
 `getServerData` and `getStaticData` have a 10-second local deadline. Request
 body preparation and isolated or direct `getServerData` execution share that
 single budget. Dependency timeouts count toward the project circuit breaker.
+Breaker health is shared across routes only within an authoritative source.
+Server data prefers the exact worker-generation tuple, then the exact cache
+scope; cached static data uses the cache scope, while uncached static data uses
+the worker-generation tuple. Compatibility calls that supply neither identity
+share one unversioned bucket per project.
 Direct `getServerData` receives a request signal that combines caller
 cancellation with the framework deadline, so cooperative downstream work can
 stop. `getStaticData` has no signal in its public contract. Non-cooperative
 project code cannot be forcibly stopped after the caller rejects.
 
-`getStaticPaths` has no default local deadline for backward compatibility.
-Internal integrations can opt in with
-`DataFetcherOptions.staticPathsTimeoutMs`. The deadline covers both the hook
-and result validation. A timeout or caller abort stops waiting, but the
-framework retains the execution lease until late project code and validation
+Direct `DataFetcher` use gives `getStaticPaths` no default local deadline for
+backward compatibility. Internal integrations can opt in with
+`DataFetcherOptions.staticPathsTimeoutMs`. The production rendering pipeline
+uses a 10-second result deadline. It covers both the hook and result validation.
+A timeout or caller abort stops waiting, but the framework observes the late
+settlement and retains the execution lease until project code and validation
 settle.
+
+This is an in-process completion deadline, not CPU or memory preemption. A
+synchronous CPU-bound hook can block the event loop past the deadline and is
+rejected only after it returns; memory allocation is not capped. Enforcing hard
+execution limits requires a separately isolated process or worker that the host
+can terminate.
 
 All three hooks share a fail-closed process execution budget. Defaults are 512
 active hooks globally and 128 for one project. Configure them with
@@ -296,6 +352,7 @@ When data worker isolation is enabled:
 | `server-data-fetcher.ts`  | Request-time execution and worker boundary          |
 | `static-data-fetcher.ts`  | Static cache, single-flight loads, and revalidation |
 | `static-paths-fetcher.ts` | Static path validation, admission, and deadline     |
+| `static-path-limits.ts`   | Central production static-path limits               |
 | `execution-admission.ts`  | Global and per-project hook capacity                |
 | `abort-utils.ts`          | Exact caller-abort composition and detached waiting |
 | `helpers.ts`              | Branded redirect and not-found results              |

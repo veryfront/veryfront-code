@@ -16,6 +16,7 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
 import * as React from "react";
 import {
   __injectReactDOMServerForTests,
@@ -861,6 +862,111 @@ describe(
         assertEquals(searchCall.url?.href, "https://example.test/search?q=jobs");
         assertEquals(searchCall.staticDataOnly, true);
         assertEquals(searchCall.url?.searchParams.get("q"), "jobs");
+      });
+
+      it("passes decoded getStaticPaths params while rendering the encoded concrete URL", async () => {
+        let observed:
+          | {
+            slug: string;
+            params?: Record<string, string | string[]>;
+            pathname?: string;
+          }
+          | undefined;
+        const renderer = {
+          renderPage: (
+            slug: string,
+            options?: {
+              params?: Record<string, string | string[]>;
+              url?: URL;
+            },
+          ) => {
+            observed = {
+              slug,
+              params: options?.params,
+              pathname: options?.url?.pathname,
+            };
+            return Promise.resolve({
+              html: "<html><head></head><body><div>content</div></body></html>",
+              frontmatter: {},
+              headings: [],
+            });
+          },
+          destroy: () => Promise.resolve(),
+        } as unknown as VeryfrontRenderer;
+
+        await buildPagesRoutes(
+          [{
+            slug: "blog/hello%20world",
+            path: "/blog/hello%20world",
+            file: "pages/blog/[slug].tsx",
+            templatePath: "/blog/[slug]",
+            params: { slug: "hello world" },
+          }],
+          {
+            adapter: createMockAdapter(),
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer,
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+            dryRun: true,
+          },
+        );
+
+        assertEquals(observed, {
+          slug: "blog/hello%20world",
+          params: { slug: "hello world" },
+          pathname: "/blog/hello%20world",
+        });
+      });
+
+      it("resolves dynamic-page preload links through the source template", async () => {
+        const adapter = createMemoryAdapter();
+        const chunkManifest: ChunkManifest = {
+          version: "1.0",
+          routes: {
+            "/blog/[slug]": {
+              entry: "blog-slug.js",
+              chunks: [],
+            },
+          },
+          chunks: {
+            "blog-slug.js": {
+              name: "blog-slug",
+              file: "blog-slug.js",
+              imports: [],
+              size: 42,
+              hash: "1234abcd",
+            },
+          },
+          shared: [],
+        };
+
+        await buildPagesRoutes(
+          [{
+            slug: "blog/hello",
+            path: "/blog/hello",
+            file: "pages/blog/[slug].tsx",
+            templatePath: "/blog/[slug]",
+            params: { slug: "hello" },
+          }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer: createMockRenderer(),
+            config: createMockConfig(),
+            enablePrefetch: true,
+            chunkManifest,
+            dryRun: false,
+          },
+        );
+
+        assertStringIncludes(
+          adapter.fs.files.get("/tmp/output/blog/hello/index.html") ?? "",
+          '<link rel="modulepreload" href="/_veryfront/chunks/blog-slug.js">',
+        );
       });
 
       it("records generated Pages Router paths in SSG stats", async () => {

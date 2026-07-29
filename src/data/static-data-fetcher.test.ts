@@ -9,7 +9,11 @@ import {
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
-import { StaticDataFetcher, type StaticDataFetcherOptions } from "./static-data-fetcher.ts";
+import {
+  StaticDataFetcher,
+  type StaticDataFetcherOptions,
+  type StaticDataFetchOptions,
+} from "./static-data-fetcher.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { notFound, redirect } from "./helpers.ts";
 import {
@@ -50,11 +54,26 @@ function createContext(overrides: Partial<DataContext> = {}): DataContext {
   };
 }
 
+const TEST_MODULE_PATH = "/project/pages/static-data-test.tsx";
+
+class TestStaticDataFetcher extends StaticDataFetcher {
+  override fetch(
+    pageModule: PageWithData,
+    context: DataContext,
+    options: StaticDataFetchOptions = {},
+  ): Promise<DataResult> {
+    return super.fetch(pageModule, context, {
+      modulePath: TEST_MODULE_PATH,
+      ...options,
+    });
+  }
+}
+
 function createFetcher(
   options: StaticDataFetcherOptions = {},
 ): { cache: CacheManager; fetcher: StaticDataFetcher } {
   const cache = new CacheManager();
-  const fetcher = new StaticDataFetcher(cache, options);
+  const fetcher = new TestStaticDataFetcher(cache, options);
   return { cache, fetcher };
 }
 
@@ -740,6 +759,70 @@ describe("StaticDataFetcher", () => {
       assertEquals(calls, 5);
     });
 
+    it("isolates uncached breaker state by source while sharing it across source routes", async () => {
+      const { fetcher } = createFetcher();
+      const projectId = `uncached-source-breaker-${crypto.randomUUID()}`;
+      let failingCalls = 0;
+      const failing: PageWithData = {
+        default: () => null,
+        getStaticData: () => {
+          failingCalls++;
+          throw new Error("preview source A dependency failure");
+        },
+      };
+      const sourceA = {
+        projectId,
+        cacheScope: null,
+        workerScopeId: `preview-source-a-scope-${crypto.randomUUID()}`,
+        workerGenerationId: "shared-release-label",
+      } satisfies StaticDataFetchOptions;
+
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await assertRejects(
+          () =>
+            fetcher.fetch(
+              failing,
+              createContext({
+                url: new URL(`https://example.test/source-a/${attempt}`),
+              }),
+              sourceA,
+            ),
+          Error,
+          "preview source A dependency failure",
+        );
+      }
+      await assertRejects(
+        () =>
+          fetcher.fetch(
+            failing,
+            createContext({
+              url: new URL("https://example.test/source-a/another-route"),
+            }),
+            sourceA,
+          ),
+        CircuitBreakerOpen,
+      );
+
+      const healthy = await fetcher.fetch(
+        {
+          default: () => null,
+          getStaticData: () => ({ props: { source: "b" } }),
+        },
+        createContext({
+          url: new URL("https://example.test/source-b/healthy"),
+        }),
+        {
+          projectId,
+          cacheScope: null,
+          workerScopeId: `preview-source-b-scope-${crypto.randomUUID()}`,
+          workerGenerationId: "shared-release-label",
+        },
+      );
+
+      assertEquals(healthy.props, { source: "b" });
+      assertEquals(failingCalls, 5);
+    });
+
     it("isolates ambient cache and breaker identity on a shared hostname", async () => {
       const { fetcher } = createFetcher();
       const projectA = {
@@ -973,7 +1056,7 @@ describe("StaticDataFetcher", () => {
 
         await fetcher.fetch(pageModule, context);
 
-        const cacheKey = cache.createCacheKey(context);
+        const cacheKey = cache.createCacheKey(context, TEST_MODULE_PATH);
         assertExists(cacheKey);
 
         const entry = cache.get(cacheKey);
@@ -1078,7 +1161,7 @@ describe("StaticDataFetcher", () => {
         };
 
         const context = createContext({ url: new URL("http://localhost/stale-page") });
-        const cacheKey = cache.createCacheKey(context);
+        const cacheKey = cache.createCacheKey(context, TEST_MODULE_PATH);
         assertExists(cacheKey);
 
         cache.set(cacheKey, {
@@ -1136,7 +1219,7 @@ describe("StaticDataFetcher", () => {
           }),
       );
       for (const context of contexts) {
-        const key = cache.createCacheKey(context, undefined, scope);
+        const key = cache.createCacheKey(context, TEST_MODULE_PATH, scope);
         assertExists(key);
         cache.set(key, {
           data: { props: { version: 1 }, revalidate: 0 },
@@ -1177,7 +1260,7 @@ describe("StaticDataFetcher", () => {
       });
       const cacheKey = cache.createCacheKey(
         context,
-        undefined,
+        TEST_MODULE_PATH,
         scope,
       );
       assertExists(cacheKey);
@@ -1289,7 +1372,7 @@ describe("StaticDataFetcher", () => {
           [scopeB, contextB],
         ] as const
       ) {
-        const key = cache.createCacheKey(context, undefined, scope);
+        const key = cache.createCacheKey(context, TEST_MODULE_PATH, scope);
         assertExists(key);
         cache.set(key, {
           data: { props: { version: 1 }, revalidate: 0 },
@@ -1460,8 +1543,8 @@ describe("StaticDataFetcher", () => {
           }),
           url: new URL("http://localhost/skipped-revalidation"),
         });
-        const heldKey = cache.createCacheKey(heldContext);
-        const skippedKey = cache.createCacheKey(skippedContext);
+        const heldKey = cache.createCacheKey(heldContext, TEST_MODULE_PATH);
+        const skippedKey = cache.createCacheKey(skippedContext, TEST_MODULE_PATH);
         assertExists(heldKey);
         assertExists(skippedKey);
 
@@ -1554,7 +1637,7 @@ describe("StaticDataFetcher", () => {
               [unlimited.cache, unlimitedContext],
             ] as const
           ) {
-            const key = cache.createCacheKey(context);
+            const key = cache.createCacheKey(context, TEST_MODULE_PATH);
             assertExists(key);
             cache.set(key, {
               data: { props: { version: 1 }, revalidate: 0 },
@@ -1605,7 +1688,7 @@ describe("StaticDataFetcher", () => {
         };
 
         const context = createContext({ url: new URL("http://localhost/isr-not-found") });
-        const cacheKey = cache.createCacheKey(context);
+        const cacheKey = cache.createCacheKey(context, TEST_MODULE_PATH);
         assertExists(cacheKey);
 
         cache.set(cacheKey, {
@@ -1644,7 +1727,7 @@ describe("StaticDataFetcher", () => {
         };
 
         const context = createContext({ url: new URL("http://localhost/isr-redirect") });
-        const cacheKey = cache.createCacheKey(context);
+        const cacheKey = cache.createCacheKey(context, TEST_MODULE_PATH);
         assertExists(cacheKey);
 
         cache.set(cacheKey, {
@@ -1676,7 +1759,7 @@ describe("StaticDataFetcher", () => {
           },
         };
         const context = createContext({ url: new URL("http://localhost/isr-backoff") });
-        const cacheKey = cache.createCacheKey(context);
+        const cacheKey = cache.createCacheKey(context, TEST_MODULE_PATH);
         assertExists(cacheKey);
         cache.set(cacheKey, {
           data: { props: { version: 1 }, revalidate: 0 },
@@ -1724,7 +1807,7 @@ describe("StaticDataFetcher", () => {
         };
 
         const context = createContext({ url: new URL("http://localhost/isr-success") });
-        const cacheKey = cache.createCacheKey(context);
+        const cacheKey = cache.createCacheKey(context, TEST_MODULE_PATH);
         assertExists(cacheKey);
 
         cache.set(cacheKey, {
@@ -1777,7 +1860,7 @@ describe("StaticDataFetcher", () => {
         const context = createContext({
           url: new URL("http://localhost/isr-eviction-generation"),
         });
-        const key = cache.createCacheKey(context);
+        const key = cache.createCacheKey(context, TEST_MODULE_PATH);
         assertExists(key);
         cache.set(key, {
           data: { props: { version: 1 }, revalidate: 0 },

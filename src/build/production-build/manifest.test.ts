@@ -88,8 +88,37 @@ describe("build/production-build/manifest", () => {
       assertExists(second);
 
       assertEquals(first.path, "/");
+      assertEquals(first.template, "/");
       assertEquals(first.slug, "index");
       assertEquals(second.path, "/about");
+      assertEquals(second.template, "/about");
+    });
+
+    it("maps generated dynamic paths back to their source template", () => {
+      const result = generateManifest({
+        ...baseOptions,
+        routes: [
+          {
+            path: "/blog/hello%20world",
+            templatePath: "/blog/[slug]",
+            slug: "blog/hello%20world",
+            file: "pages/blog/[slug].tsx",
+            params: { slug: "hello world" },
+          },
+        ],
+        stats: {
+          ...baseOptions.stats,
+          pages: 1,
+          ssgPaths: ["/blog/hello%20world"],
+        },
+      });
+
+      assertEquals(result.routes, [{
+        path: "/blog/hello%20world",
+        template: "/blog/[slug]",
+        slug: "blog/hello%20world",
+        chunks: [],
+      }]);
     });
 
     it("omits routes that were not generated", () => {
@@ -135,6 +164,7 @@ describe("build/production-build/manifest", () => {
       const route = result.routes[2];
       assertExists(route);
       assertEquals(route.path, "/api/data");
+      assertEquals(route.template, "/api/data");
     });
 
     it("should format stats with MB size", () => {
@@ -161,6 +191,62 @@ describe("build/production-build/manifest", () => {
       const route = result.routes[0];
       assertExists(route);
       assertEquals(route.chunks, ["chunk-a.js"]);
+    });
+
+    it("resolves concrete dynamic routes through their template chunk identity", () => {
+      const dynamicChunkManifest: ChunkManifest = {
+        ...validChunkManifest,
+        routes: {
+          "/blog/[slug]": validChunkManifest.routes["/"]!,
+        },
+      };
+      const result = generateManifest({
+        ...baseOptions,
+        routes: [
+          {
+            path: "/blog/hello",
+            templatePath: "/blog/[slug]",
+            slug: "blog/hello",
+            file: "pages/blog/[slug].tsx",
+            params: { slug: "hello" },
+          },
+          {
+            path: "/blog/world",
+            templatePath: "/blog/[slug]",
+            slug: "blog/world",
+            file: "pages/blog/[slug].tsx",
+            params: { slug: "world" },
+          },
+        ],
+        enableSplitting: true,
+        chunkManifest: dynamicChunkManifest,
+        stats: {
+          ...baseOptions.stats,
+          chunks: 2,
+          ssgPaths: ["/blog/hello", "/blog/world"],
+        },
+      });
+
+      assertEquals(
+        result.routes.map((route) => ({
+          path: route.path,
+          template: route.template,
+          chunks: route.chunks,
+        })),
+        [
+          {
+            path: "/blog/hello",
+            template: "/blog/[slug]",
+            chunks: ["chunk-a.js"],
+          },
+          {
+            path: "/blog/world",
+            template: "/blog/[slug]",
+            chunks: ["chunk-a.js"],
+          },
+        ],
+      );
+      assertEquals(Object.keys(result.chunks!.routes), ["/blog/[slug]"]);
     });
 
     it("canonicalizes route and chunk ordering into a detached snapshot", () => {

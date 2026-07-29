@@ -226,6 +226,7 @@ export async function buildPagesRoutes(
           renderer.renderPage(route.slug, {
             contentSourceId,
             ...staticRouteContext,
+            ...(route.params ? { params: route.params } : {}),
             releaseAssetManifest: options.releaseAssetManifest,
           }),
       );
@@ -238,7 +239,7 @@ export async function buildPagesRoutes(
         );
         const preloadLinks = generatePreloadLinks(
           chunkManifest,
-          route.path,
+          route.templatePath ?? route.path,
           "/_veryfront/chunks",
         );
         enhancedHtml = injectBeforeClosingTag(enhancedHtml, "head", `${preloadLinks}\n`);

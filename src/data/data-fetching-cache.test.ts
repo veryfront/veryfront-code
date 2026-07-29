@@ -70,6 +70,14 @@ function estimateWeightedEntry(entry: CacheEntry): number {
   return props.bytes;
 }
 
+function nestRetainedValue(value: unknown, levels = 12): unknown {
+  let nested = value;
+  for (let level = 0; level < levels; level++) {
+    nested = { child: nested };
+  }
+  return nested;
+}
+
 describe("CacheManager", () => {
   describe("scope snapshots", () => {
     it("reads every scope field once and returns a validated frozen value", () => {
@@ -527,6 +535,302 @@ describe("CacheManager", () => {
       assertEquals(cache.get(oversizedKey), null);
     });
 
+    it("rejects a deeply nested typed array without evicting project or global peers", () => {
+      const cache = new CacheManager({
+        maxEntries: 3,
+        maxSizeBytes: 2_048,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 1_024,
+      });
+      const peer = createScopedKey(cache, "peer", "peer");
+      const healthy = createScopedKey(cache, "project", "healthy");
+      const rejected = createScopedKey(cache, "project", "rejected");
+      cache.set(peer, createEntry({ value: "peer" }));
+      cache.set(healthy, createEntry({ value: "healthy" }));
+
+      assertThrows(
+        () =>
+          cache.set(
+            rejected,
+            createEntry(nestRetainedValue(new Uint8Array(2 * 1024 * 1024)) as Record<
+              string,
+              unknown
+            >),
+          ),
+        RangeError,
+        "too complex to estimate safely",
+      );
+
+      assertExists(cache.get(peer));
+      assertExists(cache.get(healthy));
+      assertEquals(cache.get(rejected), null);
+    });
+
+    it("rejects a deeply nested string that would bypass the global byte limit", () => {
+      const cache = new CacheManager({
+        maxEntries: 2,
+        maxSizeBytes: 1_024,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 1_024,
+      });
+
+      assertThrows(
+        () =>
+          cache.set(
+            "deep-string",
+            createEntry(nestRetainedValue("x".repeat(2 * 1024 * 1024)) as Record<
+              string,
+              unknown
+            >),
+          ),
+        RangeError,
+        "too complex to estimate safely",
+      );
+      assertEquals(cache.get("deep-string"), null);
+    });
+
+    it("fails closed when a retained object graph exhausts estimator depth", () => {
+      const cache = new CacheManager({
+        maxEntries: 2,
+        maxSizeBytes: 1_024 * 1024,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 1_024 * 1024,
+      });
+
+      assertThrows(
+        () =>
+          cache.set(
+            "deep-object",
+            createEntry(nestRetainedValue({ leaf: true }) as Record<string, unknown>),
+          ),
+        RangeError,
+        "too complex to estimate safely",
+      );
+      assertEquals(cache.get("deep-object"), null);
+    });
+
+    it("applies the depth limit to recognized backing-object chains", () => {
+      const cache = new CacheManager({
+        maxEntries: 2,
+        maxSizeBytes: 1_024 * 1024,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 1_024 * 1024,
+      });
+      let nested: object = new ArrayBuffer(1);
+      for (let depth = 0; depth < 12; depth++) {
+        const parent = new ArrayBuffer(1);
+        Object.defineProperty(parent, "child", { value: nested });
+        nested = parent;
+      }
+
+      assertThrows(
+        () => cache.set("deep-backing-chain", createEntry({ nested })),
+        RangeError,
+        "too complex to estimate safely",
+      );
+      assertEquals(cache.get("deep-backing-chain"), null);
+    });
+
+    it("fails closed without mutation when estimator node work is exhausted", () => {
+      const cache = new CacheManager({
+        maxEntries: 2,
+        maxSizeBytes: 1_024 * 1024,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 1_024 * 1024,
+      });
+      const healthy = createEntry({ value: "healthy" });
+      cache.set("healthy", healthy);
+      const tooWide: Record<string, number> = {};
+      for (let index = 0; index < 100_001; index++) {
+        tooWide[`field-${index}`] = index;
+      }
+
+      assertThrows(
+        () => cache.set("too-wide", createEntry({ tooWide })),
+        RangeError,
+        "too complex to estimate safely",
+      );
+      assertStrictEquals(cache.get("healthy"), healthy);
+      assertEquals(cache.get("too-wide"), null);
+    });
+
+    it("charges an ArrayBufferView's complete retained backing storage", () => {
+      const cache = new CacheManager({
+        maxEntries: 2,
+        maxSizeBytes: 1_024,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 1_024,
+      });
+      const backing = new ArrayBuffer(2 * 1024 * 1024);
+      const oneByteView = new Uint8Array(backing, 0, 1);
+
+      assertThrows(
+        () => cache.set("view", createEntry({ oneByteView })),
+        RangeError,
+        "exceeds maxSizeBytes",
+      );
+      assertEquals(cache.get("view"), null);
+    });
+
+    it("does not double-charge typed-array indices after charging their backing store", () => {
+      const cache = new CacheManager({
+        maxEntries: 2,
+        maxSizeBytes: 4_096,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 4_096,
+      });
+      const entry = createEntry({ value: new Uint8Array(500) });
+
+      cache.set("typed-array", entry);
+
+      assertStrictEquals(cache.get("typed-array"), entry);
+    });
+
+    it("charges custom own data retained by recognized backing values", () => {
+      const cache = new CacheManager({
+        maxEntries: 10,
+        maxSizeBytes: 1_024,
+        maxEntriesPerProject: 10,
+        maxSizeBytesPerProject: 1_024,
+      });
+      const healthy = createEntry({ value: "healthy" });
+      cache.set("healthy", healthy);
+      const candidates: Array<readonly [string, object]> = [
+        ["typed-array", new Uint8Array(1)],
+        ["data-view", new DataView(new ArrayBuffer(1))],
+        ["array-buffer", new ArrayBuffer(1)],
+        ["blob", new Blob(["x"])],
+      ];
+      if (typeof SharedArrayBuffer === "function") {
+        candidates.push(["shared-array-buffer", new SharedArrayBuffer(1)]);
+      }
+      const retained = "x".repeat(2 * 1024 * 1024);
+
+      for (const [key, value] of candidates) {
+        Object.defineProperty(value, "retained", {
+          value: retained,
+        });
+        assertThrows(
+          () => cache.set(key, createEntry({ value })),
+          RangeError,
+          "exceeds maxSizeBytes",
+        );
+        assertEquals(cache.get(key), null);
+      }
+      assertStrictEquals(cache.get("healthy"), healthy);
+    });
+
+    it("charges observable BigInt payload size", () => {
+      const cache = new CacheManager({
+        maxEntries: 2,
+        maxSizeBytes: 1_024,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 1_024,
+      });
+
+      assertThrows(
+        () => cache.set("bigint", createEntry({ value: 1n << 16_384n })),
+        RangeError,
+        "exceeds maxSizeBytes",
+      );
+      assertEquals(cache.get("bigint"), null);
+    });
+
+    it("charges observable Symbol descriptions", () => {
+      const cache = new CacheManager({
+        maxEntries: 2,
+        maxSizeBytes: 1_024,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 1_024,
+      });
+
+      assertThrows(
+        () => cache.set("symbol", createEntry({ value: Symbol("x".repeat(2_048)) })),
+        RangeError,
+        "exceeds maxSizeBytes",
+      );
+      assertEquals(cache.get("symbol"), null);
+    });
+
+    it("does not execute retained accessors while estimating an entry", () => {
+      const cache = new CacheManager();
+      let getterCalls = 0;
+      const props: Record<string, unknown> = {};
+      Object.defineProperty(props, "expensive", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return new Uint8Array(2 * 1024 * 1024);
+        },
+      });
+
+      cache.set("accessor", createEntry(props));
+
+      assertEquals(getterCalls, 0);
+      assertExists(cache.get("accessor"));
+    });
+
+    it("does not mutate expiry state before rejecting an oversized global write", () => {
+      let now = 1_000;
+      const cache = new CacheManager({
+        maxEntries: 2,
+        maxSizeBytes: 1_024,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 1_024,
+        ttlMs: 10,
+        now: () => now,
+      });
+      const healthy = createEntry({ value: "healthy" });
+      cache.set("healthy", healthy);
+      now += 10;
+
+      assertThrows(
+        () => cache.set("oversized", createEntry({ value: "x".repeat(2_048) })),
+        RangeError,
+        "exceeds maxSizeBytes",
+      );
+
+      now -= 10;
+      assertStrictEquals(cache.get("healthy"), healthy);
+      assertEquals(cache.get("oversized"), null);
+    });
+
+    it("charges observable own data retained by functions and accessors", () => {
+      const cache = new CacheManager({
+        maxEntries: 3,
+        maxSizeBytes: 1_024,
+        maxEntriesPerProject: 3,
+        maxSizeBytesPerProject: 1_024,
+      });
+      const healthy = createEntry({ value: "healthy" });
+      cache.set("healthy", healthy);
+      const retained = "x".repeat(2 * 1024 * 1024);
+      const retainedFunction = () => undefined;
+      Object.defineProperty(retainedFunction, "retained", {
+        value: retained,
+      });
+      const retainedGetter = () => undefined;
+      Object.defineProperty(retainedGetter, "retained", {
+        value: retained,
+      });
+      const accessorOwner: Record<string, unknown> = {};
+      Object.defineProperty(accessorOwner, "value", { get: retainedGetter });
+
+      assertThrows(
+        () => cache.set("function", createEntry({ retainedFunction })),
+        RangeError,
+        "exceeds maxSizeBytes",
+      );
+      assertThrows(
+        () => cache.set("accessor-function", createEntry(accessorOwner)),
+        RangeError,
+        "exceeds maxSizeBytes",
+      );
+      assertEquals(cache.get("function"), null);
+      assertEquals(cache.get("accessor-function"), null);
+      assertStrictEquals(cache.get("healthy"), healthy);
+    });
+
     it("does not evict quota victims when clock preparation rejects a write", () => {
       let clockCalls = 0;
       let throwOnCall = Number.POSITIVE_INFINITY;
@@ -649,7 +953,7 @@ describe("CacheManager", () => {
     it("clears transport-safe framed keys by their raw route pattern", () => {
       const cache = new CacheManager();
       const context = createContext("http://localhost/blog/%25draft");
-      const key = withProductionContext(() => cache.createCacheKey(context));
+      const key = withProductionContext(() => cache.createCacheKey(context, "page"));
       assertExists(key);
       assertEquals(key.includes("/blog/%2525draft"), true);
       cache.set(key, createEntry({}));
@@ -662,10 +966,10 @@ describe("CacheManager", () => {
     it("does not match serialization length or delimiter metadata", () => {
       const cache = new CacheManager();
       const alphaKey = withProductionContext(() =>
-        cache.createCacheKey(createContext("http://localhost/alpha"))
+        cache.createCacheKey(createContext("http://localhost/alpha"), "page")
       );
       const betaKey = withProductionContext(() =>
-        cache.createCacheKey(createContext("http://localhost/beta"))
+        cache.createCacheKey(createContext("http://localhost/beta"), "page")
       );
       assertExists(alphaKey);
       assertExists(betaKey);
@@ -684,15 +988,15 @@ describe("CacheManager", () => {
       const context = createContext("http://localhost/shared");
       const projectA = runWithCacheKeyContext(
         { projectId: "project-a", mode: "production", versionId: "rel-1" },
-        () => cache.createCacheKey(context),
+        () => cache.createCacheKey(context, "page"),
       );
       const projectB = runWithCacheKeyContext(
         { projectId: "project-b", mode: "production", versionId: "rel-1" },
-        () => cache.createCacheKey(context),
+        () => cache.createCacheKey(context, "page"),
       );
       const releaseA2 = runWithCacheKeyContext(
         { projectId: "project-a", mode: "production", versionId: "rel-2" },
-        () => cache.createCacheKey(context),
+        () => cache.createCacheKey(context, "page"),
       );
       assertExists(projectA);
       assertExists(projectB);
@@ -950,6 +1254,7 @@ describe("CacheManager", () => {
       const cache = new CacheManager();
       const key = cache.createCacheKey(
         createContext("http://localhost/posts/123", { id: "123" }),
+        "page",
       );
 
       assertEquals(key, null);
@@ -961,10 +1266,18 @@ describe("CacheManager", () => {
 
       const key = runWithCacheKeyContext(
         { projectId: "test", mode: "preview", versionId: "main" },
-        () => cache.createCacheKey(context),
+        () => cache.createCacheKey(context, "page"),
       );
 
       assertEquals(key, null);
+    });
+
+    it("returns null without a non-empty module identity in production", () => {
+      const cache = new CacheManager();
+      const context = createContext("https://example.test/no-module");
+
+      assertEquals(withProductionContext(() => cache.createCacheKey(context)), null);
+      assertEquals(withProductionContext(() => cache.createCacheKey(context, "")), null);
     });
 
     it("uses an explicit production scope without ambient request context", () => {
@@ -1001,7 +1314,7 @@ describe("CacheManager", () => {
       const cache = new CacheManager();
       const context = createContext("http://localhost/posts/123", { id: "123" });
 
-      const key = withProductionContext(() => cache.createCacheKey(context));
+      const key = withProductionContext(() => cache.createCacheKey(context, "page"));
 
       assertEquals(
         key,
@@ -1013,7 +1326,7 @@ describe("CacheManager", () => {
       const cache = new CacheManager();
       const context = createContext("http://localhost/about", {});
 
-      const key = withProductionContext(() => cache.createCacheKey(context));
+      const key = withProductionContext(() => cache.createCacheKey(context, "page"));
 
       assertEquals(
         key,
@@ -1026,8 +1339,8 @@ describe("CacheManager", () => {
       const context1 = createContext("http://localhost/posts/1", { id: "1" });
       const context2 = createContext("http://localhost/posts/2", { id: "2" });
 
-      const key1 = withProductionContext(() => cache.createCacheKey(context1));
-      const key2 = withProductionContext(() => cache.createCacheKey(context2));
+      const key1 = withProductionContext(() => cache.createCacheKey(context1, "page"));
+      const key2 = withProductionContext(() => cache.createCacheKey(context2, "page"));
 
       assertExists(key1);
       assertExists(key2);
@@ -1070,8 +1383,8 @@ describe("CacheManager", () => {
         category: "tech",
       });
 
-      const firstKey = withProductionContext(() => cache.createCacheKey(first));
-      const secondKey = withProductionContext(() => cache.createCacheKey(second));
+      const firstKey = withProductionContext(() => cache.createCacheKey(first, "page"));
+      const secondKey = withProductionContext(() => cache.createCacheKey(second, "page"));
 
       assertEquals(firstKey, secondKey);
     });
@@ -1081,8 +1394,8 @@ describe("CacheManager", () => {
       const context1 = createContext("http://localhost/search?b=2&a=1");
       const context2 = createContext("http://localhost/search?a=1&b=2");
 
-      const key1 = withProductionContext(() => cache.createCacheKey(context1));
-      const key2 = withProductionContext(() => cache.createCacheKey(context2));
+      const key1 = withProductionContext(() => cache.createCacheKey(context1, "page"));
+      const key2 = withProductionContext(() => cache.createCacheKey(context2, "page"));
 
       assertExists(key1);
       assertExists(key2);
@@ -1094,8 +1407,8 @@ describe("CacheManager", () => {
       const context1 = createContext("http://localhost/search?tag=a&tag=b");
       const context2 = createContext("http://localhost/search?tag=b&tag=a");
 
-      const key1 = withProductionContext(() => cache.createCacheKey(context1));
-      const key2 = withProductionContext(() => cache.createCacheKey(context2));
+      const key1 = withProductionContext(() => cache.createCacheKey(context1, "page"));
+      const key2 = withProductionContext(() => cache.createCacheKey(context2, "page"));
 
       assertExists(key1);
       assertExists(key2);
@@ -1107,8 +1420,8 @@ describe("CacheManager", () => {
       const context1 = createContext("http://localhost/search?q=alpha");
       const context2 = createContext("http://localhost/search?q=beta");
 
-      const key1 = withProductionContext(() => cache.createCacheKey(context1));
-      const key2 = withProductionContext(() => cache.createCacheKey(context2));
+      const key1 = withProductionContext(() => cache.createCacheKey(context1, "page"));
+      const key2 = withProductionContext(() => cache.createCacheKey(context2, "page"));
 
       assertExists(key1);
       assertExists(key2);
@@ -1121,9 +1434,9 @@ describe("CacheManager", () => {
       const https = createContext("https://alpha.example.test/page");
       const otherHost = createContext("http://beta.example.test/page");
 
-      const httpKey = withProductionContext(() => cache.createCacheKey(http));
-      const httpsKey = withProductionContext(() => cache.createCacheKey(https));
-      const otherHostKey = withProductionContext(() => cache.createCacheKey(otherHost));
+      const httpKey = withProductionContext(() => cache.createCacheKey(http, "page"));
+      const httpsKey = withProductionContext(() => cache.createCacheKey(https, "page"));
+      const otherHostKey = withProductionContext(() => cache.createCacheKey(otherHost, "page"));
 
       assertExists(httpKey);
       assertExists(httpsKey);
@@ -1136,7 +1449,7 @@ describe("CacheManager", () => {
       const cache = new CacheManager();
       const context = createContext("http://localhost/search?b=2&a=1&a=3");
 
-      const key = withProductionContext(() => cache.createCacheKey(context));
+      const key = withProductionContext(() => cache.createCacheKey(context, "page"));
 
       assertExists(key);
       assertEquals(key.includes("/search?b=2&a=1&a=3|2:{}"), true);
@@ -1148,7 +1461,7 @@ describe("CacheManager", () => {
         slug: ["docs", "getting-started"],
       });
 
-      const key = withProductionContext(() => cache.createCacheKey(context));
+      const key = withProductionContext(() => cache.createCacheKey(context, "page"));
 
       assertExists(key);
       assertEquals(key.includes("docs"), true);

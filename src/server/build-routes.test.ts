@@ -219,7 +219,7 @@ describe("server/build-routes", () => {
       assertEquals(routes.map((route) => route.path).sort(), ["/", "/chat", "/docs"]);
     });
 
-    it("excludes dynamic Pages Router routes from static generation", async () => {
+    it("preserves dynamic Pages Router templates for build-time expansion", async () => {
       const adapter = createMockAdapter({
         "/project/pages/index.tsx": "export default () => <div />",
         "/project/pages/jobs/[id].tsx": "export default () => <div />",
@@ -227,7 +227,20 @@ describe("server/build-routes", () => {
         "/project/pages/blog/index.tsx": "export default () => <div />",
       });
       const routes = await collectPagesRoutes(adapter, "/project");
-      assertEquals(routes.map((route) => route.path).sort(), ["/", "/blog"]);
+      assertEquals(
+        routes
+          .map((route) => ({
+            path: route.path,
+            templatePath: route.templatePath,
+          }))
+          .sort((left, right) => left.path.localeCompare(right.path)),
+        [
+          { path: "/", templatePath: undefined },
+          { path: "/blog", templatePath: undefined },
+          { path: "/docs/[...slug]", templatePath: "/docs/[...slug]" },
+          { path: "/jobs/[id]", templatePath: "/jobs/[id]" },
+        ],
+      );
     });
 
     it("converts file paths to slugs by stripping extensions", async () => {

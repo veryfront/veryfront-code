@@ -12,6 +12,7 @@ import { RenderPipeline } from "./pipeline.ts";
 import { normalizeRoutePathname } from "./path-helpers.ts";
 import { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RendererOptions, RenderOptions, RenderResult } from "./types.ts";
+import type { StaticPathsResult } from "#veryfront/data";
 
 // Re-export types for backward compatibility
 export type { PageDataResponse, RendererOptions, RenderOptions, RenderResult } from "./types.ts";
@@ -281,6 +282,23 @@ export class VeryfrontRenderer {
       {
         "renderer.slug": slug,
       },
+    );
+  }
+
+  getStaticPaths(
+    slug: string,
+    options?: Pick<RenderOptions, "projectId" | "contentSourceId" | "abortSignal">,
+  ): Promise<StaticPathsResult | null> {
+    const mergedOptions = this.mergeRenderOptions(options as RenderOptions | undefined);
+    const pipelineOptions = {
+      projectId: mergedOptions.projectId,
+      contentSourceId: mergedOptions.contentSourceId,
+      ...(mergedOptions.abortSignal ? { abortSignal: mergedOptions.abortSignal } : {}),
+    };
+    return withSpan(
+      "renderer.getStaticPaths",
+      () => this.renderPipeline.getStaticPaths(slug, pipelineOptions),
+      { "renderer.slug": slug },
     );
   }
 

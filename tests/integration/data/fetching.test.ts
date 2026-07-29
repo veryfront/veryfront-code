@@ -37,10 +37,6 @@ function makeContext(url: string): DataContext {
   };
 }
 
-function assert(condition: boolean): asserts condition {
-  if (!condition) throw new Error("Assertion failed");
-}
-
 describe("DataFetcher", () => {
   describe("DataFetcher", () => {
     let fetcher: DataFetcher;
@@ -148,6 +144,7 @@ describe("DataFetcher", () => {
       it("caches static data", async () => {
         await withProductionContext(async () => {
           let callCount = 0;
+          const options = { modulePath: "/project/pages/cache-static-data.tsx" };
 
           const pageModule: PageWithData = {
             default: () => null,
@@ -157,10 +154,10 @@ describe("DataFetcher", () => {
             },
           };
 
-          const result1 = await fetcher.fetchData(pageModule, context, "production");
+          const result1 = await fetcher.fetchData(pageModule, context, "production", options);
           assertEquals((result1.props as any)?.count, 1);
 
-          const result2 = await fetcher.fetchData(pageModule, context, "production");
+          const result2 = await fetcher.fetchData(pageModule, context, "production", options);
           assertEquals((result2.props as any)?.count, 1);
           assertEquals(callCount, 1);
         });
@@ -169,6 +166,7 @@ describe("DataFetcher", () => {
       it("respects revalidate time", async () => {
         await withProductionContext(async () => {
           let callCount = 0;
+          const options = { modulePath: "/project/pages/revalidate-time.tsx" };
 
           const pageModule: PageWithData = {
             default: () => null,
@@ -181,27 +179,29 @@ describe("DataFetcher", () => {
             },
           };
 
-          const result1 = await fetcher.fetchData(pageModule, context, "production");
+          const result1 = await fetcher.fetchData(pageModule, context, "production", options);
           assertEquals((result1.props as any)?.count, 1);
 
-          const result2 = await fetcher.fetchData(pageModule, context, "production");
+          const result2 = await fetcher.fetchData(pageModule, context, "production", options);
           assertEquals((result2.props as any)?.count, 1);
 
           await delay(150);
 
-          const result3 = await fetcher.fetchData(pageModule, context, "production");
+          const result3 = await fetcher.fetchData(pageModule, context, "production", options);
           assertEquals((result3.props as any)?.count, 1);
 
           await delay(50);
 
-          const result4 = await fetcher.fetchData(pageModule, context, "production");
+          const result4 = await fetcher.fetchData(pageModule, context, "production", options);
           assertEquals((result4.props as any)?.count, 2);
+          assertEquals(callCount, 2);
         });
       });
 
       it("handles revalidate: false (never revalidate)", async () => {
         await withProductionContext(async () => {
           let callCount = 0;
+          const options = { modulePath: "/project/pages/revalidate-never.tsx" };
 
           const pageModule: PageWithData = {
             default: () => null,
@@ -214,9 +214,9 @@ describe("DataFetcher", () => {
             },
           };
 
-          await fetcher.fetchData(pageModule, context, "production");
-          await fetcher.fetchData(pageModule, context, "production");
-          await fetcher.fetchData(pageModule, context, "production");
+          await fetcher.fetchData(pageModule, context, "production", options);
+          await fetcher.fetchData(pageModule, context, "production", options);
+          await fetcher.fetchData(pageModule, context, "production", options);
 
           assertEquals(callCount, 1);
         });
@@ -275,6 +275,7 @@ describe("DataFetcher", () => {
             assertEquals(resDev.props, { a: 1 });
 
             let staticCalls = 0;
+            const options = { modulePath: "/project/pages/dev-vs-static.tsx" };
             const pageProd: PageWithData<{ t: number }> = {
               default: () => null,
               getStaticData() {
@@ -284,16 +285,18 @@ describe("DataFetcher", () => {
             };
 
             const c = makeContext("http://x/path");
-            const first = await testFetcher.fetchData(pageProd, c, "production");
-            const second = await testFetcher.fetchData(pageProd, c, "production");
+            const first = await testFetcher.fetchData(pageProd, c, "production", options);
+            const second = await testFetcher.fetchData(pageProd, c, "production", options);
             assertEquals((second.props as any)?.t === (first.props as any)?.t, true);
+            assertEquals(staticCalls, 1);
 
             await delay(5);
 
-            const third = await testFetcher.fetchData(pageProd, c, "production");
+            const third = await testFetcher.fetchData(pageProd, c, "production", options);
             assertEquals((third.props as any)?.t === (first.props as any)?.t, true);
 
-            void staticCalls;
+            await delay(5);
+            assertEquals(staticCalls, 2);
           });
         },
       );
@@ -343,24 +346,23 @@ describe("DataFetcher", () => {
     describe("Cache management", () => {
       it("clears all cache", async () => {
         await withProductionContext(async () => {
+          let callCount = 0;
+          const options = { modulePath: "/project/pages/clear-all-cache.tsx" };
           const pageModule: PageWithData = {
             default: () => null,
-            getStaticData: () => ({
-              props: { timestamp: Date.now() },
-            }),
+            getStaticData: () => ({ props: { count: ++callCount } }),
           };
 
-          const result1 = await fetcher.fetchData(pageModule, context, "production");
-          const timestamp1 = (result1.props as any)?.timestamp;
+          const result1 = await fetcher.fetchData(pageModule, context, "production", options);
+          const cached = await fetcher.fetchData(pageModule, context, "production", options);
+          assertEquals((result1.props as any)?.count, 1);
+          assertEquals((cached.props as any)?.count, 1);
 
           fetcher.clearCache();
 
-          await delay(10);
-
-          const result2 = await fetcher.fetchData(pageModule, context, "production");
-          const timestamp2 = (result2.props as any)?.timestamp;
-
-          assert(timestamp2 > timestamp1);
+          const result2 = await fetcher.fetchData(pageModule, context, "production", options);
+          assertEquals((result2.props as any)?.count, 2);
+          assertEquals(callCount, 2);
         });
       });
 
@@ -370,6 +372,7 @@ describe("DataFetcher", () => {
           const context2 = { ...context, url: new URL("http://localhost/page2") };
 
           let callCount = 0;
+          const options = { modulePath: "/project/pages/clear-cache-pattern.tsx" };
           const pageModule: PageWithData = {
             default: () => null,
             getStaticData: () => {
@@ -378,16 +381,17 @@ describe("DataFetcher", () => {
             },
           };
 
-          await fetcher.fetchData(pageModule, context1, "production");
-          await fetcher.fetchData(pageModule, context2, "production");
+          await fetcher.fetchData(pageModule, context1, "production", options);
+          await fetcher.fetchData(pageModule, context2, "production", options);
 
           fetcher.clearCache("page1");
 
-          const result1 = await fetcher.fetchData(pageModule, context1, "production");
-          const result2 = await fetcher.fetchData(pageModule, context2, "production");
+          const result1 = await fetcher.fetchData(pageModule, context1, "production", options);
+          const result2 = await fetcher.fetchData(pageModule, context2, "production", options);
 
           assertEquals((result1.props as any)?.count, 3);
           assertEquals((result2.props as any)?.count, 2);
+          assertEquals(callCount, 3);
         });
       });
     });

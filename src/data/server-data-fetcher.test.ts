@@ -7,7 +7,7 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { ServerDataFetcher } from "./server-data-fetcher.ts";
+import { ServerDataFetcher, type ServerDataFetchOptions } from "./server-data-fetcher.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { notFound, redirect } from "./helpers.ts";
 import { __resetPoolForTests, getWorkerPool } from "#veryfront/security/sandbox/worker-pool.ts";
@@ -188,6 +188,148 @@ describe("ServerDataFetcher", () => {
         CircuitBreakerOpen,
       );
       assertEquals(calls, 5);
+    });
+
+    it("isolates breaker state by immutable source while sharing it across source routes", async () => {
+      const fetcher = new ServerDataFetcher();
+      const projectId = `server-source-breaker-${crypto.randomUUID()}`;
+      const workerScopeId = `server-source-scope-${crypto.randomUUID()}`;
+      let failingCalls = 0;
+      const failing: PageWithData = {
+        default: () => null,
+        getServerData: () => {
+          failingCalls++;
+          throw new Error("source A dependency failure");
+        },
+      };
+      const sourceA = {
+        projectId,
+        cacheScope: {
+          projectId,
+          mode: "preview" as const,
+          versionId: "shared-cache-scope",
+        },
+        workerScopeId,
+        workerGenerationId: "shared-release-label",
+      };
+
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await assertRejects(
+          () =>
+            fetcher.fetch(
+              failing,
+              createContext({
+                url: new URL(`https://example.test/source-a/${attempt}`),
+              }),
+              sourceA,
+            ),
+          Error,
+          "source A dependency failure",
+        );
+      }
+      await assertRejects(
+        () =>
+          fetcher.fetch(
+            failing,
+            createContext({
+              url: new URL("https://example.test/source-a/another-route"),
+            }),
+            sourceA,
+          ),
+        CircuitBreakerOpen,
+      );
+
+      const healthy = await fetcher.fetch(
+        {
+          default: () => null,
+          getServerData: () => ({ props: { source: "b" } }),
+        },
+        createContext({
+          url: new URL("https://example.test/source-b/healthy"),
+        }),
+        {
+          projectId,
+          cacheScope: {
+            projectId,
+            mode: "preview",
+            versionId: "shared-cache-scope",
+          },
+          workerScopeId: `server-source-b-scope-${crypto.randomUUID()}`,
+          workerGenerationId: "shared-release-label",
+        },
+      );
+
+      assertEquals(healthy.props, { source: "b" });
+      assertEquals(failingCalls, 5);
+    });
+
+    it("isolates breaker state by cache scope when no worker source is available", async () => {
+      const fetcher = new ServerDataFetcher();
+      const projectId = `server-scope-breaker-${crypto.randomUUID()}`;
+      let failingCalls = 0;
+      const failing: PageWithData = {
+        default: () => null,
+        getServerData: () => {
+          failingCalls++;
+          throw new Error("preview cache scope failed");
+        },
+      };
+      const previewScope = {
+        projectId,
+        mode: "preview" as const,
+        versionId: "branch-a",
+      };
+      const sourceA = {
+        projectId,
+        cacheScope: previewScope,
+      } satisfies ServerDataFetchOptions;
+
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await assertRejects(
+          () =>
+            fetcher.fetch(
+              failing,
+              createContext({
+                url: new URL(`https://example.test/preview-a/${attempt}`),
+              }),
+              sourceA,
+            ),
+          Error,
+          "preview cache scope failed",
+        );
+      }
+      await assertRejects(
+        () =>
+          fetcher.fetch(
+            failing,
+            createContext({
+              url: new URL("https://example.test/preview-a/another-route"),
+            }),
+            sourceA,
+          ),
+        CircuitBreakerOpen,
+      );
+
+      const healthy = await fetcher.fetch(
+        {
+          default: () => null,
+          getServerData: () => ({ props: { source: "production" } }),
+        },
+        createContext({
+          url: new URL("https://example.test/production/healthy"),
+        }),
+        {
+          projectId,
+          cacheScope: {
+            projectId,
+            mode: "production",
+            versionId: "release-b",
+          },
+        },
+      );
+
+      assertEquals(healthy.props, { source: "production" });
+      assertEquals(failingCalls, 5);
     });
 
     it("isolates ambient server breaker identity on a shared hostname", async () => {
@@ -1607,6 +1749,193 @@ describe("ServerDataFetcher", () => {
           Error,
           "intentional test error from isolated getServerData",
         );
+      });
+
+      it("rejects conflicting outcomes inside the worker boundary", async () => {
+        const { modulePath, projectDir: dir } = await writeIsolatedPage(
+          `export function getServerData() {
+             return {
+               props: { mustNotEscape: true },
+               redirect: { destination: "/other" },
+             };
+           }
+           export default function Page() { return null; }`,
+        );
+
+        const error = await assertRejects(() => isolatedFetch(modulePath, dir));
+
+        assertInstanceOf(error, Error);
+        assertEquals(error.message.includes("Invalid isolated data result"), true);
+      });
+
+      it("preserves registered worker error identity and diagnostics", async () => {
+        const { modulePath, projectDir: dir } = await writeIsolatedPage(
+          `export function getServerData() {
+             return { props: { shouldNotRun: true } };
+           }
+           export default function Page() { return null; }`,
+        );
+        const pool = getWorkerPool();
+        const originalExecute = pool.execute;
+        const fetcher = new ServerDataFetcher();
+        const projectId = `worker-registered-error-${crypto.randomUUID()}`;
+        const pageModule: PageWithData = {
+          default: () => null,
+          getServerData: () => ({ props: { shouldNotRun: true } }),
+        };
+
+        pool.execute = async () => ({
+          type: "error",
+          id: "worker-registered-error",
+          error: {
+            message: "dependency overloaded",
+            name: "VeryfrontError",
+            stack:
+              "VeryfrontError: dependency overloaded\n    at postgres://admin:secret@db.internal/query:1:1",
+            problem: {
+              slug: SERVICE_OVERLOADED.slug,
+              category: SERVICE_OVERLOADED.category,
+              status: 429,
+              title: SERVICE_OVERLOADED.title,
+              suggestion: SERVICE_OVERLOADED.suggestion,
+              detail: "upstream capacity exhausted",
+              cause: "queue is full",
+              instance: "/requests/data-1",
+            },
+          },
+        });
+
+        try {
+          const error = await assertRejects(() =>
+            runWithTestSourcePolicy(() =>
+              fetcher.fetch(pageModule, createContext(), {
+                modulePath,
+                projectDir: dir,
+                projectId,
+              })
+            )
+          );
+
+          assertInstanceOf(error, VeryfrontError);
+          assertEquals(error.slug, SERVICE_OVERLOADED.slug);
+          assertEquals(error.status, 429);
+          assertEquals(error.detail, "upstream capacity exhausted");
+          assertEquals(error.cause, "queue is full");
+          assertEquals(error.instance, "/requests/data-1");
+          assertEquals(
+            error.stack?.includes("postgres://admin:[REDACTED]@db.internal/query"),
+            true,
+          );
+          assertEquals(error.stack?.includes("secret"), false);
+        } finally {
+          pool.execute = originalExecute;
+        }
+      });
+
+      it("counts malformed worker responses before breaker success", async () => {
+        const { modulePath, projectDir: dir } = await writeIsolatedPage(
+          `export function getServerData() {
+             return { props: { shouldNotRun: true } };
+           }
+           export default function Page() { return null; }`,
+        );
+        const pool = getWorkerPool();
+        const originalExecute = pool.execute;
+        const fetcher = new ServerDataFetcher();
+        const projectId = `worker-invalid-result-${crypto.randomUUID()}`;
+        const pageModule: PageWithData = {
+          default: () => null,
+          getServerData: () => ({ props: { shouldNotRun: true } }),
+        };
+        let workerCalls = 0;
+        const fetch = () =>
+          runWithTestSourcePolicy(() =>
+            fetcher.fetch(pageModule, createContext(), {
+              modulePath,
+              projectDir: dir,
+              projectId,
+            })
+          );
+
+        pool.execute = async () => {
+          workerCalls++;
+          return {
+            type: "data-result",
+            id: "worker-invalid-result",
+            result: {
+              props: { invalid: true },
+              notFound: true,
+            },
+          };
+        };
+
+        try {
+          for (let attempt = 0; attempt < 5; attempt++) {
+            await assertRejects(fetch, TypeError, "valid data result object");
+          }
+          await assertRejects(fetch, CircuitBreakerOpen);
+          assertEquals(workerCalls, 5);
+        } finally {
+          pool.execute = originalExecute;
+        }
+      });
+
+      it("counts a serialized worker service overload as a dependency failure", async () => {
+        const { modulePath, projectDir: dir } = await writeIsolatedPage(
+          `export function getServerData() {
+             return { props: { shouldNotRun: true } };
+           }
+           export default function Page() { return null; }`,
+        );
+        const pool = getWorkerPool();
+        const originalExecute = pool.execute;
+        const fetcher = new ServerDataFetcher();
+        const projectId = `worker-project-overload-${crypto.randomUUID()}`;
+        const pageModule: PageWithData = {
+          default: () => null,
+          getServerData: () => ({ props: { shouldNotRun: true } }),
+        };
+        let workerCalls = 0;
+        const fetch = () =>
+          runWithTestSourcePolicy(() =>
+            fetcher.fetch(pageModule, createContext(), {
+              modulePath,
+              projectDir: dir,
+              projectId,
+            })
+          );
+
+        pool.execute = async () => {
+          workerCalls++;
+          return {
+            type: "error",
+            id: "worker-project-overload",
+            error: {
+              message: "project dependency overloaded",
+              name: "VeryfrontError",
+              problem: {
+                slug: SERVICE_OVERLOADED.slug,
+                category: SERVICE_OVERLOADED.category,
+                status: SERVICE_OVERLOADED.status,
+                title: SERVICE_OVERLOADED.title,
+                suggestion: SERVICE_OVERLOADED.suggestion,
+                detail: "Project dependency reported overload",
+              },
+            },
+          };
+        };
+
+        try {
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const error = await assertRejects(fetch);
+            assertInstanceOf(error, VeryfrontError);
+            assertEquals(error.slug, SERVICE_OVERLOADED.slug);
+          }
+          await assertRejects(fetch, CircuitBreakerOpen);
+          assertEquals(workerCalls, 5);
+        } finally {
+          pool.execute = originalExecute;
+        }
       });
 
       it("does not reuse an unversioned dependency graph across requests", async () => {

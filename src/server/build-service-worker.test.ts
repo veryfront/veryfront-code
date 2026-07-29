@@ -204,7 +204,7 @@ describe("server/build-service-worker", () => {
         const output = generateServiceWorker(
           createManifest({
             routes: [
-              { path: "/", slug: "index", chunks: ["page-index.js"] },
+              { path: "/", template: "/", slug: "index", chunks: ["page-index.js"] },
             ],
           }),
         );
@@ -214,7 +214,7 @@ describe("server/build-service-worker", () => {
       it("should skip routes without chunks array", () => {
         const manifest = createManifest({
           routes: [
-            { path: "/", slug: "index", chunks: [] },
+            { path: "/", template: "/", slug: "index", chunks: [] },
           ],
         });
         // deno-lint-ignore no-explicit-any
@@ -329,8 +329,13 @@ describe("server/build-service-worker", () => {
               shared: ["shared-runtime.js"],
             },
             routes: [
-              { path: "/", slug: "index", chunks: ["route-index.js"] },
-              { path: "/about", slug: "about", chunks: ["route-about.js"] },
+              { path: "/", template: "/", slug: "index", chunks: ["route-index.js"] },
+              {
+                path: "/about",
+                template: "/about",
+                slug: "about",
+                chunks: ["route-about.js"],
+              },
             ],
           }),
         );

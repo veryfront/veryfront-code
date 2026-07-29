@@ -19,6 +19,7 @@ import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
 import { discoverStaticAssets } from "../asset-generation.ts";
 import { assertSafeBuildOutputDirectory, validateBuildOutputPlan } from "./output-plan.ts";
 import { type BuildPublication, createBuildPublication } from "./build-publication.ts";
+import { expandPagesStaticPaths } from "../static-path-expansion.ts";
 
 export function buildProduction(options: BuildOptions): Promise<BuildStats> {
   return withSpan(
@@ -95,7 +96,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
           {},
         );
 
-        const routes = await withSpan(
+        const collectedRoutes = await withSpan(
           "build.collectRoutes",
           () =>
             collectAllRoutes(
@@ -108,6 +109,14 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
             ),
           {},
         );
+        const routes: CollectedRoutes = {
+          ...collectedRoutes,
+          pages: await withSpan(
+            "build.expandStaticPaths",
+            () => expandPagesStaticPaths(collectedRoutes.pages, context.renderer),
+            {},
+          ),
+        };
 
         const publicEntries = await withSpan(
           "build.discoverPublicAssets",

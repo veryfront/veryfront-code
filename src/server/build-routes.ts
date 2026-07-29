@@ -63,10 +63,14 @@ export async function collectPagesRoutes(
 
     const slug = convertToSlug(relativePath);
     const pathForRoute = `/${slug === "index" ? "" : slug}`;
-    if (isDynamicRoute(pathForRoute)) continue;
 
     if (!shouldIncludeRoute(pathForRoute, include, exclude)) continue;
-    routes.push({ path: pathForRoute, file: file.path, slug });
+    routes.push({
+      path: pathForRoute,
+      file: file.path,
+      slug,
+      ...(isDynamicRoute(pathForRoute) ? { templatePath: pathForRoute } : {}),
+    });
   }
 
   return routes;

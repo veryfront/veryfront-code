@@ -23,7 +23,7 @@ import { snapshotWorkerGenerationIdentity } from "#veryfront/security/sandbox/wo
  * when worker isolation is enabled.
  */
 export interface FetchDataOptions {
-  /** Absolute path to the module containing getServerData */
+  /** Absolute data-module path. Production static caching is skipped when absent or empty. */
   modulePath?: string;
   /** Project directory for worker scoping */
   projectDir?: string;
@@ -176,6 +176,7 @@ export class DataFetcher {
       modulePath,
       projectDir,
       projectId: trustedProjectId,
+      cacheScope: authoritativeScope,
       signal: callerSignal,
       workerScopeId: workerGeneration?.scopeId,
       workerGenerationId: workerGeneration?.generationId,
@@ -206,6 +207,8 @@ export class DataFetcher {
               modulePath,
               projectId: trustedProjectId,
               cacheScope: authoritativeScope,
+              workerScopeId: workerGeneration?.scopeId,
+              workerGenerationId: workerGeneration?.generationId,
             },
           ) as Promise<DataResult<TProps>>;
           return raceWithCallerAbort(pending, callerSignal);

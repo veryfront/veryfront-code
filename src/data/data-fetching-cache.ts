@@ -18,6 +18,343 @@ import { requireDataProjectId } from "./project-identity.ts";
 
 const DATA_CACHE_NAMESPACE = "veryfront:data:v3";
 const ObjectFreeze = Object.freeze;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ReflectApply = Reflect.apply;
+const ReflectOwnKeys = Reflect.ownKeys;
+const ArrayIsArray = Array.isArray;
+const ArrayBufferIsView = ArrayBuffer.isView;
+
+const MAX_DATA_CACHE_ESTIMATION_DEPTH = 10;
+const MAX_DATA_CACHE_ESTIMATION_NODES = 100_000;
+const MAX_DATA_CACHE_BIGINT_BITS = 100_000n;
+const MAX_DATA_CACHE_BIGINT_MAGNITUDE = 1n << MAX_DATA_CACHE_BIGINT_BITS;
+
+const OBJECT_OVERHEAD_BYTES = 32;
+const ARRAY_OVERHEAD_BYTES = 24;
+const MAP_OVERHEAD_BYTES = 48;
+const SET_OVERHEAD_BYTES = 40;
+const STRING_OVERHEAD_BYTES = 16;
+const BIGINT_OVERHEAD_BYTES = 16;
+const SYMBOL_OVERHEAD_BYTES = 16;
+const FUNCTION_REFERENCE_BYTES = 64;
+
+const BigIntToString = BigInt.prototype.toString;
+const SymbolDescriptionGetter = ObjectGetOwnPropertyDescriptor(
+  Symbol.prototype,
+  "description",
+)?.get;
+const ArrayBufferByteLengthGetter = ObjectGetOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  "byteLength",
+)?.get;
+const SharedArrayBufferByteLengthGetter = typeof SharedArrayBuffer === "function"
+  ? ObjectGetOwnPropertyDescriptor(SharedArrayBuffer.prototype, "byteLength")?.get
+  : undefined;
+const TypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+const TypedArrayBufferGetter = ObjectGetOwnPropertyDescriptor(
+  TypedArrayPrototype,
+  "buffer",
+)?.get;
+const TypedArrayLengthGetter = ObjectGetOwnPropertyDescriptor(
+  TypedArrayPrototype,
+  "length",
+)?.get;
+const DataViewBufferGetter = ObjectGetOwnPropertyDescriptor(
+  DataView.prototype,
+  "buffer",
+)?.get;
+const BlobSizeGetter = typeof Blob === "function"
+  ? ObjectGetOwnPropertyDescriptor(Blob.prototype, "size")?.get
+  : undefined;
+const MapSizeGetter = ObjectGetOwnPropertyDescriptor(Map.prototype, "size")?.get;
+const MapEntries = Map.prototype.entries;
+const SetSizeGetter = ObjectGetOwnPropertyDescriptor(Set.prototype, "size")?.get;
+const SetValues = Set.prototype.values;
+
+interface DataCacheSizeEstimationState {
+  readonly seen: WeakSet<object>;
+  visited: number;
+}
+
+function throwUnsafeDataCacheEstimate(): never {
+  throw new RangeError("Data cache value is too complex to estimate safely");
+}
+
+function retainDataCacheEstimationWork(
+  state: DataCacheSizeEstimationState,
+  amount = 1,
+): void {
+  if (
+    !Number.isSafeInteger(amount) || amount < 0 ||
+    amount > MAX_DATA_CACHE_ESTIMATION_NODES - state.visited
+  ) {
+    throwUnsafeDataCacheEstimate();
+  }
+  state.visited += amount;
+}
+
+function estimateSymbolSize(value: symbol): number {
+  if (!SymbolDescriptionGetter) return SYMBOL_OVERHEAD_BYTES;
+  const description = ReflectApply(SymbolDescriptionGetter, value, []) as
+    | string
+    | undefined;
+  return SYMBOL_OVERHEAD_BYTES + (description?.length ?? 0) * 2;
+}
+
+function estimateBigIntSize(value: bigint): number {
+  if (
+    value <= -MAX_DATA_CACHE_BIGINT_MAGNITUDE ||
+    value >= MAX_DATA_CACHE_BIGINT_MAGNITUDE
+  ) {
+    throwUnsafeDataCacheEstimate();
+  }
+
+  // Hex conversion is bounded by MAX_DATA_CACHE_BIGINT_BITS and uses a
+  // captured intrinsic, so no application conversion hook can run.
+  const hexadecimal = ReflectApply(BigIntToString, value, [16]) as string;
+  const digits = hexadecimal[0] === "-" ? hexadecimal.length - 1 : hexadecimal.length;
+  return BIGINT_OVERHEAD_BYTES + Math.ceil(digits / 2);
+}
+
+function propertyIdentitySize(key: PropertyKey): number {
+  if (typeof key === "symbol") return estimateSymbolSize(key);
+  const text = typeof key === "string" ? key : key.toString();
+  return text.length * 2 + 8;
+}
+
+function tryApplyNumberGetter(
+  getter: ((this: unknown) => unknown) | undefined,
+  value: object,
+): number | undefined {
+  if (!getter) return undefined;
+  try {
+    const result = ReflectApply(getter, value, []);
+    return typeof result === "number" && Number.isSafeInteger(result) && result >= 0
+      ? result
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+interface ArrayBufferViewBacking {
+  readonly buffer: ArrayBufferLike;
+  readonly typedArrayLength?: number;
+}
+
+function readArrayBufferViewBacking(value: ArrayBufferView): ArrayBufferViewBacking {
+  let buffer: ArrayBufferLike | undefined;
+  let typedArrayLength: number | undefined;
+  if (TypedArrayBufferGetter) {
+    try {
+      buffer = ReflectApply(TypedArrayBufferGetter, value, []) as ArrayBufferLike;
+    } catch {
+      // A DataView does not carry the TypedArray internal slot.
+    }
+  }
+  if (buffer !== undefined) {
+    typedArrayLength = tryApplyNumberGetter(TypedArrayLengthGetter, value);
+    if (typedArrayLength === undefined) throwUnsafeDataCacheEstimate();
+  }
+  if (buffer === undefined && DataViewBufferGetter) {
+    try {
+      buffer = ReflectApply(DataViewBufferGetter, value, []) as ArrayBufferLike;
+    } catch {
+      // ArrayBuffer.isView() promised one of these two native view brands.
+    }
+  }
+  if (buffer === undefined) throwUnsafeDataCacheEstimate();
+  return typedArrayLength === undefined ? { buffer } : { buffer, typedArrayLength };
+}
+
+function isTypedArrayIndex(key: PropertyKey, length: number): boolean {
+  if (typeof key !== "string") return false;
+  if (key === "0") return length > 0;
+  const first = key.charCodeAt(0);
+  if (first < 49 || first > 57) return false;
+  const index = Number(key);
+  return Number.isSafeInteger(index) && index < length && String(index) === key;
+}
+
+function estimateOwnProperties(
+  value: object,
+  depth: number,
+  state: DataCacheSizeEstimationState,
+  ignoredKeys: ReadonlySet<PropertyKey> = new Set(),
+  ignoreKey?: (key: PropertyKey) => boolean,
+): number {
+  const keys = ReflectOwnKeys(value);
+  retainDataCacheEstimationWork(state, keys.length);
+  let size = 0;
+  for (const key of keys) {
+    if (ignoredKeys.has(key) || ignoreKey?.(key)) continue;
+    const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
+    if (!descriptor) continue;
+    size += propertyIdentitySize(key);
+    if ("value" in descriptor) {
+      size += estimateDataCacheValueSize(descriptor.value, depth + 1, state);
+    } else {
+      // Accessors are retained by reference. Never execute application code
+      // merely because its containing result is considered for caching.
+      if (descriptor.get) {
+        size += estimateDataCacheValueSize(descriptor.get, depth + 1, state);
+      }
+      if (descriptor.set) {
+        size += estimateDataCacheValueSize(descriptor.set, depth + 1, state);
+      }
+    }
+  }
+  return size;
+}
+
+function estimateRecognizedObjectSize(
+  value: object,
+  intrinsicSize: number,
+  depth: number,
+  state: DataCacheSizeEstimationState,
+  ignoreKey?: (key: PropertyKey) => boolean,
+): number {
+  return intrinsicSize + estimateOwnProperties(
+    value,
+    depth,
+    state,
+    undefined,
+    ignoreKey,
+  );
+}
+
+function tryReadCollection<T>(
+  value: object,
+  sizeGetter: ((this: unknown) => unknown) | undefined,
+  values: (this: unknown) => IterableIterator<T>,
+): { size: number; values: IterableIterator<T> } | undefined {
+  const size = tryApplyNumberGetter(sizeGetter, value);
+  if (size === undefined) return undefined;
+  try {
+    return {
+      size,
+      values: ReflectApply(values, value, []) as IterableIterator<T>,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function estimateDataCacheValueSize(
+  value: unknown,
+  depth: number,
+  state: DataCacheSizeEstimationState,
+): number {
+  retainDataCacheEstimationWork(state);
+  if (value == null) return 0;
+
+  const type = typeof value;
+  if (type === "string") return (value as string).length * 2 + STRING_OVERHEAD_BYTES;
+  if (type === "number") return 8;
+  if (type === "bigint") return estimateBigIntSize(value as bigint);
+  if (type === "boolean") return 4;
+  if (type === "symbol") return estimateSymbolSize(value as symbol);
+  if (type !== "object" && type !== "function") return FUNCTION_REFERENCE_BYTES;
+
+  const retainedObject = value as object;
+  if (state.seen.has(retainedObject)) return 0;
+  if (depth >= MAX_DATA_CACHE_ESTIMATION_DEPTH) throwUnsafeDataCacheEstimate();
+  state.seen.add(retainedObject);
+
+  if (type === "function") {
+    return FUNCTION_REFERENCE_BYTES + estimateOwnProperties(
+      retainedObject,
+      depth,
+      state,
+    );
+  }
+
+  if (ArrayBufferIsView(value)) {
+    const backing = readArrayBufferViewBacking(value);
+    if (
+      backing.typedArrayLength !== undefined &&
+      backing.typedArrayLength > MAX_DATA_CACHE_ESTIMATION_NODES - state.visited
+    ) {
+      throwUnsafeDataCacheEstimate();
+    }
+    const backingSize = estimateDataCacheValueSize(
+      backing.buffer,
+      depth + 1,
+      state,
+    );
+    const ignoreKey = backing.typedArrayLength === undefined
+      ? undefined
+      : (key: PropertyKey): boolean => isTypedArrayIndex(key, backing.typedArrayLength!);
+    return backingSize + estimateOwnProperties(
+      value,
+      depth,
+      state,
+      undefined,
+      ignoreKey,
+    );
+  }
+
+  const arrayBufferBytes = tryApplyNumberGetter(ArrayBufferByteLengthGetter, value);
+  if (arrayBufferBytes !== undefined) {
+    return estimateRecognizedObjectSize(value, arrayBufferBytes, depth, state);
+  }
+  const sharedBufferBytes = tryApplyNumberGetter(
+    SharedArrayBufferByteLengthGetter,
+    value,
+  );
+  if (sharedBufferBytes !== undefined) {
+    return estimateRecognizedObjectSize(value, sharedBufferBytes, depth, state);
+  }
+  const blobBytes = tryApplyNumberGetter(BlobSizeGetter, value);
+  if (blobBytes !== undefined) {
+    return estimateRecognizedObjectSize(value, blobBytes, depth, state);
+  }
+
+  if (ArrayIsArray(value)) {
+    const lengthDescriptor = ObjectGetOwnPropertyDescriptor(value, "length");
+    const length = lengthDescriptor && "value" in lengthDescriptor
+      ? lengthDescriptor.value
+      : undefined;
+    if (!Number.isSafeInteger(length) || length < 0) throwUnsafeDataCacheEstimate();
+    // Reject before enumerating a dense attacker-controlled array whose own
+    // keys alone would exhaust the traversal budget.
+    if (length > MAX_DATA_CACHE_ESTIMATION_NODES - state.visited) {
+      throwUnsafeDataCacheEstimate();
+    }
+    return ARRAY_OVERHEAD_BYTES + length * 8 +
+      estimateOwnProperties(value, depth, state, new Set<PropertyKey>(["length"]));
+  }
+
+  const map = tryReadCollection<[unknown, unknown]>(value, MapSizeGetter, MapEntries);
+  if (map) {
+    retainDataCacheEstimationWork(state, map.size);
+    let size = MAP_OVERHEAD_BYTES + map.size * 16;
+    for (const [key, child] of map.values) {
+      size += estimateDataCacheValueSize(key, depth + 1, state);
+      size += estimateDataCacheValueSize(child, depth + 1, state);
+    }
+    return size + estimateOwnProperties(value, depth, state);
+  }
+
+  const set = tryReadCollection<unknown>(value, SetSizeGetter, SetValues);
+  if (set) {
+    retainDataCacheEstimationWork(state, set.size);
+    let size = SET_OVERHEAD_BYTES + set.size * 8;
+    for (const child of set.values) {
+      size += estimateDataCacheValueSize(child, depth + 1, state);
+    }
+    return size + estimateOwnProperties(value, depth, state);
+  }
+
+  return OBJECT_OVERHEAD_BYTES + estimateOwnProperties(value, depth, state);
+}
+
+function estimateDataCacheEntrySize(entry: CacheEntry): number {
+  return estimateDataCacheValueSize(entry, 0, {
+    seen: new WeakSet(),
+    visited: 0,
+  });
+}
 
 export interface DataCacheScope {
   projectId: string;
@@ -85,7 +422,15 @@ interface ProjectCacheMetadata {
   readonly sizeBytes: number;
 }
 
-/** @internal Injectable limits are used by focused quota tests. */
+/**
+ * The default byte quotas use a bounded insertion-time estimate of observable
+ * own data and recognized backing storage. Entries remain reference-preserving,
+ * so closure, prototype, Proxy, and engine-internal retention are not a hard
+ * memory-security boundary. A restricted cacheability/snapshot contract would
+ * be required for that stronger guarantee.
+ *
+ * @internal Injectable limits are used by focused quota tests.
+ */
 export interface CacheManagerOptions {
   maxEntries?: number;
   maxSizeBytes?: number;
@@ -259,6 +604,7 @@ function requireProjectQuota(
 
 export class CacheManager {
   private readonly cache: LRUCache<string, CacheEntry>;
+  private readonly maxSizeBytes: number;
   private readonly maxEntriesPerProject: number;
   private readonly maxSizeBytesPerProject: number;
   private readonly projectUsage = new Map<string, ProjectCacheUsage>();
@@ -275,6 +621,7 @@ export class CacheManager {
       options.maxSizeBytes ?? DATA_FETCHING_MAX_SIZE_BYTES,
       "maxSizeBytes",
     );
+    this.maxSizeBytes = maxSizeBytes;
     this.maxEntriesPerProject = requireProjectQuota(
       options.maxEntriesPerProject ??
         Math.min(DATA_FETCHING_MAX_ENTRIES_PER_PROJECT, maxEntries),
@@ -312,6 +659,11 @@ export class CacheManager {
     }
     const sizeBytes = this.estimateRetainedSize(key, entry);
     if (!parsed) {
+      if (sizeBytes > this.maxSizeBytes) {
+        throw new RangeError(
+          `Cache entry size ${sizeBytes} exceeds maxSizeBytes ${this.maxSizeBytes}`,
+        );
+      }
       this.cache.cleanup();
       this.cache.set(key, entry, sizeBytes);
       return;
@@ -373,7 +725,7 @@ export class CacheManager {
       );
     }
 
-    const valueSizeBytes = this.cache.estimateSize(entry);
+    const valueSizeBytes = estimateDataCacheEntrySize(entry);
     const keySizeBytes = key.length * 2 + 16;
     return requireNonNegativeSafeInteger(
       valueSizeBytes + keySizeBytes,
@@ -533,17 +885,18 @@ export class CacheManager {
     return true;
   }
 
+  /** Return a scoped key, or null when caching lacks scope or module identity. */
   createCacheKey(
     context: DataContext,
     modulePath?: string,
     scope?: DataCacheScope | null,
   ): string | null {
     const snapshot = scope === undefined || scope === null ? scope : snapshotDataCacheScope(scope);
+    if (modulePath === undefined || modulePath.length === 0) return null;
     const params = serializeParams(context.params);
-    const moduleKey = modulePath === undefined || modulePath.length === 0 ? "page" : modulePath;
     const url = context.url.href;
     const resourceKey = [
-      moduleKey,
+      modulePath,
       url,
       params,
     ].map(frameDataCacheKeySegment).join("|");

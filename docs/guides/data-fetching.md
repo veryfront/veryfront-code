@@ -78,15 +78,14 @@ that cannot prove an immutable source generation should likewise omit both
 internal generation fields. Never supply only one field or invent a stable
 generation for mutable source.
 
-## Static data
+## Generate dynamic Pages routes at build time
 
-`getStaticData` supplies cacheable data for production requests and static
-builds. Use it for content that does not depend on request headers, cookies, or
-request bodies. It can vary by the complete URL, including query parameters
-read through `url.searchParams`:
+Set `router: "pages"` in `veryfront.config.ts`, then add `getStaticPaths` and
+`getStaticData` to the dynamic page. Return every parameter set that the build
+must publish and use `fallback: false`:
 
 ```tsx
-// app/blog/[slug]/page.tsx
+// pages/blog/[slug].tsx
 import type { DataContext } from "veryfront";
 
 const posts = [
@@ -94,18 +93,18 @@ const posts = [
   { slug: "workflow", title: "Workflow notes" },
 ];
 
-export async function getStaticData(
-  { params }: Pick<DataContext, "params" | "url">,
-) {
-  const post = posts.find((item) => item.slug === String(params.slug));
-  return { props: { post } };
-}
-
-export async function getStaticPaths() {
+export function getStaticPaths() {
   return {
-    paths: posts.map((p) => ({ params: { slug: p.slug } })),
+    paths: posts.map((post) => ({ params: { slug: post.slug } })),
     fallback: false,
   };
+}
+
+export function getStaticData(
+  { params }: Pick<DataContext, "params" | "url">,
+) {
+  const post = posts.find((item) => item.slug === params.slug);
+  return { props: { post } };
 }
 
 export default function BlogPost({ post }: { post: { title: string } }) {
@@ -113,7 +112,20 @@ export default function BlogPost({ post }: { post: { title: string } }) {
 }
 ```
 
-For dynamic routes, pair `getStaticData` with `getStaticPaths` to tell the framework which pages to generate.
+Run `veryfront build`, then inspect `dist/blog/hello/index.html` and
+`dist/blog/workflow/index.html`. Each file should contain its post title.
+Production static builds reject `fallback: true` and `fallback: "blocking"`;
+publish a bounded, complete path list instead.
+
+This production build workflow currently supports Pages Router modules only.
+App Router `generateStaticParams` is not implemented.
+
+## Static data
+
+`getStaticData` supplies cacheable data for production requests and static
+builds. Use it for content that does not depend on request headers, cookies, or
+request bodies. It can vary by the complete URL, including query parameters
+read through `url.searchParams`.
 
 `getStaticData` receives `params` and `url`. It does not receive `request`,
 request headers, cookies, a body, or a separate `query` property. Read query

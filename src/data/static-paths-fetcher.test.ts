@@ -540,13 +540,17 @@ describe("StaticPathsFetcher", () => {
           )
         );
 
-        gate.resolve({
-          get paths(): StaticPathsResult["paths"] {
-            validationSnapshot = admission.snapshot("timed-out-project");
-            return [];
-          },
-          fallback: false,
-        });
+        const validationResult = { paths: [], fallback: false } satisfies StaticPathsResult;
+        gate.resolve(
+          new Proxy(validationResult, {
+            getOwnPropertyDescriptor(target, key) {
+              if (key === "paths") {
+                validationSnapshot = admission.snapshot("timed-out-project");
+              }
+              return Reflect.getOwnPropertyDescriptor(target, key);
+            },
+          }),
+        );
         await time.tickAsync(0);
         assertEquals(validationSnapshot, {
           active: 1,
@@ -735,7 +739,85 @@ describe("StaticPathsFetcher", () => {
       assertEquals(result?.paths[99_999]?.params.id, "99999");
     });
 
-    it("snapshots accessor-backed results once", async () => {
+    it("rejects an over-limit paths array before enumerating or materializing entries", async () => {
+      let enumerations = 0;
+      const paths = new Proxy(
+        [
+          { params: { id: "1" } },
+          { params: { id: "2" } },
+          { params: { id: "3" } },
+        ],
+        {
+          ownKeys(target) {
+            enumerations++;
+            return Reflect.ownKeys(target);
+          },
+        },
+      );
+
+      await assertRejects(
+        () =>
+          createFetcher().fetch(
+            createPageModule(() => ({ paths, fallback: false })),
+            { maxPaths: 2 },
+          ),
+        RangeError,
+        "at most 2 paths",
+      );
+      assertEquals(enumerations, 0);
+    });
+
+    it("rejects an over-limit catch-all array before enumerating or copying segments", async () => {
+      let enumerations = 0;
+      const parts = new Proxy(["one", "two", "three"], {
+        ownKeys(target) {
+          enumerations++;
+          return Reflect.ownKeys(target);
+        },
+      });
+
+      await assertRejects(
+        () =>
+          createFetcher().fetch(
+            createPageModule(() => ({
+              paths: [{ params: { parts } }],
+              fallback: false,
+            })),
+            { maxArrayParamSegments: 2 },
+          ),
+        RangeError,
+        "at most 2 segments",
+      );
+      assertEquals(enumerations, 0);
+    });
+
+    it("rejects invalid admission limits before invoking project code", async () => {
+      for (
+        const options of [
+          { maxPaths: -1 },
+          { maxPaths: 1.5 },
+          { maxArrayParamSegments: -1 },
+          { maxArrayParamSegments: Number.POSITIVE_INFINITY },
+        ]
+      ) {
+        let calls = 0;
+        await assertRejects(
+          () =>
+            createFetcher().fetch(
+              createPageModule(() => {
+                calls++;
+                return { paths: [], fallback: false };
+              }),
+              options,
+            ),
+          RangeError,
+          "non-negative safe integer",
+        );
+        assertEquals(calls, 0);
+      }
+    });
+
+    it("rejects accessor-backed result fields without invoking them", async () => {
       const paths = [{ params: { slug: ["docs", "intro"] } }];
       let pathsReads = 0;
       let fallbackReads = 0;
@@ -753,19 +835,17 @@ describe("StaticPathsFetcher", () => {
         () => unstable as unknown as StaticPathsResult,
       );
 
-      const result = await createFetcher().fetch(pageModule);
+      await assertRejects(
+        () => createFetcher().fetch(pageModule),
+        TypeError,
+        "valid static paths result object",
+      );
 
-      assertEquals(pathsReads, 1);
-      assertEquals(fallbackReads, 1);
-      assertEquals(result, {
-        paths: [{ params: { slug: ["docs", "intro"] } }],
-        fallback: false,
-      });
-      paths[0]!.params.slug.push("mutated");
-      assertEquals(result?.paths[0]?.params.slug, ["docs", "intro"]);
+      assertEquals(pathsReads, 0);
+      assertEquals(fallbackReads, 0);
     });
 
-    it("reads each catch-all segment once and rejects sparse arrays", async () => {
+    it("rejects accessor-backed catch-all segments without invoking them", async () => {
       const segments: string[] = [];
       let segmentReads = 0;
       Object.defineProperty(segments, "0", {
@@ -778,22 +858,47 @@ describe("StaticPathsFetcher", () => {
       });
       segments.length = 1;
 
-      const result = await createFetcher().fetch(
-        createPageModule(() => ({
-          paths: [{ params: { slug: segments } }],
-          fallback: false,
-        })),
+      await assertRejects(
+        () =>
+          createFetcher().fetch(
+            createPageModule(() => ({
+              paths: [{ params: { slug: segments } }],
+              fallback: false,
+            })),
+          ),
+        TypeError,
+        "valid static paths result object",
       );
 
-      assertEquals(segmentReads, 1);
-      assertEquals(result?.paths[0]?.params.slug, ["docs"]);
+      assertEquals(segmentReads, 0);
+    });
 
+    it("rejects sparse catch-all arrays", async () => {
       const sparse = new Array<string>(1);
       await assertRejects(
         () =>
           createFetcher().fetch(
             createPageModule(() => ({
               paths: [{ params: { slug: sparse } }],
+              fallback: false,
+            })),
+          ),
+        TypeError,
+        "valid static paths result object",
+      );
+    });
+
+    it("rejects prototype-backed params instead of inheriting route values", async () => {
+      const params = Object.create({ slug: "inherited" }) as Record<
+        string,
+        string | string[]
+      >;
+
+      await assertRejects(
+        () =>
+          createFetcher().fetch(
+            createPageModule(() => ({
+              paths: [{ params }],
               fallback: false,
             })),
           ),
@@ -826,18 +931,19 @@ describe("StaticPathsFetcher", () => {
     });
 
     it("includes synchronous result validation in the explicit deadline", async () => {
+      const result = { paths: [], fallback: false } satisfies StaticPathsResult;
       const pageModule = createPageModule(
         () =>
-          ({
-            get paths(): StaticPathsResult["paths"] {
+          new Proxy(result, {
+            getOwnPropertyDescriptor(target, key) {
+              if (key !== "paths") return Reflect.getOwnPropertyDescriptor(target, key);
               const startedAt = performance.now();
               while (performance.now() - startedAt < 10) {
                 // Deliberately block inside structural validation.
               }
-              return [];
+              return Reflect.getOwnPropertyDescriptor(target, key);
             },
-            fallback: false,
-          }) as StaticPathsResult,
+          }),
       );
 
       await assertRejects(

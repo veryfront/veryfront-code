@@ -11,6 +11,12 @@ import { delay } from "#std/async";
 
 type StaticDataContext = Omit<DataContext, "request" | "query">;
 
+const productionCacheScope = {
+  projectId: "test-project",
+  mode: "production",
+  versionId: "rel_fetching_edge_cases",
+} as const;
+
 function makeContext(url: string, params: Record<string, string> = {}): DataContext {
   const u = new URL(url);
   return {
@@ -291,7 +297,7 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
       assertEquals(result.redirect?.destination, "/path?query=value&other=test#anchor");
     });
 
-    it("should handle redirect with both props and redirect", async () => {
+    it("should reject redirect combined with props", async () => {
       const fetcher = new DataFetcher();
       const page: PageWithData = {
         default: () => null,
@@ -303,16 +309,16 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
         }),
       };
 
-      const result = await fetcher.fetchData(page, makeContext("http://localhost/test"));
-
-      // Redirect takes precedence
-      assertEquals(result.redirect?.destination, "/redirect");
-      assertEquals(result.props, undefined);
+      await assertRejects(
+        () => fetcher.fetchData(page, makeContext("http://localhost/test")),
+        TypeError,
+        "valid data result object",
+      );
     });
   });
 
   describe("Not found handling", () => {
-    it("should handle notFound with props", async () => {
+    it("should reject notFound combined with props", async () => {
       const fetcher = new DataFetcher();
       const page: PageWithData = {
         default: () => null,
@@ -322,13 +328,14 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
         }),
       };
 
-      const result = await fetcher.fetchData(page, makeContext("http://localhost/test"));
-
-      assertEquals(result.notFound, true);
-      assertEquals(result.props, undefined);
+      await assertRejects(
+        () => fetcher.fetchData(page, makeContext("http://localhost/test")),
+        TypeError,
+        "valid data result object",
+      );
     });
 
-    it("should handle notFound with redirect", async () => {
+    it("should reject notFound combined with redirect", async () => {
       const fetcher = new DataFetcher();
       const page: PageWithData = {
         default: () => null,
@@ -338,11 +345,11 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
         }),
       };
 
-      const result = await fetcher.fetchData(page, makeContext("http://localhost/test"));
-
-      // Redirect takes precedence
-      assertExists(result.redirect);
-      assertEquals(result.notFound, undefined);
+      await assertRejects(
+        () => fetcher.fetchData(page, makeContext("http://localhost/test")),
+        TypeError,
+        "valid data result object",
+      );
     });
   });
 
@@ -366,7 +373,7 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
       assertEquals(result.revalidate, 0);
     });
 
-    it("should handle revalidate with negative number", async () => {
+    it("should reject revalidate with a negative number", async () => {
       const fetcher = new DataFetcher();
       const page: PageWithData = {
         default: () => null,
@@ -376,13 +383,16 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
         }),
       };
 
-      const result = await fetcher.fetchData(
-        page,
-        makeContext("http://localhost/test"),
-        "production",
+      await assertRejects(
+        () =>
+          fetcher.fetchData(
+            page,
+            makeContext("http://localhost/test"),
+            "production",
+          ),
+        TypeError,
+        "valid data result object",
       );
-
-      assertEquals(result.revalidate, -100);
     });
 
     it("should handle very large revalidate values", async () => {
@@ -406,49 +416,75 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
 
     it("should handle revalidate with fractional seconds", async () => {
       const fetcher = new DataFetcher();
+      let callCount = 0;
+      const options = {
+        modulePath: "/project/pages/isr/fractional-seconds.tsx",
+        cacheScope: productionCacheScope,
+      };
       const page: PageWithData = {
         default: () => null,
-        getStaticData: () => ({
-          props: { count: 1 },
-          revalidate: 0.5, // 500ms
-        }),
+        getStaticData: () => {
+          callCount++;
+          return {
+            props: { count: callCount },
+            revalidate: 0.5, // 500ms
+          };
+        },
       };
 
       const context = makeContext("http://localhost/test");
-      const result1 = await fetcher.fetchData(page, context, "production");
+      const result1 = await fetcher.fetchData(page, context, "production", options);
 
       assertEquals((result1.props as any)?.count, 1);
 
       await delay(600);
 
-      const result2 = await fetcher.fetchData(page, context, "production");
+      const result2 = await fetcher.fetchData(page, context, "production", options);
+      assertEquals((result2.props as any)?.count, 1);
 
-      assertExists(result2);
+      await delay(10);
+
+      const result3 = await fetcher.fetchData(page, context, "production", options);
+      assertEquals((result3.props as any)?.count, 2);
+      assertEquals(callCount, 2);
     });
   });
 
   describe("Cache edge cases", () => {
     it("should handle cache with complex params", async () => {
       const fetcher = new DataFetcher();
+      let callCount = 0;
+      const options = {
+        modulePath: "/project/pages/cache-edge/complex-params.tsx",
+        cacheScope: productionCacheScope,
+      };
       const page: PageWithData = {
         default: () => null,
-        getStaticData: (ctx: StaticDataContext) => ({
-          props: { params: ctx.params },
-        }),
+        getStaticData: (ctx: StaticDataContext) => {
+          callCount++;
+          return { props: { params: ctx.params, call: callCount } };
+        },
       };
 
       const context1 = makeContext("http://localhost/test", { id: "123", category: "test" });
       const context2 = makeContext("http://localhost/test", { id: "123", category: "test" });
 
-      const result1 = await fetcher.fetchData(page, context1, "production");
-      const result2 = await fetcher.fetchData(page, context2, "production");
+      const result1 = await fetcher.fetchData(page, context1, "production", options);
+      const result2 = await fetcher.fetchData(page, context2, "production", options);
 
       assertEquals((result1.props as any)?.params, (result2.props as any)?.params);
+      assertEquals((result1.props as any)?.call, 1);
+      assertEquals((result2.props as any)?.call, 1);
+      assertEquals(callCount, 1);
     });
 
     it("should differentiate cache by URL path", async () => {
       const fetcher = new DataFetcher();
       let callCount = 0;
+      const options = {
+        modulePath: "/project/pages/cache-edge/different-paths.tsx",
+        cacheScope: productionCacheScope,
+      };
 
       const page: PageWithData = {
         default: () => null,
@@ -458,37 +494,56 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
         },
       };
 
-      await fetcher.fetchData(page, makeContext("http://localhost/path1"), "production");
-      await fetcher.fetchData(page, makeContext("http://localhost/path2"), "production");
+      await fetcher.fetchData(
+        page,
+        makeContext("http://localhost/path1"),
+        "production",
+        options,
+      );
+      await fetcher.fetchData(
+        page,
+        makeContext("http://localhost/path2"),
+        "production",
+        options,
+      );
 
       assertEquals(callCount, 2);
     });
 
     it("should handle cache clear with pattern", async () => {
       const fetcher = new DataFetcher();
+      let callCount = 0;
+      const options = {
+        modulePath: "/project/pages/cache-edge/clear-pattern.tsx",
+        cacheScope: productionCacheScope,
+      };
       const page: PageWithData = {
         default: () => null,
-        getStaticData: () => ({
-          props: { timestamp: Date.now() },
-        }),
+        getStaticData: () => ({ props: { count: ++callCount } }),
       };
 
-      await fetcher.fetchData(page, makeContext("http://localhost/blog/post1"), "production");
-      await fetcher.fetchData(page, makeContext("http://localhost/docs/page1"), "production");
+      const blogContext = makeContext("http://localhost/blog/post1");
+      const docsContext = makeContext("http://localhost/docs/page1");
+
+      await fetcher.fetchData(page, blogContext, "production", options);
+      await fetcher.fetchData(page, docsContext, "production", options);
 
       fetcher.clearCache("blog");
 
-      const blogResult = await fetcher.fetchData(
-        page,
-        makeContext("http://localhost/blog/post1"),
-        "production",
-      );
-      assertExists(blogResult.props);
+      const blogResult = await fetcher.fetchData(page, blogContext, "production", options);
+      const docsResult = await fetcher.fetchData(page, docsContext, "production", options);
+      assertEquals((blogResult.props as any)?.count, 3);
+      assertEquals((docsResult.props as any)?.count, 2);
+      assertEquals(callCount, 3);
     });
 
     it("should handle concurrent cache access", async () => {
       const fetcher = new DataFetcher();
       let callCount = 0;
+      const options = {
+        modulePath: "/project/pages/cache-edge/concurrent-access.tsx",
+        cacheScope: productionCacheScope,
+      };
 
       const page: PageWithData = {
         default: () => null,
@@ -502,14 +557,15 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
       const context = makeContext("http://localhost/test");
 
       const [r1, r2, r3] = await Promise.all([
-        fetcher.fetchData(page, context, "production"),
-        fetcher.fetchData(page, context, "production"),
-        fetcher.fetchData(page, context, "production"),
+        fetcher.fetchData(page, context, "production", options),
+        fetcher.fetchData(page, context, "production", options),
+        fetcher.fetchData(page, context, "production", options),
       ]);
 
-      assertExists(r1.props);
-      assertExists(r2.props);
-      assertExists(r3.props);
+      assertEquals((r1.props as any)?.count, 1);
+      assertEquals((r2.props as any)?.count, 1);
+      assertEquals((r3.props as any)?.count, 1);
+      assertEquals(callCount, 1);
     });
   });
 

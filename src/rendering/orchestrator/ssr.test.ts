@@ -23,10 +23,38 @@ interface RendererTestInternals {
   lifecycle: RendererLifecycle;
   renderPipeline: {
     destroy(): void;
+    getStaticPaths?: (...args: unknown[]) => Promise<unknown>;
   };
 }
 
 describe("rendering/orchestrator/ssr", () => {
+  it("forwards getStaticPaths through the initialized render pipeline identity", async () => {
+    const renderer = new VeryfrontRenderer({
+      projectDir: "/project",
+      projectId: "project-id",
+      contentSourceId: "build-source",
+      mode: "production",
+      adapter: TEST_ADAPTER,
+    });
+    const calls: unknown[][] = [];
+    (renderer as unknown as { projectId: string }).projectId = "project-id";
+    (renderer as unknown as RendererTestInternals).renderPipeline = {
+      destroy() {},
+      getStaticPaths: (...args: unknown[]) => {
+        calls.push(args);
+        return Promise.resolve({ paths: [], fallback: false });
+      },
+    };
+
+    const result = await renderer.getStaticPaths("blog/[slug]");
+
+    assertEquals(calls, [[
+      "blog/[slug]",
+      { projectId: "project-id", contentSourceId: "build-source" },
+    ]]);
+    assertEquals(result, { paths: [], fallback: false });
+  });
+
   it("derives deterministic, collision-resistant default project identities", async () => {
     const first = await deriveDefaultRendererProjectId("/project-1n");
     const repeated = await deriveDefaultRendererProjectId("/project-1n");

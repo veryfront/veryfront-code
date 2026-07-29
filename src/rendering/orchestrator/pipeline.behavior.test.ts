@@ -39,6 +39,7 @@ import { __resetPoolForTests, getWorkerPool } from "#veryfront/security/sandbox/
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { DataFetcher } from "#veryfront/data/index.ts";
 import { WorkerExecutionScopeOwner } from "../worker-execution-scope.ts";
+import { TimeoutError } from "../utils/stream-utils.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
 
@@ -182,6 +183,83 @@ describe("RenderPipeline behavior", () => {
     resetRequestProfiles();
     configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
+  });
+
+  it("loads a Pages module and resolves getStaticPaths through the data boundary", async () => {
+    const pagePath = "/project/pages/blog/[slug].tsx";
+    const projectId = "build-static-paths-project";
+    const pipeline = createPipeline(pagePath);
+    const pageModule = {
+      default: () => null,
+      getStaticPaths: () => ({
+        paths: [{ params: { slug: "hello" } }],
+        fallback: false as const,
+      }),
+    };
+    let loadedPath: string | undefined;
+    let observedModule: unknown;
+    let observedOptions: unknown;
+
+    (pipeline as any).loadModule = async (path: string) => {
+      loadedPath = path;
+      return pageModule;
+    };
+    (pipeline as any).dataFetcher = {
+      getStaticPaths: async (module: unknown, options: unknown) => {
+        observedModule = module;
+        observedOptions = options;
+        return {
+          paths: [{ params: { slug: "hello" } }],
+          fallback: false,
+        };
+      },
+    };
+
+    const result = await pipeline.getStaticPaths("blog/[slug]", { projectId });
+
+    assertEquals(loadedPath, pagePath);
+    assertEquals(observedModule, pageModule);
+    assertEquals(observedOptions, {
+      projectId,
+      maxPaths: 10_000,
+      maxArrayParamSegments: 1_024,
+    });
+    assertEquals(result, {
+      paths: [{ params: { slug: "hello" } }],
+      fallback: false,
+    });
+  });
+
+  it("applies the configured build-result deadline to getStaticPaths and observes late settlement", async () => {
+    const pagePath = "/project/pages/blog/[slug].tsx";
+    const gate = createDeferred<{
+      paths: Array<{ params: { slug: string } }>;
+      fallback: false;
+    }>();
+    const pipeline = createPipeline(pagePath, { staticPathsTimeoutMs: 5 });
+    (pipeline as any).loadModule = async () => ({
+      default: () => null,
+      getStaticPaths: () => gate.promise,
+    });
+
+    const pending = pipeline.getStaticPaths("blog/[slug]");
+    try {
+      const observed = await Promise.race([
+        pending.then(
+          () => undefined,
+          (error: unknown) => error,
+        ),
+        new Promise<string>((resolve) => setTimeout(() => resolve("safety timeout"), 100)),
+      ]);
+      assertEquals(observed instanceof TimeoutError, true);
+    } finally {
+      gate.resolve({
+        paths: [{ params: { slug: "late" } }],
+        fallback: false,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    }
   });
 
   it("resolves request-scoped module loader identity and the configured React version", async () => {
@@ -1581,17 +1659,21 @@ describe("RenderPipeline behavior", () => {
 
     try {
       await sharedFetcher.fetchData(pageA, context, "production", {
+        modulePath: pagePath,
         cacheScope: scopeA,
       });
       await sharedFetcher.fetchData(pageB, context, "production", {
+        modulePath: pagePath,
         cacheScope: scopeB,
       });
       pipelineA.clearDataCache();
 
       await sharedFetcher.fetchData(pageA, context, "production", {
+        modulePath: pagePath,
         cacheScope: scopeA,
       });
       await sharedFetcher.fetchData(pageB, context, "production", {
+        modulePath: pagePath,
         cacheScope: scopeB,
       });
       assertEquals(callsA, 2);

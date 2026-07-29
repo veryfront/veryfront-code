@@ -53,7 +53,7 @@ describe(
     describe("generateServiceWorker()", () => {
       it("should generate valid service worker code", () => {
         const manifest = createTestManifest({
-          routes: [{ path: "/", slug: "index", chunks: [] }],
+          routes: [{ path: "/", template: "/", slug: "index", chunks: [] }],
         });
         const code = generateServiceWorker(manifest);
 
@@ -90,15 +90,28 @@ describe(
 
       it("should include manifest assets in static cache", () => {
         const manifest = createTestManifest({
-          routes: [{ path: "/", slug: "index", chunks: ["chunks/home-abc123.js"] }],
+          routes: [{
+            path: "/",
+            template: "/",
+            slug: "index",
+            chunks: ["chunks/home-abc123.js"],
+          }],
           chunks: {
             version: "1",
-            routes: { "/": { chunks: ["chunks/home-abc123.js"] } },
+            routes: {
+              "/": {
+                entry: "chunks/home-abc123.js",
+                chunks: ["chunks/home-abc123.js"],
+              },
+            },
             chunks: {
               "chunks/home-abc123.js": {
+                name: "home",
                 file: "chunks/home-abc123.js",
                 css: "chunks/home-abc123.css",
                 imports: ["chunks/vendor-xyz.js"],
+                size: 128,
+                hash: "abc12345",
               },
             },
             shared: ["chunks/shared-1.js"],
@@ -251,9 +264,9 @@ describe(
       it("should handle manifest with routes", () => {
         const manifest = createTestManifest({
           routes: [
-            { path: "/home", slug: "home", chunks: [] },
-            { path: "/about", slug: "about", chunks: [] },
-            { path: "/contact", slug: "contact", chunks: [] },
+            { path: "/home", template: "/home", slug: "home", chunks: [] },
+            { path: "/about", template: "/about", slug: "about", chunks: [] },
+            { path: "/contact", template: "/contact", slug: "contact", chunks: [] },
           ],
         });
         const code = generateServiceWorker(manifest);

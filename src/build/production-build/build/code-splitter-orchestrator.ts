@@ -19,8 +19,21 @@ export async function runCodeSplitting(
     return { manifest: null, chunks: 0 };
   }
 
-  const scriptRoutes = routes.filter((route) => !/\.mdx?$/i.test(route.file));
-  if (scriptRoutes.length === 0) {
+  const compilationRoutes = new Map<string, string>();
+  for (const route of routes) {
+    if (/\.mdx?$/i.test(route.file)) continue;
+    const compilationPath = route.templatePath ?? route.path;
+    const existingFile = compilationRoutes.get(compilationPath);
+    if (existingFile !== undefined && existingFile !== route.file) {
+      throw new TypeError(
+        `Code-splitting source route ${JSON.stringify(compilationPath)} maps to both ${
+          JSON.stringify(existingFile)
+        } and ${JSON.stringify(route.file)}`,
+      );
+    }
+    compilationRoutes.set(compilationPath, route.file);
+  }
+  if (compilationRoutes.size === 0) {
     logger.info("Skipping code splitting: document routes are compiled by the MDX pipeline");
     return { manifest: null, chunks: 0 };
   }
@@ -31,10 +44,9 @@ export async function runCodeSplitting(
     projectDir,
     outDir: join(outputDir, "_veryfront/chunks"),
     mode: "production",
-    routes: scriptRoutes.map(({ path, file }) => ({
-      path,
-      file,
-    })),
+    routes: [...compilationRoutes]
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([path, file]) => ({ path, file })),
     shared: ["react", "react-dom"],
     external: [],
   });

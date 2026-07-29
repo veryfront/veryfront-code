@@ -11,6 +11,7 @@ import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import { getWorkerPool, isDataIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
+import { deserializeWorkerError } from "#veryfront/security/sandbox/worker-error-boundary.ts";
 import {
   MAX_WORKER_BODY_BYTES,
   type WorkerResponse,
@@ -40,6 +41,7 @@ import {
   snapshotWorkerGenerationIdentity,
   type WorkerGenerationIdentity,
 } from "#veryfront/security/sandbox/worker-generation.ts";
+import { type DataCacheScope, snapshotDataCacheScope } from "./data-fetching-cache.ts";
 
 /**
  * Options for isolated data fetching through Worker pool.
@@ -51,6 +53,8 @@ export interface ServerDataFetchOptions {
   projectDir?: string;
   /** Trusted project identity for circuit-breaker isolation */
   projectId?: string;
+  /** Exact project/mode/version identity used when no worker source is available. */
+  cacheScope?: DataCacheScope | null;
   /** Caller cancellation, kept outside dependency health accounting. */
   signal?: AbortSignal;
   /** @internal Host-owned worker lifetime scope; paired with workerGenerationId. */
@@ -65,6 +69,31 @@ interface PreparedIsolatedRequest {
 }
 
 const localWorkerOverloads = new WeakSet<VeryfrontError>();
+
+function getServerDataCircuitBreakerName(
+  namespace: "data-fetch" | "data-prefetch",
+  projectKey: string,
+  workerGeneration?: Readonly<WorkerGenerationIdentity>,
+  cacheScope?: Readonly<DataCacheScope> | null,
+): string {
+  let sourceKey: string;
+  if (workerGeneration !== undefined) {
+    sourceKey = `generation:${
+      hashString(
+        `${workerGeneration.scopeId.length}:${workerGeneration.scopeId}${workerGeneration.generationId.length}:${workerGeneration.generationId}`,
+      )
+    }`;
+  } else if (cacheScope) {
+    sourceKey = `scope:${
+      hashString(
+        `${cacheScope.mode.length}:${cacheScope.mode}${cacheScope.versionId.length}:${cacheScope.versionId}`,
+      )
+    }`;
+  } else {
+    sourceKey = "unversioned";
+  }
+  return `${namespace}:v2:${projectKey}:${sourceKey}`;
+}
 
 function getRejectedBodySize(error: unknown): number | undefined {
   if (!isRequestBodyTooLargeError(error)) return undefined;
@@ -147,6 +176,7 @@ export class ServerDataFetcher {
     let modulePath: string | undefined;
     let projectDir: string | undefined;
     let suppliedProjectId: string | undefined;
+    let suppliedScope: DataCacheScope | null | undefined;
     let suppliedSignal: AbortSignal | undefined;
     let workerGeneration: Readonly<WorkerGenerationIdentity> | undefined;
     try {
@@ -156,6 +186,7 @@ export class ServerDataFetcher {
       suppliedProjectId = rawProjectId === undefined
         ? undefined
         : requireDataProjectId(rawProjectId);
+      suppliedScope = options?.cacheScope;
       suppliedSignal = options?.signal;
       workerGeneration = snapshotWorkerGenerationIdentity(
         options?.workerScopeId,
@@ -184,10 +215,27 @@ export class ServerDataFetcher {
     }
     const pathname = executionContext.url?.pathname ?? "unknown";
     let projectId: string;
+    let authoritativeScope: Readonly<DataCacheScope> | null;
     try {
+      const rawAmbientScope = tryGetCacheKeyContext();
+      const ambientScope = rawAmbientScope === null
+        ? null
+        : snapshotDataCacheScope(rawAmbientScope);
+      const rawScope = suppliedScope === undefined ? ambientScope : suppliedScope;
+      authoritativeScope = rawScope === null ? null : snapshotDataCacheScope(rawScope);
+      if (
+        authoritativeScope &&
+        suppliedProjectId !== undefined &&
+        suppliedProjectId !== authoritativeScope.projectId
+      ) {
+        throw new TypeError(
+          "Server data projectId must match the authoritative cache scope projectId",
+        );
+      }
       projectId = requireDataProjectId(
         suppliedProjectId ??
-          tryGetCacheKeyContext()?.projectId ??
+          authoritativeScope?.projectId ??
+          ambientScope?.projectId ??
           "default",
       );
     } catch (error) {
@@ -204,11 +252,19 @@ export class ServerDataFetcher {
       return Promise.reject(getAbortReason(callerSignal));
     }
 
-    const circuitBreaker = getCircuitBreaker(`${breakerNamespace}:${projectKey}`, {
-      failureThreshold: 5,
-      resetTimeoutMs: 30_000,
-      successThreshold: 2,
-    });
+    const circuitBreaker = getCircuitBreaker(
+      getServerDataCircuitBreakerName(
+        breakerNamespace,
+        projectKey,
+        workerGeneration,
+        authoritativeScope,
+      ),
+      {
+        failureThreshold: 5,
+        resetTimeoutMs: 30_000,
+        successThreshold: 2,
+      },
+    );
 
     const hasIsolationPaths = typeof modulePath === "string" &&
       modulePath.length > 0 &&
@@ -505,9 +561,7 @@ export class ServerDataFetcher {
     }
 
     if (workerResponse.type === "error") {
-      const err = new Error(workerResponse.error.message);
-      err.name = workerResponse.error.name;
-      throw err;
+      throw deserializeWorkerError(workerResponse.error);
     }
 
     if (workerResponse.type === "data-result") {

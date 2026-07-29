@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
+import "../../../transforms/plugins/__tests__/code-parser-setup.ts";
 import {
   assertEquals,
+  assertExists,
   assertInstanceOf,
   assertRejects,
   assertStringIncludes,
@@ -46,6 +48,95 @@ function injectTransformCacheClear(clear: () => void): void {
 function restoreTransformCache(): void {
   __injectCachesForTests(null);
   destroyTransformCache();
+}
+
+type DirectorySnapshotEntry =
+  | { path: string; kind: "directory" }
+  | { path: string; kind: "file"; bytes: number[] };
+
+async function snapshotDirectoryTree(root: string): Promise<DirectorySnapshotEntry[]> {
+  const snapshot: DirectorySnapshotEntry[] = [];
+
+  async function visit(directory: string, prefix: string): Promise<void> {
+    const entries: Deno.DirEntry[] = [];
+    for await (const entry of Deno.readDir(directory)) entries.push(entry);
+    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+
+    for (const entry of entries) {
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const absolutePath = `${directory}/${entry.name}`;
+      if (entry.isDirectory) {
+        snapshot.push({ path, kind: "directory" });
+        await visit(absolutePath, path);
+      } else if (entry.isFile) {
+        snapshot.push({
+          path,
+          kind: "file",
+          bytes: Array.from(await Deno.readFile(absolutePath)),
+        });
+      } else {
+        throw new Error(`Unexpected non-file build output entry: ${absolutePath}`);
+      }
+    }
+  }
+
+  await visit(root, "");
+  return snapshot;
+}
+
+async function assertStaticPathsFailureIsAtomic(options: {
+  source: string;
+  errorIncludes: string;
+  fileName?: string;
+}): Promise<void> {
+  const projectDir = await Deno.makeTempDir({ prefix: "vf-build-static-path-failure-" });
+  const outputDir = `${projectDir}/dist`;
+  try {
+    await Deno.mkdir(`${projectDir}/pages/blog`, { recursive: true });
+    await Deno.writeTextFile(
+      `${projectDir}/pages/blog/${options.fileName ?? "[slug].tsx"}`,
+      options.source,
+    );
+    await Deno.mkdir(`${outputDir}/_veryfront`, { recursive: true });
+    await Deno.mkdir(`${outputDir}/assets`, { recursive: true });
+    await Deno.writeTextFile(`${outputDir}/index.html`, "previous html\n");
+    await Deno.writeTextFile(
+      `${outputDir}/_veryfront/manifest.json`,
+      '{"build":"last-known-good"}\n',
+    );
+    await Deno.writeFile(
+      `${outputDir}/assets/existing.bin`,
+      new Uint8Array([0, 255, 13, 10]),
+    );
+    const before = await snapshotDirectoryTree(outputDir);
+
+    await assertRejects(
+      () =>
+        buildProduction({
+          projectDir,
+          outputDir,
+          enableSplitting: false,
+          enableCompression: false,
+          enablePrefetch: false,
+        }),
+      Error,
+      options.errorIncludes,
+    );
+
+    assertEquals(await snapshotDirectoryTree(outputDir), before);
+    assertEquals(
+      [...Deno.readDirSync(projectDir)].some((entry) =>
+        entry.name.includes(".veryfront-stage-") ||
+        entry.name.includes(".veryfront-backup-") ||
+        entry.name.includes(".veryfront-build.lock")
+      ),
+      false,
+    );
+  } finally {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+    await Deno.remove(projectDir, { recursive: true });
+  }
 }
 
 describe("build/production-build/build/build-orchestrator", () => {
@@ -174,6 +265,176 @@ describe("build/production-build/build/build-orchestrator", () => {
         const { stop } = await import("veryfront/extensions/bundler");
         await stop();
         await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("materializes Pages getStaticPaths before rendering, planning, and manifest output", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-build-static-paths-" });
+      const outputDir = `${projectDir}/dist`;
+      try {
+        await Deno.mkdir(`${projectDir}/pages/blog`, { recursive: true });
+        await Deno.writeTextFile(
+          `${projectDir}/pages/blog/[slug].tsx`,
+          `
+export function getStaticPaths() {
+  return {
+    paths: [
+      { params: { slug: "z-last" } },
+      { params: { slug: "hello world" } },
+    ],
+    fallback: false,
+  };
+}
+
+export function getStaticData({ params }: { params: { slug: string } }) {
+  return { props: { label: params.slug } };
+}
+
+export default function BlogPost({ label }: { label: string }) {
+  return <main data-static-label={label}>{label}</main>;
+}
+`,
+        );
+
+        const stats = await buildProduction({
+          projectDir,
+          outputDir,
+          enableSplitting: true,
+          enableCompression: false,
+          enablePrefetch: true,
+        });
+
+        assertEquals(stats.pages, 2);
+        assertEquals(stats.chunks, 1);
+        assertEquals(stats.ssgPaths, [
+          "/blog/hello%20world",
+          "/blog/z-last",
+        ]);
+        assertStringIncludes(
+          await Deno.readTextFile(`${outputDir}/blog/hello%20world/index.html`),
+          "hello world",
+        );
+        const manifest = JSON.parse(
+          await Deno.readTextFile(`${outputDir}/_veryfront/manifest.json`),
+        ) as {
+          routes: Array<{
+            path: string;
+            template: string;
+            slug: string;
+            chunks: string[];
+          }>;
+          chunks: {
+            routes: Record<string, { entry: string; chunks: string[] }>;
+          } | null;
+        };
+        assertEquals(manifest.routes, [
+          {
+            path: "/blog/hello%20world",
+            template: "/blog/[slug]",
+            slug: "blog/hello%20world",
+            chunks: [],
+          },
+          {
+            path: "/blog/z-last",
+            template: "/blog/[slug]",
+            slug: "blog/z-last",
+            chunks: [],
+          },
+        ]);
+        assertExists(manifest.chunks);
+        assertEquals(Object.keys(manifest.chunks.routes), ["/blog/[slug]"]);
+        const templateChunks = manifest.chunks.routes["/blog/[slug]"];
+        assertExists(templateChunks);
+        for (const path of ["hello%20world", "z-last"]) {
+          assertStringIncludes(
+            await Deno.readTextFile(`${outputDir}/blog/${path}/index.html`),
+            `/_veryfront/chunks/${templateChunks.entry}`,
+          );
+        }
+      } finally {
+        const { stop } = await import("veryfront/extensions/bundler");
+        await stop();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects unsupported fallback modes without modifying prior output", async () => {
+      for (const fallback of ["true", '"blocking"']) {
+        await assertStaticPathsFailureIsAtomic({
+          source: `
+export function getStaticPaths() {
+  return {
+    paths: [{ params: { slug: "post" } }],
+    fallback: ${fallback},
+  };
+}
+export default function BlogPost() { return null; }
+`,
+          errorIncludes: "requires fallback: false",
+        });
+      }
+    });
+
+    it("rejects collisions and static-path bounds without modifying prior output", async () => {
+      const cases = [
+        {
+          source: `
+export function getStaticPaths() {
+  return {
+    paths: [
+      { params: { slug: "Post" } },
+      { params: { slug: "post" } },
+    ],
+    fallback: false,
+  };
+}
+export default function BlogPost() { return null; }
+`,
+          errorIncludes: "collision",
+        },
+        {
+          source: `
+export function getStaticPaths() {
+  return {
+    paths: Array.from({ length: 10_001 }, (_, index) => ({
+      params: { slug: String(index) },
+    })),
+    fallback: false,
+  };
+}
+export default function BlogPost() { return null; }
+`,
+          errorIncludes: "10,000",
+        },
+        {
+          source: `
+export function getStaticPaths() {
+  return {
+    paths: [{ params: { slug: "a".repeat(2_048) } }],
+    fallback: false,
+  };
+}
+export default function BlogPost() { return null; }
+`,
+          errorIncludes: "2,048",
+        },
+        {
+          fileName: "[...parts].tsx",
+          source: `
+export function getStaticPaths() {
+  return {
+    paths: [{ params: { parts: Array.from({ length: 1_025 }, () => "x") } }],
+    fallback: false,
+  };
+}
+export default function BlogPost() { return null; }
+`,
+          errorIncludes: "1,024",
+        },
+      ];
+
+      for (const testCase of cases) {
+        await assertStaticPathsFailureIsAtomic(testCase);
       }
     });
 

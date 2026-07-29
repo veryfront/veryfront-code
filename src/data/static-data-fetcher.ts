@@ -32,6 +32,10 @@ import {
 } from "./execution-admission.ts";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
 import { requireDataProjectId } from "./project-identity.ts";
+import {
+  snapshotWorkerGenerationIdentity,
+  type WorkerGenerationIdentity,
+} from "#veryfront/security/sandbox/worker-generation.ts";
 
 /** Semaphore to limit concurrent revalidations and prevent resource exhaustion */
 const revalidationSemaphore = getSemaphore("revalidation", MAX_CONCURRENT_REVALIDATIONS, {
@@ -50,12 +54,37 @@ const revalidationSemaphore = getSemaphore("revalidation", MAX_CONCURRENT_REVALI
 const projectRevalidationCounts = new Map<string, number>();
 const DEFAULT_REVALIDATION_FAILURE_RETRY_MS = 30_000;
 
-function getStaticDataCircuitBreaker(projectId: string) {
-  return getCircuitBreaker(`static-data-fetch:${hashString(projectId)}`, {
+function getStaticDataCircuitBreaker(breakerName: string) {
+  return getCircuitBreaker(breakerName, {
     failureThreshold: 5,
     resetTimeoutMs: 30_000,
     successThreshold: 2,
   });
+}
+
+function getStaticDataCircuitBreakerName(
+  projectId: string,
+  scope: Readonly<DataCacheScope> | null,
+  workerGeneration: Readonly<WorkerGenerationIdentity> | undefined,
+): string {
+  let sourceKey: string;
+  if (scope) {
+    sourceKey = `scope:${
+      hashString(
+        `${scope.mode.length}:${scope.mode}${scope.versionId.length}:${scope.versionId}`,
+      )
+    }`;
+  } else if (workerGeneration !== undefined) {
+    sourceKey = `generation:${
+      hashString(
+        `${workerGeneration.scopeId.length}:${workerGeneration.scopeId}${workerGeneration.generationId.length}:${workerGeneration.generationId}`,
+      )
+    }`;
+  } else {
+    sourceKey = "unversioned";
+  }
+
+  return `static-data-fetch:v2:${hashString(projectId)}:${sourceKey}`;
 }
 
 /** Acquire a revalidation slot for a project (returns false if at per-project limit) */
@@ -118,11 +147,16 @@ function createProducerSettlement(): ProducerSettlement {
 }
 
 export interface StaticDataFetchOptions {
+  /** Non-empty module identity required for static cache lookup and publication. */
   modulePath?: string;
   /** Trusted project identity for circuit-breaker and fairness isolation */
   projectId?: string;
   /** Explicit immutable cache scope; null deliberately disables caching. */
   cacheScope?: DataCacheScope | null;
+  /** @internal Host-owned source lifetime scope; paired with workerGenerationId. */
+  workerScopeId?: string;
+  /** @internal Immutable source identity; paired with workerScopeId. */
+  workerGenerationId?: string;
 }
 
 export interface StaticDataFetcherOptions {
@@ -176,6 +210,10 @@ export class StaticDataFetcher {
     const suppliedProjectId = rawProjectId === undefined
       ? undefined
       : requireDataProjectId(rawProjectId);
+    const workerGeneration = snapshotWorkerGenerationIdentity(
+      options.workerScopeId,
+      options.workerGenerationId,
+    );
     const getStaticData = pageModule.getStaticData;
     if (typeof getStaticData !== "function") return { props: {} };
     const suppliedScope = options.cacheScope;
@@ -212,6 +250,11 @@ export class StaticDataFetcher {
     // scope. Request headers, hostnames, and URLs are caller-controlled and
     // could otherwise be rotated to bypass per-project limits.
     const projectId = trustedProjectId ?? "default";
+    const breakerName = getStaticDataCircuitBreakerName(
+      projectId,
+      authoritativeScope,
+      workerGeneration,
+    );
     const cacheKey = this.cacheManager.createCacheKey(
       requestContext,
       modulePath,
@@ -227,6 +270,7 @@ export class StaticDataFetcher {
             getStaticData,
             requestContext,
             projectId,
+            breakerName,
           ),
         {
           "data.fetch_method": "getStaticData",
@@ -260,6 +304,7 @@ export class StaticDataFetcher {
             getStaticData,
             requestContext,
             projectId,
+            breakerName,
             token,
           ),
         {
@@ -275,6 +320,7 @@ export class StaticDataFetcher {
         getStaticData,
         requestContext,
         projectId,
+        breakerName,
         token,
       );
     } else {
@@ -394,6 +440,7 @@ export class StaticDataFetcher {
     getStaticData: StaticDataHandler,
     context: DataContext,
     projectId: string,
+    breakerName: string,
   ): Promise<DataResult> {
     const pathname = context.url?.pathname ?? "unknown";
     const start = performance.now();
@@ -402,7 +449,7 @@ export class StaticDataFetcher {
     let producerOwnsAdmission = false;
     try {
       releaseAdmission = this.executionAdmission.acquire(projectId);
-      return await getStaticDataCircuitBreaker(projectId).execute(() => {
+      return await getStaticDataCircuitBreaker(breakerName).execute(() => {
         const execution = this.executeStaticData(
           getStaticData,
           context,
@@ -456,6 +503,7 @@ export class StaticDataFetcher {
     getStaticData: StaticDataHandler,
     context: DataContext,
     projectId: string,
+    breakerName: string,
     token: CacheWriteToken,
     producerSettlement: ProducerSettlement,
   ): Promise<DataResult> {
@@ -469,7 +517,7 @@ export class StaticDataFetcher {
     try {
       releaseAdmission = this.executionAdmission.acquire(projectId);
 
-      const result = await getStaticDataCircuitBreaker(projectId).execute(() => {
+      const result = await getStaticDataCircuitBreaker(breakerName).execute(() => {
         const settleProducer = (): void => {
           producerHasSettled = true;
           producerSettlement.settle();
@@ -562,6 +610,7 @@ export class StaticDataFetcher {
     getStaticData: StaticDataHandler,
     context: DataContext,
     projectId: string,
+    breakerName: string,
     token: CacheWriteToken,
   ): Promise<DataResult> {
     const cacheKey = token.cacheKey;
@@ -583,6 +632,7 @@ export class StaticDataFetcher {
         getStaticData,
         context,
         projectId,
+        breakerName,
         token,
         producerSettlement,
       )
@@ -618,6 +668,7 @@ export class StaticDataFetcher {
     getStaticData: StaticDataHandler,
     context: DataContext,
     projectId: string,
+    breakerName: string,
     token: CacheWriteToken,
   ): void {
     const cacheKey = token.cacheKey;
@@ -644,6 +695,7 @@ export class StaticDataFetcher {
           getStaticData,
           context,
           projectId,
+          breakerName,
           token,
           producerSettlement,
         )
@@ -674,6 +726,7 @@ export class StaticDataFetcher {
     getStaticData: StaticDataHandler,
     context: DataContext,
     projectId: string,
+    breakerName: string,
     token: CacheWriteToken,
     producerSettlement: ProducerSettlement,
   ): Promise<void> {
@@ -705,7 +758,7 @@ export class StaticDataFetcher {
         // classified by the outer catch.
         releaseExecution = this.executionAdmission.acquire(projectId);
         try {
-          const result = await getStaticDataCircuitBreaker(projectId).execute(
+          const result = await getStaticDataCircuitBreaker(breakerName).execute(
             () => {
               const settleProducer = (): void => {
                 producerSettlement.settle();

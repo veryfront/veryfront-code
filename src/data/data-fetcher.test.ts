@@ -12,6 +12,7 @@ import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
 import { DataExecutionAdmission } from "./execution-admission.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import { CircuitBreakerOpen } from "#veryfront/utils/circuit-breaker.ts";
 
 function createContext(overrides: Partial<DataContext> = {}): DataContext {
   return {
@@ -248,6 +249,75 @@ describe("DataFetcher", () => {
         assertEquals(getProps<{ source: string }>(pageResult).source, "page");
       });
 
+      it("skips static caching when the module identity is absent or empty", async () => {
+        for (
+          const [label, modulePath] of [
+            ["absent", undefined],
+            ["empty", ""],
+          ] as const
+        ) {
+          const fetcher = new DataFetcher();
+          const context = createContext({
+            url: new URL(`https://example.test/missing-module-${label}`),
+          });
+          const scope = {
+            projectId: `missing-module-${label}`,
+            mode: "production" as const,
+            versionId: "rel-1",
+          };
+          let firstModuleCalls = 0;
+          let secondModuleCalls = 0;
+          const firstModule: PageWithData<{ source: string }> = {
+            default: () => null,
+            getStaticData: () => ({
+              props: { source: `first-${++firstModuleCalls}` },
+              revalidate: 3600,
+            }),
+          };
+          const secondModule: PageWithData<{ source: string }> = {
+            default: () => null,
+            getStaticData: () => ({
+              props: { source: `second-${++secondModuleCalls}` },
+              revalidate: 3600,
+            }),
+          };
+          const options = {
+            projectId: scope.projectId,
+            cacheScope: scope,
+            modulePath,
+          };
+
+          try {
+            const first = await fetcher.fetchData(
+              firstModule,
+              context,
+              "production",
+              options,
+            );
+            const second = await fetcher.fetchData(
+              secondModule,
+              context,
+              "production",
+              options,
+            );
+            const repeated = await fetcher.fetchData(
+              firstModule,
+              context,
+              "production",
+              options,
+            );
+
+            assertEquals(first.props, { source: "first-1" });
+            assertEquals(second.props, { source: "second-1" });
+            assertEquals(repeated.props, { source: "first-2" });
+            assertEquals(firstModuleCalls, 2);
+            assertEquals(secondModuleCalls, 1);
+          } finally {
+            fetcher.destroy();
+          }
+        }
+      });
+
       it("should use getServerData if getStaticData not defined in production", async () => {
         const fetcher = new DataFetcher();
         const pageModule: PageWithData<{ source: string }> = {
@@ -327,6 +397,7 @@ describe("DataFetcher", () => {
         url: new URL("https://example.test/explicit-scope"),
       });
       const options = {
+        modulePath: "/project/pages/explicit-scope.tsx",
         projectId: "explicit-project",
         cacheScope: {
           projectId: "explicit-project",
@@ -388,7 +459,10 @@ describe("DataFetcher", () => {
         },
         context,
         "production",
-        { cacheScope: mutableScope },
+        {
+          modulePath: "/project/pages/scope-snapshot.tsx",
+          cacheScope: mutableScope,
+        },
       );
       const projectBResult = await fetcher.fetchData(
         {
@@ -401,6 +475,7 @@ describe("DataFetcher", () => {
         context,
         "production",
         {
+          modulePath: "/project/pages/scope-snapshot.tsx",
           cacheScope: {
             projectId: "project-b",
             mode: "production",
@@ -490,6 +565,186 @@ describe("DataFetcher", () => {
       } finally {
         resolveA({ props: { project: "a" } });
         await first.catch(() => undefined);
+      }
+    });
+
+    it("preserves preview source identity when dispatching static data", async () => {
+      const fetcher = new DataFetcher();
+      const projectId = `static-preview-source-${crypto.randomUUID()}`;
+      const workerScopeId = `static-preview-scope-${crypto.randomUUID()}`;
+      let failingCalls = 0;
+      const failing: PageWithData = {
+        default: () => null,
+        getStaticData: () => {
+          failingCalls++;
+          throw new Error("preview source A failed");
+        },
+      };
+      const sourceA = {
+        projectId,
+        cacheScope: null,
+        workerScopeId,
+        workerGenerationId: "shared-release-label",
+      } as const;
+
+      try {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await assertRejects(
+            () =>
+              fetcher.fetchData(
+                failing,
+                createContext({
+                  url: new URL(`https://example.test/source-a/${attempt}`),
+                }),
+                "production",
+                sourceA,
+              ),
+            Error,
+            "preview source A failed",
+          );
+        }
+        await assertRejects(
+          () =>
+            fetcher.fetchData(
+              failing,
+              createContext({
+                url: new URL("https://example.test/source-a/another-route"),
+              }),
+              "production",
+              sourceA,
+            ),
+          CircuitBreakerOpen,
+        );
+
+        const healthy = await fetcher.fetchData(
+          {
+            default: () => null,
+            getStaticData: () => ({ props: { source: "b" } }),
+          },
+          createContext({
+            url: new URL("https://example.test/source-b/healthy"),
+          }),
+          "production",
+          {
+            projectId,
+            cacheScope: null,
+            workerScopeId: `static-preview-b-scope-${crypto.randomUUID()}`,
+            workerGenerationId: "shared-release-label",
+          },
+        );
+
+        assertEquals(healthy.props, { source: "b" });
+        assertEquals(failingCalls, 5);
+      } finally {
+        fetcher.destroy();
+      }
+    });
+
+    it("accepts distinct cache-version and execution-source representations", async () => {
+      const fetcher = new DataFetcher();
+      const projectId = `static-source-representation-${crypto.randomUUID()}`;
+
+      try {
+        const result = await fetcher.fetchData(
+          {
+            default: () => null,
+            getStaticData: () => ({ props: { ok: true } }),
+          },
+          createContext({
+            url: new URL("https://example.test/distinct-source-representation"),
+          }),
+          "production",
+          {
+            modulePath: "/project/pages/distinct-source-representation.tsx",
+            projectId,
+            cacheScope: {
+              projectId,
+              mode: "production",
+              versionId: "42",
+            },
+            workerScopeId: `static-source-scope-${crypto.randomUUID()}`,
+            workerGenerationId: "release-42",
+          },
+        );
+
+        assertEquals(result.props, { ok: true });
+      } finally {
+        fetcher.destroy();
+      }
+    });
+
+    it("preserves cache-scope identity on the server path without a worker source", async () => {
+      const fetcher = new DataFetcher();
+      const projectId = `server-cache-scope-${crypto.randomUUID()}`;
+      let failingCalls = 0;
+      const failing: PageWithData = {
+        default: () => null,
+        getServerData: () => {
+          failingCalls++;
+          throw new Error("preview branch A failed");
+        },
+      };
+      const previewOptions = {
+        projectId,
+        cacheScope: {
+          projectId,
+          mode: "preview" as const,
+          versionId: "branch-a",
+        },
+      };
+
+      try {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await assertRejects(
+            () =>
+              fetcher.fetchData(
+                failing,
+                createContext({
+                  url: new URL(`https://example.test/preview-a/${attempt}`),
+                }),
+                "production",
+                previewOptions,
+              ),
+            Error,
+            "preview branch A failed",
+          );
+        }
+        await assertRejects(
+          () =>
+            fetcher.fetchData(
+              failing,
+              createContext({
+                url: new URL("https://example.test/preview-a/another-route"),
+              }),
+              "production",
+              previewOptions,
+            ),
+          CircuitBreakerOpen,
+        );
+
+        const healthy = await fetcher.fetchData(
+          {
+            default: () => null,
+            getServerData: () => ({ props: { source: "production" } }),
+          },
+          createContext({
+            url: new URL("https://example.test/production/healthy"),
+          }),
+          "production",
+          {
+            projectId,
+            cacheScope: {
+              projectId,
+              mode: "production",
+              versionId: "release-b",
+            },
+          },
+        );
+
+        assertEquals(healthy.props, { source: "production" });
+        assertEquals(failingCalls, 5);
+      } finally {
+        fetcher.destroy();
       }
     });
 
@@ -584,11 +839,13 @@ describe("DataFetcher", () => {
       const reason = new Error("first caller disconnected");
 
       const first = fetcher.fetchData(pageModule, context, "production", {
+        modulePath: "/project/pages/shared-cold.tsx",
         projectId: scope.projectId,
         cacheScope: scope,
         signal: controller.signal,
       });
       const second = fetcher.fetchData(pageModule, context, "production", {
+        modulePath: "/project/pages/shared-cold.tsx",
         projectId: scope.projectId,
         cacheScope: scope,
       });
@@ -604,7 +861,11 @@ describe("DataFetcher", () => {
         pageModule,
         context,
         "production",
-        { projectId: scope.projectId, cacheScope: scope },
+        {
+          modulePath: "/project/pages/shared-cold.tsx",
+          projectId: scope.projectId,
+          cacheScope: scope,
+        },
       );
       assertEquals(getProps<{ version: number }>(cached).version, 1);
       assertEquals(calls, 1);
@@ -796,7 +1057,9 @@ describe("DataFetcher", () => {
         }),
       };
 
-      await fetcher.fetchData(pageModule, createContext(), "production");
+      await fetcher.fetchData(pageModule, createContext(), "production", {
+        modulePath: "/project/pages/clear-all.tsx",
+      });
       fetcher.clearCache();
     });
 
@@ -832,8 +1095,9 @@ describe("DataFetcher", () => {
           const context = createContext({
             url: new URL("http://localhost/clear-race"),
           });
+          const options = { modulePath: "/project/pages/clear-race.tsx" };
 
-          const pending = fetcher.fetchData(pageModule, context, "production");
+          const pending = fetcher.fetchData(pageModule, context, "production", options);
           for (let i = 0; i < 20 && callCount === 0; i++) {
             await Promise.resolve();
           }
@@ -843,7 +1107,7 @@ describe("DataFetcher", () => {
           resolveFirst({ props: { version: 1 }, revalidate: 3600 });
           await pending;
 
-          const next = await fetcher.fetchData(pageModule, context, "production");
+          const next = await fetcher.fetchData(pageModule, context, "production", options);
           assertEquals(getProps<{ version: number }>(next).version, 2);
           assertEquals(callCount, 2);
         },
@@ -874,13 +1138,16 @@ describe("DataFetcher", () => {
           const context = createContext({
             url: new URL("http://localhost/clear-singleflight-generation"),
           });
+          const options = {
+            modulePath: "/project/pages/clear-singleflight-generation.tsx",
+          };
 
-          const pendingOld = fetcher.fetchData(pageModule, context, "production");
+          const pendingOld = fetcher.fetchData(pageModule, context, "production", options);
           for (let i = 0; i < 20 && callCount === 0; i++) await Promise.resolve();
           assertEquals(callCount, 1);
 
           fetcher.clearCache();
-          const fresh = await fetcher.fetchData(pageModule, context, "production");
+          const fresh = await fetcher.fetchData(pageModule, context, "production", options);
           assertEquals(getProps<{ version: number }>(fresh).version, 2);
           assertEquals(callCount, 2);
 
@@ -890,7 +1157,7 @@ describe("DataFetcher", () => {
             1,
           );
 
-          const cached = await fetcher.fetchData(pageModule, context, "production");
+          const cached = await fetcher.fetchData(pageModule, context, "production", options);
           assertEquals(getProps<{ version: number }>(cached).version, 2);
           assertEquals(callCount, 2);
         },
@@ -927,7 +1194,11 @@ describe("DataFetcher", () => {
       const context = createContext({
         url: new URL("https://example.test/foo/"),
       });
-      const options = { projectId: scope.projectId, cacheScope: scope };
+      const options = {
+        modulePath: "/project/pages/foo.tsx",
+        projectId: scope.projectId,
+        cacheScope: scope,
+      };
       const pending = fetcher.fetchData(
         pageModule,
         context,
@@ -979,12 +1250,15 @@ describe("DataFetcher", () => {
           const context = createContext({
             url: new URL("http://localhost/clear-before-loader"),
           });
+          const options = {
+            modulePath: "/project/pages/clear-before-loader.tsx",
+          };
 
-          const pending = fetcher.fetchData(pageModule, context, "production");
+          const pending = fetcher.fetchData(pageModule, context, "production", options);
           fetcher.clearCache();
           await pending;
 
-          const next = await fetcher.fetchData(pageModule, context, "production");
+          const next = await fetcher.fetchData(pageModule, context, "production", options);
           assertEquals(getProps<{ version: number }>(next).version, 2);
           assertEquals(callCount, 2);
         },
@@ -1019,23 +1293,26 @@ describe("DataFetcher", () => {
           const context = createContext({
             url: new URL("http://localhost/clear-revalidation-race"),
           });
+          const options = {
+            modulePath: "/project/pages/clear-revalidation-race.tsx",
+          };
 
-          await fetcher.fetchData(pageModule, context, "production");
+          await fetcher.fetchData(pageModule, context, "production", options);
           await new Promise((resolve) => setTimeout(resolve, 1));
-          await fetcher.fetchData(pageModule, context, "production");
+          await fetcher.fetchData(pageModule, context, "production", options);
           for (let i = 0; i < 20 && callCount < 2; i++) {
             await Promise.resolve();
           }
           assertEquals(callCount, 2);
 
           fetcher.clearCache();
-          const fresh = await fetcher.fetchData(pageModule, context, "production");
+          const fresh = await fetcher.fetchData(pageModule, context, "production", options);
           assertEquals(getProps<{ version: number }>(fresh).version, 3);
 
           resolveRevalidation({ props: { version: 2 }, revalidate: 3600 });
           for (let i = 0; i < 20; i++) await Promise.resolve();
 
-          const cached = await fetcher.fetchData(pageModule, context, "production");
+          const cached = await fetcher.fetchData(pageModule, context, "production", options);
           assertEquals(getProps<{ version: number }>(cached).version, 3);
           assertEquals(callCount, 3);
         },
@@ -1066,8 +1343,9 @@ describe("DataFetcher", () => {
           const context = createContext({
             url: new URL("http://localhost/products/one"),
           });
+          const options = { modulePath: "/project/pages/products.tsx" };
 
-          const pending = fetcher.fetchData(pageModule, context, "production");
+          const pending = fetcher.fetchData(pageModule, context, "production", options);
           for (let i = 0; i < 20 && callCount === 0; i++) {
             await Promise.resolve();
           }
@@ -1077,7 +1355,7 @@ describe("DataFetcher", () => {
           resolveLoad({ props: { version: 1 }, revalidate: 3600 });
           await pending;
 
-          const cached = await fetcher.fetchData(pageModule, context, "production");
+          const cached = await fetcher.fetchData(pageModule, context, "production", options);
           assertEquals(getProps<{ version: number }>(cached).version, 1);
           assertEquals(callCount, 1);
         },

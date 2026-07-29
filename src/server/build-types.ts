@@ -39,6 +39,10 @@ export interface RouteInfo {
   path: string;
   file: string;
   slug: string;
+  /** Dynamic Pages Router source pattern for a materialized static path. */
+  templatePath?: string;
+  /** Decoded parameters supplied by getStaticPaths for this concrete route. */
+  params?: Record<string, string | string[]>;
 }
 
 export interface AppRouteInfo {

@@ -21,6 +21,7 @@ export interface BuildManifest {
   };
   routes: Array<{
     path: string;
+    template: string;
     slug: string;
     chunks: string[];
   }>;
@@ -127,11 +128,11 @@ function requireValidChunkManifest(
 
 function assertManifestConsistency(options: {
   generatedRoutePaths: Set<string>;
-  generatedPagePaths: Set<string>;
+  generatedPageChunkPaths: Set<string>;
   stats: BuildStats;
   chunkManifest: ChunkManifest | null;
 }): void {
-  const { generatedRoutePaths, generatedPagePaths, stats, chunkManifest } = options;
+  const { generatedRoutePaths, generatedPageChunkPaths, stats, chunkManifest } = options;
   if (generatedRoutePaths.size !== stats.pages) {
     throw BUILD_FAILED.create({
       detail: `Build generated ${stats.pages} pages but the output manifest contains ` +
@@ -149,7 +150,7 @@ function assertManifestConsistency(options: {
 
   if (!chunkManifest) return;
   for (const routePath of Object.keys(chunkManifest.routes)) {
-    if (!generatedPagePaths.has(routePath)) {
+    if (!generatedPageChunkPaths.has(routePath)) {
       throw BUILD_FAILED.create({
         detail: `Chunk manifest references a route that was not generated: ${routePath}`,
       });
@@ -178,13 +179,16 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
     ? appRoutes.filter((route) => generatedPaths.has(route.path))
     : appRoutes;
   const generatedPagePaths = new Set(generatedRoutes.map((route) => route.path));
+  const generatedPageChunkPaths = new Set(
+    generatedRoutes.map((route) => route.templatePath ?? route.path),
+  );
   const generatedRoutePaths = new Set([
     ...generatedPagePaths,
     ...generatedAppRoutes.map((route) => route.path),
   ]);
   assertManifestConsistency({
     generatedRoutePaths,
-    generatedPagePaths,
+    generatedPageChunkPaths,
     stats,
     chunkManifest: validatedManifest,
   });
@@ -197,11 +201,13 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
   const manifestRoutes = [
     ...generatedRoutes.map((route) => ({
       path: route.path,
+      template: route.templatePath ?? route.path,
       slug: route.slug,
-      chunks: getChunksForRoute(route.path),
+      chunks: getChunksForRoute(route.templatePath ?? route.path),
     })),
     ...generatedAppRoutes.map((route) => ({
       path: route.path,
+      template: route.path,
       slug: route.path === "/" ? "index" : route.path.slice(1),
       chunks: [],
     })),

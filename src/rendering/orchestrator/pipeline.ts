@@ -52,7 +52,11 @@ import {
   snapshotDataCacheScope,
 } from "#veryfront/data/index.ts";
 import { requireDataProjectId } from "#veryfront/data/project-identity.ts";
-import type { DataContext, PageWithData } from "#veryfront/data/types.ts";
+import type { DataContext, PageWithData, StaticPathsResult } from "#veryfront/data/types.ts";
+import {
+  MAX_BUILD_STATIC_CATCH_ALL_SEGMENTS,
+  MAX_BUILD_STATIC_PATHS,
+} from "../../data/static-path-limits.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
@@ -150,6 +154,8 @@ export interface RenderPipelineConfig {
   queryParamOptions?: import("#veryfront/cache/keys.ts").QueryParamCacheOptions;
   /** @internal Shared owner used by the multi-project Renderer. */
   dataFetcher?: DataFetcher;
+  /** @internal Build-result deadline for getStaticPaths; late work remains observed. */
+  staticPathsTimeoutMs?: number;
   /** @internal Explicit immutable scope; null deliberately disables data caching. */
   dataCacheScope?: DataCacheScope | null;
   /** @internal Worker lifetime owned by the enclosing project/source context. */
@@ -286,7 +292,9 @@ export class RenderPipeline {
       }),
     });
     this.ownsDataFetcher = suppliedDataFetcher === undefined;
-    this.dataFetcher = suppliedDataFetcher ?? new DataFetcher(input.adapter);
+    this.dataFetcher = suppliedDataFetcher ?? new DataFetcher(input.adapter, {
+      staticPathsTimeoutMs: input.staticPathsTimeoutMs ?? DATA_FETCH_TIMEOUT_MS,
+    });
     this.moduleLoaderConfig = {
       projectDir,
       projectId: configuredProjectId,
@@ -771,6 +779,67 @@ export class RenderPipeline {
       } else {
         layoutProps.set(id, result.props as Record<string, unknown>);
       }
+    }
+  }
+
+  /** Resolve a Pages Router getStaticPaths export through the production module/data boundary. */
+  async getStaticPaths(
+    slug: string,
+    options?: Pick<RenderOptions, "projectId" | "contentSourceId" | "abortSignal">,
+  ): Promise<StaticPathsResult | null> {
+    this.assertActive();
+    const snapshottedOptions = snapshotRenderOptions(options as RenderOptions | undefined);
+    const workerScopeLease = this.workerExecutionScopes.acquire();
+    try {
+      const requestIdentity = this.snapshotRequestIdentity(
+        snapshottedOptions,
+        workerScopeLease.scopeId,
+      );
+      setupSSRGlobals();
+      if (this.config.mode === "development") {
+        clearSSRModuleCacheForProject(requestIdentity.projectId, {
+          preserveActiveTransforms: true,
+        });
+      }
+
+      const pageInfo = await this.config.pageResolver.resolvePage(slug);
+      const pagePath = pageInfo.entity.path;
+      const routerPath = extractRouterBasePath(pagePath, this.config.directories);
+      if (routerPath.type !== "pages") {
+        throw RENDER_ERROR.create({
+          detail: `getStaticPaths is supported only for Pages Router modules: ${slug}`,
+        });
+      }
+
+      const loaded = await withProgressTimeoutThrow(
+        (control) =>
+          this.loadModulesInParallel(
+            [{ type: "page", id: pagePath, path: pagePath }],
+            requestIdentity,
+            control,
+          ),
+        {
+          idleTimeoutMs: MODULE_LOAD_TIMEOUT_MS,
+          hardTimeoutMs: snapshottedOptions?.abortSignal ? undefined : MODULE_LOAD_HARD_TIMEOUT_MS,
+          label: `Module loading for getStaticPaths ${slug}`,
+          signal: snapshottedOptions?.abortSignal,
+        },
+      );
+      const pageModule = loaded[0]?.mod as PageWithData | undefined;
+      if (!pageModule) {
+        throw RENDER_ERROR.create({
+          detail: `Pages module did not load for getStaticPaths: ${slug}`,
+        });
+      }
+
+      return await this.dataFetcher.getStaticPaths(pageModule, {
+        projectId: requestIdentity.projectId,
+        maxPaths: MAX_BUILD_STATIC_PATHS,
+        maxArrayParamSegments: MAX_BUILD_STATIC_CATCH_ALL_SEGMENTS,
+        ...(snapshottedOptions?.abortSignal ? { signal: snapshottedOptions.abortSignal } : {}),
+      });
+    } finally {
+      workerScopeLease.release();
     }
   }
 
