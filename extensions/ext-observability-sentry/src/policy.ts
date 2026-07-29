@@ -8,6 +8,8 @@ const JWT_PATTERN = /\b[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,
 const URL_CREDENTIAL_PATTERN = /(https?:\/\/)[^@\s/]+(@[^/\s]+)/gi;
 const SENSITIVE_QUERY_PATTERN =
   /([?&](?:access_token|api_key|auth|authorization|dsn|password|secret|token)=)[^&#\s]+/gi;
+const SENSITIVE_ATTRIBUTE_KEY_PATTERN =
+  /(?:^|[_\-.])(?:api[_\-.]?key|auth|authorization|cookie|credentials?|dsn|jwt|password|secret|session|signature|token)(?:$|[_\-.])/i;
 
 export type SentryPolicyScope = {
   setContext(name: string, context: Record<string, unknown>): void;
@@ -91,6 +93,12 @@ export function applySentryScopePolicy(
       ...(context.spanId ? { span_id: context.spanId } : {}),
     });
   }
+  if (context.attributes && Object.keys(context.attributes).length > 0) {
+    scope.setContext(
+      "veryfront_application_error",
+      sanitizeApplicationErrorAttributes(context.attributes),
+    );
+  }
 }
 
 export function prepareSentryEvent<TEvent extends SentryPolicyEvent>(
@@ -129,6 +137,25 @@ export function redactSensitiveText(value: string): string {
     .replace(JWT_PATTERN, "[REDACTED]")
     .replace(URL_CREDENTIAL_PATTERN, "$1[REDACTED]$2")
     .replace(SENSITIVE_QUERY_PATTERN, "$1[REDACTED]");
+}
+
+export function sanitizeApplicationErrorAttributes(
+  attributes: Record<string, string | number | boolean>,
+): Record<string, string | number | boolean> {
+  const sanitized: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(attributes)) {
+    if (typeof value !== "string") {
+      sanitized[key] = value;
+      continue;
+    }
+    sanitized[key] = isSensitiveAttributeKey(key) ? "[REDACTED]" : redactSensitiveText(value);
+  }
+  return sanitized;
+}
+
+function isSensitiveAttributeKey(key: string): boolean {
+  const normalized = key.replace(/([a-z0-9])([A-Z])/g, "$1_$2");
+  return SENSITIVE_ATTRIBUTE_KEY_PATTERN.test(normalized);
 }
 
 export function sanitizeStackFramePath(value: string): string {
