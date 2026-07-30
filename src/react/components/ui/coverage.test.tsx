@@ -6,7 +6,9 @@
  *   1. be exported from `veryfront/ui`
  *   2. have a Storybook story (`storybook/stories/ui/<Name>.stories.tsx`)
  *   3. be documented (named in `docs/guides/ui-components.md`)
- *   4. if interactive, be covered by the adapter contract (a key on the builtin
+ *   4. have a test — its name referenced by some `*.test.tsx` under `ui/` (its own
+ *      conformance test or a shared conformance/characterization suite)
+ *   5. if interactive, be covered by the adapter contract (a key on the builtin
  *      adapter) so it can be swapped to Base UI / Radix / React Aria / Ariakit
  *
  * `status: "planned"` rows are gaps we are building toward — their `exists` check
@@ -122,6 +124,27 @@ try {
   guideText = Deno.readTextFileSync(UI_GUIDE);
 } catch { /* guide missing → all doc checks fail */ }
 
+// All `*.test.tsx` source under the ui tree EXCEPT this manifest — because this
+// file lists every component name as a string literal, so including it would make
+// the "has a test" check pass trivially for everything. A component "has a test"
+// when its name is referenced by some OTHER test file (its own `*.test.tsx` or a
+// shared conformance/characterization suite).
+function collectTestSources(dir: string): string {
+  let out = "";
+  for (const e of Deno.readDirSync(dir)) {
+    const p = `${dir}${e.name}`;
+    if (e.isDirectory) {
+      out += collectTestSources(`${p}/`);
+    } else if (e.isFile && e.name.endsWith(".test.tsx") && e.name !== "coverage.test.tsx") {
+      try {
+        out += "\n" + Deno.readTextFileSync(p);
+      } catch { /* unreadable → skip */ }
+    }
+  }
+  return out;
+}
+const UI_TEST_SRC = collectTestSources(new URL(".", import.meta.url).pathname);
+
 describe("veryfront/ui coverage — to-spec gate", () => {
   for (const c of UI_COMPONENTS) {
     it(`${c.name}: exported from veryfront/ui`, () => {
@@ -145,6 +168,14 @@ describe("veryfront/ui coverage — to-spec gate", () => {
       );
     });
 
+    it(`${c.name}: has a test`, () => {
+      assert(
+        new RegExp(`\\b${c.name}\\b`).test(UI_TEST_SRC),
+        `${c.name} (${c.status}) is not referenced by any ui *.test.tsx — needs its ` +
+          `own conformance test (or coverage in a shared conformance/characterization suite)`,
+      );
+    });
+
     if (c.interactive && c.adapterKey) {
       it(`${c.name}: covered by the adapter contract (swappable engine)`, () => {
         assert(
@@ -153,6 +184,81 @@ describe("veryfront/ui coverage — to-spec gate", () => {
         );
       });
     }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Every `cva` VARIANT is covered — in a story, in the docs, AND in a test.
+// The source of truth is each component's own `cva({ variants: {...} })` block; we
+// extract every `<group>: { <value>: ... }` and assert each `<value>` token is
+// referenced by (a) its Storybook story, (b) the UI guide, (c) some `*.test.tsx`.
+// This is what makes "has a story / doc / test" mean *complete* coverage, not just
+// "the component is mentioned once". RED until every variant is demonstrated.
+// ---------------------------------------------------------------------------
+const UI_DIR_PATH = new URL(".", import.meta.url).pathname;
+const kebab = (s: string) =>
+  s.replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
+    .toLowerCase();
+
+/** Pull `{group,value}` pairs from a `cva({ variants: {...} })` block. */
+export function extractVariants(src: string): Array<{ group: string; value: string }> {
+  const out: Array<{ group: string; value: string }> = [];
+  // The real block only — `defaultVariants`/`compoundVariants` use a capital V.
+  const m = /(?<![A-Za-z])variants\s*:\s*\{/.exec(src);
+  if (!m) return out;
+  const lines = src.slice(m.index + m[0].length).split("\n");
+  let depth = 1; // we are inside `variants: {`
+  let group: string | null = null;
+  for (const raw of lines) {
+    const line = raw.trim();
+    const stripped = line.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
+    if (depth === 1) {
+      const g = /^([A-Za-z_][\w-]*)\s*:\s*\{/.exec(stripped);
+      if (g && g[1]) group = g[1];
+    } else if (depth === 2 && group) {
+      const v = /^(?:"([\w-]+)"|'([\w-]+)'|([A-Za-z_][\w-]*))\s*:/.exec(line);
+      const value = v && (v[1] ?? v[2] ?? v[3]);
+      if (value) out.push({ group, value });
+    }
+    depth += (stripped.match(/\{/g)?.length ?? 0) - (stripped.match(/\}/g)?.length ?? 0);
+    if (depth <= 0) break;
+  }
+  return out;
+}
+
+describe("veryfront/ui: every cva variant is covered (story · docs · test)", () => {
+  for (const c of UI_COMPONENTS) {
+    if (c.status !== "shipped") continue; // planned rows fail the `exists` gate already
+    const srcPath = `${UI_DIR_PATH}${kebab(c.name)}.tsx`;
+    let src = "";
+    try {
+      src = Deno.readTextFileSync(srcPath);
+    } catch {
+      continue; // component defined elsewhere → variant gate not applicable here
+    }
+    const variants = extractVariants(src);
+    if (variants.length === 0) continue; // no cva variants → nothing to cover
+
+    it(`${c.name}: all ${variants.length} variants covered in story · docs · test`, () => {
+      let story = "";
+      try {
+        story = Deno.readTextFileSync(`${STORIES_DIR}${c.name}.stories.tsx`);
+      } catch { /* no story → every variant misses the story surface */ }
+      const misses: string[] = [];
+      for (const { group, value } of variants) {
+        const re = new RegExp(`\\b${value}\\b`);
+        const where: string[] = [];
+        if (!re.test(story)) where.push("story");
+        if (!re.test(guideText)) where.push("docs");
+        if (!re.test(UI_TEST_SRC)) where.push("test");
+        if (where.length) misses.push(`${group}="${value}" (missing: ${where.join(", ")})`);
+      }
+      assert(
+        misses.length === 0,
+        `${c.name} variants not fully covered:\n  ${misses.join("\n  ")}`,
+      );
+    });
   }
 });
 
@@ -230,9 +336,10 @@ describe("veryfront/ui: leaf composition (one node · ref · {...props})", () =>
       const ref = React.createRef<HTMLElement>();
       try {
         const root = createRoot(host);
+        // No children: `Input` is a void element and react-dom throws if given any.
         flushSync(() =>
           root.render(
-            React.createElement(Comp, { ref, "data-probe": "x", className: "vf-probe" }, "•"),
+            React.createElement(Comp, { ref, "data-probe": "x", className: "vf-probe" }),
           )
         );
         assert(host.children.length === 1, `${name} must render exactly one root node`);

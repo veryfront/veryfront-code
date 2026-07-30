@@ -22,8 +22,10 @@ Everything for this effort lives here. Start with the handoff.
 
 The source of truth for "done" is a **coverage test suite** that enumerates every
 component/hook and asserts it is exported, has a Storybook story, is documented,
-(if interactive) is adapter-covered, and meets the composition rules (one node,
-`forwardRef`, `{...props}` spread, `asChild`, no `xxxClassName`/`xxxProps` bags):
+**has a test**, (if interactive) is adapter-covered, that **every `cva` variant** is
+exercised in a story **and** the docs **and** a test, and that it meets the
+composition rules (one node, `forwardRef`, `{...props}` spread, `asChild`, no
+`xxxClassName`/`xxxProps` bags):
 
 - `src/react/components/ui/coverage.test.tsx`
 - `src/react/components/chat/coverage.test.tsx`

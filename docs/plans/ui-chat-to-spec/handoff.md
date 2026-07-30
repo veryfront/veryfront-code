@@ -318,8 +318,10 @@ Do exactly this each loop iteration (one small, fully-finished, committed slice)
    green. Do this before any feature work.
 2. **Pick ONE item** from the [Work breakdown](#work-breakdown--everything-in-scope)
    / `_impl/matrix.md` — the highest-leverage unchecked thing (finish Base UI 5/5
-   first, then go area by area).
-3. **Build** it to the composition rules (decision #6).
+   first, then go area by area). New scope enters via **`/to-spec`** → **`/to-tickets`**
+   (markdown only — a spec page + a ticket with its gate checklist; never `gh` issues).
+3. **Build** it to the composition rules (decision #6), using the **`/react-component`**
+   and **`/react-best-practices`** skills (React 19 patterns, forwardRef, hooks).
 4. **Story** — add/extend its Storybook story in `storybook/stories/{ui,chat}/`
    (`deno task storybook` to verify).
 5. **Docs** — write its concise page with the **`/docs-writer` skill** (shadcn/
@@ -337,6 +339,28 @@ Do exactly this each loop iteration (one small, fully-finished, committed slice)
 
 A slice is not "done" until **build + story + docs + tests + review** are all
 complete for that item.
+
+### Agent workflow — the skills to run (the codified SDLC)
+
+The per-iteration loop above IS the agent SDLC. Every skill has a fixed slot; run
+them in this order each slice. Markdown-only for planning — **never open `gh` issues.**
+
+| Stage    | Skill(s)                                                                                                                | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| -------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scope in | **`/to-spec`** → **`/to-tickets`**                                                                                      | Distil the RFC into a markdown spec page + a ticket carrying its own gate checklist. No `gh`.                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Build    | **`/react-component`**, **`/react-best-practices`**                                                                     | Author the primitive/component to the composition rules — one node, `forwardRef`, `{...props}`, `asChild`, `data-*`, hook-driven, React 19 idioms.                                                                                                                                                                                                                                                                                                                                                |
+| Story    | _(no skill)_ — `deno task storybook`                                                                                    | **One file per component**, same format as `storybook/stories/ui/Button.stories.tsx`: `title: "UI/<Name>"` (or `Chat/<Name>`), a `DocsPage`/`DocsSection`/`DocsExampleAuto` layout, and **one named `export const <Variant>: Story` per `cva` variant** (Primary, Secondary, Ghost, …) plus a `Matrix` story. Exact path `storybook/stories/{ui,chat}/<Name>.stories.tsx` + `<Name>.stories.tsx` naming — the coverage gate asserts the file, and the variant gate reads each `variant="…"` back. |
+| Docs     | **`/docs-writer`** (then **`vf-doc-review`**)                                                                           | Concise shadcn/Vercel-style page in `docs/guides/`; name every component/hook **and every variant value** (the coverage gate greps for them).                                                                                                                                                                                                                                                                                                                                                     |
+| Tests    | _(no skill)_                                                                                                            | Per-component conformance / per-hook behaviour test; adapters on builtin + swap. Name every variant so the "variant covered in test" column greens.                                                                                                                                                                                                                                                                                                                                               |
+| Review   | **`/composition-patterns`** + **`/code-review`** + **`/security-audit`** (+ **`/code-review ultra`** for the branch/PR) | Compound-component/React-19 quality, maintainability, and vulnerability passes. Fix findings before commit.                                                                                                                                                                                                                                                                                                                                                                                       |
+| Verify   | _(no skill)_ — `deno check`/`fmt`/`lint` + run the gate                                                                 | Turn coverage rows green; keep both freeze tests green.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+
+The **deterministic definition-of-done** for all of this is the two coverage
+manifests (`src/react/components/{ui,chat}/coverage.test.tsx`): each enumerated
+component/hook must be **exported · storied · documented · tested · (if interactive)
+adapter-covered**, and **every `cva` variant** must be exercised in a **story, the
+docs, AND a test**. Red until the skill above has done its job; the loop is done
+when they are green.
 
 ## Key files & conventions
 
