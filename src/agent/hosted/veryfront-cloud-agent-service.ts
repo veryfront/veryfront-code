@@ -18,7 +18,7 @@ import {
 } from "../service/runtime.ts";
 import type { AgentServiceServerLifecycle } from "../service/server.ts";
 import type { CreateNodeAgentServiceRuntimeInfrastructureOptions } from "../service/node-runtime-infrastructure.ts";
-import type { NodeAgentServiceApplicationErrorLifecycle } from "../service/node-sentry.ts";
+import type { NodeAgentServiceApplicationErrorLifecycle } from "../service/node-application-errors.ts";
 import type { ProjectAgentRuntimeAgentSource } from "../project/agent-runtime.ts";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { resolveDefaultProcessTarget } from "./cloud-agent-paths.ts";
@@ -115,6 +115,10 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
   mcpServers?: readonly NodeVeryfrontCloudAgentServiceMcpServer[];
   forwardedConfigNamespace?: string;
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
+  /** Explicit application-owned error reporter initialization boundary. */
+  applicationErrorReporterInitializer?: CreateNodeAgentServiceRuntimeInfrastructureOptions[
+    "applicationErrorReporterInitializer"
+  ];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
   processTarget?: NodeVeryfrontCloudAgentServiceProcessTarget;
   drainTimeoutMs?: number;
@@ -179,7 +183,7 @@ function createApplicationErrorShutdownOwnership(
         try {
           await applicationErrors.flush();
         } finally {
-          applicationErrors.reset();
+          await applicationErrors.dispose();
         }
       },
     },
@@ -254,7 +258,7 @@ export async function startAgentService(
     enabled: false,
     captureStartupError: (_error: unknown) => {},
     flush: () => Promise.resolve(true),
-    reset: () => {},
+    dispose: () => Promise.resolve(),
   };
   getRuntimeTraceContext = context.infrastructure.getTraceContext;
 
@@ -312,7 +316,7 @@ export async function startAgentService(
           error: flushError instanceof Error ? flushError.message : String(flushError),
         });
       } finally {
-        applicationErrors.reset();
+        await applicationErrors.dispose();
       }
     },
     exit: processTarget?.exit,

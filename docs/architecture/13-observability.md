@@ -26,10 +26,12 @@ Primary source areas:
 4. Log subscribers and buffers expose recent runtime output.
 5. Request profiling records route-level timing and resource use.
 
-Tracing, automatic instrumentation, and Sentry initialization use shared
-single-flight promises. Each lifecycle has a generation guard: shutdown or test
-reset invalidates pending work before it can publish stale provider or reporter
-state. Exporter creation and teardown remain owned by the active extension.
+Tracing and automatic instrumentation guard provider publication across
+concurrent lifecycle changes. Application-error reporter ownership is
+serialized: a selected extension session is disposed before its replacement can
+initialize, and a superseded session cannot publish stale state. Exporter and
+reporter creation, vendor configuration, and teardown remain owned by the
+explicitly composed extension.
 
 ## Logging boundary
 

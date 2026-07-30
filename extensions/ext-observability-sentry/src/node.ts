@@ -1,5 +1,16 @@
 import * as Sentry from "@sentry/node";
-import type { ApplicationErrorReporter, SentryConfig } from "veryfront/observability/sentry";
+import { env as nodeEnvironment } from "node:process";
+import type {
+  ApplicationErrorReporter,
+  ApplicationErrorReporterInitializer,
+  ApplicationErrorReporterSession,
+} from "veryfront/extensions/observability";
+import {
+  resolveSentryConfig,
+  type SentryApplicationErrorInitializerOptions,
+  type SentryConfig,
+  snapshotSentryInitializerOptions,
+} from "./config.ts";
 import {
   captureWithSentryPolicy,
   flushWithSentryPolicy,
@@ -9,6 +20,10 @@ import {
 
 type NodeSentrySdk = SentryPolicySdk & {
   init(options: Parameters<typeof Sentry.init>[0]): unknown;
+};
+
+type NodeSentryLifecycleSdk = NodeSentrySdk & {
+  close(timeoutMs?: number): Promise<boolean>;
 };
 
 export function createNodeSentryApplicationErrorReporter(
@@ -45,3 +60,47 @@ export function createNodeSentryApplicationErrorReporter(
     flush: (timeoutMs) => flushWithSentryPolicy(sdk, timeoutMs),
   };
 }
+
+function readNodeEnvironment(name: string): string | undefined {
+  return nodeEnvironment[name];
+}
+
+/** Create an explicitly composed Node Sentry reporter initializer. */
+export function createNodeSentryApplicationErrorReporterInitializer(
+  options: SentryApplicationErrorInitializerOptions = {},
+  sdk: NodeSentryLifecycleSdk = Sentry,
+): ApplicationErrorReporterInitializer {
+  const configuredOptions = snapshotSentryInitializerOptions(options);
+  const disposeTimeoutMs = configuredOptions.disposeTimeoutMs;
+  const configured = configuredOptions.config;
+  const readEnvironment = configuredOptions.readEnvironment ?? readNodeEnvironment;
+  return {
+    async initialize({ serviceName }): Promise<ApplicationErrorReporterSession | undefined> {
+      const resolvedConfig = resolveSentryConfig({
+        config: configured,
+        defaultEnvironment: "production",
+        readEnvironment,
+        serviceName,
+      });
+      if (!resolvedConfig) return undefined;
+
+      const reporter = createNodeSentryApplicationErrorReporter(resolvedConfig, sdk);
+      let disposal: Promise<void> | undefined;
+      return {
+        reporter,
+        dispose() {
+          disposal ??= Promise.resolve()
+            .then(() => sdk.close(disposeTimeoutMs))
+            .then((closed) => {
+              if (closed !== true) {
+                throw new Error("Sentry did not close before the application-error deadline");
+              }
+            });
+          return disposal;
+        },
+      };
+    },
+  };
+}
+
+export type { SentryApplicationErrorInitializerOptions, SentryConfig } from "./config.ts";

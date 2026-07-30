@@ -1,4 +1,4 @@
-import type { ApplicationErrorContext } from "veryfront/observability/sentry";
+import type { ApplicationErrorContext } from "veryfront/extensions/observability";
 
 export const DEFAULT_FINGERPRINT = "{{ default }}";
 

@@ -149,6 +149,7 @@ describe("commands/serve/command", () => {
       const exits: number[] = [];
       let shutdownCalls = 0;
       let flushCalls = 0;
+      let disposeCalls = 0;
       const shutdown = createCliProductionShutdownHandler({
         performShutdown: () => {
           shutdownCalls++;
@@ -157,6 +158,10 @@ describe("commands/serve/command", () => {
         captureApplicationError: () => {},
         flushApplicationErrors: () => {
           flushCalls++;
+          return Promise.resolve();
+        },
+        disposeApplicationErrors: () => {
+          disposeCalls++;
           return Promise.resolve();
         },
         exitProcess: (code) => exits.push(code),
@@ -169,6 +174,7 @@ describe("commands/serve/command", () => {
 
       assertEquals(shutdownCalls, 1);
       assertEquals(flushCalls, 1);
+      assertEquals(disposeCalls, 1);
       assertEquals(exits, [0]);
     });
 
@@ -184,6 +190,7 @@ describe("commands/serve/command", () => {
         performShutdown: () => Promise.reject(shutdownError),
         captureApplicationError: (error, context) => captured.push({ error, context }),
         flushApplicationErrors: () => Promise.resolve(),
+        disposeApplicationErrors: () => Promise.resolve(),
         exitProcess: (code) => exits.push(code),
         logger: { warn: (...args) => warnings.push(args) },
       });
@@ -205,6 +212,7 @@ describe("commands/serve/command", () => {
         performShutdown: () => Promise.resolve(),
         captureApplicationError: (error, context) => captured.push({ error, context }),
         flushApplicationErrors: () => Promise.resolve(false),
+        disposeApplicationErrors: () => Promise.resolve(),
         exitProcess: (code) => exits.push(code),
         logger: { warn: (...args) => warnings.push(args) },
       });
@@ -455,7 +463,7 @@ describe("commands/serve/command", () => {
     assertEquals(reportingErrors, [flushError]);
   });
 
-  it("captures Sentry bootstrap failures before production startup", async () => {
+  it("captures selected reporter initialization failures before production startup", async () => {
     const commandModule = await import("./command.ts") as {
       runProductionStartupWithErrorReporting?: RunProductionStartupWithErrorReporting;
     };
@@ -463,7 +471,7 @@ describe("commands/serve/command", () => {
       commandModule.runProductionStartupWithErrorReporting;
     assertExists(runProductionStartupWithErrorReporting);
 
-    const bootstrapError = new Error("Sentry bootstrap failed");
+    const bootstrapError = new Error("reporter initialization failed");
     const captures: Array<{ error: unknown; boundary: string }> = [];
     let bundlerContractsChecked = false;
     let startupCalled = false;
@@ -498,14 +506,15 @@ describe("commands/serve/command", () => {
     }]);
   });
 
-  it("keeps Sentry bootstrap inside the real production server boundary", async () => {
+  it("keeps selected reporter initialization inside the real production server boundary", async () => {
     const commandModule = await import("./command.ts") as {
       runProductionServer?: (
         options: ServeOptions,
         dependencies: {
           ensureBundlerContracts: () => Promise<void>;
-          initializeErrorReporting: () => Promise<unknown>;
-          loadSentryModule?: () => Promise<unknown>;
+          applicationErrorReporterInitializer: {
+            initialize: () => Promise<never>;
+          };
           reporter: Parameters<RunWithStartupErrorReporting>[1];
         },
       ) => Promise<void>;
@@ -513,7 +522,7 @@ describe("commands/serve/command", () => {
     const runProductionServer = commandModule.runProductionServer;
     assertExists(runProductionServer);
 
-    const bootstrapError = new Error("Sentry bootstrap failed");
+    const bootstrapError = new Error("reporter initialization failed");
     const captures: Array<{ error: unknown; boundary: string }> = [];
     const flushTimeouts: Array<number | undefined> = [];
     let bundlerCalled = false;
@@ -530,7 +539,9 @@ describe("commands/serve/command", () => {
           debug: false,
         },
         {
-          initializeErrorReporting: () => Promise.reject(bootstrapError),
+          applicationErrorReporterInitializer: {
+            initialize: () => Promise.reject(bootstrapError),
+          },
           ensureBundlerContracts: () => {
             bundlerCalled = true;
             return Promise.resolve();
@@ -558,117 +569,6 @@ describe("commands/serve/command", () => {
     assertEquals(flushTimeouts.length, 1);
     assertEquals((flushTimeouts[0] ?? Infinity) <= 2_000, true);
     assertEquals((flushTimeouts[0] ?? 0) > 0, true);
-  });
-
-  it("keeps Sentry module loading inside the real production server boundary", async () => {
-    const commandModule = await import("./command.ts") as {
-      runProductionServer?: (
-        options: ServeOptions,
-        dependencies: {
-          ensureBundlerContracts: () => Promise<void>;
-          loadSentryModule: () => Promise<never>;
-          reporter: Parameters<RunWithStartupErrorReporting>[1];
-        },
-      ) => Promise<void>;
-    };
-    const runProductionServer = commandModule.runProductionServer;
-    assertExists(runProductionServer);
-
-    const loadError = new Error("Sentry module failed to load");
-    const captures: Array<{ error: unknown; boundary: string }> = [];
-    const flushTimeouts: Array<number | undefined> = [];
-    let bundlerCalled = false;
-
-    const thrown = await assertRejects(() =>
-      runProductionServer(
-        {
-          mode: "production",
-          port: 3000,
-          bindAddress: "127.0.0.1",
-          splitMode: false,
-          useBinary: false,
-          binaryPath: "./bin/veryfront",
-          debug: false,
-        },
-        {
-          loadSentryModule: () => Promise.reject(loadError),
-          ensureBundlerContracts: () => {
-            bundlerCalled = true;
-            return Promise.reject(new Error("bundler should not run"));
-          },
-          reporter: {
-            captureApplicationError: (error, context) => {
-              captures.push({ error, boundary: context.boundary });
-              return "event-id";
-            },
-            flushApplicationErrors: (timeoutMs) => {
-              flushTimeouts.push(timeoutMs);
-              return Promise.resolve(true);
-            },
-          },
-        },
-      )
-    );
-
-    assertStrictEquals(thrown, loadError);
-    assertEquals(bundlerCalled, false);
-    assertEquals(captures, [{
-      error: loadError,
-      boundary: "process.startup",
-    }]);
-    assertEquals(flushTimeouts.length, 1);
-    assertEquals((flushTimeouts[0] ?? Infinity) <= 2_000, true);
-    assertEquals((flushTimeouts[0] ?? 0) > 0, true);
-  });
-
-  it("preserves default reporter acquisition failures without remote capture", async () => {
-    const commandModule = await import("./command.ts") as {
-      runProductionServer?: (
-        options: ServeOptions,
-        dependencies: {
-          ensureBundlerContracts: () => Promise<void>;
-          loadSentryModule: () => Promise<never>;
-        },
-      ) => Promise<void>;
-    };
-    const runProductionServer = commandModule.runProductionServer;
-    assertExists(runProductionServer);
-
-    const loadError = new Error("Sentry module failed to load");
-    let bundlerCalled = false;
-    const result = runProductionServer(
-      {
-        mode: "production",
-        port: 3000,
-        bindAddress: "127.0.0.1",
-        splitMode: false,
-        useBinary: false,
-        binaryPath: "./bin/veryfront",
-        debug: false,
-      },
-      {
-        loadSentryModule: () => Promise.reject(loadError),
-        ensureBundlerContracts: () => {
-          bundlerCalled = true;
-          return Promise.resolve();
-        },
-      },
-    ).then(
-      (value: void) => ({ value }),
-      (error: unknown) => ({ error }),
-    );
-
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<{ timedOut: true }>((resolve) => {
-      timeoutId = setTimeout(() => resolve({ timedOut: true }), 250);
-    });
-    const outcome = await Promise.race([result, timeout]);
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
-
-    assertEquals("timedOut" in outcome, false);
-    assertEquals("value" in outcome, false);
-    if ("error" in outcome) assertStrictEquals(outcome.error, loadError);
-    assertEquals(bundlerCalled, false);
   });
 
   for (const mode of ["production", "combined"] as const) {

@@ -122,10 +122,12 @@ import { cancelProxyResponseBody } from "./response-body.ts";
 import { ProxyRequestHostError } from "./request-host.ts";
 import { createProxyEndToEndHeaders } from "./hop-by-hop-headers.ts";
 import {
+  type ApplicationErrorReporterInitializer,
+  ApplicationErrorReporterInitializerName,
   captureApplicationError,
   flushApplicationErrors,
+  initializeApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
-import { initializeSentryFromEnv, shutdownSentry } from "#veryfront/observability/sentry.ts";
 
 const startupConfig = readProxyStartupConfig();
 const config = startupConfig.proxyConfig;
@@ -226,13 +228,23 @@ signalHandlers = await runProxyStartupStage(() =>
 );
 
 // Signal handlers are the earliest startup resource and therefore the final
-// rollback cleanup. Flush diagnostics before invalidating an in-flight Sentry
-// initializer so a late extension import cannot publish after cancellation.
-startupRollback.own("sentry", shutdownSentry);
+// rollback cleanup. Reporter selection belongs to application composition;
+// absence is an explicit disabled state.
+const applicationErrorReporter = await runProxyStartupStage(() =>
+  initializeApplicationErrorReporter({
+    initializer: tryResolve<ApplicationErrorReporterInitializer>(
+      ApplicationErrorReporterInitializerName,
+    ),
+    serviceName: "veryfront-proxy",
+  })
+);
+startupRollback.own(
+  "application-error-reporter",
+  () => applicationErrorReporter.dispose(),
+);
 startupRollback.own("application-errors", async () => {
   await flushApplicationErrors();
 });
-await runProxyStartupStage(() => initializeSentryFromEnv("veryfront-proxy"));
 
 const rendererRouter = await acquireProxyStartupResource(
   "renderer-router",
@@ -903,6 +915,10 @@ async function performShutdown(
       run: async () => await flushApplicationErrors(),
     },
     {
+      name: "application-error-reporter",
+      run: () => applicationErrorReporter.dispose(),
+    },
+    {
       name: "signal-handlers",
       run: () => signalHandlers?.dispose(),
     },
@@ -968,6 +984,19 @@ shutdownCoordinator = await runProxyStartupStage(() =>
       } catch (flushError) {
         try {
           proxyLogger.error("Failed to flush terminal shutdown diagnostics", {}, flushError);
+        } catch {
+          // Process termination remains authoritative.
+        }
+      }
+      try {
+        await applicationErrorReporter.dispose();
+      } catch (disposeError) {
+        try {
+          proxyLogger.error(
+            "Failed to dispose terminal application-error reporter",
+            {},
+            disposeError,
+          );
         } catch {
           // Process termination remains authoritative.
         }

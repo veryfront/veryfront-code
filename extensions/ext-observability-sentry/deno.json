@@ -8,8 +8,32 @@
   },
   "veryfront": {
     "extension": true,
+    "contracts": {
+      "provides": ["ApplicationErrorReporterInitializer"]
+    },
     "capabilities": [
-      { "type": "net:outbound", "hosts": ["*"] }
+      { "type": "net:outbound", "hosts": ["*"] },
+      {
+        "type": "env:read",
+        "keys": [
+          "APP_ENVIRONMENT",
+          "NODE_ENV",
+          "OTEL_DEPLOYMENT_ENVIRONMENT",
+          "OTEL_SERVICE_NAME",
+          "OTEL_SERVICE_VERSION",
+          "RELEASE_VERSION",
+          "SENTRY_DSN",
+          "SENTRY_ENVIRONMENT",
+          "SENTRY_RELEASE",
+          "SENTRY_SERVICE",
+          "SENTRY_SERVICE_NAME",
+          "VERYFRONT_ENV",
+          "VERYFRONT_ENVIRONMENT",
+          "VERYFRONT_VERSION",
+          "npm_package_name",
+          "npm_package_version"
+        ]
+      }
     ]
   },
   "imports": {
@@ -17,7 +41,7 @@
     "@sentry/node": "npm:@sentry/node@10.68.0",
     "@std/assert": "jsr:@std/assert@1.0.19",
     "veryfront/extensions": "../../src/extensions/index.ts",
-    "veryfront/observability/sentry": "../../src/observability/sentry.ts"
+    "veryfront/extensions/observability": "../../src/extensions/observability/index.ts"
   },
   "tasks": {
     "test": "deno test --no-check --allow-all src/"

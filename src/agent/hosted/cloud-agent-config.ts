@@ -42,6 +42,7 @@ export function createNodeVeryfrontCloudAgentServiceContext(
   const infrastructure = createNodeAgentServiceRuntimeInfrastructure({
     serviceName: options.serviceName,
     env: resolveEnvironment({ env: options.env, processTarget }),
+    applicationErrorReporterInitializer: options.applicationErrorReporterInitializer,
     processTarget,
   });
   function trace<TResult>(

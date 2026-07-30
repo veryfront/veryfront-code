@@ -1,27 +1,206 @@
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { sanitizeTelemetryAttributes, sanitizeTelemetryText } from "./telemetry-error.ts";
 import { MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH } from "./limits.ts";
+import {
+  type ApplicationErrorContext,
+  type ApplicationErrorReporter,
+  type ApplicationErrorReporterInitializer,
+  ApplicationErrorReporterInitializerName,
+  type ApplicationErrorReporterSession,
+} from "#veryfront/extensions/observability/application-error-reporter.ts";
 
-export type ApplicationErrorContext = {
-  boundary: string;
-  method?: string;
-  requestId?: string;
-  spanId?: string;
-  traceId?: string;
-  attributes?: Record<string, string | number | boolean>;
-};
+export type {
+  ApplicationErrorContext,
+  ApplicationErrorReporter,
+  ApplicationErrorReporterInitializationContext,
+  ApplicationErrorReporterInitializer,
+  ApplicationErrorReporterSession,
+} from "#veryfront/extensions/observability/application-error-reporter.ts";
+export { ApplicationErrorReporterInitializerName };
 
-export type ApplicationErrorReporter = {
+/** Active application-error reporter ownership. */
+export type ApplicationErrorReporterLifecycle = {
+  readonly enabled: boolean;
   capture(error: unknown, context: ApplicationErrorContext): string | undefined;
   flush(timeoutMs?: number): Promise<boolean>;
+  dispose(): Promise<void>;
 };
 
+const MAX_APPLICATION_ERROR_SERVICE_NAME_LENGTH = 255;
+
 let reporter: ApplicationErrorReporter | undefined;
+let reporterOwner: symbol | undefined;
+let initializationGeneration = 0;
+let activeLifecycle: ApplicationErrorReporterLifecycle | undefined;
+let initializationQueue: Promise<void> = Promise.resolve();
+let pendingInitializations = 0;
 
 export function setApplicationErrorReporter(
   nextReporter: ApplicationErrorReporter | undefined,
 ): void {
+  if (activeLifecycle || pendingInitializations > 0) {
+    throw new Error(
+      "Wait for application-error initialization and dispose its lifecycle before replacing its reporter",
+    );
+  }
   reporter = nextReporter;
+  reporterOwner = undefined;
+}
+
+function disabledApplicationErrorReporterLifecycle(): ApplicationErrorReporterLifecycle {
+  return Object.freeze({
+    enabled: false,
+    capture: () => undefined,
+    flush: () => Promise.resolve(true),
+    dispose: () => Promise.resolve(),
+  });
+}
+
+function captureReporterSession(value: unknown): ApplicationErrorReporterSession {
+  if (value === null || typeof value !== "object") {
+    throw new TypeError("Application-error reporter initializer must return a session object");
+  }
+  const session = value as Partial<ApplicationErrorReporterSession>;
+  const sessionReporter = session.reporter;
+  if (
+    sessionReporter === null || typeof sessionReporter !== "object" ||
+    typeof sessionReporter.capture !== "function" ||
+    typeof sessionReporter.flush !== "function"
+  ) {
+    throw new TypeError("Application-error reporter session must contain a valid reporter");
+  }
+  const capture = sessionReporter.capture;
+  const flush = sessionReporter.flush;
+  const dispose = session.dispose;
+  if (typeof dispose !== "function") {
+    throw new TypeError("Application-error reporter session must provide dispose()");
+  }
+
+  return Object.freeze({
+    reporter: Object.freeze({
+      capture: (error: unknown, context: ApplicationErrorContext) => {
+        const eventId = Reflect.apply(capture, sessionReporter, [error, context]);
+        return typeof eventId === "string" ? eventId : undefined;
+      },
+      flush: (timeoutMs?: number) =>
+        Promise.resolve(Reflect.apply(flush, sessionReporter, [timeoutMs])),
+    }),
+    dispose: () => Reflect.apply(dispose, session, []),
+  });
+}
+
+function enqueueInitialization<T>(operation: () => Promise<T>): Promise<T> {
+  pendingInitializations++;
+  const result = initializationQueue.then(operation);
+  initializationQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result.finally(() => {
+    pendingInitializations--;
+  });
+}
+
+function snapshotApplicationErrorServiceName(value: unknown): string {
+  if (
+    typeof value !== "string" || value.length === 0 ||
+    value.length > MAX_APPLICATION_ERROR_SERVICE_NAME_LENGTH ||
+    value.trim() !== value || value.normalize("NFC") !== value
+  ) {
+    throw new TypeError(
+      `Application-error service name must be a canonical string of at most ${MAX_APPLICATION_ERROR_SERVICE_NAME_LENGTH} characters`,
+    );
+  }
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 31 || code === 127) {
+      throw new TypeError("Application-error service name cannot contain control characters");
+    }
+  }
+  return value;
+}
+
+/**
+ * Activate an explicitly selected reporter initializer.
+ *
+ * The latest initialization owns the process reporter. A superseded
+ * initialization disposes the session it created instead of publishing stale
+ * state. Provider initialization and disposal failures are not converted into
+ * disabled/no-op behavior.
+ */
+export function initializeApplicationErrorReporter(options: {
+  initializer?: ApplicationErrorReporterInitializer;
+  serviceName: string;
+}): Promise<ApplicationErrorReporterLifecycle> {
+  const generation = ++initializationGeneration;
+  const initializer = options.initializer;
+  const requestedServiceName = options.serviceName;
+  return enqueueInitialization(async () => {
+    if (generation !== initializationGeneration) {
+      return disabledApplicationErrorReporterLifecycle();
+    }
+    const serviceName = snapshotApplicationErrorServiceName(requestedServiceName);
+    const previousLifecycle = activeLifecycle;
+    if (previousLifecycle) await previousLifecycle.dispose();
+    if (generation !== initializationGeneration) {
+      return disabledApplicationErrorReporterLifecycle();
+    }
+
+    if (!initializer) {
+      reporter = undefined;
+      reporterOwner = undefined;
+      return disabledApplicationErrorReporterLifecycle();
+    }
+
+    if (typeof initializer.initialize !== "function") {
+      throw new TypeError("Application-error reporter initializer must provide initialize()");
+    }
+    const sessionValue = await Reflect.apply(initializer.initialize, initializer, [{
+      serviceName,
+    }]);
+    if (sessionValue === undefined) {
+      reporter = undefined;
+      reporterOwner = undefined;
+      return disabledApplicationErrorReporterLifecycle();
+    }
+    const session = captureReporterSession(sessionValue);
+
+    if (generation !== initializationGeneration) {
+      await session.dispose();
+      return disabledApplicationErrorReporterLifecycle();
+    }
+
+    const owner = Symbol("application-error-reporter");
+    reporter = session.reporter;
+    reporterOwner = owner;
+    let disposal: Promise<void> | undefined;
+    const lifecycle: ApplicationErrorReporterLifecycle = Object.freeze({
+      enabled: true,
+      capture(error, context) {
+        if (reporterOwner !== owner) return undefined;
+        return captureApplicationError(error, context);
+      },
+      flush(timeoutMs) {
+        if (reporterOwner !== owner) return Promise.resolve(true);
+        return flushApplicationErrors(timeoutMs);
+      },
+      dispose() {
+        if (disposal) return disposal;
+        if (reporterOwner === owner) {
+          reporter = undefined;
+          reporterOwner = undefined;
+        }
+        disposal = Promise.resolve()
+          .then(() => session.dispose())
+          .finally(() => {
+            if (activeLifecycle === lifecycle) activeLifecycle = undefined;
+          });
+        return disposal;
+      },
+    });
+    activeLifecycle = lifecycle;
+    return lifecycle;
+  });
 }
 
 export function captureApplicationError(

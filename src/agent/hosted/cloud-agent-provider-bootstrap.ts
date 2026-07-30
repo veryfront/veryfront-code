@@ -150,6 +150,9 @@ export type ResolvedNodeVeryfrontCloudAgentServiceOptions = {
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   forwardedConfigNamespace?: string;
   createBashTool: AgentServiceSandboxToolsOptions["createBashTool"];
+  applicationErrorReporterInitializer?: CreateNodeAgentServiceRuntimeInfrastructureOptions[
+    "applicationErrorReporterInitializer"
+  ];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
   processTarget?:
     & NonNullable<CreateNodeAgentServiceRuntimeInfrastructureOptions["processTarget"]>

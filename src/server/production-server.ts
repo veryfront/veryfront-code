@@ -754,8 +754,6 @@ if (import.meta.main) {
     captureApplicationError,
     flushApplicationErrors,
   } = await import("#veryfront/observability/application-errors.ts");
-  const { initializeSentryFromEnv } = await import("#veryfront/observability/sentry.ts");
-  await initializeSentryFromEnv();
 
   // Register global error handlers FIRST to prevent process crashes from application errors
   // This ensures the renderer stays up even if user code throws unhandled exceptions

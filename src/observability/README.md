@@ -5,11 +5,10 @@ request profiling, and development-diagnostics contracts.
 
 ## Public entry points
 
-| Specifier                            | Contract                                                                        |
-| ------------------------------------ | ------------------------------------------------------------------------------- |
-| `veryfront/observability`            | Stable public tracing, metrics, instrumentation, profiling, and diagnostics API |
-| `veryfront/observability/otlp-setup` | Lower-level shim-based tracing helpers used by framework integrations           |
-| `veryfront/observability/sentry`     | Opt-in application-error reporting through the Sentry extension                 |
+| Specifier                            | Contract                                                                                          |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `veryfront/observability`            | Stable tracing, metrics, instrumentation, profiling, diagnostics, and application-error contracts |
+| `veryfront/observability/otlp-setup` | Lower-level shim-based tracing helpers used by framework integrations                             |
 
 ```ts
 import { initTracing, recordHttpRequest, withSpan } from "veryfront/observability";
@@ -202,11 +201,13 @@ failures do not replace completed application results or failures.
 
 ## Application error reporting
 
-`veryfront/observability/sentry` is disabled unless
-`VERYFRONT_ERROR_REPORTER=sentry` and a non-empty `SENTRY_DSN` are present, or
-`initializeSentry(config)` is called explicitly. Initialization snapshots and
-validates configuration before loading the extension, and concurrent callers
-share one setup attempt.
+Core defines `ApplicationErrorReporterInitializer`, the active reporter
+lifecycle, and the bounded capture/flush boundary. It contains no Sentry SDK,
+configuration, environment-variable handling, or vendor loader. With no
+explicitly composed initializer, application-error reporting is disabled.
+Selected initializer and cleanup failures propagate to their lifecycle caller;
+overlapping ownership transitions are serialized so a stale reporter cannot
+dispose a newer one.
 
 `captureApplicationError(error, context)` ignores expected request
 cancellation. Reporter failures, invalid reporter results, and hostile error or
@@ -214,6 +215,9 @@ context values do not replace application control flow.
 `flushApplicationErrors(timeoutMs?)` has a strict deadline and returns `false`
 for timeout, rejection, exceptions, or an invalid timeout; it never waits for a
 non-cooperative reporter after the deadline.
+
+Concrete reporters are separate extension packages. Sentry configuration and
+runtime setup are documented by `@veryfront/ext-observability-sentry`.
 
 ## In-process metrics
 

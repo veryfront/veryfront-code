@@ -131,11 +131,11 @@ describe("proxy main request URL parsing", () => {
     const signalAcquireIndex = source.indexOf(
       "acquireProxySignalHandlers({",
     );
-    const sentryInitializationIndex = source.indexOf(
-      'initializeSentryFromEnv("veryfront-proxy")',
+    const reporterInitializationIndex = source.indexOf(
+      "initializeApplicationErrorReporter({",
     );
-    const sentryShutdownOwnerIndex = source.indexOf(
-      'startupRollback.own("sentry", shutdownSentry)',
+    const reporterShutdownOwnerIndex = source.indexOf(
+      '"application-error-reporter",\n  () => applicationErrorReporter.dispose()',
     );
     const applicationErrorsOwnerIndex = source.indexOf(
       'startupRollback.own("application-errors"',
@@ -146,12 +146,12 @@ describe("proxy main request URL parsing", () => {
     const busAcquisitionIndex = source.indexOf("const routingInvalidationBus = await");
     const rendererReadyIndex = source.indexOf("rendererRouter?.ready()");
     assertEquals(signalAcquireIndex >= 0, true);
-    assertEquals(sentryShutdownOwnerIndex > signalAcquireIndex, true);
-    assertEquals(applicationErrorsOwnerIndex > sentryShutdownOwnerIndex, true);
-    assertEquals(sentryInitializationIndex > applicationErrorsOwnerIndex, true);
+    assertEquals(reporterInitializationIndex > signalAcquireIndex, true);
+    assertEquals(reporterShutdownOwnerIndex > reporterInitializationIndex, true);
+    assertEquals(applicationErrorsOwnerIndex > reporterShutdownOwnerIndex, true);
     for (
       const stageIndex of [
-        sentryInitializationIndex,
+        reporterInitializationIndex,
         rendererAcquisitionIndex,
         authAcquisitionIndex,
         cacheAcquisitionIndex,
@@ -179,9 +179,13 @@ describe("proxy main request URL parsing", () => {
     const proxyHandlerCleanupIndex = cleanupPlan.indexOf('name: "proxy-handler"');
     const tokenCacheCleanupIndex = cleanupPlan.indexOf('name: "token-cache"');
     const telemetryCleanupIndex = cleanupPlan.indexOf('name: "telemetry"');
+    const applicationErrorsCleanupIndex = cleanupPlan.indexOf('name: "application-errors"');
+    const reporterCleanupIndex = cleanupPlan.indexOf('name: "application-error-reporter"');
     assertEquals(proxyHandlerCleanupIndex >= 0, true);
     assertEquals(tokenCacheCleanupIndex > proxyHandlerCleanupIndex, true);
     assertEquals(telemetryCleanupIndex > tokenCacheCleanupIndex, true);
+    assertEquals(applicationErrorsCleanupIndex > telemetryCleanupIndex, true);
+    assertEquals(reporterCleanupIndex > applicationErrorsCleanupIndex, true);
     assertStringIncludes(cleanupPlan, "run: () => cache.close()");
     assertStringIncludes(cleanupPlan, "run: () => signalHandlers?.dispose()");
   });

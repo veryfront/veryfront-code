@@ -1,9 +1,15 @@
-import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
 import type {
   ApplicationErrorContext,
   ApplicationErrorReporter,
+  ApplicationErrorReporterInitializer,
 } from "#veryfront/observability/application-errors.ts";
 import {
   captureApplicationError,
@@ -11,9 +17,8 @@ import {
 } from "#veryfront/observability/application-errors.ts";
 import {
   createNodeAgentServiceLogApplicationErrorEmitter,
-  initializeNodeAgentServiceSentryApplicationErrors,
-  resolveNodeAgentServiceSentryConfig,
-} from "./node-sentry.ts";
+  initializeNodeAgentServiceApplicationErrors,
+} from "./node-application-errors.ts";
 
 type CaptureRecord = {
   error: unknown;
@@ -53,23 +58,29 @@ function createReporter(options: {
   return reporter;
 }
 
-describe("agent/service/node-sentry", () => {
-  it("resolves Agent Sentry config from the existing service env", () => {
-    assertEquals(
-      resolveNodeAgentServiceSentryConfig({
-        SENTRY_DSN: " https://public@example.ingest.sentry.io/1 ",
-        SENTRY_ENVIRONMENT: "staging",
-        SENTRY_RELEASE: "release-1",
-        SENTRY_SERVICE: "veryfront-agent",
-      }),
-      {
-        dsn: "https://public@example.ingest.sentry.io/1",
-        environment: "staging",
-        release: "release-1",
-        serviceName: "veryfront-agent",
-      },
+function createInitializer(
+  reporter: ApplicationErrorReporter,
+  onDispose: () => void | Promise<void> = () => {},
+): ApplicationErrorReporterInitializer {
+  return {
+    initialize: () => ({ reporter, dispose: onDispose }),
+  };
+}
+
+describe("agent/service/node-application-errors", () => {
+  it("stays explicitly disabled when no reporter initializer is selected", async () => {
+    const lifecycle = await initializeNodeAgentServiceApplicationErrors({});
+    assertEquals(lifecycle.enabled, false);
+    assertEquals(await lifecycle.flush(), true);
+    await lifecycle.dispose();
+  });
+
+  it("rejects invalid flush deadlines before changing reporter ownership", async () => {
+    await assertRejects(
+      () => initializeNodeAgentServiceApplicationErrors({ flushTimeoutMs: -1 }),
+      RangeError,
+      "non-negative timer delay",
     );
-    assertStrictEquals(resolveNodeAgentServiceSentryConfig({}), undefined);
   });
 
   it("converts unexpected Agent error logs into application errors with structured attributes", () => {
@@ -159,15 +170,8 @@ describe("agent/service/node-sentry", () => {
   it("initializes before OTel, coexists with OTel emitter, isolates capture failures, and cleans up", async () => {
     const reporter = createReporter({ captureThrows: true });
     const otelRecords: string[] = [];
-    const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-      env: {
-        SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
-        SENTRY_ENVIRONMENT: "staging",
-      },
-      loadExtension: () =>
-        Promise.resolve({
-          createNodeSentryApplicationErrorReporter: () => reporter,
-        }),
+    const lifecycle = await initializeNodeAgentServiceApplicationErrors({
+      initializer: createInitializer(reporter),
     });
 
     try {
@@ -182,13 +186,13 @@ describe("agent/service/node-sentry", () => {
       });
 
       assertEquals(otelRecords, ["agent failed"]);
-      lifecycle.reset();
+      await lifecycle.dispose();
       withMutedConsole(() => {
         agentLogger.error("after reset");
       });
       assertEquals(otelRecords, ["agent failed", "after reset"]);
     } finally {
-      lifecycle.reset();
+      await lifecycle.dispose();
       __resetLogRecordEmitterForTests();
       setApplicationErrorReporter(undefined);
     }
@@ -197,15 +201,9 @@ describe("agent/service/node-sentry", () => {
   it("captures one startup error, leaves OTel log delivery intact, and flushes once", async () => {
     const reporter = createReporter({ flush: () => new Promise<boolean>(() => {}) });
     const otelRecords: string[] = [];
-    const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-      env: {
-        SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
-      },
+    const lifecycle = await initializeNodeAgentServiceApplicationErrors({
       flushTimeoutMs: 5,
-      loadExtension: () =>
-        Promise.resolve({
-          createNodeSentryApplicationErrorReporter: () => reporter,
-        }),
+      initializer: createInitializer(reporter),
     });
 
     try {
@@ -229,29 +227,21 @@ describe("agent/service/node-sentry", () => {
       assertEquals(Date.now() - started < 1_000, true);
       assertEquals(reporter.flushTimeouts, [5]);
     } finally {
-      lifecycle.reset();
+      await lifecycle.dispose();
       __resetLogRecordEmitterForTests();
       setApplicationErrorReporter(undefined);
     }
   });
 
-  it("repeated initialization replaces subscribers and old reset cannot clear the newer reporter", async () => {
+  it("repeated initialization replaces subscribers and stale disposal cannot clear the newer reporter", async () => {
     const firstReporter = createReporter();
     const secondReporter = createReporter();
 
-    const firstLifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/1" },
-      loadExtension: () =>
-        Promise.resolve({
-          createNodeSentryApplicationErrorReporter: () => firstReporter,
-        }),
+    const firstLifecycle = await initializeNodeAgentServiceApplicationErrors({
+      initializer: createInitializer(firstReporter),
     });
-    const secondLifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/2" },
-      loadExtension: () =>
-        Promise.resolve({
-          createNodeSentryApplicationErrorReporter: () => secondReporter,
-        }),
+    const secondLifecycle = await initializeNodeAgentServiceApplicationErrors({
+      initializer: createInitializer(secondReporter),
     });
 
     try {
@@ -261,21 +251,21 @@ describe("agent/service/node-sentry", () => {
       assertEquals(firstReporter.captured, []);
       assertEquals(secondReporter.captured.length, 1);
 
-      firstLifecycle.reset();
+      await firstLifecycle.dispose();
       withMutedConsole(() => {
         agentLogger.error("after stale reset");
       });
       assertEquals(firstReporter.captured, []);
       assertEquals(secondReporter.captured.length, 2);
 
-      secondLifecycle.reset();
+      await secondLifecycle.dispose();
       withMutedConsole(() => {
         agentLogger.error("after current reset");
       });
       assertEquals(secondReporter.captured.length, 2);
     } finally {
-      firstLifecycle.reset();
-      secondLifecycle.reset();
+      await firstLifecycle.dispose();
+      await secondLifecycle.dispose();
       __resetLogRecordEmitterForTests();
       setApplicationErrorReporter(undefined);
     }
@@ -284,29 +274,32 @@ describe("agent/service/node-sentry", () => {
   it("prevents stale concurrent initialization from winning reporter ownership", async () => {
     const firstReporter = createReporter();
     const secondReporter = createReporter();
-    let resolveFirst:
-      | ((
-        extension: { createNodeSentryApplicationErrorReporter: () => ApplicationErrorReporter },
-      ) => void)
-      | undefined;
-    const firstInit = initializeNodeAgentServiceSentryApplicationErrors({
-      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/1" },
-      loadExtension: () =>
-        new Promise((resolve) => {
-          resolveFirst = resolve;
-        }),
+    let markFirstStarted: (() => void) | undefined;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
     });
-    const secondLifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/2" },
-      loadExtension: () =>
-        Promise.resolve({
-          createNodeSentryApplicationErrorReporter: () => secondReporter,
-        }),
+    let resolveFirst:
+      | ((session: { reporter: ApplicationErrorReporter; dispose(): void }) => void)
+      | undefined;
+    const firstInit = initializeNodeAgentServiceApplicationErrors({
+      initializer: {
+        initialize: () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+            markFirstStarted?.();
+          }),
+      },
+    });
+    await firstStarted;
+    const secondPending = initializeNodeAgentServiceApplicationErrors({
+      initializer: createInitializer(secondReporter),
     });
     resolveFirst?.({
-      createNodeSentryApplicationErrorReporter: () => firstReporter,
+      reporter: firstReporter,
+      dispose() {},
     });
     const firstLifecycle = await firstInit;
+    const secondLifecycle = await secondPending;
 
     try {
       assertEquals(firstLifecycle.enabled, false);
@@ -316,8 +309,8 @@ describe("agent/service/node-sentry", () => {
       assertEquals(firstReporter.captured, []);
       assertEquals(secondReporter.captured.length, 1);
     } finally {
-      firstLifecycle.reset();
-      secondLifecycle.reset();
+      await firstLifecycle.dispose();
+      await secondLifecycle.dispose();
       __resetLogRecordEmitterForTests();
       setApplicationErrorReporter(undefined);
     }

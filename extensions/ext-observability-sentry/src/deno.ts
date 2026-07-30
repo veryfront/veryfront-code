@@ -1,5 +1,15 @@
 import * as Sentry from "@sentry/deno";
-import type { ApplicationErrorReporter, SentryConfig } from "veryfront/observability/sentry";
+import type {
+  ApplicationErrorReporter,
+  ApplicationErrorReporterInitializer,
+  ApplicationErrorReporterSession,
+} from "veryfront/extensions/observability";
+import {
+  resolveSentryConfig,
+  type SentryApplicationErrorInitializerOptions,
+  type SentryConfig,
+  snapshotSentryInitializerOptions,
+} from "./config.ts";
 import {
   captureWithSentryPolicy,
   flushWithSentryPolicy,
@@ -16,6 +26,10 @@ const DISABLED_DENO_INTEGRATIONS = new Set([
 
 type DenoSentrySdk = SentryPolicySdk & {
   init(options: Parameters<typeof Sentry.init>[0]): unknown;
+};
+
+type DenoSentryLifecycleSdk = DenoSentrySdk & {
+  close(timeoutMs?: number): Promise<boolean>;
 };
 
 export function createDenoSentryApplicationErrorReporter(
@@ -53,3 +67,46 @@ export function createDenoSentryApplicationErrorReporter(
     flush: (timeoutMs) => flushWithSentryPolicy(sdk, timeoutMs),
   };
 }
+
+function readDenoEnvironment(name: string): string | undefined {
+  return Deno.env.get(name);
+}
+
+/** Create an explicitly composed Deno Sentry reporter initializer. */
+export function createDenoSentryApplicationErrorReporterInitializer(
+  options: SentryApplicationErrorInitializerOptions = {},
+  sdk: DenoSentryLifecycleSdk = Sentry,
+): ApplicationErrorReporterInitializer {
+  const configuredOptions = snapshotSentryInitializerOptions(options);
+  const disposeTimeoutMs = configuredOptions.disposeTimeoutMs;
+  const configured = configuredOptions.config;
+  const readEnvironment = configuredOptions.readEnvironment ?? readDenoEnvironment;
+  return {
+    async initialize({ serviceName }): Promise<ApplicationErrorReporterSession | undefined> {
+      const resolvedConfig = resolveSentryConfig({
+        config: configured,
+        readEnvironment,
+        serviceName,
+      });
+      if (!resolvedConfig) return undefined;
+
+      const reporter = createDenoSentryApplicationErrorReporter(resolvedConfig, sdk);
+      let disposal: Promise<void> | undefined;
+      return {
+        reporter,
+        dispose() {
+          disposal ??= Promise.resolve()
+            .then(() => sdk.close(disposeTimeoutMs))
+            .then((closed) => {
+              if (closed !== true) {
+                throw new Error("Sentry did not close before the application-error deadline");
+              }
+            });
+          return disposal;
+        },
+      };
+    },
+  };
+}
+
+export type { SentryApplicationErrorInitializerOptions, SentryConfig } from "./config.ts";

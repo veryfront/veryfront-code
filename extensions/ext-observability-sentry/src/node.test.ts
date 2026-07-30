@@ -1,5 +1,8 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { createNodeSentryApplicationErrorReporter } from "./node.ts";
+import {
+  createNodeSentryApplicationErrorReporter,
+  createNodeSentryApplicationErrorReporterInitializer,
+} from "./node.ts";
 
 function createNodeSentrySdk(options: {
   captureThrows?: boolean;
@@ -8,6 +11,7 @@ function createNodeSentrySdk(options: {
   const state = {
     captured: [] as unknown[],
     flushTimeouts: [] as Array<number | undefined>,
+    closeTimeouts: [] as Array<number | undefined>,
     initOptions: undefined as Parameters<typeof import("@sentry/node").init>[0] | undefined,
     tags: [] as Array<[string, string]>,
   };
@@ -27,6 +31,10 @@ function createNodeSentrySdk(options: {
     flush(timeoutMs?: number) {
       if (options.flushThrows) throw new Error("flush failed");
       state.flushTimeouts.push(timeoutMs);
+      return Promise.resolve(true);
+    },
+    close(timeoutMs?: number) {
+      state.closeTimeouts.push(timeoutMs);
       return Promise.resolve(true);
     },
     init(options: Parameters<typeof import("@sentry/node").init>[0]) {
@@ -142,4 +150,21 @@ Deno.test("Node adapter source does not import the Deno SDK", async () => {
   );
 
   assertEquals(source.includes("@sentry/deno"), false);
+});
+
+Deno.test("Node initializer owns environment defaults and SDK cleanup", async () => {
+  const { sdk, state } = createNodeSentrySdk();
+  const initializer = createNodeSentryApplicationErrorReporterInitializer({
+    readEnvironment: (name) =>
+      ({
+        SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
+      })[name],
+    disposeTimeoutMs: 40,
+  }, sdk);
+  const session = await initializer.initialize({ serviceName: "veryfront-agent" });
+  if (!session) throw new Error("Sentry initializer unexpectedly disabled reporting");
+
+  assertEquals(state.initOptions?.environment, "production");
+  await session.dispose();
+  assertEquals(state.closeTimeouts, [40]);
 });

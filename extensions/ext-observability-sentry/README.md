@@ -1,28 +1,34 @@
-# `@veryfront/ext-observability-sentry`
+# Compose Sentry application-error reporting
 
-First-party Sentry application error reporter for Veryfront runtimes.
+Install `@veryfront/ext-observability-sentry` alongside `veryfront`. The core
+package does not contain or automatically load a Sentry adapter.
 
-Enable the adapter explicitly and provide its credential:
+For a Deno Veryfront application, add the extension factory to the project
+configuration:
+
+```ts
+import extSentry from "@veryfront/ext-observability-sentry";
+import { defineConfig } from "veryfront/config";
+
+export default defineConfig({
+  extensions: [extSentry()],
+});
+```
+
+Provide the DSN to that process:
 
 ```sh
-VERYFRONT_ERROR_REPORTER=sentry
 SENTRY_DSN=https://public@example.ingest.sentry.io/1
 ```
 
-`SENTRY_DSN` alone does not activate reporting. Official compiled Veryfront
-binaries include the dormant adapter; npm consumers install
-`@veryfront/ext-observability-sentry` separately. The adapter captures
-unexpected application failures, tags them by service and boundary, and keeps
-OpenTelemetry as the owner of traces, metrics, and logs.
+`SENTRY_DSN` does not activate reporting unless the extension is explicitly
+composed. Invalid selected configuration, SDK initialization failures, and SDK
+cleanup failures stop the owning startup or shutdown lifecycle.
 
-## Runtime entrypoints
+For a Node agent host, import
+`createNodeSentryApplicationErrorReporterInitializer` from
+`@veryfront/ext-observability-sentry/node` and pass the returned initializer as
+the host's `applicationErrorReporterInitializer` option.
 
-- `@veryfront/ext-observability-sentry` keeps the V1 Deno-compatible root
-  reporter export.
-- `@veryfront/ext-observability-sentry/deno` exports the explicit Deno reporter.
-- `@veryfront/ext-observability-sentry/node` exports the explicit Node reporter.
-
-The Node and Deno reporters share the same privacy policy, service tags,
-`veryfront.boundary` tagging, Grafana trace correlation, fingerprinting, and
-bounded flush behavior. They only use Sentry for error capture; tracing, logs,
-request bodies, user data, and OpenTelemetry provider setup remain disabled.
+Both runtime adapters capture application errors only. They disable Sentry
+tracing, logs, request data, user data, and OpenTelemetry provider setup.

@@ -1,16 +1,43 @@
-import { assertEquals } from "@std/assert";
-import extSentry, {
-  createDenoSentryApplicationErrorReporter,
-  createSentryApplicationErrorReporter,
-} from "./index.ts";
+import { assertEquals, assertThrows } from "@std/assert";
+import { ApplicationErrorReporterInitializerName } from "veryfront/extensions/observability";
+import extSentry from "./index.ts";
 
-Deno.test("root export preserves the V1 Deno reporter factory name", () => {
-  assertEquals(createSentryApplicationErrorReporter, createDenoSentryApplicationErrorReporter);
+Deno.test("extension publishes the generic application-error initializer contract", () => {
+  const extension = extSentry({ readEnvironment: () => undefined });
+  const provided = new Map<string, unknown>();
+  extension.setup?.({
+    get: () => undefined,
+    require: () => {
+      throw new Error("no contracts required");
+    },
+    provide: (name, value) => provided.set(name, value),
+    config: {},
+    logger: {
+      debug() {},
+      info() {},
+      warn() {},
+      error() {},
+    },
+  });
+
+  assertEquals(extension.name, "ext-observability-sentry");
+  assertEquals(extension.contracts?.provides, [ApplicationErrorReporterInitializerName]);
+  assertEquals(
+    typeof (provided.get(ApplicationErrorReporterInitializerName) as { initialize?: unknown })
+      ?.initialize,
+    "function",
+  );
 });
 
-Deno.test("root export keeps extension metadata available", () => {
-  assertEquals(extSentry().name, "ext-observability-sentry");
-  assertEquals(extSentry().capabilities, [
-    { type: "net:outbound", hosts: ["*"] },
-  ]);
+Deno.test("extension rejects invalid composition config", () => {
+  assertThrows(
+    () => extSentry([]),
+    TypeError,
+    "Sentry initializer options must be a plain object",
+  );
+  assertThrows(
+    () => extSentry({ fallback: true }),
+    TypeError,
+    "unsupported property",
+  );
 });

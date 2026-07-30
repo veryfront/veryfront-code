@@ -5,6 +5,13 @@ import { exitProcess, registerTerminationSignals, showHeader } from "#cli/utils"
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { startCliProductionServer } from "#cli/shared/server-startup";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
+import {
+  type ApplicationErrorReporterInitializer,
+  type ApplicationErrorReporterLifecycle,
+  captureApplicationError,
+  flushApplicationErrors,
+  initializeApplicationErrorReporter,
+} from "veryfront/observability";
 
 const STARTUP_ERROR_FLUSH_TIMEOUT_MS = 2_000;
 
@@ -24,21 +31,14 @@ type StartupErrorReportingOptions = {
   flushTimeoutMs?: number;
 };
 
-type ProductionServerDependencies = {
+export type ProductionServerDependencies = {
   ensureBundlerContracts?: () => Promise<void>;
-  initializeErrorReporting?: () => Promise<unknown>;
-  loadSentryModule?: () => Promise<ProductionSentryModule>;
+  applicationErrorReporterInitializer?: ApplicationErrorReporterInitializer;
   reporter?: StartupErrorReporter;
 };
 
 type ServeCommandDependencies = {
   runProductionServer?: (options: ServeOptions) => Promise<void>;
-};
-
-type ProductionSentryModule = {
-  captureApplicationError: StartupErrorReporter["captureApplicationError"];
-  flushApplicationErrors: StartupErrorReporter["flushApplicationErrors"];
-  initializeSentryFromEnv: () => Promise<unknown>;
 };
 
 export interface ServeOptions {
@@ -59,6 +59,7 @@ export function createCliProductionShutdownHandler(options: {
     context: { boundary: string },
   ) => unknown;
   readonly flushApplicationErrors: () => void | Promise<unknown>;
+  readonly disposeApplicationErrors: () => void | Promise<unknown>;
   readonly exitProcess: (code: number) => void;
   readonly logger: { warn: (...args: unknown[]) => void };
 }): (signal: "SIGINT" | "SIGTERM") => Promise<void> {
@@ -89,6 +90,13 @@ export function createCliProductionShutdownHandler(options: {
         exitCode = 1;
         options.captureApplicationError(error, { boundary: "process.shutdown.flush" });
         options.logger.warn("Error while flushing shutdown diagnostics:", error);
+      }
+
+      try {
+        await options.disposeApplicationErrors();
+      } catch (error) {
+        exitCode = 1;
+        options.logger.warn("Error while disposing shutdown diagnostics:", error);
       }
 
       options.exitProcess(exitCode);
@@ -203,99 +211,90 @@ async function runProxy(options: ServeOptions): Promise<void> {
   await new Promise(() => {});
 }
 
-function createDeferredProductionStartupErrorReporter(): {
-  reporter: StartupErrorReporter;
-  setSentryModule: (sentryModule: ProductionSentryModule) => void;
-} {
-  let sentryModule: ProductionSentryModule | undefined;
-
-  return {
-    reporter: {
-      // If Sentry module acquisition fails, no remote transport exists yet.
-      // Preserve the acquisition failure and bound flush instead of adding a
-      // fallback reporter inside the startup path.
-      captureApplicationError: (error, context) =>
-        sentryModule?.captureApplicationError(error, context),
-      flushApplicationErrors: (timeoutMs) =>
-        sentryModule?.flushApplicationErrors(timeoutMs) ?? Promise.resolve(true),
-      onReportingError: (operation, error) => {
-        cliLogger.warn(
-          `Error reporter failed to ${operation} production startup failure.`,
-        );
-        cliLogger.debug(
-          `Error reporter ${operation} failure details:`,
-          error,
-        );
-      },
-    },
-    setSentryModule: (loadedSentryModule) => {
-      sentryModule = loadedSentryModule;
-    },
-  };
-}
-
-function loadProductionSentryModule(): Promise<ProductionSentryModule> {
-  return import("veryfront/observability/sentry");
-}
-
 export async function runProductionServer(
   options: ServeOptions,
   dependencies: ProductionServerDependencies = {},
 ): Promise<void> {
   showHeader();
-  const deferredReporter = createDeferredProductionStartupErrorReporter();
-  const reporter = dependencies.reporter ?? deferredReporter.reporter;
-  const initializeErrorReporting = dependencies.initializeErrorReporting ??
-    (async () => {
-      const sentryModule = await (
-        dependencies.loadSentryModule ?? loadProductionSentryModule
-      )();
-      deferredReporter.setSentryModule(sentryModule);
-      await sentryModule.initializeSentryFromEnv();
-    });
-
-  const { server, shutdownController } = await runProductionStartupWithErrorReporting(
-    async () => {
-      const { clearAllLocalCaches } = await import(
-        "veryfront/transforms/mdx-cache"
-      );
-      await clearAllLocalCaches();
-
-      const { initializeOTLPWithApis } = await import(
-        "veryfront/observability/otlp-setup"
-      );
-      const { initializeDistributedCaches } = await import(
-        "veryfront/cache"
-      );
-      const { defaultDistributedCacheInitializers } = await import(
-        "veryfront/server"
-      );
-      await Promise.allSettled([
-        initializeOTLPWithApis(),
-        initializeDistributedCaches(defaultDistributedCacheInitializers),
-      ]);
-
-      const projectDir = cwd();
-      const shutdownController = new AbortController();
-      const defaultProjectId = generateDefaultProjectId(projectDir);
-
-      const server = await startCliProductionServer({
-        projectDir,
-        port: options.port,
-        bindAddress: options.bindAddress,
-        debug: options.debug,
-        signal: shutdownController.signal,
-        defaultProjectSlug: defaultProjectId,
-        defaultProjectId,
-      });
-      await server.ready;
-
-      return { server, shutdownController };
+  const reporter: StartupErrorReporter = dependencies.reporter ?? {
+    captureApplicationError,
+    flushApplicationErrors,
+    onReportingError: (operation, error) => {
+      cliLogger.warn(`Error reporter failed to ${operation} production startup failure.`);
+      cliLogger.debug(`Error reporter ${operation} failure details:`, error);
     },
-    reporter,
-    dependencies.ensureBundlerContracts ?? ensureCliBundlerContracts,
-    initializeErrorReporting,
-  );
+  };
+  let applicationErrors: ApplicationErrorReporterLifecycle | undefined;
+  let started:
+    | {
+      server: Awaited<ReturnType<typeof startCliProductionServer>>;
+      shutdownController: AbortController;
+    }
+    | undefined;
+  try {
+    started = await runProductionStartupWithErrorReporting(
+      async () => {
+        const { clearAllLocalCaches } = await import(
+          "veryfront/transforms/mdx-cache"
+        );
+        await clearAllLocalCaches();
+
+        const { initializeOTLPWithApis } = await import(
+          "veryfront/observability/otlp-setup"
+        );
+        const { initializeDistributedCaches } = await import(
+          "veryfront/cache"
+        );
+        const { defaultDistributedCacheInitializers } = await import(
+          "veryfront/server"
+        );
+        await Promise.allSettled([
+          initializeOTLPWithApis(),
+          initializeDistributedCaches(defaultDistributedCacheInitializers),
+        ]);
+
+        const projectDir = cwd();
+        const shutdownController = new AbortController();
+        const defaultProjectId = generateDefaultProjectId(projectDir);
+
+        const server = await startCliProductionServer({
+          projectDir,
+          port: options.port,
+          bindAddress: options.bindAddress,
+          debug: options.debug,
+          signal: shutdownController.signal,
+          defaultProjectSlug: defaultProjectId,
+          defaultProjectId,
+        });
+        await server.ready;
+
+        return { server, shutdownController };
+      },
+      reporter,
+      dependencies.ensureBundlerContracts ?? ensureCliBundlerContracts,
+      async () => {
+        applicationErrors = await initializeApplicationErrorReporter({
+          initializer: dependencies.applicationErrorReporterInitializer,
+          serviceName: "veryfront-server",
+        });
+      },
+    );
+  } catch (startupError) {
+    try {
+      await applicationErrors?.dispose();
+    } catch (disposeError) {
+      throw new AggregateError(
+        [startupError, disposeError],
+        "Production startup and application-error reporter cleanup both failed",
+      );
+    }
+    throw startupError;
+  }
+  const { server, shutdownController } = started;
+  const applicationErrorLifecycle = applicationErrors;
+  if (!applicationErrorLifecycle) {
+    throw new Error("Production application-error lifecycle was not initialized");
+  }
 
   const shutdown = createCliProductionShutdownHandler({
     performShutdown: (signal) =>
@@ -307,6 +306,7 @@ export async function runProductionServer(
       }),
     captureApplicationError: reporter.captureApplicationError,
     flushApplicationErrors: reporter.flushApplicationErrors,
+    disposeApplicationErrors: () => applicationErrorLifecycle.dispose(),
     exitProcess,
     logger: cliLogger,
   });

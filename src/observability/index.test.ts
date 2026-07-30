@@ -5,6 +5,7 @@ import * as localObservability from "./index.ts";
 import * as observability from "veryfront/observability";
 
 const expectedRuntimeExports = [
+  "ApplicationErrorReporterInitializerName",
   "ErrorCollector",
   "FileLogSubscriber",
   "LogBuffer",
@@ -15,6 +16,7 @@ const expectedRuntimeExports = [
   "createChildSpan",
   "createFileLogSubscriber",
   "createOpenTelemetryServiceTracer",
+  "captureApplicationError",
   "endSpan",
   "extractContext",
   "getActiveContext",
@@ -24,10 +26,12 @@ const expectedRuntimeExports = [
   "getLogBuffer",
   "getMetricsState",
   "getTraceContext",
+  "flushApplicationErrors",
   "initAutoInstrumentation",
   "initMetrics",
   "initTracing",
   "initializeOTLP",
+  "initializeApplicationErrorReporter",
   "injectContext",
   "instrument",
   "instrumentBatch",

@@ -1,44 +1,22 @@
-import { isMissingFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import {
   type ApplicationErrorContext,
-  type ApplicationErrorReporter,
+  type ApplicationErrorReporterInitializer,
   captureApplicationError,
-  flushApplicationErrors,
-  setApplicationErrorReporter,
+  initializeApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
 import type { LogEntry, LogRecordEmitter } from "#veryfront/utils/logger/index.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/index.ts";
-import { VERSION } from "#veryfront/utils/version.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 
-/** Environment used by node agent service application-error reporting. */
-export type NodeAgentServiceApplicationErrorEnv = Record<string, string | undefined>;
-
-/** Configuration used by node agent service Sentry application-error reporting. */
-export type NodeAgentServiceSentryConfig = {
-  dsn: string;
-  environment: string;
-  release?: string;
-  serviceName: string;
-};
-
-/** Application-error lifecycle returned by node agent service Sentry initialization. */
+/** Application-error lifecycle returned by node agent service initialization. */
 export type NodeAgentServiceApplicationErrorLifecycle = {
   enabled: boolean;
   captureStartupError(error: unknown): void;
   flush(timeoutMs?: number): Promise<boolean>;
-  reset(): void;
+  dispose(): Promise<void>;
 };
-
-type SentryExtensionModule = {
-  createNodeSentryApplicationErrorReporter(
-    config: Required<NodeAgentServiceSentryConfig>,
-  ): ApplicationErrorReporter;
-};
-
-type SentryExtensionLoader = () => Promise<SentryExtensionModule>;
 
 const DEFAULT_SERVICE_NAME = "veryfront-agent";
-const DEFAULT_ENVIRONMENT = "production";
 const DEFAULT_FLUSH_TIMEOUT_MS = 2_000;
 const EXPECTED_ERROR_CODES = new Set([
   "AUTHENTICATION_REQUIRED",
@@ -53,48 +31,6 @@ const EXPECTED_ERROR_CODES = new Set([
 let currentInitializationId = 0;
 let currentLifecycle: NodeAgentServiceApplicationErrorLifecycle | undefined;
 let currentLifecycleOwner: symbol | undefined;
-
-function readTrimmedEnv(
-  env: NodeAgentServiceApplicationErrorEnv,
-  key: string,
-): string | undefined {
-  const value = env[key]?.trim();
-  return value ? value : undefined;
-}
-
-/** Resolve node agent service Sentry config from environment. */
-export function resolveNodeAgentServiceSentryConfig(
-  env: NodeAgentServiceApplicationErrorEnv,
-  defaultServiceName = DEFAULT_SERVICE_NAME,
-): NodeAgentServiceSentryConfig | undefined {
-  const dsn = readTrimmedEnv(env, "SENTRY_DSN");
-  if (!dsn) return undefined;
-
-  const serviceName = readTrimmedEnv(env, "SENTRY_SERVICE_NAME") ??
-    readTrimmedEnv(env, "SENTRY_SERVICE") ??
-    readTrimmedEnv(env, "OTEL_SERVICE_NAME") ??
-    readTrimmedEnv(env, "npm_package_name") ??
-    defaultServiceName;
-  const environment = readTrimmedEnv(env, "SENTRY_ENVIRONMENT") ??
-    readTrimmedEnv(env, "APP_ENVIRONMENT") ??
-    readTrimmedEnv(env, "VERYFRONT_ENV") ??
-    readTrimmedEnv(env, "VERYFRONT_ENVIRONMENT") ??
-    readTrimmedEnv(env, "NODE_ENV") ??
-    DEFAULT_ENVIRONMENT;
-  const release = readTrimmedEnv(env, "SENTRY_RELEASE") ??
-    readTrimmedEnv(env, "OTEL_SERVICE_VERSION") ??
-    readTrimmedEnv(env, "RELEASE_VERSION") ??
-    readTrimmedEnv(env, "VERYFRONT_VERSION") ??
-    readTrimmedEnv(env, "npm_package_version") ??
-    VERSION;
-
-  return {
-    dsn,
-    environment,
-    ...(release ? { release } : {}),
-    serviceName,
-  };
-}
 
 function getExpectedErrorCode(entry: LogEntry): string | undefined {
   const code = entry.context?.errorCode ?? entry.context?.error_code ?? entry.context?.code;
@@ -189,67 +125,74 @@ function defaultLifecycle(): NodeAgentServiceApplicationErrorLifecycle {
     enabled: false,
     captureStartupError: () => {},
     flush: () => Promise.resolve(true),
-    reset: () => {},
+    dispose: () => Promise.resolve(),
   };
 }
 
-function deactivateCurrentLifecycle(): void {
-  currentLifecycle?.reset();
-  currentLifecycle = undefined;
-  currentLifecycleOwner = undefined;
+async function deactivateCurrentLifecycle(): Promise<void> {
+  const lifecycle = currentLifecycle;
+  const owner = currentLifecycleOwner;
+  if (!lifecycle) return;
+  await lifecycle.dispose();
+  if (currentLifecycle === lifecycle) currentLifecycle = undefined;
+  if (currentLifecycleOwner === owner) currentLifecycleOwner = undefined;
 }
 
-async function withWallClockTimeout(
-  operation: Promise<boolean>,
-  timeoutMs: number,
-): Promise<boolean> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      operation.catch(() => false),
-      new Promise<boolean>((resolve) => {
-        timeoutId = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
-      }),
-    ]);
-  } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
+function resolveFlushTimeout(value: number | undefined): number {
+  const timeoutMs = value ?? DEFAULT_FLUSH_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(timeoutMs) || timeoutMs < 0 ||
+    timeoutMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new RangeError("Application-error flush timeout must be a non-negative timer delay");
   }
+  return timeoutMs;
 }
 
-/** Initialize node agent service Sentry application-error reporting. */
-export async function initializeNodeAgentServiceSentryApplicationErrors(options: {
-  env: NodeAgentServiceApplicationErrorEnv;
+/** Initialize an explicitly composed node agent service application-error reporter. */
+export async function initializeNodeAgentServiceApplicationErrors(options: {
+  initializer?: ApplicationErrorReporterInitializer;
   defaultServiceName?: string;
-  loadExtension?: SentryExtensionLoader;
   flushTimeoutMs?: number;
 }): Promise<NodeAgentServiceApplicationErrorLifecycle> {
+  const flushTimeoutMs = resolveFlushTimeout(options.flushTimeoutMs);
   const initializationId = ++currentInitializationId;
-  deactivateCurrentLifecycle();
-
-  const config = resolveNodeAgentServiceSentryConfig(options.env, options.defaultServiceName);
-  if (!config) return defaultLifecycle();
-
-  const extension = await (options.loadExtension ?? loadNodeSentryExtension)();
+  await deactivateCurrentLifecycle();
   if (initializationId !== currentInitializationId) return defaultLifecycle();
 
-  const reporter = extension.createNodeSentryApplicationErrorReporter({
-    dsn: config.dsn,
-    environment: config.environment,
-    release: config.release ?? "",
-    serviceName: config.serviceName,
+  const reporterLifecycle = await initializeApplicationErrorReporter({
+    initializer: options.initializer,
+    serviceName: options.defaultServiceName ?? DEFAULT_SERVICE_NAME,
   });
-  setApplicationErrorReporter(reporter);
+  if (initializationId !== currentInitializationId) {
+    await reporterLifecycle.dispose();
+    return defaultLifecycle();
+  }
+  if (!reporterLifecycle.enabled) return defaultLifecycle();
 
-  const owner = Symbol("node-agent-service-sentry");
-  const unsubscribeLogCapture = __subscribeLogRecordEmitter(
-    createNodeAgentServiceLogApplicationErrorEmitter(),
-  );
+  const owner = Symbol("node-agent-service-application-errors");
+  let unsubscribeLogCapture: () => void;
+  try {
+    unsubscribeLogCapture = __subscribeLogRecordEmitter(
+      createNodeAgentServiceLogApplicationErrorEmitter(),
+    );
+  } catch (subscriptionError) {
+    try {
+      await reporterLifecycle.dispose();
+    } catch (disposeError) {
+      throw new AggregateError(
+        [subscriptionError, disposeError],
+        "Application-error log subscription and reporter cleanup both failed",
+      );
+    }
+    throw subscriptionError;
+  }
   currentLifecycleOwner = owner;
   let active = true;
   let logCaptureActive = true;
-  const flushTimeoutMs = options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS;
+  let disposal: Promise<void> | undefined;
 
-  const lifecycle: NodeAgentServiceApplicationErrorLifecycle = {
+  const lifecycle: NodeAgentServiceApplicationErrorLifecycle = Object.freeze({
     enabled: true,
     captureStartupError(error) {
       if (!active || currentLifecycleOwner !== owner) return;
@@ -257,14 +200,14 @@ export async function initializeNodeAgentServiceSentryApplicationErrors(options:
         logCaptureActive = false;
         unsubscribeLogCapture();
       }
-      captureApplicationError(error, { boundary: "agent.process.startup" });
+      reporterLifecycle.capture(error, { boundary: "agent.process.startup" });
     },
     flush(timeoutMs = flushTimeoutMs) {
       if (!active || currentLifecycleOwner !== owner) return Promise.resolve(true);
-      return withWallClockTimeout(flushApplicationErrors(timeoutMs), timeoutMs);
+      return reporterLifecycle.flush(timeoutMs);
     },
-    reset() {
-      if (!active) return;
+    dispose() {
+      if (disposal) return disposal;
       active = false;
       if (logCaptureActive) {
         logCaptureActive = false;
@@ -273,43 +216,11 @@ export async function initializeNodeAgentServiceSentryApplicationErrors(options:
       if (currentLifecycleOwner === owner) {
         currentLifecycleOwner = undefined;
         currentLifecycle = undefined;
-        setApplicationErrorReporter(undefined);
       }
+      disposal = reporterLifecycle.dispose();
+      return disposal;
     },
-  };
+  });
   currentLifecycle = lifecycle;
   return lifecycle;
-}
-
-async function loadNodeSentryExtension(): Promise<SentryExtensionModule> {
-  let sourceError: unknown;
-  for (
-    const sourceSpecifier of [
-      "../../../extensions/ext-observability-sentry/src/node.ts",
-      "../../../extensions/ext-observability-sentry/src/node.js",
-    ]
-  ) {
-    try {
-      return await import(sourceSpecifier) as SentryExtensionModule;
-    } catch (error) {
-      if (
-        !isMissingFirstPartyExtensionModule(error, ["extensions/ext-observability-sentry/src/node"])
-      ) {
-        throw error;
-      }
-      sourceError ??= error;
-    }
-  }
-
-  try {
-    return await import("@veryfront/ext-observability-sentry/node") as SentryExtensionModule;
-  } catch (error) {
-    if (!isMissingFirstPartyExtensionModule(error, ["@veryfront/ext-observability-sentry/node"])) {
-      throw error;
-    }
-    if (error instanceof Error && sourceError !== undefined && error.cause === undefined) {
-      error.cause = sourceError;
-    }
-    throw error;
-  }
 }

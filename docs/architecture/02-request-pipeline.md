@@ -107,13 +107,14 @@ configuration.
 | `VERYFRONT_PROXY_EXPECTED_REPLICAS`     | unset                    | `1..10000`; required in production                             |
 
 After the synchronous configuration snapshot is accepted, the proxy installs
-`SIGINT` and `SIGTERM` handlers before Sentry initialization or any other
+`SIGINT` and `SIGTERM` handlers before application-error reporter initialization or any other
 asynchronous acquisition. Until listener readiness commits startup, the first
 signal aborts the startup transaction. Every resource-producing stage is owned
 before its producer begins, so reverse-order rollback observes and closes a
 late successful result even when that producer ignores cancellation or settles
-after the cleanup deadline. Diagnostics flush before Sentry is invalidated,
-and signal handlers are the final rollback resource removed.
+after the cleanup deadline. Diagnostics flush before the explicitly selected
+reporter is disposed, and signal handlers are the final rollback resource
+removed.
 
 Redis startup distinguishes borrowed stores from proxy-created stores. Borrowed
 stores are validated but never closed or unregistered by the proxy. A created

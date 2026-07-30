@@ -12,6 +12,7 @@ import type { CreateSandboxBashTool } from "#veryfront/sandbox";
 import {
   type ApplicationErrorContext,
   type ApplicationErrorReporter,
+  type ApplicationErrorReporterInitializer,
   setApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
@@ -42,7 +43,7 @@ import {
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { cloudAgentProviderBootstrapInternals } from "./cloud-agent-provider-bootstrap.ts";
-import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
+import { initializeNodeAgentServiceApplicationErrors } from "../service/node-application-errors.ts";
 
 type CaptureRecord = {
   error: unknown;
@@ -75,6 +76,14 @@ function createReporter(options: {
     },
   };
   return reporter;
+}
+
+function createApplicationErrorReporterInitializer(
+  reporter: ApplicationErrorReporter,
+): ApplicationErrorReporterInitializer {
+  return {
+    initialize: () => ({ reporter, dispose: () => {} }),
+  };
 }
 
 async function withMockDenoServiceServer(
@@ -492,15 +501,9 @@ Deno.test("startAgentService keeps application-error reporting active after read
     const events: string[] = [];
     const restoreInitializeApplicationErrors = veryfrontCloudAgentServiceInternals
       .setInitializeApplicationErrorsForTests(async () => {
-        const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-          env: {
-            SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
-          },
+        const lifecycle = await initializeNodeAgentServiceApplicationErrors({
+          initializer: createApplicationErrorReporterInitializer(reporter),
           flushTimeoutMs: 5,
-          loadExtension: () =>
-            Promise.resolve({
-              createNodeSentryApplicationErrorReporter: () => reporter,
-            }),
         });
         return {
           ...lifecycle,
@@ -508,9 +511,9 @@ Deno.test("startAgentService keeps application-error reporting active after read
             events.push(`flush:${timeoutMs ?? "default"}`);
             return await lifecycle.flush(timeoutMs);
           },
-          reset: () => {
-            events.push("reset");
-            lifecycle.reset();
+          dispose: async () => {
+            events.push("dispose");
+            await lifecycle.dispose();
           },
         };
       });
@@ -542,7 +545,7 @@ Deno.test("startAgentService keeps application-error reporting active after read
         assertEquals(await waitForExit(), 0);
       });
 
-      assertEquals(events, ["flush:default", "reset"]);
+      assertEquals(events, ["flush:default", "dispose"]);
       assertEquals(reporter.flushTimeouts, [5]);
       withMutedConsole(() => {
         agentLogger.error("framework error after shutdown");
@@ -556,7 +559,7 @@ Deno.test("startAgentService keeps application-error reporting active after read
   });
 });
 
-Deno.test("startAgentService resets application-error reporting when shutdown flush fails", async () => {
+Deno.test("startAgentService disposes application-error reporting when shutdown flush fails", async () => {
   await withTempDir(async (rootDir) => {
     writeMarkdownAgentDefinition(rootDir, "support");
     const events: string[] = [];
@@ -568,8 +571,9 @@ Deno.test("startAgentService resets application-error reporting when shutdown fl
           events.push("flush");
           return Promise.reject(new Error("flush failed"));
         },
-        reset: () => {
-          events.push("reset");
+        dispose: () => {
+          events.push("dispose");
+          return Promise.resolve();
         },
       }));
 
@@ -594,7 +598,7 @@ Deno.test("startAgentService resets application-error reporting when shutdown fl
         assertEquals(await waitForExit(), 1);
       });
 
-      assertEquals(events, ["flush", "reset"]);
+      assertEquals(events, ["flush", "dispose"]);
     } finally {
       restoreInitializeApplicationErrors();
       __resetLogRecordEmitterForTests();
@@ -603,7 +607,7 @@ Deno.test("startAgentService resets application-error reporting when shutdown fl
   });
 });
 
-Deno.test("startAgentService captures, flushes, and resets terminal startup failures", async () => {
+Deno.test("startAgentService captures, flushes, and disposes terminal startup failures", async () => {
   await withTempDir(async (rootDir) => {
     writeMarkdownAgentDefinition(rootDir, "support");
     const startupError = new Error("listen failed");
@@ -612,15 +616,9 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
     const exitCodes: number[] = [];
     const restoreInitializeApplicationErrors = veryfrontCloudAgentServiceInternals
       .setInitializeApplicationErrorsForTests(async () => {
-        const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-          env: {
-            SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
-          },
+        const lifecycle = await initializeNodeAgentServiceApplicationErrors({
+          initializer: createApplicationErrorReporterInitializer(reporter),
           flushTimeoutMs: 5,
-          loadExtension: () =>
-            Promise.resolve({
-              createNodeSentryApplicationErrorReporter: () => reporter,
-            }),
         });
         return {
           ...lifecycle,
@@ -632,9 +630,9 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
             events.push(`flush:${timeoutMs ?? "default"}`);
             return await lifecycle.flush(timeoutMs);
           },
-          reset: () => {
-            events.push("reset");
-            lifecycle.reset();
+          dispose: async () => {
+            events.push("dispose");
+            await lifecycle.dispose();
           },
         };
       });
@@ -671,7 +669,7 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
         denoRuntime.serve = originalServe;
       }
 
-      assertEquals(events, ["capture-startup", "flush:default", "reset"]);
+      assertEquals(events, ["capture-startup", "flush:default", "dispose"]);
       assertEquals(reporter.captured, [
         { error: startupError, context: { boundary: "agent.process.startup" } },
       ]);
@@ -685,7 +683,7 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
   });
 });
 
-Deno.test("startAgentService resets and exits when startup error flush rejects", async () => {
+Deno.test("startAgentService disposes and exits when startup error flush rejects", async () => {
   await withTempDir(async (rootDir) => {
     writeMarkdownAgentDefinition(rootDir, "support");
     const startupError = new Error("listen failed");
@@ -702,8 +700,9 @@ Deno.test("startAgentService resets and exits when startup error flush rejects",
           events.push("flush");
           return Promise.reject(new Error("flush failed"));
         },
-        reset: () => {
-          events.push("reset");
+        dispose: () => {
+          events.push("dispose");
+          return Promise.resolve();
         },
       }));
 
@@ -739,7 +738,7 @@ Deno.test("startAgentService resets and exits when startup error flush rejects",
         denoRuntime.serve = originalServe;
       }
 
-      assertEquals(events, ["capture-startup", "flush", "reset"]);
+      assertEquals(events, ["capture-startup", "flush", "dispose"]);
       assertEquals(exitCodes, [1]);
     } finally {
       restoreInitializeApplicationErrors();
