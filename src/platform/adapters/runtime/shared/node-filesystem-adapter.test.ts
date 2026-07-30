@@ -3,6 +3,7 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { NodeCompatibleFileSystemAdapter } from "./node-filesystem-adapter.ts";
+import { setupNodeFsWatcher } from "./shared-watcher.ts";
 
 describe("NodeCompatibleFileSystemAdapter", () => {
   it("marks only direct built-in instances as native", () => {
@@ -129,5 +130,51 @@ describe("NodeCompatibleFileSystemAdapter", () => {
       await watcher.done?.catch(() => undefined);
       await Deno.remove(root, { recursive: true });
     }
+  });
+
+  it("rejects completion with every native watcher teardown failure", async () => {
+    const firstFailure = new Error("first close failed");
+    const secondFailure = new Error("second close failed");
+    let firstCloseCalls = 0;
+    let secondCloseCalls = 0;
+
+    class CloseFailingAdapter extends NodeCompatibleFileSystemAdapter {
+      protected override setupWatcher(
+        _path: string,
+        options: Parameters<typeof setupNodeFsWatcher>[1],
+      ): Promise<void> {
+        options.watchers.push(
+          {
+            close() {
+              firstCloseCalls++;
+              throw firstFailure;
+            },
+          } as unknown as import("node:fs").FSWatcher,
+          {
+            close() {
+              secondCloseCalls++;
+              throw secondFailure;
+            },
+          } as unknown as import("node:fs").FSWatcher,
+        );
+        return Promise.resolve();
+      }
+    }
+
+    const watcher = new CloseFailingAdapter().watch("/virtual-watch-root", {
+      recursive: false,
+    });
+    await watcher.ready;
+    watcher.close();
+
+    const error = await assertRejects(
+      () => watcher.done!,
+      AggregateError,
+      "did not complete cleanly",
+    ) as AggregateError;
+    assertEquals(error.errors, [firstFailure, secondFailure]);
+    // cleanup attempts teardown immediately and done retries resources that
+    // did not close, while retaining the original failures for the caller.
+    assertEquals([firstCloseCalls, secondCloseCalls], [2, 2]);
   });
 });

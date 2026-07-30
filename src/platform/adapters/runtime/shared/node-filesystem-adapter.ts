@@ -146,6 +146,13 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
     return makeNodeTempDir(prefix);
   }
 
+  protected setupWatcher(
+    path: string,
+    options: Parameters<typeof setupNodeFsWatcher>[1],
+  ): Promise<void> {
+    return setupNodeFsWatcher(path, options);
+  }
+
   watch(paths: string | string[], options?: WatchOptions): FileWatcher {
     const pathArray = Array.isArray(paths) ? paths : [paths];
     const recursive = options?.recursive ?? true;
@@ -154,6 +161,7 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
     let closed = false;
     const watchers: Array<import("node:fs").FSWatcher> = [];
     const closedWatchers = new WeakSet<import("node:fs").FSWatcher>();
+    const lifecycleFailures: Error[] = [];
     const pendingTasks = new Set<Promise<void>>();
     const eventQueue: FileChangeEvent[] = [];
     let resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
@@ -176,10 +184,14 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
         () => pendingTasks.delete(task),
       );
     };
+    const recordLifecycleFailure = (failure: unknown): void => {
+      const error = failure instanceof Error ? failure : new Error(String(failure));
+      if (!lifecycleFailures.includes(error)) lifecycleFailures.push(error);
+    };
 
     const setup = Promise.all(
       pathArray.map((path) =>
-        setupNodeFsWatcher(path, {
+        this.setupWatcher(path, {
           recursive,
           closed: () => closed,
           signal,
@@ -210,10 +222,11 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
     const closeNativeWatchers = (): void => {
       for (const watcher of watchers) {
         if (closedWatchers.has(watcher)) continue;
-        closedWatchers.add(watcher);
         try {
           watcher.close();
+          closedWatchers.add(watcher);
         } catch (error) {
+          recordLifecycleFailure(error);
           this.logger.debug("Error closing file watcher during cleanup", { error });
         }
       }
@@ -235,16 +248,33 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
     else signal?.addEventListener("abort", cleanup, { once: true });
     const watcher = createFileWatcher(iterator, cleanup);
     watcher.ready = setup;
-    watcher.done = Promise.all([setup, closedSignal])
-      .then(async () => {
-        while (pendingTasks.size > 0) {
-          await Promise.allSettled([...pendingTasks]);
+    watcher.done = (async () => {
+      const [setupResult] = await Promise.allSettled([setup, closedSignal]);
+      if (setupResult.status === "rejected") {
+        recordLifecycleFailure(setupResult.reason);
+      }
+
+      while (pendingTasks.size > 0) {
+        const results = await Promise.allSettled([...pendingTasks]);
+        for (const result of results) {
+          if (result.status === "rejected") recordLifecycleFailure(result.reason);
         }
-      })
-      .then(closeNativeWatchers)
-      .then(() => {
-        if (watcherFailure) throw watcherFailure;
-      });
+      }
+
+      // cleanup() already attempts this once. Retry any resource whose close()
+      // threw, but preserve every distinct failure so completion cannot be
+      // reported as clean after a partial teardown.
+      closeNativeWatchers();
+      if (watcherFailure) recordLifecycleFailure(watcherFailure);
+
+      if (lifecycleFailures.length === 1) throw lifecycleFailures[0];
+      if (lifecycleFailures.length > 1) {
+        throw new AggregateError(
+          lifecycleFailures,
+          "File watcher lifecycle did not complete cleanly",
+        );
+      }
+    })();
     return watcher;
   }
 }

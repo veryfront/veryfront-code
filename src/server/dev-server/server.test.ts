@@ -70,4 +70,30 @@ describe("DevServer lifecycle", () => {
 
     assertEquals(events, ["listener", "pipeline", "request-handler"]);
   });
+
+  it("stops the active generation when its file watcher fails", async () => {
+    let listenerStopCalls = 0;
+    const server = new DevServer({ projectDir: "/project", port: 3_000 });
+    const internals = server as unknown as {
+      server?: Server;
+      handleFileWatcherFailure(error: unknown): void;
+    };
+    internals.server = {
+      addr: { hostname: "127.0.0.1", port: 3_000 },
+      stop: () => {
+        listenerStopCalls++;
+        return Promise.resolve();
+      },
+    };
+
+    internals.handleFileWatcherFailure(new Error("watch stream failed"));
+
+    // The retryable disposer starts on its next microtask. No explicit stop()
+    // call has occurred yet, so this proves the failure callback initiated it.
+    await Promise.resolve();
+    assertEquals(listenerStopCalls, 1);
+    await server.stop();
+    assertEquals(listenerStopCalls, 1);
+    assertEquals(internals.server, undefined);
+  });
 });
