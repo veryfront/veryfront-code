@@ -4,7 +4,6 @@
   "cli/commands/lint/handler.test.ts",
   "cli/commands/merge/command.test.ts",
   "cli/commands/test/handler.test.ts",
-  "cli/commands/worker/handler.test.ts",
   "cli/mcp/jsonrpc.test.ts",
   "cli/mcp/standalone.test.ts",
   "cli/mcp/tools/dev-tools.test.ts",
@@ -25,17 +24,11 @@
   "src/agent/runtime/load-tools-tool.test.ts",
   "src/agent/runtime/search-tools-tool.test.ts",
   "src/agent/service/auth.test.ts",
-  "src/modules/react-loader/ssr-module-loader.stress.test.ts",
-  "src/react/components/optimized-image/helpers.test.ts",
   "src/rendering/client/browser-logger.test.ts",
   "src/rendering/element-validator/validator-core.test.ts",
   "src/rendering/layouts/utils/compiler.test.ts",
   "src/rendering/utils/react-helpers.test.ts",
-  "src/security/path-validation/canonical.test.ts",
-  "src/security/path-validation/index.test.ts",
-  "src/server/build-service-worker.test.ts",
   "src/transforms/import-rewriter/strategies/cross-project-strategy.test.ts",
   "src/transforms/import-rewriter/strategies/import-map-strategy.test.ts",
-  "src/transforms/mdx/esm-module-loader/loader.test.ts",
-  "src/workflow/blob/gcs-storage.test.ts"
+  "src/transforms/mdx/esm-module-loader/loader.test.ts"
 ]

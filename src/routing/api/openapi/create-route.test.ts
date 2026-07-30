@@ -140,6 +140,7 @@ describe("createRoute", () => {
     const mockContext = {
       params: {},
       searchParams: new URLSearchParams(),
+      env: {},
     };
     const response = await handler(new Request("http://test.com"), mockContext);
     assertEquals(await response.text(), "success");
@@ -172,7 +173,7 @@ describe("createRoute", () => {
     assertEquals(getMetadata(first).summary, "First");
     assertEquals(getMetadata(second).summary, "Second");
     assertEquals(
-      await (await first(new Request("https://example.test"), { params: {} })).text(),
+      await (await first(new Request("https://example.test"), { params: {}, env: {} })).text(),
       "ok",
     );
   });

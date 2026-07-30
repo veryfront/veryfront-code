@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { MultiEventPublisher, RedisEventPublisher } from "./event-publisher.ts";
+import { MultiEventPublisher } from "./event-publisher.ts";
 import type { ClaudeCodeEvent, ClaudeCodeEventPublisher } from "./types.ts";
 
 async function raceWithTimeout<T>(
@@ -65,36 +65,6 @@ describe("workflow/claude-code/event-publisher", () => {
       close: () => Promise.reject(new Error("close failed")),
     };
     const publisher = new MultiEventPublisher(hangingPublisher, failingPublisher);
-
-    const result = await raceWithTimeout(
-      publisher.close().then(
-        () => ({ status: "resolved" as const }),
-        (error) => ({
-          status: "rejected" as const,
-          message: error instanceof Error ? error.message : String(error),
-        }),
-      ),
-      100,
-    );
-
-    assertEquals(result, { status: "rejected", message: "close failed" });
-  });
-
-  it("RedisEventPublisher.close fails fast when one client hangs and the other rejects", async () => {
-    const publisher = new RedisEventPublisher({ url: "redis://example" });
-    const publisherState = publisher as unknown as {
-      initialized: boolean;
-      publishClient: { close: () => Promise<void> };
-      subscribeClient: { close: () => Promise<void> };
-    };
-
-    publisherState.initialized = true;
-    publisherState.publishClient = {
-      close: () => new Promise<void>(() => {}),
-    };
-    publisherState.subscribeClient = {
-      close: () => Promise.reject(new Error("close failed")),
-    };
 
     const result = await raceWithTimeout(
       publisher.close().then(

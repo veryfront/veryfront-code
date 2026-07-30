@@ -215,7 +215,7 @@ describe("routing/api/module-loader transpile path security", () => {
       const handler = route?.GET as AppRouteHandler | undefined;
       const response = await handler?.(
         new Request("http://localhost"),
-        { params: {} },
+        { params: {}, env: {} },
       );
       assertEquals(await response?.text(), "hoisted-package");
     } finally {

@@ -106,8 +106,11 @@ describe("resolveModuleFile", () => {
             size: 32,
             isFile: true,
             isDirectory: false,
+            isSymlink: false,
+            mtime: null,
           }),
         readFile: () => Promise.reject(permissionError),
+        readFileBytesBounded: () => Promise.reject(permissionError),
       },
     };
 
