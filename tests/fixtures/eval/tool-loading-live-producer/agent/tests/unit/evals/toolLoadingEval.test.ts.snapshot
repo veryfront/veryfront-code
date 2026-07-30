@@ -1,0 +1,1179 @@
+// @vitest-environment node
+
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  type AgentToolLoadingBenchmarkCapability,
+  inspectAgentToolLoadingBenchmarkCapability,
+} from '../../../evals/tool-loading/agentToolLoadingBenchmarkAdapter'
+import { createBenchmarkStudioMcpServer } from '../../../evals/tool-loading/benchmarkStudioMcpServer'
+import {
+  deterministicToolCatalog,
+  runDeterministicToolLoadingRuntimeGate,
+} from '../../../evals/tool-loading/deterministicToolLoadingRuntime'
+import {
+  type BenchmarkFrameworkPackageIdentity,
+  type BenchmarkProducerIdentity,
+  createReadOnlyCanaryToolSurface,
+  fingerprintAuthorizedToolDefinitions,
+  installedPackageMatchesTarball,
+  isExactReadOnlyCanarySequence,
+  resolveBenchmarkFrameworkPackageIdentity,
+  resolveBenchmarkProducerIdentity,
+  sanitizeBenchmarkErrorMessage,
+  sanitizeLiveCanaryToolCall,
+  sanitizeLiveCanaryToolResult,
+  sanitizePersistedBenchmarkValue,
+} from '../../../evals/tool-loading/runToolLoadingBenchmark'
+import { buildStatus, main as runStatusCommand } from '../../../evals/tool-loading/runToolLoadingBenchmarkStatus'
+import { taskSuccessPassRate, toolLoadingTaskSuccessCases } from '../../../evals/tool-loading/taskSuccessCases'
+
+const repoRoot = resolve(import.meta.dirname, '../../..')
+const frameworkPackage = JSON.parse(readFileSync(resolve(repoRoot, 'node_modules/veryfront/package.json'), 'utf8'))
+const hasToolLoadingBenchmarkAdapter = Object.hasOwn(
+  frameworkPackage.exports ?? {},
+  './_internal/agent-tool-loading-benchmark'
+)
+
+describe('Veryfront agent tool-loading eval', () => {
+  it('redacts project identities from persisted live-canary results', () => {
+    expect(
+      sanitizeLiveCanaryToolResult('list_projects', {
+        structuredContent: {
+          data: [
+            { id: 'project-secret-id', name: 'Secret Project', slug: 'secret-project' },
+            { id: 'project-secret-id-2', name: 'Another Secret Project', slug: 'another-secret-project' },
+          ],
+          page_info: { next: null, endCursor: 'secret-cursor' },
+        },
+      })
+    ).toEqual({
+      kind: 'list_projects_summary',
+      projectCount: 2,
+      hasPageInfo: true,
+      hasNextPage: false,
+    })
+  })
+
+  it('preserves non-project canary results as JSON-wire values', () => {
+    expect(sanitizeLiveCanaryToolResult('tool_search', { matches: [{ name: 'list_projects' }] })).toEqual({
+      matches: [{ name: 'list_projects' }],
+    })
+  })
+
+  it('redacts credentials, URL secrets, and project identity from persisted benchmark errors', () => {
+    const jwt = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signature'
+    const message =
+      `Bearer bearer-secret api_key=api-secret ` +
+      `https://api.veryfront.org/run?token=query-secret&api_key=url-api-secret ` +
+      `${jwt} project/id secret`
+    const sanitized = sanitizeBenchmarkErrorMessage(message, ['project/id secret'])
+
+    for (const secret of ['bearer-secret', 'api-secret', 'query-secret', 'url-api-secret', jwt, 'project/id secret']) {
+      expect(sanitized).not.toContain(secret)
+    }
+    expect(sanitized).toContain('Bearer [REDACTED]')
+    expect(sanitized).toContain('[REDACTED_JWT]')
+    expect(sanitized).toContain('[REDACTED_PROJECT_ID]')
+  })
+
+  it('redacts both persisted call errors and their error-derived results', () => {
+    const persisted = sanitizeLiveCanaryToolCall(
+      {
+        name: 'list_projects',
+        status: 'error',
+        args: {},
+        error: 'Bearer bearer-secret failed at https://api.veryfront.org/mcp?api_key=api-secret for project-secret',
+      },
+      ['project-secret']
+    )
+
+    expect(persisted).toEqual({
+      name: 'list_projects',
+      status: 'error',
+      input: {},
+      result: 'Bearer [REDACTED] failed at https://api.veryfront.org/mcp?api_key=[REDACTED] for [REDACTED_PROJECT_ID]',
+      error: 'Bearer [REDACTED] failed at https://api.veryfront.org/mcp?api_key=[REDACTED] for [REDACTED_PROJECT_ID]',
+    })
+  })
+
+  it('recursively redacts every string in persisted explicit call results', () => {
+    const jwt = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signature'
+    const persisted = sanitizeLiveCanaryToolCall(
+      {
+        name: 'tool_search',
+        status: 'completed',
+        args: {},
+        result: {
+          message: `Bearer bearer-secret for project-secret-slug`,
+          nested: [
+            {
+              url: `https://api.veryfront.org/mcp?api_key=api-secret&token=query-secret&project=project-secret-id`,
+            },
+            jwt,
+          ],
+        },
+      },
+      ['project-secret-id', 'project-secret-slug']
+    )
+    const serialized = JSON.stringify(persisted.result)
+
+    for (const secret of [
+      'bearer-secret',
+      'api-secret',
+      'query-secret',
+      'project-secret-id',
+      'project-secret-slug',
+      jwt,
+    ]) {
+      expect(serialized).not.toContain(secret)
+    }
+    expect(persisted.result).toEqual({
+      message: 'Bearer [REDACTED] for [REDACTED_PROJECT_ID]',
+      nested: [
+        {
+          url: 'https://api.veryfront.org/mcp?api_key=[REDACTED]&token=[REDACTED]&project=[REDACTED_PROJECT_ID]',
+        },
+        '[REDACTED_JWT]',
+      ],
+    })
+    expect(
+      sanitizePersistedBenchmarkValue(
+        {
+          deterministicGate: {
+            cases: [{ observedToolCalls: [{ result: { nested: `token=secret for project-secret-id` } }] }],
+          },
+        },
+        ['project-secret-id']
+      )
+    ).toEqual({
+      deterministicGate: {
+        cases: [
+          {
+            observedToolCalls: [{ result: { nested: 'token=[REDACTED] for [REDACTED_PROJECT_ID]' } }],
+          },
+        ],
+      },
+    })
+  })
+
+  it('redacts opaque credential fields and project identities used as object keys', () => {
+    expect(
+      sanitizePersistedBenchmarkValue(
+        {
+          safeLabel: 'visible',
+          token: 'opaque-value',
+          apiKey: 'another-opaque-value',
+          nested: {
+            Authorization: {
+              scheme: 'opaque-scheme',
+              credentials: ['opaque-credential', { refresh_token: 'opaque-refresh' }],
+            },
+            'project-secret-id': {
+              accessToken: 'opaque-access',
+              safeCount: 2,
+            },
+          },
+        },
+        ['project-secret-id']
+      )
+    ).toEqual({
+      apiKey: '[REDACTED]',
+      nested: {
+        Authorization: {
+          credentials: ['[REDACTED]', { refresh_token: '[REDACTED]' }],
+          scheme: '[REDACTED]',
+        },
+        '[REDACTED_PROJECT_ID]': {
+          accessToken: '[REDACTED]',
+          safeCount: 2,
+        },
+      },
+      safeLabel: 'visible',
+      token: '[REDACTED]',
+    })
+  })
+
+  it('restricts the live canary to list_projects and requires the exact search-then-read sequence', () => {
+    const surface = createReadOnlyCanaryToolSurface({
+      effectiveToolNames: ['get_release', 'list_projects', 'studio_suggestions'],
+      mcpServers: [
+        {
+          id: 'api',
+          kind: 'http',
+          transport: { type: 'http', url: 'https://api.veryfront.org/mcp' },
+          toolPolicy: { allow: ['get_release', 'list_projects'], approval: 'never' },
+        },
+        {
+          id: 'studio',
+          kind: 'http',
+          transport: { type: 'http', url: 'https://veryfront.org/mcp' },
+          toolPolicy: { allow: ['studio_suggestions'], approval: 'never' },
+        },
+      ],
+    })
+
+    expect(surface.tools).toEqual({ list_projects: true })
+    expect(Object.keys(surface.tools)).toEqual(['list_projects'])
+    expect(surface.mcpServers).toEqual([
+      expect.objectContaining({
+        id: 'api',
+        toolPolicy: { allow: ['list_projects'], approval: 'never' },
+      }),
+    ])
+    expect(() =>
+      createReadOnlyCanaryToolSurface({
+        effectiveToolNames: ['get_release'],
+        mcpServers: [],
+      })
+    ).toThrow('list_projects is absent from the effective hosted binding')
+    expect(() =>
+      createReadOnlyCanaryToolSurface({
+        effectiveToolNames: ['list_projects'],
+        mcpServers: [],
+      })
+    ).toThrow('list_projects has no isolated remote tool source')
+    const exactCalls: Array<{ name: string; status: 'completed' }> = [
+      { name: 'tool_search', status: 'completed' },
+      { name: 'list_projects', status: 'completed' },
+    ]
+    expect(isExactReadOnlyCanarySequence(exactCalls)).toBe(true)
+    expect(isExactReadOnlyCanarySequence([...exactCalls, exactCalls[1]])).toBe(false)
+    expect(isExactReadOnlyCanarySequence([...exactCalls].reverse())).toBe(false)
+    expect(isExactReadOnlyCanarySequence([{ ...exactCalls[0], status: 'error' }, exactCalls[1]])).toBe(false)
+  })
+
+  it('includes the exact hi release gate and Hello correlation case', async () => {
+    const module = await import(pathToFileURL(resolve(repoRoot, 'evals/veryfront-agent-tool-loading.eval.ts')).href)
+    const examples = await module.default.dataset.load({ baseDir: repoRoot })
+
+    expect(examples.find((example) => example.id === 'hi')?.input).toBe('hi')
+    expect(examples.find((example) => example.id === 'hello-correlation')?.input).toBe('Hello')
+    expect(module.default.metadata).toMatchObject({
+      benchmarkModel: 'anthropic/claude-opus-4-6',
+      benchmarkExecutionModel: 'veryfront-cloud/anthropic/claude-opus-4-6',
+      benchmarkModes: ['eager', 'deferred'],
+      minimumEffectiveInputReduction: 0.6,
+      maximumDeferredEffectiveInputTokens: 10_000,
+      requiresInternalRuntimeToolLoadingOverride: true,
+    })
+  })
+
+  it('defines every deterministic task-success case with single-call expectations', () => {
+    expect(toolLoadingTaskSuccessCases.map((testCase) => testCase.id)).toEqual([
+      'hi',
+      'hello-correlation',
+      'find-current-release',
+      'create-release-stub',
+      'missing-capability',
+      'guessed-unauthorized-tool',
+      'find-tool-for-new-agent',
+      'find-tool-without-authoring-permission',
+      'skill-constrained-request',
+      'child-request',
+      'interrupted-stream',
+      'revoked-authorization',
+    ])
+    expect(
+      toolLoadingTaskSuccessCases.find((testCase) => testCase.id === 'create-release-stub')?.expectedToolCalls
+    ).toEqual([
+      { name: 'tool_search' },
+      { name: 'create_release', input: { releaseId: 'rel_fixture', branch: 'main' } },
+    ])
+    expect(
+      toolLoadingTaskSuccessCases.find((testCase) => testCase.id === 'guessed-unauthorized-tool')?.expectedToolCalls
+    ).toEqual([])
+  })
+
+  it.skipIf(!hasToolLoadingBenchmarkAdapter)(
+    'executes every deterministic case through the Veryfront runtime with observed results',
+    async () => {
+      const gate = await runDeterministicToolLoadingRuntimeGate()
+      const observed = new Map(gate.cases.map((testCase) => [testCase.id, testCase.successfulToolCalls]))
+
+      expect(taskSuccessPassRate(observed)).toBe(1)
+      expect(gate).toMatchObject({
+        status: 'passed',
+        passRate: 1,
+        executedCaseCount: toolLoadingTaskSuccessCases.length,
+      })
+      expect(gate.cases.every((testCase) => testCase.executedBy === 'veryfront-runtime')).toBe(true)
+      expect(gate.cases.every((testCase) => testCase.observedToolCalls.every((call) => 'result' in call))).toBe(true)
+    }
+  )
+
+  it('denies a tool revoked from the current authorized catalog', async () => {
+    const gate = await runDeterministicToolLoadingRuntimeGate()
+    const revoked = gate.cases.find((testCase) => testCase.id === 'revoked-authorization')
+
+    expect(revoked?.successfulToolCalls).toEqual([])
+    expect(revoked?.observedToolCalls).toEqual([
+      expect.objectContaining({
+        name: 'get_release',
+        status: 'error',
+        result: expect.anything(),
+      }),
+    ])
+    expect(revoked?.visibleToolNames.flat()).not.toContain('get_release')
+  })
+
+  it('uses the frozen authorization catalog and unique parameter descriptions', () => {
+    expect(deterministicToolCatalog.map((tool) => [tool.name, tool.state])).toEqual([
+      ['get_release', 'authorized'],
+      ['create_release', 'authorized'],
+      ['list_agents', 'attachable'],
+      ['delete_project', 'unauthorized'],
+      ['form_input', 'bootstrap'],
+      ['load_skill', 'bootstrap'],
+    ])
+    expect(new Set(deterministicToolCatalog.map((tool) => tool.parameterDescription)).size).toBe(
+      deterministicToolCatalog.length
+    )
+  })
+
+  it('preserves the reported eager baseline as incomplete correlation evidence', () => {
+    const baseline = JSON.parse(
+      readFileSync(resolve(repoRoot, 'evals/tool-loading/fixtures/eager-baseline-reported.json'), 'utf8')
+    )
+
+    expect(baseline).toMatchObject({
+      status: 'incomplete',
+      releaseProof: false,
+      records: [
+        { prompt: 'hi', effectiveInputTokensApproximate: 25_000 },
+        { prompt: 'Hello', effectiveInputTokens: 24_683 },
+      ],
+    })
+  })
+
+  it('keeps the N/N-1 MCP search fallback while preferring framework discovery', () => {
+    const paths = [
+      'agents/veryfront.md',
+      'skills/veryfront/SKILL.md',
+      'skills/veryfront/references/agent-create-agent.md',
+    ]
+    for (const path of paths) {
+      const content = readFileSync(resolve(repoRoot, path), 'utf8')
+      expect(content).toContain('search_mcp_tools')
+      expect(content).toContain('tool_search')
+      expect(content).toContain('fallback')
+    }
+  })
+
+  it('documents the four comparison calls plus one read-only canary and report paths', () => {
+    const packageJson = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8'))
+    const readme = readFileSync(resolve(repoRoot, 'evals/tool-loading/README.md'), 'utf8')
+    const runner = readFileSync(resolve(repoRoot, 'evals/tool-loading/runToolLoadingBenchmark.ts'), 'utf8')
+    const adapter = readFileSync(resolve(repoRoot, 'evals/tool-loading/agentToolLoadingBenchmarkAdapter.ts'), 'utf8')
+
+    expect(packageJson.scripts['eval:tool-loading:benchmark']).toBe('tsx evals/tool-loading/runToolLoadingBenchmark.ts')
+    expect(packageJson.scripts['eval:tool-loading:status']).toBe(
+      'tsx evals/tool-loading/runToolLoadingBenchmarkStatus.ts'
+    )
+    expect(readme).toContain('npm run eval:tool-loading:benchmark')
+    expect(readme).toContain('four controlled comparison calls')
+    expect(readme).toContain('one authorized read-only canary')
+    expect(readme).toContain('complete canonical source and tool-catalog')
+    expect(readme).toContain('unconditional module work')
+    expect(readme).toContain('would recursively start another discovery')
+    expect(readme).toContain('.veryfront/evals/tool-loading/live/report.json')
+    expect(readme).toContain('fails closed unless the producer worktree is clean and')
+    expect(readme).toContain('exact Git commit and tree')
+    expect(readme).toContain('Rollout order is framework first, then agent')
+    expect(readme).toContain('A later cleanup PR may remove that fallback only after')
+    expect(runner).toContain("const model = 'anthropic/claude-opus-4-6'")
+    expect(runner).toContain("const executionModel = 'veryfront-cloud/anthropic/claude-opus-4-6'")
+    expect(runner).toContain('model: executionModel')
+    expect(runner).toContain("from './agentToolLoadingBenchmarkAdapter'")
+    expect(adapter).toContain("const benchmarkModuleSpecifier = 'veryfront/_internal/agent-tool-loading-benchmark'")
+    expect(runner).toContain('runAgentToolLoadingBenchmark')
+    expect(runner).not.toContain('__vfToolLoadingOverride')
+    expect(runner).not.toContain('__vfToolLoadingBenchmarkObserver')
+    expect(runner).not.toContain('veryfrontStudioMcpServer')
+  })
+
+  it('binds live evidence to an exact clean committed producer', async () => {
+    const calls: string[] = []
+    const identity = await resolveBenchmarkProducerIdentity(repoRoot, async (args) => {
+      calls.push(args.join(' '))
+      if (args[0] === 'status') return ''
+      if (args[1] === 'HEAD^{tree}') return 'tree-fixture\n'
+      return 'revision-fixture\n'
+    })
+
+    expect(identity).toEqual({
+      revision: 'revision-fixture',
+      tree: 'tree-fixture',
+      clean: true,
+    })
+    expect(calls).toEqual(['rev-parse HEAD', 'rev-parse HEAD^{tree}', 'status --porcelain=v1 --untracked-files=all'])
+  })
+
+  it('refuses to produce live evidence from a dirty worktree', async () => {
+    await expect(
+      resolveBenchmarkProducerIdentity(repoRoot, async (args) => {
+        if (args[0] === 'status') return ' M evals/tool-loading/runToolLoadingBenchmark.ts\n'
+        return 'fixture\n'
+      })
+    ).rejects.toThrow(
+      'requires a clean committed producer; commit or remove these changes first: evals/tool-loading/runToolLoadingBenchmark.ts'
+    )
+  })
+
+  it('binds the benchmark to the exact locked published framework package', async () => {
+    const files = new Map([
+      [resolve(repoRoot, 'package.json'), JSON.stringify({ dependencies: { veryfront: '0.1.2000' } })],
+      [
+        resolve(repoRoot, 'package-lock.json'),
+        JSON.stringify({
+          packages: {
+            '': { dependencies: { veryfront: '0.1.2000' } },
+            'node_modules/veryfront': {
+              version: '0.1.2000',
+              integrity: 'sha512-framework-fixture',
+            },
+          },
+        }),
+      ],
+      [resolve(repoRoot, 'node_modules/veryfront/package.json'), JSON.stringify({ version: '0.1.2000' })],
+    ])
+    const identity = await resolveBenchmarkFrameworkPackageIdentity(repoRoot, {
+      readText: async (path) => files.get(path) ?? '',
+      isSymbolicLink: async () => false,
+    })
+
+    expect(identity).toEqual({
+      version: '0.1.2000',
+      integrity: 'sha512-framework-fixture',
+      source: 'package-lock',
+    })
+  })
+
+  it('binds a local npm pack artifact to its lock integrity, bytes, and exact clean framework commit', async () => {
+    const tarballPath = resolve(repoRoot, '../artifacts/veryfront-0.1.2000.tgz')
+    const files = new Map([
+      [resolve(repoRoot, 'package.json'), JSON.stringify({ dependencies: { veryfront: '0.1.1176' } })],
+      [
+        resolve(repoRoot, 'package-lock.json'),
+        JSON.stringify({
+          packages: {
+            '': { dependencies: { veryfront: '0.1.1176' } },
+            'node_modules/veryfront': {
+              version: '0.1.1176',
+              resolved: 'https://registry.npmjs.org/veryfront/-/veryfront-0.1.1176.tgz',
+              integrity: 'sha512-registry-framework-fixture',
+            },
+          },
+        }),
+      ],
+      [resolve(repoRoot, 'node_modules/veryfront/package.json'), JSON.stringify({ version: '0.1.2000' })],
+    ])
+    const gitCalls: string[] = []
+    const identity = await resolveBenchmarkFrameworkPackageIdentity(repoRoot, {
+      environment: {
+        VERYFRONT_FRAMEWORK_PACK_PATH: '../artifacts/veryfront-0.1.2000.tgz',
+        VERYFRONT_FRAMEWORK_SOURCE_DIR: '../veryfront-code',
+        VERYFRONT_FRAMEWORK_GIT_REVISION: 'framework-revision',
+        VERYFRONT_FRAMEWORK_GIT_TREE: 'framework-tree',
+        VERYFRONT_FRAMEWORK_PACK_SHA256: '028a21411615e49a2a021d3b4daf8ffbb7bcea5edc06dd30f992b861b4a09c47',
+        VERYFRONT_FRAMEWORK_PACK_INTEGRITY:
+          'sha512-pns2W49TtYxpeV3djypfl4pP2ibCRoYXF+PlLPZflyC/fjxo06/oCQH20XiGOA0kSqq1/aSA98Uxvst7RYfzHg==',
+      },
+      readText: async (path) => files.get(path) ?? '',
+      readBytes: async (path) => {
+        expect(path).toBe(tarballPath)
+        return Buffer.from('local framework tarball')
+      },
+      isSymbolicLink: async () => false,
+      verifyInstalledPackageMatchesTarball: async (receivedTarballPath, installedPackagePath) => {
+        expect(receivedTarballPath).toBe(tarballPath)
+        expect(installedPackagePath).toBe(resolve(repoRoot, 'node_modules/veryfront'))
+        return true
+      },
+      verifyFrameworkSourceMatchesTarball: async (sourceDir, receivedTarballPath) => {
+        expect(sourceDir).toBe(resolve(repoRoot, '../veryfront-code'))
+        expect(receivedTarballPath).toBe(tarballPath)
+        return true
+      },
+      runGit: async (sourceDir, args) => {
+        expect(sourceDir).toBe(resolve(repoRoot, '../veryfront-code'))
+        gitCalls.push(args.join(' '))
+        if (args[0] === 'status') return ''
+        if (args[1] === 'HEAD^{tree}') return 'framework-tree\n'
+        return 'framework-revision\n'
+      },
+    })
+
+    expect(identity).toEqual({
+      version: '0.1.2000',
+      integrity: 'sha512-pns2W49TtYxpeV3djypfl4pP2ibCRoYXF+PlLPZflyC/fjxo06/oCQH20XiGOA0kSqq1/aSA98Uxvst7RYfzHg==',
+      source: 'local-npm-pack',
+      tarballPath,
+      tarballSha256: '028a21411615e49a2a021d3b4daf8ffbb7bcea5edc06dd30f992b861b4a09c47',
+      registryDependencyVersion: '0.1.1176',
+      registryLockIntegrity: 'sha512-registry-framework-fixture',
+      frameworkRevision: 'framework-revision',
+      frameworkTree: 'framework-tree',
+      frameworkSourceClean: true,
+    })
+    expect(gitCalls).toEqual(['rev-parse HEAD', 'rev-parse HEAD^{tree}', 'status --porcelain=v1 --untracked-files=all'])
+  })
+
+  it('rejects a local npm pack artifact when its bytes do not match the attested sha256', async () => {
+    const files = new Map([
+      [resolve(repoRoot, 'package.json'), JSON.stringify({ dependencies: { veryfront: '0.1.1176' } })],
+      [
+        resolve(repoRoot, 'package-lock.json'),
+        JSON.stringify({
+          packages: {
+            '': { dependencies: { veryfront: '0.1.1176' } },
+            'node_modules/veryfront': {
+              version: '0.1.1176',
+              resolved: 'https://registry.npmjs.org/veryfront/-/veryfront-0.1.1176.tgz',
+              integrity: 'sha512-registry-framework-fixture',
+            },
+          },
+        }),
+      ],
+      [resolve(repoRoot, 'node_modules/veryfront/package.json'), JSON.stringify({ version: '0.1.2000' })],
+    ])
+
+    await expect(
+      resolveBenchmarkFrameworkPackageIdentity(repoRoot, {
+        environment: {
+          VERYFRONT_FRAMEWORK_PACK_PATH: '../veryfront.tgz',
+          VERYFRONT_FRAMEWORK_SOURCE_DIR: '../veryfront-code',
+          VERYFRONT_FRAMEWORK_GIT_REVISION: 'framework-revision',
+          VERYFRONT_FRAMEWORK_GIT_TREE: 'framework-tree',
+          VERYFRONT_FRAMEWORK_PACK_SHA256: '0'.repeat(64),
+          VERYFRONT_FRAMEWORK_PACK_INTEGRITY: 'sha512-fixture',
+        },
+        readText: async (path) => files.get(path) ?? '',
+        readBytes: async () => Buffer.from('local framework tarball'),
+        isSymbolicLink: async () => false,
+        runGit: async (_sourceDir, args) => {
+          if (args[0] === 'status') return ''
+          if (args[1] === 'HEAD^{tree}') return 'framework-tree\n'
+          return 'framework-revision\n'
+        },
+      })
+    ).rejects.toThrow('Local Veryfront npm pack sha256 mismatch')
+  })
+
+  it('compares the installed framework content to the unpacked local npm pack', async () => {
+    const fixtureRoot = mkdtempSync(resolve(tmpdir(), 'veryfront-framework-pack-test-'))
+    try {
+      const packedPackage = resolve(fixtureRoot, 'pack/package')
+      const installedPackage = resolve(fixtureRoot, 'installed')
+      mkdirSync(packedPackage, { recursive: true })
+      mkdirSync(installedPackage, { recursive: true })
+      for (const directory of [packedPackage, installedPackage]) {
+        writeFileSync(resolve(directory, 'package.json'), '{"name":"veryfront","version":"0.1.2000"}\n')
+        writeFileSync(resolve(directory, 'index.js'), 'export const fixture = true\n')
+      }
+      const tarballPath = resolve(fixtureRoot, 'veryfront-0.1.2000.tgz')
+      execFileSync('tar', ['-czf', tarballPath, '-C', resolve(fixtureRoot, 'pack'), 'package'])
+
+      await expect(installedPackageMatchesTarball(tarballPath, installedPackage)).resolves.toBe(true)
+      writeFileSync(resolve(installedPackage, 'index.js'), 'export const fixture = false\n')
+      await expect(installedPackageMatchesTarball(tarballPath, installedPackage)).resolves.toBe(false)
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses an unpinned linked framework build', async () => {
+    await expect(
+      resolveBenchmarkFrameworkPackageIdentity(repoRoot, {
+        isSymbolicLink: async () => true,
+      })
+    ).rejects.toThrow('requires a non-symlinked installed veryfront package')
+  })
+
+  it('fingerprints complete canonical definitions rather than tool names alone', () => {
+    const first = fingerprintAuthorizedToolDefinitions([
+      {
+        name: 'get_release',
+        source: 'remote',
+        description: 'Get a release',
+        inputSchema: { type: 'object', properties: { id: { type: 'string' } } },
+      },
+    ])
+    const reordered = fingerprintAuthorizedToolDefinitions([
+      {
+        inputSchema: { properties: { id: { type: 'string' } }, type: 'object' },
+        description: 'Get a release',
+        source: 'remote',
+        name: 'get_release',
+      },
+    ])
+    const changedSchema = fingerprintAuthorizedToolDefinitions([
+      {
+        name: 'get_release',
+        source: 'remote',
+        description: 'Get a release',
+        inputSchema: { type: 'object', properties: { id: { type: 'number' } } },
+      },
+    ])
+
+    expect(reordered).toBe(first)
+    expect(changedSchema).not.toBe(first)
+  })
+
+  it('omits function, symbol, and undefined object properties like JSON wire serialization', () => {
+    const withOmittedProperties = fingerprintAuthorizedToolDefinitions([
+      {
+        name: 'get_release',
+        source: 'remote',
+        description: 'Get a release',
+        inputSchema: {
+          type: 'object',
+          default: () => 'dynamic default',
+          symbolDefault: Symbol('unsupported-on-wire'),
+          undefinedDefault: undefined,
+        },
+      },
+    ])
+    const wireEquivalent = fingerprintAuthorizedToolDefinitions([
+      {
+        name: 'get_release',
+        source: 'remote',
+        description: 'Get a release',
+        inputSchema: {
+          type: 'object',
+        },
+      },
+    ])
+
+    expect(withOmittedProperties).toBe(wireEquivalent)
+  })
+
+  it('maps unsupported array slots and non-finite numbers to null like JSON wire serialization', () => {
+    const sparseExamples = Array<unknown>(7)
+    sparseExamples[0] = undefined
+    sparseExamples[2] = () => undefined
+    sparseExamples[3] = Symbol('unsupported-on-wire')
+    sparseExamples[4] = Number.NaN
+    sparseExamples[5] = Number.POSITIVE_INFINITY
+    sparseExamples[6] = Number.NEGATIVE_INFINITY
+
+    const withWireNormalizedValues = fingerprintAuthorizedToolDefinitions([
+      {
+        name: 'get_release',
+        source: 'remote',
+        description: 'Get a release',
+        inputSchema: { type: 'object', examples: sparseExamples },
+      },
+    ])
+    const wireEquivalent = fingerprintAuthorizedToolDefinitions([
+      {
+        name: 'get_release',
+        source: 'remote',
+        description: 'Get a release',
+        inputSchema: { type: 'object', examples: [null, null, null, null, null, null, null] },
+      },
+    ])
+
+    expect(withWireNormalizedValues).toBe(wireEquivalent)
+  })
+
+  it('fails closed on BigInt values and cycles', () => {
+    const circularSchema: Record<string, unknown> = { type: 'object' }
+    circularSchema.self = circularSchema
+    const unsupportedValues: unknown[] = [1n, circularSchema]
+
+    for (const unsupportedValue of unsupportedValues) {
+      expect(() =>
+        fingerprintAuthorizedToolDefinitions([
+          {
+            name: 'get_release',
+            source: 'remote',
+            description: 'Get a release',
+            inputSchema: { type: 'object', default: unsupportedValue },
+          },
+        ])
+      ).toThrow()
+    }
+  })
+
+  it('uses deferred Studio MCP URL and bearer callbacks without serializing credentials', async () => {
+    const server = createBenchmarkStudioMcpServer({
+      VERYFRONT_STUDIO_MCP_URL: 'https://veryfront.org/mcp',
+      VERYFRONT_TOKEN: 'benchmark-secret-token',
+    })
+
+    expect(server.transport.url).toBeTypeOf('function')
+    expect(server.auth?.type).toBe('bearer')
+    if (server.auth?.type !== 'bearer' || typeof server.auth.token !== 'function') {
+      throw new Error('Expected deferred bearer authentication')
+    }
+    if (typeof server.transport.url !== 'function') {
+      throw new Error('Expected deferred HTTP transport URL')
+    }
+    expect(await server.transport.url()).toBe('https://veryfront.org/mcp')
+    expect(await server.auth.token()).toBe('benchmark-secret-token')
+    expect(JSON.stringify(server)).not.toContain('benchmark-secret-token')
+  })
+
+  it('allows only canonical configured Studio tools through the benchmark transport', () => {
+    const server = createBenchmarkStudioMcpServer({})
+
+    expect(server.toolPolicy).toEqual({
+      allow: ['studio_open_project', 'studio_panel_control', 'studio_suggestions', 'studio_todo_write'],
+      approval: 'never',
+    })
+  })
+
+  it('rejects a missing standalone Studio MCP URL', async () => {
+    const server = createBenchmarkStudioMcpServer({})
+    if (typeof server.transport.url !== 'function') {
+      throw new Error('Expected deferred HTTP transport URL')
+    }
+
+    expect(() => server.transport.url()).toThrow(
+      'VERYFRONT_STUDIO_MCP_URL is required for the standalone tool-loading benchmark'
+    )
+  })
+
+  it('rejects the service API token when the Studio user JWT is missing', async () => {
+    const server = createBenchmarkStudioMcpServer({
+      VERYFRONT_API_TOKEN: 'service-token-must-not-authenticate-studio',
+    })
+    if (server.auth?.type !== 'bearer' || typeof server.auth.token !== 'function') {
+      throw new Error('Expected deferred bearer authentication')
+    }
+
+    expect(() => server.auth.token()).toThrow('VERYFRONT_TOKEN is required for the standalone tool-loading benchmark')
+  })
+
+  it('imports benchmark and status runners without filesystem or live-runtime side effects', async () => {
+    const originalCwd = process.cwd()
+    const importCwd = mkdtempSync(resolve(tmpdir(), 'veryfront-tool-loading-import-'))
+    try {
+      process.chdir(importCwd)
+      const nonce = Date.now()
+      const benchmarkModule = await import(
+        `${pathToFileURL(resolve(repoRoot, 'evals/tool-loading/runToolLoadingBenchmark.ts')).href}?import=${nonce}`
+      )
+      const statusModule = await import(
+        `${pathToFileURL(resolve(repoRoot, 'evals/tool-loading/runToolLoadingBenchmarkStatus.ts')).href}?import=${nonce}`
+      )
+
+      expect(benchmarkModule.main).toBeTypeOf('function')
+      expect(statusModule.main).toBeTypeOf('function')
+      const readyCapability: AgentToolLoadingBenchmarkCapability = {
+        available: true,
+        status: 'ready',
+        releaseGateCapability: 'complete-request-shape-capture',
+      }
+      const status = statusModule.buildStatus(readyCapability)
+      expect(status.releaseGateCapability).toBe('complete-request-shape-capture')
+      expect(status.liveRequirements.providerCredentials).toContain('VERYFRONT_API_TOKEN')
+      expect(status.liveRequirements.studioCredentials).toContain('VERYFRONT_TOKEN')
+      expect(existsSync(resolve(importCwd, '.veryfront'))).toBe(false)
+    } finally {
+      process.chdir(originalCwd)
+      rmSync(importCwd, { recursive: true, force: true })
+    }
+  })
+
+  it('reports benchmark status blocked when the adapter is absent and ready when its exports validate', async () => {
+    const absent = await inspectAgentToolLoadingBenchmarkCapability(async () => {
+      throw new Error('package subpath is not exported')
+    })
+    const present = await inspectAgentToolLoadingBenchmarkCapability(async () => ({
+      runAgentToolLoadingBenchmark() {},
+      runWithAgentToolLoadingBenchmarkRequestContext() {},
+    }))
+
+    expect(buildStatus(absent)).toMatchObject({
+      status: 'blocked',
+      releaseGateCapability: 'unavailable',
+      adapterAvailable: false,
+      blocker: 'package subpath is not exported',
+    })
+    expect(buildStatus(present)).toMatchObject({
+      status: 'ready',
+      releaseGateCapability: 'complete-request-shape-capture',
+      adapterAvailable: true,
+    })
+  })
+
+  it('makes the status command exit blocked or ready from the inspected adapter capability', async () => {
+    const originalCwd = process.cwd()
+    const statusCwd = mkdtempSync(resolve(tmpdir(), 'veryfront-tool-loading-status-'))
+    const writeOutput = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const blocked: AgentToolLoadingBenchmarkCapability = {
+      available: false,
+      status: 'blocked',
+      releaseGateCapability: 'unavailable',
+      blocker: 'adapter unavailable',
+    }
+    const ready: AgentToolLoadingBenchmarkCapability = {
+      available: true,
+      status: 'ready',
+      releaseGateCapability: 'complete-request-shape-capture',
+    }
+
+    try {
+      process.chdir(statusCwd)
+      await expect(runStatusCommand({ inspectCapability: async () => blocked })).resolves.toBe(1)
+      expect(
+        JSON.parse(readFileSync(resolve(statusCwd, '.veryfront/evals/tool-loading/status.json'), 'utf8'))
+      ).toMatchObject({
+        status: 'blocked',
+        adapterAvailable: false,
+        blocker: 'adapter unavailable',
+      })
+
+      await expect(runStatusCommand({ inspectCapability: async () => ready })).resolves.toBe(0)
+      expect(
+        JSON.parse(readFileSync(resolve(statusCwd, '.veryfront/evals/tool-loading/status.json'), 'utf8'))
+      ).toMatchObject({
+        status: 'ready',
+        adapterAvailable: true,
+      })
+    } finally {
+      process.chdir(originalCwd)
+      writeOutput.mockRestore()
+      rmSync(statusCwd, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed before direct benchmark work when required project scope is missing', async () => {
+    const benchmarkModule = await import(
+      pathToFileURL(resolve(repoRoot, 'evals/tool-loading/runToolLoadingBenchmark.ts')).href
+    )
+    for (const missingName of ['AG_UI_EVAL_PROJECT_ID', 'VERYFRONT_PROJECT_SLUG', 'VERYFRONT_TOKEN']) {
+      const environment: Record<string, string> = {
+        AG_UI_EVAL_PROJECT_ID: 'project-id',
+        VERYFRONT_PROJECT_SLUG: 'project-slug',
+        VERYFRONT_TOKEN: 'user-token',
+      }
+      delete environment[missingName]
+      const runWithProjectContext = vi.fn()
+      const runBenchmark = vi.fn()
+
+      await expect(
+        benchmarkModule.runDirectBenchmark(environment, { runWithProjectContext, runBenchmark })
+      ).rejects.toThrow(`${missingName} is required for the standalone tool-loading benchmark`)
+      expect(runWithProjectContext).not.toHaveBeenCalled()
+      expect(runBenchmark).not.toHaveBeenCalled()
+    }
+  })
+
+  it('runs the entire direct benchmark inside the exact project request context', async () => {
+    const benchmarkModule = await import(
+      pathToFileURL(resolve(repoRoot, 'evals/tool-loading/runToolLoadingBenchmark.ts')).href
+    )
+    const events: string[] = []
+    const runBenchmark = vi.fn(async () => {
+      events.push('benchmark')
+      return 7
+    })
+    const runWithProjectContext = vi.fn(
+      async (
+        _context: { projectSlug: string; projectId?: string; authToken: string },
+        operation: () => Promise<number>
+      ) => {
+        events.push('context-enter')
+        const result = await operation()
+        events.push('context-exit')
+        return result
+      }
+    )
+
+    await expect(
+      benchmarkModule.runDirectBenchmark(
+        {
+          AG_UI_EVAL_PROJECT_ID: 'project-id',
+          VERYFRONT_PROJECT_SLUG: 'project-slug',
+          VERYFRONT_TOKEN: 'user-token',
+        },
+        { runWithProjectContext, runBenchmark }
+      )
+    ).resolves.toBe(7)
+    expect(runWithProjectContext).toHaveBeenCalledWith(
+      {
+        projectSlug: 'project-slug',
+        projectId: 'project-id',
+        authToken: 'user-token',
+      },
+      runBenchmark
+    )
+    expect(events).toEqual(['context-enter', 'benchmark', 'context-exit'])
+  })
+
+  it('discovers once, performs four comparisons, and executes one read-only canary', async () => {
+    const benchmarkModule = await import(
+      pathToFileURL(resolve(repoRoot, 'evals/tool-loading/runToolLoadingBenchmark.ts')).href
+    )
+    const snapshot = { id: 'immutable-catalog' }
+    const discover = vi.fn(async () => snapshot)
+    const execute = vi.fn(async (_snapshot: typeof snapshot, prompt: 'hi' | 'Hello', mode: 'eager' | 'deferred') => {
+      const deferred = mode === 'deferred'
+      return {
+        prompt,
+        mode,
+        model: 'anthropic/claude-opus-4-6',
+        executionModel: 'veryfront-cloud/anthropic/claude-opus-4-6',
+        sourceRevision: 'test-revision',
+        sourceTree: 'test-tree',
+        catalogFingerprint: 'sha256:test',
+        catalogSourceRevision: 'test-revision',
+        catalogSourceTree: 'test-tree',
+        configuredToolNames: ['get_release'],
+        effectiveAuthorizedToolNames: ['get_release'],
+        authorizedToolDefinitions: [
+          {
+            name: 'get_release',
+            source: 'remote',
+            description: 'Get a release',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ],
+        configuredToolNameCount: 1,
+        effectiveAuthorizedToolNameCount: 1,
+        authorizedSearchableSchemaCount: 10,
+        visibleSchemaCount: deferred ? 1 : 10,
+        deferredSchemaCount: deferred ? 9 : 0,
+        providerRequestToolDefinitionCount: deferred ? 1 : 10,
+        providerWireDeferredMetadataCount: deferred ? 9 : 0,
+        requestShapeCaptureStatus: 'complete',
+        loadingPath: deferred ? 'provider-native' : 'eager',
+        inputTokens: deferred ? 20 : 100,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+        billableInputTokens: deferred ? 20 : 100,
+        effectiveInputTokens: deferred ? 20 : 100,
+        providerInputCostUsd: deferred ? 0.02 : 0.1,
+        usageCaptureStatus: 'complete',
+        steps: 1,
+        toolCalls: 0,
+        durationMs: 1,
+        completed: true,
+      }
+    })
+    const executeCanary = vi.fn(
+      async (): Promise<{
+        id: 'authorized-read-only-canary'
+        prompt: string
+        mode: 'deferred'
+        completed: boolean
+        expectedToolName: 'list_projects'
+        observedToolCalls: Array<{
+          name: string
+          status: 'pending' | 'executing' | 'completed' | 'error'
+          input: Record<string, unknown>
+          result: unknown
+        }>
+        status: 'passed' | 'failed'
+      }> => ({
+        id: 'authorized-read-only-canary',
+        prompt: 'List my projects using the authorized read-only platform tool.',
+        mode: 'deferred',
+        completed: true,
+        expectedToolName: 'list_projects',
+        producer: {
+          revision: 'test-revision',
+          tree: 'test-tree',
+          clean: true,
+        },
+        frameworkPackage: {
+          version: '0.1.2000',
+          integrity: 'sha512-framework-fixture',
+          source: 'package-lock',
+        },
+        observedToolCalls: [
+          { name: 'tool_search', status: 'completed', input: { query: 'list projects' }, result: { matches: [] } },
+          { name: 'list_projects', status: 'completed', input: {}, result: { projects: [] } },
+        ],
+        status: 'passed',
+      })
+    )
+    const writtenFiles = new Map<string, string>()
+
+    const producer: BenchmarkProducerIdentity = {
+      revision: 'test-revision',
+      tree: 'test-tree',
+      clean: true,
+    }
+    const frameworkPackage: BenchmarkFrameworkPackageIdentity = {
+      version: '0.1.2000',
+      integrity: 'sha512-framework-fixture',
+      source: 'package-lock',
+    }
+    const exitCode = await benchmarkModule.main({
+      projectDir: repoRoot,
+      producerIdentity: async () => producer,
+      frameworkPackageIdentity: async () => frameworkPackage,
+      loadExamples: async () => [
+        { id: 'hi', input: 'hi' },
+        { id: 'hello-correlation', input: 'Hello' },
+      ],
+      discover,
+      execute,
+      executeCanary,
+      runDeterministicGate: async () => ({
+        status: 'passed',
+        passRate: 1,
+        executedCaseCount: toolLoadingTaskSuccessCases.length,
+        cases: toolLoadingTaskSuccessCases.map((testCase) => ({
+          id: testCase.id,
+          executedBy: 'veryfront-runtime',
+          status: 'passed',
+          completed: true,
+          successfulToolCalls: testCase.expectedToolCalls,
+          observedToolCalls: testCase.expectedToolCalls.map((call) => ({
+            name: call.name,
+            input: call.input ?? {},
+            status: 'completed',
+            result: {},
+          })),
+          visibleToolNames: [],
+        })),
+      }),
+      mkdir: async () => undefined,
+      writeFile: async (path: string, contents: string) => {
+        writtenFiles.set(path, contents)
+      },
+      writeOutput: () => undefined,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(discover).toHaveBeenCalledTimes(1)
+    expect(execute).toHaveBeenCalledTimes(4)
+    expect(executeCanary).toHaveBeenCalledTimes(1)
+    expect(execute.mock.calls.every(([receivedSnapshot]) => receivedSnapshot === snapshot)).toBe(true)
+    const reportEntry = [...writtenFiles.entries()].find(([path]) => path.endsWith('/live/report.json'))
+    expect(reportEntry).toBeDefined()
+    const report = JSON.parse(reportEntry?.[1] ?? '{}')
+    expect(report).toMatchObject({
+      producer,
+      frameworkPackage,
+      liveCalls: 5,
+      comparisonLiveCalls: 4,
+      canaryLiveCalls: 1,
+      deterministicTaskSuccessCases: 12,
+      deterministicGate: {
+        status: 'passed',
+        passRate: 1,
+        executedCaseCount: 12,
+      },
+      liveCanary: {
+        id: 'authorized-read-only-canary',
+        status: 'passed',
+        expectedToolName: 'list_projects',
+        producer,
+        frameworkPackage,
+      },
+    })
+    expect(report.deterministicGate.cases).toHaveLength(12)
+    expect(report.comparisons[0].eager.authorizedToolDefinitions).toEqual([
+      {
+        name: 'get_release',
+        source: 'remote',
+        description: 'Get a release',
+        inputSchema: { type: 'object', properties: {} },
+      },
+    ])
+    expect(
+      report.deterministicGate.cases.every((testCase: { observedToolCalls?: unknown }) =>
+        Array.isArray(testCase.observedToolCalls)
+      )
+    ).toBe(true)
+    const markdownEntry = [...writtenFiles.entries()].find(([path]) => path.endsWith('/live/report.md'))
+    expect(markdownEntry?.[1]).toContain('Producer commit: `test-revision`')
+    expect(markdownEntry?.[1]).toContain('Producer tree: `test-tree`')
+    expect(markdownEntry?.[1]).toContain('Producer worktree: `clean`')
+    expect(markdownEntry?.[1]).toContain('Framework package: `0.1.2000`')
+    expect(markdownEntry?.[1]).toContain('Framework package integrity: `sha512-framework-fixture`')
+  })
+
+  it('fails closed before discovery when the deterministic runtime gate is not perfect', async () => {
+    const benchmarkModule = await import(
+      pathToFileURL(resolve(repoRoot, 'evals/tool-loading/runToolLoadingBenchmark.ts')).href
+    )
+    const discover = vi.fn()
+    const execute = vi.fn()
+    const executeCanary = vi.fn()
+    const writes: string[] = []
+
+    const exitCode = await benchmarkModule.main({
+      projectDir: repoRoot,
+      producerIdentity: async () => ({
+        revision: 'test-revision',
+        tree: 'test-tree',
+        clean: true,
+      }),
+      frameworkPackageIdentity: async () => ({
+        version: '0.1.2000',
+        integrity: 'sha512-framework-fixture',
+        source: 'package-lock',
+      }),
+      loadExamples: async () => [
+        { id: 'hi', input: 'hi' },
+        { id: 'hello-correlation', input: 'Hello' },
+      ],
+      discover,
+      execute,
+      executeCanary,
+      runDeterministicGate: async () => ({
+        status: 'failed',
+        passRate: 0,
+        executedCaseCount: 1,
+        cases: [
+          {
+            id: 'revoked-authorization',
+            executedBy: 'veryfront-runtime',
+            status: 'failed',
+            completed: true,
+            successfulToolCalls: [{ name: 'get_release' }],
+            observedToolCalls: [
+              {
+                name: 'get_release',
+                input: {},
+                status: 'completed',
+                result: { id: 'rel_current' },
+              },
+            ],
+            visibleToolNames: [['get_release']],
+            failure: 'revoked tool executed',
+          },
+        ],
+      }),
+      mkdir: async () => undefined,
+      writeFile: async (_path: string, contents: string) => {
+        writes.push(contents)
+      },
+      writeOutput: () => undefined,
+    })
+
+    expect(exitCode).toBe(1)
+    expect(discover).not.toHaveBeenCalled()
+    expect(execute).not.toHaveBeenCalled()
+    expect(executeCanary).not.toHaveBeenCalled()
+    expect(writes.some((contents) => contents.includes('"deterministicGate"'))).toBe(true)
+  })
+
+  it('records a diagnostic error code and redacted message for benchmark failures', async () => {
+    const benchmarkModule = await import(
+      pathToFileURL(resolve(repoRoot, 'evals/tool-loading/runToolLoadingBenchmark.ts')).href
+    )
+
+    const error = new Error(
+      'gateway failed: Authorization: Bearer secret.value token=plain-secret auth_token="quoted-secret" eyJabc.def.ghi'
+    )
+    error.name = 'VeryfrontError'
+
+    expect(benchmarkModule.benchmarkErrorFields(error)).toEqual({
+      errorCode: 'VeryfrontError',
+      errorMessage:
+        'gateway failed: Authorization: Bearer [REDACTED] token=[REDACTED] auth_token=[REDACTED] [REDACTED_JWT]',
+    })
+  })
+})

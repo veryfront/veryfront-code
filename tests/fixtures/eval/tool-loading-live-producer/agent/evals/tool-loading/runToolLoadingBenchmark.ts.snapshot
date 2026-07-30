@@ -439,6 +439,34 @@ function redactSensitiveString(value: string, projectIdentities: readonly string
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED_JWT]')
 }
 
+function isSensitiveCredentialKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '')
+  return (
+    /^(?:api|auth|access|refresh|id|bearer|client)?token$/.test(normalized) ||
+    [
+      'apikey',
+      'authorization',
+      'authorizationheader',
+      'auth',
+      'authheader',
+      'clientsecret',
+      'credential',
+      'credentials',
+      'password',
+      'passwd',
+      'privatekey',
+      'secret',
+      'signingkey',
+    ].includes(normalized)
+  )
+}
+
+type CanonicalJsonSanitizer = {
+  string: (value: string) => string
+  key?: (key: string) => string
+  sensitiveKey?: (key: string) => boolean
+}
+
 export function benchmarkErrorFields(
   error: unknown,
   projectIdentities: readonly string[] = []
@@ -455,12 +483,15 @@ export function benchmarkErrorFields(
 function canonicalJsonValue(
   value: unknown,
   label: string,
-  sanitizeString: (value: string) => string = (entry) => entry,
-  ancestors = new WeakSet<object>()
+  sanitizer?: CanonicalJsonSanitizer,
+  ancestors = new WeakSet<object>(),
+  redactValue = false
 ): unknown {
-  if (typeof value === 'string') return sanitizeString(value)
-  if (value === null || typeof value === 'boolean') return value
+  if (value === null) return value
+  if (typeof value === 'string') return redactValue ? '[REDACTED]' : (sanitizer?.string(value) ?? value)
+  if (typeof value === 'boolean') return redactValue ? '[REDACTED]' : value
   if (typeof value === 'number') {
+    if (redactValue) return '[REDACTED]'
     return Number.isFinite(value) ? value : null
   }
   if (Array.isArray(value)) {
@@ -471,7 +502,7 @@ function canonicalJsonValue(
         const entryType = typeof entry
         return entry === undefined || entryType === 'function' || entryType === 'symbol'
           ? null
-          : canonicalJsonValue(entry, `${label}[${index}]`, sanitizeString, ancestors)
+          : canonicalJsonValue(entry, `${label}[${index}]`, sanitizer, ancestors, redactValue)
       })
     } finally {
       ancestors.delete(value)
@@ -488,7 +519,16 @@ function canonicalJsonValue(
             return entry !== undefined && entryType !== 'function' && entryType !== 'symbol'
           })
           .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, entry]) => [key, canonicalJsonValue(entry, `${label}.${key}`, sanitizeString, ancestors)])
+          .map(([key, entry]) => [
+            sanitizer?.key?.(key) ?? key,
+            canonicalJsonValue(
+              entry,
+              `${label}.${key}`,
+              sanitizer,
+              ancestors,
+              redactValue || sanitizer?.sensitiveKey?.(key) === true
+            ),
+          ])
       )
     } finally {
       ancestors.delete(value)
@@ -505,7 +545,11 @@ export function fingerprintAuthorizedToolDefinitions(definitions: AuthorizedTool
 }
 
 export function sanitizePersistedBenchmarkValue(value: unknown, projectIdentities: readonly string[]): unknown {
-  return canonicalJsonValue(value, 'benchmarkReport', (entry) => redactSensitiveString(entry, projectIdentities))
+  return canonicalJsonValue(value, 'benchmarkReport', {
+    string: (entry) => redactSensitiveString(entry, projectIdentities),
+    key: (key) => redactSensitiveString(key, projectIdentities),
+    sensitiveKey: isSensitiveCredentialKey,
+  })
 }
 
 export function sanitizeLiveCanaryToolResult(
@@ -514,7 +558,11 @@ export function sanitizeLiveCanaryToolResult(
   projectIdentities: readonly string[] = []
 ): unknown {
   if (toolName !== 'list_projects') {
-    return canonicalJsonValue(result, `${toolName}.result`, (value) => redactSensitiveString(value, projectIdentities))
+    return canonicalJsonValue(result, `${toolName}.result`, {
+      string: (value) => redactSensitiveString(value, projectIdentities),
+      key: (key) => redactSensitiveString(key, projectIdentities),
+      sensitiveKey: isSensitiveCredentialKey,
+    })
   }
 
   const record = optionalRecord(result)

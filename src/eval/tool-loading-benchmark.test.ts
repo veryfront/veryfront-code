@@ -245,11 +245,11 @@ describe("eval/tool-loading-benchmark", () => {
     assertEquals(artifact.sourceArtifact, {
       repository: "veryfront-agent",
       path: ".veryfront/evals/tool-loading/live/report.json",
-      sha256: "a166982d93b0afddb7bf806224d739cdadf7801cecb224929dd02918d8dbf64a",
+      sha256: "5b66e63f0056c43029e284921a04678767e5ec1521398cbc3d0ea16155ac292b",
     });
     assertEquals(artifact.producer, {
-      revision: "0ca7665792fb067892811736b059f3fe6809a8a7",
-      tree: "b248592e3b1fe2275292df4a9e141307acfa129c",
+      revision: "edd567309805313a5ae8cbdbed2da3b183a9628b",
+      tree: "d759003be79278da9e827627e4c034fccda7e853",
       clean: true,
     });
     assertEquals(artifact.frameworkPackage, {
@@ -347,6 +347,25 @@ describe("eval/tool-loading-benchmark", () => {
       ),
       true,
     );
+    const privacyTestSnapshot = producer.agentProducer.files.find((file) =>
+      file.sourcePath === "tests/unit/evals/toolLoadingEval.test.ts"
+    );
+    assertEquals(
+      privacyTestSnapshot?.artifactPath,
+      "tests/unit/evals/toolLoadingEval.test.ts.snapshot",
+    );
+    const privacyTestSource = await Deno.readTextFile(
+      new URL(
+        `../../${producer.agentProducer.snapshotRoot}/${privacyTestSnapshot?.artifactPath}`,
+        import.meta.url,
+      ),
+    );
+    assertStringIncludes(
+      privacyTestSource,
+      "redacts opaque credential fields and project identities used as object keys",
+    );
+    assertStringIncludes(privacyTestSource, "token: 'opaque-value'");
+    assertStringIncludes(privacyTestSource, "token: '[REDACTED]'");
     for (const snapshot of [producer.agentProducer, producer.frameworkProducer]) {
       for (const file of snapshot.files) {
         assertEquals(
@@ -392,9 +411,9 @@ describe("eval/tool-loading-benchmark", () => {
       );
       assertEquals(measured.eager.catalogSourceTree, producer.agentProducer.repositoryTree);
       assertEquals(measured.deferred.catalogSourceTree, producer.agentProducer.repositoryTree);
-      assertEquals(measured.eager.usage.effectiveInputTokens, 24_549);
+      assertEquals(measured.eager.usage.effectiveInputTokens, 24_410);
       assertEquals(measured.deferred.usage.effectiveInputTokens, 6_365);
-      assertEquals(measured.effectiveInputReduction, 0.7407226363599332);
+      assertEquals(measured.effectiveInputReduction, 0.7392462105694387);
       assertEquals(measured.eager.authorizedSearchableSchemaCount, 48);
       assertEquals(measured.deferred.authorizedSearchableSchemaCount, 48);
       assertEquals(measured.deferred.loadingPath, "framework-fallback");
