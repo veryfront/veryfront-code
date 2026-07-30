@@ -2,6 +2,10 @@ import { build, emptyDir } from "#dnt";
 import { dirname } from "#std/path";
 import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
 import {
+  parseExtensionRuntimeManifestModule,
+  renderExtensionRuntimeManifestModule,
+} from "./extension-runtime-manifest.ts";
+import {
   bareImportPackageNames,
   createExtensionPackageSpec,
   createVeryfrontPeerTypeImportReplacements,
@@ -66,10 +70,16 @@ export async function buildExtensionPackages(
       async postBuild() {
         const pkgPath = `${outDir}/package.json`;
         const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
+        const thirdPartyNoticesPath =
+          `${options.rootDir}/${spec.manifestDir}/THIRD_PARTY_NOTICES.md`;
+        const includeThirdPartyNotices = await optionalRegularFileExists(
+          thirdPartyNoticesPath,
+        );
         normalizeExtensionPackageJson({
           packageJson: pkg,
           spec,
           version: options.version,
+          includeThirdPartyNotices,
         });
         await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
 
@@ -77,6 +87,20 @@ export async function buildExtensionPackages(
           outDir,
           rootConfig: options.rootConfig,
         });
+        const synchronizedRuntimeVersion =
+          await synchronizeEmittedExtensionManifestVersion({
+          outDir,
+          manifest,
+          version: options.version,
+        });
+        if (
+          manifest.veryfront?.npm?.runtimeVersionFromManifest === true &&
+          !synchronizedRuntimeVersion
+        ) {
+          throw new Error(
+            `${spec.packageName} requires a generated runtime manifest version module`,
+          );
+        }
         await patchDntArgvPolyfill(`${outDir}/esm/_dnt.polyfills.js`);
 
         await Deno.copyFile(`${options.rootDir}/LICENSE`, `${outDir}/LICENSE`);
@@ -85,6 +109,12 @@ export async function buildExtensionPackages(
           `${options.rootDir}/${spec.readmePath}`,
           `${outDir}/README.md`,
         );
+        if (includeThirdPartyNotices) {
+          await Deno.copyFile(
+            thirdPartyNoticesPath,
+            `${outDir}/THIRD_PARTY_NOTICES.md`,
+          );
+        }
 
         if (spec.packageName === "@veryfront/ext-document-kreuzberg") {
           await transpileDocumentExtractionWorker(options.rootDir, outDir);
@@ -140,12 +170,78 @@ async function rewriteVeryfrontPeerTypeImports(input: {
   }
 }
 
-async function removeUnusedBundledRootSource(outDir: string): Promise<void> {
+export async function removeUnusedBundledRootSource(
+  outDir: string,
+): Promise<void> {
   const rootSourceDir = `${outDir}/esm/src`;
   if (!await directoryExists(rootSourceDir)) return;
+  if (await packageMetadataReferencesRootSource(outDir)) return;
   if (await hasGeneratedRootSourceReferences(outDir)) return;
 
   await Deno.remove(rootSourceDir, { recursive: true });
+}
+
+async function packageMetadataReferencesRootSource(
+  outDir: string,
+): Promise<boolean> {
+  const pkg = JSON.parse(
+    await Deno.readTextFile(`${outDir}/package.json`),
+  ) as { exports?: unknown; module?: unknown; types?: unknown };
+  return [pkg.exports, pkg.module, pkg.types].some(
+    packageTargetReferencesRootSource,
+  );
+}
+
+function packageTargetReferencesRootSource(value: unknown): boolean {
+  if (typeof value === "string") return value.startsWith("./esm/src/");
+  if (Array.isArray(value)) return value.some(packageTargetReferencesRootSource);
+  if (value === null || typeof value !== "object") return false;
+  return Object.values(value).some(packageTargetReferencesRootSource);
+}
+
+export async function synchronizeEmittedExtensionManifestVersion(input: {
+  outDir: string;
+  manifest: ExtensionManifest;
+  version: string;
+}): Promise<boolean> {
+  const transformedManifestPath = `${input.outDir}/src/deno.js`;
+  let transformedSource: string;
+  try {
+    transformedSource = await Deno.readTextFile(transformedManifestPath);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+
+  const transformedManifest = parseExtensionRuntimeManifestModule(
+    transformedSource,
+    transformedManifestPath,
+  );
+  if (transformedManifest === null) return false;
+  if (transformedManifest.name !== input.manifest.name) return false;
+  if (JSON.stringify(transformedManifest) !== JSON.stringify(input.manifest)) {
+    throw new Error(
+      `Generated extension manifest does not match ${input.manifest.name}`,
+    );
+  }
+
+  const emittedManifestPath = `${input.outDir}/esm/deno.js`;
+  try {
+    await Deno.stat(emittedManifestPath);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      throw new Error(
+        `Generated extension manifest module is missing: ${emittedManifestPath}`,
+      );
+    }
+    throw error;
+  }
+
+  await Deno.writeTextFile(
+    emittedManifestPath,
+    renderExtensionRuntimeManifestModule(input.manifest, input.version),
+  );
+  return true;
 }
 
 async function removeDntImportMapArtifacts(
@@ -370,6 +466,19 @@ async function* walkFiles(root: string): AsyncGenerator<string> {
 async function directoryExists(path: string): Promise<boolean> {
   try {
     return (await Deno.stat(path)).isDirectory;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
+async function optionalRegularFileExists(path: string): Promise<boolean> {
+  try {
+    const stat = await Deno.stat(path);
+    if (!stat.isFile) {
+      throw new Error(`Expected optional package artifact to be a file: ${path}`);
+    }
+    return true;
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) return false;
     throw error;

@@ -213,6 +213,29 @@ describe("isVirtualFilesystem", () => {
 });
 
 describe("FSAdapterWrapper", () => {
+  it("propagates only an explicit own symlink-free capability", () => {
+    const explicit = createMockFSAdapter({ symlinkSemantics: "none" });
+    const inherited = Object.create(explicit) as FSAdapter;
+
+    assertEquals(new FSAdapterWrapper(explicit).symlinkSemantics, "none");
+    assertEquals(new FSAdapterWrapper(inherited).symlinkSemantics, undefined);
+  });
+
+  it("does not invoke a symlink capability accessor", () => {
+    let getterCalls = 0;
+    const fsAdapter = createMockFSAdapter();
+    Object.defineProperty(fsAdapter, "symlinkSemantics", {
+      configurable: true,
+      get() {
+        getterCalls++;
+        return "none";
+      },
+    });
+
+    assertEquals(new FSAdapterWrapper(fsAdapter).symlinkSemantics, undefined);
+    assertEquals(getterCalls, 0);
+  });
+
   describe("accessor methods", () => {
     it("getUnderlyingAdapter should return the wrapped FSAdapter", () => {
       const fsAdapter = createMockFSAdapter();

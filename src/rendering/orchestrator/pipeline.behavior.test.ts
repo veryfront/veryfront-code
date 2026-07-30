@@ -2369,7 +2369,7 @@ describe("RenderPipeline behavior", () => {
 
     Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
     Deno.env.set("WORKER_ISOLATION_DATA", "1");
-    __resetPoolForTests();
+    await __resetPoolForTests();
     const pool = getWorkerPool();
     const originalExecute = pool.execute;
     pool.execute = async (_workerProjectId, _readPaths, workerRequest) => {
@@ -2426,7 +2426,7 @@ describe("RenderPipeline behavior", () => {
       assertEquals(observedBodies.get(layoutPath), payload);
     } finally {
       pool.execute = originalExecute;
-      __resetPoolForTests();
+      await __resetPoolForTests();
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_DATA");
     }

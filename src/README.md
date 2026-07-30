@@ -14,13 +14,13 @@
 
 ### Request Handling
 
-| Module            | Export Alias            | Purpose                                         |
-| ----------------- | ----------------------- | ----------------------------------------------- |
-| **`server/`**     | `#veryfront/server`     | Dev server (HMR) + production server + handlers |
-| **`proxy/`**      | -                       | Reverse proxy for multi-project routing         |
-| **`routing/`**    | `#veryfront/routing`    | Route matching, API routes, dynamic routes      |
-| **`middleware/`** | `#veryfront/middleware` | Composable request/response pipeline            |
-| **`security/`**   | `#veryfront/security`   | Input validation, CORS, CSP, rate limiting      |
+| Module            | Export Alias            | Purpose                                            |
+| ----------------- | ----------------------- | -------------------------------------------------- |
+| **`server/`**     | `#veryfront/server`     | Dev server (HMR) + production server + handlers    |
+| **`proxy/`**      | -                       | Reverse proxy for multi-project routing            |
+| **`routing/`**    | `#veryfront/routing`    | Route matching, API routes, dynamic routes         |
+| **`middleware/`** | `#veryfront/middleware` | Composable request/response pipeline               |
+| **`security/`**   | `#veryfront/security`   | Request security, path admission, worker isolation |
 
 ### Rendering Pipeline
 
@@ -275,7 +275,7 @@ a vendor implementation or fallback in core.
 
 ### `security/` - Security Layer
 
-**Purpose**: Security primitives, input validation, and protection
+**Purpose**: Request-security primitives, physical path admission, and internal worker isolation
 
 **Exports**: `#veryfront/security`
 
@@ -291,7 +291,7 @@ a vendor implementation or fallback in core.
 
 - `http/` - Request handlers and response policy
 - `input-validation/` - Bounded body readers and parsers
-- `path-validation/` - Canonical path admission
+- `path-validation/` - Adapter-backed physical and explicit lexical path admission
 - `sandbox/` - Internal worker protocol and pool
 
 Public rate limiting is owned by `middleware/`.

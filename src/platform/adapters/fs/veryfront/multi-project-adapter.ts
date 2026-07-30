@@ -50,6 +50,7 @@ function formatDurationSince(startTime: number): string {
 }
 
 export class MultiProjectFSAdapter implements FSAdapter {
+  readonly symlinkSemantics = "none" as const;
   readonly [VERYFRONT_FS_ADAPTER_KIND] = "multi-project" as const;
   private manager: ProxyFSAdapterManager;
   private defaultAdapter?: VeryfrontFSAdapter;

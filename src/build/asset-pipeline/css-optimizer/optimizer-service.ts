@@ -267,7 +267,6 @@ export class CSSOptimizerService {
       baseDir: this.baseDir,
       adapter,
       context: "build",
-      throwOnError: true,
       validationOptions: { followSymlinks: false },
     });
     this.optimizationSession = dependencies.optimizationSession ??

@@ -129,6 +129,7 @@ function isContextualAdapter(adapter: FSAdapter): adapter is ContextualFSAdapter
 
 export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   private readonly _fsAdapter: FSAdapter;
+  readonly symlinkSemantics: "none" | undefined;
   readonly readFileBytesBounded?: (
     path: string,
     byteLimit: number,
@@ -144,6 +145,15 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
 
   constructor(fsAdapter: FSAdapter) {
     this._fsAdapter = fsAdapter;
+    const symlinkSemantics = Object.getOwnPropertyDescriptor(
+      fsAdapter,
+      "symlinkSemantics",
+    );
+    this.symlinkSemantics = symlinkSemantics !== undefined &&
+        "value" in symlinkSemantics &&
+        symlinkSemantics.value === "none"
+      ? "none"
+      : undefined;
     if (typeof fsAdapter.readFileBytesBounded === "function") {
       this.readFileBytesBounded = (path: string, byteLimit: number) =>
         fsAdapter.readFileBytesBounded!.call(fsAdapter, path, byteLimit);

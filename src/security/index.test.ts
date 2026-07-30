@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as securityModule from "./index.ts";
 import { AuthHandler } from "./http/auth.ts";
 import { SecurityConfigLoader } from "./http/config.ts";
-import { loadSecurityConfig, setCors } from "./http/middleware/index.ts";
+import { setCors } from "./http/middleware/index.ts";
 
 describe("security/index.ts exports", () => {
   it("is available through the public package security subpath", async () => {
@@ -60,13 +60,10 @@ describe("security/index.ts exports", () => {
         "handleCORSPreflight",
         "isPreflightRequest",
         "isRequestBodyTooLargeError",
-        "isValidSecurityConfig",
-        "loadSecurityConfig",
         "parseFormData",
         "parseJsonBody",
         "parseQueryParams",
         "readBodyWithLimit",
-        "sanitizeData",
         "sanitizePathForDisplay",
         "setCors",
         "shouldApplyCORS",
@@ -75,7 +72,7 @@ describe("security/index.ts exports", () => {
         "validateOrigin",
         "validateOriginSync",
         "validatePath",
-        "validatePathSync",
+        "validateLexicalPath",
         "validateRequestLimits",
         "wrapAdapterWithSecurity",
       ].sort(),
@@ -85,7 +82,6 @@ describe("security/index.ts exports", () => {
   it("keeps the http security helpers wired to their source modules", () => {
     assertEquals(securityModule.AuthHandler, AuthHandler);
     assertEquals(securityModule.SecurityConfigLoader, SecurityConfigLoader);
-    assertEquals(securityModule.loadSecurityConfig, loadSecurityConfig);
     assertEquals(securityModule.setCors, setCors);
   });
 });

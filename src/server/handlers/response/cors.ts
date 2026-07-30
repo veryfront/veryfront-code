@@ -129,7 +129,7 @@ export class CorsHandler extends BaseHandler {
       if (frameworkMethods || laterMethods) return mergeMethods(frameworkMethods, laterMethods);
       return READ_ONLY_PAGE_METHODS;
     } catch (error) {
-      this.logWarn("Failed to resolve route for CORS", { error, pathname }, ctx);
+      this.logWarn("Failed to resolve route for CORS", { error, pathname });
       return PREFLIGHT_ONLY_METHODS;
     }
   }

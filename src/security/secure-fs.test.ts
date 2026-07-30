@@ -11,12 +11,247 @@ import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
 import type { RuntimeAdapter, ServeOptions, Server } from "#veryfront/platform/adapters/base.ts";
 
-// Minimal adapter stub — only getUnsafeAdapter() is being tested
+function createMockFileSystem(
+  overrides: Partial<RuntimeAdapter["fs"]> = {},
+): RuntimeAdapter["fs"] {
+  const ready = Promise.resolve();
+  const fileSystem: RuntimeAdapter["fs"] = {
+    symlinkSemantics: "none",
+    readFile: () => Promise.resolve(""),
+    writeFile: () => Promise.resolve(),
+    stat: () =>
+      Promise.resolve({
+        isSymlink: false,
+        isDirectory: false,
+        isFile: true,
+        size: 0,
+        mtime: null,
+      }),
+    mkdir: () => Promise.resolve(),
+    remove: () => Promise.resolve(),
+    exists: () => Promise.resolve(true),
+    async *readDir() {},
+    makeTempDir: (prefix) => Promise.resolve(`/tmp/${prefix}`),
+    watch: () => ({
+      ready,
+      done: ready,
+      close() {},
+      async *[Symbol.asyncIterator]() {},
+    }),
+  };
+  return Object.assign(fileSystem, overrides);
+}
+
+// Complete adapter stub for constructor and adapter-lifecycle tests.
 function createMockAdapter() {
-  return { fs: {} } as any;
+  return { fs: createMockFileSystem() } as RuntimeAdapter;
 }
 
 describe("SecureFs", () => {
+  it("rejects inherited policy fields instead of treating them as configuration", () => {
+    const inheritedConfig = Object.assign(
+      Object.create({ baseDir: "/tmp" }),
+      { adapter: createMockAdapter() },
+    ) as Parameters<typeof createSecureFs>[0];
+    assertThrows(
+      () => createSecureFs(inheritedConfig),
+      VeryfrontError,
+      "own data property",
+    );
+
+    const inheritedValidationOptions = Object.create({ followSymlinks: true });
+    assertThrows(
+      () =>
+        createSecureFs({
+          baseDir: "/tmp",
+          adapter: createMockAdapter(),
+          validationOptions: inheritedValidationOptions,
+        }),
+      VeryfrontError,
+      "own data property",
+    );
+
+    const inheritedContextOptions = Object.create({ allowedImportDirs: ["outside"] });
+    assertThrows(
+      () =>
+        createSecureFs({
+          baseDir: "/tmp",
+          adapter: createMockAdapter(),
+          contextOptions: inheritedContextOptions,
+        }),
+      VeryfrontError,
+      "own data property",
+    );
+  });
+
+  it("rejects policy accessors without invoking them", () => {
+    let getterCalls = 0;
+    const accessorConfig = { adapter: createMockAdapter() } as Record<string, unknown>;
+    Object.defineProperty(accessorConfig, "baseDir", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return "/tmp";
+      },
+    });
+    assertThrows(
+      () => createSecureFs(accessorConfig as unknown as Parameters<typeof createSecureFs>[0]),
+      VeryfrontError,
+      "own data property",
+    );
+
+    const validationOptions = {} as Record<string, unknown>;
+    Object.defineProperty(validationOptions, "followSymlinks", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return true;
+      },
+    });
+    assertThrows(
+      () =>
+        createSecureFs({
+          baseDir: "/tmp",
+          adapter: createMockAdapter(),
+          validationOptions,
+        }),
+      VeryfrontError,
+      "own data property",
+    );
+
+    const contextOptions = {} as Record<string, unknown>;
+    Object.defineProperty(contextOptions, "allowedImportDirs", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return ["outside"];
+      },
+    });
+    assertThrows(
+      () =>
+        createSecureFs({
+          baseDir: "/tmp",
+          adapter: createMockAdapter(),
+          contextOptions,
+        }),
+      VeryfrontError,
+      "own data property",
+    );
+
+    const allowedDirs = ["public"];
+    Object.defineProperty(allowedDirs, "0", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterCalls++;
+        return "outside";
+      },
+    });
+    assertThrows(
+      () =>
+        createSecureFs({
+          baseDir: "/tmp",
+          adapter: createMockAdapter(),
+          validationOptions: { allowedDirs },
+        }),
+      VeryfrontError,
+      "dense, non-empty strings",
+    );
+
+    const accessorAdapter = {} as Record<string, unknown>;
+    Object.defineProperty(accessorAdapter, "fs", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return {};
+      },
+    });
+    assertThrows(
+      () =>
+        createSecureFs({
+          baseDir: "/tmp",
+          adapter: accessorAdapter as unknown as RuntimeAdapter,
+        }),
+      VeryfrontError,
+      "own, data-property",
+    );
+
+    assertEquals(getterCalls, 0);
+  });
+
+  it("rejects wrapper option accessors without invoking them", () => {
+    let getterCalls = 0;
+    const options = {} as Record<string, unknown>;
+    Object.defineProperty(options, "baseDir", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return "/tmp";
+      },
+    });
+
+    assertThrows(
+      () =>
+        wrapAdapterWithSecurity(
+          createMockAdapter(),
+          options as unknown as Parameters<typeof wrapAdapterWithSecurity>[1],
+        ),
+      VeryfrontError,
+      "own data property",
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("rejects operation option and watch-path accessors without invoking them", async () => {
+    let getterCalls = 0;
+    const secureFs = createSecureFs({
+      baseDir: "/tmp",
+      adapter: createMockAdapter(),
+    });
+    const recursiveOptions = {} as { recursive?: boolean };
+    Object.defineProperty(recursiveOptions, "recursive", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return true;
+      },
+    });
+    const watchPaths = ["file.txt"];
+    Object.defineProperty(watchPaths, "0", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterCalls++;
+        return "outside";
+      },
+    });
+    const watchOptions = {} as { recursive?: boolean };
+    Object.defineProperty(watchOptions, "recursive", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return true;
+      },
+    });
+
+    await assertRejects(
+      () => secureFs.mkdir("directory", recursiveOptions),
+      VeryfrontError,
+      "own data property",
+    );
+    assertThrows(
+      () => secureFs.watch(watchPaths),
+      VeryfrontError,
+      "dense, non-empty strings",
+    );
+    assertThrows(
+      () => secureFs.watch("file.txt", watchOptions),
+      VeryfrontError,
+      "own data property",
+    );
+    assertEquals(getterCalls, 0);
+  });
+
   it("rejects unknown contexts instead of falling through to internal policy", () => {
     assertThrows(
       () =>
@@ -25,17 +260,6 @@ describe("SecureFs", () => {
           adapter: createMockAdapter(),
           context: "unknown" as never,
         }),
-      VeryfrontError,
-      "valid security context",
-    );
-
-    const secureFs = createSecureFs({
-      baseDir: "/tmp",
-      adapter: createMockAdapter(),
-      context: "user-input",
-    });
-    assertThrows(
-      () => secureFs.setContext("unknown" as never),
       VeryfrontError,
       "valid security context",
     );
@@ -52,7 +276,6 @@ describe("SecureFs", () => {
             allowedImportDirs: [""],
           },
         },
-        { throwOnError: "false" as unknown as boolean },
         { onSecurityEvent: "noop" as unknown as () => void },
         {
           validationOptions: {
@@ -147,31 +370,76 @@ describe("SecureFs", () => {
     }
   });
 
-  it("does not let validation updates replace the configured trust root", async () => {
+  it("physically validates directory reads before iteration", async () => {
+    if (Deno.build.os === "windows") return;
+
     const baseDir = await Deno.makeTempDir();
     const outsideDir = await Deno.makeTempDir();
-    const outsideFile = `${outsideDir}/outside.txt`;
     try {
-      await Deno.writeTextFile(outsideFile, "outside");
+      await Deno.writeTextFile(`${outsideDir}/secret.txt`, "secret");
+      await Deno.symlink(outsideDir, `${baseDir}/link`);
       const secureFs = createSecureFs({
         baseDir,
         adapter: new DenoAdapter(),
         context: "internal",
       });
 
-      secureFs.updateValidationOptions({
-        baseDir: outsideDir,
-        adapter: new DenoAdapter(),
-      });
-
       await assertRejects(
-        () => secureFs.readFile(outsideFile),
+        async () => {
+          for await (const _entry of secureFs.readDir("link")) {
+            // Validation must reject before the adapter yields any entry.
+          }
+        },
         VeryfrontError,
         "outside base directory",
       );
     } finally {
       await Deno.remove(baseDir, { recursive: true });
       await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
+  it("physically validates watched paths before installing the watcher", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const baseDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    try {
+      await Deno.symlink(outsideDir, `${baseDir}/link`);
+      const secureFs = createSecureFs({
+        baseDir,
+        adapter: new DenoAdapter(),
+        context: "internal",
+      });
+      const watcher = secureFs.watch("link");
+
+      await assertRejects(
+        () => watcher.ready!,
+        VeryfrontError,
+        "outside base directory",
+      );
+      watcher.close();
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
+  it("installs and closes a watcher through the validated canonical path", async () => {
+    const baseDir = await Deno.makeTempDir();
+    try {
+      const secureFs = createSecureFs({
+        baseDir,
+        adapter: new DenoAdapter(),
+        context: "internal",
+      });
+      const watcher = secureFs.watch(".");
+
+      await watcher.ready;
+      watcher.close();
+      await watcher.done;
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
     }
   });
 
@@ -200,20 +468,20 @@ describe("SecureFs", () => {
     }
   });
 
-  it("snapshots allowedDirs supplied by every validation update", async () => {
+  it("snapshots module-loading import directories supplied during construction", async () => {
     const baseDir = await Deno.makeTempDir();
-    const allowedDirs = ["public"];
+    const allowedImportDirs = ["public"];
     try {
       await Deno.mkdir(`${baseDir}/private`);
       await Deno.writeTextFile(`${baseDir}/private/secret.txt`, "secret");
       const secureFs = createSecureFs({
         baseDir,
         adapter: new DenoAdapter(),
-        context: "internal",
+        context: "module-loading",
+        contextOptions: { allowedImportDirs },
       });
 
-      secureFs.updateValidationOptions({ allowedDirs });
-      allowedDirs.push("private");
+      allowedImportDirs.push("private");
 
       await assertRejects(
         () => secureFs.readFile("private/secret.txt"),
@@ -225,50 +493,192 @@ describe("SecureFs", () => {
     }
   });
 
-  describe("getUnsafeAdapter", () => {
-    it("throws in production", () => {
-      const originalEnv = Deno.env.get("NODE_ENV");
-      try {
-        Deno.env.set("NODE_ENV", "production");
+  it("distinguishes an omitted module allowlist from an explicit deny-all list", async () => {
+    const baseDir = await Deno.makeTempDir();
+    try {
+      await Deno.mkdir(`${baseDir}/src`);
+      await Deno.writeTextFile(`${baseDir}/src/module.ts`, "export {};");
+      const unrestricted = createSecureFs({
+        baseDir,
+        adapter: new DenoAdapter(),
+        context: "module-loading",
+      });
+      const denyAll = createSecureFs({
+        baseDir,
+        adapter: new DenoAdapter(),
+        context: "module-loading",
+        contextOptions: { allowedImportDirs: [] },
+      });
+
+      assertEquals(await unrestricted.readFile("src/module.ts"), "export {};");
+      await assertRejects(
+        () => denyAll.readFile("src/module.ts"),
+        VeryfrontError,
+        "not allowed",
+      );
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("returns false for missing admitted paths in existence-checking contexts", async () => {
+    const baseDir = await Deno.makeTempDir();
+    try {
+      await Deno.mkdir(`${baseDir}/public`);
+      await Deno.writeTextFile(`${baseDir}/public/present.txt`, "present");
+
+      for (const context of ["user-input", "static-serving"] as const) {
         const secureFs = createSecureFs({
-          baseDir: "/tmp",
-          adapter: createMockAdapter(),
+          baseDir,
+          adapter: new DenoAdapter(),
+          context,
         });
 
-        assertThrows(
-          () => secureFs.getUnsafeAdapter(),
-          VeryfrontError,
-          "not allowed in production",
-        );
-      } finally {
-        if (originalEnv !== undefined) {
-          Deno.env.set("NODE_ENV", originalEnv);
-        } else {
-          Deno.env.delete("NODE_ENV");
-        }
+        assertEquals(await secureFs.exists("public/present.txt"), true);
+        assertEquals(await secureFs.exists("public/missing.txt"), false);
       }
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("keeps the filesystem reference supplied during construction", async () => {
+    const originalFs = createMockFileSystem({
+      readFile: () => Promise.resolve("original"),
+    });
+    const replacementFs = createMockFileSystem({
+      readFile: () => Promise.resolve("replacement"),
+    });
+    const adapter = { fs: originalFs } as RuntimeAdapter;
+    const secureFs = createSecureFs({ baseDir: "/tmp", adapter });
+
+    adapter.fs = replacementFs;
+
+    assertEquals(await secureFs.readFile("file.txt"), "original");
+  });
+
+  it("snapshots filesystem methods supplied during construction", async () => {
+    const fileSystem = createMockFileSystem({
+      readFile: () => Promise.resolve("original"),
+    });
+    const secureFs = createSecureFs({
+      baseDir: "/tmp",
+      adapter: { fs: fileSystem } as RuntimeAdapter,
     });
 
-    it("returns adapter in development", () => {
-      const originalEnv = Deno.env.get("NODE_ENV");
-      try {
-        Deno.env.set("NODE_ENV", "development");
-        const adapter = createMockAdapter();
-        const secureFs = createSecureFs({
-          baseDir: "/tmp",
-          adapter,
-        });
-
-        const result = secureFs.getUnsafeAdapter();
-        assertEquals(result, adapter);
-      } finally {
-        if (originalEnv !== undefined) {
-          Deno.env.set("NODE_ENV", originalEnv);
-        } else {
-          Deno.env.delete("NODE_ENV");
-        }
-      }
+    Object.defineProperty(fileSystem, "readFile", {
+      configurable: true,
+      value: () => Promise.resolve("replacement"),
     });
+
+    assertEquals(await secureFs.readFile("file.txt"), "original");
+  });
+
+  it("snapshots filesystem symlink capabilities during construction", async () => {
+    const fileSystem = createMockFileSystem({
+      readFile: () => Promise.resolve("unsafe"),
+    }) as RuntimeAdapter["fs"] & { symlinkSemantics?: "none" };
+    Reflect.deleteProperty(fileSystem, "symlinkSemantics");
+    const secureFs = createSecureFs({
+      baseDir: "/tmp",
+      adapter: { fs: fileSystem } as RuntimeAdapter,
+    });
+
+    fileSystem.symlinkSemantics = "none";
+
+    await assertRejects(
+      () => secureFs.readFile("file.txt"),
+      VeryfrontError,
+      "provide lstat",
+    );
+  });
+
+  it("does not expose APIs that can mutate or bypass its policy", () => {
+    const secureFs = createSecureFs({
+      baseDir: "/tmp",
+      adapter: createMockAdapter(),
+    }) as unknown as Record<string, unknown>;
+
+    assertEquals("getUnsafeAdapter" in secureFs, false);
+    assertEquals("updateValidationOptions" in secureFs, false);
+    assertEquals("setContext" in secureFs, false);
+  });
+
+  it("keeps validation authoritative when an observer throws", async () => {
+    const baseDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(`${baseDir}/file.txt`, "ok");
+      const secureFs = createSecureFs({
+        baseDir,
+        adapter: new DenoAdapter(),
+        context: "internal",
+        onSecurityEvent() {
+          throw new Error("observer failure");
+        },
+      });
+
+      assertEquals(await secureFs.readFile("file.txt"), "ok");
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("creates temporary directories inside the configured trust root", async () => {
+    const baseDir = await Deno.makeTempDir();
+    try {
+      const secureFs = createSecureFs({
+        baseDir,
+        adapter: new DenoAdapter(),
+        context: "internal",
+      });
+
+      const tempDir = await secureFs.makeTempDir("vf-test-");
+      assertEquals(tempDir.startsWith(`${await Deno.realPath(baseDir)}/vf-test-`), true);
+      assertEquals((await Deno.stat(tempDir)).isDirectory, true);
+
+      await assertRejects(
+        () => secureFs.makeTempDir("../escape-"),
+        VeryfrontError,
+        "safe filename characters",
+      );
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("does not emulate binary reads through lossy text encoding", async () => {
+    const baseDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeFile(`${baseDir}/binary.dat`, new Uint8Array([0xff, 0x00, 0x61]));
+      const denoFileSystem = new DenoAdapter().fs;
+      const fsWithoutBinary = createMockFileSystem({
+        readFile: denoFileSystem.readFile.bind(denoFileSystem),
+        writeFile: denoFileSystem.writeFile.bind(denoFileSystem),
+        stat: denoFileSystem.stat.bind(denoFileSystem),
+        lstat: denoFileSystem.lstat?.bind(denoFileSystem),
+        realPath: denoFileSystem.realPath?.bind(denoFileSystem),
+        mkdir: denoFileSystem.mkdir.bind(denoFileSystem),
+        remove: denoFileSystem.remove.bind(denoFileSystem),
+        exists: denoFileSystem.exists.bind(denoFileSystem),
+        readDir: denoFileSystem.readDir.bind(denoFileSystem),
+        makeTempDir: denoFileSystem.makeTempDir.bind(denoFileSystem),
+        watch: denoFileSystem.watch.bind(denoFileSystem),
+      });
+      Reflect.deleteProperty(fsWithoutBinary, "symlinkSemantics");
+      const secureFs = createSecureFs({
+        baseDir,
+        adapter: { fs: fsWithoutBinary } as RuntimeAdapter,
+        context: "internal",
+      });
+
+      await assertRejects(
+        () => secureFs.readFileBytes("binary.dat"),
+        VeryfrontError,
+        "binary-safe",
+      );
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
   });
 
   it("preserves adapter lifecycle methods with their original receiver", async () => {

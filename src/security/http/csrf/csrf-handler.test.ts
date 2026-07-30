@@ -64,11 +64,12 @@ describe("security/http/csrf/csrf-handler", () => {
       assertEquals(result.continue, true);
     });
 
-    it("should exempt /_veryfront/log", async () => {
+    it("should protect /_veryfront/log", async () => {
       const ctx = createCtx(true);
       const req = new Request("http://localhost/_veryfront/log", { method: "POST" });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 403);
     });
 
     it("should NOT exempt /_veryfront/log/subpath", async () => {
@@ -79,11 +80,12 @@ describe("security/http/csrf/csrf-handler", () => {
       assertEquals(result.response?.status, 403);
     });
 
-    it("should exempt /_veryfront/modules/ asset paths", async () => {
+    it("should protect unsafe methods even on internal asset paths", async () => {
       const ctx = createCtx(true);
       const req = new Request("http://localhost/_veryfront/modules/client.js", { method: "POST" });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 403);
     });
 
     it("should NOT exempt /_veryfront/rsc/action (Server Actions need CSRF)", async () => {
@@ -146,6 +148,14 @@ describe("security/http/csrf/csrf-handler", () => {
       const ctx = createCtx(true);
       const req = new Request("http://localhost/resource", { method: "DELETE" });
       const result = await handler.handle(req, ctx);
+      assertEquals(result.response?.status, 403);
+    });
+
+    it("should reject custom methods without CSRF token", async () => {
+      const ctx = createCtx(true);
+      const req = new Request("http://localhost/cache", { method: "PURGE" });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.continue, false);
       assertEquals(result.response?.status, 403);
     });
 

@@ -98,10 +98,4 @@ describe("adapters/index.ts exports", () => {
       await assertExport("FALLBACK_EXHAUSTED", "object");
     });
   });
-
-  describe("Security", () => {
-    it("should export security namespace", async () => {
-      await assertExport("security", "object");
-    });
-  });
 });

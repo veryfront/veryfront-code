@@ -64,7 +64,6 @@ export class LibModulesHandler extends BaseHandler {
         baseDir: ctx.projectDir,
         adapter: ctx.adapter,
         context: "internal",
-        throwOnError: false,
         validationOptions: {
           allowedDirs: ["node_modules"],
           allowAbsolute: true,

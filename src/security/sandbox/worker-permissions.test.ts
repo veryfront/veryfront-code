@@ -15,6 +15,7 @@ describe("worker-permissions", () => {
     assertEquals(perms.run, false);
     assertEquals(perms.ffi, false);
     assertEquals(perms.sys, false);
+    assertEquals(perms.import, false);
   });
 
   it("denies process-global env access in compiled workers", () => {
@@ -96,13 +97,14 @@ describe("worker-permissions", () => {
     );
   });
 
-  it("always denies write, run, ffi, sys", () => {
+  it("always denies write, run, ffi, sys, and remote imports", () => {
     const perms = buildWorkerPermissions(["/anything"]);
     assertEquals(perms.write, false);
     assertEquals(perms.run, false);
     assertEquals(perms.ffi, false);
     assertEquals(perms.sys, false);
     assertEquals(perms.env, false);
+    assertEquals(perms.import, false);
   });
 
   it("defers data fetcher network scoping to ProjectWorker", () => {
@@ -121,5 +123,6 @@ describe("worker-permissions", () => {
     assertEquals(perms1.run, perms2.run);
     assertEquals(perms1.ffi, perms2.ffi);
     assertEquals(perms1.sys, perms2.sys);
+    assertEquals(perms1.import, perms2.import);
   });
 });

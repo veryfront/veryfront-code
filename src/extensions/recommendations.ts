@@ -27,6 +27,7 @@ const recommendations = new Map<string, string>([
   ["SchemaValidator", "@veryfront/ext-schema-zod"],
   ["SqliteStore", "@veryfront/ext-db-sqlite"],
   ["SandboxShellToolsProvider", "@veryfront/ext-sandbox-shell-tools"],
+  ["IsolatedSsrRendererProvider", "@veryfront/ext-react-ssr"],
 ]);
 
 /** Return recommendation. */

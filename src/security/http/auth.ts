@@ -5,10 +5,8 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "#veryfront/types";
-import type { AuthConfig } from "./middleware/types.ts";
 import { encodeBase64 } from "#veryfront/utils";
 import { constantTimeEqual } from "../utils/constant-time.ts";
-import { isProduction } from "#veryfront/platform/environment.ts";
 
 function sanitizeRealm(realm: unknown): string {
   const type = typeof realm;
@@ -48,60 +46,110 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: ReadonlySet<string>): boolean {
-  return Object.keys(value).every((key) => allowedKeys.has(key));
+function snapshotOwnDataRecord(
+  value: unknown,
+  allowedKeys: ReadonlySet<string>,
+): Readonly<Record<string, unknown>> | null {
+  if (!isRecord(value)) return null;
+
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+
+    const keys = Reflect.ownKeys(value);
+    const snapshot = Object.create(null) as Record<string, unknown>;
+    for (const key of keys) {
+      if (typeof key !== "string" || !allowedKeys.has(key)) return null;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !("value" in descriptor)) return null;
+      Object.defineProperty(snapshot, key, {
+        enumerable: true,
+        value: descriptor.value,
+      });
+    }
+    return Object.freeze(snapshot);
+  } catch {
+    return null;
+  }
+}
+
+type ExplicitAuth =
+  | Readonly<{ state: "absent" }>
+  | Readonly<{ state: "present"; value: unknown }>
+  | Readonly<{ state: "invalid" }>;
+
+const ABSENT_AUTH = Object.freeze({ state: "absent" } as const);
+const INVALID_EXPLICIT_AUTH = Object.freeze({ state: "invalid" } as const);
+
+function readExplicitAuth(securityConfig: unknown): ExplicitAuth {
+  if (securityConfig === null || securityConfig === undefined) return ABSENT_AUTH;
+  if (!isRecord(securityConfig)) return INVALID_EXPLICIT_AUTH;
+
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(securityConfig, "auth");
+    if (descriptor) {
+      return "value" in descriptor
+        ? Object.freeze({ state: "present", value: descriptor.value })
+        : INVALID_EXPLICIT_AUTH;
+    }
+
+    const visited = new Set<object>();
+    let prototype = Object.getPrototypeOf(securityConfig);
+    for (let depth = 0; prototype !== null && depth < 64; depth++) {
+      if (visited.has(prototype)) return INVALID_EXPLICIT_AUTH;
+      visited.add(prototype);
+      if (Object.getOwnPropertyDescriptor(prototype, "auth")) {
+        return INVALID_EXPLICIT_AUTH;
+      }
+      prototype = Object.getPrototypeOf(prototype);
+    }
+    return prototype === null ? ABSENT_AUTH : INVALID_EXPLICIT_AUTH;
+  } catch {
+    return INVALID_EXPLICIT_AUTH;
+  }
 }
 
 function resolveConfiguredAuth(value: unknown): ResolvedAuth {
-  try {
-    if (!isRecord(value) || !hasOnlyKeys(value, AUTH_CONFIG_KEYS)) {
-      return INVALID_AUTH;
-    }
+  const auth = snapshotOwnDataRecord(value, AUTH_CONFIG_KEYS);
+  if (!auth) return INVALID_AUTH;
 
-    const hasBasic = Object.hasOwn(value, "basic");
-    const hasBearer = Object.hasOwn(value, "bearer");
-    if (hasBasic === hasBearer) return INVALID_AUTH;
+  const hasBasic = Object.hasOwn(auth, "basic");
+  const hasBearer = Object.hasOwn(auth, "bearer");
+  if (hasBasic === hasBearer) return INVALID_AUTH;
 
-    if (hasBasic) {
-      const basic = value.basic;
-      if (
-        !isRecord(basic) ||
-        !hasOnlyKeys(basic, BASIC_AUTH_CONFIG_KEYS) ||
-        !Object.hasOwn(basic, "username") ||
-        !Object.hasOwn(basic, "password") ||
-        typeof basic.username !== "string" ||
-        basic.username.length === 0 ||
-        typeof basic.password !== "string" ||
-        basic.password.length === 0
-      ) {
-        return INVALID_AUTH;
-      }
-
-      return Object.freeze({
-        kind: "basic",
-        username: basic.username,
-        password: basic.password,
-        realm: sanitizeRealm(basic.realm || "Secure Area"),
-      });
-    }
-
-    const bearer = value.bearer;
+  if (hasBasic) {
+    const basic = snapshotOwnDataRecord(auth.basic, BASIC_AUTH_CONFIG_KEYS);
     if (
-      !isRecord(bearer) ||
-      !hasOnlyKeys(bearer, BEARER_AUTH_CONFIG_KEYS) ||
-      !Object.hasOwn(bearer, "token") ||
-      typeof bearer.token !== "string" ||
-      bearer.token.length === 0
+      !basic ||
+      !Object.hasOwn(basic, "username") ||
+      !Object.hasOwn(basic, "password") ||
+      typeof basic.username !== "string" ||
+      basic.username.length === 0 ||
+      typeof basic.password !== "string" ||
+      basic.password.length === 0
     ) {
       return INVALID_AUTH;
     }
 
-    return Object.freeze({ kind: "bearer", token: bearer.token });
-  } catch {
-    // Treat hostile accessors and proxies as malformed configuration. The
-    // rejection path is intentionally generic so credentials never leak.
+    return Object.freeze({
+      kind: "basic",
+      username: basic.username,
+      password: basic.password,
+      realm: sanitizeRealm(basic.realm || "Secure Area"),
+    });
+  }
+
+  const bearer = snapshotOwnDataRecord(auth.bearer, BEARER_AUTH_CONFIG_KEYS);
+  if (
+    !bearer ||
+    !Object.hasOwn(bearer, "token") ||
+    typeof bearer.token !== "string" ||
+    bearer.token.length === 0
+  ) {
     return INVALID_AUTH;
   }
+
+  return Object.freeze({ kind: "bearer", token: bearer.token });
 }
 
 export class AuthHandler extends BaseHandler {
@@ -127,27 +175,9 @@ export class AuthHandler extends BaseHandler {
   }
 
   private resolveAuth(ctx: HandlerContext): ResolvedAuth | null {
-    try {
-      if (
-        ctx.securityConfig &&
-        (
-          Object.hasOwn(ctx.securityConfig, "auth") ||
-          (ctx.securityConfig.auth as AuthConfig | undefined) !== undefined
-        )
-      ) {
-        return resolveConfiguredAuth(ctx.securityConfig.auth);
-      }
-    } catch {
-      return INVALID_AUTH;
-    }
-
-    // `__vfTestEnv` lets the test harness skip env-var credential loading so
-    // tests run without auth. It must NEVER short-circuit auth in production:
-    // guard it behind the environment check so a stray/injected global can't
-    // silently disable authentication on a live deployment.
-    if (!isProduction() && (globalThis as Record<string, unknown>).__vfTestEnv === true) {
-      return null;
-    }
+    const explicitAuth = readExplicitAuth(ctx.securityConfig);
+    if (explicitAuth.state === "invalid") return INVALID_AUTH;
+    if (explicitAuth.state === "present") return resolveConfiguredAuth(explicitAuth.value);
 
     const username: unknown = ctx.adapter.env.get("VERYFRONT_BASIC_USER");
     const password: unknown = ctx.adapter.env.get("VERYFRONT_BASIC_PASS");

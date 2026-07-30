@@ -48,7 +48,6 @@ export class SecureFsRepository implements FileSystemRepository {
       baseDir: config.baseDir,
       adapter: config.adapter,
       context: requireSecurityContext(config.securityContext),
-      throwOnError: true,
     });
   }
 

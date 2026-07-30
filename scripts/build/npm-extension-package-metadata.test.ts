@@ -1,6 +1,10 @@
 import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
-import { createDntExtensionEntryPoints } from "./build-npm-extension-packages.ts";
+import {
+  createDntExtensionEntryPoints,
+  removeUnusedBundledRootSource,
+  synchronizeEmittedExtensionManifestVersion,
+} from "./build-npm-extension-packages.ts";
 import {
   bareImportPackageNames,
   createExtensionPackageSpec,
@@ -119,6 +123,45 @@ describe("manifestDependencies", () => {
 });
 
 describe("createExtensionPackageSpec", () => {
+  it("publishes the offline React renderer as an explicit runtime entrypoint", async () => {
+    const manifest = JSON.parse(
+      await Deno.readTextFile("extensions/ext-react-ssr/deno.json"),
+    ) as ExtensionManifest;
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-react-ssr/deno.json",
+      manifest,
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    assertEquals(spec.entryPoints, [
+      {
+        name: ".",
+        path: "extensions/ext-react-ssr/src/index.ts",
+      },
+      {
+        name: "./worker-renderer",
+        path: "extensions/ext-react-ssr/src/worker-renderer.ts",
+      },
+    ]);
+    const extensionDependencies = {
+      react: "19.2.4",
+      "react-dom": "19.2.4",
+    };
+    assertEquals(spec.manifestDependencies, extensionDependencies);
+    assertEquals(spec.packageJson.dependencies, extensionDependencies);
+    assertEquals(spec.packageJson.veryfront, manifest.veryfront);
+
+    const runtimeSource = await Deno.readTextFile(
+      "extensions/ext-react-ssr/src/worker-renderer.ts",
+    );
+    assertEquals(runtimeSource.includes('from "react"'), false);
+    assertEquals(runtimeSource.includes('from "react-dom/server"'), false);
+    assertStringIncludes(runtimeSource, "worker-renderer-bundle.generated.ts");
+  });
+
   it("creates publishable package metadata from an extension manifest", () => {
     const manifest: ExtensionManifest = {
       name: "@veryfront/ext-sandbox-shell-tools",
@@ -470,6 +513,76 @@ describe("createDntExtensionEntryPoints", () => {
   });
 });
 
+describe("synchronizeEmittedExtensionManifestVersion", () => {
+  it("injects the published package version into an emitted manifest module", async () => {
+    const outDir = await Deno.makeTempDir({
+      prefix: "vf-extension-manifest-version-",
+    });
+    try {
+      await Deno.mkdir(`${outDir}/src`, { recursive: true });
+      await Deno.mkdir(`${outDir}/esm`, { recursive: true });
+      const manifest: ExtensionManifest = {
+        name: "@veryfront/ext-react-ssr",
+        version: "0.1.0",
+        exports: "./src/index.ts",
+        veryfront: { extension: true },
+      };
+      const generatedSource = `export default ${
+        JSON.stringify(manifest, null, 2)
+      };\n`;
+      await Deno.writeTextFile(`${outDir}/src/deno.js`, generatedSource);
+      await Deno.writeTextFile(`${outDir}/esm/deno.js`, generatedSource);
+
+      assertEquals(
+        await synchronizeEmittedExtensionManifestVersion({
+          outDir,
+          manifest,
+          version: "0.1.985",
+        }),
+        true,
+      );
+
+      const emittedSource = await Deno.readTextFile(`${outDir}/esm/deno.js`);
+      assertStringIncludes(emittedSource, '"version": "0.1.985"');
+      assertEquals(emittedSource.includes('"version": "0.1.0"'), false);
+      assertEquals(manifest.version, "0.1.0");
+    } finally {
+      await Deno.remove(outDir, { recursive: true });
+    }
+  });
+});
+
+describe("removeUnusedBundledRootSource", () => {
+  it("preserves esm/src when package exports point to extension-owned code", async () => {
+    const outDir = await Deno.makeTempDir({
+      prefix: "vf-extension-root-source-",
+    });
+    try {
+      await Deno.mkdir(`${outDir}/esm/src`, { recursive: true });
+      await Deno.writeTextFile(`${outDir}/esm/src/index.js`, "export {};\n");
+      await Deno.writeTextFile(
+        `${outDir}/package.json`,
+        JSON.stringify({
+          module: "./esm/src/index.js",
+          types: "./esm/src/index.d.ts",
+          exports: {
+            ".": {
+              import: "./esm/src/index.js",
+              types: "./esm/src/index.d.ts",
+            },
+          },
+        }),
+      );
+
+      await removeUnusedBundledRootSource(outDir);
+
+      assertEquals((await Deno.stat(`${outDir}/esm/src/index.js`)).isFile, true);
+    } finally {
+      await Deno.remove(outDir, { recursive: true });
+    }
+  });
+});
+
 describe("bareImportPackageNames", () => {
   it("extracts bare specifiers from static, dynamic, side-effect, and require imports", () => {
     const source = [
@@ -575,6 +688,44 @@ describe("createVeryfrontPeerTypeImportReplacements", () => {
 });
 
 describe("normalizeExtensionPackageJson", () => {
+  it("publishes copied third-party notices when an extension supplies them", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-react-ssr",
+      exports: "./src/index.ts",
+      veryfront: {
+        extension: true,
+        contracts: { provides: ["IsolatedSsrRendererProvider"] },
+      },
+    };
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-react-ssr/deno.json",
+      manifest,
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    const normalized = normalizeExtensionPackageJson({
+      spec,
+      version: "0.1.985",
+      includeThirdPartyNotices: true,
+      packageJson: {
+        name: "@veryfront/ext-react-ssr",
+        module: "./esm/index.js",
+        exports: { ".": { import: "./esm/index.js" } },
+      },
+    });
+
+    assertEquals(normalized.files, [
+      "esm",
+      "LICENSE",
+      "NOTICE",
+      "README.md",
+      "THIRD_PARTY_NOTICES.md",
+    ]);
+  });
+
   it("moves dnt-added veryfront dependency back to a peer and preserves manifest metadata", () => {
     const manifest: ExtensionManifest = {
       name: "@veryfront/ext-sandbox-shell-tools",

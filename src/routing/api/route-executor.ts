@@ -24,6 +24,10 @@ import {
   getWorkerPool,
   isWorkerIsolationEnabled,
 } from "#veryfront/security/sandbox/worker-pool.ts";
+import {
+  resolveWorkerGeneration,
+  snapshotWorkerGenerationIdentity,
+} from "#veryfront/security/sandbox/worker-generation.ts";
 import { deserializeWorkerError } from "#veryfront/security/sandbox/worker-error-boundary.ts";
 import {
   MAX_WORKER_BODY_BYTES,
@@ -75,8 +79,11 @@ const EMPTY_PROJECT_ENV = objectFreeze(
 const numberIsSafeInteger = Number.isSafeInteger;
 const NativePromise = Promise;
 const promiseResolve = NativePromise.resolve;
+const promiseReject = NativePromise.reject;
+const promiseThen = NativePromise.prototype.then;
 const NativeRequest = Request;
 const NativeUint8Array = Uint8Array;
+const NativeNumber = Number;
 const NativeTextEncoder = TextEncoder;
 const semanticTextEncoder = new NativeTextEncoder();
 const textEncoderEncode = NativeTextEncoder.prototype.encode;
@@ -87,9 +94,17 @@ const requestUrlGetter = getOwnPropertyDescriptor(NativeRequest.prototype, "url"
 const requestMethodGetter = getOwnPropertyDescriptor(NativeRequest.prototype, "method")!.get!;
 const requestHeadersGetter = getOwnPropertyDescriptor(NativeRequest.prototype, "headers")!.get!;
 const requestBodyGetter = getOwnPropertyDescriptor(NativeRequest.prototype, "body")!.get!;
+const requestSignalGetter = getOwnPropertyDescriptor(NativeRequest.prototype, "signal")!.get!;
 const headersGet = Headers.prototype.get;
 const headersForEach = Headers.prototype.forEach;
+const abortSignalAbortedGetter = getOwnPropertyDescriptor(
+  AbortSignal.prototype,
+  "aborted",
+)!.get!;
+const eventTargetAddEventListener = EventTarget.prototype.addEventListener;
+const eventTargetRemoveEventListener = EventTarget.prototype.removeEventListener;
 const streamGetReader = ReadableStream.prototype.getReader;
+const streamCancel = ReadableStream.prototype.cancel;
 const readerRead = ReadableStreamDefaultReader.prototype.read;
 const readerCancel = ReadableStreamDefaultReader.prototype.cancel;
 const readerReleaseLock = ReadableStreamDefaultReader.prototype.releaseLock;
@@ -97,6 +112,14 @@ const typedArrayPrototype = Object.getPrototypeOf(NativeUint8Array.prototype);
 const typedArrayByteLengthGetter = getOwnPropertyDescriptor(
   typedArrayPrototype,
   "byteLength",
+)!.get!;
+const typedArrayBufferGetter = getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  "buffer",
+)!.get!;
+const typedArrayByteOffsetGetter = getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  "byteOffset",
 )!.get!;
 const typedArraySet = getOwnPropertyDescriptor(typedArrayPrototype, "set")!.value as (
   source: ArrayLike<number>,
@@ -120,6 +143,11 @@ const CONTENT_LENGTH_PATTERN = /^\d+$/;
 const PROJECT_ENV_KEY_PATTERN = /^[^=\0]+$/;
 const PROJECT_ENV_VALUE_PATTERN = /^[^\0]*$/;
 const MAX_WORKER_BODY_BYTES_DECIMAL = `${MAX_WORKER_BODY_BYTES}`;
+const BODY_COALESCE_BLOCK_BYTES = 64 * 1024;
+const BODY_READ_YIELD_CHUNKS = 256;
+const MAX_WORKER_BODY_SOURCE_CHUNKS = 16_384;
+const MAX_CONSECUTIVE_EMPTY_BODY_CHUNKS = 4_096;
+const nativeSetTimeout = setTimeout;
 
 function resolvePromise<T>(value: T): Promise<Awaited<T>> {
   return apply(promiseResolve, NativePromise, [value]) as Promise<Awaited<T>>;
@@ -139,6 +167,10 @@ function getRequestHeaders(request: Request): Headers {
 
 function getRequestBody(request: Request): ReadableStream<Uint8Array> | null {
   return apply(requestBodyGetter, request, []) as ReadableStream<Uint8Array> | null;
+}
+
+function getRequestSignal(request: Request): AbortSignal {
+  return apply(requestSignalGetter, request, []) as AbortSignal;
 }
 
 function getHeader(headers: Headers, name: string): string | null {
@@ -342,8 +374,15 @@ async function snapshotWorkerSemanticContext(): Promise<WorkerSemanticContext> {
   };
 }
 
-function generatedExecutionScopeId(baseScopeId: string, generation: string): string {
-  return `${baseScopeId}:generation:${generation}`;
+async function resolveApiWorkerId(
+  baseScopeId: string,
+  generation: string,
+): Promise<string> {
+  const identity = snapshotWorkerGenerationIdentity(baseScopeId, generation);
+  if (!identity) {
+    throw new TypeError("API worker generation identity is required");
+  }
+  return (await resolveWorkerGeneration("api", identity)).workerId;
 }
 
 /**
@@ -465,8 +504,8 @@ function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileS
 // Worker Isolation Helpers
 // ---------------------------------------------------------------------------
 
-function checkContentLengthLimit(contentLength: string | null): void {
-  if (contentLength === null) return;
+function checkContentLengthLimit(contentLength: string | null): number | null {
+  if (contentLength === null) return null;
   if (!apply(regexpTest, CONTENT_LENGTH_PATTERN, [contentLength])) {
     throw toError(
       createError({
@@ -488,6 +527,7 @@ function checkContentLengthLimit(contentLength: string | null): void {
   const exceedsLimit = normalized.length > limit.length ||
     (normalized.length === limit.length && normalized > limit);
   if (exceedsLimit) throw createRequestBodyTooLargeError();
+  return NativeNumber(normalized);
 }
 
 function createRequestBodyTooLargeError(bytesRead?: number): Error {
@@ -507,22 +547,115 @@ function createRequestBodyReadError(message: string): Error {
   return toError(createError({ type: "api", message }));
 }
 
-function cancelBodyReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+function createContentLengthMismatchError(): Error {
+  return createRequestBodyReadError(
+    "Request body does not match Content-Length for isolated execution",
+  );
+}
+
+function createRequestBodyAbortError(): Error {
+  return createRequestBodyReadError(
+    "Request body read aborted for isolated execution",
+  );
+}
+
+function cancelBodyReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  reason?: unknown,
+): void {
   void (async () => {
     try {
-      await apply(readerCancel, reader, []);
+      await apply(readerCancel, reader, [reason]);
     } catch {
       // Cancellation is best effort after the primary body error is known.
     }
   })();
 }
 
+function cancelBodyStream(
+  stream: ReadableStream<Uint8Array>,
+  reason: unknown,
+): void {
+  void (async () => {
+    try {
+      await apply(streamCancel, stream, [reason]);
+    } catch {
+      // A locked or failed stream cannot be cancelled from this boundary.
+    }
+  })();
+}
+
+function isAbortSignalAborted(signal: AbortSignal): boolean {
+  return apply(abortSignalAbortedGetter, signal, []) as boolean;
+}
+
+function createUint8ArrayView(
+  source: Uint8Array,
+  relativeOffset: number,
+  length: number,
+): Uint8Array {
+  const buffer = apply(typedArrayBufferGetter, source, []) as ArrayBufferLike;
+  const byteOffset = apply(typedArrayByteOffsetGetter, source, []) as number;
+  return new NativeUint8Array(buffer, byteOffset + relativeOffset, length);
+}
+
+function yieldBodyReadTask(): Promise<void> {
+  return new NativePromise((resolve) => {
+    apply(nativeSetTimeout, globalThis, [resolve, 0]);
+  });
+}
+
+interface BodyReadAbortGate {
+  failure: Error | undefined;
+  rejectPending: ((reason: unknown) => void) | undefined;
+}
+
+function waitForBodyRead<T>(
+  pending: Promise<T>,
+  gate: BodyReadAbortGate,
+): Promise<T> {
+  if (gate.failure) {
+    return apply(promiseReject, NativePromise, [gate.failure]) as Promise<T>;
+  }
+
+  return new NativePromise<T>((resolve, reject) => {
+    if (gate.failure) {
+      reject(gate.failure);
+      return;
+    }
+    gate.rejectPending = reject;
+    apply(promiseThen, pending, [
+      (value: T) => {
+        if (gate.rejectPending === reject) gate.rejectPending = undefined;
+        if (gate.failure) reject(gate.failure);
+        else resolve(value);
+      },
+      (error: unknown) => {
+        if (gate.rejectPending === reject) gate.rejectPending = undefined;
+        reject(gate.failure ?? error);
+      },
+    ]);
+  });
+}
+
 async function readBodyWithSizeGuard(
   bodyStream: ReadableStream<Uint8Array> | null,
   contentLength: string | null,
+  signal: AbortSignal,
 ): Promise<Uint8Array | null> {
-  checkContentLengthLimit(contentLength);
-  if (!bodyStream) return null;
+  let declaredLength: number | null;
+  try {
+    declaredLength = checkContentLengthLimit(contentLength);
+  } catch (error) {
+    if (bodyStream) cancelBodyStream(bodyStream, error);
+    throw error;
+  }
+  if (!bodyStream) {
+    if (declaredLength !== null && declaredLength !== 0) {
+      throw createContentLengthMismatchError();
+    }
+    return null;
+  }
 
   let reader: ReadableStreamDefaultReader<Uint8Array>;
   try {
@@ -533,15 +666,45 @@ async function readBodyWithSizeGuard(
     );
   }
 
-  const chunks: Uint8Array[] = [];
+  const blocks: Uint8Array[] = [];
+  let currentBlock: Uint8Array | null = null;
+  let currentBlockLength = 0;
   let totalBytes = 0;
+  let sourceChunks = 0;
+  let consecutiveEmptyChunks = 0;
+  let chunksSinceYield = 0;
+  const abortGate: BodyReadAbortGate = {
+    failure: undefined,
+    rejectPending: undefined,
+  };
+  const abortBodyRead = (): void => {
+    if (abortGate.failure) return;
+    const failure = createRequestBodyAbortError();
+    abortGate.failure = failure;
+    const rejectPending = abortGate.rejectPending;
+    abortGate.rejectPending = undefined;
+    cancelBodyReader(reader, failure);
+    if (rejectPending) rejectPending(failure);
+  };
+
+  if (isAbortSignalAborted(signal)) {
+    abortBodyRead();
+  } else {
+    apply(eventTargetAddEventListener, signal, ["abort", abortBodyRead]);
+    if (isAbortSignalAborted(signal)) abortBodyRead();
+  }
 
   try {
     while (true) {
+      if (abortGate.failure) throw abortGate.failure;
       let result: ReadableStreamReadResult<Uint8Array>;
       try {
-        result = await apply(readerRead, reader, []) as ReadableStreamReadResult<Uint8Array>;
+        const pendingRead = apply(readerRead, reader, []) as Promise<
+          ReadableStreamReadResult<Uint8Array>
+        >;
+        result = await waitForBodyRead(pendingRead, abortGate);
       } catch (error) {
+        if (abortGate.failure) throw abortGate.failure;
         cancelBodyReader(reader);
         throw createRequestBodyReadError(
           `Failed to read request body for isolated execution: ${
@@ -574,6 +737,15 @@ async function readBodyWithSizeGuard(
       }
       if (doneDescriptor.value) break;
 
+      sourceChunks++;
+      if (sourceChunks > MAX_WORKER_BODY_SOURCE_CHUNKS) {
+        const failure = createRequestBodyReadError(
+          "Request body stream exceeded the chunk limit for isolated execution",
+        );
+        cancelBodyReader(reader, failure);
+        throw failure;
+      }
+
       const chunk = valueDescriptor && "value" in valueDescriptor
         ? valueDescriptor.value
         : undefined;
@@ -587,14 +759,67 @@ async function readBodyWithSizeGuard(
       const chunkByteLength = apply(typedArrayByteLengthGetter, chunk, []) as number;
       if (chunkByteLength > MAX_WORKER_BODY_BYTES - totalBytes) {
         const bytesRead = totalBytes + chunkByteLength;
-        cancelBodyReader(reader);
-        throw createRequestBodyTooLargeError(bytesRead);
+        const failure = createRequestBodyTooLargeError(bytesRead);
+        cancelBodyReader(reader, failure);
+        throw failure;
+      }
+      if (declaredLength !== null && chunkByteLength > declaredLength - totalBytes) {
+        const failure = createContentLengthMismatchError();
+        cancelBodyReader(reader, failure);
+        throw failure;
       }
 
-      apply(arrayPush, chunks, [chunk]);
+      chunksSinceYield++;
+      if (chunkByteLength === 0) {
+        consecutiveEmptyChunks++;
+        if (consecutiveEmptyChunks > MAX_CONSECUTIVE_EMPTY_BODY_CHUNKS) {
+          const failure = createRequestBodyReadError(
+            "Request body stream made no progress during isolated execution",
+          );
+          cancelBodyReader(reader, failure);
+          throw failure;
+        }
+      } else {
+        consecutiveEmptyChunks = 0;
+      }
+
+      if (chunksSinceYield >= BODY_READ_YIELD_CHUNKS) {
+        chunksSinceYield = 0;
+        await yieldBodyReadTask();
+        if (abortGate.failure) throw abortGate.failure;
+      }
+
+      if (chunkByteLength === 0) continue;
+
       totalBytes += chunkByteLength;
+      let chunkOffset = 0;
+      while (chunkOffset < chunkByteLength) {
+        if (currentBlock === null) {
+          currentBlock = new NativeUint8Array(BODY_COALESCE_BLOCK_BYTES);
+          currentBlockLength = 0;
+        }
+        const blockRemaining = BODY_COALESCE_BLOCK_BYTES - currentBlockLength;
+        const chunkRemaining = chunkByteLength - chunkOffset;
+        const copyLength = blockRemaining < chunkRemaining ? blockRemaining : chunkRemaining;
+        const sourceSlice = createUint8ArrayView(chunk, chunkOffset, copyLength);
+        apply(typedArraySet, currentBlock, [sourceSlice, currentBlockLength]);
+        currentBlockLength += copyLength;
+        chunkOffset += copyLength;
+
+        if (currentBlockLength === BODY_COALESCE_BLOCK_BYTES) {
+          apply(arrayPush, blocks, [currentBlock]);
+          currentBlock = null;
+          currentBlockLength = 0;
+        }
+      }
+    }
+
+    if (declaredLength !== null && totalBytes !== declaredLength) {
+      throw createContentLengthMismatchError();
     }
   } finally {
+    apply(eventTargetRemoveEventListener, signal, ["abort", abortBodyRead]);
+    abortGate.rejectPending = undefined;
     try {
       apply(readerReleaseLock, reader, []);
     } catch {
@@ -604,10 +829,14 @@ async function readBodyWithSizeGuard(
 
   const body = new NativeUint8Array(totalBytes);
   let offset = 0;
-  for (let index = 0; index < chunks.length; index++) {
-    const chunk = chunks[index]!;
-    apply(typedArraySet, body, [chunk, offset]);
-    offset += apply(typedArrayByteLengthGetter, chunk, []) as number;
+  for (let index = 0; index < blocks.length; index++) {
+    const block = blocks[index]!;
+    apply(typedArraySet, body, [block, offset]);
+    offset += BODY_COALESCE_BLOCK_BYTES;
+  }
+  if (currentBlock !== null && currentBlockLength > 0) {
+    const finalBlock = createUint8ArrayView(currentBlock, 0, currentBlockLength);
+    apply(typedArraySet, body, [finalBlock, offset]);
   }
   return body;
 }
@@ -619,12 +848,13 @@ async function serializeRequest(request: Request): Promise<SerializedRequest> {
   const serializedHeaders = snapshotHeaders(headers);
   const contentLength = getHeader(headers, "content-length");
   const bodyStream = getRequestBody(request);
+  const signal = getRequestSignal(request);
 
   return {
     url,
     method,
     headers: serializedHeaders,
-    body: await readBodyWithSizeGuard(bodyStream, contentLength),
+    body: await readBodyWithSizeGuard(bodyStream, contentLength, signal),
   };
 }
 
@@ -781,7 +1011,7 @@ function executeAppRouteIsolated(
         const semanticContext = await snapshotWorkerSemanticContext();
 
         const workerResponse = await pool.execute(
-          generatedExecutionScopeId(executionScopeId, semanticContext.generation),
+          await resolveApiWorkerId(executionScopeId, semanticContext.generation),
           [projectDir],
           {
             type: "execute-app-route",
@@ -837,7 +1067,7 @@ function executePagesRouteIsolated(
         const semanticContext = await snapshotWorkerSemanticContext();
 
         const workerResponse = await pool.execute(
-          generatedExecutionScopeId(executionScopeId, semanticContext.generation),
+          await resolveApiWorkerId(executionScopeId, semanticContext.generation),
           [projectDir],
           {
             type: "execute-pages-route",
@@ -953,7 +1183,7 @@ export async function resolvePreparedRouteMethods(
 ): Promise<string[]> {
   const semanticContext = await snapshotWorkerSemanticContext();
   const workerResponse = await getWorkerPool().execute(
-    generatedExecutionScopeId(options.executionScopeId, semanticContext.generation),
+    await resolveApiWorkerId(options.executionScopeId, semanticContext.generation),
     [options.projectDir],
     {
       type: "inspect-api-route-methods",

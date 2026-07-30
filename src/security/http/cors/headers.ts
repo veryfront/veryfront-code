@@ -1,4 +1,9 @@
-import type { CORSConfig, CORSHeaderOptions, CORSValidationResult } from "./types.ts";
+import type {
+  CORSConfig,
+  CORSHeaderOptions,
+  CORSValidationResult,
+  SyncCORSHeaderOptions,
+} from "./types.ts";
 import {
   corsOriginForTelemetry,
   normalizeCORSConfig,
@@ -21,7 +26,7 @@ export function scrubPolicyOwnedCORSHeaders(headers: Headers): boolean {
 
 function applyValidatedHeaders(
   validation: CORSValidationResult,
-  options: CORSHeaderOptions,
+  options: CORSHeaderOptions | SyncCORSHeaderOptions,
   config: NormalizedCORSConfig,
 ): Response | void {
   const { response, headers: headersObj } = options;
@@ -103,11 +108,8 @@ export function applyCORSHeaders(options: CORSHeaderOptions): Promise<Response |
   );
 }
 
-/**
- * Apply CORS synchronously. The existing CORSHeaderOptions signature remains
- * broad for source compatibility; async validators are denied at runtime.
- */
-export function applyCORSHeadersSync(options: CORSHeaderOptions): Response | void {
+/** Apply CORS synchronously. Promise-returning values still fail closed at runtime. */
+export function applyCORSHeadersSync(options: SyncCORSHeaderOptions): Response | void {
   const normalized = normalizeCORSConfig(options.config);
   const origin = readRequestOrigin(options.request);
   if (!normalized.valid) {

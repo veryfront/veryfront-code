@@ -13,15 +13,15 @@ and bearer-token request gate. Public rate limiting belongs to
 
 The root entrypoint exports the following groups:
 
-| Area             | Runtime exports                                                                                                                              |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| HTTP handlers    | `BaseHandler`, `AuthHandler`, `CsrfHandler`, `SecurityConfigLoader`                                                                          |
-| Input boundaries | `validateRequestLimits`, `readBodyWithLimit`, `parseJsonBody`, `parseFormData`, `parseQueryParams`, `createValidatedHandler`, `sanitizeData` |
-| CORS             | `cors`, `corsSimple`, `validateOrigin`, `validateOriginSync`, `applyCORSHeaders`, `applyCORSHeadersSync`, `handleCORSPreflight`              |
-| CSRF             | `generateCsrfToken`, `validateCsrf`, `applyCsrfCookie`                                                                                       |
-| Responses        | `ResponseBuilder`, `createResponseBuilder`, `applySecurityHeaders`, `buildCacheControl`, `generateNonce`                                     |
-| Paths and files  | `validatePath`, `validatePathSync`, `createValidator`, `createSecureFs`, `SecureFs`, `wrapAdapterWithSecurity`                               |
-| Deno permissions | `BUILD_HELPER_PERMISSIONS`, `SERVER_PERMISSIONS`, `WORKFLOW_RUN_PERMISSIONS`                                                                 |
+| Area             | Runtime exports                                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP handlers    | `BaseHandler`, `AuthHandler`, `CsrfHandler`, `SecurityConfigLoader`                                                             |
+| Input boundaries | `validateRequestLimits`, `readBodyWithLimit`, `parseJsonBody`, `parseFormData`, `parseQueryParams`, `createValidatedHandler`    |
+| CORS             | `cors`, `corsSimple`, `validateOrigin`, `validateOriginSync`, `applyCORSHeaders`, `applyCORSHeadersSync`, `handleCORSPreflight` |
+| CSRF             | `generateCsrfToken`, `validateCsrf`, `applyCsrfCookie`                                                                          |
+| Responses        | `ResponseBuilder`, `createResponseBuilder`, `applySecurityHeaders`, `buildCacheControl`, `generateNonce`                        |
+| Paths and files  | `validatePath`, `validateLexicalPath`, `createValidator`, `createSecureFs`, `SecureFs`, `wrapAdapterWithSecurity`               |
+| Deno permissions | `BUILD_HELPER_PERMISSIONS`, `SERVER_PERMISSIONS`, `WORKFLOW_RUN_PERMISSIONS`                                                    |
 
 Types are exported beside their owning runtime contracts. The exact runtime
 inventory is regression-pinned in [`index.test.ts`](./index.test.ts); adding or
@@ -36,6 +36,12 @@ schema before `SecurityConfigLoader` derives a request-owned, frozen security
 context. Production derivation enables the default CSRF policy when the project
 does not specify one. A failed configuration load fails the current request and
 remains retryable for a later request.
+
+`SecurityConfigLoader` is the only runtime configuration loader. Call
+`ensureLoaded()` before reading its derived values. The former
+`loadSecurityConfig()` and `isValidSecurityConfig()` helpers were removed: they
+duplicated schema validation and converted loader failures into an insecure
+`null` configuration.
 
 ### CORS
 
@@ -62,19 +68,56 @@ Ambiguous environment configuration fails closed. Unauthorized responses are
 non-cacheable and receive the resolved CORS and security policy. Credential
 verification uses constant-time comparison.
 
+### Input validation
+
+Each standalone body, form, and query parser applies the same snapshotted
+request limits as `createValidatedHandler`. Query parsing measures the complete
+URL in UTF-8 bytes before allocating parameter collections. JSON parsing also
+captures the decoded value through the framework's bounded, iterative JSON
+snapshot before invoking a schema, so excessive depth, node count, or string
+size cannot be delegated to a recursive validator. Composite handlers reuse
+their already-validated request boundary rather than silently skipping or
+repeating those checks.
+
 ### Response headers
 
 `ResponseBuilder` centralizes CSP, HSTS, framing, cross-origin, referrer, cache,
 and CORS response headers. Server integrations remove project-provided
 policy-owned headers before applying the host policy. Project configuration can
 override supported security headers, but `Access-Control-*` values must be
-configured through CORS.
+configured through CORS. The production default CSP admits only same-origin
+resources plus narrowly required nonce, data, and blob sources; CDN, font,
+media-provider, analytics, and API origins must be declared by the owning
+extension or explicit project CSP. The obsolete browser XSS auditor is disabled
+with `X-XSS-Protection: 0`.
 
 ### Paths and filesystem access
 
 Path validation canonicalizes existing ancestors, rejects traversal and
 symlink escapes, and applies context-specific rules. `SecureFs` validates a
-path before delegating to the configured runtime adapter.
+path before delegating to the configured runtime adapter. Its trust root and
+policy are immutable after construction; it exposes no raw-adapter escape
+hatch. Policy records and directory allowlists are copied from own data
+properties, so inherited settings, accessors, and later caller mutations cannot
+change the active policy. Directory iteration and watcher installation use
+asynchronous physical canonicalization. Filesystem adapters must provide
+`lstat`/`realPath` for the requested symlink policy or explicitly guarantee that
+their API cannot traverse symbolic links; unknown semantics fail closed.
+An omitted module-import allowlist is explicitly unrestricted within the
+project root, while an empty allowlist denies every project subdirectory; the
+two states are never collapsed.
+Callers that create a watcher must await `watcher.ready` before assuming it is
+active. Binary reads require a native binary-safe adapter capability and never
+fall back to text transcoding. Temporary directories are created beneath the
+configured trust root.
+
+`validateLexicalPath` performs only string-level containment checks. It does
+not accept adapter, existence, or symlink-policy options and must not be used as
+filesystem admission for a local or otherwise symlink-capable backing store.
+Conversely, `validatePath` always requires the runtime adapter whose filesystem
+will perform the admitted operation. `ValidationPresets` are immutable policy
+fragments, not standalone physical validators; combine a preset with that
+adapter or use `SecureFs`, which does so at construction.
 
 This is a path-admission boundary, not an operating-system capability sandbox.
 A hostile actor that can concurrently replace filesystem entries can still
@@ -95,6 +138,7 @@ The worker pool provides:
   with shared caches and `DENO_DIR` excluded;
 - denied Deno environment permission, with a frozen request-owned `env` record
   passed through App and Pages handler contexts instead;
+- denied remote module imports, including for renderer dependencies;
 - prepared-module size and retained-module limits;
 - bounded, normalized data-loader results before worker-to-host transfer;
 - a private control port protected from project-code message forgery;
@@ -106,6 +150,13 @@ Worker isolation is disabled unless `WORKER_ISOLATION_ENABLED` and the relevant
 `WORKER_ISOLATION_API`, `WORKER_ISOLATION_DATA`, or `WORKER_ISOLATION_SSR` flag
 are enabled. Defined invalid flags and pool limits are startup errors; they are
 not silently replaced with defaults.
+
+`WORKER_ISOLATION_SSR=1` additionally requires explicit registration of
+`@veryfront/ext-react-ssr`. That extension supplies a local, offline renderer
+bundle through the isolated-SSR contract. Core does not import React, and there
+is no host-rendering or remote-import fallback; an SSR request fails closed with
+an installation hint when the extension is absent. API and data workers do not
+resolve or receive the renderer contract.
 
 Deno Workers share the host process. Worker retirement is lifecycle hygiene,
 not a hard per-worker memory or CPU boundary. A project can still create
@@ -127,9 +178,8 @@ separately limited process or container.
 - [`rate-limit/client-key.ts`](./rate-limit/client-key.ts) is the shared client
   identity helper used by public middleware rate limiting.
 
-The remaining legacy files under `rate-limit/` are not package-exported and
-have no production consumer. They must not be presented as the supported rate
-limiter; the maintained implementation is in `src/middleware/builtin/security`.
+The maintained rate limiter is in `src/middleware/builtin/security`; Security
+contains no second implementation.
 
 ## Verification
 

@@ -76,6 +76,11 @@ export const SENSITIVE_DEPENDENCY_BOUNDARIES = [
     sourceLocation: "extensions/ext-document-kreuzberg/deno.json",
     expectedComponents: ["@kreuzberg/wasm"],
   },
+  {
+    label: "isolated React SSR rendering",
+    sourceLocation: "extensions/ext-react-ssr/deno.json",
+    expectedComponents: ["react", "react-dom"],
+  },
 ] as const;
 
 const EXACT_SEMVER_RE = /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/;

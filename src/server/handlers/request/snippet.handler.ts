@@ -9,7 +9,7 @@ import {
   SECURITY_VIOLATION,
   VeryfrontError,
 } from "#veryfront/errors";
-import { validatePathSync } from "#veryfront/security";
+import { validatePath } from "#veryfront/security";
 
 const logger = serverLogger.component("snippet-handler");
 
@@ -22,12 +22,12 @@ export class SnippetHandler extends BaseHandler {
     patterns: [{ pattern: /^\/(@\/|@components\/)/, method: "GET" }],
   };
 
-  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
     const { pathname } = url;
 
     if (!pathname.startsWith("/@/") && !pathname.startsWith("/@components/")) {
-      return Promise.resolve(this.continue());
+      return this.continue();
     }
 
     logger.debug("Handling snippet request", {
@@ -37,23 +37,27 @@ export class SnippetHandler extends BaseHandler {
 
     const filePath = this.resolveFilePath(pathname);
 
-    const pathResult = validatePathSync(filePath, {
+    const pathResult = await validatePath(filePath, {
       baseDir: ctx.projectDir,
+      adapter: ctx.adapter,
+      level: "strict",
+      allowAbsolute: false,
     });
 
-    if (!pathResult.valid) {
+    if (!pathResult.valid || !pathResult.canonicalPath) {
       logger.warn("Path traversal blocked in snippet request", { pathname, filePath });
       const error = SECURITY_VIOLATION.create({
         detail: "Invalid snippet path",
       });
-      return Promise.resolve({ response: createErrorResponse(error) });
+      return { response: createErrorResponse(error) };
     }
+    const admittedPath = pathResult.canonicalPath;
 
-    logger.debug("Resolved file path", { filePath });
+    logger.debug("Resolved file path", { filePath: admittedPath });
 
-    return this.withProxyContext(ctx, async () => {
+    return await this.withProxyContext(ctx, async () => {
       try {
-        const content = await ctx.adapter.fs.readFile(filePath);
+        const content = await ctx.adapter.fs.readFile(admittedPath);
 
         if (!content) {
           logger.debug("File not found or empty", { filePath });
@@ -67,7 +71,7 @@ export class SnippetHandler extends BaseHandler {
         const result = await renderSnippet(content, {
           mode: isDev ? "development" : "production",
           projectDir: ctx.projectDir,
-          filePath,
+          filePath: admittedPath,
           moduleServerUrl,
           projectSlug: ctx.projectSlug,
           config: ctx.config,

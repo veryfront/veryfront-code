@@ -10,6 +10,7 @@
 
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { validateIsolatedSsrRendererModuleUrl } from "#veryfront/extensions/rendering/index.ts";
 import {
   INVALID_ARGUMENT,
   SSR_OUTPUT_LIMIT_EXCEEDED,
@@ -53,8 +54,17 @@ const messagePortClose = MessagePort.prototype.close;
 const messagePortPostMessage = MessagePort.prototype.postMessage;
 const messagePortStart = MessagePort.prototype.start;
 const arrayIncludes = Array.prototype.includes;
+const arrayPush = Array.prototype.push;
+const arraySort = Array.prototype.sort;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const getPrototypeOf = Object.getPrototypeOf;
+const ownKeys = Reflect.ownKeys;
+const arrayIsArray = Array.isArray;
+const freezeObject = Object.freeze;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringTrim = String.prototype.trim;
+const textEncoderEncode = TextEncoder.prototype.encode;
 const arrayBufferPrototype = ArrayBuffer.prototype;
 const uint8ArrayPrototype = Uint8Array.prototype;
 const typedArrayPrototype = getPrototypeOf(uint8ArrayPrototype);
@@ -120,14 +130,153 @@ function requireRequestTimeoutMs(value: unknown): number {
   return value;
 }
 
+const WORKER_PERMISSION_KEYS = Object.freeze(
+  [
+    "read",
+    "write",
+    "net",
+    "env",
+    "run",
+    "ffi",
+    "sys",
+    "import",
+  ] as const satisfies readonly (keyof WorkerPermissions)[],
+);
+const MAX_WORKER_PERMISSION_ENTRIES = 4_096;
+const MAX_WORKER_PERMISSION_VALUE_CHARS = 16_384;
+const MAX_WORKER_PERMISSION_UTF8_BYTES = 1024 * 1024;
+
+function invalidWorkerPermissions(detail: string): never {
+  throw new TypeError(`Project worker permissions ${detail}`);
+}
+
+function containsAsciiControl(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const codePoint = apply(stringCharCodeAt, value, [index]);
+    if (codePoint <= 0x1f || codePoint === 0x7f) return true;
+  }
+  return false;
+}
+
+function snapshotPermissionScope(
+  value: unknown,
+  field: "read" | "env" | "import" | "net",
+): boolean | readonly string[] {
+  if (typeof value === "boolean") return value;
+
+  let descriptors: Record<PropertyKey, PropertyDescriptor>;
+  let prototype: object | null;
+  let isArray: boolean;
+  try {
+    isArray = arrayIsArray(value);
+    prototype = typeof value === "object" && value !== null ? getPrototypeOf(value) : null;
+    descriptors = typeof value === "object" && value !== null
+      ? getOwnPropertyDescriptors(value)
+      : {};
+  } catch {
+    return invalidWorkerPermissions(`${field} scope could not be inspected`);
+  }
+  if (!isArray || prototype !== Array.prototype) {
+    return invalidWorkerPermissions(`${field} must be a boolean or plain string array`);
+  }
+
+  const lengthDescriptor = descriptors.length;
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (
+    !Number.isSafeInteger(length) || length < 0 ||
+    length > MAX_WORKER_PERMISSION_ENTRIES ||
+    ownKeys(descriptors).length !== length + 1
+  ) {
+    return invalidWorkerPermissions(`${field} must be a bounded dense string array`);
+  }
+
+  const values: string[] = [];
+  let utf8Bytes = 0;
+  for (let index = 0; index < length; index++) {
+    const descriptor = descriptors[String(index)];
+    const entry = descriptor?.enumerable && "value" in descriptor ? descriptor.value : undefined;
+    if (
+      typeof entry !== "string" || entry.length === 0 ||
+      entry.length > MAX_WORKER_PERMISSION_VALUE_CHARS ||
+      apply(stringTrim, entry, []) !== entry || containsAsciiControl(entry)
+    ) {
+      return invalidWorkerPermissions(`${field} contains a noncanonical entry`);
+    }
+    utf8Bytes += apply(textEncoderEncode, textEncoder, [entry]).byteLength;
+    if (utf8Bytes > MAX_WORKER_PERMISSION_UTF8_BYTES) {
+      return invalidWorkerPermissions(`${field} exceeds its byte budget`);
+    }
+    if (!apply(arrayIncludes, values, [entry])) {
+      apply(arrayPush, values, [entry]);
+    }
+  }
+
+  apply(arraySort, values, []);
+  return freezeObject(values);
+}
+
+function snapshotWorkerPermissions(value: unknown): Readonly<WorkerPermissions> {
+  if (value === null || typeof value !== "object" || arrayIsArray(value)) {
+    return invalidWorkerPermissions("must be a plain object");
+  }
+
+  let descriptors: Record<PropertyKey, PropertyDescriptor>;
+  let prototype: object | null;
+  try {
+    prototype = getPrototypeOf(value);
+    descriptors = getOwnPropertyDescriptors(value);
+  } catch {
+    return invalidWorkerPermissions("could not be inspected");
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    return invalidWorkerPermissions("must be a plain object");
+  }
+
+  const keys = ownKeys(descriptors);
+  if (
+    keys.length !== WORKER_PERMISSION_KEYS.length ||
+    !WORKER_PERMISSION_KEYS.every((key) => keys.includes(key))
+  ) {
+    return invalidWorkerPermissions("must contain exactly the supported fields");
+  }
+
+  const readValue = (key: keyof WorkerPermissions): unknown => {
+    const descriptor = descriptors[key];
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      return invalidWorkerPermissions(`${key} must be an enumerable data property`);
+    }
+    return descriptor.value;
+  };
+  const requireBoolean = (key: "write" | "net" | "run" | "ffi" | "sys"): boolean => {
+    const candidate = readValue(key);
+    if (typeof candidate !== "boolean") {
+      return invalidWorkerPermissions(`${key} must be a boolean`);
+    }
+    return candidate;
+  };
+
+  return freezeObject({
+    read: snapshotPermissionScope(readValue("read"), "read"),
+    write: requireBoolean("write"),
+    net: requireBoolean("net"),
+    env: snapshotPermissionScope(readValue("env"), "env"),
+    run: requireBoolean("run"),
+    ffi: requireBoolean("ffi"),
+    sys: requireBoolean("sys"),
+    import: snapshotPermissionScope(readValue("import"), "import"),
+  });
+}
+
 // Intersection with the DOM `WorkerOptions` so the value is assignable to the
 // `Worker` constructor without suppression — Deno reads the extra `deno` field
 // at runtime even though the DOM lib type doesn't declare it.
 type ScopedWorkerPermissions = Omit<WorkerPermissions, "net"> & {
-  net: string[] | boolean;
+  net: readonly string[] | boolean;
 };
 type ExtendedWorkerOptions = WorkerOptions & {
-  deno?: { permissions: ScopedWorkerPermissions };
+  deno?: { permissions: Readonly<ScopedWorkerPermissions> };
 };
 
 export interface ProjectWorkerOptions {
@@ -135,6 +284,8 @@ export interface ProjectWorkerOptions {
   permissions: WorkerPermissions;
   requestTimeoutMs: number;
   workerScriptUrl?: string;
+  /** Extension-owned renderer module imported only for isolated SSR requests. */
+  isolatedSsrRendererModuleUrl?: string;
   /** Override for deterministic egress resolution tests. */
   egressResolveHost?: ResolveWorkerHost;
   /** Host-owned policy snapshot. Project code must never be able to change it. */
@@ -324,20 +475,25 @@ export class ProjectWorker {
   private idleListeners = new Set<() => void>();
   private suppressIdleNotifications = false;
   private requestTimeoutMs: number;
-  private permissions: WorkerPermissions;
+  private readonly permissions: Readonly<WorkerPermissions>;
   private workerScriptUrl?: string;
+  private readonly isolatedSsrRendererModuleUrl?: string;
   private egressResolveHost?: ResolveWorkerHost;
   private readonly allowInternalEgress: boolean;
   private egressBroker: WorkerEgressBroker | null = null;
+  private shutdownPromise: Promise<void> | null = null;
   private _requestCount = 0;
   private _lastActivityAt = Date.now();
   private _status: WorkerStatus = "idle";
 
   constructor(options: ProjectWorkerOptions) {
     this.projectId = options.projectId;
-    this.permissions = options.permissions;
+    this.permissions = snapshotWorkerPermissions(options.permissions);
     this.requestTimeoutMs = requireRequestTimeoutMs(options.requestTimeoutMs);
     this.workerScriptUrl = options.workerScriptUrl;
+    this.isolatedSsrRendererModuleUrl = options.isolatedSsrRendererModuleUrl === undefined
+      ? undefined
+      : validateIsolatedSsrRendererModuleUrl(options.isolatedSsrRendererModuleUrl);
     this.egressResolveHost = options.egressResolveHost;
     if (typeof options.allowInternalEgress !== "boolean") {
       throw new TypeError("Project worker allowInternalEgress must be a boolean");
@@ -377,6 +533,11 @@ export class ProjectWorker {
    */
   start(): void {
     if (this.worker) return;
+    if (this.shutdownPromise) {
+      throw INVALID_ARGUMENT.create({
+        message: "A terminated project worker cannot be restarted",
+      });
+    }
     if (this.workerScriptUrl && this.permissions.net) {
       throw INVALID_ARGUMENT.create({
         message: "Custom project worker scripts cannot use unrestricted network permissions",
@@ -384,16 +545,16 @@ export class ProjectWorker {
     }
 
     const allowInternalEgress = this.allowInternalEgress;
-    let workerPermissions: ScopedWorkerPermissions = this.permissions;
+    let workerPermissions: Readonly<ScopedWorkerPermissions> = this.permissions;
     if (this.permissions.net === true) {
       this.egressBroker = startWorkerEgressBroker({
         allowInternalEgress,
         resolveHost: this.egressResolveHost,
       });
-      workerPermissions = {
+      workerPermissions = freezeObject({
         ...this.permissions,
-        net: this.egressBroker.config.netAllowlist,
-      };
+        net: snapshotPermissionScope(this.egressBroker.config.netAllowlist, "net"),
+      });
     }
 
     try {
@@ -445,6 +606,9 @@ export class ProjectWorker {
           startedWorker,
           {
             type: "initialize-egress",
+            ...(this.isolatedSsrRendererModuleUrl === undefined
+              ? {}
+              : { rendererModuleUrl: this.isolatedSsrRendererModuleUrl }),
             options: {
               allowInternalEgress,
               socksProxy: this.egressBroker?.config.socksProxy,
@@ -463,17 +627,7 @@ export class ProjectWorker {
         this.failWorker("crashed", "Worker crashed");
       };
     } catch (error) {
-      try {
-        this.worker?.terminate();
-      } catch {
-        // Preserve the startup error while still closing the egress broker.
-      }
-      this.worker = null;
-      this.workerGeneration = null;
-      this.closeControlPort();
-      this.egressBroker?.close();
-      this.egressBroker = null;
-      this._status = "terminated";
+      this.beginShutdown("terminated", "Worker startup failed");
       throw error;
     }
 
@@ -814,8 +968,19 @@ export class ProjectWorker {
    * Terminate the worker. Rejects all pending requests.
    */
   terminate(): void {
-    this.failWorker("terminated", "Worker terminated");
+    void this.shutdown();
     logger.debug("Worker terminated");
+  }
+
+  /**
+   * Terminate the worker and wait until all worker-owned resources are closed.
+   *
+   * The returned promise is single-flight and never rejects: teardown failures
+   * are logged after every close attempt, while callers still receive a
+   * deterministic quiescence boundary.
+   */
+  shutdown(): Promise<void> {
+    return this.beginShutdown("terminated", "Worker terminated");
   }
 
   // -----------------------------------------------------------------------
@@ -863,12 +1028,26 @@ export class ProjectWorker {
   }
 
   private failWorker(status: "crashed" | "terminated", reason: string): void {
+    void this.beginShutdown(status, reason);
+  }
+
+  private beginShutdown(
+    status: "crashed" | "terminated",
+    reason: string,
+  ): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+
+    const completion = Promise.withResolvers<void>();
+    this.shutdownPromise = completion.promise;
+
     const worker = this.worker;
+    const egressBroker = this.egressBroker;
     const hadActiveWork = this._status === "busy" ||
       this.pending.size !== 0 ||
       this.streamHandlers.size !== 0;
     this.worker = null;
     this.workerGeneration = null;
+    this.egressBroker = null;
     this._status = status;
 
     this.suppressIdleNotifications = true;
@@ -887,9 +1066,28 @@ export class ProjectWorker {
     }
 
     this.closeControlPort();
-    this.egressBroker?.close();
-    this.egressBroker = null;
+    if (egressBroker) {
+      try {
+        egressBroker.close();
+      } catch (error) {
+        logger.debug("Worker egress broker close failed", { error });
+      }
+    }
     if (hadActiveWork) this.notifyIdleListeners();
+
+    if (!egressBroker) {
+      completion.resolve();
+      return completion.promise;
+    }
+
+    void egressBroker.closed.then(
+      () => completion.resolve(),
+      (error) => {
+        logger.debug("Worker egress broker shutdown failed", { error });
+        completion.resolve();
+      },
+    );
+    return completion.promise;
   }
 
   private closeControlPort(): void {

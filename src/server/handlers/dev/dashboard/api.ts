@@ -26,7 +26,8 @@ import {
 import { TransformStage } from "#veryfront/transforms/pipeline/types.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { validatePathSync } from "#veryfront/security";
+import { validatePath } from "#veryfront/security";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
@@ -44,17 +45,22 @@ const dashboardApiLogger = serverLogger.component("dashboard-api");
 /**
  * Validate a relative path against the project directory.
  *
- * Uses `validatePathSync` in strict mode (rejects absolute paths, null bytes,
- * `..` traversal, and any resolved path that escapes `baseDir`).
+ * Uses physical strict-mode validation (rejects absolute paths, null bytes,
+ * traversal, and symlink escapes from `baseDir`).
  *
  * Note: `searchParams.get()` already percent-decodes; no extra decoding needed
  * (double-decoding would itself be a vulnerability).
  *
  * Returns the canonicalized absolute path on success, or `null` when invalid.
  */
-function validateRelativePath(path: string, projectDir: string): string | null {
-  const result = validatePathSync(path, {
+async function validateRelativePath(
+  path: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<string | null> {
+  const result = await validatePath(path, {
     baseDir: projectDir,
+    adapter,
     allowAbsolute: false,
     level: "strict",
   });
@@ -473,7 +479,7 @@ async function handleListFiles(req: Request, ctx: HandlerContext): Promise<Respo
   if (relativePath === "") {
     fullPath = projectDir;
   } else {
-    const canonical = validateRelativePath(relativePath, projectDir);
+    const canonical = await validateRelativePath(relativePath, projectDir, adapter);
     if (canonical === null) return errorResponse("Invalid path", 400);
     fullPath = canonical;
   }
@@ -511,7 +517,7 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
   const relativePath = new URL(req.url).searchParams.get("path") ?? "";
   if (!relativePath) return errorResponse("path parameter is required", 400);
 
-  const canonical = validateRelativePath(relativePath, projectDir);
+  const canonical = await validateRelativePath(relativePath, projectDir, adapter);
   if (canonical === null) return errorResponse("Invalid path", 400);
 
   try {

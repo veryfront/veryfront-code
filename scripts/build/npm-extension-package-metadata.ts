@@ -14,6 +14,10 @@ export type ExtensionManifest = {
       requires?: string[];
     };
     capabilities?: unknown[];
+    npm?: {
+      publish?: boolean;
+      runtimeVersionFromManifest?: boolean;
+    };
   };
   imports?: Record<string, string>;
 };
@@ -159,6 +163,16 @@ export function createExtensionPackageSpec(input: {
       `${input.manifestPath} must declare veryfront.extension: true`,
     );
   }
+  const runtimeVersionFromManifest =
+    input.manifest.veryfront.npm?.runtimeVersionFromManifest;
+  if (
+    runtimeVersionFromManifest !== undefined &&
+    typeof runtimeVersionFromManifest !== "boolean"
+  ) {
+    throw new Error(
+      `${input.manifestPath} veryfront.npm.runtimeVersionFromManifest must be boolean`,
+    );
+  }
 
   const packageDirectoryName = extensionPackageDirectoryName(packageName);
   const dependencies = manifestDependencies(input.manifest);
@@ -228,6 +242,7 @@ export function normalizeExtensionPackageJson(input: {
   packageJson: Record<string, unknown>;
   spec: ExtensionPackageSpec;
   version: string;
+  includeThirdPartyNotices?: boolean;
 }): Record<string, unknown> {
   const pkg = input.packageJson as {
     dependencies?: Record<string, string>;
@@ -268,7 +283,13 @@ export function normalizeExtensionPackageJson(input: {
     pkg.types = importPath.replace(/\.js$/, ".d.ts");
   }
   addExportTypes(pkg);
-  pkg.files = ["esm", "LICENSE", "NOTICE", "README.md"];
+  pkg.files = [
+    "esm",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    ...(input.includeThirdPartyNotices ? ["THIRD_PARTY_NOTICES.md"] : []),
+  ];
   pkg.veryfront = input.spec.packageJson.veryfront;
   delete pkg.devDependencies;
   delete pkg._generatedBy;

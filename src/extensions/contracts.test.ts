@@ -7,6 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { register, reset, resolve, tryResolve, unregister } from "./contracts.ts";
 
 describe("extensions/contracts", () => {
@@ -29,11 +30,15 @@ describe("extensions/contracts", () => {
       );
     });
 
-    it("includes recommendation in error message when available", () => {
-      assertThrows(
-        () => resolve("Bundler"),
-        Error,
-        "deno add @veryfront/ext-bundler-esbuild",
+    it("includes an executable npm recommendation in the error", () => {
+      const error = assertThrows(
+        () => resolve("IsolatedSsrRendererProvider"),
+        VeryfrontError,
+        "deno add npm:@veryfront/ext-react-ssr",
+      );
+      assertEquals(
+        error.detail,
+        "Install it with: deno add npm:@veryfront/ext-react-ssr",
       );
     });
   });

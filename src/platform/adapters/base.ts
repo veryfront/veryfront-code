@@ -225,6 +225,13 @@ export interface Server {
 }
 
 export interface FileSystemAdapter {
+  /**
+   * Explicitly declares that paths in this adapter cannot traverse symbolic
+   * links. The backing store may reject links or expose them only as inert
+   * entries, but it must never resolve a path through one. Native/local
+   * adapters must omit this marker and provide lstat and realPath instead.
+   */
+  readonly symlinkSemantics?: "none";
   readFile(path: string): Promise<string>;
   /** Read raw bytes when binary-safe access is required */
   readFileBytes?(path: string): Promise<Uint8Array>;

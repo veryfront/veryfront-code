@@ -13,6 +13,8 @@ import type { RequestTokenProvenance } from "./request-context.ts";
 export type { DirectoryEntry };
 
 export interface FSAdapter {
+  /** The remote filesystem API never resolves paths through symbolic links. */
+  readonly symlinkSemantics?: "none";
   readFile(path: string): Promise<Uint8Array | string>;
   /** Read raw bytes without an intermediate text decode when supported. */
   readFileBytes?(path: string): Promise<Uint8Array>;

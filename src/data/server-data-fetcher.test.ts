@@ -874,7 +874,7 @@ describe("ServerDataFetcher", () => {
         Deno.env.delete("WORKER_ISOLATION_ENABLED");
         Deno.env.delete("WORKER_ISOLATION_DATA");
       } catch { /* environment permission is available in the focused gate */ }
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const fetcher = new ServerDataFetcher();
       const body = "shared request payload";
@@ -1022,21 +1022,21 @@ describe("ServerDataFetcher", () => {
   });
 
   describe("fetchIsolated body size guard", () => {
-    afterEach(() => {
+    afterEach(async () => {
       try {
         Deno.env.delete("WORKER_ISOLATION_ENABLED");
       } catch { /* ok */ }
       try {
         Deno.env.delete("WORKER_ISOLATION_DATA");
       } catch { /* ok */ }
-      __resetPoolForTests();
+      await __resetPoolForTests();
     });
 
     it("should reject oversized request bodies in isolated data fetch", async () => {
       // Enable data isolation
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData = {
@@ -1072,7 +1072,7 @@ describe("ServerDataFetcher", () => {
     it("should fail closed when isolation is enabled without both worker paths", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const fetcher = new ServerDataFetcher();
       let calls = 0;
@@ -1106,7 +1106,7 @@ describe("ServerDataFetcher", () => {
       const time = new FakeTime();
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       const pool = getWorkerPool();
       const originalExecute = pool.execute;
       let workerCalls = 0;
@@ -1180,7 +1180,7 @@ describe("ServerDataFetcher", () => {
           await pending.catch(() => undefined);
         }
         pool.execute = originalExecute;
-        __resetPoolForTests();
+        await __resetPoolForTests();
         time.restore();
       }
     });
@@ -1188,7 +1188,7 @@ describe("ServerDataFetcher", () => {
     it("should reject via Content-Length header before buffering", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData = {
@@ -1220,7 +1220,7 @@ describe("ServerDataFetcher", () => {
     it("should reject a malformed Content-Length instead of parsing its prefix", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData = {
@@ -1250,7 +1250,7 @@ describe("ServerDataFetcher", () => {
     it("should cancel a streaming body as soon as its actual size exceeds the limit", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       let cancelled = false;
       const request = new Request("http://localhost/test", {
@@ -1293,7 +1293,7 @@ describe("ServerDataFetcher", () => {
     it("should keep rejected request bodies out of the project circuit breaker", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const projectId = `body-validation-${crypto.randomUUID()}`;
       const fetcher = new ServerDataFetcher();
@@ -1332,7 +1332,7 @@ describe("ServerDataFetcher", () => {
       const validContext = createContext();
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_DATA");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       const result = await fetcher.fetch(pageModule, validContext, {
         projectId,
       });
@@ -1343,7 +1343,7 @@ describe("ServerDataFetcher", () => {
     it("should reject a missing source policy before consuming the request body", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       const pool = getWorkerPool();
       const originalExecute = pool.execute;
       let workerCalls = 0;
@@ -1387,7 +1387,7 @@ describe("ServerDataFetcher", () => {
     it("should cancel body preparation when the incoming Request aborts", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       const pool = getWorkerPool();
       const originalExecute = pool.execute;
       let workerCalls = 0;
@@ -1446,7 +1446,7 @@ describe("ServerDataFetcher", () => {
     it("should skip body size guard when request has no body", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData = {
@@ -1699,7 +1699,7 @@ describe("ServerDataFetcher", () => {
         try {
           Deno.env.delete("WORKER_ISOLATION_DATA");
         } catch { /* ok */ }
-        __resetPoolForTests();
+        await __resetPoolForTests();
 
         if (projectDir) {
           await Deno.remove(projectDir, { recursive: true }).catch(() => {});
@@ -1717,7 +1717,7 @@ describe("ServerDataFetcher", () => {
 
         Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
         Deno.env.set("WORKER_ISOLATION_DATA", "1");
-        __resetPoolForTests();
+        await __resetPoolForTests();
 
         return { modulePath, projectDir: dir };
       }

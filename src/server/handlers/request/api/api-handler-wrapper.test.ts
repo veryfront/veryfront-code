@@ -119,7 +119,7 @@ describe("ApiHandlerWrapper", () => {
     const previousApi = Deno.env.get("WORKER_ISOLATION_API");
     Deno.env.delete("WORKER_ISOLATION_ENABLED");
     Deno.env.delete("WORKER_ISOLATION_API");
-    __resetPoolForTests();
+    await __resetPoolForTests();
 
     const ctx = createResponseCtx(false, null);
     let fsExistsCalls = 0;
@@ -138,7 +138,7 @@ describe("ApiHandlerWrapper", () => {
       assertEquals(result.response?.status, 200);
       assertEquals(fsExistsCalls, 0);
     } finally {
-      __resetPoolForTests();
+      await __resetPoolForTests();
       if (previousMaster === undefined) Deno.env.delete("WORKER_ISOLATION_ENABLED");
       else Deno.env.set("WORKER_ISOLATION_ENABLED", previousMaster);
       if (previousApi === undefined) Deno.env.delete("WORKER_ISOLATION_API");
@@ -151,7 +151,7 @@ describe("ApiHandlerWrapper", () => {
     const previousApi = Deno.env.get("WORKER_ISOLATION_API");
     Deno.env.delete("WORKER_ISOLATION_ENABLED");
     Deno.env.delete("WORKER_ISOLATION_API");
-    __resetPoolForTests();
+    await __resetPoolForTests();
 
     const ctx = createResponseCtx(false, null);
     ctx.allowHostProjectCodeExecution = true;
@@ -172,7 +172,7 @@ describe("ApiHandlerWrapper", () => {
       assertEquals(fsExistsCalls > 0, true);
       assertEquals(ctx.isLocalProject, false);
     } finally {
-      __resetPoolForTests();
+      await __resetPoolForTests();
       if (previousMaster === undefined) Deno.env.delete("WORKER_ISOLATION_ENABLED");
       else Deno.env.set("WORKER_ISOLATION_ENABLED", previousMaster);
       if (previousApi === undefined) Deno.env.delete("WORKER_ISOLATION_API");
@@ -189,7 +189,7 @@ describe("ApiHandlerWrapper", () => {
     );
     Deno.env.delete("WORKER_ISOLATION_ENABLED");
     Deno.env.delete("WORKER_ISOLATION_API");
-    __resetPoolForTests();
+    await __resetPoolForTests();
     injectApiResponse(new Response("project"));
     let fsExistsCalls = 0;
     let accessorCalls = 0;
@@ -281,7 +281,7 @@ describe("ApiHandlerWrapper", () => {
       } else {
         delete (Object.prototype as { isLocalProject?: boolean }).isLocalProject;
       }
-      __resetPoolForTests();
+      await __resetPoolForTests();
       if (previousMaster === undefined) Deno.env.delete("WORKER_ISOLATION_ENABLED");
       else Deno.env.set("WORKER_ISOLATION_ENABLED", previousMaster);
       if (previousApi === undefined) Deno.env.delete("WORKER_ISOLATION_API");

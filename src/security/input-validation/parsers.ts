@@ -1,4 +1,5 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { createValidationError, VeryfrontError } from "./errors.ts";
 import {
   readBodyBytesWithLimit,
@@ -6,12 +7,61 @@ import {
   validateContentType,
   validateRequestLimits,
 } from "./limits.ts";
-import { sanitizeData } from "./sanitizers.ts";
-import { type ParseFormOptions, type ParseJsonOptions, type RequestLimits } from "./types.ts";
+import {
+  type ParseFormOptions,
+  type ParseJsonOptions,
+  type ParseQueryOptions,
+  type RequestLimits,
+} from "./types.ts";
 import * as nodeBuffer from "node:buffer";
 
 const FileCtor = globalThis.File ??
   (nodeBuffer as typeof nodeBuffer & { File: typeof File }).File;
+const PARSE_JSON_OPTION_KEYS = new Set(["limits"]);
+const PARSE_FORM_OPTION_KEYS = new Set(["limits"]);
+const PARSE_QUERY_OPTION_KEYS = new Set(["limits"]);
+
+function snapshotParserOptions(
+  value: unknown,
+  label: string,
+  allowedKeys: ReadonlySet<string>,
+): Readonly<Record<string, unknown>> {
+  if (value === undefined) return Object.freeze(Object.create(null));
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${label} must be a plain object`);
+  }
+  let prototype: object | null;
+  let keys: Array<string | symbol>;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    keys = Reflect.ownKeys(value);
+  } catch {
+    throw new TypeError(`${label} could not be inspected safely`);
+  }
+  if (prototype !== null && prototype !== Object.prototype) {
+    throw new TypeError(`${label} must be a plain object`);
+  }
+
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) {
+    if (typeof key !== "string" || !allowedKeys.has(key)) {
+      throw new TypeError(
+        `${label} contains an unsupported ${typeof key === "string" ? `option: ${key}` : "symbol"}`,
+      );
+    }
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new TypeError(`${label}.${key} could not be inspected safely`);
+    }
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError(`${label}.${key} must be an own data property`);
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return Object.freeze(snapshot);
+}
 
 /** Parse and validate a JSON request body. */
 export async function parseJsonBody<T>(
@@ -19,13 +69,17 @@ export async function parseJsonBody<T>(
   schema: Schema<T>,
   options?: ParseJsonOptions,
 ): Promise<T> {
-  const limits = validateRequestLimits(request, options?.limits);
+  const snapshot = snapshotParserOptions(
+    options,
+    "JSON body parser options",
+    PARSE_JSON_OPTION_KEYS,
+  );
+  const limits = validateRequestLimits(request, snapshot.limits as RequestLimits | undefined);
 
   return await parseJsonBodyAfterRequestLimits(
     request,
     schema,
     limits,
-    options?.sanitize,
   );
 }
 
@@ -40,7 +94,6 @@ export async function parseJsonBodyAfterRequestLimits<T>(
   request: Request,
   schema: Schema<T>,
   limits: Required<RequestLimits>,
-  sanitize = false,
 ): Promise<T> {
   validateContentType(request, "application/json");
 
@@ -56,10 +109,15 @@ export async function parseJsonBodyAfterRequestLimits<T>(
     });
   }
 
-  const result = schema.safeParse(data);
-  if (result.success) {
-    return sanitize ? (sanitizeData(result.data) as T) : result.data;
+  const snapshot = snapshotBoundedJsonValue(data);
+  if (!snapshot.success) {
+    throw createValidationError("JSON value exceeds structural limits", {
+      path: snapshot.path,
+    });
   }
+
+  const result = schema.safeParse(snapshot.value);
+  if (result.success) return result.data;
 
   const issues = result.issues ?? [];
   throw createValidationError("Validation failed", {
@@ -77,7 +135,12 @@ export async function parseFormData<T>(
   schema: Schema<T>,
   options?: ParseFormOptions,
 ): Promise<T> {
-  const limits = validateRequestLimits(request, options?.limits);
+  const snapshot = snapshotParserOptions(
+    options,
+    "Form body parser options",
+    PARSE_FORM_OPTION_KEYS,
+  );
+  const limits = validateRequestLimits(request, snapshot.limits as RequestLimits | undefined);
 
   validateContentType(request, ["multipart/form-data", "application/x-www-form-urlencoded"]);
 
@@ -98,7 +161,10 @@ export async function parseFormData<T>(
     });
   }
 
-  const data: Record<string, unknown> = {};
+  // Form field names are untrusted property keys. A null-prototype collector
+  // keeps special names such as "__proto__" from changing the object's
+  // prototype before the schema gets a chance to validate them.
+  const data: Record<string, unknown> = Object.create(null);
 
   for (const [key, value] of formData.entries()) {
     if (value instanceof FileCtor && value.size > limits.maxFileSize) {
@@ -119,16 +185,44 @@ export async function parseFormData<T>(
   });
 }
 
-/** Parse and validate query parameters from a request URL. */
-export function parseQueryParams<T>(request: Request, schema: Schema<T>): T {
+/** Parse and validate query parameters from a bounded request URL. */
+export function parseQueryParams<T>(
+  request: Request,
+  schema: Schema<T>,
+  options?: ParseQueryOptions,
+): T {
+  const snapshot = snapshotParserOptions(
+    options,
+    "Query parser options",
+    PARSE_QUERY_OPTION_KEYS,
+  );
+  validateRequestLimits(request, snapshot.limits as RequestLimits | undefined);
+  return parseQueryParamsAfterRequestLimits(request, schema);
+}
+
+/**
+ * Parse query parameters after the caller has applied `validateRequestLimits()`.
+ *
+ * @internal Composite request boundaries use this to avoid repeating URL and
+ * header validation.
+ */
+export function parseQueryParamsAfterRequestLimits<T>(request: Request, schema: Schema<T>): T {
   const url = new URL(request.url);
-  const params: Record<string, unknown> = {};
+  // Query names are untrusted property keys. In particular, reading then
+  // assigning "__proto__" on a normal object can mutate its prototype.
+  const params: Record<string, unknown> = Object.create(null);
 
   for (const [key, value] of url.searchParams) {
-    const existing = params[key];
+    const descriptor = Object.getOwnPropertyDescriptor(params, key);
+    const existing = descriptor && "value" in descriptor ? descriptor.value : undefined;
 
-    if (existing === undefined) {
-      params[key] = value;
+    if (!descriptor) {
+      Object.defineProperty(params, key, {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value,
+      });
       continue;
     }
 

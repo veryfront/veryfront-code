@@ -62,12 +62,6 @@ export interface SerializedError {
     cause?: string;
     instance?: string;
   };
-  /** @deprecated Legacy transport fields; never trusted by the host boundary. */
-  type?: string;
-  /** @deprecated Legacy transport fields; never trusted by the host boundary. */
-  status?: number;
-  /** @deprecated Legacy transport fields; never trusted by the host boundary. */
-  detail?: string;
 }
 
 /**
@@ -318,14 +312,6 @@ export interface WorkerPreparedModuleCapacityResponse {
 export interface WorkerPoolConfig {
   /** Maximum number of concurrent workers (default: 20) */
   maxPoolSize: number;
-  /**
-   * Maximum worker-protocol requests admitted concurrently to one worker
-   * (default: 1).
-   *
-   * Optional for compatibility with callers that construct the complete
-   * legacy config shape. The pool always resolves this to the default.
-   */
-  maxActiveRequestsPerWorker?: number;
   /** Idle timeout before evicting a worker (default: 300_000 = 5 minutes) */
   idleTimeoutMs: number;
   /**
@@ -339,14 +325,6 @@ export interface WorkerPoolConfig {
   maxRequestsPerWorker: number;
   /** Maximum age of a worker in ms before recycling (default: 600_000 = 10 minutes) */
   maxWorkerAgeMs: number;
-  /**
-   * Legacy/advisory compatibility value (default: 64 MB).
-   *
-   * Same-process Workers cannot enforce a hard per-worker memory boundary:
-   * retained ESM and top-level project allocations are process memory. Strong
-   * containment requires process or container isolation.
-   */
-  memoryBudgetMb: number;
   /** Host-owned snapshot allowing internal network egress (default: false). */
   allowInternalEgress?: boolean;
 }
@@ -375,20 +353,12 @@ export const MAX_WORKER_RETAINED_MODULE_SOURCE_BYTES = 16 * 1024 * 1024;
 /** Maximum number of distinct logical-route/source module identities per worker. */
 export const MAX_WORKER_RETAINED_MODULES = 128;
 
-/**
- * Worker protocol requests are serialized inside one project worker, so host
- * admission permits exactly one active request per worker.
- */
-export const DEFAULT_MAX_ACTIVE_REQUESTS_PER_WORKER = 1;
-
-export const DEFAULT_WORKER_POOL_CONFIG: Required<WorkerPoolConfig> = {
+export const DEFAULT_WORKER_POOL_CONFIG: Readonly<Required<WorkerPoolConfig>> = Object.freeze({
   maxPoolSize: 20,
-  maxActiveRequestsPerWorker: DEFAULT_MAX_ACTIVE_REQUESTS_PER_WORKER,
   idleTimeoutMs: 300_000,
   requestTimeoutMs: 30_000,
   healthCheckIntervalMs: 30_000,
   maxRequestsPerWorker: 1_000,
   maxWorkerAgeMs: 600_000,
-  memoryBudgetMb: 64,
   allowInternalEgress: false,
-};
+});

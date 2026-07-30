@@ -144,7 +144,6 @@ async function prepareAppRouteStylesheet(
     baseDir: options.projectDir,
     adapter: options.adapter,
     context: "build",
-    throwOnError: true,
     validationOptions: {
       followSymlinks: false,
     },

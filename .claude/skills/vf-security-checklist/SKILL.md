@@ -3,133 +3,167 @@ name: vf-security-checklist
 description: Use when touching auth, user input validation, file paths, redirects, WebSocket, uploads, rate limiting, CORS, or any security-sensitive code in veryfront
 ---
 
-# Veryfront Security Checklist
+# Veryfront security checklist
 
 ## Overview
 
-Veryfront has undergone a comprehensive security audit. This checklist captures the verified patterns and known pitfalls.
+This checklist records Veryfront's current security boundaries and the invariants
+that security-sensitive changes must preserve. It does not replace focused
+threat analysis and regression tests for the code being changed.
 
 **Core principle:** Validate at boundaries, use framework security utilities, never trust client input.
 
-## Before You Ship: Quick Check
+## Before you ship: quick check
 
 Run through these when modifying security-sensitive code:
 
-### Input & Validation
-- [ ] User input validated with Zod schemas before use
-- [ ] Path inputs validated with `validatePathSync()` from `#veryfront/security`
-- [ ] No string concatenation for SQL/commands — use parameterized queries / array args
-- [ ] HTML user content escaped or wrapped with `validateTrustedHtml()`
+### Input and validation
 
-### Authentication & Tokens
+- [ ] User input validated with the provider-neutral schema contracts before use
+- [ ] Filesystem paths admitted with `validatePath()` and a runtime adapter, or operated on through `SecureFs`
+- [ ] `validateLexicalPath()` used only for stores without symlinks or code that performs its own descriptor-relative checks
+- [ ] No string concatenation for SQL or commands; use parameterized queries or array arguments
+- [ ] Untrusted HTML escaped or assigned through safe DOM APIs; `validateTrustedHtml()` is not treated as a sanitizer
+
+### Authentication and tokens
+
 - [ ] JWT signatures verified (not just payload extraction)
 - [ ] Tokens in headers or cookies (never in URL query params)
 - [ ] WebSocket auth uses subprotocol header, not query string
 - [ ] Session tokens stored securely (compliance-approved method)
 
-### Network & Routing
+### Network and routing
+
 - [ ] Redirects validate URL scheme (block `javascript:`, `data:`, `vbscript:`)
 - [ ] CORS origins explicitly listed (no wildcard `*` in production)
-- [ ] Rate limiting uses `trustProxy: false` (default) unless behind a trusted reverse proxy
+- [ ] Rate limiting imported from `veryfront/middleware` and keyed by verified identity or an explicitly trusted proxy
 - [ ] WebSocket enforces `wss://` in production (not plain `ws://`)
 
-### File System
+### File system
+
 - [ ] File paths validated against traversal (`../`) attacks
-- [ ] Use `SecureFS` methods for file operations
-- [ ] `SecureFS` unsafe methods (`unsafeReadFile`, etc.) not used in production paths
+- [ ] Use `SecureFs` methods for filesystem operations after constructing the boundary
+- [ ] Code does not bypass `SecureFs` through its underlying runtime adapter
 - [ ] Upload handlers have auth middleware
 - [ ] Sandbox code execution has size/time limits
 
 ### Commands
+
 - [ ] External commands use array arguments (no shell interpolation)
 - [ ] No `shell: true` option in subprocess calls
 - [ ] User input never concatenated into command strings
 
-## Security Module Utilities
+## Security module utilities
 
 ```typescript
-import {
-  validatePathSync,
-  validateTrustedHtml,
-  // Rate limiting, CORS, input validation
-} from "#veryfront/security";
+import { createSecureFs, validateLexicalPath } from "#veryfront/security";
+import type { RuntimeAdapter } from "#veryfront/platform";
 
-// Path validation — prevents traversal
-const safePath = validatePathSync(userInput, { baseDir: projectRoot });
+export async function readUserFile(
+  runtimeAdapter: RuntimeAdapter,
+  projectRoot: string,
+  userInput: string,
+): Promise<string> {
+  const secureFs = createSecureFs({
+    baseDir: projectRoot,
+    adapter: runtimeAdapter,
+    context: "user-input",
+  });
+  return await secureFs.readFile(userInput);
+}
 
-// HTML safety — wraps trusted HTML
-const html = validateTrustedHtml(content);
+// Lexical containment is only for stores that cannot resolve symlinks.
+export function admitObjectKey(objectStoreRoot: string, objectKey: string): string {
+  const result = validateLexicalPath(objectKey, { baseDir: objectStoreRoot });
+  if (!result.valid || !result.canonicalPath) {
+    throw new TypeError("Object key is outside the allowed root");
+  }
+  return result.canonicalPath;
+}
 ```
 
-## Secure Patterns
+`validatePath()` returns a promise because physical admission canonicalizes the
+path through the supplied runtime adapter and checks symlink policy. Prefer
+`SecureFs` when the admitted path is immediately used for a filesystem
+operation, so validation and use stay inside the same framework boundary.
 
-### Command Execution (Safe)
+`validateTrustedHtml()` is an internal check for framework-generated server
+HTML. It detects suspicious patterns but does not sanitize arbitrary HTML.
+Escape untrusted text or assign it with `textContent`.
+
+## Secure patterns
+
+### Command execution
+
 ```typescript
-// Correct: array arguments, no shell
 const cmd = new Deno.Command("git", {
   args: ["log", "--oneline", "-n", "10"],
 });
-
-// Wrong: string interpolation
-const cmd = new Deno.Command("sh", {
-  args: ["-c", `git log ${userInput}`],  // INJECTION RISK
-});
 ```
 
-### Redirect Validation
+Do not pass user input to a shell command string or enable `shell: true`.
+
+### Redirect validation
+
 ```typescript
-// Correct: validate scheme
-const url = new URL(redirectTarget);
-if (!["http:", "https:"].includes(url.protocol)) {
-  throw SECURITY_VIOLATION.create({
-    detail: "Invalid redirect scheme",
-    context: { protocol: url.protocol },
-  });
+export function resolveSameOriginRedirect(target: string, requestUrl: string): string {
+  const request = new URL(requestUrl);
+  const redirect = new URL(target, request);
+  if (
+    !["http:", "https:"].includes(redirect.protocol) ||
+    redirect.origin !== request.origin ||
+    redirect.username !== "" ||
+    redirect.password !== ""
+  ) {
+    throw new TypeError(
+      "Redirect target must be a same-origin HTTP(S) URL without credentials",
+    );
+  }
+  return redirect.href;
 }
-
-// Wrong: no validation
-res.redirect(userProvidedUrl);  // javascript: XSS risk
 ```
 
-### Rate Limiting
-```typescript
-import { createRateLimiter } from "#veryfront/security";
+Cross-origin redirects require an explicit origin allowlist in addition to the
+scheme check.
 
-// Correct: trustProxy=false (default) uses rightmost X-Forwarded-For IP
-// (added by nearest proxy, not client-controlled)
-const limiter = createRateLimiter({
-  maxRequests: 100,
-  windowMs: 60_000,
-  trustProxy: false,
-});
+### Rate limiting
 
-// Wrong: trustProxy=true uses leftmost IP (client-spoofable)
-// Only safe behind a trusted reverse proxy that overwrites X-Forwarded-For
-const limiter = createRateLimiter({
-  maxRequests: 100,
-  windowMs: 60_000,
-  trustProxy: true,  // SPOOFABLE without trusted proxy
-});
-```
+Import `rateLimit`, `authRateLimit`, and store contracts from
+`veryfront/middleware`. Security contains only the shared client-key helper; it
+does not expose a second limiter implementation.
 
-## Verified Secure Areas
+| Configuration                 | Client key behavior                                                                                                               |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `keyGenerator`                | Uses the caller's verified, stable application identity.                                                                          |
+| `trustProxy: false` (default) | Ignores `X-Forwarded-For` and `X-Real-IP`; the default generator uses one fallback bucket.                                        |
+| `trustProxy: true`            | Uses the rightmost `X-Forwarded-For` address, then `X-Real-IP`; valid only when the nearest trusted proxy controls those headers. |
 
-These have been audited and are safe — don't over-engineer:
-- Command injection: protected (array args throughout)
-- XSS: protected (`validateTrustedHtml` wrapper)
-- HTML escaping: comprehensive (5 characters: `& < > " '`)
-- Path traversal: protected (`src/security/path-validation/`)
-- CSRF: protected (double-submit, constant-time compare)
-- Cryptographic randomness: uses `crypto.getRandomValues()`
+Production deployments must either provide a `keyGenerator` based on a
+verified identity or enable proxy trust only at a controlled proxy boundary.
+The in-memory store is process-local. Distributed deployments supply a
+`RateLimitStore` through the extension-backed distributed store contract.
 
-## Common Mistakes
+## Security invariants to preserve
 
-| Mistake | Fix |
-|---------|-----|
-| Extracting JWT payload without verification | Verify signature first |
-| `trustProxy: true` without trusted proxy | Use `trustProxy: false` (default) for rightmost IP |
-| `ws://` WebSocket in production | Enforce `wss://` |
-| `SecureFS.unsafeReadFile` in prod code | Use safe variant with path validation |
-| Missing auth on upload endpoint | Add auth middleware |
-| Redirect without scheme check | Validate `http:` / `https:` only |
-| String-concatenated commands | Use array `args` parameter |
+- External commands receive argument arrays and do not invoke a shell.
+- Untrusted HTML is escaped; trusted server HTML checks remain defense-in-depth.
+- Filesystem admission uses adapter-backed canonicalization and explicit symlink policy.
+- CSRF token comparison remains constant-time.
+- Security tokens use Web Crypto randomness.
+
+These invariants describe the current design. Re-run the focused security and
+consumer tests after changing any of their implementation paths.
+
+## Common mistakes
+
+| Mistake                                             | Fix                                                              |
+| --------------------------------------------------- | ---------------------------------------------------------------- |
+| Extracting JWT payload without verification         | Verify signature first                                           |
+| `trustProxy: true` without a trusted proxy          | Use a verified `keyGenerator`, or keep forwarded headers ignored |
+| `ws://` WebSocket in production                     | Enforce `wss://`                                                 |
+| `validateLexicalPath()` for a local filesystem path | Use `validatePath()` with an adapter or `SecureFs`               |
+| Direct adapter access after creating `SecureFs`     | Perform the operation through `SecureFs`                         |
+| Treating `validateTrustedHtml()` as a sanitizer     | Escape untrusted content or assign it with `textContent`         |
+| Missing auth on upload endpoint                     | Add auth middleware                                              |
+| Redirect without scheme check                       | Validate `http:` / `https:` only                                 |
+| String-concatenated commands                        | Use array `args` parameter                                       |

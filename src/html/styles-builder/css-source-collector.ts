@@ -136,7 +136,6 @@ export async function collectCSSCandidateSourceFiles(options: {
     baseDir: projectDir,
     adapter: options.adapter,
     context: "build",
-    throwOnError: true,
     validationOptions: {
       followSymlinks: false,
     },

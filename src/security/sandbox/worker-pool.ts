@@ -21,7 +21,13 @@ import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SECURITY_VIOLATION, SERVICE_OVERLOADED } from "#veryfront/errors";
 import { basename, dirname, resolve as resolvePath } from "#veryfront/compat/path";
+import { fromFileUrl, toFileUrl } from "#veryfront/compat/path";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
+import { resolve as resolveExtensionContract } from "#veryfront/extensions/contracts.ts";
+import {
+  IsolatedSsrRendererProviderName,
+  snapshotIsolatedSsrRendererProvider,
+} from "#veryfront/extensions/rendering/index.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { ProjectWorker, type ProjectWorkerOptions } from "./project-worker.ts";
 import {
@@ -45,6 +51,18 @@ const stringTrim = String.prototype.trim;
 const numberFromString = Number;
 const numberIsSafeInteger = Number.isSafeInteger;
 const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
+const SERIALIZED_WORKER_REQUEST_CAPACITY = 1;
+const HOST_HEAP_EVICTION_THRESHOLD_PERCENT = 70;
+const HOST_HEAP_EVICTION_FRACTION = 0.25;
+const WORKER_POOL_CONFIG_KEYS = new Set([
+  "maxPoolSize",
+  "idleTimeoutMs",
+  "requestTimeoutMs",
+  "healthCheckIntervalMs",
+  "maxRequestsPerWorker",
+  "maxWorkerAgeMs",
+  "allowInternalEgress",
+]);
 const nativeRealPathSync = typeof Deno !== "undefined" &&
     typeof Deno.realPathSync === "function"
   ? Deno.realPathSync.bind(Deno)
@@ -55,11 +73,12 @@ interface PoolEntry {
   lastAccessedAt: number;
   createdAt: number;
   readPaths: string[];
+  rendererModuleUrl: string | null;
   activeRequests: number;
   retirementRequested: boolean;
   retirementReason?: string;
   releaseIdleListener: () => void;
-  terminationStarted: boolean;
+  shutdown: Promise<void> | null;
   healthCheckInFlight: boolean;
   preparedModuleCapacityReached: boolean;
   retired: Promise<void>;
@@ -78,6 +97,13 @@ export interface WorkerPoolDependencies {
   createWorker?: (options: ProjectWorkerOptions) => ProjectWorker;
   /** Test seam for deterministic host-memory pressure behavior. */
   getHeapUsedPercent?: () => number;
+  /** Test seam for the extension contract resolved only on SSR admission. */
+  resolveIsolatedSsrRendererProvider?: () => unknown;
+}
+
+interface IsolatedSsrRendererAdmission {
+  readonly moduleUrl: string;
+  readonly readPaths: readonly string[];
 }
 
 function canonicalizePath(path: string): string {
@@ -169,19 +195,6 @@ function requirePositivePoolInteger(
   return value;
 }
 
-function requireSerializedWorkerCapacity(value: unknown): number {
-  const validated = requirePositivePoolInteger(
-    "maxActiveRequestsPerWorker",
-    value,
-  );
-  if (validated !== 1) {
-    throw new TypeError(
-      "Worker pool maxActiveRequestsPerWorker must be exactly 1 because worker execution is serialized",
-    );
-  }
-  return validated;
-}
-
 function requireNonNegativePoolInteger(
   name: string,
   value: unknown,
@@ -202,6 +215,48 @@ function requireNonNegativePoolInteger(
 
 function valueOrDefault<T>(value: T | undefined, fallback: T): T {
   return value === undefined ? fallback : value;
+}
+
+function snapshotWorkerPoolConfig(
+  value: unknown,
+): Readonly<Partial<WorkerPoolConfig>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("Worker pool config must be a plain object");
+  }
+
+  let prototype: object | null;
+  let keys: Array<string | symbol>;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    keys = Reflect.ownKeys(value);
+  } catch {
+    throw new TypeError("Worker pool config could not be inspected safely");
+  }
+  if (prototype !== null && prototype !== Object.prototype) {
+    throw new TypeError("Worker pool config must be a plain object");
+  }
+
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) {
+    if (typeof key !== "string" || !WORKER_POOL_CONFIG_KEYS.has(key)) {
+      throw new TypeError(
+        `Worker pool config contains an unsupported ${
+          typeof key === "string" ? `option: ${key}` : "symbol"
+        }`,
+      );
+    }
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new TypeError(`Worker pool config.${key} could not be inspected safely`);
+    }
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError(`Worker pool config.${key} must be an own data property`);
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return Object.freeze(snapshot) as Readonly<Partial<WorkerPoolConfig>>;
 }
 
 function requirePoolBoolean(name: string, value: unknown): boolean {
@@ -239,6 +294,55 @@ function sameOrderedPaths(left: readonly string[], right: readonly string[]): bo
   return left.every((path, index) => path === right[index]);
 }
 
+function captureIsolatedSsrRendererAdmission(value: unknown): IsolatedSsrRendererAdmission {
+  const provider = snapshotIsolatedSsrRendererProvider(value);
+  let modulePath: string;
+  let readPaths: string[];
+  try {
+    modulePath = canonicalizePath(fromFileUrl(provider.moduleUrl));
+    readPaths = normalizeReadPaths(
+      provider.readRootUrls.map((rootUrl) => fromFileUrl(rootUrl)),
+    );
+  } catch (cause) {
+    throw new TypeError("Isolated SSR renderer provider contains an invalid local path", {
+      cause,
+    });
+  }
+
+  for (const readPath of readPaths) {
+    if (dirname(readPath) === readPath) {
+      throw new TypeError("Isolated SSR renderer read roots must not grant filesystem-root access");
+    }
+    let metadata: Deno.FileInfo;
+    try {
+      metadata = Deno.statSync(readPath);
+    } catch (cause) {
+      throw new TypeError("Isolated SSR renderer read root is unavailable", { cause });
+    }
+    if (!metadata.isDirectory) {
+      throw new TypeError("Isolated SSR renderer read roots must be directories");
+    }
+  }
+
+  let moduleMetadata: Deno.FileInfo;
+  try {
+    moduleMetadata = Deno.statSync(modulePath);
+  } catch (cause) {
+    throw new TypeError("Isolated SSR renderer module is unavailable", { cause });
+  }
+  if (!moduleMetadata.isFile) {
+    throw new TypeError("Isolated SSR renderer moduleUrl must identify a file");
+  }
+  if (!readPaths.some((readPath) => isWithinDirectory(readPath, modulePath))) {
+    throw new TypeError("Isolated SSR renderer moduleUrl is outside its declared read roots");
+  }
+
+  return Object.freeze({
+    moduleUrl: toFileUrl(modulePath).href,
+    readPaths: Object.freeze(readPaths),
+  });
+}
+
 function isPreparedApiRequest(request: WorkerRequest): boolean {
   return request.type === "execute-app-route" ||
     request.type === "execute-pages-route" ||
@@ -247,10 +351,13 @@ function isPreparedApiRequest(request: WorkerRequest): boolean {
 
 export class WorkerPool {
   private pool = new Map<string, PoolEntry>();
+  private workerShutdowns = new Set<Promise<void>>();
   private readonly config: ResolvedWorkerPoolConfig;
   private readonly createWorker: (options: ProjectWorkerOptions) => ProjectWorker;
   private readonly getHeapUsedPercent: () => number;
+  private readonly resolveIsolatedSsrRendererProvider: () => unknown;
   private shuttingDown = false;
+  private shutdownPromise: Promise<void> | null = null;
 
   private cleanupInterval: ReturnType<typeof setInterval> | undefined;
   private healthCheckInterval: ReturnType<typeof setInterval> | undefined;
@@ -259,24 +366,19 @@ export class WorkerPool {
     config: Partial<WorkerPoolConfig> = {},
     dependencies: WorkerPoolDependencies = {},
   ) {
+    const input = snapshotWorkerPoolConfig(config);
     this.config = {
       maxPoolSize: requirePositivePoolInteger(
         "maxPoolSize",
         valueOrDefault(
-          config.maxPoolSize,
+          input.maxPoolSize,
           DEFAULT_WORKER_POOL_CONFIG.maxPoolSize,
-        ),
-      ),
-      maxActiveRequestsPerWorker: requireSerializedWorkerCapacity(
-        valueOrDefault(
-          config.maxActiveRequestsPerWorker,
-          DEFAULT_WORKER_POOL_CONFIG.maxActiveRequestsPerWorker,
         ),
       ),
       idleTimeoutMs: requireNonNegativePoolInteger(
         "idleTimeoutMs",
         valueOrDefault(
-          config.idleTimeoutMs,
+          input.idleTimeoutMs,
           DEFAULT_WORKER_POOL_CONFIG.idleTimeoutMs,
         ),
         MAX_TIMER_DELAY_MS,
@@ -284,7 +386,7 @@ export class WorkerPool {
       requestTimeoutMs: requirePositivePoolInteger(
         "requestTimeoutMs",
         valueOrDefault(
-          config.requestTimeoutMs,
+          input.requestTimeoutMs,
           DEFAULT_WORKER_POOL_CONFIG.requestTimeoutMs,
         ),
         MAX_TIMER_DELAY_MS,
@@ -292,7 +394,7 @@ export class WorkerPool {
       healthCheckIntervalMs: requirePositivePoolInteger(
         "healthCheckIntervalMs",
         valueOrDefault(
-          config.healthCheckIntervalMs,
+          input.healthCheckIntervalMs,
           DEFAULT_WORKER_POOL_CONFIG.healthCheckIntervalMs,
         ),
         MAX_TIMER_DELAY_MS,
@@ -300,29 +402,22 @@ export class WorkerPool {
       maxRequestsPerWorker: requirePositivePoolInteger(
         "maxRequestsPerWorker",
         valueOrDefault(
-          config.maxRequestsPerWorker,
+          input.maxRequestsPerWorker,
           DEFAULT_WORKER_POOL_CONFIG.maxRequestsPerWorker,
         ),
       ),
       maxWorkerAgeMs: requireNonNegativePoolInteger(
         "maxWorkerAgeMs",
         valueOrDefault(
-          config.maxWorkerAgeMs,
+          input.maxWorkerAgeMs,
           DEFAULT_WORKER_POOL_CONFIG.maxWorkerAgeMs,
         ),
         MAX_TIMER_DELAY_MS,
       ),
-      memoryBudgetMb: requirePositivePoolInteger(
-        "memoryBudgetMb",
-        valueOrDefault(
-          config.memoryBudgetMb,
-          DEFAULT_WORKER_POOL_CONFIG.memoryBudgetMb,
-        ),
-      ),
       allowInternalEgress: requirePoolBoolean(
         "allowInternalEgress",
         valueOrDefault(
-          config.allowInternalEgress,
+          input.allowInternalEgress,
           DEFAULT_WORKER_POOL_CONFIG.allowInternalEgress,
         ),
       ),
@@ -330,6 +425,8 @@ export class WorkerPool {
     this.createWorker = dependencies.createWorker ?? ((options) => new ProjectWorker(options));
     this.getHeapUsedPercent = dependencies.getHeapUsedPercent ??
       (() => getHeapStats().heapUsedPercent);
+    this.resolveIsolatedSsrRendererProvider = dependencies.resolveIsolatedSsrRendererProvider ??
+      (() => resolveExtensionContract(IsolatedSsrRendererProviderName));
     this.startCleanup();
     this.startHealthChecks();
   }
@@ -345,18 +442,28 @@ export class WorkerPool {
     projectId: string,
     readPaths: string[],
   ): ProjectWorker {
+    return this.getOrCreateWorkerForAdmission(projectId, readPaths);
+  }
+
+  private getOrCreateWorkerForAdmission(
+    projectId: string,
+    readPaths: string[],
+    renderer?: IsolatedSsrRendererAdmission,
+  ): ProjectWorker {
     if (this.shuttingDown) {
       throw this.createOverloadError("Worker pool is shutting down");
     }
 
     const normalizedReadPaths = normalizeReadPaths(readPaths);
+    const rendererModuleUrl = renderer?.moduleUrl ?? null;
     const existing = this.pool.get(projectId);
     if (existing) {
       const readPathsChanged = !sameOrderedPaths(existing.readPaths, normalizedReadPaths);
+      const rendererChanged = existing.rendererModuleUrl !== rendererModuleUrl;
 
       if (this.isTerminal(existing)) {
         this.requestRetirement(projectId, existing, "terminal");
-      } else if (readPathsChanged) {
+      } else if (readPathsChanged || rendererChanged) {
         this.requestRetirement(projectId, existing, "read_paths_changed");
         if (this.pool.get(projectId) === existing) {
           throw this.createOverloadError(
@@ -391,6 +498,7 @@ export class WorkerPool {
       permissions,
       requestTimeoutMs: this.config.requestTimeoutMs,
       allowInternalEgress: this.config.allowInternalEgress,
+      isolatedSsrRendererModuleUrl: rendererModuleUrl ?? undefined,
     });
 
     worker.start();
@@ -405,10 +513,11 @@ export class WorkerPool {
       lastAccessedAt: now,
       createdAt: now,
       readPaths: normalizedReadPaths,
+      rendererModuleUrl,
       activeRequests: 0,
       retirementRequested: false,
       releaseIdleListener: () => {},
-      terminationStarted: false,
+      shutdown: null,
       healthCheckInFlight: false,
       preparedModuleCapacityReached: false,
       retired,
@@ -445,6 +554,12 @@ export class WorkerPool {
     return withSpan(
       "workerPool.execute",
       async () => {
+        const renderer = request.type === "render-ssr"
+          ? captureIsolatedSsrRendererAdmission(
+            this.resolveIsolatedSsrRendererProvider(),
+          )
+          : undefined;
+        const admittedReadPaths = renderer ? [...readPaths, ...renderer.readPaths] : readPaths;
         const canRetryCapacity = isPreparedApiRequest(request);
         let capacityRolloverConsumed = false;
 
@@ -465,7 +580,7 @@ export class WorkerPool {
 
           let entry: PoolEntry;
           try {
-            entry = this.admitRequest(projectId, readPaths);
+            entry = this.admitRequest(projectId, admittedReadPaths, renderer);
           } catch (error) {
             const current = this.pool.get(projectId);
             if (
@@ -525,7 +640,14 @@ export class WorkerPool {
     request: RenderSSRRequest,
   ): ReadableStream<Uint8Array> {
     this.validateRequestModulePaths(readPaths, request);
-    const entry = this.admitRequest(projectId, readPaths);
+    const renderer = captureIsolatedSsrRendererAdmission(
+      this.resolveIsolatedSsrRendererProvider(),
+    );
+    const entry = this.admitRequest(
+      projectId,
+      [...readPaths, ...renderer.readPaths],
+      renderer,
+    );
 
     let source: ReadableStream<Uint8Array>;
     try {
@@ -631,9 +753,9 @@ export class WorkerPool {
   /**
    * Retire every worker belonging to one logical execution scope.
    *
-   * Generation ownership is matched using the complete framed identity (or
-   * the exact parsed legacy API identity), never a raw scope prefix. Busy
-   * generations finish their current requests before eviction.
+   * Generation ownership is matched using the complete versioned, framed
+   * identity, never a raw scope prefix. Busy generations finish their current
+   * requests before eviction.
    */
   evictWorkerScope(scopeId: string): void {
     if (!scopeId) return;
@@ -650,19 +772,10 @@ export class WorkerPool {
     }
   }
 
-  /**
-   * Get pool statistics for monitoring.
-   *
-   * `memoryBudgetMb` is retained for configuration compatibility only. It is
-   * not an enforced per-worker limit; `memoryBudgetEnforced` makes that
-   * operational constraint explicit to monitoring consumers.
-   */
+  /** Get pool statistics for monitoring. */
   getStats(): {
     poolSize: number;
     maxPoolSize: number;
-    maxActiveRequestsPerWorker: number;
-    memoryBudgetMb: number;
-    memoryBudgetEnforced: false;
     workers: Record<string, {
       status: string;
       requestCount: number;
@@ -699,9 +812,6 @@ export class WorkerPool {
     return {
       poolSize: this.pool.size,
       maxPoolSize: this.config.maxPoolSize,
-      maxActiveRequestsPerWorker: this.config.maxActiveRequestsPerWorker,
-      memoryBudgetMb: this.config.memoryBudgetMb,
-      memoryBudgetEnforced: false,
       workers,
     };
   }
@@ -741,10 +851,14 @@ export class WorkerPool {
   }
 
   /**
-   * Shutdown the pool. Terminates all workers and stops timers.
+   * Shutdown the pool and wait for every managed worker to become quiescent.
+   * Concurrent calls share one completion promise.
    */
-  shutdown(): void {
-    if (this.shuttingDown) return;
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+
+    const completion = Promise.withResolvers<void>();
+    this.shutdownPromise = completion.promise;
     this.shuttingDown = true;
 
     if (this.cleanupInterval) clearInterval(this.cleanupInterval);
@@ -752,14 +866,20 @@ export class WorkerPool {
     this.cleanupInterval = undefined;
     this.healthCheckInterval = undefined;
 
-    for (const [, entry] of this.pool) {
+    const entries = [...this.pool.values()];
+    this.pool.clear();
+    for (const entry of entries) {
       entry.releaseIdleListener();
-      this.terminateEntry(entry);
-      this.settleRetirement(entry);
+      const shutdown = this.terminateEntry(entry);
+      void shutdown.then(() => this.settleRetirement(entry));
     }
 
-    this.pool.clear();
-    logger.debug("Worker pool shut down");
+    void this.drainWorkerShutdowns().then(() => {
+      for (const entry of entries) this.settleRetirement(entry);
+      logger.debug("Worker pool shut down");
+      completion.resolve();
+    });
+    return completion.promise;
   }
 
   // -----------------------------------------------------------------------
@@ -873,17 +993,18 @@ export class WorkerPool {
   private admitRequest(
     projectId: string,
     readPaths: string[],
+    renderer?: IsolatedSsrRendererAdmission,
   ): PoolEntry {
-    const worker = this.getOrCreateWorker(projectId, readPaths);
+    const worker = this.getOrCreateWorkerForAdmission(projectId, readPaths, renderer);
     const entry = this.pool.get(projectId);
     if (!entry || entry.worker !== worker || entry.retirementRequested) {
       throw this.createOverloadError(
         "Worker changed while the request was being admitted",
       );
     }
-    if (entry.activeRequests >= this.config.maxActiveRequestsPerWorker) {
+    if (entry.activeRequests >= SERIALIZED_WORKER_REQUEST_CAPACITY) {
       throw this.createOverloadError(
-        `Worker active request capacity reached (${entry.activeRequests}/${this.config.maxActiveRequestsPerWorker})`,
+        `Worker active request capacity reached (${entry.activeRequests}/${SERIALIZED_WORKER_REQUEST_CAPACITY})`,
       );
     }
 
@@ -962,12 +1083,13 @@ export class WorkerPool {
 
     this.pool.delete(projectId);
     entry.releaseIdleListener();
-    this.terminateEntry(entry);
-    this.settleRetirement(entry);
-
-    logger.debug("Worker retired", {
-      reason: entry.retirementReason ?? "unspecified",
-      poolSize: this.pool.size,
+    const shutdown = this.terminateEntry(entry);
+    void shutdown.then(() => {
+      this.settleRetirement(entry);
+      logger.debug("Worker retired", {
+        reason: entry.retirementReason ?? "unspecified",
+        poolSize: this.pool.size,
+      });
     });
     return true;
   }
@@ -989,19 +1111,29 @@ export class WorkerPool {
     }
   }
 
-  private terminateEntry(entry: PoolEntry): void {
-    if (entry.terminationStarted) return;
-    entry.terminationStarted = true;
+  private terminateEntry(entry: PoolEntry): Promise<void> {
+    if (entry.shutdown) return entry.shutdown;
 
-    // Terminal ProjectWorkers have already closed their Worker, protocol port,
-    // and egress broker. Avoid a second lifecycle call while still marking the
-    // pool entry as fully disposed.
-    if (this.isTerminal(entry)) return;
-
+    let workerShutdown: Promise<void>;
     try {
-      entry.worker.terminate();
+      workerShutdown = Promise.resolve(entry.worker.shutdown());
     } catch (error) {
       logger.debug("Worker termination failed", { error });
+      workerShutdown = Promise.resolve();
+    }
+
+    const normalized = workerShutdown.catch((error) => {
+      logger.debug("Worker termination failed", { error });
+    });
+    const tracked = normalized.finally(() => this.workerShutdowns.delete(tracked));
+    entry.shutdown = tracked;
+    this.workerShutdowns.add(tracked);
+    return tracked;
+  }
+
+  private async drainWorkerShutdowns(): Promise<void> {
+    while (this.workerShutdowns.size > 0) {
+      await Promise.all([...this.workerShutdowns]);
     }
   }
 
@@ -1061,21 +1193,23 @@ export class WorkerPool {
    *
    * This can drop pool references but cannot guarantee that retained ESM state
    * or top-level allocations are reclaimed. It is operational pressure relief,
-   * not enforcement of `memoryBudgetMb`.
+   * not a per-worker memory limit.
    */
   private evictUnderMemoryPressure(): void {
     try {
       const heapUsedPercent = this.getHeapUsedPercent();
       if (!Number.isFinite(heapUsedPercent) || heapUsedPercent < 0) return;
-      if (heapUsedPercent < 70) return; // Only act above 70%
+      if (heapUsedPercent < HOST_HEAP_EVICTION_THRESHOLD_PERCENT) return;
 
       // Sort workers by last access time (oldest first)
       const entries = [...this.pool.entries()]
         .filter(([, entry]) => !this.isBusy(entry))
         .sort(([, a], [, b]) => a.lastAccessedAt - b.lastAccessedAt);
 
-      // Evict up to 25% of idle workers
-      const toEvict = Math.max(1, Math.ceil(entries.length * 0.25));
+      const toEvict = Math.max(
+        1,
+        Math.ceil(entries.length * HOST_HEAP_EVICTION_FRACTION),
+      );
       for (let i = 0; i < toEvict && i < entries.length; i++) {
         const [projectId, entry] = entries[i]!;
         if (this.pool.get(projectId) !== entry) continue;
@@ -1153,11 +1287,6 @@ export function getWorkerPool(): WorkerPool {
         "WORKER_MAX_POOL_SIZE",
         DEFAULT_WORKER_POOL_CONFIG.maxPoolSize,
       ),
-      maxActiveRequestsPerWorker: getHostEnvInteger(
-        "WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER",
-        DEFAULT_WORKER_POOL_CONFIG.maxActiveRequestsPerWorker,
-        1,
-      ),
       idleTimeoutMs: getHostEnvInteger(
         "WORKER_IDLE_TIMEOUT_MS",
         DEFAULT_WORKER_POOL_CONFIG.idleTimeoutMs,
@@ -1177,12 +1306,6 @@ export function getWorkerPool(): WorkerPool {
         DEFAULT_WORKER_POOL_CONFIG.maxWorkerAgeMs,
         MAX_TIMER_DELAY_MS,
       ),
-      // Compatibility/advisory value only. Deno Workers do not provide an
-      // enforceable in-process per-worker memory ceiling.
-      memoryBudgetMb: getHostEnvInteger(
-        "WORKER_MEMORY_BUDGET_MB",
-        DEFAULT_WORKER_POOL_CONFIG.memoryBudgetMb,
-      ),
       allowInternalEgress: isInternalEgressOverrideEnabled(
         getHostEnv(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV),
       ),
@@ -1201,12 +1324,18 @@ export function evictWorkerScopeIfPresent(scopeId: string): void {
   _pool?.evictWorkerScope(scopeId);
 }
 
-/** Reset the singleton and cached flags — for testing only */
-export function __resetPoolForTests(): void {
-  _pool?.shutdown();
+/**
+ * Reset the singleton and cached flags — for testing only.
+ *
+ * Callers must await the returned promise before changing worker-related host
+ * configuration or starting another test so the detached pool is quiescent.
+ */
+export function __resetPoolForTests(): Promise<void> {
+  const pool = _pool;
   _pool = null;
   _flagsResolved = false;
   _apiIsolation = false;
   _dataIsolation = false;
   _ssrIsolation = false;
+  return pool?.shutdown() ?? Promise.resolve();
 }

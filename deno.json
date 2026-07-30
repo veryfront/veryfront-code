@@ -66,6 +66,7 @@
     "./extensions/ext-eval-report-mlflow",
     "./extensions/ext-eval-report-http",
     "./extensions/ext-content-mdx",
+    "./extensions/ext-react-ssr",
     "./extensions/ext-studio-capture-html2canvas",
     "./extensions/ext-schema-zod"
   ],
@@ -437,9 +438,11 @@
   },
   "tasks": {
     "setup": "deno run --allow-all scripts/setup.ts",
-    "generate": "deno run --frozen -A scripts/build/generate-templates-manifest.ts && deno run --frozen -A scripts/build/generate-dev-ui-styles.ts && deno run --frozen -A scripts/build/generate-dev-ui-manifest.ts && deno run --frozen -A scripts/build/prebundle-client-scripts.ts && deno run --frozen -A scripts/build/prebundle-bridge.ts && deno run --frozen -A scripts/build/prebundle-rsc-scripts.ts",
+    "generate": "deno run --frozen -A scripts/build/generate-templates-manifest.ts && deno run --frozen -A scripts/build/generate-dev-ui-styles.ts && deno run --frozen -A scripts/build/generate-dev-ui-manifest.ts && deno run --frozen -A scripts/build/prebundle-client-scripts.ts && deno run --frozen -A scripts/build/prebundle-bridge.ts && deno run --frozen -A scripts/build/prebundle-rsc-scripts.ts && deno task generate:react-ssr",
+    "generate:react-ssr": "deno run --frozen -A extensions/ext-react-ssr/scripts/prebundle.ts",
+    "generate:react-ssr:check": "deno run --frozen -A extensions/ext-react-ssr/scripts/prebundle.ts --check",
     "generate:framework-candidates:check": "deno run --frozen --allow-read scripts/build/check-framework-candidates.ts",
-    "generate:manifests:check": "deno run --frozen -A scripts/build/generate-templates-manifest.ts --check && deno run --frozen -A scripts/build/generate-dev-ui-styles.ts --check && deno run --frozen -A scripts/build/generate-dev-ui-manifest.ts --check && deno task generate:framework-candidates:check",
+    "generate:manifests:check": "deno run --frozen -A scripts/build/generate-templates-manifest.ts --check && deno run --frozen -A scripts/build/generate-dev-ui-styles.ts --check && deno run --frozen -A scripts/build/generate-dev-ui-manifest.ts --check && deno task generate:framework-candidates:check && deno task generate:react-ssr:check",
     "start": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts",
     "start:headless": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts --headless",
     "proxy": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts serve --mode=proxy",

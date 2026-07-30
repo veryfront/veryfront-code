@@ -9,6 +9,9 @@
  *
  * Usage:
  *   deno run -A scripts/build-npm-dnt.ts
+ *
+ * Release CI sets VERYFRONT_NPM_VERSION to the exact version that must be
+ * embedded consistently in the root package and every extension artifact.
  */
 
 import { build, emptyDir } from "#dnt";
@@ -31,6 +34,7 @@ import {
 	assertRootPackageExcludesCSSImplementations,
 	normalizeNpmPackageMetadata,
 	removeInternalNpmEntryPointExports,
+	resolveNpmBuildVersion,
 } from "./npm-package-metadata.ts";
 import {
 	assertNoBundledReactDomClientShim,
@@ -38,10 +42,10 @@ import {
 } from "./npm-react-shims.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
-const version = denoJson.version;
-if (!version) {
-	throw new Error("deno.json must have a 'version' field");
-}
+const version = resolveNpmBuildVersion(
+	denoJson.version,
+	Deno.env.get("VERYFRONT_NPM_VERSION"),
+);
 const license = denoJson.license;
 if (!license) {
 	throw new Error("deno.json must have a 'license' field");

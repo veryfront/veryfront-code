@@ -121,6 +121,29 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     return match?.[1] ?? "";
   }
 
+  it("treats an explicitly empty import allowlist as deny-all", async () => {
+    const { serveModule } = await import("./module-server.ts");
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(
+      "/test-project/private/secret.ts",
+      `export const secret = "TOP_SECRET";`,
+    );
+
+    const response = await serveModule(
+      new Request("http://localhost:3000/_vf_modules/private/secret.ts"),
+      {
+        projectId: "test-project",
+        projectDir: "/test-project",
+        adapter,
+        allowedImportDirs: [],
+      },
+    );
+    const body = await response.text();
+
+    assertEquals(response.status, 500);
+    assertEquals(body.includes("TOP_SECRET"), false);
+  });
+
   function manifest(
     dependencies: ReleaseAssetManifest["dependencies"],
     releaseId = "release-id",

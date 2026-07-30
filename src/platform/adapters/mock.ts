@@ -219,6 +219,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
       }),
     shutdown: () => Promise.resolve(),
     fs: {
+      symlinkSemantics: "none",
       files,
       byteFiles,
       directories,

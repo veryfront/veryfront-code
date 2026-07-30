@@ -130,7 +130,6 @@ export class StaticFileService {
       baseDir: options.projectDir,
       adapter: options.adapter,
       context: "static-serving",
-      throwOnError: false,
     });
   }
 

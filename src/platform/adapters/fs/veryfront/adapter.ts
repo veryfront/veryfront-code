@@ -173,6 +173,7 @@ function buildManifestFetcher(
 }
 
 export class VeryfrontFSAdapter implements FSAdapter {
+  readonly symlinkSemantics = "none" as const;
   readonly [VERYFRONT_FS_ADAPTER_KIND] = "single-project" as const;
   private client: VeryfrontApiClient;
   private cache: FileCache;

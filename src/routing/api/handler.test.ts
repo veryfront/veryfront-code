@@ -5,6 +5,7 @@ import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { computeHash, HTTP_OK } from "#veryfront/utils";
 import type { HandlerContext } from "#veryfront/types";
 import { __resetPoolForTests, getWorkerPool } from "#veryfront/security/sandbox/worker-pool.ts";
+import { isWorkerGenerationInScope } from "#veryfront/security/sandbox/worker-generation.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -40,7 +41,7 @@ async function withApiWorkerIsolation<T>(run: () => Promise<T>): Promise<T> {
   const previousApi = Deno.env.get("WORKER_ISOLATION_API");
   Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
   Deno.env.set("WORKER_ISOLATION_API", "1");
-  __resetPoolForTests();
+  await __resetPoolForTests();
 
   try {
     return await runWithExactSourceIntegrationPolicy(
@@ -48,7 +49,7 @@ async function withApiWorkerIsolation<T>(run: () => Promise<T>): Promise<T> {
       run,
     );
   } finally {
-    __resetPoolForTests();
+    await __resetPoolForTests();
     if (previousMaster === undefined) Deno.env.delete("WORKER_ISOLATION_ENABLED");
     else Deno.env.set("WORKER_ISOLATION_ENABLED", previousMaster);
     if (previousApi === undefined) Deno.env.delete("WORKER_ISOLATION_API");
@@ -61,7 +62,7 @@ async function withApiWorkerIsolationDisabled<T>(run: () => Promise<T>): Promise
   const previousApi = Deno.env.get("WORKER_ISOLATION_API");
   Deno.env.delete("WORKER_ISOLATION_ENABLED");
   Deno.env.delete("WORKER_ISOLATION_API");
-  __resetPoolForTests();
+  await __resetPoolForTests();
 
   try {
     return await runWithExactSourceIntegrationPolicy(
@@ -69,7 +70,7 @@ async function withApiWorkerIsolationDisabled<T>(run: () => Promise<T>): Promise
       run,
     );
   } finally {
-    __resetPoolForTests();
+    await __resetPoolForTests();
     if (previousMaster === undefined) Deno.env.delete("WORKER_ISOLATION_ENABLED");
     else Deno.env.set("WORKER_ISOLATION_ENABLED", previousMaster);
     if (previousApi === undefined) Deno.env.delete("WORKER_ISOLATION_API");
@@ -77,9 +78,9 @@ async function withApiWorkerIsolationDisabled<T>(run: () => Promise<T>): Promise
   }
 }
 
-afterEach((): void => {
+afterEach(async (): Promise<void> => {
   while (handlers.length) handlers.pop()?.destroy();
-  __resetPoolForTests();
+  await __resetPoolForTests();
   __injectDepsForTests(null);
 });
 
@@ -1252,6 +1253,49 @@ describe("APIRouteHandler", () => {
       await handler.initialize();
 
       assertExists(handler);
+    });
+
+    it("retires every framed API worker generation when its handler cache is cleared", async () => {
+      await withApiWorkerIsolation(async () => {
+        const adapter = createMockAdapter();
+        const executionScopeId = `api:test-handler-retirement:${crypto.randomUUID()}`;
+        const preparedSource = `export function GET() { return new Response("worker"); }`;
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          preparedSource,
+        );
+        __injectDepsForTests({
+          prepareHandlerModule: async () => ({
+            source: preparedSource,
+            sha256: await computeHash(preparedSource),
+          }),
+        });
+        const handler = new APIRouteHandler(
+          "/test/project",
+          adapter,
+          {} as VeryfrontConfig,
+          executionScopeId,
+        );
+        handlers.push(handler);
+        await handler.initialize();
+
+        const response = await handler.handle(
+          new Request("http://localhost/api/resource"),
+          { isLocalProject: true } as HandlerContext,
+        );
+        assertEquals(response?.status, 200);
+        assertEquals(await response?.text(), "worker");
+
+        const ownedBeforeClear = Object.keys(getWorkerPool().getStats().workers)
+          .filter((workerId) => isWorkerGenerationInScope(workerId, executionScopeId));
+        assertEquals(ownedBeforeClear.length, 1);
+
+        handler.clearCache();
+
+        const ownedAfterClear = Object.keys(getWorkerPool().getStats().workers)
+          .filter((workerId) => isWorkerGenerationInScope(workerId, executionScopeId));
+        assertEquals(ownedAfterClear, []);
+      });
     });
 
     it("should defer destruction until active requests settle", async () => {

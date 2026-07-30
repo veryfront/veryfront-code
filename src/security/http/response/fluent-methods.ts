@@ -6,7 +6,7 @@ import { applyCORSHeaders, applyCORSHeadersSync } from "../cors/index.ts";
 import { buildCacheControl } from "./cache-handler.ts";
 import { applySecurityHeaders } from "./security-handler.ts";
 import { applyCsrfCookie } from "../../csrf/helpers.ts";
-import type { CacheStrategy, CORSConfig, SecurityConfig } from "./types.ts";
+import type { CacheStrategy, SecurityConfig, SyncCORSConfig } from "./types.ts";
 
 export interface FluentMethodsContext {
   headers: Headers;
@@ -23,7 +23,7 @@ export interface FluentMethodsContext {
 export function withCORS<T extends FluentMethodsContext>(
   this: T,
   req: Request,
-  corsConfig?: boolean | CORSConfig,
+  corsConfig?: boolean | SyncCORSConfig,
 ): T {
   applyCORSHeadersSync({
     request: req,

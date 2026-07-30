@@ -124,6 +124,7 @@ const TEST_PERMISSIONS: WorkerPermissions = {
   run: false,
   ffi: false,
   sys: false,
+  import: false,
 };
 
 Deno.bench({

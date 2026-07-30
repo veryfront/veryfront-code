@@ -161,7 +161,7 @@ describe("server/handlers/response/cors", () => {
       const previousApi = Deno.env.get("WORKER_ISOLATION_API");
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const projectDir = "/virtual/cors-remote-vfs";
       const adapter = createVfsAdapter();
@@ -199,7 +199,7 @@ describe("server/handlers/response/cors", () => {
         );
       } finally {
         await resetApiHandler(projectDir);
-        __resetPoolForTests();
+        await __resetPoolForTests();
         if (previousMaster === undefined) Deno.env.delete("WORKER_ISOLATION_ENABLED");
         else Deno.env.set("WORKER_ISOLATION_ENABLED", previousMaster);
         if (previousApi === undefined) Deno.env.delete("WORKER_ISOLATION_API");

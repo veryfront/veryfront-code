@@ -57,6 +57,23 @@ function sensitiveExtensionManifests() {
         },
       ],
     },
+    {
+      sourceLocation: "extensions/ext-react-ssr/deno.json",
+      group: "extension" as const,
+      componentCount: 2,
+      components: [
+        {
+          name: "react",
+          version: "19.2.4",
+          purl: "pkg:npm/react@19.2.4",
+        },
+        {
+          name: "react-dom",
+          version: "19.2.4",
+          purl: "pkg:npm/react-dom@19.2.4",
+        },
+      ],
+    },
   ];
 }
 
@@ -293,6 +310,7 @@ describe("auditDependencyBoundaries", () => {
       "sensitive extension sandbox execution boundary is missing expected component just-bash",
       "sensitive extension native SQLite storage boundary is missing from dependency index",
       "sensitive extension document extraction boundary is missing from dependency index",
+      "sensitive extension isolated React SSR rendering boundary is missing from dependency index",
     ]);
   });
 });

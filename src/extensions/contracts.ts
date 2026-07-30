@@ -16,11 +16,14 @@ export function resolve<T>(name: string): T {
   const impl = contracts.get(name);
   if (impl === undefined) {
     const recommendation = getRecommendation(name);
+    const installCommand = recommendation === undefined
+      ? undefined
+      : `deno add npm:${recommendation}`;
     throw MISSING_EXTENSION_ERROR.create({
-      message: recommendation
-        ? `Missing extension for contract "${name}". Install it with: deno add ${recommendation}`
+      message: installCommand
+        ? `Missing extension for contract "${name}". Install it with: ${installCommand}`
         : `Missing extension for contract "${name}"`,
-      detail: recommendation ? `Install it with: deno add ${recommendation}` : undefined,
+      detail: installCommand ? `Install it with: ${installCommand}` : undefined,
     });
   }
   return impl as T;

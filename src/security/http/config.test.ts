@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { deriveSecurityContext, SecurityConfigLoader } from "./config.ts";
@@ -88,7 +88,7 @@ describe("security/http/config", () => {
     assertEquals(loader.getSecurityHeader("COEP", "require-corp"), "require-corp");
   });
 
-  it("reset clears cached security state", async () => {
+  it("does not expose a reset race after publishing security state", async () => {
     const loader = new SecurityConfigLoader(
       "/project",
       createMockAdapter(),
@@ -105,11 +105,9 @@ describe("security/http/config", () => {
     assertEquals(loader.getSecurityConfig()?.cors, true);
     assertEquals(loader.getCspUserHeader(), "default-src 'self'");
 
-    loader.reset();
-
-    assertEquals(loader.getSecurityConfig(), null);
-    assertEquals(loader.getCspUserHeader(), null);
-    assertEquals(loader.getCorsConfig(), undefined);
+    assertEquals("reset" in loader, false);
+    assertEquals(loader.getSecurityConfig()?.cors, true);
+    assertEquals(loader.getCspUserHeader(), "default-src 'self'");
   });
 
   it("defaults CSRF protection on in production when not explicitly configured", async () => {
@@ -279,14 +277,50 @@ describe("security/http/config", () => {
     assertEquals(development.securityConfig.cors, false);
   });
 
+  it("rejects hostile configuration shapes without invoking accessors", () => {
+    let configGetterCalls = 0;
+    const config = {} as Record<string, unknown>;
+    Object.defineProperty(config, "security", {
+      enumerable: true,
+      get() {
+        configGetterCalls++;
+        return { csrf: true };
+      },
+    });
+    assertThrows(() => deriveSecurityContext(config as VeryfrontConfig), TypeError);
+    assertEquals(configGetterCalls, 0);
+
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    assertThrows(
+      () => deriveSecurityContext({ security: cyclic } as VeryfrontConfig),
+      TypeError,
+    );
+
+    let optionGetterCalls = 0;
+    const options = {} as Record<string, unknown>;
+    Object.defineProperty(options, "productionDefaults", {
+      enumerable: true,
+      get() {
+        optionGetterCalls++;
+        return true;
+      },
+    });
+    assertThrows(
+      () => deriveSecurityContext(undefined, options as never),
+      TypeError,
+    );
+    assertEquals(optionGetterCalls, 0);
+  });
+
   it("rejects a failed load for the current caller and retries on the next call", async () => {
     let shouldFail = true;
     const config = new Proxy(
       { security: { csrf: true } },
       {
-        get(target, property, receiver) {
-          if (shouldFail) throw new Error("config load failed");
-          return Reflect.get(target, property, receiver);
+        getOwnPropertyDescriptor(target, property) {
+          if (property === "security" && shouldFail) throw new Error("config load failed");
+          return Reflect.getOwnPropertyDescriptor(target, property);
         },
       },
     );
@@ -294,8 +328,8 @@ describe("security/http/config", () => {
 
     await assertRejects(
       () => loader.ensureLoaded(),
-      Error,
-      "config load failed",
+      TypeError,
+      "Invalid security configuration",
     );
     assertEquals(loader.getSecurityConfig(), null);
 

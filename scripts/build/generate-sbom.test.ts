@@ -170,6 +170,31 @@ describe("componentsFromLock", () => {
     ]);
   });
 
+  it("inventories React code bundled into the isolated SSR extension", () => {
+    const components = componentsForManifestBoundary(
+      JSON.stringify({ version: "5", specifiers: {}, npm: {} }),
+      "extensions/ext-react-ssr/deno.json",
+      {
+        manifestImportsByPath: {
+          "extensions/ext-react-ssr/deno.json": {
+            react: "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3",
+            "react-dom/server":
+              "https://esm.sh/react-dom@19.2.4/server?external=react&target=es2022&deps=csstype@3.2.3",
+          },
+        },
+      },
+    );
+
+    assertEquals(
+      components.map(({ name, version }) => ({ name, version })),
+      [
+        { name: "csstype", version: "3.2.3" },
+        { name: "react", version: "19.2.4" },
+        { name: "react-dom", version: "19.2.4" },
+      ],
+    );
+  });
+
   it("emits npm package components from esm.sh import aliases", () => {
     const components = componentsFromEsmShImports({
       "@types/react": "https://esm.sh/@types/react@19.2.14?deps=csstype@3.2.3",

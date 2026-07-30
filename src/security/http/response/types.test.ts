@@ -20,18 +20,18 @@ Deno.test("response CORSConfig preserves async origin-validator source compatibi
   );
 });
 
-Deno.test("existing public synchronous CORS helper signatures remain source compatible", () => {
+Deno.test("synchronous CORS helper signatures reject async origin validators", () => {
   type SyncHeaderConfig = NonNullable<
     Parameters<typeof applyCORSHeadersSync>[0]["config"]
   >;
   type SyncValidationConfig = NonNullable<Parameters<typeof validateOriginSync>[1]>;
 
   const headerAcceptsAsync: { origin: () => Promise<boolean> } extends SyncHeaderConfig ? true
-    : false = true;
+    : false = false;
   const validatorAcceptsAsync: { origin: () => Promise<boolean> } extends SyncValidationConfig
     ? true
-    : false = true;
+    : false = false;
 
-  assertEquals(headerAcceptsAsync, true);
-  assertEquals(validatorAcceptsAsync, true);
+  assertEquals(headerAcceptsAsync, false);
+  assertEquals(validatorAcceptsAsync, false);
 });

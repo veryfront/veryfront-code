@@ -17,7 +17,7 @@ import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { tryNotFoundFallback } from "../request/ssr/not-found-fallback.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
-import { validatePathSync } from "#veryfront/security";
+import { validatePath } from "#veryfront/security";
 import { getRequestTokenProvenance } from "../../context/request-context.ts";
 
 const logger = serverLogger.component("markdown-preview-handler");
@@ -48,14 +48,18 @@ export class MarkdownPreviewHandler extends BaseHandler {
 
     const filePath = pathname.replace(/^\//, "");
 
-    const pathResult = validatePathSync(filePath, {
+    const pathResult = await validatePath(filePath, {
       baseDir: ctx.projectDir,
+      adapter: ctx.adapter,
+      level: "strict",
+      allowAbsolute: false,
     });
 
-    if (!pathResult.valid) {
+    if (!pathResult.valid || !pathResult.canonicalPath) {
       logger.warn("Path traversal blocked in markdown preview", { pathname, filePath });
       return this.continue();
     }
+    const admittedPath = pathResult.canonicalPath;
 
     const fsAdapter = ctx.adapter.fs;
 
@@ -77,7 +81,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
       return await fsAdapter.runWithContext(
         ctx.projectSlug,
         effectiveToken,
-        () => this.renderMarkdown(req, ctx, filePath, url),
+        () => this.renderMarkdown(req, ctx, filePath, admittedPath, url),
         ctx.projectId,
         {
           productionMode: false,
@@ -98,32 +102,52 @@ export class MarkdownPreviewHandler extends BaseHandler {
       }
     }
 
-    return await this.renderMarkdown(req, ctx, filePath, url);
+    return await this.renderMarkdown(req, ctx, filePath, admittedPath, url);
   }
 
   private async renderMarkdown(
     req: Request,
     ctx: HandlerContext,
-    filePath: string,
+    requestedPath: string,
+    admittedPath: string,
     url: URL,
   ): Promise<HandlerResult> {
     try {
       const resolveFile = ctx.adapter.fs.resolveFile;
-      const resolvedPath = resolveFile ? await resolveFile.call(ctx.adapter.fs, filePath) : null;
+      const resolvedPath = resolveFile
+        ? await resolveFile.call(ctx.adapter.fs, admittedPath)
+        : null;
 
       if (resolveFile) {
-        logger.debug("resolveFile result", { filePath, resolvedPath });
+        logger.debug("resolveFile result", { filePath: requestedPath, resolvedPath });
+      }
+
+      let readPath = admittedPath;
+      if (resolvedPath !== null) {
+        const resolvedValidation = await validatePath(resolvedPath, {
+          baseDir: ctx.projectDir,
+          adapter: ctx.adapter,
+          level: "strict",
+          allowAbsolute: true,
+        });
+        if (!resolvedValidation.valid || !resolvedValidation.canonicalPath) {
+          logger.warn("Resolved markdown path escaped the project", {
+            filePath: requestedPath,
+          });
+          return this.continue();
+        }
+        readPath = resolvedValidation.canonicalPath;
       }
 
       let content: string;
       try {
-        content = await ctx.adapter.fs.readFile(resolvedPath ?? filePath);
+        content = await ctx.adapter.fs.readFile(readPath);
       } catch (_) {
         /* expected: markdown file may not exist */
-        logger.debug("File not found", { filePath, resolvedPath });
+        logger.debug("File not found", { filePath: requestedPath, resolvedPath });
 
         const builder = this.createResponseBuilder(ctx);
-        const notFoundResponse = await tryNotFoundFallback(req, filePath, ctx, builder);
+        const notFoundResponse = await tryNotFoundFallback(req, requestedPath, ctx, builder);
         if (notFoundResponse) return this.respond(notFoundResponse);
 
         return this.continue();
@@ -141,7 +165,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
       }
 
       if (frontmatter.prose === false) {
-        logger.debug("Skipping - prose: false", { filePath });
+        logger.debug("Skipping - prose: false", { filePath: requestedPath });
         return this.continue();
       }
 
@@ -150,19 +174,19 @@ export class MarkdownPreviewHandler extends BaseHandler {
         ctx.projectDir,
         body,
         frontmatter,
-        filePath,
+        readPath,
         "server",
       );
 
       const responseBuilder = this.createResponseBuilder(ctx);
       const html = generateMarkdownHtml({
         rawHtml: bundle.rawHtml || "",
-        title: frontmatter.title != null ? String(frontmatter.title) : filePath,
+        title: frontmatter.title != null ? String(frontmatter.title) : requestedPath,
         description: frontmatter.description != null ? String(frontmatter.description) : "",
         request: req,
         url,
         projectId: ctx.projectSlug || ctx.projectId || "markdown-preview",
-        filePath,
+        filePath: requestedPath,
         nonce: responseBuilder.nonce,
       });
 
@@ -172,14 +196,14 @@ export class MarkdownPreviewHandler extends BaseHandler {
       const response = responseBuilder.withContentType("text/html; charset=utf-8", html, HTTP_OK);
 
       logger.debug("Serving markdown preview", {
-        filePath,
+        filePath: requestedPath,
         htmlLength: html.length,
       });
 
       return this.respond(response);
     } catch (error) {
       logger.error("Error rendering markdown", {
-        filePath,
+        filePath: requestedPath,
         error: error instanceof Error ? error.message : String(error),
       });
       return this.continue();

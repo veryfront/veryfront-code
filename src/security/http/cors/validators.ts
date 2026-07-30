@@ -1,4 +1,4 @@
-import type { CORSConfig, CORSValidationResult } from "./types.ts";
+import type { CORSConfig, CORSValidationResult, SyncCORSConfig } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { recordCorsRejection } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -404,15 +404,10 @@ export function validateOrigin(
   );
 }
 
-/**
- * Synchronous origin validation.
- *
- * The broad CORSConfig parameter is retained for source compatibility.
- * Promise-returning validators are detected and denied at runtime.
- */
+/** Synchronous origin validation. Promise-returning values still fail closed at runtime. */
 export function validateOriginSync(
   requestOrigin: unknown,
-  config?: boolean | CORSConfig,
+  config?: boolean | SyncCORSConfig,
 ): CORSValidationResult {
   const normalized = normalizeCORSConfig(config);
   if (!normalized.valid) return denyCors(normalized.error);

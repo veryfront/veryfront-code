@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
@@ -10,7 +10,7 @@ import {
   type LogEntry,
   refreshLoggerConfig,
 } from "#veryfront/utils/logger/index.ts";
-import { loadSecurityConfig } from "../http/middleware/config-loader.ts";
+import { SecurityConfigLoader } from "../http/config.ts";
 
 const testSuite = isDeno ? describe : describe.skip;
 
@@ -126,10 +126,15 @@ testSuite("security worker telemetry redaction", () => {
       __registerLogRecordEmitter((entry) => entries.push(entry));
       console.debug = () => {};
 
-      assertEquals(await loadSecurityConfig(projectDir, adapter), null);
+      const loader = new SecurityConfigLoader(projectDir, adapter);
+      await assertRejects(
+        () => loader.ensureLoaded(),
+        Error,
+        tenantMarker,
+      );
 
       const diagnostic = entries.find(
-        (entry) => entry.message === "Failed to load security config",
+        (entry) => entry.message === "Failed to load security config; will retry on next request",
       );
       assertExists(diagnostic);
       const serialized = JSON.stringify(diagnostic);

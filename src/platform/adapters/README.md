@@ -208,21 +208,6 @@ const content = await readTextFile("./file.txt");
 await writeTextFile("./output.txt", "Hello");
 ```
 
-## Security Adapters
-
-Security utilities for secure operations:
-
-```ts
-import { requestPermission, runInWorker } from "#veryfront/platform/adapters/security/index.ts";
-
-const permission = await requestPermission({ name: "read", path: "./src" });
-if (permission.state !== "granted") {
-  throw new Error("Read permission is required");
-}
-
-const result = await runInWorker("return 'hello'.toUpperCase();");
-```
-
 ## Remote Filesystem (Veryfront API)
 
 Access project files via Veryfront API:

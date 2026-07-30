@@ -1,5 +1,5 @@
 import { CONTENT_TYPES } from "./constants.ts";
-import type { CacheStrategy, CORSConfig, SecurityConfig } from "./types.ts";
+import type { CacheStrategy, SecurityConfig, SyncCORSConfig } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { DEFAULT_MAX_AGE, getDefaultCORSMethods } from "../cors/constants.ts";
@@ -18,7 +18,7 @@ type ResponseBuilderConstructor = new (config?: {
 interface ResponseBuilderInstance {
   headers: Headers;
   status: number;
-  withCORS(req: Request, corsConfig?: boolean | CORSConfig): ResponseBuilderInstance;
+  withCORS(req: Request, corsConfig?: boolean | SyncCORSConfig): ResponseBuilderInstance;
   withSecurity(config?: SecurityConfig, req?: Request): ResponseBuilderInstance;
   withCache(strategy: CacheStrategy): ResponseBuilderInstance;
   withETag(etag: string): ResponseBuilderInstance;
@@ -41,7 +41,7 @@ function createBuilder(
   req: Request,
   config?: {
     securityConfig?: SecurityConfig | null;
-    corsConfig?: boolean | CORSConfig;
+    corsConfig?: boolean | SyncCORSConfig;
     isDev?: boolean;
     cspUserHeader?: string | null;
     adapter?: RuntimeAdapter;
@@ -79,7 +79,7 @@ export function error(
   req: Request,
   config?: {
     securityConfig?: SecurityConfig | null;
-    corsConfig?: boolean | CORSConfig;
+    corsConfig?: boolean | SyncCORSConfig;
     contentType?: string;
   },
 ): Response {
@@ -98,7 +98,7 @@ export function json(
   config?: {
     status?: number;
     securityConfig?: SecurityConfig | null;
-    corsConfig?: boolean | CORSConfig;
+    corsConfig?: boolean | SyncCORSConfig;
     cache?: CacheStrategy;
     etag?: string;
   },
@@ -112,7 +112,7 @@ export function html(
   config?: {
     status?: number;
     securityConfig?: SecurityConfig | null;
-    corsConfig?: boolean | CORSConfig;
+    corsConfig?: boolean | SyncCORSConfig;
     cache?: CacheStrategy;
     etag?: string;
   },
@@ -126,7 +126,7 @@ export function preflight(
     allowMethods?: string | string[];
     allowHeaders?: string | string[];
     securityConfig?: SecurityConfig | null;
-    corsConfig?: boolean | CORSConfig;
+    corsConfig?: boolean | SyncCORSConfig;
     isDev?: boolean;
     cspUserHeader?: string | null;
     adapter?: RuntimeAdapter;
@@ -135,10 +135,7 @@ export function preflight(
 ): Response {
   const effectiveCorsConfig = config?.corsConfig ?? config?.securityConfig?.cors;
   const normalizedCorsConfig = normalizeCORSConfig(effectiveCorsConfig);
-  const builder = createBuilder(req, {
-    ...config,
-    corsConfig: normalizedCorsConfig.valid ? normalizedCorsConfig.config : false,
-  });
+  const builder = createBuilder(req, config);
 
   const runtimeMethods = config?.allowMethods ?? getDefaultCORSMethods().join(", ");
   const normalizedRuntimeMethods = normalizeCORSPreflightList(runtimeMethods);
@@ -192,7 +189,7 @@ export function stream(
   config?: {
     contentType?: string;
     securityConfig?: SecurityConfig | null;
-    corsConfig?: boolean | CORSConfig;
+    corsConfig?: boolean | SyncCORSConfig;
     cache?: CacheStrategy;
   },
 ): Response {

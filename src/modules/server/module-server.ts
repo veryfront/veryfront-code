@@ -251,6 +251,7 @@ export interface ModuleServerOptions {
   /**
    * Restrict module imports to specific directories (opt-in security).
    * When not set, users can import from any directory in the project.
+   * An explicit empty array denies every project directory.
    */
   allowedImportDirs?: string[];
   /** React version for transforms (from project config) */
@@ -346,7 +347,6 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         adapter,
         context: "module-loading",
         contextOptions: { allowedImportDirs },
-        throwOnError: false,
         onSecurityEvent: (event) => {
           if (event.type !== "validation-failed") return;
           logger.warn("Security validation failed", {

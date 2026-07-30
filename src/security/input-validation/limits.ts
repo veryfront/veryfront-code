@@ -6,6 +6,14 @@ const BODY_COALESCE_BLOCK_BYTES = 64 * 1024;
 const BODY_READ_YIELD_CHUNKS = 256;
 const MAX_CONSECUTIVE_EMPTY_BODY_CHUNKS = 4_096;
 const textEncoder = new TextEncoder();
+const fatalUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const REQUEST_LIMIT_KEYS = new Set([
+  "maxBodySize",
+  "maxUrlLength",
+  "maxHeaderSize",
+  "maxFileSize",
+]);
+const READ_BODY_OPTION_KEYS = new Set(["signal"]);
 
 export interface ReadBodyLimitOptions {
   /** Abort the read and cancel the underlying stream when the caller deadline expires. */
@@ -23,26 +31,68 @@ function requireByteLimit(name: string, value: unknown): number {
   return value;
 }
 
+function snapshotOwnOptions(
+  value: unknown,
+  label: string,
+  allowedKeys: ReadonlySet<string>,
+): Readonly<Record<string, unknown>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${label} must be a plain object`);
+  }
+  let prototype: object | null;
+  let keys: Array<string | symbol>;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    keys = Reflect.ownKeys(value);
+  } catch {
+    throw new TypeError(`${label} could not be inspected safely`);
+  }
+  if (prototype !== null && prototype !== Object.prototype) {
+    throw new TypeError(`${label} must be a plain object`);
+  }
+
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) {
+    if (typeof key !== "string" || !allowedKeys.has(key)) {
+      throw new TypeError(
+        `${label} contains an unsupported ${typeof key === "string" ? `option: ${key}` : "symbol"}`,
+      );
+    }
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new TypeError(`${label}.${key} could not be inspected safely`);
+    }
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError(`${label}.${key} must be an own data property`);
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return Object.freeze(snapshot);
+}
+
 /** Resolve and validate every request-boundary limit before it is used. */
 export function resolveRequestLimits(
   limits: RequestLimits = {},
 ): Required<RequestLimits> {
+  const snapshot = snapshotOwnOptions(limits, "Request limits", REQUEST_LIMIT_KEYS);
   return {
     maxBodySize: requireByteLimit(
       "Request body size limit",
-      limits.maxBodySize === undefined ? DEFAULT_LIMITS.maxBodySize : limits.maxBodySize,
+      snapshot.maxBodySize === undefined ? DEFAULT_LIMITS.maxBodySize : snapshot.maxBodySize,
     ),
     maxUrlLength: requireByteLimit(
       "Request URL size limit",
-      limits.maxUrlLength === undefined ? DEFAULT_LIMITS.maxUrlLength : limits.maxUrlLength,
+      snapshot.maxUrlLength === undefined ? DEFAULT_LIMITS.maxUrlLength : snapshot.maxUrlLength,
     ),
     maxHeaderSize: requireByteLimit(
       "Request header size limit",
-      limits.maxHeaderSize === undefined ? DEFAULT_LIMITS.maxHeaderSize : limits.maxHeaderSize,
+      snapshot.maxHeaderSize === undefined ? DEFAULT_LIMITS.maxHeaderSize : snapshot.maxHeaderSize,
     ),
     maxFileSize: requireByteLimit(
       "Request file size limit",
-      limits.maxFileSize === undefined ? DEFAULT_LIMITS.maxFileSize : limits.maxFileSize,
+      snapshot.maxFileSize === undefined ? DEFAULT_LIMITS.maxFileSize : snapshot.maxFileSize,
     ),
   };
 }
@@ -181,7 +231,7 @@ export async function readBodyWithLimit(
   maxSize: number = DEFAULT_LIMITS.maxBodySize,
 ): Promise<string> {
   const bytes = await readBodyBytesWithLimit(request, maxSize);
-  return new TextDecoder().decode(bytes);
+  return fatalUtf8Decoder.decode(bytes);
 }
 
 /**
@@ -197,6 +247,14 @@ export async function readBodyBytesWithLimit(
   maxSize: number = DEFAULT_LIMITS.maxBodySize,
   options: ReadBodyLimitOptions = {},
 ): Promise<Uint8Array> {
+  const optionSnapshot = snapshotOwnOptions(
+    options,
+    "Request body read options",
+    READ_BODY_OPTION_KEYS,
+  );
+  if (optionSnapshot.signal !== undefined && !(optionSnapshot.signal instanceof AbortSignal)) {
+    throw new TypeError("Request body read options.signal must be an AbortSignal");
+  }
   requireByteLimit("Request body size limit", maxSize);
   if (request.bodyUsed) {
     throw createValidationError("Request body has already been consumed");
@@ -229,8 +287,9 @@ export async function readBodyBytesWithLimit(
   let chunksSinceYield = 0;
   let consecutiveEmptyChunks = 0;
   let abortReason: unknown;
-  const signal = options.signal && options.signal !== request.signal
-    ? AbortSignal.any([request.signal, options.signal])
+  const optionSignal = optionSnapshot.signal as AbortSignal | undefined;
+  const signal = optionSignal && optionSignal !== request.signal
+    ? AbortSignal.any([request.signal, optionSignal])
     : request.signal;
   const abort = (): void => {
     abortReason = signal?.reason ?? new DOMException("The operation was aborted", "AbortError");

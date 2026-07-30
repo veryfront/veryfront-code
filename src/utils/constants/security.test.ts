@@ -1,14 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { FORBIDDEN_PATH_PATTERNS, SCANNER_PATH_PATTERN } from "./security.ts";
+import { SCANNER_PATH_PATTERN } from "./security.ts";
 
 describe("constants/security", () => {
-  it("preserves the mutable public forbidden-pattern array contract", () => {
-    const mutablePatterns: RegExp[] = FORBIDDEN_PATH_PATTERNS;
-    assertEquals(Object.isFrozen(mutablePatterns), false);
-  });
-
   describe("SCANNER_PATH_PATTERN", () => {
     it("matches common scanner probe paths", () => {
       assertEquals(SCANNER_PATH_PATTERN.test("/wp-admin"), true);

@@ -519,7 +519,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          deno task build:npm
+          VERYFRONT_NPM_VERSION="${VERSION}" deno task build:npm
           scripts/ci/publish-npm-packages.sh rc-publish
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -680,7 +680,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          deno task build:npm
+          VERYFRONT_NPM_VERSION="${VERSION}" deno task build:npm
           scripts/ci/publish-npm-packages.sh release-publish
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8

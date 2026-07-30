@@ -823,16 +823,24 @@ export async function resolveAdapterReadPath(
   projectDir: string,
 ): Promise<string> {
   if (typeof adapter.fs.realPath !== "function") {
-    if (typeof adapter.fs.lstat === "function") {
-      throw toError(
-        createError({
-          type: "api",
-          message:
-            "[API] cannot safely load local modules: adapter.fs.realPath is required when symlinks are supported",
-        }),
-      );
+    const symlinkSemantics = Object.getOwnPropertyDescriptor(
+      adapter.fs,
+      "symlinkSemantics",
+    );
+    if (
+      symlinkSemantics !== undefined &&
+      "value" in symlinkSemantics &&
+      symlinkSemantics.value === "none"
+    ) {
+      return filePath;
     }
-    return filePath;
+    throw toError(
+      createError({
+        type: "api",
+        message:
+          "[API] cannot safely load modules: adapter.fs.realPath is required unless the filesystem explicitly declares symlink-free storage",
+      }),
+    );
   }
 
   const validation = await validatePath(filePath, {

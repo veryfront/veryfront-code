@@ -66,6 +66,33 @@ describe("src/skill/path-safety", () => {
       }
     });
 
+    it("allows root files while an empty allowlist still rejects subdirectories", async () => {
+      const root = "/project/skills/test";
+      const adapter = createSkillTestAdapter({
+        [`${root}/SKILL.md`]: "# Test skill",
+        [`${root}/references/guide.md`]: "Guide",
+      });
+
+      assertEquals(
+        await validateSkillPath(root, "SKILL.md", [], adapter),
+        `${root}/SKILL.md`,
+      );
+      assertEquals(
+        await validateStrictSkillPath(root, "SKILL.md", [], adapter),
+        `${root}/SKILL.md`,
+      );
+      await assertRejects(
+        () => validateSkillPath(root, "references/guide.md", [], adapter),
+        Error,
+        "allowlist is empty",
+      );
+      await assertRejects(
+        () => validateStrictSkillPath(root, "references/guide.md", [], adapter),
+        Error,
+        "allowlist is empty",
+      );
+    });
+
     it("requires an absolute root while preserving the public allowed-directory contract", async () => {
       await assertRejects(
         () => validateSkillPath("relative/skill", "references/guide.md", ["references"]),

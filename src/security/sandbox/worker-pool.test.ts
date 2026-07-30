@@ -26,13 +26,10 @@ import type {
   WorkerRequest,
   WorkerResponse,
 } from "./worker-types.ts";
-import {
-  DEFAULT_MAX_ACTIVE_REQUESTS_PER_WORKER,
-  DEFAULT_WORKER_POOL_CONFIG,
-  MAX_WORKER_BODY_BYTES,
-} from "./worker-types.ts";
+import { DEFAULT_WORKER_POOL_CONFIG, MAX_WORKER_BODY_BYTES } from "./worker-types.ts";
 import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
 import { resolveWorkerGeneration, snapshotWorkerGenerationIdentity } from "./worker-generation.ts";
+import { fromFileUrl } from "#veryfront/compat/path";
 
 // Worker isolation only works in Deno (requires Deno Worker permissions API)
 const testSuite = isDeno ? describe : describe.skip;
@@ -41,10 +38,20 @@ const TEST_PREPARED_MODULE = {
   source: "export function GET() { return new Response('ok'); }",
   sha256: "0".repeat(64),
 } as const;
+const TEST_ISOLATED_SSR_RENDERER_PROVIDER = Object.freeze({
+  moduleUrl: new URL(
+    "../../../extensions/ext-react-ssr/src/worker-renderer.ts",
+    import.meta.url,
+  ).href,
+  readRootUrls: Object.freeze([
+    new URL("../../../extensions/ext-react-ssr/src/", import.meta.url).href,
+  ]),
+});
 
 interface ControlledWorkerBehavior {
   completeStreamsSynchronously?: boolean;
   notifyIdleOnSubscription?: boolean;
+  shutdownCompletion?: Promise<void>;
 }
 
 function deferred<T>(): {
@@ -102,6 +109,8 @@ function makeSSRRequest(
 class ControlledWorker {
   readonly projectId: string;
   readonly allowInternalEgress: boolean | undefined;
+  readonly permissions: ProjectWorkerOptions["permissions"];
+  readonly isolatedSsrRendererModuleUrl: string | undefined;
   status: "idle" | "busy" | "crashed" | "terminated" = "idle";
   requestCount = 0;
   terminateCalls = 0;
@@ -114,6 +123,7 @@ class ControlledWorker {
   private streams = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
   private idleListeners = new Set<() => void>();
   private readonly behavior: ControlledWorkerBehavior;
+  private shutdownPromise: Promise<void> | null = null;
 
   constructor(
     options: ProjectWorkerOptions,
@@ -121,6 +131,8 @@ class ControlledWorker {
   ) {
     this.projectId = options.projectId;
     this.allowInternalEgress = options.allowInternalEgress;
+    this.permissions = options.permissions;
+    this.isolatedSsrRendererModuleUrl = options.isolatedSsrRendererModuleUrl;
     this.behavior = behavior;
   }
 
@@ -236,6 +248,12 @@ class ControlledWorker {
   }
 
   terminate(): void {
+    void this.shutdown();
+  }
+
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    this.shutdownPromise = this.behavior.shutdownCompletion ?? Promise.resolve();
     this.terminateCalls++;
     this.status = "terminated";
     for (const [, pending] of this.pending) {
@@ -247,6 +265,7 @@ class ControlledWorker {
     }
     this.streams.clear();
     this.notifyIdle();
+    return this.shutdownPromise;
   }
 
   private updateIdle(): void {
@@ -264,7 +283,10 @@ class ControlledWorker {
 function createControlledPool(
   config: Partial<WorkerPoolConfig> = {},
   behavior: ControlledWorkerBehavior = {},
-  dependencies: Pick<WorkerPoolDependencies, "getHeapUsedPercent"> = {},
+  dependencies: Pick<
+    WorkerPoolDependencies,
+    "getHeapUsedPercent" | "resolveIsolatedSsrRendererProvider"
+  > = {},
 ): {
   pool: WorkerPool;
   workers: Map<string, ControlledWorker[]>;
@@ -281,6 +303,7 @@ function createControlledPool(
       ...config,
     },
     {
+      resolveIsolatedSsrRendererProvider: () => TEST_ISOLATED_SSR_RENDERER_PROVIDER,
       ...dependencies,
       createWorker(options) {
         const worker = new ControlledWorker(options, behavior);
@@ -334,8 +357,8 @@ testSuite("WorkerPool", () => {
     });
   });
 
-  afterEach(() => {
-    pool.shutdown();
+  afterEach(async () => {
+    await pool.shutdown();
   });
 
   it("creates a worker for a new project", () => {
@@ -347,11 +370,11 @@ testSuite("WorkerPool", () => {
     assertEquals(stats.poolSize, 1);
   });
 
-  it("passes the resolved internal-egress decision to every worker", () => {
+  it("passes the resolved internal-egress decision to every worker", async () => {
     const controlled = createControlledPool(
       { allowInternalEgress: true } as Partial<WorkerPoolConfig>,
     );
-    pool.shutdown();
+    await pool.shutdown();
     pool = controlled.pool;
 
     const worker = pool.getOrCreateWorker("internal-egress-project", []);
@@ -359,6 +382,82 @@ testSuite("WorkerPool", () => {
       (worker as unknown as ControlledWorker).allowInternalEgress,
       true,
     );
+  });
+
+  it("does not resolve the isolated SSR provider for API admission", async () => {
+    let resolverCalls = 0;
+    const controlled = createControlledPool({}, {}, {
+      resolveIsolatedSsrRendererProvider: () => {
+        resolverCalls++;
+        throw new Error("API admission must not resolve the SSR extension");
+      },
+    });
+    await pool.shutdown();
+    pool = controlled.pool;
+
+    const pending = pool.execute("api-only", ["/tmp"], makeRequest("api-request"));
+    const worker = latestWorker(controlled.workers, "api-only");
+    worker.complete("api-request");
+    assertEquals((await pending).type, "result");
+    assertEquals(resolverCalls, 0);
+    assertEquals(worker.isolatedSsrRendererModuleUrl, undefined);
+  });
+
+  it("rejects malformed isolated SSR provider accessors without executing them", async () => {
+    let getterCalls = 0;
+    const malformedProvider = Object.defineProperties({}, {
+      moduleUrl: {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return TEST_ISOLATED_SSR_RENDERER_PROVIDER.moduleUrl;
+        },
+      },
+      readRootUrls: {
+        enumerable: true,
+        value: TEST_ISOLATED_SSR_RENDERER_PROVIDER.readRootUrls,
+      },
+    });
+    const controlled = createControlledPool({}, {}, {
+      resolveIsolatedSsrRendererProvider: () => malformedProvider,
+    });
+    await pool.shutdown();
+    pool = controlled.pool;
+
+    assertThrows(
+      () => pool.executeStream("ssr-malformed", ["/tmp"], makeSSRRequest("ssr-request")),
+      TypeError,
+      "moduleUrl must be a data property",
+    );
+    assertEquals(getterCalls, 0);
+    assertEquals(pool.getStats().poolSize, 0);
+  });
+
+  it("adds canonical extension read roots and module URL only to SSR workers", async () => {
+    const controlled = createControlledPool();
+    await pool.shutdown();
+    pool = controlled.pool;
+
+    const stream = pool.executeStream(
+      "ssr-permissions",
+      ["/tmp"],
+      makeSSRRequest("ssr-permissions-request"),
+    );
+    const worker = latestWorker(controlled.workers, "ssr-permissions");
+    const readPermissions = worker.permissions.read;
+    assert(Array.isArray(readPermissions));
+    assert(
+      TEST_ISOLATED_SSR_RENDERER_PROVIDER.readRootUrls.every((rootUrl) =>
+        readPermissions.includes(Deno.realPathSync(fromFileUrl(rootUrl)))
+      ),
+    );
+    assertEquals(
+      worker.isolatedSsrRendererModuleUrl,
+      TEST_ISOLATED_SSR_RENDERER_PROVIDER.moduleUrl,
+    );
+
+    worker.completeStream("ssr-permissions-request");
+    await new Response(stream).arrayBuffer();
   });
 
   it("returns the same worker for the same project", () => {
@@ -417,14 +516,31 @@ testSuite("WorkerPool", () => {
     assertEquals(stats.workers["project-a"].hasPending, false);
   });
 
-  it("shutdown terminates all workers", () => {
+  it("shutdown is single-flight and waits for every worker to quiesce", async () => {
+    const gate = deferred<void>();
+    const controlled = createControlledPool({}, { shutdownCompletion: gate.promise });
+    await pool.shutdown();
+    pool = controlled.pool;
     pool.getOrCreateWorker("project-a", []);
     pool.getOrCreateWorker("project-b", []);
 
-    pool.shutdown();
+    const first = pool.shutdown();
+    const second = pool.shutdown();
+    assert(first === second);
+    assertEquals(pool.getStats().poolSize, 0);
+    assertEquals(latestWorker(controlled.workers, "project-a").terminateCalls, 1);
+    assertEquals(latestWorker(controlled.workers, "project-b").terminateCalls, 1);
 
-    const stats = pool.getStats();
-    assertEquals(stats.poolSize, 0);
+    let settled = false;
+    void first.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    assertEquals(settled, false);
+
+    gate.resolve();
+    await first;
+    assertEquals(settled, true);
   });
 
   it("rejects execute when modulePath is outside allowed read paths", async () => {
@@ -496,8 +612,8 @@ testSuite("WorkerPool - RFC 9457 error metadata", () => {
     });
   });
 
-  afterEach(() => {
-    pool.shutdown();
+  afterEach(async () => {
+    await pool.shutdown();
   });
 
   it("execute-app-route request includes projectDir", () => {
@@ -517,8 +633,8 @@ testSuite("WorkerPool - RFC 9457 error metadata", () => {
 testSuite("WorkerPool - bounded admission and retirement", () => {
   let pool: WorkerPool;
 
-  afterEach(() => {
-    pool?.shutdown();
+  afterEach(async () => {
+    await pool?.shutdown();
   });
 
   it("rejects same-worker requests at the active ceiling and admits after settlement", async () => {
@@ -551,9 +667,7 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
   });
 
   it("releases same-worker capacity after the worker request rejects", async () => {
-    const controlled = createControlledPool({
-      maxActiveRequestsPerWorker: 1,
-    });
+    const controlled = createControlledPool();
     pool = controlled.pool;
 
     const failed = pool.execute("scope-a", ["/tmp"], makeRequest("a-1"));
@@ -573,20 +687,13 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     assertEquals(pool.getStats().workers["scope-a"]?.activeRequests, 0);
   });
 
-  it("shares the active ceiling with streams until worker protocol settlement", async () => {
-    const controlled = createControlledPool({
-      maxActiveRequestsPerWorker: 1,
-    });
+  it("holds the active ceiling for streams until worker protocol settlement", async () => {
+    const controlled = createControlledPool();
     pool = controlled.pool;
 
     const stream = pool.executeStream("scope-a", ["/tmp"], makeSSRRequest("stream-a"));
     const workerA = latestWorker(controlled.workers, "scope-a");
 
-    await assertRejects(
-      () => pool.execute("scope-a", ["/tmp"], makeRequest("a-1")),
-      VeryfrontError,
-      "active request capacity reached",
-    );
     assertThrows(
       () => pool.executeStream("scope-a", ["/tmp"], makeSSRRequest("stream-b")),
       VeryfrontError,
@@ -596,53 +703,43 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     workerA.completeStream("stream-a", [new Uint8Array([4, 2])]);
     assertEquals(pool.getStats().workers["scope-a"]?.activeRequests, 0);
 
-    const admitted = pool.execute("scope-a", ["/tmp"], makeRequest("a-1"));
-    workerA.complete("a-1");
-    await admitted;
+    const admitted = pool.executeStream(
+      "scope-a",
+      ["/tmp"],
+      makeSSRRequest("stream-b"),
+    );
+    assertEquals(latestWorker(controlled.workers, "scope-a"), workerA);
+    workerA.completeStream("stream-b");
+    await new Response(admitted).arrayBuffer();
     assertEquals(
       new Uint8Array(await new Response(stream).arrayBuffer()),
       new Uint8Array([4, 2]),
     );
   });
 
-  it("validates an explicitly configured active request ceiling", () => {
-    for (
-      const invalid of [
-        0,
-        -1,
-        1.5,
-        Number.NaN,
-        Number.POSITIVE_INFINITY,
-        null as unknown as number,
-      ]
-    ) {
-      assertThrows(
-        () => new WorkerPool({ maxActiveRequestsPerWorker: invalid }),
-        TypeError,
-        "positive safe integer",
-      );
-    }
-
-    const compatible = new WorkerPool({
-      ...DEFAULT_WORKER_POOL_CONFIG,
-      maxActiveRequestsPerWorker: undefined,
+  it("replaces an idle SSR-capable generation before API admission", async () => {
+    let rendererResolverCalls = 0;
+    const controlled = createControlledPool({}, {}, {
+      resolveIsolatedSsrRendererProvider: () => {
+        rendererResolverCalls++;
+        return TEST_ISOLATED_SSR_RENDERER_PROVIDER;
+      },
     });
-    try {
-      assertEquals(
-        compatible.getStats().maxActiveRequestsPerWorker,
-        DEFAULT_MAX_ACTIVE_REQUESTS_PER_WORKER,
-      );
-    } finally {
-      compatible.shutdown();
-    }
-  });
+    pool = controlled.pool;
 
-  it("rejects an active ceiling above serialized worker capacity", () => {
-    assertThrows(
-      () => new WorkerPool({ maxActiveRequestsPerWorker: 2 }),
-      TypeError,
-      "must be exactly 1",
-    );
+    const stream = pool.executeStream("scope-a", ["/tmp"], makeSSRRequest("stream-a"));
+    const rendererWorker = latestWorker(controlled.workers, "scope-a");
+    rendererWorker.completeStream("stream-a");
+    await new Response(stream).arrayBuffer();
+
+    const api = pool.execute("scope-a", ["/tmp"], makeRequest("api-a"));
+    const apiWorker = latestWorker(controlled.workers, "scope-a");
+    assert(apiWorker !== rendererWorker);
+    assertEquals(rendererWorker.terminateCalls, 1);
+    assertEquals(apiWorker.isolatedSsrRendererModuleUrl, undefined);
+    assertEquals(rendererResolverCalls, 1);
+    apiWorker.complete("api-a");
+    await api;
   });
 
   it("validates every direct pool resource and timer boundary", () => {
@@ -653,7 +750,6 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
       { healthCheckIntervalMs: 0 },
       { maxRequestsPerWorker: 0 },
       { maxWorkerAgeMs: -1 },
-      { memoryBudgetMb: 0 },
     ];
 
     for (const config of invalidConfigs) {
@@ -663,6 +759,35 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
         "Worker pool",
       );
     }
+  });
+
+  it("rejects unknown, inherited, and accessor-backed pool options", () => {
+    let getterCalls = 0;
+    const accessorConfig = {} as Record<string, unknown>;
+    Object.defineProperty(accessorConfig, "maxPoolSize", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return 1;
+      },
+    });
+
+    assertThrows(
+      () => new WorkerPool({ unknown: true } as never),
+      TypeError,
+      "unsupported option",
+    );
+    assertThrows(
+      () => new WorkerPool(Object.create({ maxPoolSize: 1 })),
+      TypeError,
+      "plain object",
+    );
+    assertThrows(
+      () => new WorkerPool(accessorConfig as Partial<WorkerPoolConfig>),
+      TypeError,
+      "own data property",
+    );
+    assertEquals(getterCalls, 0);
   });
 
   it("rejects a new scope at capacity without interrupting the active scope", async () => {
@@ -1174,25 +1299,25 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     assertEquals(pool.getStats().workers["scope-a"], undefined);
   });
 
-  it("evicts an exact scope and only its controlled generation keys", async () => {
+  it("evicts an exact API scope and only its framed generation keys", async () => {
     const controlled = createControlledPool({ maxPoolSize: 8 });
     pool = controlled.pool;
     const scope = "scope-a";
     const nestedScope = `${scope}:generation:nested`;
     const busyGeneration = (await resolveWorkerGeneration(
-      "data",
+      "api",
       snapshotWorkerGenerationIdentity(scope, "release-busy"),
     )).workerId;
     const idleGeneration = (await resolveWorkerGeneration(
-      "ssr",
+      "api",
       snapshotWorkerGenerationIdentity(scope, "release-idle"),
     )).workerId;
     const nestedGeneration = (await resolveWorkerGeneration(
-      "data",
+      "api",
       snapshotWorkerGenerationIdentity(nestedScope, "release-nested"),
     )).workerId;
     const unrelatedGeneration = (await resolveWorkerGeneration(
-      "data",
+      "api",
       snapshotWorkerGenerationIdentity("scope-a-other", "release-other"),
     )).workerId;
     const malformedGeneration = `${scope}:generation:${"z".repeat(64)}`;
@@ -1226,7 +1351,7 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     assertEquals(pool.getStats().workers[busyGeneration], undefined);
   });
 
-  it("evicts legacy API generations by exact parsed scope", () => {
+  it("does not interpret unframed worker keys as generation identities", () => {
     const controlled = createControlledPool({ maxPoolSize: 4 });
     pool = controlled.pool;
     const scope = "api:scope";
@@ -1239,7 +1364,7 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
 
     pool.evictWorkerScope(scope);
 
-    assertEquals(pool.getStats().workers[generation], undefined);
+    assertExists(pool.getStats().workers[generation]);
     assertExists(pool.getStats().workers[nestedGeneration]);
   });
 
@@ -1252,23 +1377,14 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     crashedControl.becomeTerminal("crashed");
     const afterCrash = pool.getOrCreateWorker("scope-crash", []);
     assert(afterCrash !== crashed);
-    assertEquals(crashedControl.terminateCalls, 0);
+    assertEquals(crashedControl.terminateCalls, 1);
 
     const timedOut = pool.getOrCreateWorker("scope-timeout", []);
     const timedOutControl = latestWorker(controlled.workers, "scope-timeout");
     timedOutControl.becomeTerminal("terminated");
     const afterTimeout = pool.getOrCreateWorker("scope-timeout", []);
     assert(afterTimeout !== timedOut);
-    assertEquals(timedOutControl.terminateCalls, 0);
-  });
-
-  it("reports memory configuration as advisory rather than enforced", () => {
-    const controlled = createControlledPool({ memoryBudgetMb: 32 });
-    pool = controlled.pool;
-
-    const stats = pool.getStats();
-    assertEquals(stats.memoryBudgetMb, 32);
-    assertEquals(stats.memoryBudgetEnforced, false);
+    assertEquals(timedOutControl.terminateCalls, 1);
   });
 
   it("retires only idle workers when real host heap pressure is high", async () => {
@@ -1299,8 +1415,57 @@ describe("MAX_WORKER_BODY_BYTES", () => {
   });
 });
 
+describe("worker pool defaults", () => {
+  it("publishes an immutable host policy", () => {
+    assertEquals(Object.isFrozen(DEFAULT_WORKER_POOL_CONFIG), true);
+    assertThrows(
+      () => {
+        (DEFAULT_WORKER_POOL_CONFIG as { maxPoolSize: number }).maxPoolSize = 1;
+      },
+      TypeError,
+    );
+    assertEquals(DEFAULT_WORKER_POOL_CONFIG.maxPoolSize, 20);
+  });
+});
+
+describe("worker pool test reset", () => {
+  afterEach(async () => {
+    await __resetPoolForTests();
+  });
+
+  it("does not resolve before the detached singleton is quiescent", async () => {
+    await __resetPoolForTests();
+    const singleton = getWorkerPool();
+    const shutdown = singleton.shutdown.bind(singleton);
+    const gate = deferred<void>();
+    let shutdownCalls = 0;
+
+    singleton.shutdown = async () => {
+      shutdownCalls++;
+      await gate.promise;
+      await shutdown();
+    };
+
+    const reset = __resetPoolForTests();
+    let settled = false;
+    void reset.then(() => {
+      settled = true;
+    });
+
+    try {
+      await Promise.resolve();
+      assertEquals(shutdownCalls, 1);
+      assertEquals(settled, false);
+    } finally {
+      gate.resolve();
+      await reset;
+    }
+    assertEquals(settled, true);
+  });
+});
+
 describe("Feature flag caching", () => {
-  afterEach(() => {
+  afterEach(async () => {
     try {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
     } catch { /* ok */ }
@@ -1317,44 +1482,41 @@ describe("Feature flag caching", () => {
       Deno.env.delete("WORKER_MAX_POOL_SIZE");
     } catch { /* ok */ }
     try {
-      Deno.env.delete("WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER");
-    } catch { /* ok */ }
-    try {
       Deno.env.delete("WORKER_REQUEST_TIMEOUT_MS");
     } catch { /* ok */ }
-    __resetPoolForTests();
+    await __resetPoolForTests();
   });
 
-  it("returns false when master switch is off", () => {
-    __resetPoolForTests();
+  it("returns false when master switch is off", async () => {
+    await __resetPoolForTests();
     assertEquals(isWorkerIsolationEnabled(), false);
     assertEquals(isDataIsolationEnabled(), false);
     assertEquals(isSSRIsolationEnabled(), false);
   });
 
-  it("returns true for API isolation when both flags set", () => {
-    __resetPoolForTests();
+  it("returns true for API isolation when both flags set", async () => {
+    await __resetPoolForTests();
     Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
     Deno.env.set("WORKER_ISOLATION_API", "1");
     assertEquals(isWorkerIsolationEnabled(), true);
   });
 
-  it("returns true for data isolation when both flags set", () => {
-    __resetPoolForTests();
+  it("returns true for data isolation when both flags set", async () => {
+    await __resetPoolForTests();
     Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
     Deno.env.set("WORKER_ISOLATION_DATA", "1");
     assertEquals(isDataIsolationEnabled(), true);
   });
 
-  it("returns true for SSR isolation when both flags set", () => {
-    __resetPoolForTests();
+  it("returns true for SSR isolation when both flags set", async () => {
+    await __resetPoolForTests();
     Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
     Deno.env.set("WORKER_ISOLATION_SSR", "1");
     assertEquals(isSSRIsolationEnabled(), true);
   });
 
-  it("caches flag results across calls", () => {
-    __resetPoolForTests();
+  it("caches flag results across calls", async () => {
+    await __resetPoolForTests();
     Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
     Deno.env.set("WORKER_ISOLATION_API", "1");
     assertEquals(isWorkerIsolationEnabled(), true);
@@ -1364,8 +1526,8 @@ describe("Feature flag caching", () => {
     assertEquals(isWorkerIsolationEnabled(), true);
   });
 
-  it("ignores malicious project overlays for host isolation policy", () => {
-    __resetPoolForTests();
+  it("ignores malicious project overlays for host isolation policy", async () => {
+    await __resetPoolForTests();
     Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
     Deno.env.set("WORKER_ISOLATION_API", "1");
     Deno.env.set("WORKER_ISOLATION_DATA", "1");
@@ -1385,7 +1547,7 @@ describe("Feature flag caching", () => {
       },
     );
 
-    __resetPoolForTests();
+    await __resetPoolForTests();
     Deno.env.set("WORKER_ISOLATION_ENABLED", "0");
     runWithProjectEnv(
       {
@@ -1402,30 +1564,27 @@ describe("Feature flag caching", () => {
     );
   });
 
-  it("ignores project overlays and applies host pool limits", () => {
-    __resetPoolForTests();
+  it("ignores project overlays and applies host pool limits", async () => {
+    await __resetPoolForTests();
     Deno.env.set("WORKER_MAX_POOL_SIZE", "2");
-    Deno.env.set("WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER", "1");
     Deno.env.set("WORKER_REQUEST_TIMEOUT_MS", "1234");
 
     runWithProjectEnv(
       {
         WORKER_MAX_POOL_SIZE: "999",
-        WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER: "999",
         WORKER_REQUEST_TIMEOUT_MS: "1",
       },
       () => {
         const singleton = getWorkerPool();
         const config = (singleton as unknown as { config: WorkerPoolConfig }).config;
         assertEquals(singleton.getStats().maxPoolSize, 2);
-        assertEquals(singleton.getStats().maxActiveRequestsPerWorker, 1);
         assertEquals(config.requestTimeoutMs, 1234);
       },
     );
   });
 
-  it("snapshots the host internal-egress decision when the singleton resolves", () => {
-    __resetPoolForTests();
+  it("snapshots the host internal-egress decision when the singleton resolves", async () => {
+    await __resetPoolForTests();
     Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, "1");
     try {
       const first = getWorkerPool();
@@ -1438,28 +1597,26 @@ describe("Feature flag caching", () => {
       assertEquals(getWorkerPool(), first);
       assertEquals(firstConfig.allowInternalEgress, true);
 
-      __resetPoolForTests();
+      await __resetPoolForTests();
       const second = getWorkerPool();
       const secondConfig = (second as unknown as {
         config: WorkerPoolConfig & { allowInternalEgress?: boolean };
       }).config;
       assertEquals(secondConfig.allowInternalEgress, false);
     } finally {
-      __resetPoolForTests();
+      await __resetPoolForTests();
       Deno.env.delete(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV);
     }
   });
 
-  it("fails closed for invalid host pool limits", () => {
+  it("fails closed for invalid host pool limits", async () => {
     for (
       const [name, value] of [
         ["WORKER_MAX_POOL_SIZE", "0"],
-        ["WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER", "0"],
-        ["WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER", "2"],
         ["WORKER_REQUEST_TIMEOUT_MS", "Infinity"],
       ] as const
     ) {
-      __resetPoolForTests();
+      await __resetPoolForTests();
       Deno.env.set(name, value);
       try {
         assertThrows(
@@ -1473,8 +1630,8 @@ describe("Feature flag caching", () => {
     }
   });
 
-  it("fails closed for invalid host isolation flags", () => {
-    __resetPoolForTests();
+  it("fails closed for invalid host isolation flags", async () => {
+    await __resetPoolForTests();
     Deno.env.set("WORKER_ISOLATION_ENABLED", "treu");
 
     assertThrows(
@@ -1484,13 +1641,13 @@ describe("Feature flag caching", () => {
     );
   });
 
-  it("__resetPoolForTests clears cached flags", () => {
-    __resetPoolForTests();
+  it("__resetPoolForTests clears cached flags", async () => {
+    await __resetPoolForTests();
     Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
     Deno.env.set("WORKER_ISOLATION_API", "1");
     assertEquals(isWorkerIsolationEnabled(), true);
 
-    __resetPoolForTests();
+    await __resetPoolForTests();
     try {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
     } catch { /* ok */ }

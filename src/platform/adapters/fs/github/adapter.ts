@@ -19,6 +19,7 @@ import {
 const LOG_PREFIX = "[GitHubFSAdapter]";
 
 export class GitHubFSAdapter implements FSAdapter {
+  readonly symlinkSemantics = "none" as const;
   private readonly config: ResolvedGitHubConfig;
   private readonly client: GitHubApiClient;
   private readonly cache: FileCache;

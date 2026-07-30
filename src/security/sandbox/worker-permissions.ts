@@ -15,13 +15,15 @@ import { join } from "#veryfront/compat/path/index.ts";
  * See: https://docs.deno.com/runtime/fundamentals/permissions/
  */
 export interface WorkerPermissions {
-  read: string[] | boolean;
+  read: readonly string[] | boolean;
   write: boolean;
   net: boolean;
-  env: string[] | boolean;
+  env: readonly string[] | boolean;
   run: boolean;
   ffi: boolean;
   sys: boolean;
+  /** Remote module loading is always denied; extension worker graphs must be local. */
+  import: readonly string[] | boolean;
 }
 
 interface WorkerPermissionOptions {
@@ -99,6 +101,7 @@ export function buildWorkerPermissions(
       run: false,
       ffi: false,
       sys: false,
+      import: false,
     };
   }
 
@@ -110,5 +113,6 @@ export function buildWorkerPermissions(
     run: false,
     ffi: false,
     sys: false,
+    import: false,
   };
 }

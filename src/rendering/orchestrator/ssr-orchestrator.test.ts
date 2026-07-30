@@ -18,9 +18,10 @@ import {
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/render-sessions.ts";
 import { createImportMapIdentity } from "#veryfront/modules/import-map/index.ts";
-import { __resetPoolForTests, getWorkerPool } from "#veryfront/security/sandbox/worker-pool.ts";
+import { WorkerPool } from "#veryfront/security/sandbox/worker-pool.ts";
 import { join } from "node:path";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
+import { ReactIsolatedSsrRendererProvider } from "../../../extensions/ext-react-ssr/src/index.ts";
 
 const TEST_SOURCE_INTEGRATION_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
 const PROJECT_STYLESHEET = {
@@ -626,40 +627,44 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       const pageModulePath = join(projectDir, "page.mjs");
       const dependencyPath = join(projectDir, "dependency.mjs");
       const workerScopeId = `ssr-generation-${crypto.randomUUID()}`;
-      await Deno.writeTextFile(
-        pageModulePath,
-        `import { label } from "./dependency.mjs";
-         export default function Page() { return label; }`,
-      );
-      await Deno.writeTextFile(
-        dependencyPath,
-        `export const label = "first generation";`,
-      );
-      const orchestrator = new SSROrchestrator(createMockConfig(), {
-        getWorkerPool,
-        isSSRIsolationEnabled: () => true,
+      const workerPool = new WorkerPool({}, {
+        resolveIsolatedSsrRendererProvider: () => ReactIsolatedSsrRendererProvider,
       });
-      const renderGeneration = (workerGenerationId: string) =>
-        runWithExactSourceIntegrationPolicy(
-          TEST_SOURCE_INTEGRATION_POLICY,
-          () =>
-            orchestrator.performSSRRendering(
-              React.createElement("div"),
-              createGenerationContext(),
-              undefined,
-              {
-                projectDir,
-                pageModulePath,
-                layoutModulePaths: [],
-                pageProps: {},
-                layoutProps: [],
-                workerScopeId,
-                workerGenerationId,
-              },
-            ),
-        );
 
       try {
+        await Deno.writeTextFile(
+          pageModulePath,
+          `import { label } from "./dependency.mjs";
+           export default function Page() { return label; }`,
+        );
+        await Deno.writeTextFile(
+          dependencyPath,
+          `export const label = "first generation";`,
+        );
+        const orchestrator = new SSROrchestrator(createMockConfig(), {
+          getWorkerPool: () => workerPool,
+          isSSRIsolationEnabled: () => true,
+        });
+        const renderGeneration = (workerGenerationId: string) =>
+          runWithExactSourceIntegrationPolicy(
+            TEST_SOURCE_INTEGRATION_POLICY,
+            () =>
+              orchestrator.performSSRRendering(
+                React.createElement("div"),
+                createGenerationContext(),
+                undefined,
+                {
+                  projectDir,
+                  pageModulePath,
+                  layoutModulePaths: [],
+                  pageProps: {},
+                  layoutProps: [],
+                  workerScopeId,
+                  workerGenerationId,
+                },
+              ),
+          );
+
         const first = await renderGeneration("release-1");
         await Deno.writeTextFile(
           dependencyPath,
@@ -670,8 +675,8 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
         assert(first.fullHtml.includes("first generation"));
         assert(second.fullHtml.includes("second generation"));
       } finally {
-        getWorkerPool().evictWorkerScope(workerScopeId);
-        __resetPoolForTests();
+        workerPool.evictWorkerScope(workerScopeId);
+        await workerPool.shutdown();
         await Deno.remove(projectDir, { recursive: true });
       }
     });

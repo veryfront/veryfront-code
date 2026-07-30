@@ -91,6 +91,19 @@ export type {
 } from "./sandbox/index.ts";
 export { SandboxShellToolsProviderName } from "./sandbox/index.ts";
 
+// Isolated worker rendering
+export {
+  createIsolatedSsrRendererProvider,
+  type IsolatedSsrRenderer,
+  type IsolatedSsrRendererModule,
+  type IsolatedSsrRendererProvider,
+  IsolatedSsrRendererProviderName,
+  MAX_ISOLATED_SSR_RENDERER_READ_ROOTS,
+  MAX_ISOLATED_SSR_RENDERER_URL_CHARACTERS,
+  snapshotIsolatedSsrRendererProvider,
+  validateIsolatedSsrRendererModuleUrl,
+} from "./rendering/index.ts";
+
 // Image optimization
 export type {
   ImageOptimizationEngine,

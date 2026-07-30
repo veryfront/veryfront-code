@@ -21,6 +21,8 @@
 #                    $GITHUB_SHA. Requires: VERSION, GITHUB_SHA.
 set -euo pipefail
 
+VERYFRONT_PUBLISH_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
 usage() {
   echo "Usage: $0 <rc-publish|preflight|release-publish>" >&2
   exit 2
@@ -79,6 +81,9 @@ update_package_version() {
     | update_first_party_extension_deps
   ' "${PACKAGE_DIR}/package.json" > "${PACKAGE_DIR}/package.json.tmp"
   mv "${PACKAGE_DIR}/package.json.tmp" "${PACKAGE_DIR}/package.json"
+  deno run --no-lock --allow-read="${PACKAGE_DIR}" \
+    "${VERYFRONT_PUBLISH_SCRIPT_DIR}/validate-npm-package-version.ts" \
+    "${PACKAGE_DIR}" "${VERSION}"
 }
 
 # Poll the npm registry until PACKAGE_NAME@VERSION reports a gitHead. Succeeds

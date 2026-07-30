@@ -60,9 +60,6 @@ export {
 } from "./node.ts";
 export type { NodeHttpServer, NodeIncomingMessage, NodeServerResponse } from "./node.ts";
 
-// Security namespace
-export * as security from "./security/index.ts";
-
 export {
   createFSAdapter,
   createFSAdapterFromConfig,

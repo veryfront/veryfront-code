@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  __serializeRequestForTests,
   __snapshotProjectEnvRecordForTests,
   executeAppRoute as executeAppRouteWithBoundary,
   executePagesRoute as executePagesRouteWithBoundary,
@@ -11,6 +12,7 @@ import {
 import type { RouteMatch } from "./api-route-matcher.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { __resetPoolForTests, getWorkerPool } from "#veryfront/security/sandbox/worker-pool.ts";
+import { isWorkerGenerationInScope } from "#veryfront/security/sandbox/worker-generation.ts";
 import { MAX_WORKER_BODY_BYTES } from "#veryfront/security/sandbox/worker-types.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
@@ -187,7 +189,7 @@ async function withRealWorkerIsolation<T>(run: () => Promise<T>): Promise<T> {
 
   Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
   Deno.env.set("WORKER_ISOLATION_API", "1");
-  __resetPoolForTests();
+  await __resetPoolForTests();
 
   try {
     return await runWithExactSourceIntegrationPolicy(
@@ -195,7 +197,7 @@ async function withRealWorkerIsolation<T>(run: () => Promise<T>): Promise<T> {
       run,
     );
   } finally {
-    __resetPoolForTests();
+    await __resetPoolForTests();
     restoreEnv(envSnapshot);
   }
 }
@@ -332,7 +334,7 @@ describe("routing/api/route-executor", () => {
       ]);
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       let localityReads = 0;
       const options = Object.defineProperty({}, "isLocalProject", {
         enumerable: true,
@@ -367,7 +369,7 @@ describe("routing/api/route-executor", () => {
         assertEquals(JSON.stringify(body).includes("hosted-resolver-secret"), false);
       } finally {
         restoreEnv(envSnapshot);
-        __resetPoolForTests();
+        await __resetPoolForTests();
       }
     });
 
@@ -993,7 +995,7 @@ describe("routing/api/route-executor", () => {
       ]);
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       let localityReads = 0;
       const options = Object.defineProperty({}, "isLocalProject", {
         enumerable: true,
@@ -1029,7 +1031,7 @@ describe("routing/api/route-executor", () => {
         assertEquals(JSON.stringify(body).includes("hosted-pages-resolver-secret"), false);
       } finally {
         restoreEnv(envSnapshot);
-        __resetPoolForTests();
+        await __resetPoolForTests();
       }
     });
 
@@ -1057,7 +1059,7 @@ describe("routing/api/route-executor", () => {
       ]);
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       const originalWarn = console.warn;
 
       try {
@@ -1094,16 +1096,16 @@ describe("routing/api/route-executor", () => {
   });
 
   describe("in-process execution boundary", () => {
-    afterEach(() => {
+    afterEach(async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
     });
 
     it("fails closed for remote and unknown-locality routes when worker flags are disabled", async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       let hostExecutions = 0;
       const handler = {
         GET: () => {
@@ -1154,7 +1156,7 @@ describe("routing/api/route-executor", () => {
     it("trusts only an own locality data property for App and Pages host execution", async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       let hostExecutions = 0;
       const handler = {
         GET: () => {
@@ -1236,7 +1238,7 @@ describe("routing/api/route-executor", () => {
     it("executes trusted standalone source in-process without treating production as development", async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       let hostExecutions = 0;
       const handler = {
         GET: () => {
@@ -1305,7 +1307,7 @@ describe("routing/api/route-executor", () => {
     it("keeps absent App and Pages locality fail-closed after prototype poisoning", async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       const previous = Object.getOwnPropertyDescriptor(
         Object.prototype,
         "isLocalProject",
@@ -1390,7 +1392,7 @@ describe("routing/api/route-executor", () => {
     it("uses captured static primordials for fail-closed route admission", async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const freezeDescriptor = Object.getOwnPropertyDescriptor(Object, "freeze")!;
       const promiseResolveDescriptor = Object.getOwnPropertyDescriptor(Promise, "resolve")!;
@@ -1458,7 +1460,7 @@ describe("routing/api/route-executor", () => {
     it("uses captured validation primordials for serialized worker errors", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       const pool = getWorkerPool();
       const originalExecute = pool.execute;
       const workerResponse: Awaited<ReturnType<typeof pool.execute>> = {
@@ -1561,7 +1563,7 @@ describe("routing/api/route-executor", () => {
       ]);
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       try {
         const response = await executeAppRoute(
@@ -1586,16 +1588,16 @@ describe("routing/api/route-executor", () => {
   });
 
   describe("worker isolation admission", () => {
-    afterEach(() => {
+    afterEach(async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
     });
 
     it("does not execute App handlers on the host when isolation metadata is absent or partial", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       let hostExecutions = 0;
       const handler = {
         GET: () => {
@@ -1630,7 +1632,7 @@ describe("routing/api/route-executor", () => {
     it("does not execute Pages handlers on the host when isolation metadata is absent or partial", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
       let hostExecutions = 0;
       const handler = {
         GET: () => {
@@ -1665,21 +1667,303 @@ describe("routing/api/route-executor", () => {
   });
 
   describe("body size guard (isolated execution)", () => {
-    afterEach(() => {
+    afterEach(async () => {
       try {
         Deno.env.delete("WORKER_ISOLATION_ENABLED");
       } catch { /* ok */ }
       try {
         Deno.env.delete("WORKER_ISOLATION_API");
       } catch { /* ok */ }
-      __resetPoolForTests();
+      await __resetPoolForTests();
+    });
+
+    it("aborts and cancels a stalled isolated body read promptly", async () => {
+      const pullStarted = Promise.withResolvers<void>();
+      const abortController = new AbortController();
+      let cancellations = 0;
+      let cancellationReason: unknown;
+      const stream = new ReadableStream<Uint8Array>({
+        pull() {
+          pullStarted.resolve();
+        },
+        cancel(reason) {
+          cancellations++;
+          cancellationReason = reason;
+        },
+      }, { highWaterMark: 0 });
+      const request = new Request(
+        "http://localhost/api/test",
+        {
+          method: "POST",
+          body: stream,
+          duplex: "half",
+          signal: abortController.signal,
+        } as RequestInit & { duplex: "half" },
+      );
+
+      const serialized = __serializeRequestForTests(request);
+      await pullStarted.promise;
+      abortController.abort(new Error("private caller abort reason"));
+
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const error = await Promise.race([
+          assertRejects(
+            () => serialized,
+            Error,
+            "Request body read aborted for isolated execution",
+          ),
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error("stalled request body ignored abort")),
+              1_000,
+            );
+          }),
+        ]);
+        assert(error instanceof Error);
+        assertEquals(error.message.includes("private caller abort reason"), false);
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
+      }
+
+      await Promise.resolve();
+      assertEquals(cancellations, 1);
+      assert(cancellationReason instanceof Error);
+    });
+
+    it("bounds adversarial tiny-chunk streams independently of byte size", async () => {
+      let pulls = 0;
+      let cancellations = 0;
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls++;
+          controller.enqueue(new Uint8Array([pulls & 0xff]));
+        },
+        cancel() {
+          cancellations++;
+        },
+      }, { highWaterMark: 0 });
+      const request = new Request(
+        "http://localhost/api/test",
+        {
+          method: "POST",
+          body: stream,
+          duplex: "half",
+        } as RequestInit & { duplex: "half" },
+      );
+
+      await assertRejects(
+        () => __serializeRequestForTests(request),
+        Error,
+        "Request body stream exceeded the chunk limit for isolated execution",
+      );
+      assert(pulls > 0 && pulls < 20_000);
+      assertEquals(cancellations, 1);
+    });
+
+    it("cancels an empty-chunk stream that makes no progress", async () => {
+      let pulls = 0;
+      let cancellations = 0;
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls++;
+          controller.enqueue(new Uint8Array(0));
+        },
+        cancel() {
+          cancellations++;
+        },
+      }, { highWaterMark: 0 });
+      const request = new Request(
+        "http://localhost/api/test",
+        {
+          method: "POST",
+          body: stream,
+          duplex: "half",
+        } as RequestInit & { duplex: "half" },
+      );
+
+      await assertRejects(
+        () => __serializeRequestForTests(request),
+        Error,
+        "Request body stream made no progress during isolated execution",
+      );
+      assert(pulls > 0 && pulls < 5_000);
+      assertEquals(cancellations, 1);
+    });
+
+    it("rejects an understated Content-Length while reading the stream", async () => {
+      let pulls = 0;
+      let cancellations = 0;
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls++;
+          controller.enqueue(new Uint8Array([pulls]));
+        },
+        cancel() {
+          cancellations++;
+        },
+      }, { highWaterMark: 0 });
+      const request = new Request(
+        "http://localhost/api/test",
+        {
+          method: "POST",
+          body: stream,
+          duplex: "half",
+          headers: { "content-length": "1" },
+        } as RequestInit & { duplex: "half" },
+      );
+
+      await assertRejects(
+        () => __serializeRequestForTests(request),
+        Error,
+        "Request body does not match Content-Length for isolated execution",
+      );
+      assertEquals(pulls, 2);
+      assertEquals(cancellations, 1);
+    });
+
+    it("coalesces byte-identical bodies across fixed block boundaries", async () => {
+      const chunks = [
+        new Uint8Array(65_535).fill(1),
+        new Uint8Array(2).fill(2),
+        new Uint8Array(0),
+        new Uint8Array(70_000).fill(3),
+      ];
+      const expectedLength = 135_537;
+      let pulls = 0;
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const chunk = chunks[pulls++];
+          if (chunk) controller.enqueue(chunk);
+          else controller.close();
+        },
+      }, { highWaterMark: 0 });
+      const request = new Request(
+        "http://localhost/api/test",
+        {
+          method: "POST",
+          body: stream,
+          duplex: "half",
+          headers: { "content-length": String(expectedLength) },
+        } as RequestInit & { duplex: "half" },
+      );
+
+      const serialized = await __serializeRequestForTests(request);
+
+      assert(serialized.body instanceof Uint8Array);
+      assertEquals(serialized.body.byteLength, expectedLength);
+      assertEquals(serialized.body[0], 1);
+      assertEquals(serialized.body[65_534], 1);
+      assertEquals(serialized.body[65_535], 2);
+      assertEquals(serialized.body[65_536], 2);
+      assertEquals(serialized.body[65_537], 3);
+      assertEquals(serialized.body[expectedLength - 1], 3);
+    });
+
+    it("keeps request bytes exact after typed-array species poisoning", async () => {
+      const chunk = new Uint8Array([1, 2, 3, 4]);
+      const request = new Request(
+        "http://localhost/api/test",
+        {
+          method: "POST",
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(chunk);
+              controller.close();
+            },
+          }),
+          duplex: "half",
+        } as RequestInit & { duplex: "half" },
+      );
+      const speciesDescriptor = Object.getOwnPropertyDescriptor(
+        Uint8Array,
+        Symbol.species,
+      );
+      let speciesCalls = 0;
+      let serialized: Awaited<ReturnType<typeof __serializeRequestForTests>> | undefined;
+
+      try {
+        Object.defineProperty(Uint8Array, Symbol.species, {
+          configurable: true,
+          get() {
+            speciesCalls++;
+            return class PoisonedUint8Array extends Uint8Array {
+              constructor(
+                buffer: ArrayBuffer,
+                byteOffset?: number,
+                length?: number,
+              ) {
+                super(buffer, byteOffset, length);
+                this.fill(9);
+              }
+            };
+          },
+        });
+        serialized = await __serializeRequestForTests(request);
+      } finally {
+        if (speciesDescriptor) {
+          Object.defineProperty(Uint8Array, Symbol.species, speciesDescriptor);
+        } else {
+          delete (Uint8Array as Uint8ArrayConstructor & {
+            [Symbol.species]?: unknown;
+          })[Symbol.species];
+        }
+      }
+
+      assert(serialized?.body instanceof Uint8Array);
+      assertEquals(speciesCalls, 0);
+      assertEquals(Array.from(serialized.body), [1, 2, 3, 4]);
+    });
+
+    it("does not consult Uint8Array.prototype.constructor while copying", async () => {
+      const chunk = new Uint8Array([5, 6, 7, 8]);
+      const request = new Request(
+        "http://localhost/api/test",
+        {
+          method: "POST",
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(chunk);
+              controller.close();
+            },
+          }),
+          duplex: "half",
+        } as RequestInit & { duplex: "half" },
+      );
+      const constructorDescriptor = Object.getOwnPropertyDescriptor(
+        Uint8Array.prototype,
+        "constructor",
+      )!;
+      let constructorReads = 0;
+      let serialized: Awaited<ReturnType<typeof __serializeRequestForTests>> | undefined;
+
+      try {
+        Object.defineProperty(Uint8Array.prototype, "constructor", {
+          configurable: true,
+          get() {
+            constructorReads++;
+            throw new Error("Uint8Array.prototype.constructor must not run");
+          },
+        });
+        serialized = await __serializeRequestForTests(request);
+      } finally {
+        Object.defineProperty(
+          Uint8Array.prototype,
+          "constructor",
+          constructorDescriptor,
+        );
+      }
+
+      assert(serialized?.body instanceof Uint8Array);
+      assertEquals(constructorReads, 0);
+      assertEquals(Array.from(serialized.body), [5, 6, 7, 8]);
     });
 
     it("should reject oversized request bodies in isolated app route execution", async () => {
       // Enable worker isolation
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         POST: (_req: Request) => new Response("ok"),
@@ -1709,7 +1993,7 @@ describe("routing/api/route-executor", () => {
       // Enable worker isolation
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         POST: (_req: Request) => new Response("ok"),
@@ -1746,7 +2030,7 @@ describe("routing/api/route-executor", () => {
       // Enable worker isolation
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         POST: (_ctx: unknown) => new Response("ok"),
@@ -1776,7 +2060,7 @@ describe("routing/api/route-executor", () => {
       // Enable worker isolation
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         POST: (_req: Request) => new Response("ok"),
@@ -1805,7 +2089,7 @@ describe("routing/api/route-executor", () => {
     it("cancels a chunked body as soon as it exceeds the isolation limit", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         POST: (_req: Request) => new Response("ok"),
@@ -1856,7 +2140,7 @@ describe("routing/api/route-executor", () => {
     it("should skip body size guard for requests without a body", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         GET: (_req: Request) => new Response("ok"),
@@ -1885,7 +2169,7 @@ describe("routing/api/route-executor", () => {
     it("rejects malformed Content-Length before reading the body", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const handler = {
         POST: (_req: Request) => new Response("ok"),
@@ -1893,11 +2177,15 @@ describe("routing/api/route-executor", () => {
 
       for (const contentLength of ["not-a-number", "1x", "-1", "+1", "1.5"]) {
         let pulls = 0;
+        let cancellations = 0;
         const stream = new ReadableStream<Uint8Array>({
           pull(controller) {
             pulls++;
             controller.enqueue(new Uint8Array([1]));
             controller.close();
+          },
+          cancel() {
+            cancellations++;
           },
         }, { highWaterMark: 0 });
         const request = new Request(
@@ -1923,13 +2211,14 @@ describe("routing/api/route-executor", () => {
         assertEquals(response.status, 500);
         assertEquals(body.detail.includes("Invalid Content-Length"), true);
         assertEquals(pulls, 0, `body was read for Content-Length ${contentLength}`);
+        assertEquals(cancellations, 1);
       }
     });
 
     it("fails deterministically when an isolated request body is already locked", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const request = new Request(
         "http://localhost/api/test",
@@ -1969,7 +2258,7 @@ describe("routing/api/route-executor", () => {
     it("wraps isolated request-body reader failures deterministically", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const request = new Request(
         "http://localhost/api/test",
@@ -2001,16 +2290,16 @@ describe("routing/api/route-executor", () => {
   });
 
   describe("source policy propagation (isolated execution)", () => {
-    afterEach(() => {
+    afterEach(async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
     });
 
     it("restores the exact source integration policy inside the worker", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const policy = normalizeSourceIntegrationPolicy({
         allow: { confluence: { allowedTools: ["get_page"] } },
@@ -2048,16 +2337,16 @@ describe("routing/api/route-executor", () => {
   });
 
   describe("response helpers (isolated pages execution)", () => {
-    afterEach(() => {
+    afterEach(async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      __resetPoolForTests();
+      await __resetPoolForTests();
     });
 
     it("drops ctx.text bodies for null-body statuses", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
-      __resetPoolForTests();
+      await __resetPoolForTests();
 
       const modulePath = new URL(
         "./fixtures/null-body-pages-route.ts",
@@ -2388,9 +2677,8 @@ describe("routing/api/route-executor", () => {
             assertEquals(second.status, 200);
             assertEquals(await second.json(), { tenantValue: "tenant-b" });
 
-            const generationPrefix = `${options.executionScopeId}:generation:`;
             const generationKeys = Object.keys(getWorkerPool().getStats().workers)
-              .filter((key) => key.startsWith(generationPrefix));
+              .filter((key) => isWorkerGenerationInScope(key, options.executionScopeId));
             assertEquals(generationKeys.length, 2);
           } finally {
             if (previous) Object.defineProperty(Uint8Array.prototype, "byteLength", previous);

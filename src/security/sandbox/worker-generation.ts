@@ -2,11 +2,10 @@ import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 
 const MAX_WORKER_GENERATION_ID_LENGTH = 1024;
 const WORKER_KEY_PREFIX = "veryfront-worker:v1";
-const LEGACY_GENERATION_MARKER = ":generation:";
 const SHA_256_HEX_LENGTH = 64;
 const SHA_256_FRAME_PREFIX = `${SHA_256_HEX_LENGTH}:`;
 const LOWERCASE_HEX_PATTERN = /^[0-9a-f]+$/;
-const WORKER_KINDS = ["data", "ssr"] as const;
+const WORKER_KINDS = ["api", "data", "ssr"] as const;
 
 export type WorkerKind = (typeof WORKER_KINDS)[number];
 
@@ -34,8 +33,8 @@ function requireGenerationField(value: unknown, label: string): string {
 }
 
 function requireWorkerKind(kind: unknown): WorkerKind {
-  if (kind !== "data" && kind !== "ssr") {
-    throw new TypeError('Worker kind must be either "data" or "ssr"');
+  if (kind !== "api" && kind !== "data" && kind !== "ssr") {
+    throw new TypeError('Worker kind must be "api", "data", or "ssr"');
   }
   return kind;
 }
@@ -128,22 +127,6 @@ function isSha256Hex(value: string): boolean {
 }
 
 /**
- * Match the earlier API-route generation format without prefix semantics.
- *
- * API generations end in a SHA-256 digest, so the final marker unambiguously
- * separates the complete scope from its digest even when the scope itself
- * contains `:generation:`.
- */
-function matchesLegacyApiGeneration(workerId: string, scopeId: string): boolean {
-  const markerIndex = workerId.lastIndexOf(LEGACY_GENERATION_MARKER);
-  if (markerIndex < 0) return false;
-
-  const candidateScope = workerId.slice(0, markerIndex);
-  const digest = workerId.slice(markerIndex + LEGACY_GENERATION_MARKER.length);
-  return candidateScope === scopeId && isSha256Hex(digest);
-}
-
-/**
  * Return whether an exact reusable worker identity belongs to `scopeId`.
  *
  * This is intentionally a complete-key match rather than a raw prefix check.
@@ -158,8 +141,7 @@ export function isWorkerGenerationInScope(
     return false;
   }
 
-  return matchesFramedGeneration(workerId, scopeId) ||
-    matchesLegacyApiGeneration(workerId, scopeId);
+  return matchesFramedGeneration(workerId, scopeId);
 }
 
 /**

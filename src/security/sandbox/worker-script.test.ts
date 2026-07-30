@@ -20,6 +20,7 @@ import {
   loadModule,
   loadPreparedModule,
   makeProjectPathGuard,
+  sanitizeWorkerDataModuleStack,
   serializeError,
   snapshotWorkerRequest,
 } from "./worker-script.ts";
@@ -122,13 +123,31 @@ describe("worker-script makeProjectPathGuard", () => {
     }
   });
 
+  it("rejects a missing target beneath a symlinked parent outside the project", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    try {
+      await Deno.symlink(outsideDir, join(projectDir, "link"));
+
+      const guard = makeProjectPathGuard(projectDir);
+      await assertRejects(
+        () => guard("link/not-yet-created.txt"),
+        Error,
+        "escapes project directory",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
   it("allows a not-yet-existing path that is lexically contained", async () => {
     const projectDir = await Deno.makeTempDir();
     try {
       const guard = makeProjectPathGuard(projectDir);
       const resolved = await guard("nested/new-file.txt");
-      // The target doesn't exist so it can't be canonicalized; it is still
-      // accepted (lexically contained) and points at the nested path.
+      // The nearest existing ancestor is canonicalized and the missing suffix
+      // is reattached within that physical root.
       assert(resolved.endsWith(join("nested", "new-file.txt")));
     } finally {
       await Deno.remove(projectDir, { recursive: true });
@@ -144,10 +163,9 @@ describe("worker-script serializeError", () => {
     assertEquals(serialized.message, "boom");
     assertEquals(serialized.name, "Error");
     assertExists(serialized.stack);
-    // No RFC 9457 fields on a plain Error
-    assertEquals(serialized.type, undefined);
-    assertEquals(serialized.status, undefined);
-    assertEquals(serialized.detail, undefined);
+    assertEquals(Object.hasOwn(serialized, "type"), false);
+    assertEquals(Object.hasOwn(serialized, "status"), false);
+    assertEquals(Object.hasOwn(serialized, "detail"), false);
   });
 
   it("preserves the subclass name for custom Error types", () => {
@@ -581,6 +599,19 @@ describe("worker-script loadModule", () => {
 });
 
 describe("worker-script prepared modules", () => {
+  it("requires an explicit source integration policy", async () => {
+    const prepared = await prepareWorkerModule("export function GET() {}");
+
+    await assertRejects(
+      () =>
+        loadPreparedModule(prepared, {
+          logicalModuleId: "/routes/missing-policy.ts",
+        } as never),
+      TypeError,
+      "source integration policy",
+    );
+  });
+
   it("rejects non-lowercase and mismatched SHA-256 identities", async () => {
     const source = "export function GET() {}";
     const prepared = await prepareWorkerModule(source);
@@ -589,7 +620,10 @@ describe("worker-script prepared modules", () => {
       () =>
         loadPreparedModule(
           { source, sha256: prepared.sha256.toUpperCase() },
-          { logicalModuleId: "/routes/uppercase.ts" },
+          {
+            logicalModuleId: "/routes/uppercase.ts",
+            sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+          },
         ),
       TypeError,
       "Invalid worker request module",
@@ -598,7 +632,10 @@ describe("worker-script prepared modules", () => {
       () =>
         loadPreparedModule(
           { source, sha256: "0".repeat(64) },
-          { logicalModuleId: "/routes/mismatch.ts" },
+          {
+            logicalModuleId: "/routes/mismatch.ts",
+            sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+          },
         ),
       TypeError,
       "digest mismatch",
@@ -614,7 +651,10 @@ describe("worker-script prepared modules", () => {
       () =>
         loadPreparedModule(
           { source: oversizedSource, sha256: "0".repeat(64) },
-          { logicalModuleId: "/routes/oversized.ts" },
+          {
+            logicalModuleId: "/routes/oversized.ts",
+            sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+          },
         ),
       TypeError,
       "Invalid worker request module",
@@ -630,6 +670,7 @@ describe("worker-script prepared modules", () => {
       () =>
         loadPreparedModule(prepared, {
           logicalModuleId: "/routes/no-handler.ts",
+          sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         }),
       Error,
       "Prepared API route module import failed",
@@ -643,6 +684,7 @@ describe("worker-script prepared modules", () => {
     `);
     const module = await loadPreparedModule(prepared, {
       logicalModuleId: "/routes/custom.ts",
+      sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
     });
 
     assertEquals(typeof module.PROPFIND, "function");
@@ -662,12 +704,15 @@ describe("worker-script prepared modules", () => {
     try {
       const first = await loadPreparedModule(prepared, {
         logicalModuleId: "/routes/one.ts",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
       const cached = await loadPreparedModule(prepared, {
         logicalModuleId: "/routes/one.ts",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
       const distinctRoute = await loadPreparedModule(prepared, {
         logicalModuleId: "/routes/two.ts",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
 
       assert(first === cached);
@@ -718,6 +763,7 @@ describe("worker-script prepared modules", () => {
       () =>
         loadPreparedModule(prepared, {
           logicalModuleId: "/routes/private-source.ts",
+          sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         }),
       Error,
       "Prepared API route module import failed",
@@ -732,6 +778,19 @@ describe("worker-script prepared modules", () => {
       serializedText.includes(`vf-api:${prepared.sha256}:`),
       serializedText,
     );
+  });
+
+  it("redacts a complete percent-encoded data URL containing raw parentheses", () => {
+    const digest = "a".repeat(64);
+    const sentinel = "VF_SECRET_AFTER_PAREN";
+    const stack =
+      `SyntaxError: data:text/javascript;charset=utf-8,var%20f%3D(x)%3D%3Ex%3B%0Aconst%20${sentinel}%20%3D%20%3B#sha256=${digest}:2:31`;
+
+    const sanitized = sanitizeWorkerDataModuleStack(stack, digest);
+
+    assert(!sanitized.includes("data:text/javascript"));
+    assert(!sanitized.includes(sentinel));
+    assertEquals(sanitized, `SyntaxError: vf-api:${digest}:2:31`);
   });
 
   it("keeps requests and responses on the private control port after project poisoning", async () => {
@@ -1349,6 +1408,7 @@ describe("worker-script prepared modules", () => {
         suffix;
       await loadPreparedModule(await prepareWorkerModule(source), {
         logicalModuleId: `/routes/capacity-${moduleIndex++}.ts`,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       });
       remaining -= sourceBytes;
     }
@@ -1358,6 +1418,7 @@ describe("worker-script prepared modules", () => {
       () =>
         loadPreparedModule(extra, {
           logicalModuleId: "/routes/over-capacity.ts",
+          sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         }),
       Error,
       "retention capacity exceeded",

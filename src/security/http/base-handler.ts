@@ -11,6 +11,7 @@ import type { VerifiedControlPlaneRequestClaims } from "#veryfront/internal-agen
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { WebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
 import { getErrorMessage as formatErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { AUTHENTICATION_REQUIRED } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
 import { isExplicitlyLocalProject } from "#veryfront/security/project-locality.ts";
 import { ResponseBuilder } from "./response/index.ts";
@@ -80,7 +81,6 @@ export abstract class BaseHandler implements Handler {
   protected createResponseBuilder(
     ctx: HandlerContext,
     nonce?: string,
-    _options?: Record<string, unknown>,
   ): ResponseBuilder {
     return new ResponseBuilder({
       securityConfig: ctx.securityConfig ?? undefined,
@@ -97,11 +97,11 @@ export abstract class BaseHandler implements Handler {
     serverLogger.debug(`[${this.metadata.name}] ${message}`, extra ?? undefined);
   }
 
-  protected logWarn(message: string, extra?: Record<string, unknown>, _ctx?: HandlerContext): void {
+  protected logWarn(message: string, extra?: Record<string, unknown>): void {
     serverLogger.warn(`[${this.metadata.name}] ${message}`, extra ?? undefined);
   }
 
-  protected logInfo(message: string, extra?: Record<string, unknown>, _ctx?: HandlerContext): void {
+  protected logInfo(message: string, extra?: Record<string, unknown>): void {
     serverLogger.info(`[${this.metadata.name}] ${message}`, extra ?? undefined);
   }
 
@@ -162,38 +162,24 @@ export abstract class BaseHandler implements Handler {
       ) => Promise<R>;
     };
 
-    if (typeof fsWrapper.setRequestBranch === "function") {
-      try {
-        fsWrapper.setRequestBranch(ctx.parsedDomain?.branch ?? null);
-      } catch (_) {
-        /* expected: multi-project mode uses runWithContext for branch context */
-      }
-    }
-
     const requireToken = options.requireToken ?? false;
     const isMultiProjectMode = fsWrapper.isMultiProjectMode?.() === true;
     const isContextualMode = fsWrapper.isContextualMode?.() === true;
-    const hasLegacyContextCapability = fsWrapper.isMultiProjectMode === undefined &&
-      fsWrapper.isContextualMode === undefined &&
-      typeof fsWrapper.setRequestToken === "function";
-    const requiresProjectCredential = isMultiProjectMode ||
-      isContextualMode ||
-      hasLegacyContextCapability;
+    const requiresProjectCredential = isMultiProjectMode || isContextualMode;
 
     // No project slug → local dev mode, no proxy context needed.
     if (!ctx.projectSlug) return fn();
 
     // A project slug is also used to isolate standalone caches; it does not by
-    // itself imply a credentialed proxy filesystem. Warn only when the adapter
-    // actually exposes contextual project access. The callback still runs so
-    // embedded framework modules remain available while remote project reads
-    // fail at their authorization boundary.
+    // itself imply a credentialed proxy filesystem. Once the adapter declares
+    // contextual project access, however, a required credential is an actual
+    // admission boundary and the callback must not run without it.
     if (requireToken && !effectiveToken && requiresProjectCredential) {
-      serverLogger.warn(
-        `[${this.metadata.name}] No API token for proxy context — project content will be unavailable`,
-        { projectSlug: ctx.projectSlug },
+      return Promise.reject(
+        AUTHENTICATION_REQUIRED.create({
+          detail: "Contextual project filesystem access requires an API token",
+        }),
       );
-      return fn();
     }
 
     if (isMultiProjectMode) {
@@ -233,8 +219,22 @@ export abstract class BaseHandler implements Handler {
       );
     }
 
-    if (typeof fsWrapper.setRequestToken === "function" && effectiveToken) {
-      fsWrapper.setRequestToken(effectiveToken);
+    if (isContextualMode) {
+      if (typeof fsWrapper.setRequestBranch !== "function") {
+        return Promise.reject(
+          new TypeError("Contextual filesystem mode requires a setRequestBranch adapter method"),
+        );
+      }
+      fsWrapper.setRequestBranch(ctx.parsedDomain?.branch ?? null);
+
+      if (effectiveToken) {
+        if (typeof fsWrapper.setRequestToken !== "function") {
+          return Promise.reject(
+            new TypeError("Contextual filesystem mode requires a setRequestToken adapter method"),
+          );
+        }
+        fsWrapper.setRequestToken(effectiveToken);
+      }
     }
 
     return runWithCacheBatching(fn);

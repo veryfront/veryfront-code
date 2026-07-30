@@ -19,9 +19,11 @@ import {
   NpmPackageOwnershipError,
   removeInternalNpmEntryPointExports,
   repositoryExtensionDependencyOwnership,
+  resolveNpmBuildVersion,
   ROOT_CSS_EXTENSION_PACKAGES,
   ROOT_CSS_EXTENSION_SOURCE_DIRECTORIES,
 } from "./npm-package-metadata.ts";
+import { renderExtensionRuntimeManifestModule } from "./extension-runtime-manifest.ts";
 import {
   type ExtensionManifest,
   firstPartyExtensionManifestPaths,
@@ -29,6 +31,34 @@ import {
   type RootPackageConfig,
 } from "./npm-extension-package-metadata.ts";
 import { assertNoBundledReactDomClientShim } from "./npm-react-shims.ts";
+
+Deno.test("npm build version accepts only an explicit exact release override", () => {
+  assertEquals(resolveNpmBuildVersion("0.1.1177", undefined), "0.1.1177");
+  assertEquals(
+    resolveNpmBuildVersion("0.1.1177", "0.1.1177-rc.42"),
+    "0.1.1177-rc.42",
+  );
+  assertThrows(
+    () => resolveNpmBuildVersion("0.1.1177", " 0.1.1177-rc.42"),
+    TypeError,
+    "VERYFRONT_NPM_VERSION",
+  );
+  assertThrows(
+    () => resolveNpmBuildVersion(undefined, undefined),
+    TypeError,
+    "deno.json version",
+  );
+});
+
+Deno.test("release workflows build npm artifacts with their computed version", async () => {
+  const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+  assertEquals(
+    workflow.split(
+      'VERYFRONT_NPM_VERSION="${VERSION}" deno task build:npm',
+    ).length - 1,
+    2,
+  );
+});
 
 Deno.test("exports agent skill helpers as a public package subpath", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
@@ -291,6 +321,77 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
     assertEquals(pkg.peerDependencies, {
       veryfront: `^${publishVersion}`,
     });
+  } finally {
+    await Deno.remove(packageDir, { recursive: true });
+  }
+});
+
+Deno.test("npm publish refuses an extension runtime-manifest version drift", async () => {
+  const packageDir = await Deno.makeTempDir();
+  const baseVersion = "0.1.1016-rc";
+  const publishVersion = "0.1.1016-rc.123";
+  const packageName = "@veryfront/ext-react-ssr";
+
+  try {
+    await Deno.mkdir(`${packageDir}/esm`, { recursive: true });
+    await Deno.writeTextFile(
+      `${packageDir}/package.json`,
+      JSON.stringify({
+        name: packageName,
+        version: baseVersion,
+        veryfront: {
+          extension: true,
+          npm: { runtimeVersionFromManifest: true },
+        },
+      }),
+    );
+    await Deno.writeTextFile(
+      `${packageDir}/esm/deno.js`,
+      renderExtensionRuntimeManifestModule(
+        { name: packageName, version: baseVersion },
+        baseVersion,
+      ),
+    );
+
+    const runVersionUpdate = () =>
+      new Deno.Command("bash", {
+        args: [
+          "-c",
+          [
+            "set -euo pipefail",
+            'source "$SCRIPT_PATH"',
+            'VERSION="$PUBLISH_VERSION" update_package_version "$PACKAGE_DIR"',
+          ].join("\n"),
+        ],
+        env: {
+          PACKAGE_DIR: packageDir,
+          PUBLISH_VERSION: publishVersion,
+          SCRIPT_PATH: `${Deno.cwd()}/scripts/ci/publish-npm-packages.sh`,
+        },
+        stderr: "piped",
+        stdout: "piped",
+      }).output();
+
+    const rejected = await runVersionUpdate();
+    assertEquals(rejected.code === 0, false);
+    assertStringIncludes(
+      new TextDecoder().decode(rejected.stderr),
+      `runtime manifest version ${baseVersion} does not match ${publishVersion}`,
+    );
+
+    await Deno.writeTextFile(
+      `${packageDir}/esm/deno.js`,
+      renderExtensionRuntimeManifestModule(
+        { name: packageName, version: publishVersion },
+        publishVersion,
+      ),
+    );
+    const accepted = await runVersionUpdate();
+    assertEquals(
+      accepted.code,
+      0,
+      new TextDecoder().decode(accepted.stderr),
+    );
   } finally {
     await Deno.remove(packageDir, { recursive: true });
   }

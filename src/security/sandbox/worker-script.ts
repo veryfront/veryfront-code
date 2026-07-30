@@ -53,7 +53,14 @@ import {
   type WorkerEgressHttpBrokerConfig,
   type WorkerEgressSocksProxyConfig,
 } from "./worker-egress-guard.ts";
-import { isAbsolute, relative, resolve as resolvePath, sep as PATH_SEP } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  relative,
+  resolve as resolvePath,
+  sep as PATH_SEP,
+} from "node:path";
 import { types as nodeUtilTypes } from "node:util";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { isDataControlResult, toDataControlResult } from "#veryfront/data/helpers.ts";
@@ -74,6 +81,11 @@ import {
   snapshotErrorForBoundary,
   snapshotThrowableDiagnostic,
 } from "#veryfront/errors/safe-diagnostics.ts";
+import { IMPORT_RESOLUTION_ERROR, INITIALIZATION_ERROR } from "#veryfront/errors/index.ts";
+import {
+  type IsolatedSsrRenderer,
+  validateIsolatedSsrRendererModuleUrl,
+} from "#veryfront/extensions/rendering/index.ts";
 import {
   isTrustedRouteResponsePromise,
   serializeRouteResponse,
@@ -82,6 +94,7 @@ import { createWorkerExitControls } from "./worker-exit-controls.ts";
 
 type InitializeEgressMessage = {
   type: "initialize-egress";
+  rendererModuleUrl?: string;
   options: InstalledWorkerEgressGuardOptions;
   controlPort: MessagePort;
 };
@@ -192,10 +205,10 @@ const CANONICAL_ROUTE_METHOD_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Z]{1,64}$/;
 const PROJECT_ENV_KEY_PATTERN = /^[^=\0]+$/;
 const PROJECT_ENV_VALUE_PATTERN = /^[^\0]*$/;
 const DATA_JAVASCRIPT_URL_PATTERN =
-  /data:(?:text|application)\/javascript(?:;[a-zA-Z0-9=+._-]+)*,[^ \t\r\n)]*/g;
+  /data:(?:text|application)\/javascript(?:;[a-zA-Z0-9=+._-]+)*,[^ \t\r\n]*/g;
 const DATA_JAVASCRIPT_URL_PRESENCE_PATTERN =
   /data:(?:text|application)\/javascript(?:;[a-zA-Z0-9=+._-]+)*,/;
-const STACK_LOCATION_PATTERN = /:([0-9]+):([0-9]+)$/;
+const STACK_LOCATION_PATTERN = /:([0-9]+):([0-9]+)\)?$/;
 const SANITIZED_DATA_MODULE_LABEL_PATTERN = /vf-api:(?:[0-9a-f]{64}|unknown)(?::[0-9]+:[0-9]+)?/;
 const MAX_WORKER_PATH_CHARS = 32 * 1024;
 const MAX_WORKER_URL_CHARS = 64 * 1024;
@@ -397,6 +410,33 @@ async function realPathIfExisting(path: string): Promise<string | null> {
   }
 }
 
+async function realPathThroughExistingAncestor(path: string): Promise<string> {
+  const unresolvedSegments: string[] = [];
+  let candidate = path;
+
+  while (true) {
+    const realCandidate = await realPathIfExisting(candidate);
+    if (realCandidate !== null) {
+      let resolved = realCandidate;
+      for (let index = unresolvedSegments.length - 1; index >= 0; index--) {
+        resolved = resolvePath(resolved, unresolvedSegments[index]!);
+      }
+      return resolved;
+    }
+
+    const parent = dirname(candidate);
+    if (parent === candidate) {
+      throw new NativeError("Unable to canonicalize project path");
+    }
+    const segment = basename(candidate);
+    if (!segment || segment === "." || segment === "..") {
+      throw new NativeError("Unable to canonicalize project path");
+    }
+    apply(arrayPush, unresolvedSegments, [segment]);
+    candidate = parent;
+  }
+}
+
 /**
  * Build a path guard that confines filesystem access to `projectDir`.
  *
@@ -420,9 +460,8 @@ export function makeProjectPathGuard(projectDir: string): (path: string) => Prom
       throw new NativeError(`Path escapes project directory: ${path}`);
     }
 
-    // Canonicalize to defeat symlinks that escape the project. realPath fails
-    // for a not-yet-existing target (e.g. a fresh path); the lexical check
-    // above already covers that case, so fall back to the resolved path.
+    // Canonicalize through the nearest existing ancestor so a missing target
+    // beneath an existing symlink cannot escape through a lexical fallback.
     realRootPromise ??= (async () => {
       try {
         return await denoRealPath(root);
@@ -431,33 +470,152 @@ export function makeProjectPathGuard(projectDir: string): (path: string) => Prom
       }
     })();
     const realRoot = await realRootPromise;
-    const realResolved = await realPathIfExisting(resolved);
-    if (realResolved !== null && !isContained(realRoot, realResolved)) {
+    const realResolved = await realPathThroughExistingAncestor(resolved);
+    if (!isContained(realRoot, realResolved)) {
       throw new NativeError(`Path escapes project directory: ${path}`);
     }
 
-    return realResolved ?? resolved;
+    return realResolved;
   };
 }
 
-// Load React lazily for SSR requests. API-only workers and health checks should
-// start without resolving React, and the runtime caches dynamic imports after
-// the first SSR request.
-let _React: typeof import("react") | null = null;
-let _ReactDOMServer: typeof import("react-dom/server") | null = null;
-let _reactReady: Promise<void> | null = null;
+// The host admits a trusted local extension module only for SSR workers. API
+// workers never receive or resolve a renderer, and there is deliberately no
+// implicit framework fallback.
+let isolatedSsrRendererModuleUrl: string | null = null;
+let isolatedSsrRendererPromise: Promise<Readonly<IsolatedSsrRenderer>> | null = null;
 
-function ensureReactReady(): Promise<void> {
-  _reactReady ??= (async () => {
-    try {
-      _React = await import("react");
-      _ReactDOMServer = await import("react-dom/server");
-    } catch {
-      // React may not be available in all worker contexts (e.g., API-only workers).
-      // SSR handler will throw a clear error if React is needed but not loaded.
-    }
-  })();
-  return _reactReady;
+function rendererBoundaryError(stage: "import" | "initialization", cause: unknown): Error {
+  const diagnostic = snapshotThrowableDiagnostic(cause);
+  const message = diagnostic
+    ? `Isolated SSR renderer extension ${stage} failed: ${diagnostic}`
+    : `Isolated SSR renderer extension ${stage} failed`;
+  return (stage === "import" ? IMPORT_RESOLUTION_ERROR : INITIALIZATION_ERROR).create({
+    message,
+    cause: diagnostic || "Unknown error",
+  });
+}
+
+function snapshotIsolatedSsrRenderer(value: unknown): Readonly<IsolatedSsrRenderer> {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    isProxy(value) ||
+    isArray(value)
+  ) {
+    throw new NativeTypeError("Isolated SSR renderer factory must return a plain object");
+  }
+  const prototype = getPrototypeOf(value);
+  if (prototype !== objectPrototype && prototype !== null) {
+    throw new NativeTypeError("Isolated SSR renderer factory must return a plain object");
+  }
+
+  const renderer = value as Record<string, unknown>;
+  const keys = objectKeys(renderer);
+  const reflectedKeys = ownKeys(renderer);
+  if (
+    keys.length !== 2 ||
+    reflectedKeys.length !== 2 ||
+    !includesExpectedKey(keys, "createElement") ||
+    !includesExpectedKey(keys, "renderToReadableStream")
+  ) {
+    throw new NativeTypeError(
+      'Isolated SSR renderer must contain only "createElement" and "renderToReadableStream"',
+    );
+  }
+
+  const createElementDescriptor = getOwnPropertyDescriptor(renderer, "createElement");
+  const renderDescriptor = getOwnPropertyDescriptor(renderer, "renderToReadableStream");
+  if (
+    !createElementDescriptor?.enumerable ||
+    !("value" in createElementDescriptor) ||
+    typeof createElementDescriptor.value !== "function" ||
+    isProxy(createElementDescriptor.value)
+  ) {
+    throw new NativeTypeError(
+      "Isolated SSR renderer createElement must be a non-proxy function data property",
+    );
+  }
+  if (
+    !renderDescriptor?.enumerable ||
+    !("value" in renderDescriptor) ||
+    typeof renderDescriptor.value !== "function" ||
+    isProxy(renderDescriptor.value)
+  ) {
+    throw new NativeTypeError(
+      "Isolated SSR renderer renderToReadableStream must be a non-proxy function data property",
+    );
+  }
+
+  return objectFreeze({
+    createElement: createElementDescriptor.value as IsolatedSsrRenderer["createElement"],
+    renderToReadableStream: renderDescriptor.value as IsolatedSsrRenderer["renderToReadableStream"],
+  });
+}
+
+async function initializeIsolatedSsrRenderer(): Promise<Readonly<IsolatedSsrRenderer>> {
+  const moduleUrl = isolatedSsrRendererModuleUrl;
+  if (moduleUrl === null) {
+    throw new NativeError(
+      "Missing isolated SSR renderer extension. Install and register @veryfront/ext-react-ssr",
+    );
+  }
+
+  let rendererModule: unknown;
+  try {
+    rendererModule = await import(moduleUrl);
+  } catch (cause) {
+    throw rendererBoundaryError("import", cause);
+  }
+
+  if (
+    rendererModule === null ||
+    typeof rendererModule !== "object" ||
+    isProxy(rendererModule)
+  ) {
+    throw new NativeTypeError("Isolated SSR renderer extension must export a module object");
+  }
+  const moduleRecord = rendererModule as Record<string, unknown>;
+  const moduleKeys = objectKeys(moduleRecord);
+  const moduleReflectedKeys = ownKeys(moduleRecord);
+  if (
+    moduleKeys.length !== 1 ||
+    moduleKeys[0] !== "createIsolatedSsrRenderer" ||
+    moduleReflectedKeys.length !== 2 ||
+    moduleReflectedKeys[0] !== "createIsolatedSsrRenderer" ||
+    moduleReflectedKeys[1] !== Symbol.toStringTag
+  ) {
+    throw new NativeTypeError(
+      'Isolated SSR renderer extension must export only "createIsolatedSsrRenderer"',
+    );
+  }
+  const factoryDescriptor = getOwnPropertyDescriptor(
+    moduleRecord,
+    "createIsolatedSsrRenderer",
+  );
+  if (
+    !factoryDescriptor?.enumerable ||
+    !("value" in factoryDescriptor) ||
+    typeof factoryDescriptor.value !== "function" ||
+    isProxy(factoryDescriptor.value)
+  ) {
+    throw new NativeTypeError(
+      "Isolated SSR renderer extension factory must be a non-proxy function data property",
+    );
+  }
+
+  let renderer: unknown;
+  try {
+    renderer = apply(factoryDescriptor.value, undefined, []);
+  } catch (cause) {
+    throw rendererBoundaryError("initialization", cause);
+  }
+  return snapshotIsolatedSsrRenderer(renderer);
+}
+
+function getIsolatedSsrRenderer(): Promise<Readonly<IsolatedSsrRenderer>> {
+  isolatedSsrRendererPromise ??= initializeIsolatedSsrRenderer();
+  return isolatedSsrRendererPromise;
 }
 
 // ---------------------------------------------------------------------------
@@ -2103,7 +2261,7 @@ function validatePreparedRouteModule(
 
 interface PreparedModuleLoadOptions {
   logicalModuleId: string;
-  sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   projectEnv?: Record<string, string>;
 }
 
@@ -2124,9 +2282,7 @@ export async function loadPreparedModule(
     MAX_WORKER_PATH_CHARS,
     false,
   );
-  const policy = options.sourceIntegrationPolicy === undefined
-    ? ({ schemaVersion: 1, mode: "unrestricted" } as const)
-    : snapshotSourceIntegrationPolicy(options.sourceIntegrationPolicy);
+  const policy = snapshotSourceIntegrationPolicy(options.sourceIntegrationPolicy);
   const env = snapshotProjectEnv(options.projectEnv);
   const semanticIdentity = buildModuleSemanticIdentity(policy, env);
   const sourceBytes = encodeUtf8(prepared.source);
@@ -2418,11 +2574,11 @@ async function handleInspectApiRouteMethods(
  * Handle SSR rendering in the isolated Worker.
  *
  * Imports the page + layout components from their temp file paths,
- * constructs a React element tree (layouts wrapping page), and renders
- * to HTML string. For streaming, sends chunks via postMessage.
+ * constructs an extension-owned element tree (layouts wrapping page), and
+ * renders bounded HTML output. For streaming, sends chunks via postMessage.
  *
- * The Worker gets its own React instance — safe because SSR is
- * self-contained (no hydration mismatch concern).
+ * The Worker gets its own renderer instance; framework core never imports or
+ * shares a renderer implementation across the host boundary.
  */
 async function handleRenderSSR(
   req: RenderSSRRequest,
@@ -2451,7 +2607,7 @@ function inspectFixedUint8View(value: unknown): FixedUint8View {
     !typedArrayByteOffsetGetter ||
     !arrayBufferByteLengthGetter
   ) {
-    throw new NativeTypeError("React emitted a non-native SSR byte chunk");
+    throw new NativeTypeError("SSR renderer emitted a non-native byte chunk");
   }
 
   const buffer = apply(typedArrayBufferGetter, value, []) as unknown;
@@ -2460,13 +2616,13 @@ function inspectFixedUint8View(value: unknown): FixedUint8View {
     typeof buffer !== "object" ||
     getPrototypeOf(buffer) !== arrayBufferPrototype
   ) {
-    throw new NativeTypeError("React emitted a shared SSR byte chunk");
+    throw new NativeTypeError("SSR renderer emitted a shared byte chunk");
   }
   if (
     arrayBufferResizableGetter &&
     apply(arrayBufferResizableGetter, buffer, []) === true
   ) {
-    throw new NativeTypeError("React emitted a resizable SSR byte chunk");
+    throw new NativeTypeError("SSR renderer emitted a resizable byte chunk");
   }
 
   const byteOffset = apply(typedArrayByteOffsetGetter, value, []) as number;
@@ -2480,7 +2636,7 @@ function inspectFixedUint8View(value: unknown): FixedUint8View {
     byteOffset > bufferByteLength ||
     byteLength > bufferByteLength - byteOffset
   ) {
-    throw new NativeTypeError("React emitted an invalid SSR byte view");
+    throw new NativeTypeError("SSR renderer emitted an invalid byte view");
   }
   return {
     buffer: buffer as ArrayBuffer,
@@ -2560,10 +2716,10 @@ async function sendStreamFrame(
 }
 
 /**
- * Bound framework-owned SSR retention after React yields each source chunk.
+ * Bound framework-owned SSR retention after the renderer yields each source chunk.
  *
- * This worker shares a process with React and project code. A component or
- * React may therefore allocate a large value before the framework can observe,
+ * This worker shares a process with the renderer and project code. Either may
+ * therefore allocate a large value before the framework can observe,
  * split, account, cancel, or release it. A hard pre-allocation memory boundary
  * requires process/container isolation rather than a same-process Worker.
  */
@@ -2642,60 +2798,33 @@ async function renderSSR(
   req: RenderSSRRequest,
   execution: SSRExecutionContext,
 ): Promise<string | null> {
-  // Load React only for SSR workers. API-only workers and health checks should
-  // not pay the React import cost or contend on it under parallel worker tests.
-  await ensureReactReady();
-
-  if (!_React || !_ReactDOMServer) {
-    throw new NativeError("React modules not available in this worker");
-  }
-
-  const React = _React;
+  const renderer = await getIsolatedSsrRenderer();
+  const createElement = renderer.createElement;
+  const renderToReadableStream = renderer.renderToReadableStream;
 
   // Import the page component
   const pageMod = await loadModule(req.pageModulePath);
-  const PageComponent = (pageMod.default ?? pageMod) as React.ComponentType<
-    Record<string, unknown>
-  >;
+  const PageComponent = pageMod.default ?? pageMod;
 
   // Import layout components (innermost → outermost order)
-  const layoutComponents = new NativeArray<
-    React.ComponentType<Record<string, unknown>>
-  >(req.layoutModulePaths.length);
+  const layoutComponents = new NativeArray<unknown>(req.layoutModulePaths.length);
   for (let index = 0; index < req.layoutModulePaths.length; index++) {
     const layoutPath = req.layoutModulePaths[index]!;
     const layoutMod = await loadModule(layoutPath);
     defineDataProperty(
       layoutComponents,
       NativeString(index),
-      (layoutMod.default ?? layoutMod) as React.ComponentType<
-        Record<string, unknown>
-      >,
+      layoutMod.default ?? layoutMod,
     );
   }
 
   // Build element tree: page is innermost, layouts wrap outward
-  const createElement = React.createElement as (
-    type: unknown,
-    props: Record<string, unknown> | null,
-    ...children: unknown[]
-  ) => React.ReactElement;
-
-  let element: React.ReactElement = createElement(PageComponent, req.pageProps);
+  let element: unknown = createElement(PageComponent, req.pageProps);
 
   for (let i = 0; i < layoutComponents.length; i++) {
     const Layout = layoutComponents[i];
     const layoutProps = req.layoutProps[i] ?? {};
     element = createElement(Layout, layoutProps, element);
-  }
-
-  const serverModule = _ReactDOMServer as unknown as Record<string, unknown>;
-  const renderToReadableStream = serverModule.renderToReadableStream as
-    | ((element: React.ReactElement) => Promise<ReadableStream<Uint8Array>>)
-    | undefined;
-  if (typeof renderToReadableStream !== "function") {
-    // A synchronous render followed by a size check cannot bound allocation.
-    throw new NativeError("Bounded React SSR streaming is unavailable");
   }
 
   const stream = await renderToReadableStream(element);
@@ -3275,7 +3404,7 @@ function handleWorkerBootstrapMessage(
   const bootstrap = requireRecordShape(
     message,
     ["type", "options", "controlPort"],
-    [],
+    ["rendererModuleUrl"],
     "bootstrap",
   );
   if (readDataProperty(bootstrap, "type") !== "initialize-egress") return;
@@ -3284,6 +3413,13 @@ function handleWorkerBootstrapMessage(
   if (!(port instanceof NativeMessagePort)) {
     throw new NativeTypeError("Invalid worker control port");
   }
+  const rendererModuleUrlProperty = readOptionalDataProperty(
+    bootstrap,
+    "rendererModuleUrl",
+  );
+  isolatedSsrRendererModuleUrl = rendererModuleUrlProperty.present
+    ? validateIsolatedSsrRendererModuleUrl(rendererModuleUrlProperty.value)
+    : null;
 
   workerControlPort = port;
   postControlPortMessage = (

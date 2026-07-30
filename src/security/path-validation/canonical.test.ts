@@ -16,26 +16,12 @@ function createAdapterWithFs(
 
 describe("security/path-validation/canonical", () => {
   describe("getCanonicalPath", () => {
-    it("should resolve path segments without adapter", async () => {
-      const { path, isSymlink } = await getCanonicalPath("/a/b/../c");
-      assertEquals(path, "/a/c");
-      assertEquals(isSymlink, false);
-    });
-
-    it("should resolve dot segments", async () => {
-      const { path, isSymlink } = await getCanonicalPath("/a/./b/./c");
-      assertEquals(path, "/a/b/c");
-      assertEquals(isSymlink, false);
-    });
-
-    it("should return isSymlink false when followSymlinks is false", async () => {
-      const { isSymlink } = await getCanonicalPath("/some/path", undefined, false);
-      assertEquals(isSymlink, false);
-    });
-
-    it("should return isSymlink false when adapter is undefined", async () => {
-      const { isSymlink } = await getCanonicalPath("/some/path", undefined, true);
-      assertEquals(isSymlink, false);
+    it("requires a runtime adapter instead of degrading to lexical resolution", async () => {
+      await assertRejects(
+        () => getCanonicalPath("/a/b/../c", undefined as never),
+        TypeError,
+        "requires a runtime adapter",
+      );
     });
 
     it("should detect symlinks via adapter.fs.lstat", async () => {
@@ -52,23 +38,8 @@ describe("security/path-validation/canonical", () => {
           }),
       });
 
-      const { isSymlink } = await getCanonicalPath("/some/path", mockAdapter, true);
+      const { isSymlink } = await getCanonicalPath("/some/path", mockAdapter);
       assertEquals(isSymlink, true);
-    });
-
-    it("should fall back gracefully when adapter.fs.stat throws", async () => {
-      const mockAdapter = createAdapterWithFs({
-        stat: () => Promise.reject(new Error("not found")),
-      });
-
-      const { path, isSymlink } = await getCanonicalPath("/some/path", mockAdapter, true);
-      assertEquals(path, "/some/path");
-      assertEquals(isSymlink, false);
-    });
-
-    it("should handle relative paths", async () => {
-      const { path } = await getCanonicalPath("a/b/../c");
-      assertEquals(path, "a/c");
     });
 
     it("should resolve the nearest existing ancestor for a missing target", async () => {
@@ -157,8 +128,14 @@ describe("security/path-validation/canonical", () => {
 
   describe("validateAllowedDirs", () => {
     it("should return valid when path is within base and no allowedDirs", () => {
-      const { valid } = validateAllowedDirs("/project/src/file.ts", "/project", []);
+      const { valid } = validateAllowedDirs("/project/src/file.ts", "/project", undefined);
       assertEquals(valid, true);
+    });
+
+    it("should treat an explicit empty allowlist as deny-all", () => {
+      const { valid, code } = validateAllowedDirs("/project/src/file.ts", "/project", []);
+      assertEquals(valid, false);
+      assertEquals(code, PathValidationError.NOT_IN_ALLOWLIST);
     });
 
     it("should return invalid when path is outside base directory", () => {

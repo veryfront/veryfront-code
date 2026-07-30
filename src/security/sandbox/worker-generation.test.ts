@@ -37,7 +37,7 @@ Deno.test("worker generation identities are exact, bounded, and deterministic", 
   await assertRejects(
     () => resolveWorkerGeneration("invalid" as never),
     TypeError,
-    'must be either "data" or "ssr"',
+    'must be "api", "data", or "ssr"',
   );
 
   const identity = snapshotWorkerGenerationIdentity("data-scope", "release-a");
@@ -100,6 +100,31 @@ Deno.test("scope matching is exact for delimiters and nested scope names", async
   assertEquals(isWorkerGenerationInScope(delimited.workerId, `${delimitedScope}:child`), false);
 });
 
+Deno.test("API worker generations use framed identities with exact scope ownership", async () => {
+  const scope = "api:tenant";
+  const siblingScope = "api:tenant-other";
+  const nestedScope = `${scope}:child`;
+  const generation = await resolveWorkerGeneration(
+    "api",
+    snapshotWorkerGenerationIdentity(scope, "release-a"),
+  );
+  const nestedGeneration = await resolveWorkerGeneration(
+    "api",
+    snapshotWorkerGenerationIdentity(nestedScope, "release-a"),
+  );
+  const malformedGeneration = `${generation.workerId.slice(0, -1)}z`;
+
+  assertMatch(
+    generation.workerId,
+    /^veryfront-worker:v1:kind=3:api:scope=\d+:[A-Za-z0-9_-]+:generation=64:[0-9a-f]{64}$/,
+  );
+  assertEquals(isWorkerGenerationInScope(generation.workerId, scope), true);
+  assertEquals(isWorkerGenerationInScope(generation.workerId, siblingScope), false);
+  assertEquals(isWorkerGenerationInScope(generation.workerId, nestedScope), false);
+  assertEquals(isWorkerGenerationInScope(nestedGeneration.workerId, scope), false);
+  assertEquals(isWorkerGenerationInScope(malformedGeneration, scope), false);
+});
+
 Deno.test("worker identity preserves otherwise-replaced UTF-16 code units", async () => {
   const loneSurrogate = "\ud800";
   const replacementCharacter = "\ufffd";
@@ -125,22 +150,10 @@ Deno.test("worker identity preserves otherwise-replaced UTF-16 code units", asyn
   );
 });
 
-Deno.test("legacy API generation matching parses the complete digest suffix", () => {
-  const parentScope = "api:scope";
-  const nestedScope = `${parentScope}:generation:nested`;
-  const parentGeneration = `${parentScope}:generation:${"a".repeat(64)}`;
-  const nestedGeneration = `${nestedScope}:generation:${"b".repeat(64)}`;
-
-  assertEquals(isWorkerGenerationInScope(parentGeneration, parentScope), true);
-  assertEquals(isWorkerGenerationInScope(parentGeneration, nestedScope), false);
-  assertEquals(isWorkerGenerationInScope(nestedGeneration, nestedScope), true);
-  assertEquals(isWorkerGenerationInScope(nestedGeneration, parentScope), false);
+Deno.test("unframed generation identities are never treated as pool keys", () => {
+  const scope = "api:scope";
   assertEquals(
-    isWorkerGenerationInScope(`${parentGeneration}:trailing`, parentScope),
-    false,
-  );
-  assertEquals(
-    isWorkerGenerationInScope(`${parentScope}:generation:not-a-digest`, parentScope),
+    isWorkerGenerationInScope(`${scope}:generation:${"a".repeat(64)}`, scope),
     false,
   );
 });

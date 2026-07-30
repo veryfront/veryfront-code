@@ -381,14 +381,12 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     apiRedirect: "Redirect response",
     notFound: "Throw 404 in data loaders",
     redirect: "Throw redirect in data loaders",
-    createValidatedHandler: "Zod-validated API handler wrapper",
+    createValidatedHandler: "Schema-validated API handler wrapper",
     parseJsonBody: "Parse and validate JSON body",
     parseFormData: "Parse multipart form data",
     parseQueryParams: "Parse and validate query params",
-    sanitizeData:
-      "Sanitize data to prevent XSS and prototype pollution attacks",
     createValidationError: "Create an input validation error.",
-    CommonSchemas: "Built-in Zod schemas (email, URL, etc.)",
+    CommonSchemas: "Built-in schema contracts (email, URL, etc.)",
     INPUT_VALIDATION_FAILED:
       "HTTP request input validation failures (replaces ValidationError)",
     APIContext: "API route handler context",
@@ -584,7 +582,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     useApproval: "Approve or reject workflow",
     WorkflowClient: "Workflow HTTP client",
     MemoryBackend: "In-memory backend (dev)",
-    createDistributedWorkflowBackend: "Create an extension-backed workflow backend",
+    createDistributedWorkflowBackend:
+      "Create an extension-backed workflow backend",
     DistributedWorkflowBackendOptions: "Distributed workflow provider options",
     WorkflowExecutor: "Low-level workflow executor",
     WorkflowDefinition: "Workflow definition",
@@ -661,7 +660,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     MiddlewareContext: "Middleware pipeline context",
     MiddlewarePipeline: "Composable middleware chain",
     MemoryRateLimitStore: "In-memory rate limit store",
-    createDistributedRateLimitStore: "Create an extension-backed rate limit store",
+    createDistributedRateLimitStore:
+      "Create an extension-backed rate limit store",
     DistributedRateLimitStoreOptions: "Distributed rate limit provider options",
     Context: "Base request context",
     ExecutionContext: "Context with execution metadata",
@@ -873,7 +873,11 @@ function isTopLevelExportPath(path: string): boolean {
 
 function topLevelSlug(exportPath: string): string {
   if (exportPath === ".") return "index";
-  return exportPath.replace("./", "").split("/")[0];
+  const normalized = exportPath.replace("./", "");
+  const separatorIndex = normalized.indexOf("/");
+  return separatorIndex === -1
+    ? normalized
+    : normalized.slice(0, separatorIndex);
 }
 
 function createExportEntry(exportPath: string, filePath: string): ExportEntry {

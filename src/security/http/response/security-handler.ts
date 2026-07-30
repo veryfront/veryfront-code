@@ -63,30 +63,24 @@ export function generateNonce(): string {
 const VERYFRONT_FRAME_ANCESTORS = ["'self'", ...HOSTED_STUDIO_ORIGINS];
 
 /**
- * Build a default CSP that works for typical veryfront apps.
+ * Build the dependency-free core production CSP.
  *
- * - Scripts: nonce-based + cdn.jsdelivr.net + esm.sh (Scalar API docs,
- *   html2canvas, legacy/browser ESM hydration)
- * - Styles:
- *   - style-src: 'self' + 'unsafe-inline' + Google Fonts + cdn.veryfront.com
- *     + Video.js CDN so React style="" attributes, framework inline styles,
- *     and common media-player stylesheets remain compatible. Do not include a
- *     nonce in style directives here: browsers ignore 'unsafe-inline' when a
- *     nonce/hash is present, which breaks runtime-created style attributes and
- *     style elements.
- *   - style-src-elem: 'unsafe-inline' + Google Fonts + cdn.veryfront.com +
- *     Video.js CDN for runtime-created <style> tags and stylesheet elements
+ * - Scripts: same-origin and nonce-authorized scripts only
+ * - Styles: same-origin plus inline styles required by framework components.
+ *   Do not include a nonce in style directives here: browsers ignore
+ *   'unsafe-inline' when a nonce/hash is present, which breaks runtime-created
+ *   style attributes and style elements.
  *   - style-src-attr: 'unsafe-inline' for modern browsers with directive-level
  *     style attribute support
- * - Images/fonts: 'self' + data: + https: + cdn.veryfront.com
- * - Media: 'self' + https: + blob: where browser media pipelines require
- *   object URLs
+ * - Images/fonts: same-origin plus inline data resources
+ * - Media: same-origin plus blob URLs used by browser media pipelines
  * - Workers: 'self' + blob: for browser libraries that create blob workers
- * - Connections: 'self' + wss: + https: (WebSocket for HMR/live reload, API calls)
+ * - Connections: same-origin only. Development skips this default, so HMR is
+ *   not widened into the production policy.
  * - Objects: 'none' (block Flash/plugins)
  * - Frames: 'self' (allows same-origin iframes; apps embedding external
- *   content like YouTube or OAuth popups should add those origins via
- *   security.csp.frameSrc in veryfront.config.ts)
+ *   content must add those origins through an extension or explicit project
+ *   `security.csp.frameSrc` configuration)
  * - Frame-ancestors: `'none'` for customer apps, or a Studio allowlist for
  *   veryfront-managed deployments. Supersedes X-Frame-Options in modern
  *   browsers and provides clickjacking protection even when X-Frame-Options
@@ -100,14 +94,14 @@ function buildDefaultCSP(nonce: string, isVeryfrontDomain: boolean): string {
 
   return [
     `default-src 'self'`,
-    `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net https://esm.sh`,
-    `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.veryfront.com https://vjs.zencdn.net`,
-    `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.veryfront.com https://vjs.zencdn.net`,
+    `script-src 'self' 'nonce-${nonce}'`,
+    `style-src 'self' 'unsafe-inline'`,
+    `style-src-elem 'self' 'unsafe-inline'`,
     `style-src-attr 'unsafe-inline'`,
-    `img-src 'self' data: https:`,
-    `font-src 'self' data: https://fonts.gstatic.com https://cdn.veryfront.com`,
-    `connect-src 'self' wss: https:`,
-    `media-src 'self' https: blob:`,
+    `img-src 'self' data:`,
+    `font-src 'self' data:`,
+    `connect-src 'self'`,
+    `media-src 'self' blob:`,
     `worker-src 'self' blob:`,
     `object-src 'none'`,
     `frame-src 'self'`,
@@ -211,7 +205,9 @@ export function applySecurityHeaders(
     headers.set("X-Frame-Options", getHeaderOverride("x-frame-options") ?? "DENY");
   }
 
-  headers.set("X-XSS-Protection", getHeaderOverride("x-xss-protection") ?? "1; mode=block");
+  // Disable obsolete browser XSS auditors. Legacy filtering could mutate a
+  // safe response into an exploitable one; CSP is the active script policy.
+  headers.set("X-XSS-Protection", getHeaderOverride("x-xss-protection") ?? "0");
 
   const csp = buildCSP(isDev, nonce, cspUserHeader, config, adapter, isVeryfrontDomain);
   if (csp) headers.set("Content-Security-Policy", csp);

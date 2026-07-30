@@ -22,43 +22,186 @@ export interface DeriveSecurityContextOptions {
   productionDefaults?: boolean;
 }
 
+const MAX_SECURITY_CONFIG_DEPTH = 32;
+const MAX_SECURITY_CONFIG_ENTRIES = 10_000;
+const MAX_SECURITY_CONFIG_ARRAY_LENGTH = 1_024;
+
+interface SecuritySnapshotState {
+  readonly clones: WeakMap<object, unknown>;
+  readonly active: WeakSet<object>;
+  entries: number;
+}
+
+function invalidSecurityConfig(): never {
+  throw new TypeError("Invalid security configuration");
+}
+
+function consumeSecurityEntry(state: SecuritySnapshotState): void {
+  state.entries++;
+  if (state.entries > MAX_SECURITY_CONFIG_ENTRIES) invalidSecurityConfig();
+}
+
 function cloneAndFreezeSecurityValue<T>(
   value: T,
-  seen: WeakMap<object, unknown> = new WeakMap(),
+  state: SecuritySnapshotState = {
+    clones: new WeakMap(),
+    active: new WeakSet(),
+    entries: 0,
+  },
+  depth = 0,
 ): T {
   if (value === null) return value;
 
+  if (depth > MAX_SECURITY_CONFIG_DEPTH) return invalidSecurityConfig();
+
   if (typeof value === "function") {
     const source = value as (...args: unknown[]) => unknown;
-    const cached = seen.get(source);
+    const cached = state.clones.get(source);
     if (cached !== undefined) return cached as T;
 
     const wrapped = function (this: unknown, ...args: unknown[]): unknown {
       return Reflect.apply(source, this, args);
     };
-    seen.set(source, wrapped);
+    state.clones.set(source, wrapped);
     return Object.freeze(wrapped) as T;
   }
 
-  if (typeof value !== "object") return value;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : invalidSecurityConfig();
+  }
+  if (
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    value === undefined
+  ) {
+    return value;
+  }
+  if (typeof value !== "object") return invalidSecurityConfig();
 
   const source = value as object;
-  const cached = seen.get(source);
+  if (state.active.has(source)) return invalidSecurityConfig();
+  const cached = state.clones.get(source);
   if (cached !== undefined) return cached as T;
 
-  if (Array.isArray(value)) {
-    const clone: unknown[] = [];
-    seen.set(source, clone);
-    for (const item of value) clone.push(cloneAndFreezeSecurityValue(item, seen));
-    return Object.freeze(clone) as T;
+  let isArray: boolean;
+  let prototype: object | null;
+  try {
+    isArray = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
+  } catch {
+    return invalidSecurityConfig();
   }
 
-  const clone: Record<string, unknown> = {};
-  seen.set(source, clone);
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    clone[key] = cloneAndFreezeSecurityValue(child, seen);
+  if (!isArray && prototype !== Object.prototype && prototype !== null) {
+    return invalidSecurityConfig();
   }
-  return Object.freeze(clone) as T;
+
+  state.active.add(source);
+  try {
+    if (isArray) {
+      let keys: (string | symbol)[];
+      let length: unknown;
+      try {
+        keys = Reflect.ownKeys(source);
+        const lengthDescriptor = Object.getOwnPropertyDescriptor(source, "length");
+        length = lengthDescriptor && "value" in lengthDescriptor
+          ? lengthDescriptor.value
+          : undefined;
+      } catch {
+        return invalidSecurityConfig();
+      }
+      if (
+        typeof length !== "number" ||
+        !Number.isSafeInteger(length) ||
+        length < 0 ||
+        length > MAX_SECURITY_CONFIG_ARRAY_LENGTH ||
+        keys.length !== length + 1
+      ) {
+        return invalidSecurityConfig();
+      }
+
+      const clone = new Array<unknown>(length);
+      state.clones.set(source, clone);
+      for (let index = 0; index < length; index++) {
+        const descriptor = Object.getOwnPropertyDescriptor(source, String(index));
+        if (!descriptor || !("value" in descriptor)) return invalidSecurityConfig();
+        consumeSecurityEntry(state);
+        clone[index] = cloneAndFreezeSecurityValue(descriptor.value, state, depth + 1);
+      }
+      return Object.freeze(clone) as T;
+    }
+
+    let keys: (string | symbol)[];
+    try {
+      keys = Reflect.ownKeys(source);
+    } catch {
+      return invalidSecurityConfig();
+    }
+    const clone: Record<string, unknown> = Object.create(null);
+    state.clones.set(source, clone);
+    for (const key of keys) {
+      if (typeof key !== "string") return invalidSecurityConfig();
+      const descriptor = Object.getOwnPropertyDescriptor(source, key);
+      if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+        return invalidSecurityConfig();
+      }
+      consumeSecurityEntry(state);
+      Object.defineProperty(clone, key, {
+        configurable: false,
+        enumerable: true,
+        writable: false,
+        value: cloneAndFreezeSecurityValue(descriptor.value, state, depth + 1),
+      });
+    }
+    return Object.freeze(clone) as T;
+  } finally {
+    state.active.delete(source);
+  }
+}
+
+function readSecurityConfig(cfg: unknown): SecurityConfig | undefined {
+  if (cfg === undefined) return undefined;
+  if (typeof cfg !== "object" || cfg === null || Array.isArray(cfg)) {
+    return invalidSecurityConfig();
+  }
+
+  try {
+    const prototype = Object.getPrototypeOf(cfg);
+    if (prototype !== Object.prototype && prototype !== null) return invalidSecurityConfig();
+    const descriptor = Object.getOwnPropertyDescriptor(cfg, "security");
+    if (!descriptor) return undefined;
+    if (!descriptor.enumerable || !("value" in descriptor)) return invalidSecurityConfig();
+    const value = descriptor.value;
+    if (value === undefined) return undefined;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return invalidSecurityConfig();
+    }
+    return value as SecurityConfig;
+  } catch {
+    return invalidSecurityConfig();
+  }
+}
+
+function readProductionDefaults(options: unknown): boolean | undefined {
+  if (typeof options !== "object" || options === null || Array.isArray(options)) {
+    return invalidSecurityConfig();
+  }
+
+  try {
+    const prototype = Object.getPrototypeOf(options);
+    if (prototype !== Object.prototype && prototype !== null) return invalidSecurityConfig();
+    const keys = Reflect.ownKeys(options);
+    if (keys.some((key) => key !== "productionDefaults")) return invalidSecurityConfig();
+    const descriptor = Object.getOwnPropertyDescriptor(options, "productionDefaults");
+    if (!descriptor) return undefined;
+    if (!descriptor.enumerable || !("value" in descriptor)) return invalidSecurityConfig();
+    if (descriptor.value !== undefined && typeof descriptor.value !== "boolean") {
+      return invalidSecurityConfig();
+    }
+    return descriptor.value as boolean | undefined;
+  } catch {
+    return invalidSecurityConfig();
+  }
 }
 
 /**
@@ -73,16 +216,19 @@ export function deriveSecurityContext(
   cfg?: VeryfrontConfig,
   options: DeriveSecurityContextOptions = {},
 ): DerivedSecurityContext {
-  const source = cfg?.security as SecurityConfig | undefined;
-  const normalized: SecurityConfig = source ? { ...source } : {};
+  const source = readSecurityConfig(cfg);
+  const snapshot = source === undefined
+    ? Object.freeze(Object.create(null)) as SecurityConfig
+    : cloneAndFreezeSecurityValue(source);
+  const normalized: SecurityConfig = Object.assign(Object.create(null), snapshot);
   normalized.cors ??= false;
 
-  const productionDefaults = options.productionDefaults ?? isProduction();
+  const productionDefaults = readProductionDefaults(options) ?? isProduction();
   if (normalized.csrf === undefined && productionDefaults) {
     normalized.csrf = true;
   }
 
-  const securityConfig = cloneAndFreezeSecurityValue(normalized);
+  const securityConfig = Object.freeze(normalized);
   return Object.freeze({
     securityConfig,
     cspUserHeader: serializeCSPDirectives(securityConfig.csp),
@@ -115,7 +261,10 @@ export class SecurityConfigLoader {
       // Fail this request closed, but allow a later request to retry after a
       // transient filesystem, import, or parse failure.
       if (Object.is(this.loadPromise, loadPromise)) this.loadPromise = null;
-      logger.error("Failed to load security config; will retry on next request", { error });
+      // Configuration errors can contain project paths or source fragments.
+      // Keep process telemetry stable and non-sensitive; the error still
+      // rejects the current caller unchanged for the request error boundary.
+      logger.error("Failed to load security config; will retry on next request");
       throw error;
     }
   }
@@ -166,12 +315,5 @@ export class SecurityConfigLoader {
 
     if (typeof configValue === "string") return configValue;
     return envValue || defaultValue;
-  }
-
-  reset(): void {
-    this.securityConfig = null;
-    this.cspUserHeader = null;
-    this.isLoaded = false;
-    this.loadPromise = null;
   }
 }

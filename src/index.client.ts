@@ -55,6 +55,9 @@ export type {
   DataContext,
   InferGetServerDataProps,
   PageWithData,
+  StaticDataPrimitive,
+  StaticDataResult,
+  StaticDataValue,
   StaticPathsResult,
 } from "./data/types.ts";
 
@@ -75,4 +78,3 @@ export {
   parseJsonBody,
   parseQueryParams,
 } from "./security/input-validation/parsers.ts";
-export { sanitizeData } from "./security/input-validation/sanitizers.ts";

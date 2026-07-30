@@ -11,9 +11,11 @@ import {
   isRequestBodyTooLargeError,
   readBodyBytesWithLimit,
   readBodyWithLimit,
+  resolveRequestLimits,
   validateContentType,
   validateRequestLimits,
 } from "./limits.ts";
+import { DEFAULT_LIMITS } from "./types.ts";
 
 function createStreamingRequest(
   body: ReadableStream<Uint8Array>,
@@ -34,6 +36,18 @@ function createStreamingRequest(
 
 describe("security/input-validation/limits", () => {
   describe("validateRequestLimits", () => {
+    it("does not allow callers to weaken framework-owned defaults", () => {
+      const expectedBodyLimit = DEFAULT_LIMITS.maxBodySize;
+
+      assertThrows(
+        () => {
+          (DEFAULT_LIMITS as { maxBodySize: number }).maxBodySize = 0;
+        },
+        TypeError,
+      );
+      assertStrictEquals(resolveRequestLimits().maxBodySize, expectedBodyLimit);
+    });
+
     it("should pass for normal requests", () => {
       const req = new Request("http://localhost/api/data", {
         headers: { "Content-Length": "100" },
@@ -156,6 +170,35 @@ describe("security/input-validation/limits", () => {
       }
     });
 
+    it("rejects unknown, inherited, and accessor-backed limit options", () => {
+      let getterCalls = 0;
+      const accessorLimits = {} as Record<string, unknown>;
+      Object.defineProperty(accessorLimits, "maxBodySize", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return 1;
+        },
+      });
+
+      assertThrows(
+        () => resolveRequestLimits({ unknown: 1 } as never),
+        TypeError,
+        "unsupported option",
+      );
+      assertThrows(
+        () => resolveRequestLimits(Object.create({ maxBodySize: 1 })),
+        TypeError,
+        "plain object",
+      );
+      assertThrows(
+        () => resolveRequestLimits(accessorLimits as never),
+        TypeError,
+        "own data property",
+      );
+      assertEquals(getterCalls, 0);
+    });
+
     it("counts URL and header limits in UTF-8 bytes", () => {
       const requestWithUnicodeUrl = {
         url: "http://localhost/å",
@@ -250,6 +293,15 @@ describe("security/input-validation/limits", () => {
       const text = await readBodyWithLimit(req, 1024);
 
       assertEquals(text, "hello world");
+    });
+
+    it("should reject malformed UTF-8 instead of replacing bytes", async () => {
+      const req = new Request("http://localhost/", {
+        method: "POST",
+        body: new Uint8Array([0xc0, 0xaf]),
+      });
+
+      await assertRejects(() => readBodyWithLimit(req, 2), TypeError);
     });
 
     it("should reject body exceeding limit", async () => {
@@ -544,6 +596,36 @@ describe("security/input-validation/limits", () => {
         VeryfrontError,
         "No request body",
       );
+    });
+
+    it("rejects body-read option accessors without invoking them", async () => {
+      let getterCalls = 0;
+      const options = {} as Record<string, unknown>;
+      Object.defineProperty(options, "signal", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return new AbortController().signal;
+        },
+      });
+
+      await assertRejects(
+        () =>
+          readBodyBytesWithLimit(
+            createStreamingRequest(
+              new ReadableStream({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+            ),
+            1,
+            options as never,
+          ),
+        TypeError,
+        "own data property",
+      );
+      assertEquals(getterCalls, 0);
     });
   });
 });

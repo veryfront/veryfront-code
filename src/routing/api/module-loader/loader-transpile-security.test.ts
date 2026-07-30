@@ -13,6 +13,7 @@ function createVirtualFileSystem(
   readFile: FileSystemAdapter["readFile"] = nodeAdapter.fs.readFile.bind(nodeAdapter.fs),
 ): FileSystemAdapter {
   return {
+    symlinkSemantics: "none",
     readFile,
     readFileBytes: nodeAdapter.fs.readFileBytes.bind(nodeAdapter.fs),
     writeFile: nodeAdapter.fs.writeFile.bind(nodeAdapter.fs),
@@ -122,6 +123,29 @@ describe("routing/api/module-loader transpile path security", () => {
     assertEquals(
       await resolveAdapterReadPath(virtualAdapter, modulePath, projectDir),
       modulePath,
+    );
+  });
+
+  it("rejects adapters whose missing realPath capability has no symlink-free proof", async () => {
+    const fs = createVirtualFileSystem() as FileSystemAdapter & {
+      symlinkSemantics?: "none";
+    };
+    delete fs.symlinkSemantics;
+    const adapter: RuntimeAdapter = {
+      ...nodeAdapter,
+      id: "memory",
+      fs,
+    };
+
+    await assertRejects(
+      () =>
+        resolveAdapterReadPath(
+          adapter,
+          "/virtual/project/handler.ts",
+          "/virtual/project",
+        ),
+      Error,
+      "realPath is required",
     );
   });
 

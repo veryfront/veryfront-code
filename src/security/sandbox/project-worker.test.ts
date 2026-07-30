@@ -18,9 +18,11 @@ import {
   MAX_WORKER_SSR_OUTPUT_CHUNKS,
 } from "./worker-types.ts";
 import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
+import type { WorkerEgressBroker } from "./worker-egress-guard.ts";
 import { computeHash } from "#veryfront/utils";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
 import { validateDataResult } from "#veryfront/data/helpers.ts";
+import { fromFileUrl, toFileUrl } from "#veryfront/compat/path";
 
 const testSuite = isDeno ? describe : describe.skip;
 const TEST_SOURCE_INTEGRATION_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
@@ -29,6 +31,13 @@ const TEST_EMPTY_PREPARED_MODULE = {
   source: TEST_EMPTY_MODULE_SOURCE,
   sha256: await computeHash(TEST_EMPTY_MODULE_SOURCE),
 };
+const TEST_ISOLATED_SSR_RENDERER_MODULE_URL = new URL(
+  "../../../extensions/ext-react-ssr/src/worker-renderer.ts",
+  import.meta.url,
+).href;
+const TEST_ISOLATED_SSR_RENDERER_READ_PATHS = [
+  fromFileUrl(new URL("../../../extensions/ext-react-ssr/src/", import.meta.url)),
+];
 
 const TEST_PERMISSIONS: WorkerPermissions = {
   read: true,
@@ -38,6 +47,7 @@ const TEST_PERMISSIONS: WorkerPermissions = {
   run: false,
   ffi: false,
   sys: false,
+  import: false,
 };
 
 const REAL_WORKER_PERMISSIONS: WorkerPermissions = {
@@ -48,6 +58,7 @@ const REAL_WORKER_PERMISSIONS: WorkerPermissions = {
   run: false,
   ffi: false,
   sys: false,
+  import: false,
 };
 
 const TEST_WORKER_SCRIPT_URL = `data:application/typescript,${
@@ -130,6 +141,22 @@ function createSSRScriptedWorker(
     `,
     requestTimeoutMs,
   );
+}
+
+function createProductionSSRWorker(
+  projectId: string,
+  projectDir: string,
+): ProjectWorker {
+  return new ProjectWorker({
+    projectId,
+    permissions: buildWorkerPermissions([
+      projectDir,
+      ...TEST_ISOLATED_SSR_RENDERER_READ_PATHS,
+    ]),
+    requestTimeoutMs: 30_000,
+    allowInternalEgress: false,
+    isolatedSsrRendererModuleUrl: TEST_ISOLATED_SSR_RENDERER_MODULE_URL,
+  });
 }
 
 async function assertWorkerReady(worker: ProjectWorker): Promise<void> {
@@ -285,6 +312,48 @@ testSuite("ProjectWorker", () => {
     assertEquals(worker.status, "terminated");
   });
 
+  it("shutdown is single-flight and waits for stalled broker work", async () => {
+    const worker = createTestWorker("test-quiescent-shutdown");
+    worker.start();
+    const brokerCompletion = Promise.withResolvers<void>();
+    let closeCalls = 0;
+    const broker: WorkerEgressBroker = {
+      config: {
+        socksProxy: {
+          hostname: "127.0.0.1",
+          port: 1,
+          username: "test",
+          password: "test",
+        },
+        httpBroker: { url: "http://127.0.0.1:1/fetch", token: "test" },
+        netAllowlist: ["127.0.0.1:1"],
+      },
+      close() {
+        closeCalls++;
+      },
+      closed: brokerCompletion.promise,
+    };
+    (worker as unknown as { egressBroker: WorkerEgressBroker | null }).egressBroker = broker;
+
+    const first = worker.shutdown();
+    const second = worker.shutdown();
+    assert(first === second);
+    assertEquals(worker.status, "terminated");
+    assertEquals(closeCalls, 1);
+
+    let settled = false;
+    void first.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    assertEquals(settled, false);
+
+    brokerCompletion.resolve();
+    await first;
+    assertEquals(settled, true);
+    assertEquals(closeCalls, 1);
+  });
+
   it("responds to health check", async () => {
     const worker = createTestWorker();
     worker.start();
@@ -324,6 +393,128 @@ testSuite("ProjectWorker", () => {
   it("projectId is set correctly", () => {
     const worker = createTestWorker();
     assertEquals(worker.projectId, "test-project");
+  });
+
+  it("snapshots permissions at construction so later mutation cannot broaden the worker", async () => {
+    const secretPath = await Deno.makeTempFile();
+    await Deno.writeTextFile(secretPath, "permission-snapshot-secret");
+    const mutableRead: string[] = [];
+    const mutablePermissions: WorkerPermissions = {
+      read: mutableRead,
+      write: false,
+      net: false,
+      env: false,
+      run: false,
+      ffi: false,
+      sys: false,
+      import: false,
+    };
+    const worker = new ProjectWorker({
+      projectId: "test-permission-snapshot",
+      permissions: mutablePermissions,
+      requestTimeoutMs: 5_000,
+      allowInternalEgress: false,
+      workerScriptUrl: `data:application/typescript,${
+        encodeURIComponent(`
+          self.onmessage = async (event) => {
+            const message = event.data;
+            if (message.type !== "ping") return;
+            let broadened = false;
+            try {
+              await Deno.readTextFile(${JSON.stringify(secretPath)});
+              broadened = true;
+            } catch {
+              // Expected: the construction-time empty read scope is immutable.
+            }
+            self.postMessage({
+              type: broadened ? "permission-broadened" : "pong",
+              id: message.id,
+            });
+          };
+        `)
+      }`,
+    });
+
+    mutableRead.push(secretPath);
+    mutablePermissions.read = true;
+    mutablePermissions.net = true;
+
+    try {
+      worker.start();
+      assertEquals(await worker.isHealthy(5_000), true);
+    } finally {
+      await worker.shutdown();
+      await Deno.remove(secretPath);
+    }
+  });
+
+  it("canonicalizes and freezes permission arrays without retaining caller storage", () => {
+    const source = ["/project/b", "/project/a", "/project/b"];
+    const worker = new ProjectWorker({
+      projectId: "test-permission-canonicalization",
+      permissions: { ...TEST_PERMISSIONS, read: source },
+      requestTimeoutMs: 5_000,
+      allowInternalEgress: false,
+      workerScriptUrl: TEST_WORKER_SCRIPT_URL,
+    });
+    const captured = (worker as unknown as {
+      permissions: Readonly<WorkerPermissions>;
+    }).permissions;
+
+    source.push("/project/c");
+    assertEquals(captured.read, ["/project/a", "/project/b"]);
+    assertEquals(Object.isFrozen(captured), true);
+    assertEquals(Object.isFrozen(captured.read), true);
+  });
+
+  it("rejects hostile permission accessors without invoking them", () => {
+    let getterCalls = 0;
+    const permissions = Object.defineProperty(
+      { ...TEST_PERMISSIONS },
+      "read",
+      {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return true;
+        },
+      },
+    );
+
+    assertThrows(
+      () =>
+        new ProjectWorker({
+          projectId: "test-permission-accessor",
+          permissions,
+          requestTimeoutMs: 5_000,
+          allowInternalEgress: false,
+        }),
+      TypeError,
+      "read must be an enumerable data property",
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("rejects non-enumerable permission array entries", () => {
+    const read = ["/project/a"];
+    Object.defineProperty(read, "0", {
+      configurable: true,
+      enumerable: false,
+      value: "/project/a",
+      writable: true,
+    });
+
+    assertThrows(
+      () =>
+        new ProjectWorker({
+          projectId: "test-permission-array-enumerability",
+          permissions: { ...TEST_PERMISSIONS, read },
+          requestTimeoutMs: 5_000,
+          allowInternalEgress: false,
+        }),
+      TypeError,
+      "read contains a noncanonical entry",
+    );
   });
 
   it("rejects unrestricted network access for custom worker scripts", () => {
@@ -2191,6 +2382,84 @@ testSuite("ProjectWorker - executeStream", () => {
     }
   });
 
+  it("fails closed with an actionable error when no isolated SSR extension is configured", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-worker-ssr-missing-" });
+    const pageModulePath = `${projectDir}/page.ts`;
+    await Deno.writeTextFile(pageModulePath, `export default function Page() { return "unused"; }`);
+    const worker = new ProjectWorker({
+      projectId: "test-missing-ssr-renderer",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 30_000,
+      allowInternalEgress: false,
+    });
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const response = await worker.execute({
+        type: "render-ssr",
+        id: "missing-renderer",
+        pageModulePath,
+        layoutModulePaths: [],
+        pageProps: {},
+        layoutProps: [],
+        delivery: "string",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      });
+      assertEquals(response.type, "error");
+      if (response.type !== "error") throw new Error("expected renderer configuration error");
+      assert(response.error.message.includes("Install and register @veryfront/ext-react-ssr"));
+    } finally {
+      await worker.shutdown();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("preserves a sanitized renderer import diagnostic and detached cause", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-worker-ssr-import-" });
+    const pageModulePath = `${projectDir}/page.ts`;
+    const rendererModulePath = `${projectDir}/renderer.ts`;
+    await Deno.writeTextFile(pageModulePath, `export default function Page() { return "unused"; }`);
+    await Deno.writeTextFile(
+      rendererModulePath,
+      `throw new Error("renderer import failed for https://user:secret@example.test/private");`,
+    );
+    const worker = new ProjectWorker({
+      projectId: "test-failed-ssr-renderer-import",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 30_000,
+      allowInternalEgress: false,
+      isolatedSsrRendererModuleUrl: toFileUrl(rendererModulePath).href,
+    });
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const response = await worker.execute({
+        type: "render-ssr",
+        id: "failed-renderer-import",
+        pageModulePath,
+        layoutModulePaths: [],
+        pageProps: {},
+        layoutProps: [],
+        delivery: "string",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      });
+      assertEquals(response.type, "error");
+      if (response.type !== "error") throw new Error("expected renderer import error");
+      assert(
+        response.error.message.includes(
+          "Isolated SSR renderer extension import failed: renderer import failed",
+        ),
+      );
+      assertEquals(response.error.message.includes("secret"), false);
+      const serializedCause = response.error.problem?.cause;
+      assertEquals(serializedCause?.includes("secret"), false);
+      assertEquals(serializedCause?.includes("renderer import failed"), true);
+    } finally {
+      await worker.shutdown();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("streams production isolated SSR through the bounded continuation protocol", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-worker-ssr-stream-" });
     const pageModulePath = `${projectDir}/page.ts`;
@@ -2198,12 +2467,7 @@ testSuite("ProjectWorker - executeStream", () => {
       pageModulePath,
       `export default function Page() { return "bounded worker stream"; }`,
     );
-    const worker = new ProjectWorker({
-      projectId: "test-real-stream-protocol",
-      permissions: buildWorkerPermissions([projectDir]),
-      requestTimeoutMs: 30_000,
-      allowInternalEgress: false,
-    });
+    const worker = createProductionSSRWorker("test-real-stream-protocol", projectDir);
     worker.start();
     try {
       await assertWorkerReady(worker);
@@ -2234,12 +2498,7 @@ testSuite("ProjectWorker - executeStream", () => {
       pageModulePath,
       `export default function Page(props) { return "render-" + props.index; }`,
     );
-    const worker = new ProjectWorker({
-      projectId: "test-real-concurrent-admission",
-      permissions: buildWorkerPermissions([projectDir]),
-      requestTimeoutMs: 30_000,
-      allowInternalEgress: false,
-    });
+    const worker = createProductionSSRWorker("test-real-concurrent-admission", projectDir);
     worker.start();
     try {
       await assertWorkerReady(worker);
@@ -2279,12 +2538,7 @@ testSuite("ProjectWorker - executeStream", () => {
         return "é".repeat(${multibyteCharacters}) + ${textBytes % 2 === 0 ? '""' : '"x"'};
       }`,
     );
-    const worker = new ProjectWorker({
-      projectId: "test-real-large-frame-splitting",
-      permissions: buildWorkerPermissions([projectDir]),
-      requestTimeoutMs: 30_000,
-      allowInternalEgress: false,
-    });
+    const worker = createProductionSSRWorker("test-real-large-frame-splitting", projectDir);
     worker.start();
     try {
       await assertWorkerReady(worker);
@@ -2335,12 +2589,7 @@ testSuite("ProjectWorker - executeStream", () => {
       pageModulePath,
       `export default function Page() { return "x".repeat(${MAX_WORKER_SSR_OUTPUT_BYTES + 1}); }`,
     );
-    const worker = new ProjectWorker({
-      projectId: "test-real-string-limit",
-      permissions: buildWorkerPermissions([projectDir]),
-      requestTimeoutMs: 30_000,
-      allowInternalEgress: false,
-    });
+    const worker = createProductionSSRWorker("test-real-string-limit", projectDir);
     worker.start();
     try {
       await assertWorkerReady(worker);

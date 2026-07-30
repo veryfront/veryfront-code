@@ -1,13 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
 import {
   createValidator,
   sanitizePathForDisplay,
+  validateLexicalPath,
   validatePath,
-  validatePathSync,
+  ValidationPresets,
 } from "./index.ts";
 import { PathValidationError } from "./types.ts";
 
@@ -21,10 +23,13 @@ function createAdapterWithFs(
 
 describe("security/path-validation/index", () => {
   describe("validatePath", () => {
+    const adapter = createMockAdapter();
+
     it("should accept a valid relative path within base", async () => {
       const result = await validatePath("src/file.ts", {
         baseDir: "/project",
         allowedDirs: ["src"],
+        adapter,
       });
 
       assertEquals(result.valid, true);
@@ -32,17 +37,21 @@ describe("security/path-validation/index", () => {
     });
 
     it("should reject paths with null bytes", async () => {
-      const result = await validatePath("src/\0evil.ts", { baseDir: "/project" });
+      const result = await validatePath("src/\0evil.ts", {
+        baseDir: "/project",
+        adapter,
+      });
 
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.NULL_BYTE);
     });
 
-    it("should reject absolute paths in strict mode when allowAbsolute is false", async () => {
+    it("should reject absolute paths whenever allowAbsolute is false", async () => {
       const result = await validatePath("/etc/passwd", {
         baseDir: "/project",
         level: "strict",
         allowAbsolute: false,
+        adapter,
       });
 
       assertEquals(result.valid, false);
@@ -55,24 +64,28 @@ describe("security/path-validation/index", () => {
         level: "strict",
         allowAbsolute: true,
         allowedDirs: ["src"],
+        adapter,
       });
 
       assertEquals(result.valid, true);
     });
 
-    it("should allow absolute paths in normal mode even without allowAbsolute", async () => {
+    it("should reject absolute paths in normal mode unless explicitly enabled", async () => {
       const result = await validatePath("/project/src/file.ts", {
         baseDir: "/project",
         level: "normal",
         allowedDirs: ["src"],
+        adapter,
       });
 
-      assertEquals(result.valid, true);
+      assertEquals(result.valid, false);
+      assertEquals(result.code, PathValidationError.ABSOLUTE_PATH_DENIED);
     });
 
     it("should reject paths outside base directory", async () => {
       const result = await validatePath("../../etc/passwd", {
         baseDir: "/project",
+        adapter,
       });
 
       assertEquals(result.valid, false);
@@ -104,9 +117,121 @@ describe("security/path-validation/index", () => {
       assertEquals(result.code, PathValidationError.SYMLINK_DETECTED);
     });
 
+    it("fails closed when an adapter cannot prove no-follow symlink semantics", async () => {
+      const adapter = createMockAdapter();
+      Reflect.deleteProperty(adapter.fs, "symlinkSemantics");
+
+      const result = await validatePath("src/file.ts", {
+        baseDir: "/project",
+        adapter,
+        followSymlinks: false,
+      });
+
+      assertEquals(result.valid, false);
+      assertEquals(result.code, PathValidationError.SYMLINK_CAPABILITY_REQUIRED);
+    });
+
+    it("requires lstat for strict validation even when realPath is available", async () => {
+      const adapter = createAdapterWithFs({
+        realPath: (path: string) => Promise.resolve(path),
+      });
+      Reflect.deleteProperty(adapter.fs, "symlinkSemantics");
+
+      const result = await validatePath("src/file.ts", {
+        baseDir: "/project",
+        level: "strict",
+        adapter,
+        allowAbsolute: false,
+      });
+
+      assertEquals(result.valid, false);
+      assertEquals(result.code, PathValidationError.SYMLINK_CAPABILITY_REQUIRED);
+    });
+
+    it("requires realPath before an adapter may follow symlinks", async () => {
+      const adapter = createAdapterWithFs({
+        lstat: () =>
+          Promise.resolve({
+            isSymlink: false,
+            isDirectory: false,
+            isFile: true,
+            size: 0,
+            mtime: null,
+          }),
+      });
+      Reflect.deleteProperty(adapter.fs, "symlinkSemantics");
+
+      const result = await validatePath("src/file.ts", {
+        baseDir: "/project",
+        adapter,
+        followSymlinks: true,
+      });
+
+      assertEquals(result.valid, false);
+      assertEquals(result.code, PathValidationError.SYMLINK_CAPABILITY_REQUIRED);
+    });
+
+    it("accepts lexical validation only with an explicit symlink-free marker", async () => {
+      const adapter = createMockAdapter();
+
+      const result = await validatePath("src/file.ts", {
+        baseDir: "/project",
+        adapter,
+        followSymlinks: false,
+      });
+
+      assertEquals(result.valid, true);
+      assertEquals(result.canonicalPath, "/project/src/file.ts");
+    });
+
+    it("fails closed without a filesystem adapter, including physical presets", async () => {
+      for (
+        const options of [
+          { baseDir: "/project" },
+          ValidationPresets.userInput("/project"),
+          ValidationPresets.static("/project"),
+        ]
+      ) {
+        const result = await validatePath("src/file.ts", options as never);
+        assertEquals(result.valid, false);
+        assertEquals(result.code, PathValidationError.INVALID_PATH);
+      }
+    });
+
+    it("enforces followSymlinks for intermediate links inside the trust root", async () => {
+      if (Deno.build.os === "windows") return;
+
+      const baseDir = await Deno.makeTempDir();
+      try {
+        await Deno.mkdir(`${baseDir}/target`);
+        await Deno.writeTextFile(`${baseDir}/target/file.ts`, "export {};");
+        await Deno.symlink(`${baseDir}/target`, `${baseDir}/link`);
+        const adapter = new DenoAdapter();
+
+        const denied = await validatePath("link/file.ts", {
+          baseDir,
+          level: "normal",
+          followSymlinks: false,
+          adapter,
+        });
+        const allowed = await validatePath("link/file.ts", {
+          baseDir,
+          level: "normal",
+          followSymlinks: true,
+          adapter,
+        });
+
+        assertEquals(denied.code, PathValidationError.SYMLINK_DETECTED);
+        assertEquals(allowed.valid, true);
+        assertEquals(allowed.canonicalPath, await Deno.realPath(`${baseDir}/target/file.ts`));
+      } finally {
+        await Deno.remove(baseDir, { recursive: true });
+      }
+    });
+
     it("should reject when file not found and checkExists is true", async () => {
       const mockAdapter = createAdapterWithFs({
-        stat: () => Promise.reject(new Error("ENOENT")),
+        stat: () => Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" })),
       });
 
       const result = await validatePath("src/missing.ts", {
@@ -121,10 +246,31 @@ describe("security/path-validation/index", () => {
       assertEquals(result.code, PathValidationError.FILE_NOT_FOUND);
     });
 
+    it("propagates filesystem failures that are not not-found errors", async () => {
+      const mockAdapter = createAdapterWithFs({
+        stat: () =>
+          Promise.reject(Object.assign(new Error("permission denied"), { code: "EACCES" })),
+      });
+
+      await assertRejects(
+        () =>
+          validatePath("src/private.ts", {
+            baseDir: "/project",
+            level: "normal",
+            checkExists: true,
+            adapter: mockAdapter,
+            allowedDirs: ["src"],
+          }),
+        Error,
+        "permission denied",
+      );
+    });
+
     it("should enforce allowedDirs restriction", async () => {
       const result = await validatePath("secret/data.ts", {
         baseDir: "/project",
         allowedDirs: ["src", "lib"],
+        adapter,
       });
 
       assertEquals(result.valid, false);
@@ -134,6 +280,7 @@ describe("security/path-validation/index", () => {
     it("should pass when no allowedDirs restriction is set", async () => {
       const result = await validatePath("anything/file.ts", {
         baseDir: "/project",
+        adapter,
       });
 
       assertEquals(result.valid, true);
@@ -143,6 +290,7 @@ describe("security/path-validation/index", () => {
       const result = await validatePath("src/../lib/file.ts", {
         baseDir: "/project",
         allowedDirs: ["lib"],
+        adapter,
       });
 
       assertEquals(result.valid, true);
@@ -173,11 +321,35 @@ describe("security/path-validation/index", () => {
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.OUTSIDE_BASE);
     });
+
+    it("rejects unknown, inherited, and accessor-backed options without invoking accessors", async () => {
+      let getterCalls = 0;
+      const accessorOptions = { baseDir: "/project" } as Record<string, unknown>;
+      Object.defineProperty(accessorOptions, "allowedDirs", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return ["src"];
+        },
+      });
+
+      for (
+        const options of [
+          { baseDir: "/project", unknown: true },
+          Object.create({ baseDir: "/project" }),
+          accessorOptions,
+        ]
+      ) {
+        const result = await validatePath("src/file.ts", options as never);
+        assertEquals(result.code, PathValidationError.INVALID_PATH);
+      }
+      assertEquals(getterCalls, 0);
+    });
   });
 
-  describe("validatePathSync", () => {
+  describe("validateLexicalPath", () => {
     it("should accept a valid relative path within base", () => {
-      const result = validatePathSync("src/file.ts", {
+      const result = validateLexicalPath("src/file.ts", {
         baseDir: "/project",
         allowedDirs: ["src"],
       });
@@ -186,16 +358,15 @@ describe("security/path-validation/index", () => {
     });
 
     it("should reject paths with null bytes", () => {
-      const result = validatePathSync("src/\0evil.ts", { baseDir: "/project" });
+      const result = validateLexicalPath("src/\0evil.ts", { baseDir: "/project" });
 
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.NULL_BYTE);
     });
 
-    it("should reject absolute paths in strict mode", () => {
-      const result = validatePathSync("/etc/passwd", {
+    it("should reject absolute paths unless explicitly enabled", () => {
+      const result = validateLexicalPath("/etc/passwd", {
         baseDir: "/project",
-        level: "strict",
         allowAbsolute: false,
       });
 
@@ -204,7 +375,7 @@ describe("security/path-validation/index", () => {
     });
 
     it("should enforce allowedDirs", () => {
-      const result = validatePathSync("secret/data.ts", {
+      const result = validateLexicalPath("secret/data.ts", {
         baseDir: "/project",
         allowedDirs: ["src"],
       });
@@ -214,7 +385,7 @@ describe("security/path-validation/index", () => {
     });
 
     it("should reject paths outside base directory", () => {
-      const result = validatePathSync("../../etc/passwd", {
+      const result = validateLexicalPath("../../etc/passwd", {
         baseDir: "/project",
       });
 
@@ -223,11 +394,25 @@ describe("security/path-validation/index", () => {
     });
 
     it("should accept paths with no allowedDirs", () => {
-      const result = validatePathSync("anything/file.ts", {
+      const result = validateLexicalPath("anything/file.ts", {
         baseDir: "/project",
       });
 
       assertEquals(result.valid, true);
+    });
+
+    it("rejects malformed lexical policy objects and directory lists", () => {
+      const unknownOption = validateLexicalPath("src/file.ts", {
+        baseDir: "/project",
+        unknown: true,
+      } as never);
+      const nestedAllowedDir = validateLexicalPath("src/file.ts", {
+        baseDir: "/project",
+        allowedDirs: ["src/nested"],
+      });
+
+      assertEquals(unknownOption.code, PathValidationError.INVALID_PATH);
+      assertEquals(nestedAllowedDir.code, PathValidationError.INVALID_PATH);
     });
   });
 
@@ -236,6 +421,7 @@ describe("security/path-validation/index", () => {
       const validate = createValidator({
         baseDir: "/project",
         allowedDirs: ["src"],
+        adapter: createMockAdapter(),
       });
 
       const result = await validate("src/file.ts");
@@ -246,6 +432,7 @@ describe("security/path-validation/index", () => {
       const validate = createValidator({
         baseDir: "/project",
         allowedDirs: ["src"],
+        adapter: createMockAdapter(),
       });
 
       const result = await validate("lib/file.ts", { allowedDirs: ["lib"] });
@@ -256,11 +443,40 @@ describe("security/path-validation/index", () => {
       const validate = createValidator({
         baseDir: "/project",
         level: "strict",
+        adapter: createMockAdapter(),
       });
 
       const result = await validate("/etc/passwd");
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.ABSOLUTE_PATH_DENIED);
+    });
+
+    it("snapshots defaults and rejects hostile overrides", async () => {
+      const allowedDirs = ["src"];
+      const defaults = {
+        baseDir: "/project",
+        allowedDirs,
+        adapter: createMockAdapter(),
+      };
+      const validate = createValidator(defaults);
+      allowedDirs.push("secret");
+      defaults.baseDir = "/outside";
+
+      const denied = await validate("secret/file.ts");
+      assertEquals(denied.code, PathValidationError.NOT_IN_ALLOWLIST);
+
+      let getterCalls = 0;
+      const overrides = {} as Record<string, unknown>;
+      Object.defineProperty(overrides, "allowedDirs", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return ["secret"];
+        },
+      });
+      const hostile = await validate("secret/file.ts", overrides as never);
+      assertEquals(hostile.code, PathValidationError.INVALID_PATH);
+      assertEquals(getterCalls, 0);
     });
   });
 
@@ -277,6 +493,16 @@ describe("security/path-validation/index", () => {
 
     it("should return filename when path is not under base", () => {
       const result = sanitizePathForDisplay("/other/dir/file.ts", "/project");
+      assertEquals(result, "file.ts");
+    });
+
+    it("should not treat a sibling with a shared prefix as inside the base", () => {
+      const result = sanitizePathForDisplay("/project-secret/nested/file.ts", "/project");
+      assertEquals(result, "file.ts");
+    });
+
+    it("should normalize traversal before stripping the base", () => {
+      const result = sanitizePathForDisplay("/project/src/../../secret/file.ts", "/project");
       assertEquals(result, "file.ts");
     });
 

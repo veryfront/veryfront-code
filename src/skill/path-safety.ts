@@ -2,12 +2,17 @@
  * Skill path safety
  *
  * Validates file paths within skill directories to prevent traversal attacks.
- * Uses centralized validatePath() from #veryfront/security.
+ * Uses centralized lexical admission from #veryfront/security before applying
+ * descriptor-aware filesystem checks.
  *
  * @module
  */
 
-import { validatePath, type ValidationResult } from "#veryfront/security";
+import {
+  PathValidationError,
+  validateLexicalPath,
+  type ValidationResult,
+} from "#veryfront/security";
 import { isAbsolute, join, relative, resolve } from "#veryfront/compat/path";
 import { exists, readDir, stat } from "#veryfront/platform/compat/fs.ts";
 import { createError, fromError, toError, VeryfrontError } from "#veryfront/errors";
@@ -238,6 +243,41 @@ function normalizeAllowedSubdirs(
   return subdirs;
 }
 
+/**
+ * Apply the skill-specific allowlist contract after generic containment.
+ *
+ * Root files such as SKILL.md are always eligible. Only paths that descend
+ * into a top-level directory are governed by `allowedSubdirs`. Passing an
+ * empty array therefore means "root files only", not "deny the skill root"
+ * and not the generic path validator's unrestricted `undefined` policy.
+ */
+function validateSkillLexicalPath(
+  requestedPath: string,
+  skillRoot: string,
+  allowedSubdirs: readonly string[],
+): ValidationResult {
+  const result = validateLexicalPath(requestedPath, {
+    baseDir: skillRoot,
+    allowAbsolute: false,
+  });
+  if (!result.valid || !result.canonicalPath) return result;
+
+  const relativePath = relative(resolve(skillRoot), resolve(result.canonicalPath))
+    .replaceAll("\\", "/");
+  const segments = relativePath.split("/").filter(Boolean);
+  if (segments.length <= 1 || allowedSubdirs.includes(segments[0]!)) {
+    return result;
+  }
+
+  return {
+    valid: false,
+    error: allowedSubdirs.length === 0
+      ? `Access to directory '${segments[0]}' not allowed: directory allowlist is empty`
+      : `Access to directory '${segments[0]}' not allowed. Allowed: ${allowedSubdirs.join(", ")}`,
+    code: PathValidationError.NOT_IN_ALLOWLIST,
+  };
+}
+
 async function assertRealPathContained(
   skillRoot: string,
   targetPath: string,
@@ -337,12 +377,11 @@ export async function validateSkillPath(
     Number.POSITIVE_INFINITY,
   );
 
-  const result: ValidationResult = await validatePath(boundedRequestedPath, {
-    baseDir: boundedRoot,
-    allowedDirs: normalizedAllowedSubdirs,
-    level: "strict",
-    allowAbsolute: false,
-  });
+  const result = validateSkillLexicalPath(
+    boundedRequestedPath,
+    boundedRoot,
+    normalizedAllowedSubdirs,
+  );
 
   if (!result.valid) {
     throw toError(
@@ -435,12 +474,11 @@ export async function validateStrictSkillPath(
   );
   const normalizedAllowedSubdirs = normalizeAllowedSubdirs(allowedSubdirs);
 
-  const result: ValidationResult = await validatePath(boundedRequestedPath, {
-    baseDir: boundedRoot,
-    allowedDirs: normalizedAllowedSubdirs,
-    level: "strict",
-    allowAbsolute: false,
-  });
+  const result = validateSkillLexicalPath(
+    boundedRequestedPath,
+    boundedRoot,
+    normalizedAllowedSubdirs,
+  );
 
   if (!result.valid) {
     throw toError(

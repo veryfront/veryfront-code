@@ -16,7 +16,7 @@ import {
   toCjsDestructureBindings,
 } from "./loader.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, lstat, realPath } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -53,6 +53,8 @@ const adapter: RuntimeAdapter = {
       }
     },
     stat: fs.stat.bind(fs),
+    lstat,
+    realPath,
     mkdir: fs.mkdir.bind(fs),
     remove: fs.remove.bind(fs),
     makeTempDir: (prefix: string) => fs.makeTempDir({ prefix }),
@@ -83,6 +85,41 @@ const adapter: RuntimeAdapter = {
     throw new Error("not implemented");
   },
 };
+
+function createMappedReadAdapter(
+  realDir: string,
+  virtualBase: string,
+): RuntimeAdapter {
+  const virtualPrefix = `${virtualBase}/`;
+  const canonicalRealDir = realPath(realDir);
+  const toReal = (path: string): string => {
+    if (path === virtualBase) return realDir;
+    return path.startsWith(virtualPrefix) ? `${realDir}/${path.slice(virtualPrefix.length)}` : path;
+  };
+  const toVirtual = (path: string, canonicalRoot: string): string => {
+    if (path === canonicalRoot) return virtualBase;
+    const canonicalPrefix = `${canonicalRoot}/`;
+    return path.startsWith(canonicalPrefix)
+      ? `${virtualBase}/${path.slice(canonicalPrefix.length)}`
+      : path;
+  };
+
+  return {
+    ...adapter,
+    fs: {
+      ...adapter.fs,
+      readFile: (path: string) => fs.readTextFile(toReal(path)),
+      exists: (path: string) => fs.exists(toReal(path)),
+      stat: (path: string) => fs.stat(toReal(path)),
+      lstat: (path: string) => lstat(toReal(path)),
+      realPath: async (path: string) =>
+        toVirtual(
+          await realPath(toReal(path)),
+          await canonicalRealDir,
+        ),
+    },
+  };
+}
 
 describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, () => {
   afterAll(async () => {
@@ -126,17 +163,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 
     const tempRoot = await makeTempDir();
     const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
-    const toReal = (path: string): string => path.replace(virtualBase, realDir);
-
-    const virtualAdapter: RuntimeAdapter = {
-      ...adapter,
-      fs: {
-        ...adapter.fs,
-        readFile: (path: string) => fs.readTextFile(toReal(path)),
-        exists: (path: string) => fs.exists(toReal(path)),
-        stat: (path: string) => fs.stat(toReal(path)),
-      },
-    };
+    const virtualAdapter = createMappedReadAdapter(realDir, virtualBase);
 
     const route = await loadHandlerModule({
       projectDir: virtualBase,
@@ -167,16 +194,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 
     const tempRoot = await makeTempDir();
     const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
-    const toReal = (path: string): string => path.replace(virtualBase, realDir);
-    const virtualAdapter: RuntimeAdapter = {
-      ...adapter,
-      fs: {
-        ...adapter.fs,
-        readFile: (path: string) => fs.readTextFile(toReal(path)),
-        exists: (path: string) => fs.exists(toReal(path)),
-        stat: (path: string) => fs.stat(toReal(path)),
-      },
-    };
+    const virtualAdapter = createMappedReadAdapter(realDir, virtualBase);
 
     const route = await loadHandlerModule({
       projectDir: virtualBase,
@@ -214,16 +232,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 
     const tempRoot = await makeTempDir();
     const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
-    const toReal = (path: string): string => path.replace(virtualBase, realDir);
-    const virtualAdapter: RuntimeAdapter = {
-      ...adapter,
-      fs: {
-        ...adapter.fs,
-        readFile: (path: string) => fs.readTextFile(toReal(path)),
-        exists: (path: string) => fs.exists(toReal(path)),
-        stat: (path: string) => fs.stat(toReal(path)),
-      },
-    };
+    const virtualAdapter = createMappedReadAdapter(realDir, virtualBase);
 
     const route = await loadHandlerModule({
       projectDir: virtualBase,
@@ -1275,16 +1284,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     // path (where the import map plugin runs) rather than direct Deno import.
     const tempRoot = await makeTempDir();
     const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
-    const toReal = (path: string): string => path.replace(virtualBase, realDir);
-
-    const virtualAdapter: RuntimeAdapter = {
-      ...adapter,
-      fs: {
-        ...adapter.fs,
-        readFile: (path: string) => fs.readTextFile(toReal(path)),
-        exists: (path: string) => fs.exists(toReal(path)),
-      },
-    };
+    const virtualAdapter = createMappedReadAdapter(realDir, virtualBase);
 
     let caught = "";
     try {
@@ -1317,16 +1317,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     // Use a virtual adapter to force the esbuild transpile path
     const tempRoot = await makeTempDir();
     const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
-    const toReal = (path: string): string => path.replace(virtualBase, realDir);
-
-    const virtualAdapter: RuntimeAdapter = {
-      ...adapter,
-      fs: {
-        ...adapter.fs,
-        readFile: (path: string) => fs.readTextFile(toReal(path)),
-        exists: (path: string) => fs.exists(toReal(path)),
-      },
-    };
+    const virtualAdapter = createMappedReadAdapter(realDir, virtualBase);
 
     let caught = "";
     try {
@@ -1361,16 +1352,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 
     const tempRoot = await makeTempDir();
     const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
-    const toReal = (path: string): string => path.replace(virtualBase, realDir);
-
-    const virtualAdapter: RuntimeAdapter = {
-      ...adapter,
-      fs: {
-        ...adapter.fs,
-        readFile: (path: string) => fs.readTextFile(toReal(path)),
-        exists: (path: string) => fs.exists(toReal(path)),
-      },
-    };
+    const virtualAdapter = createMappedReadAdapter(realDir, virtualBase);
 
     try {
       globalThis.fetch = (async () =>

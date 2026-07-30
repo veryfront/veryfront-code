@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import {
@@ -9,6 +9,7 @@ import {
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { metrics } from "#veryfront/metrics";
+import { VeryfrontError } from "#veryfront/errors";
 import { resetMetricsForTests } from "../../metrics/testing.ts";
 import { BaseHandler } from "./base-handler.ts";
 import type {
@@ -249,6 +250,45 @@ describe("BaseHandler.withProxyContext", () => {
     assertEquals(called, true, "fn should run with proxyToken");
   });
 
+  for (const mode of ["multi-project", "contextual"] as const) {
+    it(`rejects missing required credentials before ${mode} filesystem work`, async () => {
+      const handler = new TestHandler();
+      let callbackCalled = false;
+      const fs = mode === "multi-project"
+        ? {
+          isMultiProjectMode: () => true,
+          runWithContext: async (_slug: string, _token: string, fn: () => Promise<unknown>) =>
+            await fn(),
+        }
+        : {
+          isContextualMode: () => true,
+          setRequestBranch() {},
+          setRequestToken() {},
+        };
+      const ctx = createMinimalCtx({
+        projectSlug: "remote-project",
+        adapter: { fs } as unknown as HandlerContext["adapter"],
+      });
+
+      const error = await assertRejects(
+        () =>
+          handler.testWithProxyContext(
+            ctx,
+            () => {
+              callbackCalled = true;
+              return Promise.resolve("forbidden");
+            },
+            { requireToken: true },
+          ),
+        VeryfrontError,
+      );
+
+      assert(error instanceof VeryfrontError);
+      assertEquals(error.slug, "authentication-required");
+      assertEquals(callbackCalled, false);
+    });
+  }
+
   it("rejects an incomplete multi-project filesystem adapter explicitly", async () => {
     const handler = new TestHandler();
     const ctx = createMinimalCtx({
@@ -265,6 +305,26 @@ describe("BaseHandler.withProxyContext", () => {
       () => handler.testWithProxyContext(ctx, () => Promise.resolve("unused")),
       TypeError,
       "requires a runWithContext adapter method",
+    );
+  });
+
+  it("rejects incomplete contextual filesystem capabilities without legacy inference", async () => {
+    const handler = new TestHandler();
+    const ctx = createMinimalCtx({
+      projectSlug: "my-project",
+      proxyToken: "vf_proxy_token",
+      adapter: {
+        fs: {
+          isContextualMode: () => true,
+          setRequestToken() {},
+        },
+      } as unknown as HandlerContext["adapter"],
+    });
+
+    await assertRejects(
+      () => handler.testWithProxyContext(ctx, () => Promise.resolve("unused")),
+      TypeError,
+      "requires a setRequestBranch adapter method",
     );
   });
 

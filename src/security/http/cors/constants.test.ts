@@ -11,8 +11,6 @@ import {
   HTTP_NO_CONTENT,
 } from "./constants.ts";
 
-function acceptsLegacyMutableArray(_value: string[]): void {}
-
 describe("CORS constants", () => {
   describe("DEFAULT_METHODS", () => {
     it("should include standard HTTP methods", () => {
@@ -25,15 +23,9 @@ describe("CORS constants", () => {
       assertEquals(DEFAULT_METHODS.length, 6);
     });
 
-    it("preserves its mutable public type without owning runtime policy", () => {
-      acceptsLegacyMutableArray(DEFAULT_METHODS);
-      const originalLength = DEFAULT_METHODS.length;
-      DEFAULT_METHODS.push("PUBLIC-CONSUMER-METHOD");
-      try {
-        assertEquals(getDefaultCORSMethods().includes("PUBLIC-CONSUMER-METHOD"), false);
-      } finally {
-        DEFAULT_METHODS.length = originalLength;
-      }
+    it("exports the immutable runtime policy", () => {
+      assertEquals(Object.isFrozen(DEFAULT_METHODS), true);
+      assertEquals(getDefaultCORSMethods(), DEFAULT_METHODS);
     });
   });
 
@@ -44,15 +36,9 @@ describe("CORS constants", () => {
       }
     });
 
-    it("preserves its mutable public type without owning runtime policy", () => {
-      acceptsLegacyMutableArray(DEFAULT_HEADERS);
-      const originalLength = DEFAULT_HEADERS.length;
-      DEFAULT_HEADERS.push("Public-Consumer-Header");
-      try {
-        assertEquals(getDefaultCORSHeaders().includes("Public-Consumer-Header"), false);
-      } finally {
-        DEFAULT_HEADERS.length = originalLength;
-      }
+    it("exports the immutable runtime policy", () => {
+      assertEquals(Object.isFrozen(DEFAULT_HEADERS), true);
+      assertEquals(getDefaultCORSHeaders(), DEFAULT_HEADERS);
     });
   });
 

@@ -41,6 +41,21 @@ const EXACT_NPM_VERSION_PATTERN =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*)|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:(?:0|[1-9]\d*)|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const PACKAGE_PART_PATTERN = /^[a-z0-9](?:[a-z0-9._~-]*[a-z0-9])?$/;
 
+export function resolveNpmBuildVersion(
+  configuredVersion: unknown,
+  override: string | undefined,
+): string {
+  const version = override ?? configuredVersion;
+  if (typeof version !== "string" || !EXACT_NPM_VERSION_PATTERN.test(version)) {
+    throw new TypeError(
+      override === undefined
+        ? "deno.json version must be an exact semantic version"
+        : "VERYFRONT_NPM_VERSION must be an exact semantic version",
+    );
+  }
+  return version;
+}
+
 export interface ExtensionManifestSource {
   readonly manifestPath: string;
   readonly manifest: unknown;
