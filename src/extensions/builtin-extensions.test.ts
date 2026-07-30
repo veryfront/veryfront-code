@@ -16,7 +16,6 @@ import {
 import { mergeExtensions } from "./discovery.ts";
 import { getDeferredExtensionState } from "./deferred-extension.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
-import { EvalReportMlflowExtensionMetadata } from "../../extensions/ext-eval-report-mlflow/src/index.ts";
 import { ExtensionLoader } from "./loader.ts";
 
 const noopLogger = {
@@ -331,10 +330,6 @@ describe("createBuiltinExtensions", () => {
       capabilities: manifest.veryfront.capabilities,
     };
 
-    assertEquals(
-      canonicalizeUnorderedMetadata(builtinMetadata),
-      canonicalizeUnorderedMetadata(EvalReportMlflowExtensionMetadata),
-    );
     assertEquals(
       canonicalizeUnorderedMetadata(builtinMetadata),
       canonicalizeUnorderedMetadata(manifestMetadata),

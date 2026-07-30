@@ -1,19 +1,29 @@
-import { fromFileUrl, join } from "#std/path";
-import { extractExtensionSourceMetadata } from "./extension-source-metadata.ts";
+import { dirname, fromFileUrl, join } from "#std/path";
+import {
+  createExtensionMetadataWorkspaceBudget,
+  type ExtensionMetadataWorkspaceBudget,
+  extractExtensionSourceMetadataFromFile,
+} from "./extension-source-metadata.ts";
+import {
+  assertSupportedExtensionImportMap,
+  canonicalExtensionManifestPath,
+  createExtensionManifestWorkspaceBudget,
+  discoverExtensionManifestPaths,
+  ExtensionManifestReadError,
+  type ExtensionManifestWorkspaceBudget,
+  readExtensionManifest,
+  resolveExtensionManifestEntry,
+} from "./extension-manifest-reader.ts";
 
 type Capability = { type: string; [key: string]: unknown };
-
-interface ContractMetadata {
-  provides?: string[];
-  requires?: string[];
-}
 
 export interface ExtensionContractAuditInput {
   manifestPath: string;
   manifestCapabilities: Capability[];
-  manifestContracts?: ContractMetadata;
+  manifestContracts?: unknown;
   factoryProvides: string[];
   factoryRequires: string[];
+  sourceResolutionIssues?: string[];
 }
 
 export interface ExtensionContractAuditIssue {
@@ -25,13 +35,44 @@ function uniqueSorted(values: string[]): string[] {
   return [...new Set(values)].filter((value) => value.length > 0).sort();
 }
 
-function contractList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return uniqueSorted(
-    value.filter((entry): entry is string =>
-      typeof entry === "string" && entry.length > 0
-    ),
-  );
+function compareDeterministically(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+interface ValidatedContractList {
+  values: string[];
+  issues: string[];
+}
+
+function validateContractList(
+  field: string,
+  value: unknown,
+): ValidatedContractList {
+  if (value === undefined) return { values: [], issues: [] };
+  if (!Array.isArray(value)) {
+    return { values: [], issues: [`${field} must be an array`] };
+  }
+  const values: string[] = [];
+  const issues: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < value.length; index += 1) {
+    const entry = value[index];
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      issues.push(`${field}[${index}] must be a non-empty string`);
+    } else if (entry.trim() !== entry) {
+      issues.push(`${field}[${index}] must not have surrounding whitespace`);
+    } else if (seen.has(entry)) {
+      issues.push(`${field}[${index}] duplicates "${entry}"`);
+    } else {
+      seen.add(entry);
+      values.push(entry);
+    }
+  }
+  return { values: values.sort(), issues };
 }
 
 function describeContracts(
@@ -54,7 +95,11 @@ export function auditExtensionContracts(
 ): ExtensionContractAuditIssue[] {
   const issues: ExtensionContractAuditIssue[] = [];
 
-  for (const input of inputs) {
+  for (const rawInput of inputs) {
+    const input = {
+      ...rawInput,
+      manifestPath: canonicalExtensionManifestPath(rawInput.manifestPath),
+    };
     if (
       input.manifestCapabilities.some((capability) =>
         capability.type === "contract"
@@ -67,14 +112,48 @@ export function auditExtensionContracts(
       });
     }
 
-    const factoryProvides = uniqueSorted(input.factoryProvides);
-    const factoryRequires = uniqueSorted(input.factoryRequires);
+    const factoryProvidesResult = validateContractList(
+      "factory contracts.provides",
+      input.factoryProvides,
+    );
+    const factoryRequiresResult = validateContractList(
+      "factory contracts.requires",
+      input.factoryRequires,
+    );
+    const sourceResolutionIssues = uniqueSorted(
+      input.sourceResolutionIssues ?? [],
+    );
+    if (sourceResolutionIssues.length > 0) {
+      for (const issue of sourceResolutionIssues) {
+        issues.push({
+          manifestPath: input.manifestPath,
+          message:
+            `${input.manifestPath} could not resolve factory contract metadata: ${issue}`,
+        });
+      }
+      continue;
+    }
+    const factoryValidationIssues = [
+      ...factoryProvidesResult.issues,
+      ...factoryRequiresResult.issues,
+    ];
+    for (const issue of factoryValidationIssues) {
+      issues.push({
+        manifestPath: input.manifestPath,
+        message: `${input.manifestPath} ${issue}`,
+      });
+    }
+    if (factoryValidationIssues.length > 0) continue;
+    const factoryProvides = factoryProvidesResult.values;
+    const factoryRequires = factoryRequiresResult.values;
     const factoryContractSummary = describeContracts(
       factoryProvides,
       factoryRequires,
     );
 
-    if (!input.manifestContracts && factoryContractSummary.length > 0) {
+    if (
+      input.manifestContracts === undefined && factoryContractSummary.length > 0
+    ) {
       issues.push({
         manifestPath: input.manifestPath,
         message:
@@ -83,8 +162,41 @@ export function auditExtensionContracts(
       continue;
     }
 
-    const manifestProvides = contractList(input.manifestContracts?.provides);
-    const manifestRequires = contractList(input.manifestContracts?.requires);
+    if (
+      input.manifestContracts !== undefined &&
+      !isRecord(input.manifestContracts)
+    ) {
+      issues.push({
+        manifestPath: input.manifestPath,
+        message: `${input.manifestPath} veryfront.contracts must be an object`,
+      });
+      continue;
+    }
+    const manifestContracts = isRecord(input.manifestContracts)
+      ? input.manifestContracts
+      : undefined;
+
+    const manifestProvidesResult = validateContractList(
+      "veryfront.contracts.provides",
+      manifestContracts?.provides,
+    );
+    const manifestRequiresResult = validateContractList(
+      "veryfront.contracts.requires",
+      manifestContracts?.requires,
+    );
+    const manifestValidationIssues = [
+      ...manifestProvidesResult.issues,
+      ...manifestRequiresResult.issues,
+    ];
+    for (const issue of manifestValidationIssues) {
+      issues.push({
+        manifestPath: input.manifestPath,
+        message: `${input.manifestPath} ${issue}`,
+      });
+    }
+    if (manifestValidationIssues.length > 0) continue;
+    const manifestProvides = manifestProvidesResult.values;
+    const manifestRequires = manifestRequiresResult.values;
 
     if (!listsEqual(manifestProvides, factoryProvides)) {
       issues.push({
@@ -110,28 +222,57 @@ export function auditExtensionContracts(
   return issues;
 }
 
-async function extensionManifestPaths(root: string): Promise<string[]> {
-  const extensionsDir = join(root, "extensions");
-  const paths: string[] = [];
-  for await (const entry of Deno.readDir(extensionsDir)) {
-    if (!entry.isDirectory || !entry.name.startsWith("ext-")) continue;
-    paths.push(join("extensions", entry.name, "deno.json"));
-  }
-  return paths.sort();
-}
-
 async function loadAuditInput(
   root: string,
   manifestPath: string,
+  workspaceBudget: ExtensionMetadataWorkspaceBudget,
+  manifestBudget: ExtensionManifestWorkspaceBudget,
 ): Promise<ExtensionContractAuditInput> {
-  const manifest = JSON.parse(
-    await Deno.readTextFile(join(root, manifestPath)),
-  ) as Record<string, unknown>;
-  const veryfront = (manifest.veryfront ?? {}) as Record<string, unknown>;
-  const source = await Deno.readTextFile(
-    join(root, manifestPath.replace(/deno\.json$/, "src/index.ts")),
+  const manifest = await readExtensionManifest(
+    root,
+    manifestPath,
+    manifestBudget,
   );
-  const sourceMetadata = extractExtensionSourceMetadata(source);
+  const veryfront = isRecord(manifest.veryfront) ? manifest.veryfront : {};
+  const imports = manifest.imports;
+  assertSupportedExtensionImportMap(manifestPath, manifest);
+  const entryPath = resolveExtensionManifestEntry(manifestPath, manifest);
+  let factoryProvides: string[] = [];
+  let factoryRequires: string[] = [];
+  let sourceResolutionIssues: string[] = [];
+  try {
+    const sourceMetadata = await extractExtensionSourceMetadataFromFile({
+      workspaceRoot: root,
+      entryPath: join(
+        root,
+        entryPath,
+      ),
+      importMapBaseDir: join(root, dirname(manifestPath)),
+      imports: typeof imports === "object" && imports !== null &&
+          !Array.isArray(imports)
+        ? imports as Record<string, unknown>
+        : {},
+      workspaceBudget,
+    });
+    factoryProvides = uniqueSorted([
+      ...sourceMetadata.legacyProvides,
+      ...validateContractList(
+        "source contracts.provides",
+        sourceMetadata.contracts?.provides,
+      ).values,
+    ]);
+    factoryRequires = validateContractList(
+      "source contracts.requires",
+      sourceMetadata.contracts?.requires,
+    ).values;
+    sourceResolutionIssues = sourceMetadata.contractResolutionIssues;
+  } catch (error) {
+    sourceResolutionIssues = [
+      `[source-inspection-failed] ${
+        error instanceof Error ? error.message : "unknown failure"
+      }`,
+    ];
+  }
 
   return {
     manifestPath,
@@ -141,29 +282,62 @@ async function loadAuditInput(
         typeof (value as Record<string, unknown>).type === "string"
       )
       : [],
-    manifestContracts: veryfront.contracts as ContractMetadata | undefined,
-    factoryProvides: uniqueSorted([
-      ...sourceMetadata.legacyProvides,
-      ...contractList(sourceMetadata.contracts?.provides),
-    ]),
-    factoryRequires: contractList(sourceMetadata.contracts?.requires),
+    manifestContracts: veryfront.contracts,
+    factoryProvides,
+    factoryRequires,
+    sourceResolutionIssues,
   };
 }
 
-async function auditWorkspace(
+export async function auditExtensionContractWorkspace(
   root: string,
 ): Promise<ExtensionContractAuditIssue[]> {
-  const inputs = await Promise.all(
-    (await extensionManifestPaths(root)).map((manifestPath) =>
-      loadAuditInput(root, manifestPath)
-    ),
+  const discovery = await discoverExtensionManifestPaths(root);
+  const workspaceBudget = createExtensionMetadataWorkspaceBudget();
+  const manifestBudget = createExtensionManifestWorkspaceBudget();
+  const loaded: Array<
+    ExtensionContractAuditInput | ExtensionContractAuditIssue
+  > = [];
+  for (const manifestPath of discovery.manifestPaths) {
+    try {
+      loaded.push(
+        await loadAuditInput(
+          root,
+          manifestPath,
+          workspaceBudget,
+          manifestBudget,
+        ),
+      );
+    } catch (error) {
+      const detail = error instanceof ExtensionManifestReadError
+        ? error.message
+        : "[manifest-read-failed] manifest could not be inspected";
+      loaded.push({
+        manifestPath,
+        message: `${manifestPath} could not read extension manifest: ${detail}`,
+      });
+    }
+  }
+  const inputs: ExtensionContractAuditInput[] = [];
+  const issues: ExtensionContractAuditIssue[] = discovery.issues.map((
+    issue,
+  ) => ({
+    manifestPath: issue.manifestPath,
+    message:
+      `${issue.manifestPath} could not discover extension manifest: ${issue.detail}`,
+  }));
+  for (const entry of loaded) {
+    if ("factoryProvides" in entry) inputs.push(entry);
+    else issues.push(entry);
+  }
+  return [...issues, ...auditExtensionContracts(inputs)].sort((left, right) =>
+    compareDeterministically(left.message, right.message)
   );
-  return auditExtensionContracts(inputs);
 }
 
 if (import.meta.main) {
   const root = fromFileUrl(new URL("../..", import.meta.url));
-  const issues = await auditWorkspace(root);
+  const issues = await auditExtensionContractWorkspace(root);
   if (issues.length === 0) {
     console.log("Extension contract metadata verified.");
     Deno.exit(0);

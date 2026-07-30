@@ -44,37 +44,6 @@ const MAX_REQUEST_TIMEOUT_MS = 60_000;
 const MAX_RETRY_ATTEMPTS = 5;
 const MAX_RETRY_DELAY_MS = 5_000;
 
-export const EvalReportMlflowExtensionMetadata = {
-  contracts: {
-    requires: ["EvalReportExporterRegistry"],
-  },
-  capabilities: [
-    { type: "net:outbound", hosts: ["*"] },
-    {
-      type: "env:read",
-      keys: [
-        "MLFLOW_ARTIFACTS_PORT",
-        "MLFLOW_ARTIFACTS_URI",
-        "MLFLOW_EXPERIMENT_NAME",
-        "MLFLOW_RUN_NAME",
-        "MLFLOW_TRACKING_PASSWORD",
-        "MLFLOW_TRACKING_TOKEN",
-        "MLFLOW_TRACKING_URI",
-        "MLFLOW_TRACKING_USERNAME",
-        "MLFLOW_OAUTH_TOKEN_URL",
-        "MLFLOW_OAUTH_CLIENT_ID",
-        "MLFLOW_OAUTH_CLIENT_SECRET",
-        "MLFLOW_OAUTH_SCOPE",
-        "MLFLOW_EXPORT_ARTIFACTS",
-        "MLFLOW_REQUEST_TIMEOUT_MS",
-        "MLFLOW_RETRY_ATTEMPTS",
-        "MLFLOW_RETRY_DELAY_MS",
-        "MLFLOW_RUN_URL_TEMPLATE",
-      ],
-    },
-  ],
-};
-
 type EvalReportMlflowFetch = (
   input: string | URL | Request,
   init?: RequestInit,
@@ -1813,8 +1782,34 @@ const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
   return {
     name: "ext-eval-report-mlflow",
     version: "0.1.0",
-    contracts: EvalReportMlflowExtensionMetadata.contracts,
-    capabilities: EvalReportMlflowExtensionMetadata.capabilities,
+    contracts: {
+      requires: ["EvalReportExporterRegistry"],
+    },
+    capabilities: [
+      { type: "net:outbound", hosts: ["*"] },
+      {
+        type: "env:read",
+        keys: [
+          "MLFLOW_ARTIFACTS_PORT",
+          "MLFLOW_ARTIFACTS_URI",
+          "MLFLOW_EXPERIMENT_NAME",
+          "MLFLOW_RUN_NAME",
+          "MLFLOW_TRACKING_PASSWORD",
+          "MLFLOW_TRACKING_TOKEN",
+          "MLFLOW_TRACKING_URI",
+          "MLFLOW_TRACKING_USERNAME",
+          "MLFLOW_OAUTH_TOKEN_URL",
+          "MLFLOW_OAUTH_CLIENT_ID",
+          "MLFLOW_OAUTH_CLIENT_SECRET",
+          "MLFLOW_OAUTH_SCOPE",
+          "MLFLOW_EXPORT_ARTIFACTS",
+          "MLFLOW_REQUEST_TIMEOUT_MS",
+          "MLFLOW_RETRY_ATTEMPTS",
+          "MLFLOW_RETRY_DELAY_MS",
+          "MLFLOW_RUN_URL_TEMPLATE",
+        ],
+      },
+    ],
     setup(ctx) {
       registry = ctx.require<EvalReportExporterRegistry>(
         EvalReportExporterRegistryName,

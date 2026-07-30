@@ -286,6 +286,7 @@ check for drift and to enforce the sensitive capability policies below.
 | `ext-observability-opentelemetry` | `net:outbound`, `env:read` for `OTEL_*`                | Exports telemetry and reads collector config |
 | `ext-observability-sentry`        | `net:outbound`, declared `env:read` keys               | Sends scrubbed application errors to Sentry  |
 | `ext-eval-report-http`            | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*` | Exports eval reports to an external endpoint |
+| `ext-eval-report-mlflow`          | `net:outbound`, declared `MLFLOW_*` `env:read` keys    | Exports eval reports to MLflow               |
 
 Use `veryfront.contracts` for contract ownership and dependency ordering. Use
 `veryfront.capabilities` only for runtime resource access and audit metadata.
