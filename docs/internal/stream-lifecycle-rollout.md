@@ -33,21 +33,23 @@ provider-visible tool execution.
 The legacy path keeps its own status wrapper at the runtime compatibility
 boundary, so no provider redeploy is required.
 
-## What legacy mode does not roll back
+## Watchdog deadline semantics follow the mode flag
 
-Two watchdog behavior changes ship in `createChatStreamWatchdog()` itself and
-apply in every mode, including `legacy`, as soon as this build deploys:
+`createChatStreamWatchdog()` derives its deadline semantics from
+`VF_STREAM_LIFECYCLE_MODE` (overridable per-call via `strictDeadlines`):
 
-- All `message-metadata` chunks are classified as telemetry and never advance
-  the watchdog deadline. Previously, non-empty metadata (for example a
-  `modelId` carrier) reset the timer, so a stream kept alive only by metadata
-  heartbeats now times out at the semantic deadline.
-- A configured long-running tool no longer disables the watchdog. It now runs
-  under an absolute cap (`toolRunningTimeoutMs`, default 300 seconds); a tool
-  execution that previously waited indefinitely is failed at that cap.
+- **`legacy` (default):** byte-compatible with the pre-lifecycle watchdog.
+  Non-empty `message-metadata` chunks re-arm the deadline, and configured
+  long-running tools run without a deadline.
+- **`shadow` / `active`:** strict lifecycle semantics. All `message-metadata`
+  and tool-call-status chunks are telemetry and never advance the deadline,
+  and configured long-running tools run under the absolute
+  `toolRunningTimeoutMs` cap (default 300 seconds).
 
-Rolling back these two changes requires reverting the build, not setting the
-mode flag.
+Deploying this build with the flag unset changes no watchdog behavior. The
+strict semantics — including the fix for streams kept alive only by
+telemetry heartbeats — take effect when the mode advances to `shadow`, and
+`VF_STREAM_LIFECYCLE_MODE=legacy` rolls them back at any scope.
 
 ## Incident evidence
 

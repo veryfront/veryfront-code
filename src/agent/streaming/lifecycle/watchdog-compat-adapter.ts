@@ -1,4 +1,5 @@
 import type { ChatUiMessageChunk, MessageMetadata } from "#veryfront/chat/types.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { type AbsoluteDeadlineTimer, createAbsoluteDeadline } from "./deadlines.ts";
 import type { StreamLifecyclePhase } from "./types.ts";
 
@@ -28,6 +29,18 @@ export type ChatStreamWatchdogOptions = {
   toolRunningTimeoutMs?: number;
   longRunningToolNames?: Iterable<string>;
   longRunningToolPrefixes?: Iterable<string>;
+  /**
+   * Strict lifecycle deadline semantics: telemetry (all message-metadata and
+   * tool-call-status chunks, empty deltas) never advances the deadline, and
+   * configured long-running tools run under the absolute
+   * `toolRunningTimeoutMs` cap instead of disabling the deadline.
+   *
+   * Defaults from `VF_STREAM_LIFECYCLE_MODE`: strict in `shadow`/`active`,
+   * legacy-compatible otherwise, so the rollout mode flag governs the full
+   * behavior change and `legacy` remains byte-compatible with the
+   * pre-lifecycle watchdog.
+   */
+  strictDeadlines?: boolean;
   setTimeoutFn?: typeof globalThis.setTimeout;
   clearTimeoutFn?: typeof globalThis.clearTimeout;
 };
@@ -74,9 +87,9 @@ export function createChatStreamWatchdogState(
 }
 
 /**
- * Compatibility helper. Long-running tool names no longer disable the
- * absolute tool-running deadline; this predicate remains exported for
- * callers that classify tool activity.
+ * Compatibility helper. Under strict lifecycle deadlines long-running tool
+ * names no longer disable the absolute tool-running deadline; in legacy mode
+ * they still do. Also exported for callers that classify tool activity.
  */
 export function isLongRunningToolRunning(
   current: ChatStreamWatchdogState,
@@ -292,11 +305,25 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
     deadline = null;
   };
 
+  const strict = resolvedOptions.strictDeadlines;
+  const legacyLongRunningToolActive = () =>
+    !strict &&
+    isLongRunningToolRunning(
+      state,
+      resolvedOptions.longRunningToolNames,
+      resolvedOptions.longRunningToolPrefixes,
+    );
+
   const arm = () => {
     if (controller.signal.aborted) {
       return;
     }
     clearDeadline();
+    if (legacyLongRunningToolActive()) {
+      // Legacy mode: configured long-running tools run without a deadline,
+      // matching the pre-lifecycle watchdog until the mode flag advances.
+      return;
+    }
     const armedState = state;
     deadline = createAbsoluteDeadline({
       timer,
@@ -321,6 +348,9 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
       return lastTimeoutState;
     },
     keepAlive() {
+      if (legacyLongRunningToolActive()) {
+        return;
+      }
       state = createChatStreamWatchdogState(
         "response_pending",
         undefined,
@@ -329,6 +359,22 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
       arm();
     },
     observe(chunk: ChatUiMessageChunk<MessageMetadata>) {
+      if (!strict) {
+        // Legacy mode is byte-compatible with the pre-lifecycle watchdog:
+        // only heartbeat-only metadata is inert; any other chunk (including
+        // non-empty metadata and tool-call-status telemetry) transitions
+        // state and re-arms the deadline.
+        if (isHeartbeatOnlyMetadataChunk(chunk)) {
+          return;
+        }
+        state = getNextChatStreamWatchdogState(state, chunk, resolvedOptions);
+        if (chunk.type === "finish") {
+          clearDeadline();
+          return;
+        }
+        arm();
+        return;
+      }
       const activity = mapWatchdogChunkToLifecycleActivity(state, chunk);
       if (activity.type === "telemetry") {
         return;
@@ -359,6 +405,7 @@ function resolveChatStreamWatchdogOptions(options?: ChatStreamWatchdogOptions) {
     idleTimeoutMs: options?.idleTimeoutMs ?? DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
     toolRunningTimeoutMs: options?.toolRunningTimeoutMs ??
       DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
+    strictDeadlines: options?.strictDeadlines ?? defaultStrictDeadlines(),
     // Default to an empty set — callers must opt in to classify specific tool
     // names as long-running. Embedding product-specific names here as a
     // default couples this shared utility to application concerns.
@@ -367,6 +414,11 @@ function resolveChatStreamWatchdogOptions(options?: ChatStreamWatchdogOptions) {
     setTimeoutFn: options?.setTimeoutFn ?? defaultSetTimeout,
     clearTimeoutFn: options?.clearTimeoutFn ?? defaultClearTimeout,
   };
+}
+
+function defaultStrictDeadlines(): boolean {
+  const mode = getHostEnv("VF_STREAM_LIFECYCLE_MODE");
+  return mode === "shadow" || mode === "active";
 }
 
 function maybeUnrefTimer(timer: ReturnType<typeof globalThis.setTimeout>): void {

@@ -209,11 +209,12 @@ describe("chat/stream-watchdog", () => {
     watchdog.dispose();
   });
 
-  it("keeps an absolute limit for configured long-running tools", () => {
+  it("keeps an absolute limit for configured long-running tools (strict)", () => {
     using time = new FakeTime();
     const watchdog = createChatStreamWatchdog({
       ...watchdogOptions,
       toolRunningTimeoutMs: 300,
+      strictDeadlines: true,
     });
     watchdog.observe({
       type: "tool-input-available",
@@ -229,9 +230,12 @@ describe("chat/stream-watchdog", () => {
     watchdog.dispose();
   });
 
-  it("does not let heartbeat metadata or status telemetry advance the deadline", () => {
+  it("does not let heartbeat metadata or status telemetry advance the deadline (strict)", () => {
     using time = new FakeTime();
-    const watchdog = createChatStreamWatchdog(watchdogOptions);
+    const watchdog = createChatStreamWatchdog({
+      ...watchdogOptions,
+      strictDeadlines: true,
+    });
 
     time.tick(100);
     watchdog.observe({ type: "message-metadata", messageMetadata: {} });
@@ -249,6 +253,81 @@ describe("chat/stream-watchdog", () => {
 
     assertEquals(watchdog.signal.aborted, true);
     assertEquals(watchdog.lastTimeoutState?.phase, "response_pending");
+    watchdog.dispose();
+  });
+
+  it("legacy mode never arms a deadline for configured long-running tools", () => {
+    using time = new FakeTime();
+    const watchdog = createChatStreamWatchdog({
+      ...watchdogOptions,
+      strictDeadlines: false,
+    });
+    watchdog.observe({
+      type: "tool-input-available",
+      toolCallId: "fork-3",
+      toolName: "invoke_agent",
+      input: {},
+    });
+
+    time.tick(100_000);
+
+    assertEquals(watchdog.signal.aborted, false);
+    watchdog.dispose();
+  });
+
+  it("legacy mode re-arms the deadline on non-empty metadata", () => {
+    using time = new FakeTime();
+    const watchdog = createChatStreamWatchdog({
+      ...watchdogOptions,
+      strictDeadlines: false,
+    });
+
+    time.tick(100);
+    watchdog.observe({
+      type: "message-metadata",
+      messageMetadata: { modelId: "anthropic/claude-sonnet-4-6" },
+    });
+    time.tick(100);
+
+    assertEquals(watchdog.signal.aborted, false);
+
+    time.tick(21);
+
+    assertEquals(watchdog.signal.aborted, true);
+    watchdog.dispose();
+  });
+
+  it("legacy mode ignores heartbeat-only metadata", () => {
+    using time = new FakeTime();
+    const watchdog = createChatStreamWatchdog({
+      ...watchdogOptions,
+      strictDeadlines: false,
+    });
+
+    time.tick(100);
+    watchdog.observe({ type: "message-metadata", messageMetadata: {} });
+    time.tick(21);
+
+    assertEquals(watchdog.signal.aborted, true);
+    assertEquals(watchdog.lastTimeoutState?.phase, "response_pending");
+    watchdog.dispose();
+  });
+
+  it("defaults to legacy deadline semantics when no lifecycle mode is set", () => {
+    using time = new FakeTime();
+    // Test env has no VF_STREAM_LIFECYCLE_MODE, so the default must be the
+    // legacy-compatible behavior: long-running tools run without a deadline.
+    const watchdog = createChatStreamWatchdog(watchdogOptions);
+    watchdog.observe({
+      type: "tool-input-available",
+      toolCallId: "fork-4",
+      toolName: "invoke_agent",
+      input: {},
+    });
+
+    time.tick(100_000);
+
+    assertEquals(watchdog.signal.aborted, false);
     watchdog.dispose();
   });
 });
