@@ -163,6 +163,7 @@ const expectedRuntimeExports = [
   "useChatInputContext",
   "useChatInputContextOptional",
   "useChatScroll",
+  "useChatSidebarItem",
   "useMessageBranches",
 ].sort();
 

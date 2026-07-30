@@ -205,6 +205,7 @@ export {
   type UseChatInputResult,
   useChatScroll,
   type UseChatScrollOptions,
+  useChatSidebarItem,
   type UseChatScrollResult,
   useReasoning,
   useSources,

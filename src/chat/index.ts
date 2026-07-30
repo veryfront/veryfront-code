@@ -189,6 +189,7 @@ export {
   type UseAttachmentsOptions,
   useAttachmentsPanel,
   type UseAttachmentsResult,
+  useChatSidebarItem,
   useModelSelector,
   useSources,
   useStepIndicator,
