@@ -51,12 +51,83 @@ type WarningCollector = {
   }>;
 };
 
-function toSnakeCaseRecord(record: Record<string, unknown>): Record<string, unknown> {
+export type OpenAINativeToolSearchMode = "hosted" | "client";
+
+type OpenAINativeToolSearchConfig = {
+  mode: OpenAINativeToolSearchMode;
+};
+
+const OPENAI_NATIVE_TOOL_SEARCH_MODEL_PREFIXES = [
+  "gpt-5.4",
+  "gpt-5.5",
+  "gpt-5.6",
+] as const;
+
+/** Explicit capability gate for Responses API tool search. */
+export function supportsOpenAINativeToolSearch(
+  modelId: string,
+  providerName = "openai",
+): boolean {
+  if (providerName !== "openai" && providerName !== "veryfront-cloud") {
+    return false;
+  }
+  return OPENAI_NATIVE_TOOL_SEARCH_MODEL_PREFIXES.some((prefix) =>
+    modelId === prefix || modelId.startsWith(`${prefix}-`)
+  );
+}
+
+function readOpenAINativeToolSearchConfig(
+  tools: RuntimeToolDefinition[] | undefined,
+): OpenAINativeToolSearchConfig | undefined {
+  const searchTool = tools?.find((tool) => tool.type === "function" && tool.name === "tool_search");
+  return searchTool?.type === "function" && searchTool.nativeToolSearch
+    ? { mode: searchTool.nativeToolSearch.mode }
+    : undefined;
+}
+
+function normalizeOpenAIProviderToolMember(
+  value: unknown,
+  nativeEnabled: boolean,
+): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const member = value as Record<string, unknown>;
+  if (
+    !nativeEnabled &&
+    (member.deferLoading === true || member.defer_loading === true)
+  ) {
+    return undefined;
+  }
   return Object.fromEntries(
-    Object.entries(record).map(([key, value]) => [
-      key.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`),
-      value,
-    ]),
+    Object.entries(member).flatMap(([key, nested]) => {
+      if (key === "deferLoading" || key === "defer_loading") {
+        return nativeEnabled && nested === true ? [["defer_loading", true]] : [];
+      }
+      return [[key, nested]];
+    }),
+  );
+}
+
+function normalizeOpenAIProviderToolArgs(
+  args: Record<string, unknown>,
+  nativeEnabled: boolean,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(args).flatMap(([key, nested]) => {
+      if (key === "deferLoading" || key === "defer_loading") {
+        return nativeEnabled && nested === true ? [["defer_loading", true]] : [];
+      }
+      const normalizedKey = key.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`);
+      if (key === "tools" && Array.isArray(nested)) {
+        return [[
+          normalizedKey,
+          nested.flatMap((member) => {
+            const normalized = normalizeOpenAIProviderToolMember(member, nativeEnabled);
+            return normalized === undefined ? [] : [normalized];
+          }),
+        ]];
+      }
+      return [[normalizedKey, nested]];
+    }),
   );
 }
 
@@ -100,6 +171,16 @@ function toOpenAIResponsesInput(
               ...(typeof part.signature === "string" ? { encrypted_content: part.signature } : {}),
               summary,
             });
+            continue;
+          }
+          if (part.type === "provider-block") {
+            if (messageContent.length > 0) {
+              input.push({ role: "assistant", content: [...messageContent] });
+              messageContent.length = 0;
+            }
+            if (part.provider === "openai-responses") {
+              input.push(part.block);
+            }
             continue;
           }
           if (messageContent.length > 0) {
@@ -166,11 +247,29 @@ function toOpenAIResponsesUserContent(
 
 function toOpenAIResponsesTools(
   tools: RuntimeToolDefinition[] | undefined,
+  nativeToolSearch?: OpenAINativeToolSearchConfig,
 ): Array<Record<string, unknown>> | undefined {
   if (!tools) return undefined;
   const normalized: Array<Record<string, unknown>> = [];
+  const nativeEnabled = nativeToolSearch !== undefined;
   for (const tool of tools) {
     if (tool.type === "function") {
+      if (tool.deferLoading === true && !nativeEnabled) {
+        continue;
+      }
+      if (nativeEnabled && tool.name === "tool_search") {
+        normalized.push(
+          nativeToolSearch.mode === "client"
+            ? {
+              type: "tool_search",
+              execution: "client",
+              ...(typeof tool.description === "string" ? { description: tool.description } : {}),
+              parameters: unwrapToolInputSchema(tool.inputSchema),
+            }
+            : { type: "tool_search" },
+        );
+        continue;
+      }
       normalized.push({
         type: "function",
         name: tool.name,
@@ -180,6 +279,7 @@ function toOpenAIResponsesTools(
         // argument. Runtime and remote tool schemas use normal JSON Schema
         // optional properties, so preserve that contract explicitly.
         strict: false,
+        ...(nativeEnabled && tool.deferLoading === true ? { defer_loading: true } : {}),
         parameters: unwrapToolInputSchema(tool.inputSchema),
       });
       continue;
@@ -189,7 +289,7 @@ function toOpenAIResponsesTools(
     if (providerType.length === 0) continue;
     normalized.push({
       type: providerType,
-      ...toSnakeCaseRecord(tool.args),
+      ...normalizeOpenAIProviderToolArgs(tool.args, nativeEnabled),
     });
   }
   return normalized.length > 0 ? normalized : undefined;
@@ -236,8 +336,19 @@ export function buildOpenAIResponsesRequest(
     }
   }
 
+  const providerOptions = readProviderOptions(
+    options.providerOptions,
+    ...(providerName === "openai" ? ["openai-compatible"] : []),
+    "openai",
+    providerName,
+  );
+  const toolSearch = supportsOpenAINativeToolSearch(modelId, providerName)
+    ? readOpenAINativeToolSearchConfig(options.tools)
+    : undefined;
   const { instructions, input } = toOpenAIResponsesInput(options.prompt);
-  const responsesTools = toOpenAIResponsesTools(options.tools);
+  const responsesTools = toOpenAIResponsesTools(options.tools, toolSearch);
+  const providerRequestOptions = { ...providerOptions };
+  delete providerRequestOptions.toolSearch;
 
   const body: OpenAIResponsesRequest = {
     model: modelId,
@@ -293,14 +404,6 @@ export function buildOpenAIResponsesRequest(
 
   // Env-BYOK users historically registered options under "openai-compatible";
   // keep merging that bucket at the lowest precedence.
-  Object.assign(
-    body,
-    readProviderOptions(
-      options.providerOptions,
-      ...(providerName === "openai" ? ["openai-compatible"] : []),
-      "openai",
-      providerName,
-    ),
-  );
+  Object.assign(body, providerRequestOptions);
   return body;
 }

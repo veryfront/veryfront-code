@@ -126,4 +126,41 @@ describe("ext-llm-openai/openai-responses-stream", () => {
       finishReason: { unified: "error", raw: "failed" },
     }]);
   });
+
+  it("preserves tool-search call/output items with call id and ordering", async () => {
+    const call = {
+      type: "tool_search_call",
+      execution: "server",
+      call_id: null,
+      status: "completed",
+      arguments: { goal: "Find release tools" },
+      provider_trace: { shard: "a" },
+    };
+    const output = {
+      type: "tool_search_output",
+      execution: "server",
+      call_id: null,
+      status: "completed",
+      tools: [{
+        type: "function",
+        name: "get_release",
+        defer_loading: true,
+        parameters: { type: "object" },
+      }],
+      provider_trace: { shard: "b" },
+    };
+    const parts = await collectParts(streamFromText([
+      data({ type: "response.output_item.added", item: call }),
+      data({ type: "response.output_item.done", item: call }),
+      data({ type: "response.output_item.added", item: output }),
+      data({ type: "response.output_item.done", item: output }),
+      data({ type: "response.completed", response: { status: "completed" } }),
+    ].join("")));
+
+    assertEquals(parts, [
+      { type: "provider-block", provider: "openai-responses", block: call },
+      { type: "provider-block", provider: "openai-responses", block: output },
+      { type: "finish", finishReason: { unified: "stop", raw: "completed" } },
+    ]);
+  });
 });

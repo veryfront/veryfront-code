@@ -16,6 +16,10 @@ import type {
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import type { TextGenerationRuntimeMessage } from "./text-generation-runtime-message-types.ts";
 
+function eagerAgent(config: Parameters<typeof agent>[0]): ReturnType<typeof agent> {
+  return agent({ ...config, toolLoading: "eager" });
+}
+
 function createRuntimeStream(parts: unknown[]) {
   return new ReadableStream<unknown>({
     start(controller) {
@@ -155,7 +159,7 @@ describe("agent runtime refresh hooks", () => {
         },
         rootPath,
       });
-      const assistant = agent({
+      const assistant = eagerAgent({
         id: "universal-skill-policy-agent",
         model: "hosted/universal-skill-policy",
         system: "Use the matching skill.",
@@ -225,7 +229,7 @@ describe("agent runtime refresh hooks", () => {
       },
     };
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/suppressed-tool-recovery",
       system: "Recover from stale tools.",
       maxSteps: 2,
@@ -310,7 +314,7 @@ describe("agent runtime refresh hooks", () => {
       inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
       execute: ({ query }) => ({ integration: "slack", query }),
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/mixed-suppressed-tool-recovery",
       system: "Recover from stale tools after checking integrations.",
       tools: { get_github: getGithub, get_slack: getSlack },
@@ -411,7 +415,7 @@ describe("agent runtime refresh hooks", () => {
       }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/tool-result-generate",
       system: "Generate tool result hook test",
       tools: { write_report: writeReport },
@@ -478,7 +482,7 @@ describe("agent runtime refresh hooks", () => {
       execute: ({ path }) => ({ path, created: true }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/empty-final-text",
       system: "Write the report and summarize the result.",
       tools: { write_report: writeReport },
@@ -549,7 +553,7 @@ describe("agent runtime refresh hooks", () => {
       execute: () => updateError,
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Update agents and recover from failed tool calls.",
       tools: { update_agent: updateAgent },
@@ -625,7 +629,7 @@ describe("agent runtime refresh hooks", () => {
       }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Create agents and summarize successful tool results.",
       tools: { create_agent: createAgent },
@@ -709,7 +713,7 @@ describe("agent runtime refresh hooks", () => {
       }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Create agents and summarize successful tool results.",
       tools: { create_agent: createAgent },
@@ -859,7 +863,7 @@ describe("agent runtime refresh hooks", () => {
         },
       });
 
-      const assistant = agent({
+      const assistant = eagerAgent({
         model: "anthropic/claude-sonnet-4-6",
         system:
           `Create scheduled agents. After ${agentWriteToolName} succeeds, call create_schedule before final output.`,
@@ -951,7 +955,7 @@ describe("agent runtime refresh hooks", () => {
       },
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Create agents and recover from failed tool calls.",
       tools: { create_agent: createAgent },
@@ -1039,7 +1043,7 @@ describe("agent runtime refresh hooks", () => {
       execute: () => updateError,
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Update agents and recover from failed tool calls.",
       tools: { update_agent: updateAgent },
@@ -1131,7 +1135,7 @@ describe("agent runtime refresh hooks", () => {
         }]),
       executeTool: () => Promise.resolve(authenticationRequired),
     };
-    const assistant = agent(
+    const assistant = eagerAgent(
       {
         model: "anthropic/claude-sonnet-4-6",
         system: "Use Gmail when requested.",
@@ -1229,7 +1233,7 @@ describe("agent runtime refresh hooks", () => {
       execute: () => ({ content: "reference" }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Recover from a missing skill.",
       tools: {
@@ -1318,7 +1322,7 @@ describe("agent runtime refresh hooks", () => {
       }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Update agents and summarize successful tool results.",
       tools: { update_agent: updateAgent },
@@ -1396,7 +1400,7 @@ describe("agent runtime refresh hooks", () => {
       }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/tool-result-stream",
       system: "Stream tool result hook test",
       tools: { write_report: writeReport },
@@ -1468,7 +1472,7 @@ describe("agent runtime refresh hooks", () => {
       },
     };
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/text-placeholder-stream",
       system: "Placeholder recovery regression test",
       maxSteps: 2,
@@ -1553,7 +1557,7 @@ describe("agent runtime refresh hooks", () => {
       )(),
       execute: ({ max_steps }) => ({ ok: true, max_steps }),
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/skill-invoke-generate",
       system: "Skill override generate test",
       tools: { load_skill: loadSkill, invoke_agent: invokeAgent },
@@ -1654,7 +1658,7 @@ describe("agent runtime refresh hooks", () => {
       )(),
       execute: ({ max_steps }) => ({ ok: true, max_steps }),
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/skill-invoke-stream",
       system: "Skill override stream test",
       tools: { load_skill: loadSkill, invoke_agent: invokeAgent },
@@ -1732,7 +1736,7 @@ describe("agent runtime refresh hooks", () => {
       )(),
       execute: ({ max_steps }) => ({ ok: true, max_steps }),
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/skill-resume-stream",
       system: "Skill resumed stream test",
       tools: { invoke_agent: invokeAgent },
@@ -1840,7 +1844,7 @@ describe("agent runtime refresh hooks", () => {
         return { ok: true };
       },
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/invoke-agent-evidence-generate",
       system: "Supplier invoice orchestrator",
       tools: { invoke_agent: invokeAgent },
@@ -1918,7 +1922,7 @@ describe("agent runtime refresh hooks", () => {
         return { ok: true };
       },
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/invoke-agent-evidence-stream",
       system: "Supplier invoice orchestrator",
       tools: { invoke_agent: invokeAgent },
@@ -2011,7 +2015,7 @@ describe("agent runtime refresh hooks", () => {
       },
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/runtime-refresh-generate",
       system: "Base system prompt",
       tools: {
@@ -2126,7 +2130,7 @@ describe("agent runtime refresh hooks", () => {
       execute: async ({ projectId }) => ({ projectId }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/runtime-refresh-stream",
       system: "Base streaming system prompt",
       tools: { switch_project: switchProject },

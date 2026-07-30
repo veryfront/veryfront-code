@@ -64,6 +64,11 @@ export type {
   OpenAICompatibleChatMessage,
   OpenAICompatibleChatRequest,
   ProviderWarning,
+  RuntimeAnthropicProviderBlock,
+  RuntimeNativeToolSearch,
+  RuntimeOpenAIProviderBlock,
   RuntimePromptMessage,
+  RuntimeProviderBlock,
+  RuntimeToolDefinition,
   RuntimeUsage,
 } from "../runtime-loader.ts";

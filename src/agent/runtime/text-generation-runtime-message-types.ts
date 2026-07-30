@@ -6,9 +6,18 @@
  * today without exposing SDK-owned message contracts upward.
  */
 
+import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
+
 export interface TextGenerationRuntimeTextPart {
   type: "text";
   text: string;
+}
+
+export interface TextGenerationRuntimeReasoningPart {
+  type: "reasoning";
+  text?: string;
+  signature?: string;
+  redactedData?: string;
 }
 
 export interface TextGenerationRuntimeFilePart {
@@ -47,7 +56,12 @@ export interface TextGenerationRuntimeUserMessage {
 
 export interface TextGenerationRuntimeAssistantMessage {
   role: "assistant";
-  content: Array<TextGenerationRuntimeTextPart | TextGenerationRuntimeToolCallPart>;
+  content: Array<
+    | TextGenerationRuntimeTextPart
+    | TextGenerationRuntimeReasoningPart
+    | TextGenerationRuntimeToolCallPart
+    | RuntimeProviderBlock
+  >;
 }
 
 export interface TextGenerationRuntimeToolMessage {

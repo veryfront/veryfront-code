@@ -597,4 +597,29 @@ describe("agent runtime message adapter", () => {
 
     assertEquals(providerMessages, []);
   });
+
+  it("drops provider blocks at the provider-neutral compatibility boundary", () => {
+    const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
+      {
+        role: "assistant",
+        parts: ([{
+          type: "provider-block",
+          provider: "anthropic",
+          block: {
+            type: "server_tool_use",
+            id: "srvtoolu_incompatible",
+            name: "tool_search",
+            input: { query: "ignored" },
+          },
+        }, agentRuntimeTextPart("Safe text")] as unknown) as ReturnType<
+          typeof agentRuntimeTextPart
+        >[],
+      },
+    ]);
+
+    assertEquals(providerMessages, [{
+      role: "assistant",
+      content: [{ type: "text", text: "Safe text" }],
+    }]);
+  });
 });

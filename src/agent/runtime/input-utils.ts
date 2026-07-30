@@ -1,7 +1,57 @@
 import type { Message } from "../types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
 
-export function normalizeInput(input: string | Message[]): Message[] {
+const TRUSTED_PROVIDER_BLOCK_INPUT = Symbol("veryfront.trustedProviderBlockInput");
+const PROVIDER_REPLAY_BLOCK_PERSISTER = Symbol("veryfront.providerReplayBlockPersister");
+
+export type ProviderReplayPersistenceInput = {
+  providerBlocks: readonly RuntimeProviderBlock[];
+  providerBlockPositions: readonly number[];
+  totalPartCount: number;
+};
+
+export type ProviderReplayBlockPersister = (
+  input: ProviderReplayPersistenceInput,
+) => void | Promise<void>;
+
+/** Mark server-loaded message history as trusted provider replay state. */
+export function markTrustedProviderBlockInput(
+  context: Record<string, unknown>,
+  persistProviderReplayBlocks?: ProviderReplayBlockPersister,
+): Record<string, unknown> {
+  return {
+    ...context,
+    [TRUSTED_PROVIDER_BLOCK_INPUT]: true,
+    ...(persistProviderReplayBlocks
+      ? { [PROVIDER_REPLAY_BLOCK_PERSISTER]: persistProviderReplayBlocks }
+      : {}),
+  };
+}
+
+/** Test whether an internal runtime context permits provider replay blocks. */
+export function hasTrustedProviderBlockInput(
+  context: Record<string, unknown> | undefined,
+): boolean {
+  return (context as Record<PropertyKey, unknown> | undefined)?.[
+    TRUSTED_PROVIDER_BLOCK_INPUT
+  ] === true;
+}
+
+/** Read the private host-installed provider replay persistence callback. */
+export function getProviderReplayBlockPersister(
+  context: Record<string, unknown> | undefined,
+): ProviderReplayBlockPersister | undefined {
+  const value = (context as Record<PropertyKey, unknown> | undefined)?.[
+    PROVIDER_REPLAY_BLOCK_PERSISTER
+  ];
+  return typeof value === "function" ? value as ProviderReplayBlockPersister : undefined;
+}
+
+export function normalizeInput(
+  input: string | Message[],
+  options: { preserveProviderBlocks?: boolean } = {},
+): Message[] {
   const now = Date.now();
 
   if (typeof input === "string") {
@@ -22,6 +72,9 @@ export function normalizeInput(input: string | Message[]): Message[] {
 
     return {
       ...msg,
+      parts: options.preserveProviderBlocks
+        ? msg.parts
+        : msg.parts.filter((part) => (part as { type?: unknown }).type !== "provider-block"),
       id: msg.id ?? `msg_${now}_${index}`,
       timestamp: msg.timestamp ?? now,
     };
@@ -35,6 +88,7 @@ export function accumulateUsage(
     totalTokens: number;
     cachedInputTokens?: number;
     cacheCreationInputTokens?: number;
+    cacheWriteInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
     billableInputTokens?: number;
@@ -58,6 +112,7 @@ export function accumulateUsage(
     totalTokens?: number;
     cachedInputTokens?: number;
     cacheCreationInputTokens?: number;
+    cacheWriteInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
     billableInputTokens?: number;
@@ -85,6 +140,10 @@ export function accumulateUsage(
   if (typeof usage.cacheCreationInputTokens === "number") {
     total.cacheCreationInputTokens = (total.cacheCreationInputTokens ?? 0) +
       usage.cacheCreationInputTokens;
+  }
+  if (typeof usage.cacheWriteInputTokens === "number") {
+    total.cacheWriteInputTokens = (total.cacheWriteInputTokens ?? 0) +
+      usage.cacheWriteInputTokens;
   }
   if (typeof usage.cacheReadInputTokens === "number") {
     total.cacheReadInputTokens = (total.cacheReadInputTokens ?? 0) + usage.cacheReadInputTokens;

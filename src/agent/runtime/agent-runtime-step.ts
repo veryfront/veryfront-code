@@ -5,6 +5,19 @@ import type { ToolConfigEntry } from "./tool-helpers.ts";
 import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { SOURCE_INTEGRATION_POLICY_CONTEXT_KEY } from "./runtime-tool-config.ts";
+import {
+  createToolExposurePlan,
+  createToolExposureState,
+  restoreToolExposureState,
+  type ToolExposureCheckpoint,
+  type ToolExposurePlan,
+  type ToolExposureState,
+} from "./tool-exposure.ts";
+import {
+  flattenSystemInstructions,
+  hasRuntimeToolInventory,
+  withRuntimeToolInventory,
+} from "./tool-inventory.ts";
 
 export type AgentRuntimeStepMode = "generate" | "stream";
 
@@ -56,6 +69,8 @@ export interface PrepareAgentRuntimeStepInput {
   systemPrompt: string;
   toolContextBase: ToolExecutionContext | undefined;
   strictConfiguredToolsOnly?: boolean;
+  toolExposureState?: ToolExposureState;
+  toolExposureCheckpoint?: ToolExposureCheckpoint;
 }
 
 export interface PreparedAgentRuntimeStep {
@@ -63,6 +78,7 @@ export interface PreparedAgentRuntimeStep {
   systemPrompt: string;
   toolContext: ToolExecutionContext;
   tools: ToolDefinition[];
+  toolExposurePlan: ToolExposurePlan;
 }
 
 function shouldIncludeSkillTools(config: AgentConfig): boolean {
@@ -127,13 +143,35 @@ export async function prepareAgentRuntimeStep(
     );
   }
   tools = filterToolsAfterSubmittedFormInput(tools, input.messages, runtimeState.context);
+  const toolExposureState = input.toolExposureState ?? createToolExposureState();
+  if (input.toolExposureCheckpoint) {
+    const restoredState = restoreToolExposureState(input.toolExposureCheckpoint, tools);
+    toolExposureState.loadedToolNames.clear();
+    for (const toolName of restoredState.loadedToolNames) {
+      toolExposureState.loadedToolNames.add(toolName);
+    }
+  }
+  const toolExposurePlan = createToolExposurePlan({
+    authorized: tools,
+    mode: input.config.toolLoading ?? "deferred",
+    state: toolExposureState,
+  });
+  const systemPrompt = hasRuntimeToolInventory(runtimeState.systemPrompt)
+    ? flattenSystemInstructions(
+      withRuntimeToolInventory(
+        runtimeState.systemPrompt,
+        toolExposurePlan.visible.map((tool) => tool.name),
+      ),
+    )
+    : runtimeState.systemPrompt;
 
   return {
     runtimeContext: trustedAllowedSkillIds === undefined
       ? runtimeState.context
       : { ...runtimeState.context, allowedSkillIds: [...trustedAllowedSkillIds] },
-    systemPrompt: runtimeState.systemPrompt,
+    systemPrompt,
     toolContext,
-    tools,
+    tools: toolExposurePlan.visible,
+    toolExposurePlan,
   };
 }

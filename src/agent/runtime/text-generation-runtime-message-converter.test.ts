@@ -12,6 +12,8 @@ import type {
   TextGenerationRuntimeUserMessage,
 } from "./text-generation-runtime-message-types.ts";
 import type { Message } from "../types.ts";
+import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
+import { attachProviderReplaySidecar } from "./provider-replay.ts";
 
 describe("text-generation-runtime-message-converter", () => {
   describe("convertToTextGenerationRuntimeMessage", () => {
@@ -148,6 +150,27 @@ describe("text-generation-runtime-message-converter", () => {
       assertEquals(content[0], { type: "text", text: "Sure, I can help." });
     });
 
+    it("preserves signed assistant reasoning", () => {
+      const msg: Message = {
+        id: "a-reasoning",
+        role: "assistant",
+        parts: [{
+          type: "reasoning",
+          text: "Checked the plan.",
+          signature: "signed-plan",
+        }],
+      };
+
+      assertEquals(convertToTextGenerationRuntimeMessage(msg), {
+        role: "assistant",
+        content: [{
+          type: "reasoning",
+          text: "Checked the plan.",
+          signature: "signed-plan",
+        }],
+      });
+    });
+
     it("converts an assistant message with tool calls", () => {
       const msg: Message = {
         id: "a2",
@@ -211,6 +234,28 @@ describe("text-generation-runtime-message-converter", () => {
         toolName: "search",
         output: { type: "json", value: { data: [1, 2, 3] } },
       });
+    });
+
+    it("keeps private tool exposure checkpoints out of provider messages", () => {
+      const result = convertToTextGenerationRuntimeMessage({
+        id: "tool-search-result",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "search-1",
+          toolName: "tool_search",
+          result: { matches: [] },
+        }],
+        metadata: {
+          __vfToolExposureCheckpoint: {
+            version: 1,
+            authorizedCatalogFingerprint: "v1-test",
+            loadedToolNames: [],
+          },
+        },
+      });
+
+      assertEquals("__vfToolExposureCheckpoint" in result, false);
     });
 
     it("converts a stored snake_case tool result message", () => {
@@ -354,6 +399,32 @@ describe("text-generation-runtime-message-converter", () => {
 
     it("returns empty array for empty input", () => {
       assertEquals(convertToTextGenerationRuntimeMessages([]), []);
+    });
+
+    it("preserves signed reasoning in assistant history", () => {
+      const messages: Message[] = [{
+        id: "assistant-reasoning",
+        role: "assistant",
+        parts: [
+          { type: "reasoning", text: "Checked the plan.", signature: "signed-plan" },
+          { type: "text", text: "Ready." },
+        ],
+      }, {
+        id: "user-next",
+        role: "user",
+        parts: [{ type: "text", text: "Continue" }],
+      }];
+
+      assertEquals(convertToTextGenerationRuntimeMessages(messages), [{
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "Checked the plan.", signature: "signed-plan" },
+          { type: "text", text: "Ready." },
+        ],
+      }, {
+        role: "user",
+        content: "Continue",
+      }]);
     });
 
     it("omits assistant messages that have no provider-sendable content", () => {
@@ -880,6 +951,57 @@ describe("text-generation-runtime-message-converter", () => {
       const requestMessages = convertToTextGenerationRuntimeRequestMessages(messages);
       assertEquals(requestMessages.at(-1)?.role, "tool");
       assertEquals(requestMessages.length, historyMessages.length - 1);
+    });
+
+    it("replays persisted provider blocks with exact JSON and ordering", () => {
+      const blocks = [
+        {
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block: {
+            type: "server_tool_use",
+            id: "srvtoolu_resume",
+            name: "tool_search",
+            input: { query: "invoices" },
+            unknown: { nested: [1, true, null] },
+          },
+        },
+        {
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block: {
+            type: "tool_search_tool_result",
+            tool_use_id: "srvtoolu_resume",
+            content: [{ type: "tool_reference", tool_name: "get_invoice" }],
+            unknown: "unchanged",
+          },
+        },
+      ] satisfies RuntimeProviderBlock[];
+      const assistantMessage = attachProviderReplaySidecar<Message>({
+        id: "assistant_native_search",
+        role: "assistant",
+        parts: [{ type: "text", text: "The invoice tool is available." }],
+      }, {
+        providerBlocks: blocks,
+        providerBlockPositions: [0, 1],
+      });
+      const messages: Message[] = [assistantMessage, {
+        id: "user_resume",
+        role: "user",
+        parts: [{ type: "text", text: "Continue" }],
+      }];
+
+      assertEquals(convertToTextGenerationRuntimeMessages(messages), [{
+        role: "assistant",
+        content: [
+          blocks[0]!,
+          blocks[1]!,
+          { type: "text", text: "The invoice tool is available." },
+        ],
+      }, {
+        role: "user",
+        content: "Continue",
+      }]);
     });
   });
 });

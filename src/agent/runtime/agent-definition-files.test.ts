@@ -102,6 +102,7 @@ Draft concise copy.
         name: "Writer",
         description: "Writes copy",
         model: "gpt-5.4",
+        toolLoading: "deferred",
         instructions: "Draft concise copy.",
       },
     );

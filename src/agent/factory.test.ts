@@ -71,6 +71,18 @@ describe("agent factory", () => {
     toolRegistry.clearAll();
   });
 
+  it("defaults tool schema loading to deferred and preserves eager override", () => {
+    const deferred = agent({ id: "deferred-default", system: "Stay helpful." });
+    const eager = agent({
+      id: "eager-override",
+      system: "Stay helpful.",
+      toolLoading: "eager",
+    });
+
+    assertEquals(deferred.config.toolLoading, "deferred");
+    assertEquals(eager.config.toolLoading, "eager");
+  });
+
   it("bootstraps schema validation before registering universal skill tools", () => {
     resetExtensionContracts();
 

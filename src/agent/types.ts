@@ -138,6 +138,20 @@ export interface AgentHttpMcpServerConfig {
 /** MCP server available to an agent. */
 export type AgentMcpServerConfig = AgentHttpMcpServerConfig | AgentVeryfrontMcpServerConfig;
 
+/** Controls when authorized tool schemas become visible to the model. */
+export type ToolLoading = "eager" | "deferred";
+
+/** @internal Actual per-step tool exposure observed by eval benchmarks. */
+export type AgentToolLoadingBenchmarkObservation = {
+  step: number;
+  authorizedSearchableSchemaCount: number;
+  visibleSchemaCount: number;
+  deferredSchemaCount: number;
+  providerRequestToolDefinitionCount: number;
+  providerWireDeferredMetadataCount: number;
+  loadingPath: "eager" | "framework-fallback" | "provider-native";
+};
+
 /** Configuration used by agent. */
 export interface AgentConfig {
   id?: string;
@@ -159,6 +173,11 @@ export interface AgentConfig {
   model?: ModelString;
   system: string | (() => string) | (() => Promise<string>);
   tools?: true | Record<string, Tool | boolean>;
+  /**
+   * Controls when authorized tool schemas become visible to the model.
+   * Defaults to `"deferred"`.
+   */
+  toolLoading?: ToolLoading;
   /**
    * Exact registered agent ids this agent may call through scoped
    * `agent_<id>` tools. Each delegate keeps its own model, skills, and tools.
@@ -384,6 +403,18 @@ export interface Agent {
      * @internal Retain framework skill loader tools while replacement tools are active.
      */
     retainSkillLoaderTools?: boolean;
+    /**
+     * @internal Eval/benchmark-only per-run exposure override. Not accepted by
+     * hosted request parsing or persisted agent manifests.
+     */
+    __vfToolLoadingOverride?: ToolLoading;
+    /**
+     * @internal Non-serializable eval/benchmark observer. Not accepted by
+     * hosted request parsing or persisted agent manifests.
+     */
+    __vfToolLoadingBenchmarkObserver?: (
+      observation: AgentToolLoadingBenchmarkObservation,
+    ) => void;
     /** Abort signal for cooperative cancellation. */
     abortSignal?: AbortSignal;
   }): Promise<AgentResponse>;

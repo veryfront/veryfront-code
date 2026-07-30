@@ -6,6 +6,7 @@
  */
 
 import type { TextGenerationRuntimeMessage } from "./text-generation-runtime-message-types.ts";
+import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
 
 export type RuntimeToolSet = Record<string, unknown>;
 
@@ -28,6 +29,7 @@ export interface RuntimeGenerateUsage {
   outputTokens?: number;
   totalTokens?: number;
   cacheCreationInputTokens?: number;
+  cacheWriteInputTokens?: number;
   cacheReadInputTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
@@ -51,6 +53,25 @@ export interface RuntimeGenerateTextResult {
   text: string;
   toolCalls?: RuntimeGenerateToolCall[];
   toolResults?: RuntimeGenerateToolResult[];
+  /** Framework-private, opaque provider response blocks retained for exact replay. */
+  providerBlocks?: RuntimeProviderBlock[];
+  /** Framework-private ordered assistant content used for exact provider replay. */
+  providerReplayParts?: Array<
+    | RuntimeProviderBlock
+    | { type: "text"; text: string }
+    | {
+      type: "reasoning";
+      text?: string;
+      signature?: string;
+      redactedData?: string;
+    }
+    | {
+      type: "tool-call";
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+    }
+  >;
   usage?: RuntimeGenerateUsage;
   finishReason?: string | null;
 }
@@ -78,6 +99,7 @@ export type RuntimeToolCallRepairFunction = (
 
 export type RuntimeStreamPart =
   | { type: "text-delta"; text: string }
+  | RuntimeProviderBlock
   | { type: "reasoning-start"; id: string }
   | { type: "reasoning-delta"; id: string; delta: string }
   | { type: "reasoning-end"; id: string; signature?: string; redactedData?: string }
@@ -148,6 +170,7 @@ export type RuntimeStreamPart =
       outputTokens?: number;
       totalTokens?: number;
       cacheCreationInputTokens?: number;
+      cacheWriteInputTokens?: number;
       cacheReadInputTokens?: number;
       cachedInputTokens?: number;
       reasoningTokens?: number;

@@ -10,6 +10,7 @@
 
 import type { LLMProvider, LLMProviderConfig } from "veryfront/extensions/llm";
 import type { EmbeddingRuntime, ModelRuntime } from "veryfront/provider/types";
+import type { RuntimeOpenAIProviderBlock, RuntimeProviderBlock } from "veryfront/provider/shared";
 import {
   buildProviderError,
   createOpenAIRequestInit,
@@ -338,6 +339,7 @@ function buildOpenAIGenerateResult(payload: unknown): {
 
 type OpenAIResponsesContentPart =
   | { type: "text"; text: string }
+  | RuntimeProviderBlock
   | {
     type: "reasoning";
     summaries?: Array<{ id?: string; text: string }>;
@@ -383,6 +385,16 @@ function buildOpenAIResponsesGenerateResult(payload: unknown): {
         input: typeof itemRecord?.arguments === "string"
           ? itemRecord.arguments
           : stringifyJsonValue(itemRecord?.arguments ?? {}),
+      });
+      continue;
+    }
+
+    if (itemType === "tool_search_call" || itemType === "tool_search_output") {
+      if (!itemRecord) continue;
+      content.push({
+        type: "provider-block",
+        provider: "openai-responses",
+        block: itemRecord as RuntimeOpenAIProviderBlock,
       });
       continue;
     }

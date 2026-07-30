@@ -19,6 +19,7 @@ import type {
   ModelRuntimeGenerateResult,
 } from "#veryfront/provider/types.ts";
 import type { RuntimeReasoningOption } from "#veryfront/agent/types.ts";
+import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
 
 type GenerateTextOptions = {
   model: ModelRuntime;
@@ -89,6 +90,13 @@ type RuntimePromptMessage =
     content: Array<
       | { type: "text"; text: string }
       | {
+        type: "reasoning";
+        text?: string;
+        signature?: string;
+        redactedData?: string;
+      }
+      | RuntimeProviderBlock
+      | {
         type: "tool-call";
         toolCallId: string;
         toolName: string;
@@ -112,6 +120,7 @@ type DirectGenerateUsage = {
   outputTokens?: number;
   totalTokens?: number;
   cacheCreationInputTokens?: number;
+  cacheWriteInputTokens?: number;
   cacheReadInputTokens?: number;
   cachedInputTokens?: number;
   reasoningTokens?: number;
@@ -134,6 +143,12 @@ type DirectGenerateUsage = {
 type DirectGenerateResult = {
   content?: Array<
     | { type: "text"; text: string }
+    | {
+      type: "reasoning";
+      text?: string;
+      signature?: string;
+      redactedData?: string;
+    }
     | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
     | {
       type: "tool-result";
@@ -231,14 +246,23 @@ function toRuntimePrompt(
       case "assistant":
         prompt.push({
           role: "assistant",
-          content: message.content.map((part) =>
-            part.type === "text" ? { type: "text" as const, text: part.text } : {
+          content: message.content.map((part) => {
+            if (part.type === "provider-block") {
+              return part;
+            }
+            if (part.type === "text") {
+              return { type: "text" as const, text: part.text };
+            }
+            if (part.type === "reasoning") {
+              return part;
+            }
+            return {
               type: "tool-call" as const,
               toolCallId: part.toolCallId,
               toolName: part.toolName,
               input: part.input,
-            }
-          ),
+            };
+          }),
         });
         break;
       case "tool":
@@ -277,6 +301,10 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
       "cacheCreation" in usage.inputTokens && typeof usage.inputTokens.cacheCreation === "number"
         ? usage.inputTokens.cacheCreation
         : undefined;
+    const cacheWriteInputTokens =
+      "cacheWrite" in usage.inputTokens && typeof usage.inputTokens.cacheWrite === "number"
+        ? usage.inputTokens.cacheWrite
+        : undefined;
     const outputTokens =
       "outputTokens" in usage && typeof usage.outputTokens === "object" && usage.outputTokens &&
         "total" in usage.outputTokens && typeof usage.outputTokens.total === "number"
@@ -292,6 +320,7 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
       outputTokens,
       totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
       ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+      ...(cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens } : {}),
       ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
       ...(cacheReadInputTokens !== undefined ? { cachedInputTokens: cacheReadInputTokens } : {}),
       ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
@@ -303,6 +332,7 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     outputTokens?: number;
     totalTokens?: number;
     cacheCreationInputTokens?: number;
+    cacheWriteInputTokens?: number;
     cacheReadInputTokens?: number;
     cachedInputTokens?: number;
     reasoningTokens?: number;
@@ -331,6 +361,9 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
     totalTokens: flatUsage.totalTokens,
     ...(typeof flatUsage.cacheCreationInputTokens === "number"
       ? { cacheCreationInputTokens: flatUsage.cacheCreationInputTokens }
+      : {}),
+    ...(typeof flatUsage.cacheWriteInputTokens === "number"
+      ? { cacheWriteInputTokens: flatUsage.cacheWriteInputTokens }
       : {}),
     ...(typeof flatUsage.cacheReadInputTokens === "number"
       ? { cacheReadInputTokens: flatUsage.cacheReadInputTokens }
@@ -538,6 +571,25 @@ function isDirectTextPart(part: unknown): part is { type: "text"; text: string }
     typeof part.text === "string";
 }
 
+function isDirectReasoningPart(
+  part: unknown,
+): part is {
+  type: "reasoning";
+  text?: string;
+  signature?: string;
+  redactedData?: string;
+} {
+  return !!part &&
+    typeof part === "object" &&
+    "type" in part &&
+    part.type === "reasoning" &&
+    (
+      ("text" in part && typeof part.text === "string") ||
+      ("signature" in part && typeof part.signature === "string") ||
+      ("redactedData" in part && typeof part.redactedData === "string")
+    );
+}
+
 function isDirectToolResultPart(
   part: unknown,
 ): part is {
@@ -558,25 +610,63 @@ function isDirectToolResultPart(
     "result" in part;
 }
 
+function isDirectProviderBlock(part: unknown): part is RuntimeProviderBlock {
+  return !!part &&
+    typeof part === "object" &&
+    "type" in part &&
+    part.type === "provider-block" &&
+    "provider" in part &&
+    (part.provider === "anthropic" || part.provider === "openai-responses") &&
+    "block" in part &&
+    !!part.block &&
+    typeof part.block === "object" &&
+    !Array.isArray(part.block);
+}
+
 function buildDirectGenerateResult(
   result: ModelRuntimeGenerateResult | DirectGenerateResult,
 ): RuntimeGenerateTextResult {
   let text = "";
   const toolCalls: RuntimeGenerateTextResult["toolCalls"] = [];
   const toolResults: RuntimeGenerateTextResult["toolResults"] = [];
+  const providerBlocks: RuntimeProviderBlock[] = [];
+  const providerReplayParts: NonNullable<RuntimeGenerateTextResult["providerReplayParts"]> = [];
 
   for (const part of result.content ?? []) {
+    if (isDirectProviderBlock(part)) {
+      providerBlocks.push(part);
+      providerReplayParts.push(part);
+      continue;
+    }
+
     if (isDirectTextPart(part)) {
       text += part.text;
+      providerReplayParts.push({ type: "text", text: part.text });
+      continue;
+    }
+
+    if (isDirectReasoningPart(part)) {
+      providerReplayParts.push({
+        type: "reasoning",
+        ...("text" in part && typeof part.text === "string" ? { text: part.text } : {}),
+        ...("signature" in part && typeof part.signature === "string"
+          ? { signature: part.signature }
+          : {}),
+        ...("redactedData" in part && typeof part.redactedData === "string"
+          ? { redactedData: part.redactedData }
+          : {}),
+      });
       continue;
     }
 
     if (isDirectToolCallPart(part)) {
-      toolCalls.push({
+      const toolCall = {
         toolCallId: part.toolCallId,
         toolName: part.toolName,
         input: parseToolCallInput(part.input),
-      });
+      };
+      toolCalls.push(toolCall);
+      providerReplayParts.push({ type: "tool-call", ...toolCall });
     }
 
     if (isDirectToolResultPart(part)) {
@@ -593,6 +683,8 @@ function buildDirectGenerateResult(
     text,
     ...(toolCalls.length > 0 ? { toolCalls } : {}),
     ...(toolResults.length > 0 ? { toolResults } : {}),
+    ...(providerBlocks.length > 0 ? { providerBlocks } : {}),
+    ...(providerReplayParts.length > 0 ? { providerReplayParts } : {}),
     usage: normalizeUsage(result.usage),
     finishReason: normalizeFinishReason(result.finishReason),
   };
@@ -618,6 +710,9 @@ function streamUsageToGenerateUsage(
     ...(totalTokens !== undefined ? { totalTokens } : {}),
     ...(totalUsage.cacheCreationInputTokens !== undefined
       ? { cacheCreationInputTokens: totalUsage.cacheCreationInputTokens }
+      : {}),
+    ...(totalUsage.cacheWriteInputTokens !== undefined
+      ? { cacheWriteInputTokens: totalUsage.cacheWriteInputTokens }
       : {}),
     ...(totalUsage.cacheReadInputTokens !== undefined
       ? { cacheReadInputTokens: totalUsage.cacheReadInputTokens }
@@ -674,6 +769,25 @@ async function buildGenerateResultFromStream(
   const toolCalls = new Map<string, NonNullable<RuntimeGenerateTextResult["toolCalls"]>[number]>();
   const toolInputs = new Map<string, { toolCallId: string; toolName: string; input: string }>();
   const toolResults: NonNullable<RuntimeGenerateTextResult["toolResults"]> = [];
+  const providerBlocks: RuntimeProviderBlock[] = [];
+  const providerReplayParts: NonNullable<RuntimeGenerateTextResult["providerReplayParts"]> = [];
+  const reasoningParts = new Map<
+    string,
+    Extract<
+      NonNullable<RuntimeGenerateTextResult["providerReplayParts"]>[number],
+      { type: "reasoning" }
+    >
+  >();
+  const replayedToolCallIds = new Set<string>();
+  const recordReplayToolCall = (
+    toolCall: NonNullable<RuntimeGenerateTextResult["toolCalls"]>[number],
+  ) => {
+    toolCalls.set(toolCall.toolCallId, toolCall);
+    if (!replayedToolCallIds.has(toolCall.toolCallId)) {
+      providerReplayParts.push({ type: "tool-call", ...toolCall });
+      replayedToolCallIds.add(toolCall.toolCallId);
+    }
+  };
 
   for await (const rawPart of mapReadableStream(stream)) {
     if (!rawPart || typeof rawPart !== "object" || !("type" in rawPart)) {
@@ -683,9 +797,42 @@ async function buildGenerateResultFromStream(
     const part = rawPart as RuntimeStreamPart;
 
     switch (part.type) {
-      case "text-delta":
-        text += part.text;
+      case "provider-block":
+        providerBlocks.push(part);
+        providerReplayParts.push(part);
         break;
+
+      case "text-delta": {
+        text += part.text;
+        const previous = providerReplayParts.at(-1);
+        if (previous?.type === "text") previous.text += part.text;
+        else providerReplayParts.push({ type: "text", text: part.text });
+        break;
+      }
+
+      case "reasoning-start": {
+        const reasoningPart = { type: "reasoning" as const, text: "" };
+        reasoningParts.set(part.id, reasoningPart);
+        providerReplayParts.push(reasoningPart);
+        break;
+      }
+
+      case "reasoning-delta": {
+        const reasoningPart = reasoningParts.get(part.id);
+        if (reasoningPart) {
+          reasoningPart.text = `${reasoningPart.text ?? ""}${part.delta}`;
+        }
+        break;
+      }
+
+      case "reasoning-end": {
+        const reasoningPart = reasoningParts.get(part.id);
+        if (reasoningPart) {
+          if (part.signature !== undefined) reasoningPart.signature = part.signature;
+          if (part.redactedData !== undefined) reasoningPart.redactedData = part.redactedData;
+        }
+        break;
+      }
 
       case "tool-input-start":
         toolInputs.set(part.id, {
@@ -706,7 +853,7 @@ async function buildGenerateResultFromStream(
       case "tool-input-end": {
         const input = toolInputs.get(part.id);
         if (input) {
-          toolCalls.set(input.toolCallId, {
+          recordReplayToolCall({
             toolCallId: input.toolCallId,
             toolName: input.toolName,
             input: parseToolCallInput(input.input),
@@ -718,7 +865,7 @@ async function buildGenerateResultFromStream(
       case "tool-input-available": {
         const toolCallId = part.toolCallId ?? part.id;
         if (toolCallId) {
-          toolCalls.set(toolCallId, {
+          recordReplayToolCall({
             toolCallId,
             toolName: part.toolName,
             input: parseToolCallInput(part.input),
@@ -728,7 +875,7 @@ async function buildGenerateResultFromStream(
       }
 
       case "tool-call":
-        toolCalls.set(part.toolCallId, {
+        recordReplayToolCall({
           toolCallId: part.toolCallId,
           toolName: part.toolName,
           input: parseToolCallInput(part.input),
@@ -770,6 +917,8 @@ async function buildGenerateResultFromStream(
     text,
     ...(finalToolCalls.length > 0 ? { toolCalls: finalToolCalls } : {}),
     ...(toolResults.length > 0 ? { toolResults } : {}),
+    ...(providerBlocks.length > 0 ? { providerBlocks } : {}),
+    ...(providerReplayParts.length > 0 ? { providerReplayParts } : {}),
     usage,
     finishReason,
   };
@@ -817,6 +966,9 @@ function normalizeStreamPart(part: unknown): unknown {
             : {}),
           ...(usage.cacheCreationInputTokens !== undefined
             ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
+            : {}),
+          ...(usage.cacheWriteInputTokens !== undefined
+            ? { cacheWriteInputTokens: usage.cacheWriteInputTokens }
             : {}),
           ...(usage.cacheReadInputTokens !== undefined
             ? { cacheReadInputTokens: usage.cacheReadInputTokens }

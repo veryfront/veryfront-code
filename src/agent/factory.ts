@@ -39,6 +39,7 @@ import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-schema-validator.ts";
 import { buildAgentDelegateTools } from "./runtime/agent-delegation.ts";
 import { normalizeAgentDelegateIds } from "./runtime/agent-delegation-names.ts";
+import { resolveToolLoading } from "./runtime/agent-definition.ts";
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -137,6 +138,7 @@ export function agent(config: AgentConfig): Agent {
     ...config,
     ...(delegates === undefined ? {} : { delegates }),
     model: resolveConfiguredAgentModel(config.model),
+    toolLoading: resolveToolLoading(config.toolLoading),
   };
 
   if (config.tools && config.tools !== true) {
@@ -277,6 +279,8 @@ export function agent(config: AgentConfig): Agent {
             {
               toolReplacements: input.tools,
               retainSkillLoaderTools: input.retainSkillLoaderTools,
+              toolLoadingOverride: input.__vfToolLoadingOverride,
+              toolLoadingBenchmarkObserver: input.__vfToolLoadingBenchmarkObserver,
             },
           );
         },

@@ -1,8 +1,9 @@
 import type { ToolDefinition } from "#veryfront/tool";
-import type { AgentConfig } from "../types.ts";
+import type { AgentConfig, ToolLoading } from "../types.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import { resolveEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { type SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import type { ToolExposureCheckpoint, ToolSearchAuthorization } from "./tool-exposure.ts";
 
 export const SOURCE_INTEGRATION_POLICY_CONTEXT_KEY = "__vfSourceIntegrationPolicy";
 
@@ -10,7 +11,41 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfForwardedIntegrationToolDefs?: Array<
     { name: string; description: string; parameters: Record<string, unknown> }
   >;
+  __vfToolSearchAuthorization?: ToolSearchAuthorization;
+  __vfToolExposureCheckpoint?: ToolExposureCheckpoint;
+  __vfPersistToolExposureCheckpoint?: (
+    checkpoint: ToolExposureCheckpoint,
+  ) => void | Promise<void>;
+  __vfOperationalToolLoadingOverride?: ToolLoading;
 } & RuntimeRemoteToolConfig;
+
+/** Effective runtime loading mode and the trusted source that selected it. */
+export type RuntimeToolLoadingResolution = {
+  mode: ToolLoading;
+  provenance: "host-operational-override" | "eval-override" | "agent-config";
+};
+
+/** Resolve tool loading without accepting request context as configuration. */
+export function resolveRuntimeToolLoading(
+  config: AgentConfig,
+  evalOverride?: ToolLoading,
+): RuntimeToolLoadingResolution {
+  const operationalOverride =
+    (config as RuntimeToolFilterConfig).__vfOperationalToolLoadingOverride;
+  if (operationalOverride === "eager" || operationalOverride === "deferred") {
+    return {
+      mode: operationalOverride,
+      provenance: "host-operational-override",
+    };
+  }
+  if (evalOverride === "eager" || evalOverride === "deferred") {
+    return { mode: evalOverride, provenance: "eval-override" };
+  }
+  return {
+    mode: config.toolLoading === "eager" ? "eager" : "deferred",
+    provenance: "agent-config",
+  };
+}
 
 export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {
   const configWithRuntimeFilters = config as RuntimeToolFilterConfig;
@@ -48,6 +83,51 @@ export function getRuntimeProviderTools(config: AgentConfig): string[] {
     return [];
   }
   return raw.every((toolName) => typeof toolName === "string") ? raw : [];
+}
+
+/** Return trusted host-derived metadata discovery authorization. */
+export function getRuntimeToolSearchAuthorization(
+  config: AgentConfig,
+): ToolSearchAuthorization {
+  const value = (config as RuntimeToolFilterConfig).__vfToolSearchAuthorization;
+  if (
+    value?.canConfigureAgentTools !== true ||
+    !Array.isArray(value.attachableCatalog) ||
+    !value.attachableCatalog.every((entry) =>
+      entry !== null &&
+      typeof entry === "object" &&
+      typeof entry.name === "string" &&
+      typeof entry.description === "string" &&
+      entry.attachVia === "tool_ids"
+    )
+  ) {
+    return { canConfigureAgentTools: false, attachableCatalog: [] };
+  }
+  return value;
+}
+
+/** Return a supported trusted private exposure checkpoint. */
+export function getRuntimeToolExposureCheckpoint(
+  config: AgentConfig,
+): ToolExposureCheckpoint | undefined {
+  const value = (config as RuntimeToolFilterConfig).__vfToolExposureCheckpoint;
+  if (
+    value?.version !== 1 ||
+    typeof value.authorizedCatalogFingerprint !== "string" ||
+    !Array.isArray(value.loadedToolNames) ||
+    !value.loadedToolNames.every((name) => typeof name === "string")
+  ) {
+    return undefined;
+  }
+  return value;
+}
+
+/** Return the trusted private checkpoint persistence hook. */
+export function getRuntimeToolExposureCheckpointPersister(
+  config: AgentConfig,
+): ((checkpoint: ToolExposureCheckpoint) => void | Promise<void>) | undefined {
+  const value = (config as RuntimeToolFilterConfig).__vfPersistToolExposureCheckpoint;
+  return typeof value === "function" ? value : undefined;
 }
 
 export function getRuntimeForwardedIntegrationToolDefs(

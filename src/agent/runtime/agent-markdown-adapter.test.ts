@@ -18,6 +18,26 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native to
   assertEquals(runtimeAgent.config.providerTools, ["web_search", "web_fetch"]);
 });
 
+Deno.test("createRuntimeAgentFromMarkdownDefinition preserves tool loading", () => {
+  const deferredAgent = createRuntimeAgentFromMarkdownDefinition({
+    id: "deferred",
+    name: "Deferred",
+    description: "Loads tools on demand",
+    instructions: "Use the configured tools.",
+    toolLoading: "deferred",
+  });
+  const eagerAgent = createRuntimeAgentFromMarkdownDefinition({
+    id: "eager",
+    name: "Eager",
+    description: "Loads tools immediately",
+    instructions: "Use the configured tools.",
+    toolLoading: "eager",
+  });
+
+  assertEquals(deferredAgent.config.toolLoading, "deferred");
+  assertEquals(eagerAgent.config.toolLoading, "eager");
+});
+
 Deno.test("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools", () => {
   toolRegistry.clearAll();
 

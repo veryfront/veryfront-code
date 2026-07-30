@@ -7,6 +7,15 @@ import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 import { normalizeAgentDelegateIds } from "./agent-delegation-names.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
+import type { ToolLoading } from "../types.ts";
+
+/** Default tool schema loading mode for programmatic and Markdown agents. */
+export const DEFAULT_TOOL_LOADING: ToolLoading = "deferred";
+
+/** Resolve an omitted tool schema loading mode to the framework default. */
+export function resolveToolLoading(value: ToolLoading | undefined): ToolLoading {
+  return value ?? DEFAULT_TOOL_LOADING;
+}
 
 /** Zod schema for get runtime agent thinking config. */
 export const getRuntimeAgentThinkingConfigSchema = defineSchema((v) =>
@@ -61,6 +70,7 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     temperature: v.number().min(0).max(2).optional(),
     maxSteps: v.number().optional(),
     providerTools: v.array(v.string().min(1)).optional(),
+    toolLoading: v.union([v.literal("eager"), v.literal("deferred")]).optional(),
     skills: v.union([v.literal(true), v.literal(false), v.array(v.string().min(1))]).optional(),
     tools: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
     delegates: v.array(v.string().min(1)).optional(),
@@ -124,6 +134,18 @@ function parseThinking(value: unknown): RuntimeAgentThinkingConfig | undefined {
     return { enabled: true };
   }
   return undefined;
+}
+
+function parseToolLoading(value: unknown): ToolLoading {
+  if (value === undefined) {
+    return resolveToolLoading(undefined);
+  }
+  if (value === "eager" || value === "deferred") {
+    return value;
+  }
+  throw CONFIG_INVALID.create({
+    detail: 'Agent frontmatter "tool-loading" must be "eager" or "deferred".',
+  });
 }
 
 function parseStringArray(value: unknown, field: string): string[] {
@@ -192,6 +214,7 @@ export function parseRuntimeAgentMarkdownDefinition(
   const providerTools = Object.hasOwn(attrs, "provider-tools")
     ? parseStringArray(attrs["provider-tools"], "provider-tools")
     : undefined;
+  const toolLoading = parseToolLoading(attrs["tool-loading"]);
   const skills = Object.hasOwn(attrs, "skills") ? parseSkillSelector(attrs.skills) : undefined;
   const tools = Object.hasOwn(attrs, "tools")
     ? parseCapabilitySelector(attrs.tools, "tools")
@@ -229,6 +252,7 @@ export function parseRuntimeAgentMarkdownDefinition(
     ...(temperature === undefined ? {} : { temperature }),
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(providerTools ? { providerTools } : {}),
+    toolLoading,
     ...(skills === undefined ? {} : { skills }),
     ...(tools === undefined ? {} : { tools }),
     ...(delegates === undefined ? {} : { delegates }),

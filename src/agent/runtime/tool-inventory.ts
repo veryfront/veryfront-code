@@ -23,6 +23,15 @@ function isRuntimeToolInventoryMessage(message: ChatSystemMessage): boolean {
   return message.content.includes(RUNTIME_TOOL_INVENTORY_HEADER);
 }
 
+/** Returns whether instructions already carry a hosted runtime tool inventory. */
+export function hasRuntimeToolInventory(
+  instructions: string | readonly ChatSystemMessage[],
+): boolean {
+  return typeof instructions === "string"
+    ? instructions.includes(RUNTIME_TOOL_INVENTORY_HEADER)
+    : instructions.some(isRuntimeToolInventoryMessage);
+}
+
 /** Applies runtime tool inventory. */
 export function withRuntimeToolInventory(
   instructions: string | readonly ChatSystemMessage[],

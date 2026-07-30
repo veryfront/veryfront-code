@@ -1,0 +1,215 @@
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import type { ToolDefinition } from "#veryfront/tool";
+import {
+  createToolExposureCheckpoint,
+  createToolExposurePlan,
+  createToolExposureState,
+  restoreToolExposureState,
+  searchToolExposure,
+  TOOL_SEARCH_TOOL_NAME,
+} from "./tool-exposure.ts";
+
+function definition(
+  name: string,
+  description: string,
+  parameterDescription = `${name} unique parameter`,
+): ToolDefinition {
+  return {
+    name,
+    description,
+    parameters: {
+      type: "object",
+      properties: {
+        value: { type: "string", description: parameterDescription },
+      },
+    },
+  };
+}
+
+const catalog = [
+  definition("get_release", "Read the current deployment release", "current release identifier"),
+  definition("create_release", "Publish a deployment release", "release label to publish"),
+  definition("archive_release", "Archive an old deployment", "release label to archive"),
+  definition("form_input", "Ask the user for structured input"),
+  definition("load_skill", "Load a configured skill"),
+];
+
+Deno.test("tool exposure plans eager and deferred visibility deterministically", () => {
+  const eager = createToolExposurePlan({
+    authorized: catalog,
+    mode: "eager",
+    state: createToolExposureState(),
+  });
+  assertEquals(eager.visible.map((tool) => tool.name), catalog.map((tool) => tool.name));
+  assertEquals(eager.deferred, []);
+
+  const deferred = createToolExposurePlan({
+    authorized: catalog,
+    mode: "deferred",
+    state: createToolExposureState(),
+  });
+  assertEquals(
+    deferred.visible.map((tool) => tool.name),
+    ["form_input", "load_skill", TOOL_SEARCH_TOOL_NAME],
+  );
+  assertEquals(
+    deferred.deferred.map((tool) => tool.name),
+    ["archive_release", "create_release", "get_release"],
+  );
+});
+
+Deno.test("tool search ranks exact name, description, and parameter matches", () => {
+  const state = createToolExposureState();
+  const exact = searchToolExposure({ query: "get_release", authorized: catalog, state });
+  assertEquals(exact.matches[0]?.name, "get_release");
+
+  const description = searchToolExposure({
+    query: "deployment",
+    authorized: catalog,
+    state: createToolExposureState(),
+  });
+  assertEquals(
+    description.matches.map((match) => match.name),
+    ["archive_release", "create_release", "get_release"],
+  );
+
+  const parameter = searchToolExposure({
+    query: "identifier",
+    authorized: catalog,
+    state: createToolExposureState(),
+  });
+  assertEquals(parameter.matches[0]?.name, "get_release");
+});
+
+Deno.test("tool search caps stable schema-free results at five", () => {
+  const authorized = Array.from(
+    { length: 8 },
+    (_, index) => definition(`tool_${index}`, "Shared searchable description"),
+  );
+  const result = searchToolExposure({
+    query: "searchable",
+    authorized,
+    state: createToolExposureState(),
+  });
+
+  assertEquals(result.matches.length, 5);
+  assertEquals(
+    result.matches.map((match) => match.name),
+    ["tool_0", "tool_1", "tool_2", "tool_3", "tool_4"],
+  );
+  const serialized = JSON.stringify(result.matches);
+  assert(!serialized.includes("parameters"));
+  assert(!serialized.includes("inputSchema"));
+  assert(!serialized.includes("outputSchema"));
+});
+
+Deno.test("authorized search matches load for the next step", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({ query: "get_release", authorized: catalog, state });
+  assertEquals(result.matches, [{
+    name: "get_release",
+    description: "Read the current deployment release",
+    status: "loaded",
+  }]);
+
+  const next = createToolExposurePlan({ authorized: catalog, mode: "deferred", state });
+  assertEquals(
+    next.visible.map((tool) => tool.name),
+    ["form_input", "get_release", "load_skill", TOOL_SEARCH_TOOL_NAME],
+  );
+});
+
+Deno.test("attachable metadata requires trusted permission and never loads", () => {
+  const attachableCatalog = [{
+    name: "list_agents",
+    description: "List configured agents",
+    attachVia: "tool_ids" as const,
+  }];
+  const deniedState = createToolExposureState();
+  assertEquals(
+    searchToolExposure({
+      query: "list agents",
+      authorized: catalog,
+      state: deniedState,
+      authorization: { canConfigureAgentTools: false, attachableCatalog },
+    }).matches,
+    [],
+  );
+
+  const allowedState = createToolExposureState();
+  assertEquals(
+    searchToolExposure({
+      query: "list agents",
+      authorized: catalog,
+      state: allowedState,
+      authorization: { canConfigureAgentTools: true, attachableCatalog },
+    }).matches,
+    [{
+      name: "list_agents",
+      description: "List configured agents",
+      status: "attachable",
+      attachVia: "tool_ids",
+    }],
+  );
+  assertEquals([...allowedState.loadedToolNames], []);
+});
+
+Deno.test("tool exposure checkpoints are private, sorted, and restore only currently authorized tools", () => {
+  const authorized = catalog.slice(0, 3);
+  const state = createToolExposureState(["get_release", "create_release", "get_release"]);
+  const checkpoint = createToolExposureCheckpoint(authorized, state);
+  assertEquals(checkpoint.version, 1);
+  assertEquals(checkpoint.loadedToolNames, ["create_release", "get_release"]);
+
+  assertEquals(
+    [...restoreToolExposureState(checkpoint, authorized).loadedToolNames].sort(),
+    ["create_release", "get_release"],
+  );
+  assertEquals(
+    [...restoreToolExposureState(checkpoint, [authorized[0]!]).loadedToolNames],
+    ["get_release"],
+  );
+  assertEquals(
+    [
+      ...restoreToolExposureState({
+        ...checkpoint,
+        authorizedCatalogFingerprint: "v1-stale",
+      }, authorized).loadedToolNames,
+    ],
+    ["create_release", "get_release"],
+  );
+  assertEquals(
+    [...restoreToolExposureState({ ...checkpoint, version: 2 }, authorized).loadedToolNames],
+    [],
+  );
+});
+
+Deno.test("new and child runs start with fresh tool exposure state", () => {
+  const parent = createToolExposureState(["get_release"]);
+  const child = createToolExposureState();
+
+  assertEquals([...parent.loadedToolNames], ["get_release"]);
+  assertEquals([...child.loadedToolNames], []);
+});
+
+Deno.test("tool_search is reserved only when deferred framework search is injected", () => {
+  const customSearch = definition("tool_search", "Custom eager search");
+  const eager = createToolExposurePlan({
+    authorized: [customSearch],
+    mode: "eager",
+    state: createToolExposureState(),
+  });
+  assertEquals(eager.visible, [customSearch]);
+
+  let message = "";
+  try {
+    createToolExposurePlan({
+      authorized: [customSearch],
+      mode: "deferred",
+      state: createToolExposureState(),
+    });
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+  }
+  assert(message.includes("reserved"));
+});

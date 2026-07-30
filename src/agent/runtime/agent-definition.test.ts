@@ -35,8 +35,51 @@ Follow the support runbook.
     thinking: { enabled: true, budgetTokens: 1200 },
     maxSteps: 8,
     providerTools: ["web_search", "web_fetch"],
+    toolLoading: "deferred",
     instructions: "Follow the support runbook.",
   });
+});
+
+Deno.test("parseRuntimeAgentMarkdownDefinition defaults tool loading to deferred", () => {
+  const result = parseRuntimeAgentMarkdownDefinition({
+    id: "support-agent",
+    content: "Help the user.",
+  });
+
+  assertEquals(result.toolLoading, "deferred");
+});
+
+Deno.test("parseRuntimeAgentMarkdownDefinition parses explicit tool loading modes", () => {
+  for (const toolLoading of ["deferred", "eager"] as const) {
+    const result = parseRuntimeAgentMarkdownDefinition({
+      id: `${toolLoading}-agent`,
+      content: `---
+tool-loading: ${toolLoading}
+---
+Help the user.
+`,
+    });
+
+    assertEquals(result.toolLoading, toolLoading);
+  }
+});
+
+Deno.test("parseRuntimeAgentMarkdownDefinition rejects invalid tool loading modes", () => {
+  for (const toolLoading of ["auto", "defered", "unknown"]) {
+    assertThrows(
+      () =>
+        parseRuntimeAgentMarkdownDefinition({
+          id: "invalid-agent",
+          content: `---
+tool-loading: ${toolLoading}
+---
+Help the user.
+`,
+        }),
+      Error,
+      "tool-loading",
+    );
+  }
 });
 
 Deno.test("parseRuntimeAgentMarkdownDefinition falls back to id and handles boolean thinking", () => {
@@ -54,6 +97,7 @@ Draft concise copy.
       name: "writer",
       description: "",
       thinking: { enabled: false },
+      toolLoading: "deferred",
       instructions: "Draft concise copy.",
     },
   );

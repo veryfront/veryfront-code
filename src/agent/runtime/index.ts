@@ -17,6 +17,7 @@ import {
   type AgentGenerateToolReplacements,
   type AgentResponse,
   type AgentStatus,
+  type AgentToolLoadingBenchmarkObservation,
   getTextFromParts,
   type Message,
   type MessagePart,
@@ -88,6 +89,10 @@ import {
   getRuntimeForwardedIntegrationToolDefs,
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
+  getRuntimeToolExposureCheckpoint,
+  getRuntimeToolExposureCheckpointPersister,
+  getRuntimeToolSearchAuthorization,
+  resolveRuntimeToolLoading,
 } from "./runtime-tool-config.ts";
 import {
   applySourceIntegrationPolicy,
@@ -175,6 +180,7 @@ function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
       return undefined;
   }
 }
+
 export {
   enforceSkillPolicy,
   extractSkillPolicy,
@@ -190,9 +196,22 @@ import {
   resolveConfiguredTool,
   type ToolConfigEntry,
 } from "./tool-helpers.ts";
-import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
+import {
+  accumulateUsage,
+  getMaxSteps,
+  getProviderReplayBlockPersister,
+  hasTrustedProviderBlockInput,
+  normalizeInput,
+} from "./input-utils.ts";
+import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
+import {
+  attachProviderReplaySidecar,
+  getProviderReplaySidecar,
+  resolveProviderReplayProvider,
+  retainCompatibleProviderReplay,
+} from "./provider-replay.ts";
 import { resolveRuntimeModel } from "./model-resolution.ts";
-import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
+import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
 import {
@@ -201,9 +220,154 @@ import {
 } from "./skill-delegation-overrides.ts";
 import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
 import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
+import {
+  createToolExposureCheckpoint,
+  createToolExposureState,
+  searchToolExposure,
+  TOOL_SEARCH_TOOL_NAME,
+  type ToolExposureCheckpoint,
+  type ToolExposurePlan,
+  type ToolExposureState,
+  type ToolSearchAuthorization,
+} from "./tool-exposure.ts";
 
 const logger = serverLogger.component("agent");
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
+
+function buildGeneratedAssistantMessage(
+  response: RuntimeGenerateTextResult,
+  metadata: { id: string; timestamp: number },
+): Message {
+  const orderedParts = response.providerReplayParts ?? [
+    ...(response.providerBlocks ?? []),
+    ...(response.text ? [{ type: "text" as const, text: response.text }] : []),
+    ...(response.toolCalls ?? []).map((toolCall) => ({
+      type: "tool-call" as const,
+      ...toolCall,
+    })),
+  ];
+  const providerBlocks: RuntimeProviderBlock[] = [];
+  const providerBlockPositions: number[] = [];
+  const visibleParts: MessagePart[] = [];
+  for (const [position, part] of orderedParts.entries()) {
+    if (part.type === "provider-block") {
+      providerBlocks.push(part);
+      providerBlockPositions.push(position);
+    } else if (part.type === "text") {
+      visibleParts.push({ type: "text", text: part.text });
+    } else if (part.type === "reasoning") {
+      visibleParts.push({
+        type: "reasoning",
+        ...(part.text !== undefined ? { text: part.text } : {}),
+        ...(part.signature !== undefined ? { signature: part.signature } : {}),
+        ...(part.redactedData !== undefined ? { redactedData: part.redactedData } : {}),
+      });
+    } else {
+      visibleParts.push({
+        type: `tool-${part.toolName}`,
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        args: part.input as Record<string, unknown>,
+      });
+    }
+  }
+  const message: Message = {
+    ...metadata,
+    role: "assistant",
+    parts: visibleParts,
+  };
+  return providerBlocks.length > 0
+    ? attachProviderReplaySidecar(message, {
+      providerBlocks,
+      providerBlockPositions,
+    })
+    : message;
+}
+
+function executeFrameworkToolSearch(input: {
+  args: Record<string, unknown>;
+  plan: ToolExposurePlan;
+  state: ToolExposureState;
+  authorization: ToolSearchAuthorization;
+}): {
+  result: ReturnType<typeof searchToolExposure> & { nextStep: string };
+  checkpoint: ReturnType<typeof createToolExposureCheckpoint>;
+} {
+  const query = typeof input.args.query === "string" ? input.args.query.trim() : "";
+  if (!query) {
+    throw new Error('tool_search requires a non-empty "query" string');
+  }
+  const result = searchToolExposure({
+    query,
+    authorized: input.plan.authorized,
+    state: input.state,
+    authorization: input.authorization,
+  });
+  return {
+    result: {
+      ...result,
+      nextStep: result.loadedCount > 0
+        ? "Continue to the next model step. Loaded tool schemas will be available then."
+        : "Continue with the available tools or answer without a tool.",
+    },
+    checkpoint: createToolExposureCheckpoint(input.plan.authorized, input.state),
+  };
+}
+
+function observeToolLoadingBenchmark(input: {
+  observer:
+    | ((observation: AgentToolLoadingBenchmarkObservation) => void)
+    | undefined;
+  step: number;
+  plan: ToolExposurePlan;
+  runtimeTools: Record<string, unknown> | undefined;
+  nativeToolSearch: boolean;
+  mode: AgentConfig["toolLoading"];
+}): void {
+  if (!input.observer) return;
+  const runtimeToolDefinitions = Object.values(input.runtimeTools ?? {});
+  const providerWireDeferredMetadataCount = input.nativeToolSearch
+    ? runtimeToolDefinitions.filter((tool) =>
+      tool !== null &&
+      typeof tool === "object" &&
+      (tool as { deferLoading?: unknown }).deferLoading === true
+    ).length
+    : 0;
+  let loadingPath: AgentToolLoadingBenchmarkObservation["loadingPath"] = "framework-fallback";
+  if (input.mode === "eager") {
+    loadingPath = "eager";
+  } else if (input.nativeToolSearch) {
+    loadingPath = "provider-native";
+  }
+
+  input.observer({
+    step: input.step,
+    authorizedSearchableSchemaCount: input.plan.authorized.length,
+    visibleSchemaCount: input.plan.visible.filter((tool) =>
+      tool.name !== TOOL_SEARCH_TOOL_NAME
+    ).length,
+    deferredSchemaCount: input.plan.deferred.length,
+    providerRequestToolDefinitionCount: runtimeToolDefinitions.length -
+      providerWireDeferredMetadataCount,
+    providerWireDeferredMetadataCount,
+    loadingPath,
+  });
+}
+
+function resolveNativeToolSearch(input: {
+  model: string;
+  authorization: ToolSearchAuthorization;
+}): { mode: "hosted"; variant?: "regex" } | undefined {
+  if (input.authorization.canConfigureAgentTools) return undefined;
+  const provider = resolveProviderReplayProvider(input.model);
+  if (provider === "anthropic") {
+    return { mode: "hosted", variant: "regex" };
+  }
+  if (provider === "openai-responses") {
+    return { mode: "hosted" };
+  }
+  return undefined;
+}
 
 function buildStreamFinishUsage(
   usage: AgentResponse["usage"],
@@ -221,6 +385,9 @@ function buildStreamFinishUsage(
       : {}),
     ...(usage.cacheCreationInputTokens !== undefined
       ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
+      : {}),
+    ...(usage.cacheWriteInputTokens !== undefined
+      ? { cacheWriteInputTokens: usage.cacheWriteInputTokens }
       : {}),
     ...(usage.cacheReadInputTokens !== undefined
       ? { cacheReadInputTokens: usage.cacheReadInputTokens }
@@ -656,6 +823,10 @@ export class AgentRuntime {
     options?: {
       toolReplacements?: AgentGenerateToolReplacements;
       retainSkillLoaderTools?: boolean;
+      toolLoadingOverride?: AgentConfig["toolLoading"];
+      toolLoadingBenchmarkObserver?: (
+        observation: AgentToolLoadingBenchmarkObservation,
+      ) => void;
     },
   ): Promise<AgentResponse> {
     throwIfAborted(abortSignal);
@@ -670,7 +841,9 @@ export class AgentRuntime {
         "agent.model": resolvedModelString,
       });
 
-      const inputMessages = normalizeInput(input);
+      const inputMessages = normalizeInput(input, {
+        preserveProviderBlocks: hasTrustedProviderBlockInput(context),
+      });
       const messages = await this.prepareTurnMessages(inputMessages);
 
       const systemPrompt = await this.resolveSystemPrompt();
@@ -707,6 +880,8 @@ export class AgentRuntime {
               options?.retainSkillLoaderTools,
             ),
             abortSignal,
+            options?.toolLoadingOverride,
+            options?.toolLoadingBenchmarkObserver,
           ),
       );
     });
@@ -733,7 +908,10 @@ export class AgentRuntime {
     const resolvedModelString = transport.resolvedModelString;
     debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
-    const memoryMessages = await this.prepareTurnMessages(messages);
+    const inputMessages = normalizeInput(messages, {
+      preserveProviderBlocks: hasTrustedProviderBlockInput(context),
+    });
+    const memoryMessages = await this.prepareTurnMessages(inputMessages);
 
     const systemPrompt = await this.resolveSystemPrompt();
 
@@ -894,6 +1072,10 @@ export class AgentRuntime {
     temperatureModelString?: string,
     toolReplacements?: AgentGenerateToolReplacements,
     abortSignal?: AbortSignal,
+    toolLoadingOverride?: AgentConfig["toolLoading"],
+    toolLoadingBenchmarkObserver?: (
+      observation: AgentToolLoadingBenchmarkObservation,
+    ) => void,
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
@@ -902,8 +1084,9 @@ export class AgentRuntime {
       const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
       const toolCalls: ToolCall[] = [];
-      const currentMessages = [...messages];
+      const currentMessages = retainCompatibleProviderReplay(messages, effectiveModel);
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      const persistProviderReplayBlocks = getProviderReplayBlockPersister(runtimeContext);
 
       // Local models can't reliably do function calling, so skip tools gracefully.
       const isLocal = isLocalModelRuntime(languageModel);
@@ -920,17 +1103,33 @@ export class AgentRuntime {
       let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
         runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
       const hasToolReplacements = toolReplacements !== undefined;
+      const initialToolExposureCheckpoint = hasToolReplacements
+        ? undefined
+        : getRuntimeToolExposureCheckpoint(this.config);
+      const toolExposureState = createToolExposureState();
+      const persistToolExposureCheckpoint = hasToolReplacements
+        ? undefined
+        : getRuntimeToolExposureCheckpointPersister(this.config);
       const runtimeToolsConfig = hasToolReplacements ? toolReplacements : this.config.tools;
+      const toolLoadingResolution = resolveRuntimeToolLoading(
+        this.config,
+        toolLoadingOverride,
+      );
+      const runConfig: AgentConfig = {
+        ...this.config,
+        toolLoading: toolLoadingResolution.mode,
+      };
       const runtimeStepConfig: AgentConfig = hasToolReplacements
         ? {
-          ...this.config,
+          ...runConfig,
           tools: runtimeToolsConfig,
+          toolLoading: "eager",
           skills: undefined,
           providerTools: undefined,
           mcpServers: undefined,
           sandbox: undefined,
         }
-        : this.config;
+        : runConfig;
       const allowedRemoteToolNames = hasToolReplacements
         ? undefined
         : getRuntimeAllowedRemoteTools(this.config);
@@ -949,6 +1148,9 @@ export class AgentRuntime {
       const providerTools = sourceIntegrationPolicy
         ? applySourceIntegrationPolicy(configuredProviderTools, sourceIntegrationPolicy)
         : configuredProviderTools;
+      const toolSearchAuthorization = hasToolReplacements
+        ? { canConfigureAgentTools: false, attachableCatalog: [] }
+        : getRuntimeToolSearchAuthorization(this.config);
       let currentSystemPrompt = systemPrompt;
       let currentRuntimeContext = runtimeContext;
       let agentWriteFinalResponseToolGuardEnabled = false;
@@ -983,6 +1185,8 @@ export class AgentRuntime {
           systemPrompt: currentSystemPrompt,
           toolContextBase: { ...toolContextBase, abortSignal },
           strictConfiguredToolsOnly: hasToolReplacements,
+          toolExposureState,
+          toolExposureCheckpoint: step === 0 ? initialToolExposureCheckpoint : undefined,
         });
         throwIfAborted(abortSignal);
         currentSystemPrompt = preparedStep.systemPrompt;
@@ -993,12 +1197,40 @@ export class AgentRuntime {
             !shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
           )
           : preparedStep.tools;
+        const nativeToolSearch = runtimeStepConfig.toolLoading === "deferred"
+          ? resolveNativeToolSearch({
+            model: effectiveModel,
+            authorization: toolSearchAuthorization,
+          })
+          : undefined;
+        setSpanAttributes(loopSpan, {
+          "tool.loading.mode": runtimeStepConfig.toolLoading ?? "deferred",
+          "tool.loading.provenance": toolLoadingResolution.provenance,
+          "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
+          "tool.catalog.visible_count": tools.length,
+          "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
+          "tool.loading.path": nativeToolSearch ? "provider-native" : "framework-fallback",
+        });
         const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
 
         const temperature = this.resolveTemperature(
           temperatureModelString ?? effectiveModel,
           providerOptions,
         );
+        const runtimeTools = convertToolsToRuntimeTools(tools, {
+          model: effectiveModel,
+          providerTools: stepProviderTools,
+          toolExposurePlan: preparedStep.toolExposurePlan,
+          nativeToolSearch,
+        });
+        observeToolLoadingBenchmark({
+          observer: toolLoadingBenchmarkObserver,
+          step,
+          plan: preparedStep.toolExposurePlan,
+          runtimeTools,
+          nativeToolSearch: nativeToolSearch !== undefined,
+          mode: runtimeStepConfig.toolLoading,
+        });
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
@@ -1008,10 +1240,7 @@ export class AgentRuntime {
             model: languageModel,
             system: currentSystemPrompt,
             messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
-            tools: convertToolsToRuntimeTools(tools, {
-              model: effectiveModel,
-              providerTools: stepProviderTools,
-            }),
+            tools: runtimeTools,
             experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
             ...(temperature === undefined ? {} : { temperature }),
@@ -1036,6 +1265,7 @@ export class AgentRuntime {
             cachedInputTokens: response.usage.cachedInputTokens ??
               response.usage.cacheReadInputTokens,
             cacheCreationInputTokens: response.usage.cacheCreationInputTokens,
+            cacheWriteInputTokens: response.usage.cacheWriteInputTokens,
             cacheReadInputTokens: response.usage.cacheReadInputTokens,
             reasoningTokens: response.usage.reasoningTokens,
             billableInputTokens: response.usage.billableInputTokens,
@@ -1056,26 +1286,19 @@ export class AgentRuntime {
           setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
         }
 
-        const assistantParts: MessagePart[] = [];
-        if (response.text) assistantParts.push({ type: "text", text: response.text });
-
-        for (const tc of response.toolCalls ?? []) {
-          assistantParts.push({
-            type: `tool-${tc.toolName}`,
-            toolCallId: tc.toolCallId,
-            toolName: tc.toolName,
-            args: tc.input as Record<string, unknown>,
-          });
-        }
-
-        const assistantMessage: Message = {
+        const assistantMessage = buildGeneratedAssistantMessage(response, {
           id: `msg_${Date.now()}_${step}`,
-          role: "assistant",
-          parts: assistantParts,
           timestamp: Date.now(),
-        };
+        });
         currentMessages.push(assistantMessage);
         await this.memory.add(assistantMessage);
+        const providerReplay = getProviderReplaySidecar(assistantMessage);
+        if (providerReplay) {
+          await persistProviderReplayBlocks?.({
+            ...providerReplay,
+            totalPartCount: assistantMessage.parts.length + providerReplay.providerBlocks.length,
+          });
+        }
         throwIfAborted(abortSignal);
         const generatedToolResults = collectGeneratedToolResults(response.toolResults);
 
@@ -1173,6 +1396,50 @@ export class AgentRuntime {
                 "gen_ai.tool.call.id": tc.toolCallId,
               }),
             );
+
+            if (tc.toolName === TOOL_SEARCH_TOOL_NAME) {
+              let checkpoint: ToolExposureCheckpoint;
+              try {
+                const search = executeFrameworkToolSearch({
+                  args: toolCall.args,
+                  plan: preparedStep.toolExposurePlan,
+                  state: toolExposureState,
+                  authorization: toolSearchAuthorization,
+                });
+                toolCall.status = "completed";
+                toolCall.result = search.result;
+                setSpanAttributes(toolSpan, {
+                  "tool.status": "completed",
+                  "tool.search.result_count": search.result.resultCount,
+                  "tool.search.loaded_count": search.result.loadedCount,
+                  "tool.search.attachable_metadata_count": search.result.attachableMetadataCount,
+                  "tool.search.miss": search.result.miss,
+                });
+                const toolResultMessage = createToolResultMessage(
+                  tc.toolCallId,
+                  tc.toolName,
+                  search.result,
+                );
+                currentMessages.push(toolResultMessage);
+                await this.memory.add(toolResultMessage);
+                checkpoint = search.checkpoint;
+              } catch (error) {
+                toolCall.status = "error";
+                toolCall.error = error instanceof Error ? error.message : String(error);
+                const errorMessage = createToolErrorMessage(
+                  tc.toolCallId,
+                  tc.toolName,
+                  toolCall.error,
+                );
+                currentMessages.push(errorMessage);
+                await this.memory.add(errorMessage);
+                toolCalls.push(toolCall);
+                return;
+              }
+              await persistToolExposureCheckpoint?.(checkpoint);
+              toolCalls.push(toolCall);
+              return;
+            }
 
             if (generatedToolResult && !hasToolReplacements) {
               if (generatedToolResult.providerExecuted === true) {
@@ -1433,8 +1700,9 @@ export class AgentRuntime {
     const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
     const toolCalls: ToolCall[] = [];
-    const currentMessages = [...messages];
+    const currentMessages = retainCompatibleProviderReplay(messages, effectiveModel);
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const persistProviderReplayBlocks = getProviderReplayBlockPersister(runtimeContext);
 
     // Local models can't reliably do function calling, so skip tools gracefully.
     const isLocalStreaming = isLocalModelRuntime(languageModel);
@@ -1452,6 +1720,14 @@ export class AgentRuntime {
       runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
+    const initialToolExposureCheckpoint = getRuntimeToolExposureCheckpoint(this.config);
+    const toolExposureState = createToolExposureState();
+    const persistToolExposureCheckpoint = getRuntimeToolExposureCheckpointPersister(this.config);
+    const toolLoadingResolution = resolveRuntimeToolLoading(this.config);
+    const runtimeStepConfig: AgentConfig = {
+      ...this.config,
+      toolLoading: toolLoadingResolution.mode,
+    };
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
     const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
     const remoteToolSources = getRuntimeRemoteToolSources(this.config, undefined, this.id);
@@ -1460,6 +1736,7 @@ export class AgentRuntime {
     const providerTools = sourceIntegrationPolicy
       ? applySourceIntegrationPolicy(configuredProviderTools, sourceIntegrationPolicy)
       : configuredProviderTools;
+    const toolSearchAuthorization = getRuntimeToolSearchAuthorization(this.config);
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
     let agentWriteFinalResponseToolGuardEnabled = false;
@@ -1478,7 +1755,7 @@ export class AgentRuntime {
         activeSkillPolicy,
         activeSkillToolAvailability,
         allowedRemoteToolNames,
-        config: this.config,
+        config: runtimeStepConfig,
         forwardedRemoteToolDefinitions,
         getAvailableTools,
         isLocalModel: isLocalStreaming,
@@ -1491,6 +1768,8 @@ export class AgentRuntime {
         step,
         systemPrompt: currentSystemPrompt,
         toolContextBase,
+        toolExposureState,
+        toolExposureCheckpoint: step === 0 ? initialToolExposureCheckpoint : undefined,
       });
       currentSystemPrompt = preparedStep.systemPrompt;
       currentRuntimeContext = preparedStep.runtimeContext;
@@ -1500,11 +1779,27 @@ export class AgentRuntime {
           !shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
         )
         : preparedStep.tools;
+      const nativeToolSearch = runtimeStepConfig.toolLoading === "deferred"
+        ? resolveNativeToolSearch({
+          model: effectiveModel,
+          authorization: toolSearchAuthorization,
+        })
+        : undefined;
+      setOtelActiveSpanAttributes({
+        "tool.loading.mode": runtimeStepConfig.toolLoading ?? "deferred",
+        "tool.loading.provenance": toolLoadingResolution.provenance,
+        "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
+        "tool.catalog.visible_count": tools.length,
+        "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
+        "tool.loading.path": nativeToolSearch ? "provider-native" : "framework-fallback",
+      });
       const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
         providerTools: stepProviderTools,
+        toolExposurePlan: preparedStep.toolExposurePlan,
+        nativeToolSearch,
       });
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort();
 
@@ -1602,6 +1897,13 @@ export class AgentRuntime {
       latestAssistantText = getTextFromParts(assistantMessage.parts);
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
+      const providerReplay = getProviderReplaySidecar(assistantMessage);
+      if (providerReplay) {
+        await persistProviderReplayBlocks?.({
+          ...providerReplay,
+          totalPartCount: assistantMessage.parts.length + providerReplay.providerBlocks.length,
+        });
+      }
 
       const finalToolResults = collectFinalStreamToolResults(state);
 
@@ -1794,6 +2096,50 @@ export class AgentRuntime {
             currentMessages,
             toolCalls,
           );
+          continue;
+        }
+
+        if (tc.name === TOOL_SEARCH_TOOL_NAME) {
+          let checkpoint: ToolExposureCheckpoint;
+          try {
+            callbacks?.onToolCall?.(toolCall);
+            const search = executeFrameworkToolSearch({
+              args: toolCall.args,
+              plan: preparedStep.toolExposurePlan,
+              state: toolExposureState,
+              authorization: toolSearchAuthorization,
+            });
+            toolCall.status = "completed";
+            toolCall.result = search.result;
+            toolCalls.push(toolCall);
+            setOtelActiveSpanAttributes({
+              "tool.search.result_count": search.result.resultCount,
+              "tool.search.loaded_count": search.result.loadedCount,
+              "tool.search.attachable_metadata_count": search.result.attachableMetadataCount,
+              "tool.search.miss": search.result.miss,
+            });
+            sendSSE(controller, encoder, {
+              type: "tool-output-available",
+              toolCallId: toolCall.id,
+              output: search.result,
+            });
+            const toolResultMessage = createToolResultMessage(tc.id, tc.name, search.result);
+            currentMessages.push(toolResultMessage);
+            await this.memory.add(toolResultMessage);
+            checkpoint = search.checkpoint;
+            currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
+          } catch (error) {
+            await this.recordToolError(
+              toolCall,
+              error instanceof Error ? error.message : String(error),
+              controller,
+              encoder,
+              currentMessages,
+              toolCalls,
+            );
+            continue;
+          }
+          await persistToolExposureCheckpoint?.(checkpoint);
           continue;
         }
 

@@ -8,6 +8,9 @@ import {
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
   getRuntimeSourceIntegrationPolicyFromContext,
+  getRuntimeToolExposureCheckpoint,
+  getRuntimeToolSearchAuthorization,
+  resolveRuntimeToolLoading,
 } from "./runtime-tool-config.ts";
 
 function runtimeConfig(extra: Record<string, unknown> = {}): AgentConfig {
@@ -19,6 +22,71 @@ function runtimeConfig(extra: Record<string, unknown> = {}): AgentConfig {
 }
 
 describe("agent/runtime-tool-config", () => {
+  it("resolves tool loading with host override ahead of eval override and records provenance", () => {
+    assertEquals(resolveRuntimeToolLoading(runtimeConfig({ toolLoading: "deferred" })), {
+      mode: "deferred",
+      provenance: "agent-config",
+    });
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({ toolLoading: "deferred" }), "eager"),
+      {
+        mode: "eager",
+        provenance: "eval-override",
+      },
+    );
+    assertEquals(
+      resolveRuntimeToolLoading(
+        runtimeConfig({
+          toolLoading: "eager",
+          __vfOperationalToolLoadingOverride: "deferred",
+        }),
+        "eager",
+      ),
+      {
+        mode: "deferred",
+        provenance: "host-operational-override",
+      },
+    );
+  });
+
+  it("defaults trusted authoring search authorization closed", () => {
+    assertEquals(
+      getRuntimeToolSearchAuthorization(runtimeConfig({
+        context: {
+          canConfigureAgentTools: true,
+          attachableCatalog: [{ name: "list_agents" }],
+        },
+      })),
+      { canConfigureAgentTools: false, attachableCatalog: [] },
+    );
+  });
+
+  it("accepts only supported private checkpoint state from internal config", () => {
+    assertEquals(
+      getRuntimeToolExposureCheckpoint(runtimeConfig({
+        __vfToolExposureCheckpoint: {
+          version: 1,
+          authorizedCatalogFingerprint: "v1-catalog",
+          loadedToolNames: ["get_release"],
+        },
+      })),
+      {
+        version: 1,
+        authorizedCatalogFingerprint: "v1-catalog",
+        loadedToolNames: ["get_release"],
+      },
+    );
+    assertEquals(
+      getRuntimeToolExposureCheckpoint(runtimeConfig({
+        __vfToolExposureCheckpoint: {
+          version: 2,
+          loadedToolNames: ["get_release"],
+        },
+      })),
+      undefined,
+    );
+  });
+
   describe("getRuntimeAllowedRemoteTools", () => {
     it("distinguishes absent allow-lists from invalid configured allow-lists", () => {
       assertEquals(getRuntimeAllowedRemoteTools(runtimeConfig()), undefined);

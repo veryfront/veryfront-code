@@ -25,6 +25,7 @@ import {
   ManualMonotonicClock,
   StreamLifecycleFailure,
 } from "#veryfront/agent/streaming/lifecycle/index.ts";
+import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
 
 afterEach(() => {
   _resetShimForTests();
@@ -90,6 +91,7 @@ describe("chat-stream-handler", () => {
       assertEquals(state.finishReason, null);
       assertEquals(state.toolCalls.size, 0);
       assertEquals(state.toolResults.length, 0);
+      assertEquals(state.providerBlocks, []);
       assertEquals(state.suppressedToolCalls, []);
       assertEquals(state.usage, { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
     });
@@ -210,6 +212,49 @@ describe("chat-stream-handler", () => {
       assertEquals(events[1], { type: "text-delta", id: "text-1", delta: "Hello " });
       assertEquals(events[2], { type: "text-delta", id: "text-1", delta: "world" });
       assertEquals(events[3], { type: "text-end", id: "text-1" });
+    });
+
+    it("accumulates opaque provider blocks without exposing them as SSE events", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const blocks = [
+        {
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block: {
+            type: "server_tool_use",
+            id: "srvtoolu_stream",
+            name: "tool_search",
+            input: { query: "invoices" },
+            unknown: { exact: true },
+          },
+        },
+        {
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block: {
+            type: "tool_search_tool_result",
+            tool_use_id: "srvtoolu_stream",
+            content: [{ type: "tool_reference", tool_name: "get_invoice" }],
+          },
+        },
+      ] satisfies RuntimeProviderBlock[];
+
+      await processStream(
+        createMockResult([...blocks, {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: null,
+        }]),
+        state,
+        controller,
+        encoder,
+        "text-1",
+        undefined,
+      );
+
+      assertEquals(state.providerBlocks, blocks);
+      assertEquals(events, []);
     });
 
     it("passes through data-tool-call-status events", async () => {

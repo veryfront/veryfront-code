@@ -375,4 +375,314 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
       "frequencyPenalty",
     ]);
   });
+
+  it("serializes native tool search only for supported Responses models", () => {
+    const options = {
+      prompt: [{ role: "user", content: [{ type: "text", text: "Find a release tool" }] }],
+      tools: [
+        {
+          type: "function",
+          name: "tool_search",
+          description: "Search authorized tools",
+          inputSchema: { type: "object", properties: { query: { type: "string" } } },
+          nativeToolSearch: { mode: "hosted" },
+        },
+        {
+          type: "function",
+          name: "get_release",
+          inputSchema: { type: "object" },
+          deferLoading: true,
+        },
+      ],
+    };
+
+    const supported = buildOpenAIResponsesRequest(
+      "gpt-5.4",
+      "openai",
+      options as never,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(supported.tools, [
+      { type: "tool_search" },
+      {
+        type: "function",
+        name: "get_release",
+        strict: false,
+        defer_loading: true,
+        parameters: { type: "object" },
+      },
+    ]);
+
+    const unsupported = buildOpenAIResponsesRequest(
+      "gpt-5.3",
+      "openai",
+      options as never,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(unsupported.tools, [
+      {
+        type: "function",
+        name: "tool_search",
+        description: "Search authorized tools",
+        strict: false,
+        parameters: { type: "object", properties: { query: { type: "string" } } },
+      },
+    ]);
+
+    const clientControlled = buildOpenAIResponsesRequest(
+      "gpt-5.4",
+      "openai",
+      {
+        ...options,
+        tools: options.tools.map((tool) =>
+          tool.name === "tool_search" ? { ...tool, nativeToolSearch: { mode: "client" } } : tool
+        ),
+      } as never,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(clientControlled.tools, [
+      {
+        type: "tool_search",
+        execution: "client",
+        description: "Search authorized tools",
+        parameters: { type: "object", properties: { query: { type: "string" } } },
+      },
+      {
+        type: "function",
+        name: "get_release",
+        strict: false,
+        defer_loading: true,
+        parameters: { type: "object" },
+      },
+    ]);
+
+    const providerOptionBypass = buildOpenAIResponsesRequest(
+      "gpt-5.4",
+      "openai",
+      {
+        ...options,
+        tools: options.tools.map((tool) =>
+          tool.name === "tool_search" ? { ...tool, nativeToolSearch: undefined } : tool
+        ),
+        providerOptions: { openai: { toolSearch: { mode: "hosted" } } },
+      } as never,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(providerOptionBypass.tools, [{
+      type: "function",
+      name: "tool_search",
+      description: "Search authorized tools",
+      strict: false,
+      parameters: { type: "object", properties: { query: { type: "string" } } },
+    }]);
+  });
+
+  it("replays OpenAI tool-search call/output items in original order", () => {
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.4",
+      "openai",
+      {
+        prompt: [
+          { role: "user", content: [{ type: "text", text: "Find a tool" }] },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "provider-block",
+                provider: "openai-responses",
+                block: {
+                  type: "tool_search_call",
+                  execution: "server",
+                  call_id: null,
+                  status: "completed",
+                  arguments: { goal: "Find release tools" },
+                  provider_trace: { shard: "a" },
+                },
+              },
+              {
+                type: "provider-block",
+                provider: "openai-responses",
+                block: {
+                  type: "tool_search_output",
+                  execution: "server",
+                  call_id: null,
+                  status: "completed",
+                  tools: [{
+                    type: "function",
+                    name: "get_release",
+                    defer_loading: true,
+                    parameters: { type: "object" },
+                  }],
+                  provider_trace: { shard: "b" },
+                },
+              },
+              {
+                type: "provider-block",
+                provider: "anthropic",
+                block: {
+                  type: "server_tool_use",
+                  id: "srvtoolu_ignored",
+                  name: "tool_search_tool_regex",
+                  input: { query: "ignored" },
+                },
+              },
+            ],
+          },
+        ],
+      } as never,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.input, [
+      { role: "user", content: [{ type: "input_text", text: "Find a tool" }] },
+      {
+        type: "tool_search_call",
+        execution: "server",
+        call_id: null,
+        status: "completed",
+        arguments: { goal: "Find release tools" },
+        provider_trace: { shard: "a" },
+      },
+      {
+        type: "tool_search_output",
+        execution: "server",
+        call_id: null,
+        status: "completed",
+        tools: [{
+          type: "function",
+          name: "get_release",
+          defer_loading: true,
+          parameters: { type: "object" },
+        }],
+        provider_trace: { shard: "b" },
+      },
+    ]);
+  });
+
+  it("defers namespace members only on a native-capable OpenAI Responses route", () => {
+    const options = {
+      prompt: [{ role: "user", content: [{ type: "text", text: "Find CRM tools" }] }],
+      tools: [
+        {
+          type: "function",
+          name: "tool_search",
+          inputSchema: { type: "object" },
+          nativeToolSearch: { mode: "hosted" },
+        },
+        {
+          type: "provider",
+          name: "crm",
+          id: "openai.namespace",
+          args: {
+            name: "crm",
+            tools: [
+              {
+                type: "function",
+                name: "get_customer",
+                parameters: { type: "object" },
+              },
+              {
+                type: "function",
+                name: "list_orders",
+                deferLoading: true,
+                parameters: { type: "object" },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const supported = buildOpenAIResponsesRequest(
+      "gpt-5.4",
+      "openai",
+      options as never,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(supported.tools, [
+      { type: "tool_search" },
+      {
+        type: "namespace",
+        name: "crm",
+        tools: [
+          { type: "function", name: "get_customer", parameters: { type: "object" } },
+          {
+            type: "function",
+            name: "list_orders",
+            defer_loading: true,
+            parameters: { type: "object" },
+          },
+        ],
+      },
+    ]);
+
+    const unsupportedRoute = buildOpenAIResponsesRequest(
+      "gpt-5.4",
+      "azure",
+      options as never,
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(unsupportedRoute.tools, [
+      {
+        type: "function",
+        name: "tool_search",
+        strict: false,
+        parameters: { type: "object" },
+      },
+      {
+        type: "namespace",
+        name: "crm",
+        tools: [
+          { type: "function", name: "get_customer", parameters: { type: "object" } },
+        ],
+      },
+    ]);
+  });
+
+  it("normalizes only top-level provider-tool args and preserves nested camelCase", () => {
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.4",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Find a tool" }] }],
+        tools: [{
+          type: "provider",
+          id: "openai.custom_tool",
+          args: {
+            topLevelKey: "normalized",
+            nestedConfig: {
+              camelCaseKey: "preserved",
+              deferLoading: true,
+            },
+            opaqueItems: [{
+              deferLoading: true,
+              nestedCamelCase: { staysOpaque: true },
+            }],
+          },
+        }],
+      } as never,
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.tools, [{
+      type: "custom_tool",
+      top_level_key: "normalized",
+      nested_config: {
+        camelCaseKey: "preserved",
+        deferLoading: true,
+      },
+      opaque_items: [{
+        deferLoading: true,
+        nestedCamelCase: { staysOpaque: true },
+      }],
+    }]);
+  });
 });

@@ -3,7 +3,10 @@ import {
   stringifyJsonValue,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
-import type { RuntimePromptMessage } from "veryfront/provider/shared";
+import type {
+  RuntimePromptMessage,
+  RuntimeToolDefinition as SharedRuntimeToolDefinition,
+} from "veryfront/provider/shared";
 
 type ProviderCacheTtl = boolean | "5m" | "1h";
 
@@ -20,19 +23,7 @@ type ProviderReasoningOption = {
   budgetTokens?: number;
 };
 
-export type RuntimeToolDefinition =
-  | {
-    type: "function";
-    name: string;
-    description?: string;
-    inputSchema: unknown;
-  }
-  | {
-    type: "provider";
-    name: string;
-    id: `${string}.${string}`;
-    args: Record<string, unknown>;
-  };
+export type RuntimeToolDefinition = SharedRuntimeToolDefinition;
 
 export type OpenAICompatibleLanguageOptions = {
   prompt: RuntimePromptMessage[];
@@ -108,6 +99,42 @@ type AnthropicCompatibleRequest = {
   tool_choice?: unknown;
   [key: string]: unknown;
 };
+
+export type AnthropicNativeToolSearchMode = "hosted" | "client";
+export type AnthropicNativeToolSearchVariant = "regex" | "bm25";
+
+type AnthropicNativeToolSearchConfig = {
+  mode: AnthropicNativeToolSearchMode;
+  variant: AnthropicNativeToolSearchVariant;
+};
+
+const ANTHROPIC_NATIVE_TOOL_SEARCH_MODEL_PREFIXES = [
+  "claude-opus-4-5",
+  "claude-opus-4-6",
+  "claude-opus-4-7",
+  "claude-opus-4-8",
+  "claude-sonnet-4-5",
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5",
+] as const;
+
+/** Explicit compatibility gate for Anthropic's native tool-search tool. */
+export function supportsAnthropicNativeToolSearch(modelId: string): boolean {
+  return ANTHROPIC_NATIVE_TOOL_SEARCH_MODEL_PREFIXES.some((prefix) =>
+    modelId === prefix || modelId.startsWith(`${prefix}-`)
+  );
+}
+
+function readAnthropicNativeToolSearchConfig(
+  tools: RuntimeToolDefinition[] | undefined,
+): AnthropicNativeToolSearchConfig | undefined {
+  const searchTool = tools?.find((tool) => tool.type === "function" && tool.name === "tool_search");
+  if (searchTool?.type !== "function" || !searchTool.nativeToolSearch) return undefined;
+  return {
+    mode: searchTool.nativeToolSearch.mode,
+    variant: searchTool.nativeToolSearch.variant ?? "regex",
+  };
+}
 
 function normalizeAnthropicToolChoice(toolChoice: unknown): unknown {
   if (typeof toolChoice === "string") {
@@ -237,7 +264,11 @@ function toAnthropicMessages(
         const shouldCompactCompletedToolRound = index < lastHistoricalAssistantTextIndex &&
           message.content.some((part) => part.type === "tool-call");
         const assistantContent = shouldCompactCompletedToolRound
-          ? message.content.filter((part) => part.type === "text" && part.text.length > 0)
+          ? message.content.filter((part) =>
+            (part.type === "text" && part.text.length > 0) ||
+            part.type === "reasoning" ||
+            part.type === "provider-block"
+          )
           : message.content;
 
         if (assistantContent.length === 0) {
@@ -249,33 +280,46 @@ function toAnthropicMessages(
         pendingToolUseIds = new Set(
           assistantContent.flatMap((part) => part.type === "tool-call" ? [part.toolCallId] : []),
         );
-        messages.push({
-          role: "assistant",
-          content: assistantContent.map((part) => {
-            if (part.type === "text") {
-              return { type: "text", text: part.text };
+        const anthropicContent: Array<Record<string, unknown>> = [];
+        for (const part of assistantContent) {
+          if (part.type === "text") {
+            anthropicContent.push({ type: "text", text: part.text });
+            continue;
+          }
+          if (part.type === "reasoning") {
+            if (typeof part.redactedData === "string") {
+              anthropicContent.push({
+                type: "redacted_thinking",
+                data: part.redactedData,
+              });
+              continue;
             }
-            if (part.type === "reasoning") {
-              if (typeof part.redactedData === "string") {
-                return {
-                  type: "redacted_thinking",
-                  data: part.redactedData,
-                };
-              }
-              return {
-                type: "thinking",
-                thinking: part.text ?? "",
-                ...(typeof part.signature === "string" ? { signature: part.signature } : {}),
-              };
+            anthropicContent.push({
+              type: "thinking",
+              thinking: part.text ?? "",
+              ...(typeof part.signature === "string" ? { signature: part.signature } : {}),
+            });
+            continue;
+          }
+          if (part.type === "provider-block") {
+            if (part.provider === "anthropic") {
+              anthropicContent.push(part.block);
             }
-            return {
-              type: "tool_use",
-              id: part.toolCallId,
-              name: part.toolName,
-              input: part.input,
-            };
-          }),
-        });
+            continue;
+          }
+          anthropicContent.push({
+            type: "tool_use",
+            id: part.toolCallId,
+            name: part.toolName,
+            input: part.input,
+          });
+        }
+        if (anthropicContent.length > 0) {
+          messages.push({
+            role: "assistant",
+            content: anthropicContent,
+          });
+        }
         skippingHistoricalToolResults = shouldCompactCompletedToolRound;
         break;
       }
@@ -345,19 +389,35 @@ function resolveAnthropicProviderType(rawType: string): string {
 function toAnthropicTools(
   tools: RuntimeToolDefinition[] | undefined,
   toolsCacheControl?: { type: "ephemeral"; ttl?: "1h" },
+  nativeToolSearch?: AnthropicNativeToolSearchConfig,
 ): Array<Record<string, unknown>> | undefined {
   if (!tools) {
     return undefined;
   }
 
   const normalized: Array<Record<string, unknown>> = [];
+  const nativeEnabled = nativeToolSearch !== undefined;
 
   for (const tool of tools) {
     if (tool.type === "function") {
+      if (tool.deferLoading === true && !nativeEnabled) {
+        continue;
+      }
+      if (nativeEnabled && nativeToolSearch.mode === "hosted" && tool.name === "tool_search") {
+        const variant = nativeToolSearch.variant;
+        normalized.push({
+          type: `tool_search_tool_${variant}_20251119`,
+          name: `tool_search_tool_${variant}`,
+        });
+        continue;
+      }
       normalized.push({
         name: tool.name,
         ...(typeof tool.description === "string" ? { description: tool.description } : {}),
         input_schema: unwrapToolInputSchema(tool.inputSchema),
+        ...(nativeEnabled && tool.deferLoading === true && tool.name !== "tool_search"
+          ? { defer_loading: true }
+          : {}),
       });
       continue;
     }
@@ -383,11 +443,13 @@ function toAnthropicTools(
   }
 
   if (toolsCacheControl) {
-    const lastIndex = normalized.length - 1;
-    normalized[lastIndex] = {
-      ...normalized[lastIndex],
-      cache_control: toolsCacheControl,
-    };
+    const lastCacheableIndex = normalized.findLastIndex((tool) => tool.defer_loading !== true);
+    if (lastCacheableIndex >= 0) {
+      normalized[lastCacheableIndex] = {
+        ...normalized[lastCacheableIndex],
+        cache_control: toolsCacheControl,
+      };
+    }
   }
 
   return normalized;
@@ -490,13 +552,18 @@ export function buildAnthropicMessagesRequest(
     options.cacheControl?.tools,
   );
 
-  const { system, messages } = toAnthropicMessages(options.prompt, systemCacheControl);
-  const anthropicTools = toAnthropicTools(options.tools, toolsCacheControl);
   const rawProviderOptions = readProviderOptions(
     options.providerOptions,
     "anthropic",
     providerName,
   );
+  const toolSearch = supportsAnthropicNativeToolSearch(modelId)
+    ? readAnthropicNativeToolSearchConfig(options.tools)
+    : undefined;
+  const { system, messages } = toAnthropicMessages(options.prompt, systemCacheControl);
+  const anthropicTools = toAnthropicTools(options.tools, toolsCacheControl, toolSearch);
+  const providerRequestOptions = { ...rawProviderOptions };
+  delete providerRequestOptions.toolSearch;
   const thinkingBudget = resolveAnthropicThinkingBudget(options.reasoning);
   const providerThinkingBudget = resolveAnthropicProviderThinkingBudget(rawProviderOptions);
   const effectiveThinkingBudget = thinkingBudget ?? providerThinkingBudget;
@@ -608,6 +675,6 @@ export function buildAnthropicMessagesRequest(
     ...(options.anthropicContainer !== undefined ? { container: options.anthropicContainer } : {}),
   };
 
-  Object.assign(body, rawProviderOptions);
+  Object.assign(body, providerRequestOptions);
   return body;
 }

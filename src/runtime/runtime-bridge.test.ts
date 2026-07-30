@@ -7,6 +7,7 @@ import {
   createGenerateModel,
   createStreamModel,
 } from "./runtime-bridge.test-helpers.ts";
+import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
 
 describe("runtime-bridge", () => {
   it("uses the direct generate path for models without tools", async () => {
@@ -44,6 +45,36 @@ describe("runtime-bridge", () => {
     });
   });
 
+  it("preserves distinct cache creation, write, and read usage from direct models", async () => {
+    const model = createGenerateModel("openai", "openai/gpt-test", async () => ({
+      content: [{ type: "text", text: "World" }],
+      finishReason: "stop",
+      usage: {
+        inputTokens: 20,
+        outputTokens: 4,
+        totalTokens: 24,
+        cacheCreationInputTokens: 7,
+        cacheWriteInputTokens: 5,
+        cacheReadInputTokens: 3,
+      },
+    }));
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+
+    assertEquals(result.usage, {
+      inputTokens: 20,
+      outputTokens: 4,
+      totalTokens: 24,
+      cacheCreationInputTokens: 7,
+      cacheWriteInputTokens: 5,
+      cacheReadInputTokens: 3,
+      cachedInputTokens: 3,
+    });
+  });
+
   it("forwards reasoning options to direct generate models", async () => {
     const model = createGenerateModel("test", "test/reasoning-generate", async (options) => {
       assertEquals(options.reasoning, { enabled: false });
@@ -61,6 +92,57 @@ describe("runtime-bridge", () => {
     });
 
     assertEquals(result.text, "ok");
+  });
+
+  it("preserves signed reasoning through resumed prompts and direct generate results", async () => {
+    const model = createGenerateModel("anthropic", "anthropic/claude-opus-4-6", async (options) => {
+      assertEquals(options.prompt, [{
+        role: "assistant",
+        content: [{
+          type: "reasoning",
+          text: "Checked the plan.",
+          signature: "signed-plan",
+        }],
+      }, {
+        role: "user",
+        content: [{ type: "text", text: "Continue" }],
+      }]);
+      return {
+        content: [{
+          type: "reasoning",
+          text: "Continued the plan.",
+          signature: "signed-continuation",
+        }, {
+          type: "text",
+          text: "Done",
+        }],
+        finishReason: "stop",
+      };
+    });
+
+    const result = await generateText({
+      model,
+      messages: [{
+        role: "assistant",
+        content: [{
+          type: "reasoning",
+          text: "Checked the plan.",
+          signature: "signed-plan",
+        }],
+      }, {
+        role: "user",
+        content: "Continue",
+      }],
+    });
+
+    assertEquals(result.providerReplayParts, [{
+      type: "reasoning",
+      text: "Continued the plan.",
+      signature: "signed-continuation",
+    }, {
+      type: "text",
+      text: "Done",
+    }]);
   });
 
   it("buffers the stream path for models that prefer streamed generate", async () => {
@@ -108,6 +190,44 @@ describe("runtime-bridge", () => {
       inputTokens: 2,
       outputTokens: 5,
       totalTokens: 7,
+    });
+  });
+
+  it("preserves distinct cache creation, write, and read usage when buffering a stream", async () => {
+    const model = {
+      ...createStreamModel("openai", "openai/gpt-test", async () => ({
+        stream: ReadableStream.from([
+          { type: "text-delta", delta: "World" },
+          {
+            type: "finish",
+            finishReason: "stop",
+            usage: {
+              inputTokens: 20,
+              outputTokens: 4,
+              totalTokens: 24,
+              cacheCreationInputTokens: 7,
+              cacheWriteInputTokens: 5,
+              cacheReadInputTokens: 3,
+            },
+          },
+        ]),
+      })),
+      _generateViaStream: true,
+    };
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+
+    assertEquals(result.usage, {
+      inputTokens: 20,
+      outputTokens: 4,
+      totalTokens: 24,
+      cacheCreationInputTokens: 7,
+      cacheWriteInputTokens: 5,
+      cacheReadInputTokens: 3,
+      cachedInputTokens: 3,
     });
   });
 
@@ -952,5 +1072,121 @@ describe("runtime-bridge", () => {
     });
 
     assertEquals(result.text, "Continuing");
+  });
+
+  it("preserves opaque provider blocks through generate and resumed prompt replay", async () => {
+    const anthropicBlocks = [
+      {
+        type: "provider-block" as const,
+        provider: "anthropic" as const,
+        block: {
+          type: "server_tool_use",
+          id: "srvtoolu_1",
+          name: "tool_search",
+          input: { query: "billing" },
+          future_field: { exact: true },
+        },
+      },
+      {
+        type: "provider-block" as const,
+        provider: "anthropic" as const,
+        block: {
+          type: "tool_search_tool_result",
+          tool_use_id: "srvtoolu_1",
+          content: [{ type: "tool_reference", tool_name: "get_invoice" }],
+          future_field: ["preserve", 1],
+        },
+      },
+    ] satisfies RuntimeProviderBlock[];
+    const generateModel = createGenerateModel(
+      "anthropic",
+      "anthropic/claude-opus-4-6",
+      async () => ({
+        content: [...anthropicBlocks, { type: "text", text: "Found it." }],
+        finishReason: "stop",
+      }),
+    );
+
+    const result = await generateText({
+      model: generateModel,
+      messages: [{ role: "user", content: "Find billing tools" }],
+    });
+
+    assertEquals(result.providerBlocks, anthropicBlocks);
+
+    const replayModel = createGenerateModel(
+      "anthropic",
+      "anthropic/claude-opus-4-6",
+      async (options) => {
+        assertEquals(options.prompt, [
+          {
+            role: "assistant",
+            content: [...anthropicBlocks, { type: "text", text: "Found it." }],
+          },
+          {
+            role: "user",
+            content: [{ type: "text", text: "Continue" }],
+          },
+        ]);
+        return { content: [{ type: "text", text: "Resumed." }] };
+      },
+    );
+
+    await generateText({
+      model: replayModel,
+      messages: [{
+        role: "assistant",
+        content: [...anthropicBlocks, { type: "text", text: "Found it." }],
+      }, {
+        role: "user",
+        content: "Continue",
+      }],
+    });
+  });
+
+  it("preserves ordered OpenAI provider blocks when streamed generate is buffered", async () => {
+    const openAIBlocks = [
+      {
+        type: "provider-block" as const,
+        provider: "openai-responses" as const,
+        block: {
+          type: "tool_search_call",
+          id: "ts_1",
+          execution: "server",
+          call_id: null,
+          arguments: { query: "billing" },
+          future_field: { exact: true },
+        },
+      },
+      {
+        type: "provider-block" as const,
+        provider: "openai-responses" as const,
+        block: {
+          type: "tool_search_output",
+          id: "tso_1",
+          execution: "server",
+          call_id: null,
+          output: [{ type: "tool_reference", name: "get_invoice" }],
+          future_field: ["preserve", 2],
+        },
+      },
+    ] satisfies RuntimeProviderBlock[];
+    const model = {
+      ...createStreamModel("openai", "openai/gpt-5.4", async () => ({
+        stream: ReadableStream.from([
+          ...openAIBlocks,
+          { type: "text-delta", delta: "Found it." },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      })),
+      _generateViaStream: true,
+    };
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Find billing tools" }],
+    });
+
+    assertEquals(result.providerBlocks, openAIBlocks);
   });
 });

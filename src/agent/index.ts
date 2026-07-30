@@ -141,6 +141,7 @@ export type {
   ToolCallPart,
   ToolCallPartWithArgs,
   ToolCallPartWithInput,
+  ToolLoading,
   ToolResultPart,
 } from "./types.ts";
 
