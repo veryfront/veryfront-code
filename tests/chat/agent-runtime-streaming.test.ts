@@ -315,6 +315,7 @@ describe("AgentRuntime streaming", () => {
         id: "test-agent",
         model: "mock/mock-model",
         system: "You are a tester",
+        toolLoading: "eager",
         memory: { type: "conversation", maxTokens: 4000 },
         tools: {
           "repeat-id": tool({
@@ -437,6 +438,7 @@ describe("AgentRuntime streaming", () => {
         id: "test-agent",
         model: "mock/mock-model",
         system: "You are a tester",
+        toolLoading: "eager",
         memory: { type: "conversation", maxTokens: 4000 },
         tools: {
           review: tool({
