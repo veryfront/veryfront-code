@@ -730,6 +730,65 @@ describe("ServerDataFetcher", () => {
       assertEquals(healthy.props, { healthy: true });
     });
 
+    it("keeps exact caller cancellation neutral at the deadline boundary", async () => {
+      const time = new FakeTime();
+      const fetcher = new ServerDataFetcher();
+      const projectId = `deadline-abort-${crypto.randomUUID()}`;
+
+      try {
+        for (let index = 0; index < 5; index++) {
+          const controller = new AbortController();
+          const reason = new Error(`boundary caller abort ${index}`);
+          const abortTimer = setTimeout(
+            () => controller.abort(reason),
+            DATA_FETCH_TIMEOUT_MS,
+          );
+          let markStarted!: () => void;
+          const started = new Promise<void>((resolve) => {
+            markStarted = resolve;
+          });
+          const pending = fetcher.fetch(
+            {
+              default: () => null,
+              getServerData: (context) =>
+                new Promise((_resolve, reject) => {
+                  markStarted();
+                  context.request.signal.addEventListener(
+                    "abort",
+                    () => reject(context.request.signal.reason),
+                    { once: true },
+                  );
+                }),
+            },
+            createContext({
+              request: new Request("http://localhost/test", {
+                signal: controller.signal,
+              }),
+            }),
+            { projectId },
+          );
+
+          await started;
+          await time.tickAsync(DATA_FETCH_TIMEOUT_MS);
+          clearTimeout(abortTimer);
+          assertStrictEquals(await assertRejects(() => pending), reason);
+          for (let flush = 0; flush < 8; flush++) await Promise.resolve();
+        }
+
+        const healthy = await fetcher.fetch(
+          {
+            default: () => null,
+            getServerData: () => ({ props: { healthy: true } }),
+          },
+          createContext(),
+          { projectId },
+        );
+        assertEquals(healthy.props, { healthy: true });
+      } finally {
+        time.restore();
+      }
+    });
+
     it("should count an independent AbortError that coincides with caller abort", async () => {
       const fetcher = new ServerDataFetcher();
       const projectId = `independent-abort-${crypto.randomUUID()}`;
@@ -1281,14 +1340,13 @@ describe("ServerDataFetcher", () => {
       assertEquals(result.props, { ok: true });
     });
 
-    it("should reject a missing source policy before inspecting the request body", async () => {
+    it("should reject a missing source policy before consuming the request body", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
       __resetPoolForTests();
       const pool = getWorkerPool();
       const originalExecute = pool.execute;
       let workerCalls = 0;
-      let bodyAccesses = 0;
       pool.execute = (..._args) => {
         workerCalls++;
         return Promise.resolve({
@@ -1298,16 +1356,9 @@ describe("ServerDataFetcher", () => {
         });
       };
 
-      const baseRequest = new Request("http://localhost/test", {
+      const request = new Request("http://localhost/test", {
         method: "POST",
         body: "must-not-be-read",
-      });
-      const request = new Proxy(baseRequest, {
-        get(target, property) {
-          if (property === "body") bodyAccesses++;
-          const value = Reflect.get(target, property, target);
-          return typeof value === "function" ? value.bind(target) : value;
-        },
       });
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData = {
@@ -1326,8 +1377,8 @@ describe("ServerDataFetcher", () => {
           Error,
           "requires an exact source integration policy",
         );
-        assertEquals(bodyAccesses, 0);
         assertEquals(workerCalls, 0);
+        assertEquals(await request.text(), "must-not-be-read");
       } finally {
         pool.execute = originalExecute;
       }

@@ -11,6 +11,9 @@ export type {
   DataResult,
   InferGetServerDataProps,
   PageWithData,
+  StaticDataPrimitive,
+  StaticDataResult,
+  StaticDataValue,
   StaticPathsResult,
 } from "./types.ts";
 export { type DataCacheScope, snapshotDataCacheScope } from "./data-fetching-cache.ts";

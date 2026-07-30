@@ -4,6 +4,7 @@ import {
   assertExists,
   assertRejects,
   assertStrictEquals,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
@@ -13,6 +14,7 @@ import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
 import { DataExecutionAdmission } from "./execution-admission.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { CircuitBreakerOpen } from "#veryfront/utils/circuit-breaker.ts";
+import { MAX_DATA_MODULE_PATH_CHARACTERS, MAX_DATA_PROJECT_DIR_CHARACTERS } from "./data-limits.ts";
 
 function createContext(overrides: Partial<DataContext> = {}): DataContext {
   return {
@@ -31,13 +33,39 @@ function getProps<T>(result: DataResult): T {
 
 describe("DataFetcher", () => {
   describe("constructor", () => {
-    it("should create instance without adapter", () => {
+    it("creates an instance with default options", () => {
       assertExists(new DataFetcher());
     });
 
-    it("should create instance with adapter", () => {
-      const mockAdapter = { env: { get: () => undefined } };
-      assertExists(new DataFetcher(mockAdapter));
+    it("rejects legacy adapter and unknown options instead of ignoring them", () => {
+      assertThrows(
+        () => new DataFetcher({ env: { get: () => undefined } } as never),
+        TypeError,
+        "Unknown DataFetcher option: env",
+      );
+      assertThrows(
+        () => Reflect.construct(DataFetcher, [undefined, { staticPathsTimeoutMs: 5 }]),
+        TypeError,
+        "DataFetcher accepts at most one options argument",
+      );
+    });
+
+    it("validates constructor option values before allocating resources", () => {
+      for (const invalidAdmission of [null, {}]) {
+        assertThrows(
+          () =>
+            new DataFetcher({
+              executionAdmission: invalidAdmission,
+            } as never),
+          TypeError,
+          "DataFetcher executionAdmission must be a DataExecutionAdmission instance",
+        );
+      }
+      assertThrows(
+        () => new DataFetcher({ staticPathsTimeoutMs: -1 }),
+        RangeError,
+        "Static paths timeout must be zero or a positive safe integer",
+      );
     });
 
     it("should forward an explicitly configured static-path deadline", async () => {
@@ -45,7 +73,7 @@ describe("DataFetcher", () => {
         maxConcurrent: 1,
         maxConcurrentPerProject: 1,
       });
-      const fetcher = new DataFetcher(undefined, {
+      const fetcher = new DataFetcher({
         staticPathsTimeoutMs: 5,
         executionAdmission: admission,
       });
@@ -146,6 +174,149 @@ describe("DataFetcher", () => {
       );
       assertEquals(staticResult.props, { generation: 1 });
       assertEquals(staticReads, 1);
+    });
+
+    it("rejects accessor-backed context fields without invoking them", async () => {
+      const fetcher = new DataFetcher();
+      const reads = { params: 0, query: 0, request: 0, url: 0 };
+      const context = Object.defineProperties({}, {
+        params: {
+          enumerable: true,
+          get() {
+            reads.params++;
+            return { slug: "first" };
+          },
+        },
+        query: {
+          enumerable: true,
+          get() {
+            reads.query++;
+            return new URLSearchParams("source=first");
+          },
+        },
+        request: {
+          enumerable: true,
+          get() {
+            reads.request++;
+            return new Request("https://example.test/first");
+          },
+        },
+        url: {
+          enumerable: true,
+          get() {
+            reads.url++;
+            return new URL("https://example.test/first");
+          },
+        },
+      }) as DataContext;
+      let calls = 0;
+      await assertRejects(
+        () =>
+          fetcher.fetchData(
+            {
+              default: () => null,
+              getStaticData: () => {
+                calls++;
+                return { props: {} };
+              },
+            },
+            context,
+            "production",
+            { cacheScope: null },
+          ),
+        TypeError,
+        "own enumerable data property",
+      );
+
+      assertEquals(reads, { params: 0, query: 0, request: 0, url: 0 });
+      assertEquals(calls, 0);
+    });
+
+    it("returns context accessor failures as promise rejections", async () => {
+      const fetcher = new DataFetcher();
+      let requestReads = 0;
+      const context = Object.defineProperties({}, {
+        params: { enumerable: true, value: {} },
+        query: { enumerable: true, value: new URLSearchParams() },
+        request: {
+          enumerable: true,
+          get() {
+            requestReads++;
+            throw new Error("request accessor failed");
+          },
+        },
+        url: { enumerable: true, value: new URL("https://example.test/failure") },
+      }) as DataContext;
+
+      let pending: Promise<DataResult>;
+      try {
+        pending = fetcher.fetchData(
+          { default: () => null, getServerData: () => ({ props: {} }) },
+          context,
+        );
+      } catch {
+        throw new Error("fetchData threw synchronously");
+      }
+
+      await assertRejects(
+        () => pending,
+        TypeError,
+        "request must be an own enumerable data property",
+      );
+      assertEquals(requestReads, 0);
+    });
+
+    it("rejects executable, Proxy, unknown, and oversized fetch options", async () => {
+      const fetcher = new DataFetcher();
+      let calls = 0;
+      let optionReads = 0;
+      const pageModule: PageWithData = {
+        default: () => null,
+        getStaticData: () => {
+          calls++;
+          return { props: {} };
+        },
+      };
+      const accessorOptions = Object.defineProperty({}, "modulePath", {
+        enumerable: true,
+        get() {
+          optionReads++;
+          return "/project/pages/page.tsx";
+        },
+      });
+      const proxyOptions = new Proxy(
+        { modulePath: "/project/pages/page.tsx" },
+        {
+          ownKeys() {
+            optionReads++;
+            return ["modulePath"];
+          },
+        },
+      );
+      for (
+        const options of [
+          accessorOptions,
+          proxyOptions,
+          { unknown: true },
+          { modulePath: "m".repeat(MAX_DATA_MODULE_PATH_CHARACTERS + 1) },
+          { projectDir: "p".repeat(MAX_DATA_PROJECT_DIR_CHARACTERS + 1) },
+        ]
+      ) {
+        await assertRejects(
+          () =>
+            fetcher.fetchData(
+              pageModule,
+              createContext(),
+              "production",
+              options as never,
+            ),
+          options === accessorOptions || options === proxyOptions || "unknown" in options
+            ? TypeError
+            : RangeError,
+        );
+      }
+      assertEquals(optionReads, 0);
+      assertEquals(calls, 0);
     });
 
     describe("development mode", () => {
@@ -424,7 +595,7 @@ describe("DataFetcher", () => {
       assertEquals(calls, 1);
     });
 
-    it("snapshots a mutable cache scope before admission and publication", async () => {
+    it("rejects Proxy cache scopes before dispatch", async () => {
       const fetcher = new DataFetcher();
       const context = createContext({
         url: new URL("https://example.test/scope-snapshot"),
@@ -446,49 +617,30 @@ describe("DataFetcher", () => {
           },
         },
       );
-      let projectACalls = 0;
-      let projectBCalls = 0;
-
-      const projectAResult = await fetcher.fetchData(
-        {
-          default: () => null,
-          getStaticData: () => ({
-            props: { source: `a-${++projectACalls}` },
-            revalidate: 3600,
-          }),
-        },
-        context,
-        "production",
-        {
-          modulePath: "/project/pages/scope-snapshot.tsx",
-          cacheScope: mutableScope,
-        },
-      );
-      const projectBResult = await fetcher.fetchData(
-        {
-          default: () => null,
-          getStaticData: () => ({
-            props: { source: `b-${++projectBCalls}` },
-            revalidate: 3600,
-          }),
-        },
-        context,
-        "production",
-        {
-          modulePath: "/project/pages/scope-snapshot.tsx",
-          cacheScope: {
-            projectId: "project-b",
-            mode: "production",
-            versionId: "rel-1",
-          },
-        },
+      let calls = 0;
+      await assertRejects(
+        () =>
+          fetcher.fetchData(
+            {
+              default: () => null,
+              getStaticData: () => {
+                calls++;
+                return { props: {} };
+              },
+            },
+            context,
+            "production",
+            {
+              modulePath: "/project/pages/scope-snapshot.tsx",
+              cacheScope: mutableScope,
+            },
+          ),
+        TypeError,
+        "plain object",
       );
 
-      assertEquals(projectAResult.props, { source: "a-1" });
-      assertEquals(projectBResult.props, { source: "b-1" });
-      assertEquals(projectACalls, 1);
-      assertEquals(projectBCalls, 1);
-      assertEquals(projectReads, 1);
+      assertEquals(calls, 0);
+      assertEquals(projectReads, 0);
     });
 
     it("keeps ambient admission identity when an explicit null disables caching", async () => {
@@ -496,7 +648,7 @@ describe("DataFetcher", () => {
         maxConcurrent: 2,
         maxConcurrentPerProject: 1,
       });
-      const fetcher = new DataFetcher(undefined, {
+      const fetcher = new DataFetcher({
         executionAdmission: admission,
       });
       const projectA = {
@@ -876,7 +1028,7 @@ describe("DataFetcher", () => {
         maxConcurrent: 2,
         maxConcurrentPerProject: 1,
       });
-      const fetcher = new DataFetcher(undefined, {
+      const fetcher = new DataFetcher({
         executionAdmission: admission,
       });
       const scope = {
@@ -1071,6 +1223,73 @@ describe("DataFetcher", () => {
     it("should not throw with empty pattern", () => {
       const fetcher = new DataFetcher();
       fetcher.clearCache("");
+    });
+
+    it("rejects a non-string pattern before invalidating in-flight cache work", async () => {
+      await runWithCacheKeyContext(
+        {
+          projectId: "invalid-clear-pattern",
+          mode: "production",
+          versionId: "rel_test",
+        },
+        async () => {
+          const fetcher = new DataFetcher();
+          let calls = 0;
+          let markStarted!: () => void;
+          const started = new Promise<void>((resolve) => {
+            markStarted = resolve;
+          });
+          let release!: () => void;
+          const gate = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          const pageModule: PageWithData<{ version: number }> = {
+            default: () => null,
+            getStaticData: async () => {
+              calls++;
+              markStarted();
+              await gate;
+              return { props: { version: calls }, revalidate: 3600 };
+            },
+          };
+          const context = createContext({
+            url: new URL("https://example.test/invalid-clear-pattern"),
+          });
+          const options = {
+            modulePath: "/project/pages/invalid-clear-pattern.tsx",
+          };
+          const pending = fetcher.fetchData(
+            pageModule,
+            context,
+            "production",
+            options,
+          );
+
+          try {
+            await started;
+            assertThrows(
+              () => fetcher.clearCache(0 as never),
+              TypeError,
+              "pattern must be a string",
+            );
+            release();
+            await pending;
+
+            const cached = await fetcher.fetchData(
+              pageModule,
+              context,
+              "production",
+              options,
+            );
+            assertEquals(getProps<{ version: number }>(cached).version, 1);
+            assertEquals(calls, 1);
+          } finally {
+            release();
+            await Promise.allSettled([pending]);
+            fetcher.destroy();
+          }
+        },
+      );
     });
 
     it("should not let an in-flight load repopulate a cleared cache", async () => {

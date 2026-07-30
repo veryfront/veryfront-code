@@ -28,6 +28,7 @@ import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import {
   combineAbortSignals,
   getAbortReason,
+  isAbortSignalAborted,
   isCallerAbort,
   raceWithCallerAbort,
 } from "./abort-utils.ts";
@@ -123,21 +124,31 @@ interface DataFetchDeadline {
 function createDataFetchDeadline(
   label: string,
   timeoutMs: number,
+  callerSignal?: AbortSignal,
 ): DataFetchDeadline {
   const startedAt = performance.now();
-  const error = new TimeoutError(label, timeoutMs);
+  const timeoutError = new TimeoutError(label, timeoutMs);
   const controller = new AbortController();
   let expired = false;
-  let rejectDeadline!: (error: TimeoutError) => void;
+  let expirationReason: unknown = timeoutError;
+  let rejectDeadline!: (reason?: unknown) => void;
 
   const promise = new Promise<never>((_, reject) => {
     rejectDeadline = reject;
   });
-  const expire = (): void => {
-    if (expired) return;
-    expired = true;
-    controller.abort(error);
-    rejectDeadline(error);
+  const expire = (): unknown => {
+    if (!expired) {
+      expired = true;
+      // A caller cancellation scheduled before the deadline remains the
+      // authoritative reason even if both timers become runnable together.
+      // This keeps ordinary disconnects out of dependency health accounting.
+      expirationReason = callerSignal && isAbortSignalAborted(callerSignal)
+        ? getAbortReason(callerSignal)
+        : timeoutError;
+      controller.abort(expirationReason);
+      rejectDeadline(expirationReason);
+    }
+    return expirationReason;
   };
   const timeoutId = setTimeout(expire, timeoutMs);
 
@@ -152,8 +163,7 @@ function createDataFetchDeadline(
       // The monotonic check prevents a late result from winning merely because
       // its promise reaction was queued before the overdue timer callback.
       if (!expired && performance.now() - startedAt < timeoutMs) return;
-      expire();
-      throw error;
+      throw expire();
     },
   };
 }
@@ -248,7 +258,7 @@ export class ServerDataFetcher {
       executionContext.request?.signal,
       suppliedSignal,
     );
-    if (callerSignal?.aborted) {
+    if (callerSignal && isAbortSignalAborted(callerSignal)) {
       return Promise.reject(getAbortReason(callerSignal));
     }
 
@@ -287,6 +297,7 @@ export class ServerDataFetcher {
         const deadline = createDataFetchDeadline(
           timeoutLabel,
           DATA_FETCH_TIMEOUT_MS,
+          callerSignal,
         );
         let releaseAdmission: (() => void) | undefined;
         let producerOwnsAdmission = false;
@@ -341,6 +352,11 @@ export class ServerDataFetcher {
                 deadline.throwIfExpired();
                 return validated;
               }, (error) => {
+                // Exact caller cancellation remains dependency-neutral even
+                // when its promise reaction runs on the deadline boundary.
+                // Converting it to TimeoutError first would open the project
+                // circuit after five ordinary disconnects.
+                if (isCallerAbort(error, callerSignal)) throw error;
                 // A synchronous loader can block the event loop past the timer
                 // and then throw before the overdue timer callback runs.
                 deadline.throwIfExpired();
@@ -382,6 +398,12 @@ export class ServerDataFetcher {
             revalidate: result.revalidate,
           } as DataResult<TProps>;
         } catch (caughtError) {
+          // Preserve exact caller cancellation before applying the monotonic
+          // deadline check. The caller signal can win the same event-loop turn
+          // in which the deadline timer becomes eligible.
+          if (isCallerAbort(caughtError, callerSignal)) {
+            throw caughtError;
+          }
           let error = caughtError;
           try {
             deadline.throwIfExpired();
@@ -389,10 +411,6 @@ export class ServerDataFetcher {
             error = timeoutError;
           }
           const durationMs = Math.round(performance.now() - start);
-
-          if (isCallerAbort(error, callerSignal)) {
-            throw error;
-          }
 
           if (!producerOwnsAdmission && isServiceOverload(error)) {
             serverLogger.warn("DATA_FETCH_REJECTED execution capacity exhausted", {
@@ -462,7 +480,7 @@ export class ServerDataFetcher {
     // to buffer an otherwise untrusted request body.
     const sourceIntegrationPolicy = requireActiveSourceIntegrationPolicy();
     const request = context.request;
-    if (signal.aborted) throw getAbortReason(signal);
+    if (isAbortSignalAborted(signal)) throw getAbortReason(signal);
     if (!request?.body) {
       return {
         body: null,

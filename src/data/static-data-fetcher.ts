@@ -1,5 +1,6 @@
 import {
   type CacheManager,
+  DataCacheCapacityError,
   dataCacheKeyMatches,
   type DataCacheMatchOptions,
   type DataCacheScope,
@@ -36,6 +37,14 @@ import {
   snapshotWorkerGenerationIdentity,
   type WorkerGenerationIdentity,
 } from "#veryfront/security/sandbox/worker-generation.ts";
+import { captureCacheableDataResult, cloneCapturedDataResult } from "./cache-result-snapshot.ts";
+import {
+  getAbortReason,
+  isAbortSignalAborted,
+  raceWithCallerAbort,
+  snapshotAbortSignal,
+} from "./abort-utils.ts";
+import { isNativePromiseWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 /** Semaphore to limit concurrent revalidations and prevent resource exhaustion */
 const revalidationSemaphore = getSemaphore("revalidation", MAX_CONCURRENT_REVALIDATIONS, {
@@ -53,6 +62,22 @@ const revalidationSemaphore = getSemaphore("revalidation", MAX_CONCURRENT_REVALI
  */
 const projectRevalidationCounts = new Map<string, number>();
 const DEFAULT_REVALIDATION_FAILURE_RETRY_MS = 30_000;
+const PromiseConstructor = Promise;
+const PromisePrototypeThen = Promise.prototype.then;
+const ReflectApply = Reflect.apply;
+
+function observeThenable(
+  value: object | ((...args: never[]) => unknown),
+  then: (...args: unknown[]) => unknown,
+): Promise<unknown> {
+  return new PromiseConstructor<unknown>((resolve, reject) => {
+    try {
+      ReflectApply(then, value, [resolve, reject]);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
 
 function getStaticDataCircuitBreaker(breakerName: string) {
   return getCircuitBreaker(breakerName, {
@@ -112,6 +137,7 @@ function releaseRevalidationSlot(projectId: string): void {
 }
 
 type StaticDataHandler = NonNullable<PageWithData["getStaticData"]>;
+type StaticDataContext = Pick<DataContext, "params" | "url">;
 
 interface CacheWriteToken {
   readonly cacheKey: string;
@@ -153,6 +179,8 @@ export interface StaticDataFetchOptions {
   projectId?: string;
   /** Explicit immutable cache scope; null deliberately disables caching. */
   cacheScope?: DataCacheScope | null;
+  /** Caller cancellation. Shared static work continues for other callers. */
+  signal?: AbortSignal;
   /** @internal Host-owned source lifetime scope; paired with workerGenerationId. */
   workerScopeId?: string;
   /** @internal Immutable source identity; paired with workerScopeId. */
@@ -206,6 +234,10 @@ export class StaticDataFetcher {
     context: DataContext,
     options: StaticDataFetchOptions = {},
   ): Promise<DataResult> {
+    const callerSignal = snapshotAbortSignal(options.signal);
+    if (callerSignal && isAbortSignalAborted(callerSignal)) {
+      throw getAbortReason(callerSignal);
+    }
     const rawProjectId = options.projectId;
     const suppliedProjectId = rawProjectId === undefined
       ? undefined
@@ -240,10 +272,7 @@ export class StaticDataFetcher {
     // fetch() returns; deriving a key now but cloning only inside the deferred
     // loader could publish data computed for a different request under that
     // original key.
-    const requestContext: DataContext = {
-      ...context,
-      ...cloneStaticDataContext(context),
-    };
+    const requestContext = cloneStaticDataContext(context);
 
     const pathname = requestContext.url.pathname;
     // Fairness and circuit identity must come from a trusted option or cache
@@ -263,7 +292,7 @@ export class StaticDataFetcher {
 
     // No caching in preview mode (cacheKey is null)
     if (!cacheKey) {
-      return withSpan(
+      const pending = withSpan(
         "data.fetch_static",
         () =>
           this.fetchFreshNoCache(
@@ -278,6 +307,7 @@ export class StaticDataFetcher {
           "data.cache": "disabled",
         },
       );
+      return this.deliverCapturedResult(pending, callerSignal);
     }
 
     // Register before the first await so clearCache() is a true barrier even
@@ -297,7 +327,7 @@ export class StaticDataFetcher {
     token.expectedEntry = cached;
 
     if (!cached) {
-      return withSpan(
+      const pending = withSpan(
         "data.fetch_static",
         () =>
           this.fetchFreshSingleFlight(
@@ -313,6 +343,7 @@ export class StaticDataFetcher {
           "data.cache": "miss",
         },
       );
+      return this.deliverCapturedResult(pending, callerSignal);
     }
 
     if (this.cacheManager.shouldRevalidate(cached)) {
@@ -327,11 +358,21 @@ export class StaticDataFetcher {
       this.releaseCacheWrite(token);
     }
 
-    return cached.data;
+    return this.deliverCapturedResult(Promise.resolve(cached.data), callerSignal);
+  }
+
+  /** Clone only for a caller that is still waiting for the shared result. */
+  private deliverCapturedResult(
+    producer: Promise<DataResult>,
+    callerSignal?: AbortSignal,
+  ): Promise<DataResult> {
+    return raceWithCallerAbort(producer, callerSignal).then(
+      cloneCapturedDataResult,
+    );
   }
 
   private createStaticDataContext(
-    context: DataContext,
+    context: StaticDataContext,
   ): Omit<DataContext, "request" | "query"> {
     return cloneStaticDataContext(context);
   }
@@ -357,42 +398,78 @@ export class StaticDataFetcher {
 
   private executeStaticData(
     getStaticData: StaticDataHandler,
-    context: DataContext,
+    context: StaticDataContext,
     timeoutMs: number,
     label: string,
     onProducerSettled?: () => void,
   ): Promise<DataResult> {
     const startedAt = performance.now();
-    const producer = Promise.resolve()
-      .then(() => getStaticData(this.createStaticDataContext(context)))
-      .then((result) => {
-        if (performance.now() - startedAt >= timeoutMs) {
-          throw new TimeoutError(label, timeoutMs);
+    const throwIfExpired = (error?: unknown): void => {
+      if (
+        !(error instanceof TimeoutError) &&
+        performance.now() - startedAt >= timeoutMs
+      ) {
+        throw new TimeoutError(label, timeoutMs);
+      }
+    };
+    const captureReturned = (result: unknown): DataResult => {
+      throwIfExpired();
+      const validated = validateDataResult(result, "getStaticData");
+      throwIfExpired();
+      const captured = captureCacheableDataResult(validated);
+      throwIfExpired();
+      return captured;
+    };
+    const captureRejected = (error: unknown): DataResult => {
+      throwIfExpired(error);
+      // `throw notFound()` / `throw redirect(...)`: treat a thrown control
+      // result exactly like a returned one. Normalising here keeps a routing
+      // decision outside dependency failure accounting.
+      if (isDataControlResult(error)) {
+        const control = validateDataResult(error, "getStaticData");
+        throwIfExpired();
+        const captured = captureCacheableDataResult(
+          toDataControlResult(control),
+        );
+        throwIfExpired();
+        return captured;
+      }
+      throw error;
+    };
+
+    const producer = PromiseConstructor.resolve().then(() => {
+      try {
+        const rawResult = getStaticData(this.createStaticDataContext(context));
+        if (isNativePromiseWithoutHooks(rawResult)) {
+          // Use the intrinsic operation so an own `then` field cannot alter how
+          // a genuine (including cross-realm) promise is observed.
+          return ReflectApply(PromisePrototypeThen, rawResult, [
+            captureReturned,
+            captureRejected,
+          ]) as Promise<DataResult>;
         }
-        const validated = validateDataResult(result, "getStaticData");
-        if (performance.now() - startedAt >= timeoutMs) {
-          throw new TimeoutError(label, timeoutMs);
-        }
-        return validated;
-      }, (error) => {
         if (
-          !(error instanceof TimeoutError) &&
-          performance.now() - startedAt >= timeoutMs
+          rawResult !== null &&
+          (typeof rawResult === "object" || typeof rawResult === "function")
         ) {
-          throw new TimeoutError(label, timeoutMs);
-        }
-        // `throw notFound()` / `throw redirect(...)`: treat a thrown control
-        // result exactly like a returned one. Normalising here keeps a routing
-        // decision outside dependency failure accounting.
-        if (isDataControlResult(error)) {
-          const control = validateDataResult(error, "getStaticData");
-          if (performance.now() - startedAt >= timeoutMs) {
-            throw new TimeoutError(label, timeoutMs);
+          // Read an application thenable's callback once, matching promise
+          // assimilation without a second getter observation.
+          const then = (rawResult as { then?: unknown }).then;
+          if (typeof then === "function") {
+            return observeThenable(
+              rawResult,
+              then as (...args: unknown[]) => unknown,
+            ).then(captureReturned, captureRejected);
           }
-          return toDataControlResult(control);
         }
-        throw error;
-      });
+        // Capture synchronous results in the hook's return turn. A hook may
+        // queue a mutation before returning; an extra promise hop must not let
+        // that mutation race ahead of framework ownership.
+        return captureReturned(rawResult);
+      } catch (error) {
+        return captureRejected(error);
+      }
+    });
 
     if (onProducerSettled) {
       void producer.then(onProducerSettled, onProducerSettled);
@@ -418,11 +495,15 @@ export class StaticDataFetcher {
     token: CacheWriteToken,
   ): void {
     if (!this.isCacheWriteActive(token)) return;
-    this.cacheManager.replaceIfCurrent(token.cacheKey, token.expectedEntry, {
-      data: result,
-      timestamp: Date.now(),
-      revalidate: result.revalidate,
-    });
+    this.cacheManager.replaceIfCurrent(
+      token.cacheKey,
+      token.expectedEntry,
+      Object.freeze({
+        data: result,
+        timestamp: Date.now(),
+        revalidate: result.revalidate,
+      }),
+    );
   }
 
   private deferRevalidation(
@@ -438,7 +519,7 @@ export class StaticDataFetcher {
 
   private async fetchFreshNoCache(
     getStaticData: StaticDataHandler,
-    context: DataContext,
+    context: StaticDataContext,
     projectId: string,
     breakerName: string,
   ): Promise<DataResult> {
@@ -501,7 +582,7 @@ export class StaticDataFetcher {
 
   private async fetchFresh(
     getStaticData: StaticDataHandler,
-    context: DataContext,
+    context: StaticDataContext,
     projectId: string,
     breakerName: string,
     token: CacheWriteToken,
@@ -513,6 +594,7 @@ export class StaticDataFetcher {
     let releaseAdmission: (() => void) | undefined;
     let producerOwnsAdmission = false;
     let producerHasSettled = false;
+    let loaderSucceeded = false;
 
     try {
       releaseAdmission = this.executionAdmission.acquire(projectId);
@@ -532,6 +614,7 @@ export class StaticDataFetcher {
         producerOwnsAdmission = true;
         return execution;
       });
+      loaderSucceeded = true;
 
       try {
         await withSpan(
@@ -543,9 +626,11 @@ export class StaticDataFetcher {
           { "data.revalidate": result.revalidate ?? 0 },
         );
       } catch (error) {
-        // Cache capacity or value-estimation limits must not turn valid
-        // project data into an application outage. The caller receives the
-        // fresh result and a later request may retry uncached.
+        if (!(error instanceof DataCacheCapacityError)) throw error;
+        // Configured cache capacity must not turn valid project data into an
+        // application outage. The caller receives the captured result and a
+        // later request may retry publication. Unexpected cache failures are
+        // propagated instead of being disguised as capacity pressure.
         this.logError("DATA_CACHE_SET_ERROR static data was not cached", error, {
           pathname,
         });
@@ -554,6 +639,14 @@ export class StaticDataFetcher {
       return result;
     } catch (error) {
       const durationMs = Math.round(performance.now() - start);
+
+      if (loaderSucceeded) {
+        this.logError("DATA_CACHE_SET_ERROR static data publication failed", error, {
+          pathname,
+          durationMs,
+        });
+        throw error;
+      }
 
       if (
         !producerOwnsAdmission &&
@@ -595,8 +688,8 @@ export class StaticDataFetcher {
         releaseAdmission?.();
         producerSettlement.settle();
       } else if (producerHasSettled) {
-        // Successful work retains its lease through cache publication and any
-        // project-controlled property traversal performed by size estimation.
+        // Successful work retains its lease through cache publication and
+        // quota accounting.
         releaseAdmission?.();
       } else {
         // A timeout-facing caller may leave non-cooperative project code
@@ -608,7 +701,7 @@ export class StaticDataFetcher {
 
   private fetchFreshSingleFlight(
     getStaticData: StaticDataHandler,
-    context: DataContext,
+    context: StaticDataContext,
     projectId: string,
     breakerName: string,
     token: CacheWriteToken,
@@ -666,7 +759,7 @@ export class StaticDataFetcher {
 
   private startBackgroundRevalidation(
     getStaticData: StaticDataHandler,
-    context: DataContext,
+    context: StaticDataContext,
     projectId: string,
     breakerName: string,
     token: CacheWriteToken,
@@ -724,7 +817,7 @@ export class StaticDataFetcher {
 
   private async revalidateInBackground(
     getStaticData: StaticDataHandler,
-    context: DataContext,
+    context: StaticDataContext,
     projectId: string,
     breakerName: string,
     token: CacheWriteToken,

@@ -56,6 +56,18 @@ export type Redirect = InferSchema<ReturnType<typeof getRedirectSchema>>;
 export type DataResult<T = unknown> = InferSchema<ReturnType<typeof getDataResultSchema>> & {
   props?: T;
 };
+/** Primitive admitted by the retained `getStaticData()` result contract. */
+export type StaticDataPrimitive = null | undefined | boolean | number | string;
+/**
+ * Recursive value admitted by `getStaticData()` at runtime. Arrays must be
+ * dense and records must use `Object.prototype` or a null prototype.
+ */
+export type StaticDataValue =
+  | StaticDataPrimitive
+  | StaticDataValue[]
+  | { [key: string]: StaticDataValue };
+/** Typed form of a cacheable `getStaticData()` result. */
+export type StaticDataResult<T extends StaticDataValue = StaticDataValue> = DataResult<T>;
 export type StaticPathEntry = InferSchema<ReturnType<typeof getStaticPathEntrySchema>>;
 /** Return type for `getStaticPaths()`. */
 export type StaticPathsResult = InferSchema<ReturnType<typeof getStaticPathsResultSchema>>;

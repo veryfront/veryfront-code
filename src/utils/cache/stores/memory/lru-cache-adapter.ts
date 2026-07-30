@@ -5,6 +5,7 @@ import { LRUListManager } from "./lru-list-manager.ts";
 import { EvictionManager } from "../../eviction/eviction-manager.ts";
 import { EntryManager } from "./entry-manager.ts";
 import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/utils/constants/cache.ts";
+import { MAX_CACHE_KEY_CHARACTERS } from "#veryfront/utils/constants/limits.ts";
 
 const logger = serverLogger.component("cache");
 
@@ -12,7 +13,6 @@ const MAX_ESTIMATION_DEPTH = 10;
 const MAX_ESTIMATION_NODES = 100_000;
 const MAX_TAGS_PER_ENTRY = 100;
 const MAX_TAG_CODE_UNITS = 256;
-const MAX_KEY_CODE_UNITS = 16_384;
 
 const OBJECT_OVERHEAD_BYTES = 32;
 const ARRAY_OVERHEAD_BYTES = 24;
@@ -146,8 +146,10 @@ function defaultSizeEstimator(value: unknown): number {
 }
 
 function validateKey(key: string): void {
-  if (typeof key !== "string" || key.length > MAX_KEY_CODE_UNITS) {
-    throw new RangeError(`Cache key must contain at most ${MAX_KEY_CODE_UNITS} characters`);
+  if (typeof key !== "string" || key.length > MAX_CACHE_KEY_CHARACTERS) {
+    throw new RangeError(
+      `Cache key must contain at most ${MAX_CACHE_KEY_CHARACTERS} characters`,
+    );
   }
 }
 

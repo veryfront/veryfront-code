@@ -205,6 +205,17 @@ export class LRUCache<K, V> {
     }
   }
 
+  /**
+   * Iterate every physically resident key, including entries whose TTL has
+   * elapsed but whose lazy or periodic cleanup has not run yet.
+   *
+   * Invalidation barriers use this view so a clock sample changing at the TTL
+   * boundary cannot hide a resident entry from deletion.
+   */
+  *residentKeys(): IterableIterator<K> {
+    yield* this.internalKeys.keys();
+  }
+
   *entries(): IterableIterator<[K, V]> {
     for (const [internalKey, value] of this.adapter.entries<V>()) {
       if (this.originalKeys.has(internalKey)) {

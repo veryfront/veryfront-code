@@ -7,6 +7,7 @@ import type {
   DataResult,
   InferGetServerDataProps,
   PageWithData,
+  StaticDataResult,
   StaticPathsResult,
 } from "./types.ts";
 import { DataResultSchema } from "./schemas/index.ts";
@@ -40,6 +41,23 @@ describe("types.ts", () => {
   });
 
   describe("DataResult", () => {
+    it("should expose the bounded recursive static-data result type", () => {
+      type StaticProps = {
+        title: string;
+        flags: Array<boolean | null>;
+        nested: { value: number };
+      };
+      const result: StaticDataResult<StaticProps> = {
+        props: {
+          title: "static",
+          flags: [true, false, null],
+          nested: { value: 1 },
+        },
+      };
+
+      assertEquals(result.props?.nested, { value: 1 });
+    });
+
     it("should support props result", () => {
       const result: DataResult<{ title: string }> = { props: { title: "Hello" } };
 

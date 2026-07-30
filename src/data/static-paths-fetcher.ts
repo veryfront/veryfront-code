@@ -6,20 +6,30 @@ import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/strea
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
-import { getAbortReason, isCallerAbort, raceWithCallerAbort } from "./abort-utils.ts";
+import {
+  getAbortReason,
+  isAbortSignalAborted,
+  isCallerAbort,
+  raceWithCallerAbort,
+  snapshotAbortSignal,
+} from "./abort-utils.ts";
 import {
   type DataExecutionAdmission,
   defaultDataExecutionAdmission,
 } from "./execution-admission.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { requireDataProjectId } from "./project-identity.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 function createEmptyStaticPathsResult(): StaticPathsResult {
   return { paths: [], fallback: false };
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  if (
+    value === null || typeof value !== "object" || Array.isArray(value) ||
+    isProxyWithoutHooks(value)
+  ) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }
@@ -44,7 +54,10 @@ function snapshotDenseArray(
   maxLength?: number,
   limitDescription?: string,
 ): unknown[] {
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+  if (
+    !Array.isArray(value) || isProxyWithoutHooks(value) ||
+    Object.getPrototypeOf(value) !== Array.prototype
+  ) {
     throw new TypeError("getStaticPaths must return a valid static paths result object");
   }
 
@@ -204,6 +217,58 @@ function snapshotOptionalLimit(value: unknown, description: string): number | un
   return value as number;
 }
 
+function snapshotStaticPathsFetchOptions(
+  options: unknown,
+): Readonly<StaticPathsFetchOptions> {
+  if (options === undefined) return Object.freeze({});
+  if (
+    options === null || typeof options !== "object" || Array.isArray(options) ||
+    isProxyWithoutHooks(options)
+  ) {
+    throw new TypeError("Static paths options must be a plain object");
+  }
+  const prototype = Object.getPrototypeOf(options);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError("Static paths options must be a plain object");
+  }
+
+  const keys = Reflect.ownKeys(options);
+  if (keys.length > 4) {
+    throw new TypeError("Static paths options contain unknown properties");
+  }
+  const values = new Map<string, unknown>();
+  for (const key of keys) {
+    if (
+      typeof key !== "string" ||
+      (key !== "projectId" && key !== "signal" && key !== "maxPaths" &&
+        key !== "maxArrayParamSegments")
+    ) {
+      throw new TypeError(`Unknown static paths option: ${String(key)}`);
+    }
+    const descriptor = Reflect.getOwnPropertyDescriptor(options, key);
+    if (descriptor?.enumerable !== true || !("value" in descriptor)) {
+      throw new TypeError(
+        `Static paths option ${key} must be an own enumerable data property`,
+      );
+    }
+    values.set(key, descriptor.value);
+  }
+
+  const projectId = values.get("projectId");
+  return Object.freeze({
+    projectId: projectId === undefined ? undefined : requireDataProjectId(projectId),
+    signal: snapshotAbortSignal(values.get("signal")),
+    maxPaths: snapshotOptionalLimit(
+      values.get("maxPaths"),
+      "Static paths result limit",
+    ),
+    maxArrayParamSegments: snapshotOptionalLimit(
+      values.get("maxArrayParamSegments"),
+      "Static paths array-parameter limit",
+    ),
+  });
+}
+
 export class StaticPathsFetcher {
   private readonly timeoutMs: number | undefined;
   private readonly executionAdmission: DataExecutionAdmission;
@@ -236,17 +301,12 @@ export class StaticPathsFetcher {
     let callerSignal: AbortSignal | undefined;
     let limits: StaticPathsSnapshotLimits;
     try {
-      const rawProjectId = options?.projectId;
-      suppliedProjectId = rawProjectId === undefined
-        ? undefined
-        : requireDataProjectId(rawProjectId);
-      callerSignal = options?.signal;
+      const snapshot = snapshotStaticPathsFetchOptions(options);
+      suppliedProjectId = snapshot.projectId;
+      callerSignal = snapshot.signal;
       limits = {
-        maxPaths: snapshotOptionalLimit(options?.maxPaths, "Static paths result limit"),
-        maxArrayParamSegments: snapshotOptionalLimit(
-          options?.maxArrayParamSegments,
-          "Static paths array-parameter limit",
-        ),
+        maxPaths: snapshot.maxPaths,
+        maxArrayParamSegments: snapshot.maxArrayParamSegments,
       };
     } catch (error) {
       return Promise.reject(error);
@@ -262,7 +322,7 @@ export class StaticPathsFetcher {
       return Promise.resolve(null);
     }
 
-    if (callerSignal?.aborted) {
+    if (callerSignal && isAbortSignalAborted(callerSignal)) {
       return Promise.reject(getAbortReason(callerSignal));
     }
     let projectId: string;
@@ -281,6 +341,7 @@ export class StaticPathsFetcher {
       SpanNames.DATA_FETCH_STATIC_PATHS,
       async (span?: Span) => {
         const startedAt = performance.now();
+        let deadlineExpired = false;
         let releaseAdmission: (() => void) | undefined;
         let producerOwnsAdmission = false;
         try {
@@ -288,16 +349,17 @@ export class StaticPathsFetcher {
           const producer = Promise.resolve()
             .then(() => getStaticPaths())
             .then((result) => {
-              this.throwIfExpired(startedAt);
+              this.throwIfExpired(startedAt, deadlineExpired);
               const validated = result == null
                 ? createEmptyStaticPathsResult()
                 : validateStaticPathsResult(result, limits);
-              this.throwIfExpired(startedAt);
+              this.throwIfExpired(startedAt, deadlineExpired);
               return validated;
             });
 
           // A framework timeout or caller disconnect only stops waiting. The
-          // process capacity lease belongs to the raw hook and its validation.
+          // capacity lease remains with the raw hook until it settles. Result
+          // validation also retains the lease when it starts before expiry.
           void producer.then(releaseAdmission, releaseAdmission);
           producerOwnsAdmission = true;
 
@@ -307,7 +369,12 @@ export class StaticPathsFetcher {
               producer,
               this.timeoutMs,
               "getStaticPaths",
-              { signal: callerSignal },
+              {
+                signal: callerSignal,
+                onTimeout: () => {
+                  deadlineExpired = true;
+                },
+              },
             );
 
           span?.setAttribute("data.paths_count", finalResult.paths?.length ?? 0);
@@ -355,12 +422,11 @@ export class StaticPathsFetcher {
     );
   }
 
-  private throwIfExpired(startedAt: number): void {
-    if (
-      this.timeoutMs !== undefined &&
-      performance.now() - startedAt >= this.timeoutMs
-    ) {
-      throw new TimeoutError("getStaticPaths", this.timeoutMs);
+  private throwIfExpired(startedAt: number, deadlineExpired: boolean): void {
+    const timeoutMs = this.timeoutMs;
+    if (timeoutMs === undefined) return;
+    if (deadlineExpired || performance.now() - startedAt >= timeoutMs) {
+      throw new TimeoutError("getStaticPaths", timeoutMs);
     }
   }
 }

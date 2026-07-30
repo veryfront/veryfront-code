@@ -296,7 +296,7 @@ export class RenderPipeline {
       }),
     });
     this.ownsDataFetcher = suppliedDataFetcher === undefined;
-    this.dataFetcher = suppliedDataFetcher ?? new DataFetcher(input.adapter, {
+    this.dataFetcher = suppliedDataFetcher ?? new DataFetcher({
       staticPathsTimeoutMs: input.staticPathsTimeoutMs ?? DATA_FETCH_TIMEOUT_MS,
     });
     this.moduleLoaderConfig = {

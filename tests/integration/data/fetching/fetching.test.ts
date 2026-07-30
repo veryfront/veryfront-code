@@ -16,25 +16,18 @@ import {
   type PageWithData,
   redirect,
 } from "#veryfront/data/index.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { delay } from "#std/async";
 import {
   getProp,
   makeContext,
-  makeMockAdapter,
   type StaticDataContext,
   withProductionContext,
 } from "./fetching.test-helpers.ts";
 
 describe("DataFetcher - Comprehensive Tests", () => {
   describe("DataFetcher - Basic Initialization", () => {
-    it("should create a DataFetcher without adapter", () => {
+    it("should create a DataFetcher with default options", () => {
       assertExists(new DataFetcher());
-    });
-
-    it("should create a DataFetcher with adapter", () => {
-      const adapter = makeMockAdapter();
-      assertExists(new DataFetcher(adapter as RuntimeAdapter));
     });
   });
 
@@ -313,38 +306,6 @@ describe("DataFetcher - Comprehensive Tests", () => {
         "Async server error",
       );
     });
-
-    it("should not log errors when VERYFRONT_DEBUG is not set", async () => {
-      const adapter = makeMockAdapter({});
-      const debugFetcher = new DataFetcher(adapter as RuntimeAdapter);
-
-      const pageModule: PageWithData = {
-        default: () => null,
-        getServerData: () => {
-          throw new Error("Silent error");
-        },
-      };
-
-      await assertRejects(
-        () => debugFetcher.fetchData(pageModule, context),
-        Error,
-        "Silent error",
-      );
-    });
-
-    it("should handle errors when VERYFRONT_DEBUG is enabled", async () => {
-      const adapter = makeMockAdapter({ VERYFRONT_DEBUG: "true" });
-      const debugFetcher = new DataFetcher(adapter as RuntimeAdapter);
-
-      const pageModule: PageWithData = {
-        default: () => null,
-        getServerData: () => {
-          throw new Error("Debug error");
-        },
-      };
-
-      await assertRejects(() => debugFetcher.fetchData(pageModule, context), Error, "Debug error");
-    });
   });
 
   describe("DataFetcher - getStaticData", () => {
@@ -435,24 +396,6 @@ describe("DataFetcher - Comprehensive Tests", () => {
         () => fetcher.fetchData(pageModule, context, "production"),
         Error,
         "Async static error",
-      );
-    });
-
-    it("should handle errors when VERYFRONT_DEBUG is enabled for static data", async () => {
-      const adapter = makeMockAdapter({ VERYFRONT_DEBUG: "true" });
-      const debugFetcher = new DataFetcher(adapter as RuntimeAdapter);
-
-      const pageModule: PageWithData = {
-        default: () => null,
-        getStaticData: () => {
-          throw new Error("Debug static error");
-        },
-      };
-
-      await assertRejects(
-        () => debugFetcher.fetchData(pageModule, context, "production"),
-        Error,
-        "Debug static error",
       );
     });
   });
@@ -742,11 +685,14 @@ describe("DataFetcher - Comprehensive Tests", () => {
         const pageModule: PageWithData = {
           default: () => null,
           getStaticData: async () => {
-            callCount++;
+            const invocation = ++callCount;
             await delay(30);
             return {
-              props: { count: callCount, timestamp: Date.now() },
-              revalidate: 0.05,
+              props: { count: invocation, timestamp: Date.now() },
+              // This case verifies one stale-while-revalidate transition. A
+              // refreshed entry that immediately becomes stale again makes
+              // the final assertion depend on scheduler load, not behavior.
+              revalidate: invocation === 1 ? 0.05 : false,
             };
           },
         };

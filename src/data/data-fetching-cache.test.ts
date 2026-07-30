@@ -14,6 +14,12 @@ import {
 } from "./data-fetching-cache.ts";
 import type { CacheEntry, DataContext } from "./types.ts";
 import { DATA_FETCHING_TTL_MS } from "#veryfront/utils/constants/cache.ts";
+import {
+  MAX_DATA_CACHE_KEY_CHARACTERS,
+  MAX_DATA_INVALIDATION_PATTERN_CHARACTERS,
+  MAX_DATA_MODULE_PATH_CHARACTERS,
+  MAX_DATA_SCOPE_VERSION_CHARACTERS,
+} from "./data-limits.ts";
 
 function withProductionContext<T>(fn: () => T): T {
   return runWithCacheKeyContext(
@@ -80,33 +86,24 @@ function nestRetainedValue(value: unknown, levels = 12): unknown {
 
 describe("CacheManager", () => {
   describe("scope snapshots", () => {
-    it("reads every scope field once and returns a validated frozen value", () => {
-      const reads = { projectId: 0, mode: 0, versionId: 0 };
-      const mutableScope = {
-        get projectId() {
-          reads.projectId++;
-          return "project-a";
-        },
-        get mode() {
-          reads.mode++;
-          return "production" as const;
-        },
-        get versionId() {
-          reads.versionId++;
-          return "rel-1";
-        },
+    it("returns a validated frozen copy of plain own data fields", () => {
+      const source = {
+        projectId: "project-a",
+        mode: "production" as const,
+        versionId: "rel-1",
       };
 
-      const snapshot = snapshotDataCacheScope(mutableScope);
+      const snapshot = snapshotDataCacheScope(source);
 
       assertEquals(snapshot, {
         projectId: "project-a",
         mode: "production",
         versionId: "rel-1",
       });
-      assertEquals(reads, { projectId: 1, mode: 1, versionId: 1 });
       assertEquals(Object.isFrozen(snapshot), true);
       assertEquals(Reflect.set(snapshot, "projectId", "project-b"), false);
+      source.projectId = "project-b";
+      assertEquals(snapshot.projectId, "project-a");
     });
 
     it("rejects malformed scopes", () => {
@@ -134,24 +131,48 @@ describe("CacheManager", () => {
         TypeError,
         "mode",
       );
+      let accessorReads = 0;
+      const accessorScope = Object.defineProperties({}, {
+        projectId: {
+          enumerable: true,
+          get() {
+            accessorReads++;
+            return "project";
+          },
+        },
+        mode: { enumerable: true, value: "production" },
+        versionId: { enumerable: true, value: "rel-1" },
+      });
+      assertThrows(
+        () => snapshotDataCacheScope(accessorScope),
+        TypeError,
+        "own enumerable data property",
+      );
+      assertEquals(accessorReads, 0);
+      assertThrows(
+        () =>
+          snapshotDataCacheScope({
+            projectId: "project",
+            mode: "production",
+            versionId: "v".repeat(MAX_DATA_SCOPE_VERSION_CHARACTERS + 1),
+          }),
+        TypeError,
+        "versionId",
+      );
     });
 
-    it("uses one scope identity for key creation and exact invalidation", () => {
+    it("uses exact scope identity for key creation and invalidation", () => {
       const cache = new CacheManager();
       const context = createContext("https://example.test/scope-snapshot");
-      let createProjectReads = 0;
-      const changingCreateScope = {
-        get projectId() {
-          createProjectReads++;
-          return createProjectReads === 1 ? "project-a" : "project-b";
-        },
+      const projectAScope = {
+        projectId: "project-a",
         mode: "production" as const,
         versionId: "rel-1",
       };
       const projectA = cache.createCacheKey(
         context,
         "page",
-        changingCreateScope,
+        projectAScope,
       );
       const projectASecondRoute = cache.createCacheKey(
         createContext("https://example.test/scope-snapshot-two"),
@@ -170,28 +191,12 @@ describe("CacheManager", () => {
       assertExists(projectA);
       assertExists(projectASecondRoute);
       assertExists(projectB);
-      assertEquals(createProjectReads, 1);
       cache.set(projectA, createEntry({ project: "a-one" }));
       cache.set(projectASecondRoute, createEntry({ project: "a-two" }));
       cache.set(projectB, createEntry({ project: "b" }));
 
-      const clearReads = { projectId: 0, mode: 0, versionId: 0 };
-      cache.clearScope({
-        get projectId() {
-          clearReads.projectId++;
-          return clearReads.projectId === 1 ? "project-a" : "project-b";
-        },
-        get mode() {
-          clearReads.mode++;
-          return "production" as const;
-        },
-        get versionId() {
-          clearReads.versionId++;
-          return "rel-1";
-        },
-      });
+      cache.clearScope(projectAScope);
 
-      assertEquals(clearReads, { projectId: 1, mode: 1, versionId: 1 });
       assertEquals(cache.get(projectA), null);
       assertEquals(cache.get(projectASecondRoute), null);
       assertExists(cache.get(projectB));
@@ -770,6 +775,29 @@ describe("CacheManager", () => {
       assertExists(cache.get("accessor"));
     });
 
+    it("rejects retained proxies without executing reflection traps", () => {
+      const cache = new CacheManager();
+      let traps = 0;
+      const proxy = new Proxy({ value: "private" }, {
+        ownKeys(target) {
+          traps++;
+          return Reflect.ownKeys(target);
+        },
+        getOwnPropertyDescriptor(target, key) {
+          traps++;
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+
+      assertThrows(
+        () => cache.set("raw-proxy", createEntry(proxy)),
+        RangeError,
+        "too complex to estimate safely",
+      );
+      assertEquals(traps, 0);
+      assertEquals(cache.get("raw-proxy"), null);
+    });
+
     it("does not mutate expiry state before rejecting an oversized global write", () => {
       let now = 1_000;
       const cache = new CacheManager({
@@ -1131,6 +1159,87 @@ describe("CacheManager", () => {
       assertEquals(cache.get(projectA2), null);
       assertExists(cache.get(projectAColonB));
     });
+
+    it("deletes residents hidden at the TTL boundary and releases their quota", () => {
+      let phase: "stable" | "boundary" = "stable";
+      const cache = new CacheManager({
+        maxEntries: 2,
+        maxSizeBytes: 10_000,
+        maxEntriesPerProject: 1,
+        maxSizeBytesPerProject: 10_000,
+        ttlMs: 10,
+        now: () => phase === "stable" ? 1_000 : 1_010,
+      });
+      const expiredKey = createScopedKey(cache, "expired-project", "old");
+      const replacementKey = createScopedKey(cache, "expired-project", "new");
+      cache.set(expiredKey, createEntry({ version: "old" }));
+
+      phase = "boundary";
+      cache.clearProject("expired-project");
+      phase = "stable";
+
+      assertEquals(cache.get(expiredKey), null);
+      cache.set(replacementKey, createEntry({ version: "new" }));
+      assertExists(cache.get(replacementKey));
+    });
+
+    it("rejects malformed invalidation identities before mutating cached entries", () => {
+      const cache = new CacheManager();
+      const scope = {
+        projectId: "validation-project",
+        mode: "production" as const,
+        versionId: "rel-1",
+      };
+      const key = cache.createCacheKey(
+        createContext("https://example.test/validation"),
+        "page",
+        scope,
+      );
+      assertExists(key);
+      const entry = createEntry({ version: "retained" });
+      cache.set(key, entry);
+      let coercionHooks = 0;
+      const executable = {
+        toString() {
+          coercionHooks++;
+          return "/validation";
+        },
+        trim() {
+          coercionHooks++;
+          return "/validation";
+        },
+      };
+
+      for (
+        const invalidate of [
+          () => cache.clearPattern(0 as never),
+          () => cache.clearScope(scope, executable as never),
+          () => cache.clearProject(""),
+          () => cache.clearProject("validation-project", executable as never),
+          () => cache.clearRoute(scope, executable as never),
+          () => cache.clearProjectRoute("validation-project", executable as never),
+          () => cache.clearRouteAcrossScopes(executable as never),
+        ]
+      ) {
+        assertThrows(invalidate, TypeError);
+        assertStrictEquals(cache.get(key), entry);
+      }
+      assertEquals(coercionHooks, 0);
+      assertThrows(
+        () =>
+          cache.clearPattern(
+            "p".repeat(MAX_DATA_INVALIDATION_PATTERN_CHARACTERS + 1),
+          ),
+        RangeError,
+        "pattern must not exceed",
+      );
+      assertThrows(
+        () => cache.clearRouteAcrossScopes(`/${"é".repeat(1_000)}`),
+        RangeError,
+        "Normalized data cache pathname",
+      );
+      assertStrictEquals(cache.get(key), entry);
+    });
   });
 
   describe("shouldRevalidate", () => {
@@ -1260,9 +1369,143 @@ describe("CacheManager", () => {
       assertEquals(key, null);
     });
 
+    it("rejects non-string module identities instead of coercing cache aliases", () => {
+      const manager = new CacheManager();
+      const context = createContext("https://example.test/page");
+      const scope = {
+        projectId: "runtime-validation",
+        mode: "production" as const,
+        versionId: "rel-1",
+      };
+
+      assertThrows(
+        () =>
+          manager.createCacheKey(
+            context,
+            { length: 4, toString: () => "page" } as unknown as string,
+            scope,
+          ),
+        TypeError,
+        "modulePath must be a string",
+      );
+    });
+
+    it("bounds module identities and the final framed cache key", () => {
+      const cache = new CacheManager();
+      const scope = {
+        projectId: "bounded-key-project",
+        mode: "production" as const,
+        versionId: "rel-1",
+      };
+      assertThrows(
+        () =>
+          cache.createCacheKey(
+            createContext("https://example.test/page"),
+            "m".repeat(MAX_DATA_MODULE_PATH_CHARACTERS + 1),
+            scope,
+          ),
+        RangeError,
+        "modulePath must not exceed",
+      );
+      assertThrows(
+        () =>
+          cache.createCacheKey(
+            createContext(
+              `https://example.test/${"u".repeat(MAX_DATA_CACHE_KEY_CHARACTERS)}`,
+            ),
+            "page",
+            scope,
+          ),
+        RangeError,
+        "Data cache key must not exceed",
+      );
+      assertThrows(
+        () => cache.set("k".repeat(MAX_DATA_CACHE_KEY_CHARACTERS + 1), createEntry({})),
+        RangeError,
+        "Data cache key must not exceed",
+      );
+    });
+
+    it("rejects invalid route params before they can serialize to the same key", () => {
+      const manager = new CacheManager();
+      const scope = {
+        projectId: "runtime-validation",
+        mode: "production" as const,
+        versionId: "rel-1",
+      };
+      const invalidContexts = [
+        createContext("https://example.test/page", { id: null } as never),
+        createContext("https://example.test/page", { id: Number.NaN } as never),
+      ];
+
+      for (const context of invalidContexts) {
+        assertThrows(
+          () => manager.createCacheKey(context, "/pages/[id].tsx", scope),
+          TypeError,
+          "plain record of string or dense string-array data properties",
+        );
+      }
+    });
+
+    it("does not execute Array.prototype serialization hooks or alias array params", () => {
+      const manager = new CacheManager();
+      const scope = {
+        projectId: "runtime-validation",
+        mode: "production" as const,
+        versionId: "rel-1",
+      };
+      const previous = Reflect.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      let hookCalls = 0;
+      let first: string | null;
+      let second: string | null;
+      Object.defineProperty(Array.prototype, "toJSON", {
+        configurable: true,
+        value() {
+          hookCalls++;
+          return ["aliased"];
+        },
+      });
+      try {
+        first = manager.createCacheKey(
+          createContext("https://example.test/page", { slug: ["a"] }),
+          "/pages/[...slug].tsx",
+          scope,
+        );
+        second = manager.createCacheKey(
+          createContext("https://example.test/page", { slug: ["b"] }),
+          "/pages/[...slug].tsx",
+          scope,
+        );
+      } finally {
+        if (previous) {
+          Object.defineProperty(Array.prototype, "toJSON", previous);
+        } else {
+          Reflect.deleteProperty(Array.prototype, "toJSON");
+        }
+      }
+
+      assertEquals(hookCalls, 0);
+      assertEquals(first === second, false);
+    });
+
     it("should return null in preview mode", () => {
       const cache = new CacheManager();
-      const context = createContext("http://localhost/posts/123", { id: "123" });
+      let paramsReads = 0;
+      let urlReads = 0;
+      const context = Object.defineProperties({}, {
+        params: {
+          get() {
+            paramsReads++;
+            throw new Error("disabled cache must not inspect params");
+          },
+        },
+        url: {
+          get() {
+            urlReads++;
+            throw new Error("disabled cache must not inspect url");
+          },
+        },
+      }) as Pick<DataContext, "params" | "url">;
 
       const key = runWithCacheKeyContext(
         { projectId: "test", mode: "preview", versionId: "main" },
@@ -1270,6 +1513,7 @@ describe("CacheManager", () => {
       );
 
       assertEquals(key, null);
+      assertEquals({ paramsReads, urlReads }, { paramsReads: 0, urlReads: 0 });
     });
 
     it("returns null without a non-empty module identity in production", () => {
@@ -1299,15 +1543,32 @@ describe("CacheManager", () => {
 
     it("lets an explicit null scope disable an inherited production context", () => {
       const cache = new CacheManager();
+      let paramsReads = 0;
+      let urlReads = 0;
+      const context = Object.defineProperties({}, {
+        params: {
+          get() {
+            paramsReads++;
+            throw new Error("disabled cache must not inspect params");
+          },
+        },
+        url: {
+          get() {
+            urlReads++;
+            throw new Error("disabled cache must not inspect url");
+          },
+        },
+      }) as Pick<DataContext, "params" | "url">;
       const key = withProductionContext(() =>
         cache.createCacheKey(
-          createContext("https://example.test/uncached"),
+          context,
           "page",
           null,
         )
       );
 
       assertEquals(key, null);
+      assertEquals({ paramsReads, urlReads }, { paramsReads: 0, urlReads: 0 });
     });
 
     it("should create key from pathname and params in production mode", () => {
@@ -1318,7 +1579,7 @@ describe("CacheManager", () => {
 
       assertEquals(
         key,
-        'project-scoped:v2:17:veryfront:data:v3|12:test-project|10:production|7:rel_123|52:4:page|26:http://localhost/posts/123|12:{"id":"123"}',
+        "project-scoped:v2:17:veryfront:data:v3|12:test-project|10:production|7:rel_123|54:4:page|26:http://localhost/posts/123|14:p1:k2:ids3:123",
       );
     });
 
@@ -1330,7 +1591,7 @@ describe("CacheManager", () => {
 
       assertEquals(
         key,
-        "project-scoped:v2:17:veryfront:data:v3|12:test-project|10:production|7:rel_123|37:4:page|22:http://localhost/about|2:{}",
+        "project-scoped:v2:17:veryfront:data:v3|12:test-project|10:production|7:rel_123|38:4:page|22:http://localhost/about|3:p0:",
       );
     });
 
@@ -1452,7 +1713,7 @@ describe("CacheManager", () => {
       const key = withProductionContext(() => cache.createCacheKey(context, "page"));
 
       assertExists(key);
-      assertEquals(key.includes("/search?b=2&a=1&a=3|2:{}"), true);
+      assertEquals(key.includes("/search?b=2&a=1&a=3|3:p0:"), true);
     });
 
     it("should handle array params (catch-all routes)", () => {

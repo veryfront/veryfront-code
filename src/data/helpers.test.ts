@@ -1,7 +1,24 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isDataControlResult, notFound, redirect, validateDataResult } from "./helpers.ts";
+import {
+  cloneServerDataContext,
+  cloneStaticDataContext,
+  isDataControlResult,
+  notFound,
+  redirect,
+  snapshotDataParams,
+  validateDataResult,
+} from "./helpers.ts";
+import type { DataContext } from "./types.ts";
+import {
+  MAX_DATA_PARAM_ARRAY_SEGMENTS,
+  MAX_DATA_PARAM_KEY_CHARACTERS,
+  MAX_DATA_PARAM_PROPERTIES,
+  MAX_DATA_PARAM_VALUE_CHARACTERS,
+  MAX_DATA_QUERY_CHARACTERS,
+  MAX_DATA_URL_CHARACTERS,
+} from "./data-limits.ts";
 
 describe("helpers.ts", () => {
   describe("redirect", () => {
@@ -102,6 +119,23 @@ describe("helpers.ts", () => {
       assertEquals(isDataControlResult(undefined), false);
       assertEquals(isDataControlResult("notFound"), false);
       assertEquals(isDataControlResult(404), false);
+    });
+
+    it("rejects Proxy control candidates without executing traps", () => {
+      let reads = 0;
+      const proxy = new Proxy(notFound(), {
+        get(target, key, receiver) {
+          reads++;
+          return Reflect.get(target, key, receiver);
+        },
+        getOwnPropertyDescriptor(target, key) {
+          reads++;
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+
+      assertEquals(isDataControlResult(proxy), false);
+      assertEquals(reads, 0);
     });
 
     it("rejects a props-only result", () => {
@@ -225,6 +259,168 @@ describe("helpers.ts", () => {
       });
       assertEquals(unstable.notFound, true);
       assertEquals(normalized.notFound, false);
+    });
+  });
+
+  describe("data context snapshots", () => {
+    it("copies exact own string and dense string-array params", () => {
+      const source = Object.create(null) as Record<string, string | string[]>;
+      Object.defineProperty(source, "__proto__", {
+        enumerable: true,
+        value: "safe",
+      });
+      source.slug = ["docs", "install"];
+
+      const snapshot = snapshotDataParams(source);
+
+      assertEquals(Object.hasOwn(snapshot, "__proto__"), true);
+      assertEquals(snapshot.__proto__, "safe");
+      assertEquals(snapshot.slug, ["docs", "install"]);
+      assertEquals(Object.getPrototypeOf(snapshot), Object.prototype);
+      assertEquals(snapshot.slug === source.slug, false);
+    });
+
+    it("rejects cache-aliasing and executable param representations", () => {
+      const sparse = new Array<string>(2);
+      sparse[1] = "second";
+      const inherited = Object.create({ inherited: "value" }) as Record<string, string>;
+      inherited.own = "value";
+      let accessorReads = 0;
+      const accessor = Object.defineProperty({}, "slug", {
+        enumerable: true,
+        get() {
+          accessorReads++;
+          return "hidden";
+        },
+      });
+
+      for (
+        const params of [
+          { id: null },
+          { id: Number.NaN },
+          { id: {} },
+          { slug: sparse },
+          inherited,
+          accessor,
+        ]
+      ) {
+        assertThrows(
+          () => snapshotDataParams(params),
+          TypeError,
+          "plain record of string or dense string-array data properties",
+        );
+      }
+      assertEquals(accessorReads, 0);
+    });
+
+    it("bounds direct parameter, URL, and query inputs", () => {
+      const tooManyParams: Record<string, string> = {};
+      for (let index = 0; index <= MAX_DATA_PARAM_PROPERTIES; index++) {
+        tooManyParams[`key-${index}`] = "value";
+      }
+      for (
+        const params of [
+          tooManyParams,
+          { ["k".repeat(MAX_DATA_PARAM_KEY_CHARACTERS + 1)]: "value" },
+          { value: "x".repeat(MAX_DATA_PARAM_VALUE_CHARACTERS + 1) },
+          {
+            catchAll: Array.from(
+              { length: MAX_DATA_PARAM_ARRAY_SEGMENTS + 1 },
+              () => "segment",
+            ),
+          },
+        ]
+      ) {
+        assertThrows(() => snapshotDataParams(params), RangeError, "limit");
+      }
+
+      const longUrl = new URL(
+        `https://example.test/${"u".repeat(MAX_DATA_URL_CHARACTERS)}`,
+      );
+      assertThrows(
+        () =>
+          cloneStaticDataContext({
+            params: {},
+            url: longUrl,
+          }),
+        RangeError,
+        "URL must not exceed",
+      );
+
+      const request = new Request("https://example.test/query");
+      assertThrows(
+        () =>
+          cloneServerDataContext({
+            params: {},
+            query: new URLSearchParams(
+              `value=${"q".repeat(MAX_DATA_QUERY_CHARACTERS)}`,
+            ),
+            request,
+            url: new URL(request.url),
+          }),
+        RangeError,
+        "query must not exceed",
+      );
+    });
+
+    it("clones static identity without reading request-only fields", () => {
+      let requestReads = 0;
+      let queryReads = 0;
+      const context = Object.defineProperties({}, {
+        params: { enumerable: true, value: { slug: "page" } },
+        url: { enumerable: true, value: new URL("https://example.test/page") },
+        request: {
+          enumerable: true,
+          get() {
+            requestReads++;
+            throw new Error("request must remain unread");
+          },
+        },
+        query: {
+          enumerable: true,
+          get() {
+            queryReads++;
+            throw new Error("query must remain unread");
+          },
+        },
+      });
+
+      assertEquals(
+        cloneStaticDataContext(
+          context as Pick<DataContext, "params" | "url">,
+        ),
+        {
+          params: { slug: "page" },
+          url: new URL("https://example.test/page"),
+        },
+      );
+      assertEquals({ requestReads, queryReads }, { requestReads: 0, queryReads: 0 });
+    });
+
+    it("clones a Request through the intrinsic operation", () => {
+      const request = new Request("https://example.test/intrinsic-clone");
+      let cloneReads = 0;
+      Object.defineProperty(request, "clone", {
+        configurable: true,
+        get() {
+          cloneReads++;
+          throw new Error("an own clone field must not be consulted");
+        },
+      });
+
+      const cloned = cloneServerDataContext(
+        {
+          params: {},
+          query: new URLSearchParams(),
+          request,
+          url: new URL(request.url),
+        },
+        { cloneRequest: true },
+      );
+
+      assertEquals(cloneReads, 0);
+      assertEquals(cloned.request === request, false);
+      assertEquals(cloned.request.url, "https://example.test/intrinsic-clone");
     });
   });
 });

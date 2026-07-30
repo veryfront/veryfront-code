@@ -1,4 +1,27 @@
 import type { DataContext, DataResult } from "./types.ts";
+import {
+  MAX_DATA_PARAM_ARRAY_SEGMENTS,
+  MAX_DATA_PARAM_KEY_CHARACTERS,
+  MAX_DATA_PARAM_PROPERTIES,
+  MAX_DATA_PARAM_VALUE_CHARACTERS,
+  MAX_DATA_QUERY_CHARACTERS,
+  MAX_DATA_SERIALIZED_PARAMS_CHARACTERS,
+  MAX_DATA_URL_CHARACTERS,
+} from "./data-limits.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ReflectApply = Reflect.apply;
+const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+const ReflectOwnKeys = Reflect.ownKeys;
+const URLHrefGetter = Object.getOwnPropertyDescriptor(URL.prototype, "href")?.get;
+const URLSearchParamsToString = URLSearchParams.prototype.toString;
+const RequestUrlGetter = Object.getOwnPropertyDescriptor(Request.prototype, "url")?.get;
+const RequestSignalGetter = Object.getOwnPropertyDescriptor(
+  Request.prototype,
+  "signal",
+)?.get;
+const RequestClone = Request.prototype.clone;
 
 /**
  * Brand marking an object as produced by {@link notFound} or {@link redirect}.
@@ -64,9 +87,16 @@ export function notFound(): DataResult {
  * 404 the site never asked for.
  */
 export function isDataControlResult(value: unknown): value is DataResult {
-  if (value === null || typeof value !== "object") return false;
+  if (
+    value === null || typeof value !== "object" || isProxyWithoutHooks(value)
+  ) return false;
 
-  return (value as Record<symbol, unknown>)[DATA_CONTROL_RESULT] === true;
+  const descriptor = ReflectGetOwnPropertyDescriptor(
+    value,
+    DATA_CONTROL_RESULT,
+  );
+  return descriptor?.enumerable === false && "value" in descriptor &&
+    descriptor.value === true;
 }
 
 /**
@@ -162,24 +192,238 @@ export function validateDataResult(
   return normalized;
 }
 
-function cloneDataParams(
-  params: DataContext["params"],
-): DataContext["params"] {
-  return Object.fromEntries(
-    Object.entries(params).map(([key, value]) => [
-      key,
-      Array.isArray(value) ? [...value] : value,
-    ]),
+function invalidDataParams(): never {
+  throw new TypeError(
+    "Data context params must be a plain record of string or dense string-array data properties",
   );
+}
+
+function dataParamsLimit(description: string, limit: number): never {
+  throw new RangeError(
+    `Data context params ${description} limit of ${limit.toLocaleString("en-US")} was exceeded`,
+  );
+}
+
+function snapshotDataParamArray(value: unknown): string[] {
+  if (
+    !Array.isArray(value) || isProxyWithoutHooks(value) ||
+    Object.getPrototypeOf(value) !== Array.prototype
+  ) {
+    return invalidDataParams();
+  }
+  const lengthDescriptor = Reflect.getOwnPropertyDescriptor(value, "length");
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (!Number.isSafeInteger(length) || (length as number) < 0) {
+    return invalidDataParams();
+  }
+  if ((length as number) > MAX_DATA_PARAM_ARRAY_SEGMENTS) {
+    return dataParamsLimit("array-segment", MAX_DATA_PARAM_ARRAY_SEGMENTS);
+  }
+
+  const snapshot = new Array<string>(length as number);
+  let entries = 0;
+  for (const key of Reflect.ownKeys(value)) {
+    if (key === "length") continue;
+    if (typeof key !== "string") return invalidDataParams();
+    const index = Number(key);
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    if (
+      !Number.isSafeInteger(index) ||
+      index < 0 ||
+      index >= snapshot.length ||
+      String(index) !== key ||
+      !descriptor?.enumerable ||
+      !("value" in descriptor) ||
+      typeof descriptor.value !== "string"
+    ) {
+      return invalidDataParams();
+    }
+    if (descriptor.value.length > MAX_DATA_PARAM_VALUE_CHARACTERS) {
+      return dataParamsLimit("value-character", MAX_DATA_PARAM_VALUE_CHARACTERS);
+    }
+    snapshot[index] = descriptor.value;
+    entries++;
+  }
+  if (entries !== snapshot.length) return invalidDataParams();
+  return snapshot;
+}
+
+/** Snapshot the exact route-parameter domain used by hooks and cache keys. */
+export function snapshotDataParams(
+  params: unknown,
+): DataContext["params"] {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    return invalidDataParams();
+  }
+  if (isProxyWithoutHooks(params)) return invalidDataParams();
+  const prototype = Object.getPrototypeOf(params);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return invalidDataParams();
+  }
+
+  const snapshot: DataContext["params"] = {};
+  const keys = ReflectOwnKeys(params);
+  if (keys.length > MAX_DATA_PARAM_PROPERTIES) {
+    return dataParamsLimit("property", MAX_DATA_PARAM_PROPERTIES);
+  }
+  let retainedCharacters = 0;
+  for (const key of keys) {
+    if (typeof key !== "string") return invalidDataParams();
+    if (key.length > MAX_DATA_PARAM_KEY_CHARACTERS) {
+      return dataParamsLimit("key-character", MAX_DATA_PARAM_KEY_CHARACTERS);
+    }
+    const descriptor = ReflectGetOwnPropertyDescriptor(params, key);
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      return invalidDataParams();
+    }
+    const value = descriptor.value;
+    if (
+      typeof value === "string" &&
+      value.length > MAX_DATA_PARAM_VALUE_CHARACTERS
+    ) {
+      return dataParamsLimit("value-character", MAX_DATA_PARAM_VALUE_CHARACTERS);
+    }
+    const normalized = typeof value === "string" ? value : snapshotDataParamArray(value);
+    retainedCharacters += key.length +
+      (typeof normalized === "string"
+        ? normalized.length
+        : normalized.reduce((total, segment) => total + segment.length, 0));
+    if (retainedCharacters > MAX_DATA_SERIALIZED_PARAMS_CHARACTERS) {
+      return dataParamsLimit(
+        "total-character",
+        MAX_DATA_SERIALIZED_PARAMS_CHARACTERS,
+      );
+    }
+    // Preserve `__proto__` as data rather than invoking Object.prototype's
+    // legacy setter while keeping the familiar ordinary-object hook contract.
+    Object.defineProperty(snapshot, key, {
+      configurable: true,
+      enumerable: true,
+      value: normalized,
+      writable: true,
+    });
+  }
+  return snapshot;
+}
+
+function invalidDataContext(message: string): never {
+  throw new TypeError(message);
+}
+
+function requireContextRecord(context: unknown): object {
+  if (context === null || typeof context !== "object" || Array.isArray(context)) {
+    return invalidDataContext("Data context must be a plain object");
+  }
+  if (isProxyWithoutHooks(context)) {
+    return invalidDataContext("Data context must be a plain object");
+  }
+  const prototype = ObjectGetPrototypeOf(context);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return invalidDataContext("Data context must be a plain object");
+  }
+  return context;
+}
+
+function readContextField(context: object, key: keyof DataContext): unknown {
+  const descriptor = ReflectGetOwnPropertyDescriptor(context, key);
+  if (descriptor?.enumerable !== true || !("value" in descriptor)) {
+    return invalidDataContext(
+      `Data context ${key} must be an own enumerable data property`,
+    );
+  }
+  return descriptor.value;
+}
+
+export function snapshotDataUrl(value: unknown): URL {
+  if (
+    value === null || typeof value !== "object" ||
+    isProxyWithoutHooks(value) ||
+    ObjectGetPrototypeOf(value) !== URL.prototype || !URLHrefGetter
+  ) {
+    return invalidDataContext("Data context url must be a URL instance");
+  }
+  let href: string;
+  try {
+    href = ReflectApply(URLHrefGetter, value, []) as string;
+  } catch {
+    return invalidDataContext("Data context url must be a URL instance");
+  }
+  if (href.length > MAX_DATA_URL_CHARACTERS) {
+    throw new RangeError(
+      `Data context URL must not exceed ${
+        MAX_DATA_URL_CHARACTERS.toLocaleString("en-US")
+      } characters`,
+    );
+  }
+  return new URL(href);
+}
+
+function snapshotDataQuery(value: unknown): URLSearchParams {
+  if (
+    value === null || typeof value !== "object" ||
+    isProxyWithoutHooks(value) ||
+    ObjectGetPrototypeOf(value) !== URLSearchParams.prototype
+  ) {
+    return invalidDataContext(
+      "Data context query must be a URLSearchParams instance",
+    );
+  }
+  let serialized: string;
+  try {
+    serialized = ReflectApply(URLSearchParamsToString, value, []) as string;
+  } catch {
+    return invalidDataContext(
+      "Data context query must be a URLSearchParams instance",
+    );
+  }
+  if (serialized.length > MAX_DATA_QUERY_CHARACTERS) {
+    throw new RangeError(
+      `Data context query must not exceed ${
+        MAX_DATA_QUERY_CHARACTERS.toLocaleString("en-US")
+      } characters`,
+    );
+  }
+  return new URLSearchParams(serialized);
+}
+
+function requireDataRequest(value: unknown): Request {
+  if (
+    value === null || typeof value !== "object" ||
+    isProxyWithoutHooks(value) ||
+    ObjectGetPrototypeOf(value) !== Request.prototype || !RequestUrlGetter
+  ) {
+    return invalidDataContext("Data context request must be a Request instance");
+  }
+  try {
+    ReflectApply(RequestUrlGetter, value, []);
+  } catch {
+    return invalidDataContext("Data context request must be a Request instance");
+  }
+  return value as Request;
+}
+
+/** Read the intrinsic Request signal rather than an own shadowing property. */
+export function getDataRequestSignal(request: Request): AbortSignal {
+  if (!RequestSignalGetter) {
+    throw new TypeError("Data context request must expose an AbortSignal");
+  }
+  try {
+    return ReflectApply(RequestSignalGetter, request, []) as AbortSignal;
+  } catch {
+    throw new TypeError("Data context request must expose an AbortSignal");
+  }
 }
 
 /** Give each static hook mutable request-local values, never sibling aliases. */
 export function cloneStaticDataContext(
-  context: DataContext,
+  context: Pick<DataContext, "params" | "url">,
 ): Omit<DataContext, "request" | "query"> {
+  const source = requireContextRecord(context);
   return {
-    params: cloneDataParams(context.params),
-    url: new URL(context.url),
+    params: snapshotDataParams(readContextField(source, "params")),
+    url: snapshotDataUrl(readContextField(source, "url")),
   };
 }
 
@@ -195,10 +439,12 @@ export function cloneServerDataContext(
   context: DataContext,
   options: { cloneRequest?: boolean } = {},
 ): DataContext {
+  const source = requireContextRecord(context);
+  const request = requireDataRequest(readContextField(source, "request"));
   return {
-    params: cloneDataParams(context.params),
-    query: new URLSearchParams(context.query),
-    request: options.cloneRequest ? context.request.clone() : context.request,
-    url: new URL(context.url),
+    params: snapshotDataParams(readContextField(source, "params")),
+    query: snapshotDataQuery(readContextField(source, "query")),
+    request: options.cloneRequest ? ReflectApply(RequestClone, request, []) as Request : request,
+    url: snapshotDataUrl(readContextField(source, "url")),
   };
 }

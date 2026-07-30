@@ -11,16 +11,29 @@ import {
   isProjectScopedKeyCandidate,
   parseProjectScopedKey,
   runWithCacheKeyContext,
+  tryGetCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
 import { normalizeRoutePathname } from "#veryfront/utils/route-pathname.ts";
 import type { CacheEntry, DataContext } from "./types.ts";
 import { requireDataProjectId } from "./project-identity.ts";
+import { snapshotDataParams, snapshotDataUrl } from "./helpers.ts";
+import { getCapturedDataResultBytes } from "./cache-result-snapshot.ts";
+import {
+  MAX_DATA_CACHE_KEY_CHARACTERS,
+  MAX_DATA_INVALIDATION_PATTERN_CHARACTERS,
+  MAX_DATA_MODULE_PATH_CHARACTERS,
+  MAX_DATA_PATHNAME_CHARACTERS,
+  MAX_DATA_SCOPE_VERSION_CHARACTERS,
+  MAX_DATA_SERIALIZED_PARAMS_CHARACTERS,
+} from "./data-limits.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 const DATA_CACHE_NAMESPACE = "veryfront:data:v3";
 const ObjectFreeze = Object.freeze;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ReflectApply = Reflect.apply;
 const ReflectOwnKeys = Reflect.ownKeys;
+const ArrayPrototypeSort = Array.prototype.sort;
 const ArrayIsArray = Array.isArray;
 const ArrayBufferIsView = ArrayBuffer.isView;
 
@@ -257,9 +270,13 @@ function estimateDataCacheValueSize(
   if (type !== "object" && type !== "function") return FUNCTION_REFERENCE_BYTES;
 
   const retainedObject = value as object;
+  if (isProxyWithoutHooks(retainedObject)) throwUnsafeDataCacheEstimate();
   if (state.seen.has(retainedObject)) return 0;
   if (depth >= MAX_DATA_CACHE_ESTIMATION_DEPTH) throwUnsafeDataCacheEstimate();
   state.seen.add(retainedObject);
+
+  const capturedResultBytes = getCapturedDataResultBytes(retainedObject);
+  if (capturedResultBytes !== undefined) return capturedResultBytes;
 
   if (type === "function") {
     return FUNCTION_REFERENCE_BYTES + estimateOwnProperties(
@@ -372,20 +389,46 @@ export interface DataCacheMatchOptions {
 /**
  * Snapshot an untrusted or mutable cache scope into one immutable identity.
  *
- * Reading each field exactly once prevents accessors or proxies from assigning
- * admission, publication, and invalidation work to different tenants.
+ * Only own enumerable data fields are admitted. Accessors and proxies reject
+ * without execution, preventing different identity consumers from observing
+ * different tenants.
  */
 export function snapshotDataCacheScope(
   scope: unknown,
 ): Readonly<DataCacheScope> {
-  if (typeof scope !== "object" || scope === null) {
-    throw new TypeError("Data cache scope must be an object");
+  if (typeof scope !== "object" || scope === null || ArrayIsArray(scope)) {
+    throw new TypeError("Data cache scope must be a plain object");
   }
-
-  const candidate = scope as Record<PropertyKey, unknown>;
-  const projectId = candidate.projectId;
-  const mode = candidate.mode;
-  const versionId = candidate.versionId;
+  if (isProxyWithoutHooks(scope)) {
+    throw new TypeError("Data cache scope must be a plain object");
+  }
+  const prototype = Object.getPrototypeOf(scope);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError("Data cache scope must be a plain object");
+  }
+  const keys = ReflectOwnKeys(scope);
+  if (
+    keys.length !== 3 ||
+    !keys.includes("projectId") ||
+    !keys.includes("mode") ||
+    !keys.includes("versionId")
+  ) {
+    throw new TypeError(
+      "Data cache scope must contain exactly projectId, mode, and versionId",
+    );
+  }
+  const readField = (key: keyof DataCacheScope): unknown => {
+    const descriptor = ObjectGetOwnPropertyDescriptor(scope, key);
+    if (descriptor?.enumerable !== true || !("value" in descriptor)) {
+      throw new TypeError(
+        `Data cache scope ${key} must be an own enumerable data property`,
+      );
+    }
+    return descriptor.value;
+  };
+  const projectId = readField("projectId");
+  const mode = readField("mode");
+  const versionId = readField("versionId");
   const validatedProjectId = requireDataProjectId(
     projectId,
     "Data cache scope projectId",
@@ -393,11 +436,61 @@ export function snapshotDataCacheScope(
   if (mode !== "production" && mode !== "preview") {
     throw new TypeError("Data cache scope mode must be production or preview");
   }
-  if (typeof versionId !== "string" || versionId.length === 0) {
-    throw new TypeError("Data cache scope versionId must be a non-empty string");
+  if (
+    typeof versionId !== "string" || versionId.length === 0 ||
+    versionId.length > MAX_DATA_SCOPE_VERSION_CHARACTERS
+  ) {
+    throw new TypeError(
+      `Data cache scope versionId must be a non-empty string no longer than ${MAX_DATA_SCOPE_VERSION_CHARACTERS} characters`,
+    );
   }
 
   return ObjectFreeze({ projectId: validatedProjectId, mode, versionId });
+}
+
+/** Snapshot an optional invalidation pattern without truthy coercion. */
+export function snapshotDataCachePattern(pattern: unknown): string | undefined {
+  if (pattern === undefined || pattern === "") return undefined;
+  if (typeof pattern !== "string") {
+    throw new TypeError("Data cache pattern must be a string when provided");
+  }
+  if (pattern.length > MAX_DATA_INVALIDATION_PATTERN_CHARACTERS) {
+    throw new RangeError(
+      `Data cache pattern must not exceed ${MAX_DATA_INVALIDATION_PATTERN_CHARACTERS} characters`,
+    );
+  }
+  return pattern;
+}
+
+/** Validate and canonicalize one route invalidation pathname. */
+export function snapshotDataCachePathname(pathname: unknown): string {
+  if (typeof pathname !== "string") {
+    throw new TypeError("Data cache pathname must be a string");
+  }
+  if (pathname.length > MAX_DATA_PATHNAME_CHARACTERS) {
+    throw new RangeError(
+      `Data cache pathname must not exceed ${MAX_DATA_PATHNAME_CHARACTERS} characters`,
+    );
+  }
+  const normalized = normalizeRoutePathname(pathname);
+  if (normalized.length > MAX_DATA_PATHNAME_CHARACTERS) {
+    throw new RangeError(
+      `Normalized data cache pathname must not exceed ${MAX_DATA_PATHNAME_CHARACTERS} characters`,
+    );
+  }
+  return normalized;
+}
+
+function snapshotDataCacheKey(key: unknown): string {
+  if (typeof key !== "string") {
+    throw new TypeError("Data cache key must be a string");
+  }
+  if (key.length > MAX_DATA_CACHE_KEY_CHARACTERS) {
+    throw new RangeError(
+      `Data cache key must not exceed ${MAX_DATA_CACHE_KEY_CHARACTERS} characters`,
+    );
+  }
+  return key;
 }
 
 interface ParsedDataCacheKey extends DataCacheScope {
@@ -422,12 +515,57 @@ interface ProjectCacheMetadata {
   readonly sizeBytes: number;
 }
 
+function snapshotDataCacheMatchOptions(
+  options: unknown,
+): Readonly<DataCacheMatchOptions> {
+  if (options === undefined) return ObjectFreeze({});
+  if (
+    options === null || typeof options !== "object" || ArrayIsArray(options) ||
+    isProxyWithoutHooks(options)
+  ) {
+    throw new TypeError("Data cache match options must be a plain object");
+  }
+  const prototype = Object.getPrototypeOf(options);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError("Data cache match options must be a plain object");
+  }
+  const values = new Map<string, unknown>();
+  for (const key of ReflectOwnKeys(options)) {
+    if (
+      typeof key !== "string" ||
+      (key !== "scope" && key !== "projectId" && key !== "pathname" &&
+        key !== "pattern")
+    ) {
+      throw new TypeError(`Unknown data cache match option: ${String(key)}`);
+    }
+    const descriptor = ObjectGetOwnPropertyDescriptor(options, key);
+    if (descriptor?.enumerable !== true || !("value" in descriptor)) {
+      throw new TypeError(
+        `Data cache match option ${key} must be an own enumerable data property`,
+      );
+    }
+    values.set(key, descriptor.value);
+  }
+
+  const scope = values.get("scope");
+  const projectId = values.get("projectId");
+  const pathname = values.get("pathname");
+  const pattern = values.get("pattern");
+  return ObjectFreeze({
+    scope: scope === undefined ? undefined : snapshotDataCacheScope(scope),
+    projectId: projectId === undefined
+      ? undefined
+      : requireDataProjectId(projectId, "Data cache projectId"),
+    pathname: pathname === undefined ? undefined : snapshotDataCachePathname(pathname),
+    pattern: snapshotDataCachePattern(pattern),
+  });
+}
+
 /**
- * The default byte quotas use a bounded insertion-time estimate of observable
- * own data and recognized backing storage. Entries remain reference-preserving,
- * so closure, prototype, Proxy, and engine-internal retention are not a hard
- * memory-security boundary. A restricted cacheability/snapshot contract would
- * be required for that stronger guarantee.
+ * Production static-data publication supplies an immutable, bounded snapshot
+ * whose exact deterministic charge is recorded during capture. Direct internal
+ * CacheManager callers may still store broader values; those trusted/test paths
+ * use the generic bounded estimator rather than the static-data contract.
  *
  * @internal Injectable limits are used by focused quota tests.
  */
@@ -440,6 +578,11 @@ export interface CacheManagerOptions {
   now?: () => number;
   /** Estimate the complete retained size for one original key and value. */
   estimateSizeOf?: (entry: CacheEntry, key: string) => number;
+}
+
+/** Expected admission failure when a valid entry cannot fit configured quotas. */
+export class DataCacheCapacityError extends RangeError {
+  override readonly name = "DataCacheCapacityError";
 }
 
 function readFramedSegment(value: string, offset: number): FramedSegment | null {
@@ -506,20 +649,21 @@ export function dataCacheKeyMatches(
   key: string,
   options: DataCacheMatchOptions = {},
 ): boolean {
-  const suppliedScope = options.scope;
-  const scope = suppliedScope === undefined ? undefined : snapshotDataCacheScope(suppliedScope);
-  const projectId = options.projectId;
-  const pathnameOption = options.pathname;
-  const pattern = options.pattern;
-  const parsed = parseDataCacheKey(key);
+  const keySnapshot = snapshotDataCacheKey(key);
+  const snapshot = snapshotDataCacheMatchOptions(options);
+  const scope = snapshot.scope;
+  const projectId = snapshot.projectId;
+  const pathnameOption = snapshot.pathname;
+  const pattern = snapshot.pattern;
+  const parsed = parseDataCacheKey(keySnapshot);
   if (!parsed) {
     // Preserve legacy/raw test and integration keys, but fail closed for a
-    // malformed key that claims the framed v2 format.
-    return !isProjectScopedKeyCandidate(key) &&
+    // malformed key that claims the project-scoped data-key format.
+    return !isProjectScopedKeyCandidate(keySnapshot) &&
       scope === undefined &&
       projectId === undefined &&
       pathnameOption === undefined &&
-      (pattern === undefined || key.includes(pattern));
+      (pattern === undefined || keySnapshot.includes(pattern));
   }
 
   if (
@@ -543,7 +687,7 @@ export function dataCacheKeyMatches(
     } catch {
       return false;
     }
-    if (pathname !== normalizeRoutePathname(pathnameOption)) return false;
+    if (pathname !== pathnameOption) return false;
   }
   if (pattern === undefined) return true;
 
@@ -559,11 +703,40 @@ export function dataCacheKeyMatches(
 }
 
 function serializeParams(params: DataContext["params"]): string {
-  const canonicalParams: DataContext["params"] = Object.create(null);
-  for (const key of Object.keys(params).sort()) {
-    canonicalParams[key] = params[key]!;
+  const snapshot = snapshotDataParams(params);
+  const keys = ReflectOwnKeys(snapshot) as string[];
+  ReflectApply(ArrayPrototypeSort, keys, [
+    (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0,
+  ]);
+
+  let serialized = `p${keys.length}:`;
+  for (const key of keys) {
+    const descriptor = ObjectGetOwnPropertyDescriptor(snapshot, key);
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError("Data context params snapshot invariant violated");
+    }
+    const value = descriptor.value as string | string[];
+    serialized += `k${frameDataCacheKeySegment(key)}`;
+    if (typeof value === "string") {
+      serialized += `s${frameDataCacheKeySegment(value)}`;
+      if (serialized.length > MAX_DATA_SERIALIZED_PARAMS_CHARACTERS) {
+        throw new RangeError(
+          `Serialized data params must not exceed ${MAX_DATA_SERIALIZED_PARAMS_CHARACTERS} characters`,
+        );
+      }
+      continue;
+    }
+    serialized += `a${value.length}:`;
+    for (let index = 0; index < value.length; index++) {
+      serialized += `e${frameDataCacheKeySegment(value[index]!)}`;
+      if (serialized.length > MAX_DATA_SERIALIZED_PARAMS_CHARACTERS) {
+        throw new RangeError(
+          `Serialized data params must not exceed ${MAX_DATA_SERIALIZED_PARAMS_CHARACTERS} characters`,
+        );
+      }
+    }
   }
-  return JSON.stringify(canonicalParams);
+  return serialized;
 }
 
 function frameDataCacheKeySegment(value: string): string {
@@ -647,36 +820,38 @@ export class CacheManager {
   }
 
   get(key: string): CacheEntry | null {
-    const entry = this.cache.get(key) ?? null;
-    if (entry) this.touchProjectEntry(key);
+    const snapshot = snapshotDataCacheKey(key);
+    const entry = this.cache.get(snapshot) ?? null;
+    if (entry) this.touchProjectEntry(snapshot);
     return entry;
   }
 
   set(key: string, entry: CacheEntry): void {
-    const parsed = parseDataCacheKey(key);
-    if (!parsed && isProjectScopedKeyCandidate(key)) {
+    const snapshot = snapshotDataCacheKey(key);
+    const parsed = parseDataCacheKey(snapshot);
+    if (!parsed && isProjectScopedKeyCandidate(snapshot)) {
       throw new TypeError("Malformed or non-data project-scoped cache key");
     }
-    const sizeBytes = this.estimateRetainedSize(key, entry);
+    const sizeBytes = this.estimateRetainedSize(snapshot, entry);
     if (!parsed) {
       if (sizeBytes > this.maxSizeBytes) {
-        throw new RangeError(
+        throw new DataCacheCapacityError(
           `Cache entry size ${sizeBytes} exceeds maxSizeBytes ${this.maxSizeBytes}`,
         );
       }
       this.cache.cleanup();
-      this.cache.set(key, entry, sizeBytes);
+      this.cache.set(snapshot, entry, sizeBytes);
       return;
     }
     if (sizeBytes > this.maxSizeBytesPerProject) {
-      throw new RangeError(
+      throw new DataCacheCapacityError(
         `Data cache entry size ${sizeBytes} exceeds per-project byte limit ${this.maxSizeBytesPerProject}`,
       );
     }
 
     // Keep project accounting exact even when the periodic timer is disabled.
     this.cache.cleanup();
-    const existing = this.projectMetadata.get(key);
+    const existing = this.projectMetadata.get(snapshot);
     if (existing && existing.projectId !== parsed.projectId) {
       throw new Error("Data cache project ownership invariant violated");
     }
@@ -698,7 +873,7 @@ export class CacheManager {
         ) {
           break;
         }
-        if (candidate === key) continue;
+        if (candidate === snapshot) continue;
         keysToEvict.push(candidate);
         projectedEntries--;
         projectedSizeBytes -= candidateSize;
@@ -712,9 +887,9 @@ export class CacheManager {
       throw new Error("Unable to satisfy the configured per-project data cache quota");
     }
 
-    this.cache.setWithEvictions(key, entry, keysToEvict, sizeBytes);
-    if (existing) this.untrackProjectEntry(key);
-    this.trackProjectEntry(key, parsed.projectId, sizeBytes);
+    this.cache.setWithEvictions(snapshot, entry, keysToEvict, sizeBytes);
+    if (existing) this.untrackProjectEntry(snapshot);
+    this.trackProjectEntry(snapshot, parsed.projectId, sizeBytes);
   }
 
   private estimateRetainedSize(key: string, entry: CacheEntry): number {
@@ -792,53 +967,78 @@ export class CacheManager {
   }
 
   delete(key: string): void {
-    this.cache.delete(key);
+    this.cache.delete(snapshotDataCacheKey(key));
   }
 
   clear(): void {
     this.cache.clear();
   }
 
+  private keysForTargetedInvalidation(): IterableIterator<string> {
+    // Normal LRU iteration omits expired nodes. Invalidation must inspect every
+    // resident identity so an entry cannot hide at the TTL boundary and later
+    // reappear if the injected or system clock moves backwards.
+    return this.cache.residentKeys();
+  }
+
   clearPattern(pattern: string): void {
-    for (const key of this.cache.keys()) {
-      if (!dataCacheKeyMatches(key, { pattern })) continue;
+    const snapshot = snapshotDataCachePattern(pattern);
+    for (const key of this.keysForTargetedInvalidation()) {
+      if (!dataCacheKeyMatches(key, { pattern: snapshot })) continue;
       this.cache.delete(key);
     }
   }
 
   clearScope(scope: DataCacheScope, pattern?: string): void {
     const snapshot = snapshotDataCacheScope(scope);
-    for (const key of this.cache.keys()) {
-      if (!dataCacheKeyMatches(key, { scope: snapshot, pattern })) continue;
+    const patternSnapshot = snapshotDataCachePattern(pattern);
+    for (const key of this.keysForTargetedInvalidation()) {
+      if (!dataCacheKeyMatches(key, { scope: snapshot, pattern: patternSnapshot })) continue;
       this.cache.delete(key);
     }
   }
 
   clearProject(projectId: string, pattern?: string): void {
-    for (const key of this.cache.keys()) {
-      if (!dataCacheKeyMatches(key, { projectId, pattern })) continue;
+    const projectSnapshot = requireDataProjectId(projectId, "Data cache projectId");
+    const patternSnapshot = snapshotDataCachePattern(pattern);
+    for (const key of this.keysForTargetedInvalidation()) {
+      if (
+        !dataCacheKeyMatches(key, {
+          projectId: projectSnapshot,
+          pattern: patternSnapshot,
+        })
+      ) continue;
       this.cache.delete(key);
     }
   }
 
   clearRoute(scope: DataCacheScope, pathname: string): void {
     const snapshot = snapshotDataCacheScope(scope);
-    for (const key of this.cache.keys()) {
-      if (!dataCacheKeyMatches(key, { scope: snapshot, pathname })) continue;
+    const pathnameSnapshot = snapshotDataCachePathname(pathname);
+    for (const key of this.keysForTargetedInvalidation()) {
+      if (!dataCacheKeyMatches(key, { scope: snapshot, pathname: pathnameSnapshot })) continue;
       this.cache.delete(key);
     }
   }
 
   clearProjectRoute(projectId: string, pathname: string): void {
-    for (const key of this.cache.keys()) {
-      if (!dataCacheKeyMatches(key, { projectId, pathname })) continue;
+    const projectSnapshot = requireDataProjectId(projectId, "Data cache projectId");
+    const pathnameSnapshot = snapshotDataCachePathname(pathname);
+    for (const key of this.keysForTargetedInvalidation()) {
+      if (
+        !dataCacheKeyMatches(key, {
+          projectId: projectSnapshot,
+          pathname: pathnameSnapshot,
+        })
+      ) continue;
       this.cache.delete(key);
     }
   }
 
   clearRouteAcrossScopes(pathname: string): void {
-    for (const key of this.cache.keys()) {
-      if (!dataCacheKeyMatches(key, { pathname })) continue;
+    const snapshot = snapshotDataCachePathname(pathname);
+    for (const key of this.keysForTargetedInvalidation()) {
+      if (!dataCacheKeyMatches(key, { pathname: snapshot })) continue;
       this.cache.delete(key);
     }
   }
@@ -887,14 +1087,27 @@ export class CacheManager {
 
   /** Return a scoped key, or null when caching lacks scope or module identity. */
   createCacheKey(
-    context: DataContext,
+    context: Pick<DataContext, "params" | "url">,
     modulePath?: string,
     scope?: DataCacheScope | null,
   ): string | null {
-    const snapshot = scope === undefined || scope === null ? scope : snapshotDataCacheScope(scope);
+    if (modulePath !== undefined && typeof modulePath !== "string") {
+      throw new TypeError("Data cache modulePath must be a string when provided");
+    }
     if (modulePath === undefined || modulePath.length === 0) return null;
+    if (modulePath.length > MAX_DATA_MODULE_PATH_CHARACTERS) {
+      throw new RangeError(
+        `Data cache modulePath must not exceed ${MAX_DATA_MODULE_PATH_CHARACTERS} characters`,
+      );
+    }
+
+    const selectedScope = scope === undefined ? tryGetCacheKeyContext() : scope;
+    if (selectedScope === null) return null;
+    const snapshot = snapshotDataCacheScope(selectedScope);
+    if (snapshot.mode === "preview") return null;
+
     const params = serializeParams(context.params);
-    const url = context.url.href;
+    const url = snapshotDataUrl(context.url).href;
     const resourceKey = [
       modulePath,
       url,
@@ -903,14 +1116,11 @@ export class CacheManager {
 
     // A dedicated namespace prevents ambiguous legacy keys from being reused
     // after the independently framed identity format ships.
-    if (snapshot === null) return null;
-    if (snapshot !== undefined) {
-      return runWithCacheKeyContext(
-        snapshot,
-        () => getProjectScopedKey(DATA_CACHE_NAMESPACE, resourceKey),
-      );
-    }
-    return getProjectScopedKey(DATA_CACHE_NAMESPACE, resourceKey);
+    const key = runWithCacheKeyContext(
+      snapshot,
+      () => getProjectScopedKey(DATA_CACHE_NAMESPACE, resourceKey),
+    );
+    return snapshotDataCacheKey(key);
   }
 
   destroy(): void {

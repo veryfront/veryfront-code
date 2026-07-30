@@ -1,5 +1,5 @@
 /**
- * Runtime-compatible, no-hook error introspection.
+ * Runtime-compatible, no-hook value introspection.
  *
  * `Error.isError()` is the standard brand check on newer runtimes. The Node
  * compatibility implementation keeps the same semantics on supported older
@@ -13,6 +13,7 @@ const nativeErrorBrandCheck: (value: unknown) => boolean = typeof standardIsErro
   ? (value) => apply(standardIsError, Error, [value]) as boolean
   : (value) => nodeUtilTypes.isNativeError(value);
 const nativeProxyBrandCheck = nodeUtilTypes.isProxy;
+const nativePromiseBrandCheck = nodeUtilTypes.isPromise;
 
 /**
  * Identify native Error values without evaluating project-owned Proxy traps.
@@ -24,4 +25,11 @@ export function isNativeErrorWithoutHooks(value: unknown): value is Error {
 /** Identify a Proxy without evaluating any trap on the proxied value. */
 export function isProxyWithoutHooks(value: unknown): boolean {
   return nativeProxyBrandCheck(value);
+}
+
+/** Identify a genuine Promise across realms without reading instance fields. */
+export function isNativePromiseWithoutHooks(
+  value: unknown,
+): value is Promise<unknown> {
+  return nativePromiseBrandCheck(value);
 }

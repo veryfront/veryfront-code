@@ -3,6 +3,7 @@ import {
   assertEquals,
   assertExists,
   assertInstanceOf,
+  assertNotStrictEquals,
   assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
@@ -225,6 +226,62 @@ describe("StaticDataFetcher", () => {
       assertEquals(receivedContext.query, undefined);
     });
 
+    it("rejects accessor-backed static identity without reading any field", async () => {
+      const { fetcher } = createFetcher();
+      const reads = { params: 0, url: 0, request: 0, query: 0 };
+      const context = Object.defineProperties({}, {
+        params: {
+          enumerable: true,
+          get() {
+            reads.params++;
+            return { slug: "first" };
+          },
+        },
+        url: {
+          enumerable: true,
+          get() {
+            reads.url++;
+            return new URL("https://example.test/static-first");
+          },
+        },
+        request: {
+          enumerable: true,
+          get() {
+            reads.request++;
+            throw new Error("static execution must not read request");
+          },
+        },
+        query: {
+          enumerable: true,
+          get() {
+            reads.query++;
+            throw new Error("static execution must not read query");
+          },
+        },
+      }) as DataContext;
+      let calls = 0;
+
+      await assertRejects(
+        () =>
+          fetcher.fetch(
+            {
+              default: () => null,
+              getStaticData: () => {
+                calls++;
+                return { props: {} };
+              },
+            },
+            context,
+            { cacheScope: null },
+          ),
+        TypeError,
+        "params must be an own enumerable data property",
+      );
+
+      assertEquals(reads, { params: 0, url: 0, request: 0, query: 0 });
+      assertEquals(calls, 0);
+    });
+
     it("should return props from getStaticData", async () => {
       const { fetcher } = createFetcher();
       const pageModule: PageWithData<{ title: string }> = {
@@ -261,6 +318,253 @@ describe("StaticDataFetcher", () => {
       });
     });
 
+    it("serves valid fresh data only when configured cache capacity rejects it", async () => {
+      await withProductionContext(async () => {
+        const cache = new CacheManager({
+          maxEntries: 1,
+          maxEntriesPerProject: 1,
+          maxSizeBytes: 128,
+          maxSizeBytesPerProject: 128,
+        });
+        const fetcher = new TestStaticDataFetcher(cache);
+        const context = createContext({
+          url: new URL("https://example.test/cache-capacity"),
+        });
+
+        const result = await fetcher.fetch(
+          {
+            default: () => null,
+            getStaticData: () => ({ props: { ok: true } }),
+          },
+          context,
+        );
+
+        assertEquals(result.props, { ok: true });
+        const key = cache.createCacheKey(context, TEST_MODULE_PATH);
+        assertExists(key);
+        assertEquals(cache.get(key), null);
+      });
+    });
+
+    it("propagates unexpected cache publication failures", async () => {
+      const failure = new Error("cache accounting invariant failed");
+      class BrokenCacheManager extends CacheManager {
+        override replaceIfCurrent(): boolean {
+          throw failure;
+        }
+      }
+
+      await withProductionContext(async () => {
+        const fetcher = new TestStaticDataFetcher(new BrokenCacheManager());
+        const rejected = await assertRejects(() =>
+          fetcher.fetch(
+            {
+              default: () => null,
+              getStaticData: () => ({ props: { ok: true } }),
+            },
+            createContext({
+              url: new URL("https://example.test/cache-invariant"),
+            }),
+          )
+        );
+
+        assertStrictEquals(rejected, failure);
+      });
+    });
+
+    it("keeps cached storage and later hits isolated from caller mutation", async () => {
+      await withProductionContext(async () => {
+        const { cache, fetcher } = createFetcher();
+        const source = {
+          nested: { title: "original", items: [1, 2] },
+        };
+        let calls = 0;
+        const pageModule: PageWithData<typeof source> = {
+          default: () => null,
+          getStaticData: () => {
+            calls++;
+            return { props: source, revalidate: 60 };
+          },
+        };
+        const context = createContext({
+          url: new URL("https://example.test/detached-cache-hit"),
+        });
+
+        const first = await fetcher.fetch(pageModule, context);
+        const firstProps = first.props as typeof source;
+        source.nested.title = "source-mutated";
+        firstProps.nested.title = "caller-mutated";
+        firstProps.nested.items.push(3);
+
+        const second = await fetcher.fetch(pageModule, context);
+        const secondProps = second.props as typeof source;
+        const cacheKey = cache.createCacheKey(context, TEST_MODULE_PATH);
+        assertExists(cacheKey);
+        const stored = cache.get(cacheKey);
+        assertExists(stored);
+
+        assertEquals(secondProps, {
+          nested: { title: "original", items: [1, 2] },
+        });
+        assertNotStrictEquals(firstProps, secondProps);
+        assertNotStrictEquals(firstProps.nested, secondProps.nested);
+        assertEquals(Object.isFrozen(stored), true);
+        assertEquals(Object.isFrozen(stored.data), true);
+        assertEquals(Object.isFrozen(stored.data.props), true);
+        assertEquals(stored.data.props, {
+          nested: { title: "original", items: [1, 2] },
+        });
+        assertEquals(calls, 1);
+      });
+    });
+
+    it("captures a synchronous result before a hook-queued mutation", async () => {
+      await withProductionContext(async () => {
+        const { fetcher } = createFetcher();
+        const source = { value: "returned" };
+        let calls = 0;
+        const pageModule: PageWithData<typeof source> = {
+          default: () => null,
+          getStaticData: () => {
+            calls++;
+            queueMicrotask(() => {
+              source.value = "mutated";
+            });
+            return { props: source, revalidate: false };
+          },
+        };
+        const context = createContext({
+          url: new URL("https://example.test/synchronous-snapshot"),
+        });
+
+        const first = await fetcher.fetch(pageModule, context);
+        await Promise.resolve();
+        const second = await fetcher.fetch(pageModule, context);
+
+        assertEquals(source.value, "mutated");
+        assertEquals(first.props, { value: "returned" });
+        assertEquals(second.props, { value: "returned" });
+        assertEquals(calls, 1);
+      });
+    });
+
+    it("observes an application thenable exactly once", async () => {
+      await withProductionContext(async () => {
+        const { fetcher } = createFetcher();
+        let thenReads = 0;
+        let calls = 0;
+        const result: DataResult<{ source: string }> = {
+          props: { source: "thenable" },
+          revalidate: false,
+        };
+        const thenable = Object.defineProperty({}, "then", {
+          configurable: true,
+          get() {
+            thenReads++;
+            return (resolve: (value: unknown) => void) => resolve(result);
+          },
+        });
+        const pageModule = {
+          default: () => null,
+          getStaticData: () => {
+            calls++;
+            return thenable;
+          },
+        } as unknown as PageWithData;
+        const context = createContext({
+          url: new URL("https://example.test/thenable-snapshot"),
+        });
+
+        assertEquals(await fetcher.fetch(pageModule, context), result);
+        assertEquals(await fetcher.fetch(pageModule, context), result);
+        assertEquals(thenReads, 1);
+        assertEquals(calls, 1);
+      });
+    });
+
+    it("observes a genuine promise through its intrinsic state", async () => {
+      await withProductionContext(async () => {
+        const { fetcher } = createFetcher();
+        const result: DataResult<{ source: string }> = {
+          props: { source: "promise" },
+          revalidate: false,
+        };
+        const promised = Promise.resolve(result);
+        Object.defineProperty(promised, "then", {
+          configurable: true,
+          get() {
+            throw new Error("an own then field must not be consulted");
+          },
+        });
+        const pageModule = {
+          default: () => null,
+          getStaticData: () => promised,
+        } as unknown as PageWithData;
+
+        assertEquals(
+          await fetcher.fetch(
+            pageModule,
+            createContext({
+              url: new URL("https://example.test/intrinsic-promise"),
+            }),
+          ),
+          result,
+        );
+      });
+    });
+
+    it("accounts a bounded captured graph without re-traversing mutable props", async () => {
+      await withProductionContext(async () => {
+        const { fetcher } = createFetcher();
+        let nested: Record<string, unknown> = { leaf: "value" };
+        for (let depth = 0; depth < 20; depth++) nested = { child: nested };
+        let calls = 0;
+        const pageModule: PageWithData = {
+          default: () => null,
+          getStaticData: () => {
+            calls++;
+            return { props: nested, revalidate: false };
+          },
+        };
+
+        const first = await fetcher.fetch(pageModule, createContext());
+        const second = await fetcher.fetch(pageModule, createContext());
+
+        assertEquals(first.props, second.props);
+        assertNotStrictEquals(first.props, second.props);
+        assertEquals(calls, 1);
+      });
+    });
+
+    it("preserves redirect and revalidate semantics in detached cache results", async () => {
+      await withProductionContext(async () => {
+        const { fetcher } = createFetcher();
+        let calls = 0;
+        const pageModule: PageWithData = {
+          default: () => null,
+          getStaticData: () => {
+            calls++;
+            return {
+              redirect: { destination: "/original", permanent: false },
+              revalidate: 60,
+            };
+          },
+        };
+
+        const first = await fetcher.fetch(pageModule, createContext());
+        assertExists(first.redirect);
+        first.redirect.destination = "/caller-mutated";
+        const second = await fetcher.fetch(pageModule, createContext());
+
+        assertEquals(second, {
+          redirect: { destination: "/original", permanent: false },
+          revalidate: 60,
+        });
+        assertNotStrictEquals(first.redirect, second.redirect);
+        assertEquals(calls, 1);
+      });
+    });
+
     it("should coalesce concurrent cold-cache loads for the same key", async () => {
       await withProductionContext(async () => {
         const { fetcher } = createFetcher();
@@ -270,12 +574,21 @@ describe("StaticDataFetcher", () => {
           releaseLoad = resolve;
         });
 
-        const pageModule: PageWithData<{ version: number }> = {
+        const pageModule: PageWithData<{
+          version: number;
+          nested: { values: number[] };
+        }> = {
           default: () => null,
           getStaticData: async () => {
             callCount++;
             await loadGate;
-            return { props: { version: callCount }, revalidate: 60 };
+            return {
+              props: {
+                version: callCount,
+                nested: { values: [1, 2, 3] },
+              },
+              revalidate: 60,
+            };
           },
         };
         const context = createContext({ url: new URL("http://localhost/cold-page") });
@@ -299,6 +612,14 @@ describe("StaticDataFetcher", () => {
           results.map((result) => (result.props as { version: number }).version),
           [1, 1, 1],
         );
+        const resultProps = results.map((result) =>
+          result.props as { nested: { values: number[] } }
+        );
+        assertNotStrictEquals(resultProps[0], resultProps[1]);
+        assertNotStrictEquals(resultProps[0]!.nested, resultProps[1]!.nested);
+        resultProps[0]!.nested.values.push(4);
+        assertEquals(resultProps[1]!.nested.values, [1, 2, 3]);
+        assertEquals(resultProps[2]!.nested.values, [1, 2, 3]);
       });
     });
 
@@ -542,34 +863,26 @@ describe("StaticDataFetcher", () => {
       });
     });
 
-    it("retains non-serializable props by reference in the in-memory cache", async () => {
+    it("rejects non-plain static props consistently and never caches them", async () => {
       await withProductionContext(async () => {
         const { fetcher } = createFetcher();
-        const marker = Symbol("marker");
-        const props: Record<string, unknown> & { self?: unknown } = {
-          date: new Date("2026-01-02T03:04:05.000Z"),
-          map: new Map([["answer", 42]]),
-          big: 9_007_199_254_740_993n,
-          marker,
-        };
-        props.self = props;
         let calls = 0;
-        const pageModule: PageWithData<typeof props> = {
+        const pageModule: PageWithData = {
           default: () => null,
           getStaticData: () => {
             calls++;
-            return { props };
+            return { props: { callback: () => "unsafe" } };
           },
         };
 
-        const first = await fetcher.fetch(pageModule, createContext());
-        const second = await fetcher.fetch(pageModule, createContext());
-
-        assertStrictEquals(first.props, props);
-        assertStrictEquals(second.props, props);
-        assertStrictEquals((second.props as typeof props).self, props);
-        assertStrictEquals((second.props as typeof props).marker, marker);
-        assertEquals(calls, 1);
+        for (const options of [{}, { cacheScope: null }]) {
+          await assertRejects(
+            () => fetcher.fetch(pageModule, createContext(), options),
+            TypeError,
+            "Cached static data must contain only primitives",
+          );
+        }
+        assertEquals(calls, 2);
       });
     });
 
@@ -878,20 +1191,18 @@ describe("StaticDataFetcher", () => {
         active: number;
         activeForProject: number;
       }> = [];
-      const props = new Proxy(
-        { value: 1 },
-        {
-          ownKeys(target) {
-            publicationSnapshots.push(admission.snapshot(projectId));
-            return Reflect.ownKeys(target);
-          },
+      const resultWithObservedProps = Object.defineProperty({}, "props", {
+        enumerable: true,
+        get() {
+          publicationSnapshots.push(admission.snapshot(projectId));
+          return { value: 1 };
         },
-      );
+      }) as DataResult;
 
       const result = await fetcher.fetch(
         {
           default: () => null,
-          getStaticData: () => ({ props }),
+          getStaticData: () => resultWithObservedProps,
         },
         createContext({
           url: new URL("https://example.test/publication-admission"),
@@ -906,7 +1217,7 @@ describe("StaticDataFetcher", () => {
         },
       );
 
-      assertStrictEquals(result.props, props);
+      assertEquals(result.props, { value: 1 });
       assertEquals(publicationSnapshots.length > 0, true);
       assertEquals(
         publicationSnapshots.every((snapshot) =>
@@ -920,7 +1231,7 @@ describe("StaticDataFetcher", () => {
       });
     });
 
-    it("returns valid data when cache publication exceeds estimator complexity", async () => {
+    it("rejects data that exceeds snapshot complexity and never caches it", async () => {
       const { fetcher } = createFetcher();
       const scope = {
         projectId: `complex-cache-${crypto.randomUUID()}`,
@@ -940,21 +1251,13 @@ describe("StaticDataFetcher", () => {
         url: new URL("https://example.test/complex-cache-value"),
       });
 
-      const first = await fetcher.fetch(pageModule, context, {
-        cacheScope: scope,
-      });
-      const second = await fetcher.fetch(pageModule, context, {
-        cacheScope: scope,
-      });
-
-      assertStrictEquals(
-        (first.props as { items: number[] }).items,
-        items,
-      );
-      assertStrictEquals(
-        (second.props as { items: number[] }).items,
-        items,
-      );
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await assertRejects(
+          () => fetcher.fetch(pageModule, context, { cacheScope: scope }),
+          RangeError,
+          "node limit of 100,000",
+        );
+      }
       assertEquals(calls, 2);
     });
 
@@ -1791,19 +2094,21 @@ describe("StaticDataFetcher", () => {
           active: number;
           activeForProject: number;
         }> = [];
-        const refreshedProps = new Proxy(
-          { version: 2 },
+        const refreshedResult = Object.defineProperty(
+          { revalidate: 60 },
+          "props",
           {
-            ownKeys(target) {
+            enumerable: true,
+            get() {
               publicationSnapshots.push(admission.snapshot("test-project"));
-              return Reflect.ownKeys(target);
+              return { version: 2 };
             },
           },
-        );
+        ) as DataResult<{ version: number }>;
 
         const pageModule: PageWithData<{ version: number }> = {
           default: () => null,
-          getStaticData: () => ({ props: refreshedProps, revalidate: 60 }),
+          getStaticData: () => refreshedResult,
         };
 
         const context = createContext({ url: new URL("http://localhost/isr-success") });
@@ -1833,6 +2138,49 @@ describe("StaticDataFetcher", () => {
         assertEquals(admission.snapshot("test-project"), {
           active: 0,
           activeForProject: 0,
+        });
+      });
+    });
+
+    it("detaches a successful revalidation from its hook-owned source", async () => {
+      await withProductionContext(async () => {
+        const { cache, fetcher } = createFetcher();
+        const context = createContext({
+          url: new URL("http://localhost/isr-detached-source"),
+        });
+        const cacheKey = cache.createCacheKey(context, TEST_MODULE_PATH);
+        assertExists(cacheKey);
+        cache.set(cacheKey, {
+          data: { props: { version: 1 }, revalidate: 0 },
+          timestamp: Date.now() - 10_000,
+          revalidate: 0,
+        });
+
+        const refreshedProps = { version: 2, nested: { label: "captured" } };
+        const pageModule: PageWithData<typeof refreshedProps> = {
+          default: () => null,
+          getStaticData: () => ({
+            props: refreshedProps,
+            revalidate: 3_600,
+          }),
+        };
+
+        assertEquals((await fetcher.fetch(pageModule, context)).props, {
+          version: 1,
+        });
+        await settleRevalidation();
+        refreshedProps.version = 99;
+        refreshedProps.nested.label = "mutated";
+
+        const retained = cache.get(cacheKey);
+        assertExists(retained);
+        assertEquals(retained.data.props, {
+          version: 2,
+          nested: { label: "captured" },
+        });
+        assertEquals((await fetcher.fetch(pageModule, context)).props, {
+          version: 2,
+          nested: { label: "captured" },
         });
       });
     });

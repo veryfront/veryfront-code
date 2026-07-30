@@ -18,14 +18,16 @@ import type {
   DataContext,
   InferGetServerDataProps,
   PageWithData,
+  StaticDataResult,
+  StaticDataValue,
   StaticPathsResult,
 } from "veryfront";
 ```
 
-`DataFetcher`, `FetchDataOptions`, `DataResult`, and the cache types are
-framework internals. They are intentionally absent from the published package
-exports. Repository source that implements or tests the rendering pipeline
-uses `#veryfront/data`.
+`DataFetcher`, `FetchDataOptions`, the unrestricted `DataResult`, and the cache
+types are framework internals. They are intentionally absent from the published
+package exports. Repository source that implements or tests the rendering
+pipeline uses `#veryfront/data`.
 
 | Export                    | Contract                                                  |
 | ------------------------- | --------------------------------------------------------- |
@@ -33,6 +35,8 @@ uses `#veryfront/data`.
 | `redirect(destination)`   | Produces a temporary or permanent redirect control result |
 | `DataContext`             | Request, URL, route parameter, and query context          |
 | `PageWithData<T>`         | Page module shape with optional data hooks                |
+| `StaticDataResult<T>`     | Runtime-aligned result type for static hooks              |
+| `StaticDataValue`         | Recursive static props representation                     |
 | `StaticPathsResult`       | Static route parameters and fallback policy               |
 | `InferGetServerDataProps` | Extracts the props type from a `PageWithData` declaration |
 
@@ -61,6 +65,13 @@ interface DataContext {
   url: URL;
 }
 ```
+
+The framework validates and snapshots context identity before dispatch. The
+context and option containers must be plain records with own enumerable data
+properties; inherited fields, accessors, and proxies reject without being
+executed. `params` must be a plain or null-prototype record whose values are
+strings or dense plain string arrays. Other runtime representations reject
+instead of being coerced into an identity that could alias another request.
 
 `getStaticData` receives only `params` and `url`. Request-specific state is not
 available to a static loader.
@@ -92,6 +103,11 @@ interface DataResult<Props = unknown> {
 }
 ```
 
+Use the exported `StaticDataResult<Props>` type for static hooks. Its recursive
+`StaticDataValue` constraint mirrors the cacheable runtime contract while the
+general `DataResult<Props>` type remains available to unrestricted server-data
+hooks.
+
 Return one active outcome per invocation: defined `props`, defined `redirect`,
 or `notFound: true`. Returning more than one rejects with `TypeError`.
 `notFound: false` is inactive and may accompany props. The boundary snapshots
@@ -100,8 +116,8 @@ and `redirect()` instead of assembling control objects manually. The helpers
 can be returned or thrown. Every other thrown value remains an error.
 
 Use finite, non-negative seconds for `revalidate`. `false` and an omitted value
-disable background revalidation. Legacy numeric edge cases remain accepted for
-compatibility, but they are not a stable application contract.
+disable background revalidation. Zero is valid and makes an entry eligible for
+revalidation as soon as its timestamp is in the past.
 
 `getStaticPaths` returns route parameters and an explicit fallback mode:
 
@@ -153,8 +169,11 @@ output tree or publish a partial manifest.
 ## Internal programmatic execution
 
 Framework code can use the internal class with page modules and explicit
-contexts. The optional legacy constructor argument is accepted for source
-compatibility and is ignored.
+contexts. The constructor accepts only an optional `DataFetcherOptions` object.
+The legacy runtime-adapter position was removed; adapters belong to the owning
+rendering or extension boundary and are never accepted or ignored by data core.
+Passing the former two-argument shape fails at runtime instead of discarding an
+argument.
 
 ```ts
 import { DataFetcher } from "#veryfront/data";
@@ -182,8 +201,8 @@ try {
 }
 ```
 
-The optional second constructor argument configures internal execution policy.
-For example, `{ staticPathsTimeoutMs: 30_000 }` applies an explicit local
+The optional constructor options object configures internal execution policy.
+For example, `new DataFetcher({ staticPathsTimeoutMs: 30_000 })` applies an explicit local
 deadline to `getStaticPaths`; omitted or zero preserves the historical
 unbounded behavior.
 
@@ -219,11 +238,13 @@ before retirement. Scope and generation IDs are validated as non-empty strings
 of at most 1,024 characters and are snapshotted before asynchronous work.
 
 `getStaticPaths(pageModule, { projectId, signal })` accepts the same trusted
-project identity and caller cancellation. Internal callers may also supply
-non-negative `maxPaths` and `maxArrayParamSegments` admission limits. The
-production renderer supplies the build limits above. `destroy()` is idempotent
-and prevents later use, but it cannot forcibly terminate project code that has
-already started.
+project identity and caller cancellation. Its options container must be a plain
+record of recognized own data fields; accessors, proxies, unknown fields, and
+invalid signals reject before project code runs. Internal callers may also
+supply non-negative `maxPaths` and `maxArrayParamSegments` admission limits.
+The production renderer supplies the build limits above. `destroy()` is
+idempotent and prevents later use, but it cannot forcibly terminate project
+code that has already started.
 
 ## Cache and revalidation behavior
 
@@ -252,43 +273,66 @@ being called once per incoming request. A refresh replaces or defers only the
 exact cache generation that started it; eviction, expiry, or a newer cold load
 cannot be overwritten by older background work.
 
-Cached results expire from the in-memory cache after ten minutes and are
-returned by reference while present. Treat returned props as immutable.
-Mutating a cached result can affect later callers that share the same
-`DataFetcher`.
+Every `getStaticData` result is captured as bounded framework-owned plain data
+before dependency success is recorded. This applies consistently when caching
+is enabled or disabled. Cache storage is immutable and never exposed to a
+loader or caller. Every cache hit, cold-singleflight participant, and uncached
+static caller receives a fresh mutable graph; mutating one result cannot affect
+another request or the retained byte accounting.
+
+Static props may contain `null`, `undefined`, booleans, numbers, strings, dense
+plain arrays, and plain or null-prototype records. Cycles and repeated references
+are preserved within each detached graph. Functions and symbols, `bigint`,
+accessors, proxies, sparse or extended arrays, custom prototypes, dates, regular
+expressions, collections, and typed or shared buffers reject. Redirect,
+not-found, and revalidation fields retain their validated semantics.
+
+One static result is limited to 64 levels, 100,000 value/reference visits, and
+a deterministic 10 MiB retained-size charge. A representation or limit failure
+rejects the loader result within its deadline and execution admission; it is not
+silently retained or served uncached.
 
 The cache defaults to 500 entries and 50 MiB process-wide, with a ceiling of
 100 entries and 10 MiB for one project. All releases and content versions for
 the same project share that project quota. A project that reaches its ceiling
 evicts its own least-recently-used entries before it can displace a peer.
-Entry limits and insertion-time estimated-byte quotas can be configured with:
+Entry limits and retained-byte quotas can be configured with:
 
 - `DATA_FETCHING_MAX_ENTRIES`
 - `DATA_FETCHING_MAX_ENTRIES_PER_PROJECT`
 - `DATA_FETCHING_MAX_SIZE_MB`
 - `DATA_FETCHING_MAX_SIZE_MB_PER_PROJECT`
 
-The byte quotas use a bounded, best-effort estimate of data observable at
-insertion time, including own data properties and recognized backing stores.
-They are not a hard retained-memory cap: later mutation and memory reachable
-only through closures, accessors, custom prototypes, proxies, or opaque engine
-state can exceed the accounting. The estimator reads property descriptors
-rather than deliberately invoking accessors, although reflecting on a proxy
-can execute its traps under the reference-preserving cache contract. Hard
-containment requires a separately approved restricted-value or snapshot and
-serialization contract; the current public cache intentionally preserves
-result references.
+The byte quotas charge the immutable stored snapshot, the complete framed key,
+and the cache-entry metadata. Snapshot size is recorded by the same bounded
+traversal that creates storage, so later caller mutation cannot make accounting
+stale. Direct internal cache tests can inject a size estimator, but production
+static publication uses the recorded snapshot charge.
 
 The per-project values must not exceed their global values. Malformed or
 out-of-range data-safety overrides fail during startup instead of silently
-using a default. If value sizing or cache publication fails, the valid fresh
-loader result is still returned uncached and a later request may retry.
+using a default. If only configured cache capacity rejects an already valid
+snapshot, the caller still receives a detached fresh result and a later request
+may retry publication. Unexpected cache publication or accounting failures
+propagate instead of being treated as ordinary capacity pressure.
+
+Direct JavaScript calls are bounded independently of HTTP validation. A cache
+scope version and project ID may contain at most 1,024 characters. Module paths,
+project directories, invalidation patterns, and pathnames are limited to 4,096
+characters; canonicalized pathnames are checked again after percent expansion.
+URLs and query strings are limited to 65,536 characters, and the complete
+framed cache key to 16,384. Params accept at most 256 properties, 1,024
+characters per key, 4,096 per string value, 1,024 segments per array, and 65,536
+characters in total.
 
 `clearCache()` clears the instance cache. `clearCache(pattern)` clears entries
 whose decoded project-scoped key contains the pattern. A full clear invalidates
 all older in-flight writes; a pattern clear invalidates only matching writes.
 Post-clear requests do not join invalidated single-flight work, and unrelated
-pattern writes remain eligible to populate their entries.
+pattern writes remain eligible to populate their entries. Invalidation
+patterns and pathnames must be primitive strings, and project invalidation uses
+the same validated non-empty project identity as execution. An empty pattern
+retains the documented full-clear behavior.
 
 ## Timeouts and isolation limits
 
@@ -310,8 +354,9 @@ backward compatibility. Internal integrations can opt in with
 `DataFetcherOptions.staticPathsTimeoutMs`. The production rendering pipeline
 uses a 10-second result deadline. It covers both the hook and result validation.
 A timeout or caller abort stops waiting, but the framework observes the late
-settlement and retains the execution lease until project code and validation
-settle.
+settlement and retains the execution lease until project code settles.
+Validation that starts before the deadline retains the same lease; a result
+that arrives after the timeout is not traversed.
 
 This is an in-process completion deadline, not CPU or memory preemption. A
 synchronous CPU-bound hook can block the event loop past the deadline and is
@@ -336,28 +381,30 @@ When data worker isolation is enabled:
 - request bodies are streamed into a bounded buffer;
 - malformed `Content-Length` values are rejected;
 - declared and actual body sizes are limited to 10 MiB;
-- one worker accepts at most 20 active requests by default, configured through
-  the strictly validated `WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER`;
+- each worker is structurally serialized to one active request; this invariant
+  is not configurable;
 - rejected request bodies do not count as dependency failures in the project
   circuit breaker;
 - host-side worker-pool shedding does not open a project's dependency circuit.
 
 ## Internal files
 
-| File                      | Responsibility                                      |
-| ------------------------- | --------------------------------------------------- |
-| `index.ts`                | Internal module barrel                              |
-| `data-fetcher.ts`         | Loader selection and orchestration                  |
-| `data-fetching-cache.ts`  | Project-scoped in-memory static-data cache          |
-| `server-data-fetcher.ts`  | Request-time execution and worker boundary          |
-| `static-data-fetcher.ts`  | Static cache, single-flight loads, and revalidation |
-| `static-paths-fetcher.ts` | Static path validation, admission, and deadline     |
-| `static-path-limits.ts`   | Central production static-path limits               |
-| `execution-admission.ts`  | Global and per-project hook capacity                |
-| `abort-utils.ts`          | Exact caller-abort composition and detached waiting |
-| `helpers.ts`              | Branded redirect and not-found results              |
-| `schemas/data.schema.ts`  | Data contract schemas and inferred types            |
-| `types.ts`                | Page loader interfaces and type utilities           |
+| File                       | Responsibility                                      |
+| -------------------------- | --------------------------------------------------- |
+| `index.ts`                 | Internal module barrel                              |
+| `data-fetcher.ts`          | Loader selection and orchestration                  |
+| `data-fetching-cache.ts`   | Project-scoped in-memory static-data cache          |
+| `server-data-fetcher.ts`   | Request-time execution and worker boundary          |
+| `static-data-fetcher.ts`   | Static cache, single-flight loads, and revalidation |
+| `cache-result-snapshot.ts` | Bounded immutable static-result capture and cloning |
+| `data-limits.ts`           | Direct-call identity and snapshot resource limits   |
+| `static-paths-fetcher.ts`  | Static path validation, admission, and deadline     |
+| `static-path-limits.ts`    | Central production static-path limits               |
+| `execution-admission.ts`   | Global and per-project hook capacity                |
+| `abort-utils.ts`           | Exact caller-abort composition and detached waiting |
+| `helpers.ts`               | Branded redirect and not-found results              |
+| `schemas/data.schema.ts`   | Data contract schemas and inferred types            |
+| `types.ts`                 | Page loader interfaces and type utilities           |
 
 Application code must use the root `"veryfront"` exports shown above. Do not
 publish or depend on source deep imports.
