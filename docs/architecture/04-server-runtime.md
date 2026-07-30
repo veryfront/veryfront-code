@@ -53,11 +53,13 @@ ordered `AggregateError`; completion is logged only when no cleanup failed.
 Process owners share concurrent attempts and retain a retry path after rejection,
 while CLI execution maps incomplete cleanup to a nonzero exit status.
 
-## Generated framework candidates
+## Generated framework CSS candidates
 
-Development Tailwind scanning consumes a tracked framework-candidate array.
+Development CSS generation consumes a tracked framework-candidate array.
 Candidate discovery is a side-effect-free, sorted, deduplicated scan of React
-UI, chat, and primitive sources that excludes test/spec files. The
+UI, chat, and primitive sources that excludes test/spec files. Core passes the
+result to the registered provider-neutral `CSSProcessor`; candidate extraction
+does not select or import a vendor engine. The
 `generate:framework-candidates:check` task compares source with the tracked array
 without writing and is part of `generate:manifests:check`. Only a genuinely
 missing optional root is ignored; traversal and read failures propagate.

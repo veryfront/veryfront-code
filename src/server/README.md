@@ -168,11 +168,26 @@ Node service startup uses the same Platform listener owner as adapter-backed
 servers. This owner also retires a native Node 18 listener that finishes a
 queued hostname lookup and binds after an earlier stop.
 
-## Generated framework styling candidates
+## CSS request boundary
 
-Framework component Tailwind candidates are collected recursively from the
+The development stylesheet route reads `styles.stylesheet`, or the
+conventional `globals.css` when no path is configured. If no project
+stylesheet is available, it uses the registered `CSSProcessor` extension's
+`defaultStylesheet`. Server captures the provider-neutral compilation and
+optimization identities before cache or artifact resolution; it does not
+import a vendor CSS engine or switch to one after an asynchronous failure.
+
+Compilation failures return a non-success `application/problem+json` response.
+Prepared and remote artifacts are accepted only when their content, style
+profile, source selector, and exact CSS pipeline identity agree with the
+request.
+
+## Generated framework CSS candidates
+
+Framework component class-name candidates are collected recursively from the
 tracked React UI, chat, and primitive source roots. Test/spec files are excluded
-and the result is sorted and deduplicated. Run
+and the result is sorted and deduplicated before it reaches the registered
+`CSSProcessor`. Run
 `deno task generate:framework-candidates:check` to compare current source with
 the tracked generated array without writing files; this check is also part of
 `generate:manifests:check`. Regeneration remains part of the build-generation

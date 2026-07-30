@@ -198,6 +198,16 @@ describe("createBuiltinExtensions", () => {
       source.includes('from "../../extensions/ext-sandbox-shell-tools/src/index.ts"'),
       false,
     );
+    assertEquals(
+      source.includes("ext-studio-capture-html2canvas"),
+      false,
+    );
+    assertEquals(
+      OPTIONAL_BUILTIN_EXTENSIONS.some((definition) =>
+        definition.name === "ext-studio-capture-html2canvas"
+      ),
+      false,
+    );
   });
 
   it("skips unavailable optional built-in implementations", async () => {

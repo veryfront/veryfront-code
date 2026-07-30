@@ -5961,4 +5961,19 @@ execution-lifecycle policies require an explicit strict replacement. Those
 architectural changes are handled in a separate checkpoint so this safe input
 and identity hardening remains independently reviewable.
 
+### CSS extension-boundary follow-up checkpoint
+
+Recovered tests and operator references now exercise the provider-neutral CSS
+contracts introduced by the Build, Extensions, Rendering, and Server reviews.
+The build facade tests register explicit optimization and purging engines,
+production streaming tests register an explicit test engine, and built-in
+extension tests keep the HTML-capture implementation out of automatic core
+composition. The support matrix records the exact extension ownership and
+capabilities, including PurgeCSS's declared CPU-count read, while the Server
+reference documents request-bound CSS identity and fail-closed compilation.
+
+The focused staged portfolio passes five suites with 63 nested steps. This
+follow-up changes no production source and does not by itself close the still
+open top-level `server` revalidation.
+
 Update this ledger in the same commit that closes or reopens an audit unit.
