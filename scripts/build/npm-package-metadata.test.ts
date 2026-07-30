@@ -5,11 +5,13 @@ import {
   BROWSER_SAFE_EXPORTS,
 } from "./browser-safe-exports.mjs";
 import {
-  EXTENSION_OWNED_DEPENDENCIES,
+  deriveExtensionDependencyOwnership,
+  type ExtensionDependencyOwnership,
+  loadExtensionDependencyOwnership,
   normalizeNpmPackageMetadata,
+  NpmPackageOwnershipError,
   removeInternalNpmEntryPointExports,
-  ROOT_OPTIONAL_RUNTIME_PEERS,
-  ROOT_SHARED_WORKSPACE_DEPENDENCIES,
+  repositoryExtensionDependencyOwnership,
 } from "./npm-package-metadata.ts";
 import {
   type ExtensionManifest,
@@ -333,226 +335,395 @@ Deno.test("npm publish skips extension packages marked publish false", async () 
   }
 });
 
-// Extensions whose implementations are statically imported by
-// src/extensions/builtin-extensions.ts and therefore ship inside the root
-// npm package. Their dependencies must stay in root; every other workspace
-// extension's dependencies must be stripped via EXTENSION_OWNED_DEPENDENCIES.
-const ROOT_BUNDLED_EXTENSIONS = new Set([
-  "ext-schema-zod",
-  "ext-llm-openai",
-  "ext-llm-anthropic",
-  "ext-llm-google",
-  "ext-eval-report-mlflow",
-]);
+type GeneratedPackageMetadata = Parameters<
+  typeof normalizeNpmPackageMetadata
+>[0];
 
-Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests", async () => {
+function extensionManifest(
+  name: string,
+  imports: Record<string, string> = {},
+): Record<string, unknown> {
+  return {
+    name,
+    version: "1.2.3",
+    exports: "./src/index.ts",
+    veryfront: { extension: true },
+    imports,
+  };
+}
+
+function fixtureOwnership(): ExtensionDependencyOwnership {
+  return deriveExtensionDependencyOwnership([{
+    manifestPath: "extensions/ext-alpha/deno.json",
+    manifest: extensionManifest("@veryfront/ext-alpha", {
+      alpha: "npm:package-alpha@1.2.3",
+    }),
+  }]);
+}
+
+function assertOwnershipError(
+  callback: () => unknown,
+  code: NpmPackageOwnershipError["code"],
+): NpmPackageOwnershipError {
+  const error = assertThrows(callback, NpmPackageOwnershipError);
+  assertEquals(error.code, code);
+  return error;
+}
+
+Deno.test("derives the complete extension dependency inventory from workspace manifests", async () => {
   const denoConfig = JSON.parse(
     await Deno.readTextFile("deno.json"),
   ) as RootPackageConfig;
-  const owned = new Set<string>(EXTENSION_OWNED_DEPENDENCIES);
-  const optionalPeers = new Set<string>(ROOT_OPTIONAL_RUNTIME_PEERS);
-  const rootShared = new Set<string>(ROOT_SHARED_WORKSPACE_DEPENDENCIES);
-
+  const ownership = repositoryExtensionDependencyOwnership();
   const manifestPaths = firstPartyExtensionManifestPaths(denoConfig);
+
+  assertEquals(manifestPaths.length > 0, true);
+  assertEquals(Object.getPrototypeOf(ownership.packages), null);
+  assertEquals(Object.isFrozen(ownership), true);
+  assertEquals(Object.isFrozen(ownership.packages), true);
   assertEquals(
-    manifestPaths.length > 0,
-    true,
-    "expected workspace extension manifests",
+    Object.keys(ownership.packages),
+    Object.keys(ownership.packages).toSorted(),
   );
 
   for (const manifestPath of manifestPaths) {
     const manifest = JSON.parse(
       await Deno.readTextFile(manifestPath),
     ) as ExtensionManifest;
-    const extensionDirectory = manifestPath.split("/")[1];
-    const dependencies = Object.keys(manifestDependencies(manifest));
-
-    if (ROOT_BUNDLED_EXTENSIONS.has(extensionDirectory)) {
-      for (const dependency of dependencies) {
-        assertEquals(
-          owned.has(dependency),
-          false,
-          `${dependency} is required by root-bundled ${extensionDirectory} and must not be stripped from the root veryfront package`,
-        );
-      }
-      continue;
-    }
-
-    for (const dependency of dependencies) {
-      assertEquals(
-        owned.has(dependency) || optionalPeers.has(dependency) ||
-          rootShared.has(dependency),
-        true,
-        `${dependency} (declared by ${manifestPath}) must be classified as extension-owned, an optional root peer, or an intentional root/workspace shared dependency`,
+    for (
+      const [dependencyName, version] of Object.entries(
+        manifestDependencies(manifest),
+      )
+    ) {
+      const owner = ownership.packages[dependencyName]?.find((candidate) =>
+        candidate.manifestPath === manifestPath
       );
+      assertEquals(owner, {
+        extensionName: manifest.name,
+        manifestPath,
+        version,
+      });
+      assertEquals(Object.isFrozen(owner), true);
     }
   }
 });
 
-describe("normalizeNpmPackageMetadata", () => {
-  it("removes source files from the published npm file list", () => {
-    const pkg = normalizeNpmPackageMetadata({
-      files: ["esm", "script", "src", "bin", "README.md"],
+describe("extension dependency ownership", () => {
+  it("is deterministic and accepts multiple owners of one exact version", () => {
+    const sources = [{
+      manifestPath: "extensions/ext-zeta/deno.json",
+      manifest: extensionManifest("@veryfront/ext-zeta", {
+        zeta: "npm:package-zeta@2.0.0/subpath",
+        shared: "npm:package-shared@3.4.5",
+      }),
+    }, {
+      manifestPath: "extensions/ext-alpha/deno.json",
+      manifest: extensionManifest("@veryfront/ext-alpha", {
+        alpha: "https://esm.sh/package-alpha@1.2.3?target=deno",
+        shared: "npm:package-shared@3.4.5",
+      }),
+    }];
+
+    const forward = deriveExtensionDependencyOwnership(sources);
+    const reverse = deriveExtensionDependencyOwnership(sources.toReversed());
+
+    assertEquals(JSON.stringify(forward), JSON.stringify(reverse));
+    assertEquals(Object.keys(forward.packages), [
+      "package-alpha",
+      "package-shared",
+      "package-zeta",
+    ]);
+    assertEquals(forward.packages["package-shared"], [{
+      extensionName: "@veryfront/ext-alpha",
+      manifestPath: "extensions/ext-alpha/deno.json",
+      version: "3.4.5",
+    }, {
+      extensionName: "@veryfront/ext-zeta",
+      manifestPath: "extensions/ext-zeta/deno.json",
+      version: "3.4.5",
+    }]);
+  });
+
+  it("keeps independently versioned extension dependencies isolated", () => {
+    const ownership = deriveExtensionDependencyOwnership([{
+      manifestPath: "extensions/ext-alpha/deno.json",
+      manifest: extensionManifest("@veryfront/ext-alpha", {
+        dependency: "npm:package-shared@1.0.0",
+      }),
+    }, {
+      manifestPath: "extensions/ext-zeta/deno.json",
+      manifest: extensionManifest("@veryfront/ext-zeta", {
+        dependency: "npm:package-shared@2.0.0",
+      }),
+    }]);
+
+    assertEquals(ownership.packages["package-shared"], [{
+      extensionName: "@veryfront/ext-alpha",
+      manifestPath: "extensions/ext-alpha/deno.json",
+      version: "1.0.0",
+    }, {
+      extensionName: "@veryfront/ext-zeta",
+      manifestPath: "extensions/ext-zeta/deno.json",
+      version: "2.0.0",
+    }]);
+  });
+
+  it("fails closed on conflicting aliases inside one extension manifest", () => {
+    assertOwnershipError(
+      () =>
+        deriveExtensionDependencyOwnership([{
+          manifestPath: "extensions/ext-alpha/deno.json",
+          manifest: extensionManifest("@veryfront/ext-alpha", {
+            first: "npm:package-shared@1.0.0",
+            second: "npm:package-shared@2.0.0/subpath",
+          }),
+        }]),
+      "conflicting-extension-dependency-version",
+    );
+  });
+
+  it("fails closed on duplicate extension identities", () => {
+    assertOwnershipError(
+      () =>
+        deriveExtensionDependencyOwnership([{
+          manifestPath: "extensions/ext-alpha/deno.json",
+          manifest: extensionManifest("@veryfront/ext-duplicate"),
+        }, {
+          manifestPath: "extensions/ext-zeta/deno.json",
+          manifest: extensionManifest("@veryfront/ext-duplicate"),
+        }]),
+      "duplicate-extension-identity",
+    );
+  });
+
+  for (
+    const [description, manifest] of [
+      [
+        "a non-exact extension version",
+        { ...extensionManifest("@veryfront/ext-alpha"), version: "^1.2.3" },
+      ],
+      [
+        "a non-first-party extension identity",
+        extensionManifest("package-alpha"),
+      ],
+      [
+        "an npm target without a version",
+        extensionManifest("@veryfront/ext-alpha", {
+          dependency: "npm:package-alpha",
+        }),
+      ],
+      [
+        "a non-exact dependency version",
+        extensionManifest("@veryfront/ext-alpha", {
+          dependency: "npm:package-alpha@^1.2.3",
+        }),
+      ],
+      [
+        "an export that escapes its package",
+        {
+          ...extensionManifest("@veryfront/ext-alpha"),
+          exports: "../src/index.ts",
+        },
+      ],
+      [
+        "an exports map without its root entry point",
+        {
+          ...extensionManifest("@veryfront/ext-alpha"),
+          exports: { "./feature": "./src/feature.ts" },
+        },
+      ],
+    ] as const
+  ) {
+    it(`rejects ${description}`, () => {
+      assertOwnershipError(
+        () =>
+          deriveExtensionDependencyOwnership([{
+            manifestPath: "extensions/ext-alpha/deno.json",
+            manifest,
+          }]),
+        "invalid-extension-manifest",
+      );
     });
+  }
+
+  it("does not invoke accessors while rejecting hostile manifests", () => {
+    let getterInvoked = false;
+    const manifest = extensionManifest("@veryfront/ext-alpha");
+    Object.defineProperty(manifest, "name", {
+      enumerable: true,
+      get() {
+        getterInvoked = true;
+        return "@veryfront/ext-alpha";
+      },
+    });
+
+    assertOwnershipError(
+      () =>
+        deriveExtensionDependencyOwnership([{
+          manifestPath: "extensions/ext-alpha/deno.json",
+          manifest,
+        }]),
+      "invalid-extension-manifest",
+    );
+    assertEquals(getterInvoked, false);
+  });
+
+  it("rejects duplicate workspace entries before reading manifests", async () => {
+    const root = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        `${root}/deno.json`,
+        JSON.stringify({
+          workspace: ["./extensions/ext-alpha", "./extensions/EXT-ALPHA"],
+        }),
+      );
+      assertOwnershipError(
+        () => loadExtensionDependencyOwnership(new URL(`file://${root}/`)),
+        "duplicate-workspace-entry",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+});
+
+describe("normalizeNpmPackageMetadata", () => {
+  const ownership = fixtureOwnership();
+
+  it("removes source files and pins only automatic dependency ranges", () => {
+    const pkg = normalizeNpmPackageMetadata({
+      files: ["esm", "script", "src", "/src", "bin", "README.md"],
+      dependencies: { "package-core": "^1.0.0" },
+      optionalDependencies: { "package-optional": "~2.0.0" },
+      devDependencies: { "package-development": "^3.0.0" },
+      peerDependencies: { "package-peer": "^4.0.0" },
+      overrides: { "package-transitive": "~5.0.0" },
+    }, ownership);
 
     assertEquals(pkg.files, ["esm", "script", "bin", "README.md"]);
+    assertEquals(pkg.dependencies, { "package-core": "1.0.0" });
+    assertEquals(pkg.optionalDependencies, { "package-optional": "2.0.0" });
+    assertEquals(pkg.devDependencies, { "package-development": "3.0.0" });
+    assertEquals(pkg.peerDependencies, { "package-peer": "^4.0.0" });
+    assertEquals(pkg.overrides, { "package-transitive": "~5.0.0" });
   });
 
-  it("keeps opt-in feature packages out of automatic npm installs", () => {
-    const pkg = normalizeNpmPackageMetadata({
+  for (
+    const [section, createPackage] of [
+      ["dependencies", () => ({ dependencies: { "package-alpha": "1.2.3" } })],
+      [
+        "optionalDependencies",
+        () => ({ optionalDependencies: { "package-alpha": "1.2.3" } }),
+      ],
+      [
+        "peerDependencies",
+        () => ({ peerDependencies: { "package-alpha": "^1.2.3" } }),
+      ],
+      [
+        "peerDependenciesMeta",
+        () => ({
+          peerDependenciesMeta: { "package-alpha": { optional: true } },
+        }),
+      ],
+      [
+        "devDependencies",
+        () => ({ devDependencies: { "package-alpha": "1.2.3" } }),
+      ],
+      ["overrides", () => ({ overrides: { "package-alpha": "1.2.3" } })],
+    ] satisfies readonly [string, () => GeneratedPackageMetadata][]
+  ) {
+    it(`fails closed when ${section} claims an extension-owned package`, () => {
+      const error = assertOwnershipError(
+        () => normalizeNpmPackageMetadata(createPackage(), ownership),
+        "root-extension-dependency-collision",
+      );
+      assertStringIncludes(error.location, `package.json.${section}`);
+      assertStringIncludes(error.message, "extensions/ext-alpha/deno.json");
+    });
+  }
+
+  it("does not partially mutate metadata when ownership validation fails", () => {
+    const pkg = {
+      files: ["esm", "src"],
       dependencies: {
-        "@kreuzberg/node": "^4.4.2",
-        "@kreuzberg/wasm": "4.5.2",
-        "@opentelemetry/api": "1.9.1",
-        "@opentelemetry/exporter-metrics-otlp-http": "0.219.0",
-        "@opentelemetry/sdk-metrics": "2.8.0",
-        "@opentelemetry/sdk-node": "0.218.0",
-        "@sentry/deno": "10.68.0",
-        "@sentry/node": "10.68.0",
-        "brace-expansion": "5.0.8",
-        "gaxios": "7.2.0",
-        "gcp-metadata": "8.1.2",
-        "protobufjs": "7.6.5",
-        "zod": "4.3.6",
+        "package-alpha": "^1.2.3",
+        "package-core": "^4.5.6",
       },
-      optionalDependencies: {
-        "@huggingface/transformers": "^4.2.0",
-      },
-    });
+    };
+    const before = structuredClone(pkg);
 
-    assertEquals(pkg.dependencies, { zod: "4.3.6" });
-    assertEquals(pkg.optionalDependencies, undefined);
-    assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
-    });
-    assertEquals(pkg.peerDependenciesMeta, {
-      "@huggingface/transformers": { optional: true },
-    });
+    assertOwnershipError(
+      () => normalizeNpmPackageMetadata(pkg, ownership),
+      "root-extension-dependency-collision",
+    );
+    assertEquals(pkg, before);
   });
 
-  it("keeps sandbox shell extension packages out of automatic npm installs", () => {
-    const pkg = normalizeNpmPackageMetadata({
-      dependencies: {
-        "bash-tool": "1.3.16",
-        "just-bash": "2.14.5",
-        zod: "4.3.6",
-      },
-    });
-
-    assertEquals(pkg.dependencies, { zod: "4.3.6" });
-    assertEquals(pkg.optionalDependencies, undefined);
-    assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
-    });
-    assertEquals(pkg.peerDependenciesMeta, {
-      "@huggingface/transformers": { optional: true },
-    });
+  it("detects extension-owned packages hidden behind npm aliases", () => {
+    const error = assertOwnershipError(
+      () =>
+        normalizeNpmPackageMetadata({
+          dependencies: {
+            "package-alias": "npm:package-alpha@^1.2.3",
+          },
+        }, ownership),
+      "root-extension-dependency-collision",
+    );
+    assertStringIncludes(error.message, "npm alias package-alias");
   });
 
-  it("declares opaque optional runtime peers even when dnt cannot trace them", () => {
-    // The @huggingface/transformers import is opaque (invisible to dnt), so the
-    // generated package.json never contains it; the optional peer must still be
-    // declared or npm consumers get no installable remedy for local AI models.
-    const pkg = normalizeNpmPackageMetadata({
-      dependencies: { zod: "4.3.6" },
-    });
-
-    assertEquals(pkg.peerDependencies?.["@huggingface/transformers"], "^4.2.0");
-    assertEquals(pkg.peerDependenciesMeta?.["@huggingface/transformers"], {
-      optional: true,
-    });
+  it("detects extension-owned packages in version-qualified overrides", () => {
+    const error = assertOwnershipError(
+      () =>
+        normalizeNpmPackageMetadata({
+          overrides: {
+            "package-alpha@^1.0.0": "1.2.3",
+          },
+        }, ownership),
+      "root-extension-dependency-collision",
+    );
+    assertStringIncludes(error.message, "package-alpha");
   });
 
-  it("keeps first-party extension implementation packages out of root npm metadata", () => {
-    const pkg = normalizeNpmPackageMetadata({
-      dependencies: {
-        "@babel/parser": "^7.29.2",
-        "@mdx-js/mdx": "^3.1.1",
-        "@types/hast": "^3.0.3",
-        esbuild: "^0.28.1",
-        jose: "^5.9.6",
-        redis: "^5.11.0",
-        tailwindcss: "^4.2.2",
-        unified: "^11.0.5",
-        zod: "4.3.6",
-      },
-    });
-
-    assertEquals(pkg.dependencies, { zod: "4.3.6" });
-    assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
-      redis: "^5.11.0",
-    });
-    assertEquals(pkg.peerDependenciesMeta, {
-      "@huggingface/transformers": { optional: true },
-      redis: { optional: true },
-    });
+  it("rejects nested override records instead of overlooking their dependencies", () => {
+    assertOwnershipError(
+      () =>
+        normalizeNpmPackageMetadata({
+          overrides: {
+            parent: { "package-alpha": "1.2.3" },
+          } as unknown as Record<string, string>,
+        }, ownership),
+      "invalid-generated-package-metadata",
+    );
   });
 
-  it("removes stale direct AI SDK metadata from automatic npm installs", () => {
-    const pkg = normalizeNpmPackageMetadata({
-      dependencies: {
-        ai: "^6.0.0",
-        zod: "4.3.6",
-      },
-    });
-
-    assertEquals(pkg.dependencies, { zod: "4.3.6" });
-    assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
-    });
-    assertEquals(pkg.peerDependenciesMeta, {
-      "@huggingface/transformers": { optional: true },
-    });
+  it("rejects malformed generated dependency records", () => {
+    assertOwnershipError(
+      () =>
+        normalizeNpmPackageMetadata({
+          dependencies: {
+            "package-core": 42,
+          } as unknown as Record<string, string>,
+        }, ownership),
+      "invalid-generated-package-metadata",
+    );
   });
 
-  it("removes stale npm-only type dev dependencies", () => {
-    const pkg = normalizeNpmPackageMetadata({
-      devDependencies: {
-        "@types/better-sqlite3": "^7.6.0",
-        "@types/mime-types": "^2.1.0",
-        "@types/ws": "^8.5.0",
-        "@types/node": "^20.9.0",
-      },
-    });
+  it("uses the repository-derived inventory by default", () => {
+    const dependencyName = Object.keys(
+      repositoryExtensionDependencyOwnership().packages,
+    )[0];
+    if (dependencyName === undefined) {
+      throw new Error("expected at least one extension-owned dependency");
+    }
 
-    assertEquals(pkg.devDependencies, { "@types/node": "20.9.0" });
-  });
-
-  it("pins automatic npm dependency ranges while preserving peer compatibility ranges", () => {
-    const pkg = normalizeNpmPackageMetadata({
-      dependencies: {
-        "@types/react": "^19.2.14",
-        "@deno/shim-deno": "~0.18.0",
-        zod: "4.3.6",
-      },
-      optionalDependencies: {
-        "just-bash": "^2.14.5",
-      },
-      devDependencies: {
-        "@types/node": "^20.9.0",
-      },
-      peerDependencies: {
-        react: "^19.0.0",
-      },
-    });
-
-    assertEquals(pkg.dependencies, {
-      "@types/react": "19.2.14",
-      "@deno/shim-deno": "0.18.0",
-      zod: "4.3.6",
-    });
-    assertEquals(pkg.optionalDependencies, undefined);
-    assertEquals(pkg.devDependencies, {
-      "@types/node": "20.9.0",
-    });
-    assertEquals(pkg.peerDependencies, {
-      "@huggingface/transformers": "^4.2.0",
-      react: "^19.0.0",
-    });
-    assertEquals(pkg.overrides, {
-      protobufjs: "8.6.5",
-    });
+    assertOwnershipError(
+      () =>
+        normalizeNpmPackageMetadata({
+          dependencies: { [dependencyName]: "0.0.0" },
+        }),
+      "root-extension-dependency-collision",
+    );
   });
 });
 

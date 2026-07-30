@@ -7,10 +7,9 @@
 #      and activates the parser extension under Node
 #   2. the parser-only/evaluator worker transport and model-runtime streaming
 #      run under Node 18 without unsupported Web Streams APIs
-#   3. the @huggingface/transformers optional peer is declared
-#   4. loading a missing extension fails naming the installable package
-#   5. installing @veryfront/ext-auth-jwt makes the extension load
-#   6. a broken transitive dependency surfaces the real error, not a
+#   3. loading a missing extension fails naming the installable package
+#   4. installing @veryfront/ext-auth-jwt makes the extension load
+#   5. a broken transitive dependency surfaces the real error, not a
 #      misleading "extension not installed" skip
 #
 # Requires: `deno task build:npm` output in ./npm, node + npm on PATH.
@@ -374,14 +373,7 @@ for package_dir in "${FULL_BABEL_DIRS[@]}"; do
     mv "$package_dir.smoke-removed" "$package_dir"
 done
 
-echo "== 3. root install: transformers optional peer declared"
-node -e "
-const p = require('./node_modules/veryfront/package.json');
-if (!p.peerDependencies?.['@huggingface/transformers']) process.exit(1);
-if (p.peerDependenciesMeta?.['@huggingface/transformers']?.optional !== true) process.exit(1);
-" || fail "@huggingface/transformers optional peer missing from root package.json"
-
-echo "== 4. root install: missing extension failure names the installable package"
+echo "== 3. root install: missing extension failure names the installable package"
 set +e
 MISSING_OUTPUT="$(node -e "
 import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then(async (m) => {
@@ -395,7 +387,7 @@ set -e
 echo "$MISSING_OUTPUT" | grep -q "install @veryfront/ext-auth-jwt alongside veryfront" ||
   fail "missing-extension error lacks the install hint: $MISSING_OUTPUT"
 
-echo "== 5. with @veryfront/ext-auth-jwt installed: extension loads"
+echo "== 4. with @veryfront/ext-auth-jwt installed: extension loads"
 npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-ext-auth-jwt-*.tgz
 node -e "
 import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then(async (m) => {
@@ -404,7 +396,7 @@ import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then
 });
 " || fail "ext-auth-jwt did not load after installing @veryfront/ext-auth-jwt"
 
-echo "== 6. broken transitive dependency surfaces the real error"
+echo "== 5. broken transitive dependency surfaces the real error"
 mv node_modules/jose node_modules/jose.smoke-removed
 set +e
 BROKEN_OUTPUT="$(node -e "
