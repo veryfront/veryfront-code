@@ -35,14 +35,14 @@ import { compareRuntimeAgentMetadata, getRuntimeAgentPublicMetadata, isConfigOpt
 | Name | Description | Source |
 |------|-------------|--------|
 | `compareRuntimeAgentMetadata` | Compare runtime metadata by stable code-point name and id order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L226) |
-| `getRuntimeAgentPublicMetadata` | Get browser-safe runtime metadata for an agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L562) |
+| `getRuntimeAgentPublicMetadata` | Get browser-safe runtime metadata for an agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L603) |
 | `isConfigOptionalControlPlaneRunRequest` | True for control-plane run surfaces that can dispatch without project config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L65) |
-| `listRuntimeAgents` | List runtime agents. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L604) |
+| `listRuntimeAgents` | List runtime agents. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L647) |
 | `resolveAgentSkills` | Resolve the skills visible to an agent and return stable, public metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L544) |
-| `verifyControlPlaneJws` | Verify control plane JWS. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L725) |
-| `verifyControlPlaneJwsSignature` | Verify the signature and freshness of a control-plane JWS without granting body, audience, project, subject, or surface authorization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L654) |
-| `verifyDispatchJws` | Verify dispatch JWS. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L692) |
-| `verifyDispatchJwsSignature` | Verify the Ed25519 signature of a dispatch JWS and the recency of its timestamps, without binding to a particular request body or audience. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L636) |
+| `verifyControlPlaneJws` | Verify control plane JWS. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L768) |
+| `verifyControlPlaneJwsSignature` | Verify the signature and freshness of a control-plane JWS without granting body, audience, project, subject, or surface authorization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L697) |
+| `verifyDispatchJws` | Verify dispatch JWS. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L735) |
+| `verifyDispatchJwsSignature` | Verify the Ed25519 signature of a dispatch JWS and the recency of its timestamps, without binding to a particular request body or audience. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L679) |
 
 #### Types
 
@@ -104,8 +104,8 @@ import { buildChannelResponseParts, executeChannelInvoke, listChannelAssistants 
 | `listChannelAssistants` | List channel assistants. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/invoke.ts#L242) |
 | `normalizeConversationHistoryForRuntime` | Normalizes conversation history for runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/invoke.ts#L311) |
 | `resolveChannelInvokeAgent` | Resolves channel invoke agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/invoke.ts#L348) |
-| `verifyDispatchJws` | Verify dispatch JWS. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L692) |
-| `verifyDispatchJwsSignature` | Verify the Ed25519 signature of a dispatch JWS and the recency of its timestamps, without binding to a particular request body or audience. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L636) |
+| `verifyDispatchJws` | Verify dispatch JWS. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L735) |
+| `verifyDispatchJwsSignature` | Verify the Ed25519 signature of a dispatch JWS and the recency of its timestamps, without binding to a particular request body or audience. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L679) |
 
 #### Types
 

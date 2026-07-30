@@ -74,6 +74,12 @@ function snapshotRuntimeSkillPromptDefinition(
   return Object.freeze({
     id: readPromptOwnDataProperty(skill, "id", "Runtime skill catalog entry", true) as string,
     name: readPromptOwnDataProperty(skill, "name", "Runtime skill catalog entry", true) as string,
+    displayName: readPromptOwnDataProperty(
+      skill,
+      "displayName",
+      "Runtime skill catalog entry",
+      false,
+    ) as string | undefined,
     description: readPromptOwnDataProperty(
       skill,
       "description",
@@ -351,7 +357,7 @@ export function formatRuntimeSkillMetadata(skill: RuntimeSkillDefinition): strin
 }
 
 function formatRuntimeSkillLabel(skill: RuntimeSkillDefinition): string {
-  return skill.name === skill.id ? skill.id : `${skill.name} (\`${skill.id}\`)`;
+  return skill.displayName ? `${skill.displayName} (\`${skill.id}\`)` : skill.id;
 }
 
 /**
@@ -400,6 +406,11 @@ function encodeRuntimeSkillCatalogRecord(skill: RuntimeSkillDefinition): string 
     "name",
     RUNTIME_SKILL_PROMPT_NAME_MAX_LENGTH,
   );
+  const displayName = skill.displayName === undefined ? undefined : requireBoundedPromptString(
+    skill.displayName,
+    "displayName",
+    RUNTIME_SKILL_PROMPT_NAME_MAX_LENGTH,
+  );
   const description = requireBoundedPromptString(
     skill.description,
     "description",
@@ -437,6 +448,7 @@ function encodeRuntimeSkillCatalogRecord(skill: RuntimeSkillDefinition): string 
   return encodePromptJson({
     skillId,
     ...(name === skillId ? {} : { name }),
+    ...(displayName === undefined ? {} : { displayName }),
     description,
     ...(hasAllowedToolsPolicy ? { allowedTools } : {}),
     ...(model === undefined ? {} : { model }),

@@ -1,16 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "#std/path.ts";
+import { join } from "veryfront/platform/path";
 import { validateSkillDirectory } from "./validate.ts";
 
 async function withTempSkill(
-  skillName: string,
   files: Record<string, string>,
   fn: (dir: string) => Promise<void>,
+  skillDirName = "test-skill",
 ): Promise<void> {
-  const root = await Deno.makeTempDir({ prefix: "vf-skill-validate-" });
-  const dir = join(root, skillName);
+  const rootDir = await Deno.makeTempDir({ prefix: "vf-skill-validate-" });
+  const dir = join(rootDir, skillDirName);
   try {
     await Deno.mkdir(dir, { recursive: true });
     for (const [path, content] of Object.entries(files)) {
@@ -20,13 +20,23 @@ async function withTempSkill(
     }
     await fn(dir);
   } finally {
-    await Deno.remove(root, { recursive: true });
+    await Deno.remove(rootDir, { recursive: true });
+  }
+}
+
+async function withTempCwd(dir: string, fn: () => Promise<void>): Promise<void> {
+  const previous = Deno.cwd();
+  try {
+    Deno.chdir(dir);
+    await fn();
+  } finally {
+    Deno.chdir(previous);
   }
 }
 
 describe("Skills Validate", () => {
   it("accepts a project skill with SKILL.md frontmatter", async () => {
-    await withTempSkill("code-review", {
+    await withTempSkill({
       "SKILL.md": `---
 name: code-review
 description: Review code changes.
@@ -40,21 +50,55 @@ Review the submitted changes.
     }, async (dir) => {
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues, []);
-    });
+    }, "code-review");
+  });
+
+  it("accepts the compatibility allowed_tools spelling", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: code-review
+description: Review code changes.
+allowed_tools: load_skill load_skill_reference
+---
+
+# Code Review
+`,
+    }, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues, []);
+    }, "code-review");
+  });
+
+  it("uses the current directory basename when validating the default path", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: code-review
+description: Review code changes.
+---
+
+# Code Review
+
+Review the submitted changes.
+`,
+    }, async (dir) => {
+      await withTempCwd(dir, async () => {
+        const issues = await validateSkillDirectory(".");
+        assertEquals(issues, []);
+      });
+    }, "code-review");
   });
 
   it("reports a missing SKILL.md", async () => {
-    await withTempSkill("missing", {}, async (dir) => {
+    await withTempSkill({}, async (dir) => {
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues, [{ severity: "error", message: "SKILL.md not found" }]);
-    });
+    }, "missing");
   });
 
-  it("reports invalid SKILL.md frontmatter", async () => {
-    await withTempSkill("bad-name", {
+  it("reports invalid canonical directory names", async () => {
+    await withTempSkill({
       "SKILL.md": `---
-name: BadName
-description: Invalid name.
+description: Invalid directory name.
 ---
 
 # Bad
@@ -63,12 +107,47 @@ description: Invalid name.
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues.length, 1);
       assertEquals(issues[0]?.severity, "error");
-      assertEquals(issues[0]?.message.includes("Invalid skill name"), true);
-    });
+      assertEquals(issues[0]?.message.includes('Invalid skill name "Bad Name"'), true);
+    }, "Bad Name");
+  });
+
+  it("preserves a legacy display-style frontmatter name", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: Process Email
+description: Process inbound email.
+---
+
+# Process Email
+
+Process inbound email.
+`,
+    }, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues, []);
+    }, "process-email");
+  });
+
+  it("reports SKILL.md frontmatter name mismatch with directory", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: email
+description: Mismatched name.
+---
+
+# Email
+`,
+    }, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues, [{
+        severity: "error",
+        message: 'Skill name "email" does not match directory name "process-email"',
+      }]);
+    }, "process-email");
   });
 
   it("warns when SKILL.md has no instruction body", async () => {
-    await withTempSkill("empty-body", {
+    await withTempSkill({
       "SKILL.md": `---
 name: empty-body
 description: Empty instruction body.
@@ -77,11 +156,11 @@ description: Empty instruction body.
     }, async (dir) => {
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues, [{ severity: "warning", message: "SKILL.md body is empty" }]);
-    });
+    }, "empty-body");
   });
 
-  it("reports a missing or directory-mismatched skill name", async () => {
-    await withTempSkill("expected-name", {
+  it("reports a missing skill name", async () => {
+    await withTempSkill({
       "SKILL.md": `---
 description: Missing name.
 ---
@@ -92,30 +171,16 @@ description: Missing name.
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues[0]?.severity, "error");
       assertEquals(issues[0]?.message.includes("missing required field"), true);
-    });
-
-    await withTempSkill("expected-name", {
-      "SKILL.md": `---
-name: different-name
-description: Mismatched name.
----
-
-# Mismatch
-`,
-    }, async (dir) => {
-      const issues = await validateSkillDirectory(dir);
-      assertEquals(issues[0]?.severity, "error");
-      assertEquals(issues[0]?.message.includes("must match"), true);
-    });
+    }, "expected-name");
   });
 
   it("reports skill documents over the runtime byte budget", async () => {
-    await withTempSkill("oversized", {
+    await withTempSkill({
       "SKILL.md": "x".repeat(1_048_577),
     }, async (dir) => {
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues[0]?.severity, "error");
       assertEquals(issues[0]?.message.includes("exceeds 1048576 bytes"), true);
-    });
+    }, "oversized");
   });
 });

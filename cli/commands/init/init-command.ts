@@ -6,14 +6,12 @@
 import { cliLogger as logger, isVerbose } from "#cli/utils";
 import { brand, dim, red } from "#cli/ui";
 import { createTransientSpinner } from "../../ui/progress.ts";
-import { ensureDir } from "#std/fs.ts";
 import { join } from "veryfront/platform/path";
 import { createPackageJson } from "./config-generator.ts";
 import { createDenoConfig } from "./deno-config-generator.ts";
 import { createError, toError } from "veryfront/errors";
 import type { InitOptions, InitRuntime, InitTemplate } from "./types.ts";
-import { cwd } from "veryfront/platform";
-import { createFileSystem } from "veryfront/platform";
+import { createFileSystem, cwd, mkdir } from "veryfront/platform";
 import {
   detectPackageManager,
   getDlxCommand,
@@ -665,7 +663,7 @@ export async function initCommand(
     featureTips.push("Connect services at /api/auth/<service>");
   }
 
-  if (projectName) await ensureDir(projectDir);
+  if (projectName) await mkdir(projectDir, { recursive: true });
 
   const filesSpinner = quiet ? null : createTransientSpinner("Creating project files...");
   const createdPaths: string[] = [];
@@ -676,7 +674,7 @@ export async function initCommand(
       const filePath = join(projectDir, file.path);
       const fileDir = join(projectDir, ...file.path.split("/").slice(0, -1));
 
-      if (fileDir !== projectDir) await ensureDir(fileDir);
+      if (fileDir !== projectDir) await mkdir(fileDir, { recursive: true });
 
       await fs.writeTextFile(filePath, file.content);
       createdPaths.push(file.path);
@@ -776,7 +774,9 @@ export async function initCommand(
 
   // Deploy to cloud if --deploy flag is set
   let deployedUrl: string | undefined;
-  const manualDeployCommand = `${getDlxCommand(pmPreference)} veryfront deploy`;
+  const manualDeployCommand = quiet
+    ? `${getDlxCommand(pmPreference)} veryfront deploy`
+    : getRunCommand(pmPreference, "deploy");
   if (options.deploy) {
     const manualDeployHint = `Run ${brand(manualDeployCommand)} to deploy later.`;
 
@@ -853,7 +853,7 @@ export async function initCommand(
   const displayName = projectName ?? "Project";
   const structureRoot = projectName ?? ".";
   const structureLines = renderProjectStructure(structureRoot, createdPaths);
-  const deployCommandHint = `${getDlxCommand(pm)} veryfront deploy`;
+  const deployCommandHint = getRunCommand(pm, "deploy");
 
   if (!quiet) {
     console.log();

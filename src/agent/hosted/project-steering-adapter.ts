@@ -38,7 +38,12 @@ import type {
   RuntimeSkillDefinition,
   RuntimeSkillMetadataLogger,
 } from "../runtime/skill-metadata.ts";
-import { isRuntimeSkillVisibleTo } from "../runtime/skill-metadata.ts";
+import { resolveRuntimeSkillSelectorSnapshotForAgent } from "../runtime/skill-metadata.ts";
+import {
+  assertResolvedSkillSelector,
+  createNoneSkillSelectorSnapshot,
+  type ResolvedSkillSelectorPolicy,
+} from "#veryfront/skill/selector.ts";
 
 /** Public API contract for hosted project steering logger. */
 export type HostedProjectSteeringLogger =
@@ -75,6 +80,7 @@ export type HostedProjectSkillIdsContext = MutableAgentProjectContext & {
    * visibility beyond the caller's scope.
    */
   agentId?: string;
+  skillSelectorPolicy?: ResolvedSkillSelectorPolicy;
 };
 
 /** Public API contract for hosted project steering adapter. */
@@ -162,6 +168,31 @@ function createDefaultBuiltinStore(): RuntimeLoadSkillBuiltinStore {
   };
 }
 
+function resolveRefreshedSkillSnapshot(input: {
+  skills: readonly RuntimeSkillDefinition[];
+  context: HostedProjectSkillIdsContext;
+}) {
+  const policy = input.context.skillSelectorPolicy;
+
+  if (!policy || policy.kind === "all-visible") {
+    return resolveRuntimeSkillSelectorSnapshotForAgent({
+      skills: input.skills,
+      agentId: input.context.agentId ?? "",
+      selector: policy?.source === "true" ? true : undefined,
+    });
+  }
+
+  if (policy.kind === "none") {
+    return createNoneSkillSelectorSnapshot<RuntimeSkillDefinition>(policy);
+  }
+
+  return resolveRuntimeSkillSelectorSnapshotForAgent({
+    skills: input.skills,
+    agentId: input.context.agentId ?? "",
+    selector: policy.entries,
+  });
+}
+
 function createProjectSteeringAdapter(
   options: HostedProjectSteeringAdapterOptions,
   strictProjectFiles: false,
@@ -236,20 +267,14 @@ function createProjectSteeringAdapter(
       signal,
     );
 
-    // Owner-aware: the refreshed per-run skill set keeps the caller's
-    // scope — never another agent's owned skills — and the source-path
-    // map stays in sync so colocated skills do not go stale.
-    const visibleSkills = skills.filter((skill) =>
-      isRuntimeSkillVisibleTo(skill, { agentId: context.agentId })
-    );
-    context.availableSkillIds = visibleSkills.map((skill) => skill.id);
-    const skillSourcePaths = Object.fromEntries(
-      visibleSkills
-        .filter((skill) => skill.sourcePath)
-        .map((skill) => [skill.id, skill.sourcePath as string]),
-    );
-    context.skillSourcePaths = Object.keys(skillSourcePaths).length > 0
-      ? skillSourcePaths
+    const snapshot = resolveRefreshedSkillSnapshot({ skills, context });
+    assertResolvedSkillSelector(snapshot);
+    // Project context is mutable across navigation and refresh. Give it an
+    // owned array without weakening the selector snapshot's immutability.
+    context.availableSkillIds = [...snapshot.allowedSkillIds];
+    context.skillSelectorPolicy = snapshot.policy;
+    context.skillSourcePaths = Object.keys(snapshot.skillSourcePaths).length > 0
+      ? snapshot.skillSourcePaths
       : undefined;
   }
 

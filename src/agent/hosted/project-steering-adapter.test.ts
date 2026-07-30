@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   createHostedProjectSteeringAdapter,
   createStrictHostedProjectSteeringAdapter,
+  type HostedProjectSkillIdsContext,
 } from "./project-steering-adapter.ts";
 import type {
   RuntimeGetProjectFileOptions,
@@ -347,7 +348,7 @@ Use project instructions.`,
         getProjectFiles: async () => [{ path: ".veryfront/skills/project/SKILL.md" }],
       }),
     });
-    const context = {
+    const context: HostedProjectSkillIdsContext = {
       projectId: "project-1",
       authToken: "token-1",
       branchId: null,
@@ -401,7 +402,6 @@ Deno.test("hosted project steering adapter accepts a custom builtin skill store"
       projectId: null,
       authToken: "token-1",
       branchId: null,
-      availableSkillIds: ["custom"],
     });
     const result = await loadSkillTool.execute({ skillId: "custom" });
 
@@ -473,5 +473,52 @@ Body.`;
     };
     await adapter.refreshProjectSkillIds(projectContext);
     assertEquals(projectContext.availableSkillIds, ["builtin", "global"]);
+  });
+});
+
+Deno.test("refreshProjectSkillIds rejects unresolved authored allowlist entries without narrowing", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    const adapter = createHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      projectFilesClient: createProjectFilesClient({
+        getProjectFile: async ({ path }) =>
+          path === "skills/global/SKILL.md" || path === "skills/new-skill/SKILL.md"
+            ? {
+              path,
+              content: `---
+description: ${path}
+---
+Body.`,
+            }
+            : null,
+        getProjectFiles: async () => [
+          { path: "skills/global/SKILL.md" },
+          { path: "skills/new-skill/SKILL.md" },
+        ],
+      }),
+    });
+
+    const context: HostedProjectSkillIdsContext = {
+      projectId: "project-1",
+      authToken: "token-1",
+      branchId: null,
+      availableSkillIds: ["global", "new-skill"],
+      skillSelectorPolicy: { kind: "allowlist" as const, entries: ["global", "deleted"] },
+    };
+
+    const error = await assertRejects(
+      () => adapter.refreshProjectSkillIds(context),
+      Error,
+      "configured skills are not available",
+    );
+
+    assertEquals(String(error).includes("deleted"), false);
+    assertEquals(context.availableSkillIds, ["global", "new-skill"]);
+    assertEquals(context.skillSelectorPolicy, {
+      kind: "allowlist",
+      entries: ["global", "deleted"],
+    });
+    assertEquals(context.skillSourcePaths, undefined);
   });
 });

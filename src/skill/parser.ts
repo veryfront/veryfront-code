@@ -8,7 +8,7 @@
 
 import { createError, toError } from "#veryfront/errors";
 import { validateAllowedToolPatterns, validateStrictAllowedToolPatterns } from "./allowed-tools.ts";
-import { SKILL_DOCUMENT_MAX_CHARACTERS } from "./limits.ts";
+import { SKILL_DOCUMENT_MAX_CHARACTERS, SKILL_ID_MAX_LENGTH } from "./limits.ts";
 import {
   SKILL_COMPATIBILITY_MAX_LENGTH,
   SKILL_DESCRIPTION_MAX_LENGTH,
@@ -17,10 +17,11 @@ import {
   SKILL_METADATA_MAX_ENTRIES,
   SKILL_METADATA_VALUE_MAX_LENGTH,
   SKILL_NAME_REGEX,
+  SKILL_PROVIDER_SAFE_ID_REGEX,
   SKILL_STRICT_NAME_REGEX,
   type SkillMetadata,
 } from "./types.ts";
-import { isWellFormedUtf16 } from "./string-safety.ts";
+import { hasControlCharacters, isWellFormedUtf16 } from "./string-safety.ts";
 
 /** Result of parsing a SKILL.md file */
 interface ParsedSkillContent {
@@ -142,45 +143,55 @@ function optionalBoundedString(
  * Validate and normalize parsed frontmatter into SkillMetadata.
  *
  * @param frontmatter - Parsed frontmatter object
- * @param directoryName - Directory name used as fallback for skill name
+ * @param directoryName - Canonical directory/runtime identity for the skill
  */
 export function validateSkillMetadata(
   frontmatter: Record<string, unknown>,
   directoryName: string,
+  options: { providerSafeName?: boolean } = {},
 ): SkillMetadata {
-  const rawName = typeof frontmatter.name === "string" ? frontmatter.name.trim() : directoryName;
+  const canonicalName = directoryName;
+  const nameRegex = options.providerSafeName ? SKILL_PROVIDER_SAFE_ID_REGEX : SKILL_NAME_REGEX;
+  const nameExpectation = options.providerSafeName
+    ? "must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters"
+    : "must be lowercase alphanumeric with hyphens, 1-64 characters";
 
-  if (!SKILL_NAME_REGEX.test(rawName)) {
+  if (!nameRegex.test(canonicalName)) {
     throw toError(
       createError({
         type: "agent",
-        message:
-          `Invalid skill name "${rawName}": must be lowercase alphanumeric with hyphens, 1-64 characters`,
+        message: `Invalid skill name "${canonicalName}": ${nameExpectation}`,
       }),
     );
   }
+
+  const rawName = typeof frontmatter.name === "string" ? frontmatter.name.trim() : undefined;
 
   const rawDescription = frontmatter.description;
   if (!rawDescription || typeof rawDescription !== "string" || !rawDescription.trim()) {
     throw toError(
       createError({
         type: "agent",
-        message: `Skill "${rawName}" is missing a required "description" field`,
+        message: `Skill "${canonicalName}" is missing a required "description" field`,
       }),
     );
   }
 
   const description = rawDescription.trim().slice(0, SKILL_DESCRIPTION_MAX_LENGTH);
   const allowedToolPatterns = frontmatter["allowed-tools"] ?? frontmatter.allowed_tools;
-  const allowedTools = parseAllowedTools(allowedToolPatterns, rawName);
+  const allowedTools = parseAllowedTools(allowedToolPatterns, canonicalName);
   const license = typeof frontmatter.license === "string" ? frontmatter.license.trim() : undefined;
   const compatibility = typeof frontmatter.compatibility === "string"
     ? frontmatter.compatibility.trim()
     : undefined;
   const metadata = parseMetadata(frontmatter.metadata);
+  const explicitDisplayName = getMetadataDisplayName(metadata);
+  const legacyDisplayName = rawName && rawName !== canonicalName ? rawName : undefined;
+  const displayName = explicitDisplayName ?? legacyDisplayName;
 
   return {
-    name: rawName,
+    name: canonicalName,
+    ...(displayName && { displayName }),
     description,
     ...(allowedTools && { allowedTools }),
     ...(license && { license }),
@@ -192,7 +203,8 @@ export function validateSkillMetadata(
 /** Validate bounded, untrusted skill metadata at filesystem boundaries. */
 function validateStrictSkillMetadata(
   frontmatter: Record<string, unknown>,
-  directoryName: string,
+  canonicalName: string,
+  options: { providerSafeName?: boolean },
 ): SkillMetadata {
   if (
     !frontmatter ||
@@ -201,24 +213,42 @@ function validateStrictSkillMetadata(
   ) {
     throw new TypeError("Skill frontmatter must be an object");
   }
-  if (typeof directoryName !== "string") {
-    throw new TypeError("Skill directory name must be a string");
+  if (typeof canonicalName !== "string") {
+    throw new TypeError("Skill canonical name must be a string");
   }
 
-  // Name: from frontmatter or directory name
-  const declaredName = ownDataValue(frontmatter, "name");
-  if (declaredName !== undefined && typeof declaredName !== "string") {
-    throw new TypeError("Skill name must be a string");
-  }
-  const rawName = typeof declaredName === "string" ? declaredName.trim() : directoryName;
-
-  if (!SKILL_STRICT_NAME_REGEX.test(rawName)) {
+  const nameRegex = options.providerSafeName
+    ? SKILL_PROVIDER_SAFE_ID_REGEX
+    : SKILL_STRICT_NAME_REGEX;
+  const nameExpectation = options.providerSafeName
+    ? "must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters"
+    : "must be 1-64 lowercase alphanumeric characters or single hyphens, without leading or trailing hyphens";
+  if (!nameRegex.test(canonicalName)) {
     throw toError(
       createError({
         type: "agent",
-        message:
-          `Invalid skill name "${rawName}": must be 1-64 lowercase alphanumeric characters or single hyphens, without leading or trailing hyphens`,
+        message: `Invalid skill name "${canonicalName}": ${nameExpectation}`,
       }),
+    );
+  }
+
+  // The caller-supplied directory/runtime id is the only lookup identity.
+  // A differing authored name is retained as presentation metadata.
+  const declaredName = ownDataValue(frontmatter, "name");
+  if (typeof declaredName !== "string" || declaredName.trim().length === 0) {
+    throw new TypeError(
+      `Skill "${canonicalName}" is missing required field "name"`,
+    );
+  }
+  const authoredName = declaredName.trim();
+  if (authoredName.length > SKILL_ID_MAX_LENGTH) {
+    throw new RangeError(
+      `Skill name exceeds ${SKILL_ID_MAX_LENGTH} characters`,
+    );
+  }
+  if (!isWellFormedUtf16(authoredName) || hasControlCharacters(authoredName)) {
+    throw new TypeError(
+      "Skill name must contain well-formed UTF-16 without control characters",
     );
   }
 
@@ -228,7 +258,7 @@ function validateStrictSkillMetadata(
     throw toError(
       createError({
         type: "agent",
-        message: `Skill "${rawName}" is missing a required "description" field`,
+        message: `Skill "${canonicalName}" is missing a required "description" field`,
       }),
     );
   }
@@ -236,7 +266,7 @@ function validateStrictSkillMetadata(
   const description = rawDescription.trim();
   if (description.length > SKILL_DESCRIPTION_MAX_LENGTH) {
     throw new RangeError(
-      `Skill "${rawName}" description exceeds ${SKILL_DESCRIPTION_MAX_LENGTH} characters`,
+      `Skill "${canonicalName}" description exceeds ${SKILL_DESCRIPTION_MAX_LENGTH} characters`,
     );
   }
 
@@ -245,7 +275,7 @@ function validateStrictSkillMetadata(
   const compatibilityAllowedTools = ownDataField(frontmatter, "allowed_tools");
   if (canonicalAllowedTools.present && compatibilityAllowedTools.present) {
     throw new TypeError(
-      `Skill "${rawName}" must not declare both "allowed-tools" and "allowed_tools"`,
+      `Skill "${canonicalName}" must not declare both "allowed-tools" and "allowed_tools"`,
     );
   }
   const hasAllowedTools = canonicalAllowedTools.present || compatibilityAllowedTools.present;
@@ -253,7 +283,7 @@ function validateStrictSkillMetadata(
     ? canonicalAllowedTools.value
     : compatibilityAllowedTools.value;
   const allowedTools = hasAllowedTools
-    ? parseStrictAllowedTools(allowedToolPatterns, rawName)
+    ? parseStrictAllowedTools(allowedToolPatterns, canonicalName)
     : undefined;
 
   const license = optionalBoundedString(
@@ -268,9 +298,13 @@ function validateStrictSkillMetadata(
   );
 
   const metadata = parseStrictMetadata(ownDataValue(frontmatter, "metadata"));
+  const explicitDisplayName = validateStrictDisplayName(getMetadataDisplayName(metadata));
+  const legacyDisplayName = authoredName !== canonicalName ? authoredName : undefined;
+  const displayName = explicitDisplayName ?? legacyDisplayName;
 
   return {
-    name: rawName,
+    name: canonicalName,
+    ...(displayName ? { displayName } : {}),
     description,
     ...(allowedTools && { allowedTools }),
     ...(license && { license }),
@@ -280,27 +314,34 @@ function validateStrictSkillMetadata(
 }
 
 /**
- * Validate metadata loaded from a filesystem skill. The public normalizer keeps
- * its historical directory-name fallback for programmatic callers, while file
- * discovery follows the Agent Skills requirement that `name` is declared and
- * matches the parent directory.
+ * Validate metadata loaded from a filesystem skill. The caller-supplied
+ * directory/runtime identity remains canonical; a differing authored `name`
+ * is display metadata and never participates in lookup or authorization.
  */
 export function validateSkillFileMetadata(
   frontmatter: Record<string, unknown>,
   directoryName: string,
+  options: { providerSafeName?: boolean } = {},
 ): SkillMetadata {
-  const declaredName = ownDataValue(frontmatter, "name");
-  if (typeof declaredName !== "string" || declaredName.trim().length === 0) {
-    throw new TypeError(`Skill in directory "${directoryName}" is missing required field "name"`);
-  }
+  return validateStrictSkillMetadata(frontmatter, directoryName, options);
+}
 
-  const metadata = validateStrictSkillMetadata(frontmatter, directoryName);
-  if (metadata.name !== directoryName) {
+function getMetadataDisplayName(metadata: Record<string, string> | undefined): string | undefined {
+  const displayName = metadata?.display_name?.trim();
+  return displayName ? displayName : undefined;
+}
+
+function validateStrictDisplayName(displayName: string | undefined): string | undefined {
+  if (displayName === undefined) return undefined;
+  if (displayName.length > SKILL_ID_MAX_LENGTH) {
+    throw new RangeError(`Skill display name exceeds ${SKILL_ID_MAX_LENGTH} characters`);
+  }
+  if (!isWellFormedUtf16(displayName) || hasControlCharacters(displayName)) {
     throw new TypeError(
-      `Skill name "${metadata.name}" must match its directory "${directoryName}"`,
+      "Skill display name must contain well-formed UTF-16 without control characters",
     );
   }
-  return metadata;
+  return displayName;
 }
 
 /**

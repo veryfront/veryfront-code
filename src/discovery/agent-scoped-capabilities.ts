@@ -252,7 +252,9 @@ async function buildSkillFromDir(input: {
     maxBytes: SKILL_TEXT_FILE_MAX_BYTES,
   });
   const parsed = await parseSkillFileFrontmatter(content);
-  const metadata = validateSkillFileMetadata(parsed.frontmatter, input.shortName);
+  const metadata = validateSkillFileMetadata(parsed.frontmatter, input.id, {
+    providerSafeName: true,
+  });
   const runtimeRoot = resolveRuntimeDiscoveryRoot(input.skillDir, input.context);
 
   return {

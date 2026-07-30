@@ -1,6 +1,14 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import {
+  combineAgentServiceLifecycle,
   createAgentServiceRuntime,
   createHostedAgentServiceRuntime,
   startNodeAgentService,
@@ -82,6 +90,13 @@ describe("agent/agent-service-runtime", () => {
   });
 
   it("preserves configured skills and tools on the service agent", () => {
+    skillRegistryInternal.clearAll();
+    registerSkill("support-triage", {
+      id: "support-triage",
+      metadata: { name: "support-triage", description: "Triage support requests" },
+      rootPath: "/test/skills/support-triage",
+    });
+
     const bundle = createAgentServiceRuntime({
       serviceName: "test-agent-service",
       getConfig: () => ({
@@ -107,13 +122,13 @@ describe("agent/agent-service-runtime", () => {
     const serviceAgent = bundle.runtime.contract.agents.assistant;
 
     assertEquals(serviceAgent?.config.skills, ["support-triage"]);
-    assertEquals(serviceAgent?.config.tools, {
-      search_knowledge: true,
-      get_file: true,
-      load_skill: true,
-      load_skill_reference: true,
-      execute_skill_script: true,
-    });
+    const tools = serviceAgent?.config.tools;
+    assert(tools && tools !== true);
+    assertEquals(tools?.search_knowledge, true);
+    assertEquals(tools?.get_file, true);
+    assertEquals(typeof tools?.load_skill, "object");
+    assertEquals(typeof tools?.load_skill_reference, "object");
+    assertEquals(typeof tools?.execute_skill_script, "object");
   });
 
   it("starts the node agent service server from the assembled runtime", async () => {
@@ -176,5 +191,106 @@ describe("agent/agent-service-runtime", () => {
     } finally {
       await service.nodeServer.stop();
     }
+  });
+
+  it("runs secondary shutdown lifecycle even when primary stop fails", async () => {
+    const events: string[] = [];
+    const shutdownError = new Error("primary shutdown failed");
+    const lifecycle = combineAgentServiceLifecycle(
+      {
+        stop: () => {
+          events.push("primary-stop");
+          throw shutdownError;
+        },
+      },
+      {
+        stop: () => {
+          events.push("secondary-stop");
+        },
+      },
+    );
+
+    const rejected = await assertRejects(
+      async () => {
+        await lifecycle.stop?.();
+      },
+      Error,
+      "primary shutdown failed",
+    );
+
+    assertEquals(rejected, shutdownError);
+    assertEquals(events, ["primary-stop", "secondary-stop"]);
+  });
+
+  it("preserves an undefined cleanup rejection after running both lifecycles", async () => {
+    const events: string[] = [];
+    const lifecycle = combineAgentServiceLifecycle(
+      {
+        stop: () => {
+          events.push("primary-stop");
+          return Promise.reject(undefined);
+        },
+      },
+      {
+        stop: () => {
+          events.push("secondary-stop");
+        },
+      },
+    );
+    let rejected: unknown = "not-thrown";
+
+    try {
+      await lifecycle.stop?.();
+    } catch (error) {
+      rejected = error;
+    }
+
+    assertStrictEquals(rejected, undefined);
+    assertEquals(events, ["primary-stop", "secondary-stop"]);
+  });
+
+  it("preserves a null shutdown rejection after notifying both lifecycles", () => {
+    const events: string[] = [];
+    const lifecycle = combineAgentServiceLifecycle(
+      {
+        setShuttingDown: () => {
+          events.push("primary-shutdown");
+          throw null;
+        },
+      },
+      {
+        setShuttingDown: () => {
+          events.push("secondary-shutdown");
+        },
+      },
+    );
+    let rejected: unknown = "not-thrown";
+
+    try {
+      lifecycle.setShuttingDown?.();
+    } catch (error) {
+      rejected = error;
+    }
+
+    assertStrictEquals(rejected, null);
+    assertEquals(events, ["primary-shutdown", "secondary-shutdown"]);
+  });
+
+  it("aggregates two cleanup failures in lifecycle order", async () => {
+    const primaryError = new Error("primary cleanup failed");
+    const secondaryError = new Error("secondary cleanup failed");
+    const lifecycle = combineAgentServiceLifecycle(
+      { stop: () => Promise.reject(primaryError) },
+      { stop: () => Promise.reject(secondaryError) },
+    );
+
+    const rejected = await assertRejects(
+      async () => await lifecycle.stop?.(),
+      AggregateError,
+      "Agent service cleanup failed",
+    );
+
+    assertInstanceOf(rejected, AggregateError);
+    assertEquals(rejected.errors, [primaryError, secondaryError]);
   });
 });

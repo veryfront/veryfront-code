@@ -104,6 +104,13 @@ failure can leave a partial Git diff. In that case, inspect `git status`, return
 the feature branch to a clean state with your normal Git recovery workflow, and
 then run Pull again. Do not discard unrelated local work.
 
+After a successful Pull, Veryfront stores the canonical project identity in
+ignored `.veryfront/project.json`. Dependency and compiler configuration remain
+project-owned: `package.json` and `tsconfig.json` come only from the downloaded
+release or existing target directory. Pull does not guess a renderer, bundler,
+or third-party runtime. Dry-run reports the planned project-link write without
+changing the target directory.
+
 A mutating `--prune` requires a clean Git worktree. `--yes` and `--force` skip
 only the overwrite confirmation and never bypass the clean-worktree, path, or
 symlink checks. Pull preserves the release bytes exactly, including line
@@ -111,7 +118,8 @@ endings and a missing final newline.
 
 The release is a full managed-source snapshot, not a patch. Pull overwrites
 supported text files and prunes supported text files that are absent from the
-release. It does not perform a three-way merge or auto-merge a stale release
+release. The ignored project link is local development metadata, not release
+content. Pull does not perform a three-way merge or auto-merge a stale release
 with newer Git changes. Ignored, unsupported, and binary files remain outside
 the reconciliation.
 

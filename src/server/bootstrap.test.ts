@@ -29,7 +29,11 @@ import { deleteEnv, getEnv } from "#veryfront/platform/compat/process.ts";
 import { register, reset } from "#veryfront/extensions/contracts.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
-import { __resetEnvLoaderForTests, hasEnvLoaded } from "#veryfront/utils/env-loader.ts";
+import {
+  __resetEnvLoaderForTests,
+  getEnvSource,
+  hasEnvLoaded,
+} from "#veryfront/utils/env-loader.ts";
 import { __resetLogRecordEmitterForTests, logger } from "#veryfront/utils/logger/index.ts";
 import type { TracingExporter } from "veryfront/extensions/observability";
 import {
@@ -175,6 +179,66 @@ describe("validateProductionEnvironment()", () => {
         );
       },
     );
+  });
+
+  it("does not let a process environment marker authorize local proxy startup", async () => {
+    await withEnv(
+      {
+        PROXY_MODE: "1",
+        NODE_ENV: "development",
+        CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY: "host-public-key",
+        VERYFRONT_CLI_LOCAL_PROXY_MODE: "1",
+      },
+      async () => {
+        assertThrows(
+          () => validateProductionEnvironment(),
+          Error,
+          "NODE_ENV must be set to 'production'",
+        );
+      },
+    );
+  });
+
+  it("does not accept hosted security settings loaded from a project env file", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "bootstrap-host-auth-" });
+
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/.env`,
+        [
+          "NODE_ENV=production",
+          "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY=tenant-controlled-key",
+          "",
+        ].join("\n"),
+      );
+
+      await withEnv({ PROXY_MODE: "1" }, async () => {
+        deleteEnv("NODE_ENV");
+        deleteEnv("DENO_ENV");
+        deleteEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        __resetEnvLoaderForTests();
+        _resetEnvironmentConfig();
+
+        await ensureEnvLoaded(projectDir, createMockAdapter());
+        assertEquals(getEnvSource("NODE_ENV").source, "env-file");
+        assertEquals(
+          getEnvSource("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY").source,
+          "env-file",
+        );
+        assertThrows(
+          () => validateProductionEnvironment(),
+          Error,
+          "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set",
+        );
+
+        __resetEnvLoaderForTests();
+        _resetEnvironmentConfig();
+      });
+    } finally {
+      if (hasEnvLoaded()) __resetEnvLoaderForTests();
+      _resetEnvironmentConfig();
+      await Deno.remove(projectDir, { recursive: true });
+    }
   });
 });
 

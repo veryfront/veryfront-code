@@ -16,7 +16,19 @@ import {
   SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
 import { validateSkillFileMetadata } from "#veryfront/skill/parser.ts";
-import { SKILL_DESCRIPTION_MAX_LENGTH, SKILL_STRICT_NAME_REGEX } from "#veryfront/skill/types.ts";
+import {
+  assertResolvedSkillSelector,
+  type ResolvedSkillSelectorSnapshot,
+  resolveSkillSelector,
+} from "#veryfront/skill/selector.ts";
+import {
+  SKILL_DESCRIPTION_MAX_LENGTH,
+  SKILL_METADATA_KEY_MAX_LENGTH,
+  SKILL_METADATA_MAX_ENTRIES,
+  SKILL_METADATA_VALUE_MAX_LENGTH,
+  SKILL_NAME_REGEX,
+  SKILL_PROVIDER_SAFE_ID_REGEX,
+} from "#veryfront/skill/types.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
 
 /** Maximum model identifier length accepted from hosted skill metadata. */
@@ -70,6 +82,85 @@ function normalizeStrictAllowedTools(value: string | string[]): string[] {
   return validateStrictAllowedToolPatterns(patterns.filter((entry) => entry.length > 0));
 }
 
+function normalizeOptionalString(value: unknown): string | undefined {
+  return (typeof value === "string" ? value.trim() : undefined) || undefined;
+}
+
+function normalizeMetadata(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) {
+    return undefined;
+  }
+
+  const metadata: Record<string, string> = {};
+  for (const [key, rawValue] of entries) {
+    metadata[key] = String(rawValue);
+  }
+  return metadata;
+}
+
+function normalizeStrictMetadata(value: unknown): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Skill metadata must be an object with string values");
+  }
+
+  let keys: readonly PropertyKey[];
+  try {
+    keys = Reflect.ownKeys(value);
+  } catch {
+    throw new TypeError("Skill metadata keys must be readable");
+  }
+  if (keys.length === 0) return undefined;
+  if (keys.length > SKILL_METADATA_MAX_ENTRIES) {
+    throw new RangeError(`Skill metadata accepts at most ${SKILL_METADATA_MAX_ENTRIES} entries`);
+  }
+
+  const metadata: Record<string, string> = {};
+  for (const key of keys) {
+    if (
+      typeof key !== "string" ||
+      key.length === 0 ||
+      key.length > SKILL_METADATA_KEY_MAX_LENGTH ||
+      !isWellFormedUtf16(key) ||
+      hasControlCharacters(key)
+    ) {
+      throw new TypeError(
+        `Skill metadata keys must be 1-${SKILL_METADATA_KEY_MAX_LENGTH} printable characters`,
+      );
+    }
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new TypeError(`Skill metadata field "${key}" must be a data property`);
+    }
+    if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "string") {
+      throw new TypeError(`Skill metadata field "${key}" must be a string data property`);
+    }
+    if (
+      descriptor.value.length > SKILL_METADATA_VALUE_MAX_LENGTH ||
+      !isWellFormedUtf16(descriptor.value) ||
+      hasControlCharacters(descriptor.value)
+    ) {
+      throw new TypeError(
+        `Skill metadata values must be at most ${SKILL_METADATA_VALUE_MAX_LENGTH} printable characters`,
+      );
+    }
+    Object.defineProperty(metadata, key, {
+      configurable: false,
+      enumerable: true,
+      value: descriptor.value,
+      writable: false,
+    });
+  }
+  return Object.freeze(metadata);
+}
+
 // Hand-written transform output type. The contract DSL erases the parameter
 // type through `.transform()`, so we annotate explicitly.
 /** Public API contract for runtime skill frontmatter. */
@@ -77,6 +168,7 @@ export interface RuntimeSkillFrontmatter {
   name: string | undefined;
   description: string | undefined;
   allowedTools: string[];
+  metadata: Record<string, string> | undefined;
   model: string | undefined;
   thinking: false | number | undefined;
   maxSteps: number | undefined;
@@ -90,19 +182,22 @@ const getUnsafeLegacyRuntimeSkillFrontmatterSchema = defineSchema((v) =>
       "allowed-tools": v.union([v.string(), v.array(v.string())]).optional(),
       allowed_tools: v.union([v.string(), v.array(v.string())]).optional(),
       model: v.string().optional(),
+      metadata: v.record(v.string(), v.unknown()).optional(),
       thinking: v.union([v.literal(false), v.coerce.number().int().positive()]).optional(),
       "max-steps": v.coerce.number().int().positive().optional(),
     })
     .passthrough()
     .transform((data): RuntimeSkillFrontmatter => {
       const d = data as Record<string, unknown>;
+      const metadata = normalizeMetadata(d.metadata);
       return {
-        name: (typeof d.name === "string" ? d.name.trim() : undefined) || undefined,
+        name: normalizeOptionalString(d.name),
         description: (typeof d.description === "string" ? d.description.trim() : undefined) ||
           undefined,
         allowedTools: normalizeLegacyAllowedTools(
           (d["allowed-tools"] ?? d.allowed_tools) as string | string[] | undefined,
         ),
+        metadata,
         model: (typeof d.model === "string" ? d.model.trim() : undefined) || undefined,
         thinking: d.thinking as false | number | undefined,
         maxSteps: d["max-steps"] as number | undefined,
@@ -125,6 +220,7 @@ export const getRuntimeSkillFrontmatterSchema = defineSchema((v) => {
       description: v.string().max(SKILL_DESCRIPTION_MAX_LENGTH).optional(),
       "allowed-tools": allowedToolsValue.optional(),
       allowed_tools: allowedToolsValue.optional(),
+      metadata: v.record(v.string(), v.unknown()).optional(),
       model: v.string().max(MAX_RUNTIME_SKILL_MODEL_LENGTH).refine(
         (model) => isValidRuntimeSkillModel(model),
         "Skill model must be a non-empty, trimmed identifier without control characters",
@@ -162,6 +258,13 @@ export const getRuntimeSkillFrontmatterSchema = defineSchema((v) => {
           });
         }
       }
+      try {
+        normalizeStrictMetadata(d.metadata);
+      } catch (error) {
+        context.addIssue({
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     })
     .transform((data): RuntimeSkillFrontmatter => {
       const d = data as Record<string, unknown>;
@@ -176,6 +279,7 @@ export const getRuntimeSkillFrontmatterSchema = defineSchema((v) => {
         allowedTools: hasCanonicalAllowedTools || hasCompatibilityAllowedTools
           ? normalizeStrictAllowedTools(rawAllowedTools as string | string[])
           : [],
+        metadata: normalizeStrictMetadata(d.metadata),
         model: (typeof d.model === "string" ? d.model.trim() : undefined) || undefined,
         thinking: d.thinking as false | number | undefined,
         maxSteps: d["max-steps"] as number | undefined,
@@ -194,6 +298,7 @@ export const RuntimeSkillFrontmatterSchema = lazySchema(
 export type RuntimeSkillDefinition = {
   id: string;
   name: string;
+  displayName?: string;
   description: string;
   instructions: string;
   allowedTools: string[];
@@ -204,6 +309,7 @@ export type RuntimeSkillDefinition = {
    * declared policy.
    */
   allowedToolsDeclared?: boolean;
+  metadata?: Record<string, string>;
   model?: string;
   thinking?: false | number;
   maxSteps?: number;
@@ -258,7 +364,7 @@ export function isRuntimeSkillVisibleTo(
 export function resolveRuntimeSkillsForAgent(input: {
   skills: readonly RuntimeSkillDefinition[];
   agentId: string;
-  selector: true | false | string[] | undefined;
+  selector: true | false | readonly string[] | undefined;
 }): RuntimeSkillDefinition[] {
   const visibleSkills = input.skills.filter((skill) =>
     isRuntimeSkillVisibleTo(skill, { agentId: input.agentId })
@@ -286,6 +392,34 @@ export function resolveRuntimeSkillsForAgent(input: {
   }
 
   return [...selectedSkills.values()];
+}
+
+/** Resolve a presence-aware runtime skill selector snapshot without throwing on explicit misses. */
+export function resolveRuntimeSkillSelectorSnapshotForAgent(input: {
+  skills: readonly RuntimeSkillDefinition[];
+  agentId: string;
+  selector: true | readonly string[] | undefined;
+}): ResolvedSkillSelectorSnapshot<RuntimeSkillDefinition> {
+  return resolveSkillSelector({
+    definitions: input.skills,
+    selector: input.selector,
+    getId: (skill) => skill.id,
+    isVisible: (skill) => isRuntimeSkillVisibleTo(skill, { agentId: input.agentId }),
+    getShortName: (skill) => skill.shortName,
+    isOwnShortNameCandidate: (skill) => skill.ownerAgentId === input.agentId,
+    getSourcePath: (skill) => skill.sourcePath,
+  });
+}
+
+/** Resolve a presence-aware runtime skill selector snapshot and reject explicit misses. */
+export function resolveRuntimeSkillSelectorForAgent(input: {
+  skills: readonly RuntimeSkillDefinition[];
+  agentId: string;
+  selector: true | readonly string[] | undefined;
+}): ResolvedSkillSelectorSnapshot<RuntimeSkillDefinition> {
+  const snapshot = resolveRuntimeSkillSelectorSnapshotForAgent(input);
+  assertResolvedSkillSelector(snapshot);
+  return snapshot;
 }
 
 /** Public API contract for runtime loaded skill response messages. */
@@ -677,6 +811,24 @@ function isBoundedRuntimeIdentity(value: unknown): value is string {
     !value.includes("\\");
 }
 
+function isRuntimeSkillIdValid(input: {
+  id: unknown;
+  ownerAgentId?: unknown;
+  shortName?: unknown;
+}): boolean {
+  const isOwned = input.ownerAgentId !== undefined || input.shortName !== undefined;
+  if (isOwned) {
+    return input.ownerAgentId !== undefined &&
+      input.shortName !== undefined &&
+      isBoundedRuntimeIdentity(input.ownerAgentId) &&
+      typeof input.shortName === "string" &&
+      SKILL_PROVIDER_SAFE_ID_REGEX.test(input.shortName) &&
+      typeof input.id === "string" &&
+      SKILL_PROVIDER_SAFE_ID_REGEX.test(input.id);
+  }
+  return typeof input.id === "string" && SKILL_NAME_REGEX.test(input.id);
+}
+
 function normalizeRuntimeSkillSourcePath(value: unknown): string | null {
   if (
     typeof value !== "string" ||
@@ -745,11 +897,23 @@ function snapshotRuntimeSkillReferences(
 type ParsedRuntimeSkillBuildDocument = {
   document: ParsedRuntimeSkillDocument;
   allowedToolsDeclared: boolean;
+  displayName?: string;
 };
+
+function getRuntimeSkillDisplayName(
+  metadata: RuntimeSkillFrontmatter,
+  canonicalName: string,
+): string | undefined {
+  const explicitDisplayName = metadata.metadata?.display_name?.trim() || undefined;
+  const legacyDisplayName = metadata.name && metadata.name !== canonicalName
+    ? metadata.name
+    : undefined;
+  return explicitDisplayName ?? legacyDisplayName;
+}
 
 function parseRuntimeSkillDirectoryDocument(
   content: string,
-  directoryName: string,
+  input: Pick<BuildRuntimeSkillDefinitionInput, "id" | "ownerAgentId">,
   logger?: RuntimeSkillMetadataLogger,
 ): ParsedRuntimeSkillBuildDocument | null {
   const source = parseStrictRuntimeSkillSource(content, { logger });
@@ -758,7 +922,9 @@ function parseRuntimeSkillDirectoryDocument(
   }
 
   try {
-    const metadata = validateSkillFileMetadata(source.frontmatter, directoryName);
+    const metadata = validateSkillFileMetadata(source.frontmatter, input.id, {
+      providerSafeName: input.ownerAgentId !== undefined,
+    });
     return {
       document: {
         body: source.document.body,
@@ -769,9 +935,13 @@ function parseRuntimeSkillDirectoryDocument(
           allowedTools: metadata.allowedTools === undefined
             ? []
             : snapshotAllowedToolPatterns(metadata.allowedTools),
+          metadata: metadata.metadata === undefined
+            ? undefined
+            : Object.freeze({ ...metadata.metadata }),
         },
       },
       allowedToolsDeclared: metadata.allowedTools !== undefined,
+      ...(metadata.displayName === undefined ? {} : { displayName: metadata.displayName }),
     };
   } catch (error) {
     logger?.error?.("Invalid skill frontmatter; skipping skill", {
@@ -788,19 +958,12 @@ function buildRuntimeSkillDefinitionFromDocument(
   if (!parsed) {
     return null;
   }
-  if (!isBoundedRuntimeIdentity(input.id)) {
-    input.logger?.error?.("Invalid runtime skill id; skipping skill", {
-      skillId: input.id,
-    });
-    return null;
-  }
-  if (
-    (input.ownerAgentId === undefined) !== (input.shortName === undefined) ||
-    (input.ownerAgentId !== undefined && !isBoundedRuntimeIdentity(input.ownerAgentId)) ||
-    (input.shortName !== undefined && !SKILL_STRICT_NAME_REGEX.test(input.shortName))
-  ) {
-    input.logger?.error?.("Invalid runtime skill ownership; skipping skill", {
-      skillId: input.id,
+  if (!isRuntimeSkillIdValid(input)) {
+    input.logger?.error?.("Invalid skill id; skipping skill", {
+      id: input.id,
+      error: input.ownerAgentId === undefined && input.shortName === undefined
+        ? "must be lowercase alphanumeric with hyphens, 1-64 characters"
+        : "must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters",
     });
     return null;
   }
@@ -822,14 +985,20 @@ function buildRuntimeSkillDefinitionFromDocument(
   }
 
   const { metadata, body } = parsed.document;
+  const displayName = parsed.displayName ?? getRuntimeSkillDisplayName(metadata, input.id);
+  const metadataSnapshot = metadata.metadata === undefined
+    ? undefined
+    : Object.freeze({ ...metadata.metadata });
 
   const definition: RuntimeSkillDefinition = {
     id: input.id,
-    name: metadata.name ?? input.id,
+    name: input.id,
+    ...(displayName === undefined ? {} : { displayName }),
     description: metadata.description ?? extractDescriptionFromMarkdown(body, input.id),
     instructions: input.content,
     allowedTools: snapshotAllowedToolPatterns(metadata.allowedTools),
     allowedToolsDeclared: parsed.allowedToolsDeclared,
+    ...(metadataSnapshot === undefined ? {} : { metadata: metadataSnapshot }),
     ...(metadata.model ? { model: metadata.model } : {}),
     ...(metadata.thinking !== undefined ? { thinking: metadata.thinking } : {}),
     ...(metadata.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
@@ -884,6 +1053,7 @@ export function buildUnsafeLegacyRuntimeSkillDefinition(
     description: metadata.description ?? extractDescriptionFromMarkdown(body, input.id),
     instructions: input.content,
     allowedTools: metadata.allowedTools,
+    ...(metadata.metadata ? { metadata: metadata.metadata } : {}),
     ...(metadata.model ? { model: metadata.model } : {}),
     ...(metadata.thinking !== undefined ? { thinking: metadata.thinking } : {}),
     ...(metadata.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
@@ -901,10 +1071,9 @@ export function buildRuntimeDirectorySkillDefinition(
   input: BuildRuntimeSkillDefinitionInput,
 ): RuntimeSkillDefinition | null {
   const snapshot = snapshotRuntimeSkillDefinitionInput(input);
-  const directoryName = snapshot.shortName ?? snapshot.id;
   return buildRuntimeSkillDefinitionFromDocument(
     snapshot,
-    parseRuntimeSkillDirectoryDocument(snapshot.content, directoryName, snapshot.logger),
+    parseRuntimeSkillDirectoryDocument(snapshot.content, snapshot, snapshot.logger),
   );
 }
 

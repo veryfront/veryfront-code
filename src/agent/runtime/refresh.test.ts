@@ -14,6 +14,7 @@ import type {
   ToolExecutionResultRequest,
 } from "../types.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
+import type { TextGenerationRuntimeMessage } from "./text-generation-runtime-message-types.ts";
 
 function createRuntimeStream(parts: unknown[]) {
   return new ReadableStream<unknown>({
@@ -258,6 +259,135 @@ describe("agent runtime refresh hooks", () => {
         )
       ),
       false,
+    );
+  });
+
+  it("keeps valid parallel tool results before suppressed-tool recovery guidance", async () => {
+    const observedPrompts: TextGenerationRuntimeMessage[][] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/mixed-suppressed-tool-recovery",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream(options: unknown) {
+        callCount++;
+        observedPrompts.push(
+          (options as { prompt?: TextGenerationRuntimeMessage[] }).prompt ?? [],
+        );
+
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "tc-stale",
+                toolName: "stale_tool",
+                input: { query: "ignored" },
+              },
+              {
+                type: "tool-call",
+                toolCallId: "tc-github",
+                toolName: "get_github",
+                input: { query: "pull requests" },
+              },
+              {
+                type: "tool-call",
+                toolCallId: "tc-slack",
+                toolName: "get_slack",
+                input: { query: "daily channel" },
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "Recovered." },
+            { type: "finish", finishReason: "stop" },
+          ]),
+        };
+      },
+    };
+    const getGithub = tool({
+      id: "get_github",
+      description: "Get GitHub integration details",
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+      execute: ({ query }) => ({ integration: "github", query }),
+    });
+    const getSlack = tool({
+      id: "get_slack",
+      description: "Get Slack integration details",
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+      execute: ({ query }) => ({ integration: "slack", query }),
+    });
+    const assistant = agent({
+      model: "hosted/mixed-suppressed-tool-recovery",
+      system: "Recover from stale tools after checking integrations.",
+      tools: { get_github: getGithub, get_slack: getSlack },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await (await assistant.stream({ input: "Build an agent" })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 2);
+    const retryPrompt = observedPrompts[1] ?? [];
+    assertEquals(
+      retryPrompt.slice(-3).map((message) => message.role),
+      ["assistant", "tool", "user"],
+    );
+    assertEquals(retryPrompt.at(-3), {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "tc-github",
+          toolName: "get_github",
+          input: { query: "pull requests" },
+        },
+        {
+          type: "tool-call",
+          toolCallId: "tc-slack",
+          toolName: "get_slack",
+          input: { query: "daily channel" },
+        },
+      ],
+    });
+    assertEquals(retryPrompt.at(-2), {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "tc-github",
+          toolName: "get_github",
+          output: {
+            type: "json",
+            value: { integration: "github", query: "pull requests" },
+          },
+        },
+        {
+          type: "tool-result",
+          toolCallId: "tc-slack",
+          toolName: "get_slack",
+          output: {
+            type: "json",
+            value: { integration: "slack", query: "daily channel" },
+          },
+        },
+      ],
+    });
+    assertEquals(
+      JSON.stringify(retryPrompt.at(-1)?.content).includes(
+        "ignored unavailable tool call(s): stale_tool",
+      ),
+      true,
     );
   });
 

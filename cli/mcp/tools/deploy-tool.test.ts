@@ -384,7 +384,12 @@ describe("mcp/tools/deploy-tool", () => {
           using time = new FakeTime();
           resumeReleaseSourceRead();
           await time.tickAsync(0);
-          while (releaseSourceReads < 20) {
+          // Parallel suites can need several microtask turns per fake timer.
+          for (
+            let tick = 0;
+            releaseSourceReads < 20 && tick < 200;
+            tick++
+          ) {
             await time.tickAsync(500);
           }
           assertEquals(

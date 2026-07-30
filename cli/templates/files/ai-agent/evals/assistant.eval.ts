@@ -13,16 +13,16 @@ export default evalAgent({
   ]),
   metrics: [
     metrics.answer.regex({
-      pattern: String.raw`(?<![-\d.\\])\\?\$15\.21(?![\d.])`,
+      pattern: String.raw`(?<![-\d.\\])\\?\$15\.21(?!\d|\.\d)`,
     }).gate(),
     metrics.answer.regex({
-      pattern: String.raw`(?<![-\d.\\])\\?\$99\.71(?![\d.])`,
+      pattern: String.raw`(?<![-\d.\\])\\?\$99\.71(?!\d|\.\d)`,
     }).gate(),
     metrics.answer.regex({
-      pattern: String.raw`(?<![-\d.\\])\\?\$33\.24(?![\d.])`,
+      pattern: String.raw`(?<![-\d.\\])\\?\$33\.24(?!\d|\.\d)`,
     }).gate(),
     metrics.answer.regex({
-      pattern: String.raw`(?<![-\d.\\])\\?\$33\.23(?![\d.])`,
+      pattern: String.raw`(?<![-\d.\\])\\?\$33\.23(?!\d|\.\d)`,
     }).gate(),
     metrics.agent.calledTool("calculator").gate(),
     metrics.agent.noFailedTools().gate(),

@@ -374,7 +374,7 @@ it("deploys production from the existing verified push without mutating source",
   }
 });
 
-it("promotes the latest verified push when no branch is specified", async () => {
+it("defaults omitted deploy branch to main instead of promoting a feature push receipt", async () => {
   for (const jsonMode of [false, true]) {
     const projectDir = await Deno.makeTempDir();
     await withDeployEnv(projectDir, async ({ commitSha, sourceDigest }) => {
@@ -398,25 +398,60 @@ it("promotes the latest verified push when no branch is specified", async () => 
       };
 
       try {
-        const result = await withMockFetch(
-          createDeployFetchHandler({ requests, sourceDigest }),
-          () =>
-            deployCommand({
-              projectDir,
-              env: "production",
-              dryRun: false,
-              force: false,
-              quiet: true,
-              environmentPollIntervalMs: 1,
-              environmentTimeoutMs: 1_000,
-            }),
-        );
-
         if (jsonMode) {
+          const originalExit = Deno.exit;
+          try {
+            Deno.exit = ((code?: number): never => {
+              throw new Error(`Deno.exit(${code ?? 0})`);
+            }) as typeof Deno.exit;
+            await assertRejects(
+              () =>
+                withMockFetch(
+                  createDeployFetchHandler({ requests, sourceDigest }),
+                  () =>
+                    deployCommand({
+                      projectDir,
+                      env: "production",
+                      dryRun: false,
+                      force: false,
+                      quiet: true,
+                      environmentPollIntervalMs: 1,
+                      environmentTimeoutMs: 1_000,
+                    }),
+                ),
+              Error,
+              "Deno.exit(1)",
+            );
+          } finally {
+            Deno.exit = originalExit;
+          }
+
           const jsonResult = output.map((line) => JSON.parse(line)).at(-1);
-          assertEquals(jsonResult.data.branch, "feature-x");
+          assertEquals(
+            jsonResult.error.includes(
+              'The latest push is for branch "feature-x", but deploy targets "main".',
+            ),
+            true,
+          );
         } else {
-          assertEquals(result?.branch, "feature-x");
+          await assertRejects(
+            () =>
+              withMockFetch(
+                createDeployFetchHandler({ requests, sourceDigest }),
+                () =>
+                  deployCommand({
+                    projectDir,
+                    env: "production",
+                    dryRun: false,
+                    force: false,
+                    quiet: true,
+                    environmentPollIntervalMs: 1,
+                    environmentTimeoutMs: 1_000,
+                  }),
+              ),
+            Error,
+            'The latest push is for branch "feature-x", but deploy targets "main".',
+          );
         }
       } finally {
         console.log = originalLog;
@@ -424,7 +459,7 @@ it("promotes the latest verified push when no branch is specified", async () => 
 
       assertEquals(
         requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
-        true,
+        false,
       );
     });
   }

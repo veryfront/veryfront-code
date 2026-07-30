@@ -35,6 +35,7 @@ import {
   type RuntimeLoadedSkillResponseMessages,
   type RuntimeSkillMetadataLogger,
 } from "./skill-metadata.ts";
+import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
 
 /** Fail-closed continuation note used when no delegation tool is known available. */
 export const RUNTIME_LOAD_SKILL_CONTINUATION_NOTE =
@@ -337,6 +338,7 @@ export type RuntimeLoadSkillToolContext = RuntimeProjectSkillContext & {
    * permits direct builtin fallback.
    */
   availableSkillIds?: readonly string[];
+  skillSelectorPolicy?: ResolvedSkillSelectorPolicy;
   availableToolNames?: readonly string[];
   loadedSkillResponses?: Record<string, RuntimeLoadedSkillResponse>;
   loadedSkillReferenceResponses?: Record<
@@ -1415,8 +1417,20 @@ function buildRuntimeLoadSkillInputSchema(
   authorizationStore: ReadonlyMap<string, RuntimeSkillReferenceAuthorization>,
 ) {
   const knownIds = getKnownRuntimeSkillIds(options);
-  if (!knownIds || knownIds.length === 0) {
+  if (!knownIds) {
     return runtimeLoadSkillToolInputSchema;
+  }
+
+  if (knownIds.length === 0) {
+    return defineSchema((v) =>
+      v.object({
+        skillId: v.string().refine(
+          () => false,
+          "No skills are available in this run.",
+        ).describe("No skills are available in this run."),
+        file: v.string().optional(),
+      }).strict()
+    )();
   }
 
   const knownIdSet = new Set(knownIds);

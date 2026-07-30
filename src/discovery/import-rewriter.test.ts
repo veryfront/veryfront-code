@@ -456,7 +456,7 @@ describe("discovery/import-rewriter", () => {
     }
   });
 
-  it("refreshes positive package resolutions when the discovery cache is cleared", async () => {
+  it("refreshes cached package main resolution when package metadata changes", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-cache-refresh-" });
     const pkgDir = `${projectDir}/node_modules/switchable-package`;
     const packageJsonPath = `${pkgDir}/package.json`;
@@ -483,7 +483,6 @@ describe("discovery/import-rewriter", () => {
         JSON.stringify({ name: "switchable-package", main: "./v2.js" }),
       );
       await Deno.writeTextFile(`${pkgDir}/v2.js`, "export default 2;");
-      clearTranspileCache();
 
       const refreshed = await rewriteDiscoveryImports(
         code,
@@ -492,9 +491,97 @@ describe("discovery/import-rewriter", () => {
         `${projectDir}/tools`,
       );
       assertStringIncludes(refreshed, "switchable-package/v2.js");
+      assertEquals(refreshed.includes("switchable-package/v1.js"), false);
     } finally {
       clearTranspileCache();
       await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("refreshes cached package exports resolution when package metadata changes", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-exports-refresh-" });
+    const pkgDir = `${projectDir}/node_modules/switchable-exports`;
+    const packageJsonPath = `${pkgDir}/package.json`;
+    const code = 'import value from "switchable-exports";';
+
+    try {
+      await Deno.mkdir(pkgDir, { recursive: true });
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({ name: "switchable-exports", exports: "./v1.js" }),
+      );
+      await Deno.writeTextFile(`${pkgDir}/v1.js`, "export default 1;");
+
+      const first = await rewriteDiscoveryImports(
+        code,
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/tools`,
+      );
+      assertStringIncludes(first, "switchable-exports/v1.js");
+
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({ name: "switchable-exports", exports: "./v2.js" }),
+      );
+      await Deno.writeTextFile(`${pkgDir}/v2.js`, "export default 2;");
+
+      const refreshed = await rewriteDiscoveryImports(
+        code,
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/tools`,
+      );
+      assertStringIncludes(refreshed, "switchable-exports/v2.js");
+      assertEquals(refreshed.includes("switchable-exports/v1.js"), false);
+    } finally {
+      clearTranspileCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("refreshes a cached parent package when a nearer package is installed", async () => {
+    const workspaceDir = await Deno.makeTempDir({ prefix: "vf-rewriter-nearer-package-" });
+    const projectDir = `${workspaceDir}/project`;
+    const parentPkgDir = `${workspaceDir}/node_modules/precedence-package`;
+    const localPkgDir = `${projectDir}/node_modules/precedence-package`;
+    const code = 'import value from "precedence-package";';
+
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.mkdir(parentPkgDir, { recursive: true });
+      await Deno.writeTextFile(
+        `${parentPkgDir}/package.json`,
+        JSON.stringify({ name: "precedence-package", main: "./parent.js" }),
+      );
+      await Deno.writeTextFile(`${parentPkgDir}/parent.js`, "export default 'parent';");
+
+      const first = await rewriteDiscoveryImports(
+        code,
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/tools`,
+      );
+      assertStringIncludes(first, "node_modules/precedence-package/parent.js");
+
+      await Deno.mkdir(localPkgDir, { recursive: true });
+      await Deno.writeTextFile(
+        `${localPkgDir}/package.json`,
+        JSON.stringify({ name: "precedence-package", main: "./local.js" }),
+      );
+      await Deno.writeTextFile(`${localPkgDir}/local.js`, "export default 'local';");
+
+      const refreshed = await rewriteDiscoveryImports(
+        code,
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/tools`,
+      );
+      assertStringIncludes(refreshed, "project/node_modules/precedence-package/local.js");
+      assertEquals(refreshed.includes("precedence-package/parent.js"), false);
+    } finally {
+      clearTranspileCache();
+      await Deno.remove(workspaceDir, { recursive: true });
     }
   });
 

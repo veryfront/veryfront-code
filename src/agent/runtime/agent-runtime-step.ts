@@ -66,10 +66,24 @@ export interface PreparedAgentRuntimeStep {
   tools: ToolDefinition[];
 }
 
+function shouldIncludeSkillTools(config: AgentConfig): boolean {
+  return config.skills !== false && (!Array.isArray(config.skills) || config.skills.length > 0);
+}
+
+function getTrustedAllowedSkillIds(
+  input: PrepareAgentRuntimeStepInput,
+): readonly string[] | undefined {
+  const value = input.toolContextBase?.allowedSkillIds ?? input.runtimeContext?.allowedSkillIds;
+  return Array.isArray(value) && value.every((entry): entry is string => typeof entry === "string")
+    ? value
+    : undefined;
+}
+
 /** Resolve per-step runtime state and the tools visible for that step. */
 export async function prepareAgentRuntimeStep(
   input: PrepareAgentRuntimeStepInput,
 ): Promise<PreparedAgentRuntimeStep> {
+  const trustedAllowedSkillIds = getTrustedAllowedSkillIds(input);
   const runtimeState = await input.resolveRuntimeState(
     input.messages,
     input.runtimeContext,
@@ -81,6 +95,9 @@ export async function prepareAgentRuntimeStep(
   const toolContext: ToolExecutionContext = { ...input.toolContextBase, ...runtimeState.context };
   if (input.toolContextBase?.abortSignal !== undefined) {
     toolContext.abortSignal = input.toolContextBase.abortSignal;
+  }
+  if (trustedAllowedSkillIds !== undefined) {
+    toolContext.allowedSkillIds = [...trustedAllowedSkillIds];
   }
   delete toolContext[SOURCE_INTEGRATION_POLICY_CONTEXT_KEY];
   if (input.sourceIntegrationPolicy !== undefined) {
@@ -95,7 +112,7 @@ export async function prepareAgentRuntimeStep(
 
   let tools = input.isLocalModel ? [] : await input.getAvailableTools(input.config.tools, {
     callerAgentId: input.agentId,
-    includeSkillTools: true,
+    includeSkillTools: shouldIncludeSkillTools(input.config),
     allowedRemoteToolNames: input.allowedRemoteToolNames,
     forwardedRemoteToolDefinitions: input.forwardedRemoteToolDefinitions,
     remoteToolSources: input.remoteToolSources,
@@ -122,7 +139,9 @@ export async function prepareAgentRuntimeStep(
   );
 
   return {
-    runtimeContext: runtimeState.context,
+    runtimeContext: trustedAllowedSkillIds === undefined
+      ? runtimeState.context
+      : { ...runtimeState.context, allowedSkillIds: [...trustedAllowedSkillIds] },
     systemPrompt: runtimeState.systemPrompt,
     toolContext,
     tools,

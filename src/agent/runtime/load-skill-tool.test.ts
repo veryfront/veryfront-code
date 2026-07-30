@@ -220,8 +220,7 @@ Deno.test("a claimed project skill never falls through to a builtin with the sam
 });
 
 Deno.test("an invalid catalog override cannot re-enable a builtin with the same id", async () => {
-  const invalidOverride =
-    "---\nname: different\ndescription: Invalid shared override\n---\n\n# Invalid";
+  const invalidOverride = "---\nname: shared\n---\n\n# Missing required description";
   const getProjectFiles = () => Promise.resolve([{ path: "skills/shared/SKILL.md" }]);
   const getProjectFile = ({ path }: { path: string }) =>
     Promise.resolve(
@@ -263,9 +262,11 @@ Deno.test("an invalid catalog override cannot re-enable a builtin with the same 
     },
   });
 
-  assertEquals(await tool.execute({ skillId: "shared" }), {
-    error: "Skill not found: shared. Available skills: none",
-  });
+  await assertRejects(
+    () => tool.execute({ skillId: "shared" }),
+    Error,
+    "No skills are available in this run",
+  );
   assertEquals(builtinReads, 0);
 });
 
@@ -1811,7 +1812,7 @@ Deno.test("inherited scalar accessors are never reusable authority", async () =>
   let bodyReads = 0;
   let referenceReads = 0;
   const context = createProjectContext();
-  delete context.authToken;
+  Reflect.deleteProperty(context, "authToken");
   const contextPrototype = {};
   Object.defineProperty(contextPrototype, "authToken", {
     configurable: true,
@@ -3050,6 +3051,53 @@ Deno.test("createRuntimeLoadSkillTool rejects invented skill IDs before tool exe
     Error,
     "input validation failed",
   );
+});
+
+Deno.test("createRuntimeLoadSkillTool treats an empty availableSkillIds manifest as deny-all before storage reads", async () => {
+  let projectReads = 0;
+  let builtinReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({
+      availableSkillIds: [],
+    }),
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        projectReads++;
+        return Promise.resolve({ instructions: "# Project plan", references: [] });
+      },
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinSkillIds: ["plan"],
+    builtinStore: {
+      readSkill: () => {
+        builtinReads++;
+        return "# Builtin plan";
+      },
+      readReferenceFile: () => {
+        builtinReads++;
+        return "Guide";
+      },
+      listReferences: () => {
+        builtinReads++;
+        return ["references/guide.md"];
+      },
+    },
+  });
+
+  await assertRejects(
+    () => tool.execute({ skillId: "plan" }),
+    Error,
+    "input validation failed",
+  );
+  await assertRejects(
+    () => tool.execute({ skillId: "plan", file: "references/guide.md" }),
+    Error,
+    "input validation failed",
+  );
+  assertEquals(projectReads, 0);
+  assertEquals(builtinReads, 0);
 });
 
 Deno.test("createRuntimeLoadSkillTool allows host copy overrides", async () => {

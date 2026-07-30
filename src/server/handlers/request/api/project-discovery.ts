@@ -1,4 +1,4 @@
-import { INITIALIZATION_ERROR } from "#veryfront/errors";
+import { getErrorMessage, INITIALIZATION_ERROR } from "#veryfront/errors";
 import {
   createProjectDiscoveryConfig,
   DiscoveryGenerationError,
@@ -96,6 +96,13 @@ function sanitizeDiscoveryErrorMessage(
     : `${sanitized.slice(0, MAX_DISCOVERY_ERROR_MESSAGE_LENGTH - 3)}...`;
 }
 
+function sanitizeRuntimeDiscoveryError(error: unknown): string {
+  const sanitized = sanitizeUrlCredentials(getErrorMessage(error));
+  return sanitized.length <= MAX_DISCOVERY_ERROR_MESSAGE_LENGTH
+    ? sanitized
+    : `${sanitized.slice(0, MAX_DISCOVERY_ERROR_MESSAGE_LENGTH - 3)}...`;
+}
+
 function summarizeDiscoveryFailures(
   errors: DiscoveryResult["errors"],
   projectDir: string,
@@ -107,10 +114,64 @@ function summarizeDiscoveryFailures(
       return {
         file: relativeFile,
         sourceKind: sourceKind ?? DISCOVERY_SOURCE_KINDS[topLevelDir] ?? "unknown",
-        message: sanitizeDiscoveryErrorMessage(error.message, file, projectDir, relativeFile),
+        message: sanitizeDiscoveryErrorMessage(
+          getErrorMessage(error),
+          file,
+          projectDir,
+          relativeFile,
+        ),
       };
     },
   );
+}
+
+interface DiscoveryGenerationFailureSummary {
+  readonly agents: number;
+  readonly tools: number;
+  readonly errors: number;
+  readonly failures: ReturnType<typeof summarizeDiscoveryFailures>;
+  readonly omittedErrors: number;
+}
+
+/**
+ * Classify and snapshot the one framework-owned aggregate error without
+ * allowing a hostile proxy thrown by project or adapter code to escape while
+ * JavaScript evaluates `instanceof` or reads fields.
+ */
+function snapshotDiscoveryGenerationFailure(
+  error: unknown,
+  projectDir: string,
+): DiscoveryGenerationFailureSummary | null {
+  try {
+    if (!(error instanceof DiscoveryGenerationError)) return null;
+    const result = error.result;
+    return {
+      agents: result.agents.size,
+      tools: result.tools.size,
+      errors: result.errors.length,
+      failures: summarizeDiscoveryFailures(result.errors, projectDir),
+      omittedErrors: Math.max(
+        0,
+        result.errors.length - MAX_DISCOVERY_FAILURES_TO_LOG,
+      ),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function createRuntimeDiscoveryError(error: unknown) {
+  return INITIALIZATION_ERROR.create({
+    detail: `Runtime discovery failed: ${sanitizeRuntimeDiscoveryError(error)}`,
+    cause: error,
+  });
+}
+
+function logRetryableDiscoveryFailure(ctx: HandlerContext, error: unknown): void {
+  logger.warn("Primitive discovery failed (will retry)", {
+    projectSlug: ctx.projectSlug,
+    error: sanitizeRuntimeDiscoveryError(error),
+  });
 }
 
 /** Build a discovery cache key that incorporates the release/version. */
@@ -153,11 +214,21 @@ function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
  * correct project scope.
  */
 export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<DiscoveryResult> {
-  await ctx.adapter.fs.ensureSourceSnapshotFresh?.("primitive-discovery");
-  const key = discoveryKey(ctx);
-  const sourceSnapshotVersion = await ctx.adapter.fs.getSourceSnapshotVersion?.();
-  const cacheCompletedDiscovery = shouldCacheCompletedDiscovery(ctx) ||
-    sourceSnapshotVersion !== undefined;
+  let key: string;
+  let sourceSnapshotVersion: number | undefined;
+  let cacheCompletedDiscovery: boolean;
+  try {
+    await ctx.adapter.fs.ensureSourceSnapshotFresh?.("primitive-discovery");
+    key = discoveryKey(ctx);
+    sourceSnapshotVersion = await ctx.adapter.fs.getSourceSnapshotVersion?.();
+    cacheCompletedDiscovery = shouldCacheCompletedDiscovery(ctx) ||
+      sourceSnapshotVersion !== undefined;
+  } catch (error) {
+    // No cache record exists yet, so the next request always retries the
+    // adapter/configuration preflight from a clean state.
+    logRetryableDiscoveryFailure(ctx, error);
+    throw createRuntimeDiscoveryError(error);
+  }
 
   const existing = discoveredProjects.get<DiscoveryRecord>(key);
   if (
@@ -174,49 +245,33 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
     promise: (async () => {
       const discoveryOptions = createProjectDiscoveryConfig({
         projectDir: ctx.projectDir,
+        cacheNamespace: sourceSnapshotVersion === undefined
+          ? key
+          : `${key}:snapshot:${sourceSnapshotVersion}`,
         config: ctx.config,
         fsAdapter: ctx.adapter.fs,
       });
       const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||
         discoveryOptions.agentDirs.length > 0;
 
-      try {
-        const result = await replaceDiscoveredProjectPrimitives(discoveryOptions);
-        const logData = {
-          projectSlug: ctx.projectSlug,
-          releaseId: ctx.releaseId,
-          agents: result.agents.size,
-          tools: result.tools.size,
-          errors: 0,
-        };
+      const result = await replaceDiscoveredProjectPrimitives(discoveryOptions);
+      const logData = {
+        projectSlug: ctx.projectSlug,
+        releaseId: ctx.releaseId,
+        agents: result.agents.size,
+        tools: result.tools.size,
+        errors: 0,
+      };
 
-        if (
-          result.agents.size === 0 && result.tools.size === 0 && shouldWarnOnEmptyAiDiscovery
-        ) {
-          logger.debug("Primitive discovery found 0 agents and 0 tools", logData);
-        } else {
-          logger.debug("Primitive discovery completed", logData);
-        }
-
-        return result;
-      } catch (error) {
-        if (error instanceof DiscoveryGenerationError) {
-          const result = error.result;
-          logger.warn("Primitive discovery rejected; retaining previous generation", {
-            projectSlug: ctx.projectSlug,
-            releaseId: ctx.releaseId,
-            agents: result.agents.size,
-            tools: result.tools.size,
-            errors: result.errors.length,
-            failures: summarizeDiscoveryFailures(result.errors, ctx.projectDir),
-            omittedErrors: Math.max(
-              0,
-              result.errors.length - MAX_DISCOVERY_FAILURES_TO_LOG,
-            ),
-          });
-        }
-        throw error;
+      if (
+        result.agents.size === 0 && result.tools.size === 0 && shouldWarnOnEmptyAiDiscovery
+      ) {
+        logger.debug("Primitive discovery found 0 agents and 0 tools", logData);
+      } else {
+        logger.debug("Primitive discovery completed", logData);
       }
+
+      return result;
     })(),
   };
 
@@ -231,18 +286,17 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
     if (current === discovery) {
       discoveredProjects.delete(key);
     }
-    if (!(error instanceof DiscoveryGenerationError)) {
-      logger.warn("Primitive discovery failed (will retry)", {
+    const generationFailure = snapshotDiscoveryGenerationFailure(error, ctx.projectDir);
+    if (generationFailure) {
+      logger.warn("Primitive discovery rejected; retaining previous generation", {
         projectSlug: ctx.projectSlug,
-        error: sanitizeUrlCredentials(
-          error instanceof Error ? error.message : String(error),
-        ),
+        releaseId: ctx.releaseId,
+        ...generationFailure,
       });
+    } else {
+      logRetryableDiscoveryFailure(ctx, error);
     }
-    throw INITIALIZATION_ERROR.create({
-      detail: `Runtime discovery failed: ${error instanceof Error ? error.message : String(error)}`,
-      cause: error,
-    });
+    throw createRuntimeDiscoveryError(error);
   } finally {
     if (!cacheCompletedDiscovery) {
       const current = discoveredProjects.get(key);

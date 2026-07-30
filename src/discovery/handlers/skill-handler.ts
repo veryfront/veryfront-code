@@ -61,6 +61,8 @@ export async function discoverSkills(
       });
       const parsed = await parseSkillFileFrontmatter(content);
       const metadata = validateSkillFileMetadata(parsed.frontmatter, entry.name);
+      // Directory identity is canonical. The parser retains any differing
+      // authored name only as display metadata.
       const skillId = entry.name;
       const runtimeRoot = resolveRuntimeDiscoveryRoot(skillDir, context);
 

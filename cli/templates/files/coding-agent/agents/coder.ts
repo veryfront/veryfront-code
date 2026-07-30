@@ -16,18 +16,16 @@ When asked to make changes:
 Always explain your reasoning before making edits.`,
   tools: true,
   maxSteps: 15,
-  suggestions: {
-    suggestions: [
-      {
-        type: "prompt",
-        title: "Explain the codebase",
-        prompt: "Explain how this project is organized.",
-      },
-      {
-        type: "prompt",
-        title: "Make a change",
-        prompt: "Make this code change: ",
-      },
-    ],
-  },
+  suggestions: [
+    {
+      type: "prompt",
+      title: "Explain the codebase",
+      prompt: "Explain how this project is organized.",
+    },
+    {
+      type: "prompt",
+      title: "Make a change",
+      prompt: "Make this code change: ",
+    },
+  ],
 });

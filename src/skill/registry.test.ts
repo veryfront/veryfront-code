@@ -18,6 +18,18 @@ function createTestSkill(id: string): Skill {
   };
 }
 
+function createScopedTestSkill(input: {
+  id: string;
+  ownerAgentId?: string;
+  shortName?: string;
+}): Skill {
+  return {
+    ...createTestSkill(input.id),
+    ...(input.ownerAgentId === undefined ? {} : { ownerAgentId: input.ownerAgentId }),
+    ...(input.shortName === undefined ? {} : { shortName: input.shortName }),
+  };
+}
+
 describe("src/skill/registry", () => {
   beforeEach(() => {
     skillRegistryInternal.clearAll();
@@ -44,6 +56,7 @@ describe("src/skill/registry", () => {
         id: "owned",
         metadata: {
           name: "owned",
+          displayName: "Owned Helper",
           description: "Original",
           allowedTools: ["Read"],
           metadata: { author: "A" },
@@ -64,6 +77,7 @@ describe("src/skill/registry", () => {
       assertStrictEquals(getSkill("owned"), registered);
       assertStrictEquals(getAllSkills().get("owned"), registered);
       assertEquals(registered?.metadata.description, "Mutated");
+      assertEquals(registered?.metadata.displayName, "Owned Helper");
       assertEquals(registered?.metadata.allowedTools, ["Read", "Write"]);
       assertEquals(registered?.metadata.metadata, { author: "B" });
       assertEquals(registered?.ownerAgentId, "agent-b");
@@ -80,6 +94,7 @@ describe("src/skill/registry", () => {
 
       const internal = skillRegistryInternal.get("owned");
       assertEquals(internal?.metadata.description, "Original");
+      assertEquals(internal?.metadata.displayName, "Owned Helper");
       assertEquals(internal?.metadata.allowedTools, ["Read"]);
       assertEquals(internal?.metadata.metadata, { author: "A" });
       assertEquals(internal?.ownerAgentId, "agent-a");
@@ -226,6 +241,104 @@ describe("src/skill/registry", () => {
         skillRegistryInternal.resolveVisibleSkill("new-name", { agentId: "agent-b" }),
         undefined,
       );
+    });
+  });
+
+  describe("resolveSelectorForAgent", () => {
+    it("preserves omitted, true, empty, and allowlist selector policies", () => {
+      registerSkill("a", createTestSkill("a"));
+      registerSkill("b", createTestSkill("b"));
+
+      const omitted = skillRegistryInternal.resolveSelectorForAgent(undefined);
+      assertEquals(omitted.policy, { kind: "all-visible", source: "omitted" });
+      assertEquals(omitted.allowedSkillIds, ["a", "b"]);
+
+      const all = skillRegistryInternal.resolveSelectorForAgent(true);
+      assertEquals(all.policy, { kind: "all-visible", source: "true" });
+      assertEquals(all.allowedSkillIds, ["a", "b"]);
+
+      const none = skillRegistryInternal.resolveSelectorForAgent([]);
+      assertEquals(none.policy, { kind: "none" });
+      assertEquals(none.allowedSkillIds, []);
+
+      const selected = skillRegistryInternal.resolveSelectorForAgent(["b"]);
+      assertEquals(selected.policy, { kind: "allowlist", entries: ["b"] });
+      assertEquals(selected.allowedSkillIds, ["b"]);
+    });
+
+    it("deduplicates explicit selections in request order and exposes source paths", () => {
+      registerSkill("a", createTestSkill("a"));
+      registerSkill("b", createTestSkill("b"));
+
+      const resolved = skillRegistryInternal.resolveSelectorForAgent(["b", "a", "b"]);
+      assertEquals(resolved.allowedSkillIds, ["b", "a"]);
+      assertEquals(resolved.skillSourcePaths, {
+        b: "/test/skills/b/SKILL.md",
+        a: "/test/skills/a/SKILL.md",
+      });
+      assertEquals(resolved.definitions.map((skill) => skill.id), ["b", "a"]);
+    });
+
+    it("rejects unresolved explicit entries without echoing requested ids", () => {
+      registerSkill("a", createTestSkill("a"));
+
+      const error = assertThrows(
+        () => skillRegistryInternal.resolveSelectorForAgent(["missing-skill"]),
+        Error,
+        "configured skills are not available",
+      );
+
+      assertEquals(String(error).includes("missing-skill"), false);
+    });
+
+    it("applies the canonical selector matrix for owner-visible skills", () => {
+      registerSkill("global", createScopedTestSkill({ id: "global" }));
+      registerSkill("bundled", createScopedTestSkill({ id: "bundled" }));
+      registerSkill(
+        "agent--cite",
+        createScopedTestSkill({ id: "agent--cite", ownerAgentId: "agent", shortName: "cite" }),
+      );
+      registerSkill(
+        "other--style",
+        createScopedTestSkill({ id: "other--style", ownerAgentId: "other", shortName: "style" }),
+      );
+      registerSkill("cite", createScopedTestSkill({ id: "cite" }));
+
+      const cases: Array<{
+        selector: true | string[] | undefined;
+        expectedPolicy: object;
+        expectedIds: string[];
+      }> = [
+        {
+          selector: undefined,
+          expectedPolicy: { kind: "all-visible", source: "omitted" },
+          expectedIds: ["global", "bundled", "agent--cite", "cite"],
+        },
+        {
+          selector: true,
+          expectedPolicy: { kind: "all-visible", source: "true" },
+          expectedIds: ["global", "bundled", "agent--cite", "cite"],
+        },
+        {
+          selector: [],
+          expectedPolicy: { kind: "none" },
+          expectedIds: [],
+        },
+        {
+          selector: ["bundled", "cite", "global", "bundled"],
+          expectedPolicy: { kind: "allowlist", entries: ["bundled", "cite", "global", "bundled"] },
+          expectedIds: ["bundled", "agent--cite", "global"],
+        },
+      ];
+
+      for (const testCase of cases) {
+        const snapshot = skillRegistryInternal.resolveSelectorForAgent(testCase.selector, {
+          agentId: "agent",
+        });
+        assertEquals(snapshot.policy, testCase.expectedPolicy);
+        assertEquals(snapshot.allowedSkillIds, testCase.expectedIds);
+        assertEquals(snapshot.definitions.map((skill) => skill.id), testCase.expectedIds);
+      }
     });
   });
 });

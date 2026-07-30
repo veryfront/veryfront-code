@@ -7,9 +7,13 @@
 import type { ParsedArgs } from "#cli/shared/types";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { exitProcess, logError, logSuccess, logWarning } from "#cli/utils";
-import { basename } from "#std/path.ts";
+import { basename, resolve } from "veryfront/platform/path";
 import { isNotFoundError } from "veryfront/fs";
-import { parseSkillFileFrontmatter, validateSkillFileMetadata } from "veryfront/skill";
+import {
+  parseSkillFileFrontmatter,
+  SKILL_NAME_REGEX,
+  validateSkillFileMetadata,
+} from "veryfront/skill";
 import { readSkillDocument } from "../../skills/read-skill-document.ts";
 
 interface ValidationIssue {
@@ -39,7 +43,9 @@ export async function validateSkillDirectory(dir: string): Promise<ValidationIss
 
   try {
     const parsed = await parseSkillFileFrontmatter(content);
-    validateSkillFileMetadata(parsed.frontmatter, basename(dir));
+    const directoryName = basename(resolve(dir));
+    validateCanonicalFrontmatterName(parsed.frontmatter, directoryName);
+    validateSkillFileMetadata(parsed.frontmatter, directoryName);
     if (!parsed.body.trim()) {
       issues.push({ severity: "warning", message: "SKILL.md body is empty" });
     }
@@ -49,6 +55,22 @@ export async function validateSkillDirectory(dir: string): Promise<ValidationIss
   }
 
   return issues;
+}
+
+function validateCanonicalFrontmatterName(
+  frontmatter: Record<string, unknown>,
+  directoryName: string,
+): void {
+  if (typeof frontmatter.name !== "string") return;
+
+  const name = frontmatter.name.trim();
+  if (!SKILL_NAME_REGEX.test(name)) {
+    return;
+  }
+
+  if (name !== directoryName) {
+    throw new Error(`Skill name "${name}" does not match directory name "${directoryName}"`);
+  }
 }
 
 async function outputResults(

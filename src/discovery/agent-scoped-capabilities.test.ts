@@ -147,6 +147,38 @@ Deno.test("relative adapter roots keep directory-agent skills loadable", async (
   }
 });
 
+Deno.test("directory agents with dotted ids register provider-safe owned skill ids", async () => {
+  const root = await Deno.makeTempDir();
+  skillRegistryInternal.clearAll();
+  try {
+    const agentsDir = `${root}/agents`;
+    await Deno.mkdir(`${agentsDir}/a.b/skills/x_y`, { recursive: true });
+    await Deno.writeTextFile(
+      `${agentsDir}/a.b/AGENT.md`,
+      `---\nname: Dotted Agent\nskills: [x_y]\n---\nHandle dotted ids.\n`,
+    );
+    await Deno.writeTextFile(
+      `${agentsDir}/a.b/skills/x_y/SKILL.md`,
+      `---\nname: X Y\ndescription: Owned underscore helper\nmetadata:\n  display_name: X Y\n---\nUse X Y.\n`,
+    );
+
+    const result = emptyResult();
+    await discoverRuntimeAgentMarkdownDefinitions(agentsDir, result, context);
+
+    assertEquals(result.errors, []);
+    const skill = skillRegistry.get("a_b--x_y");
+    assertEquals(skill?.id, "a_b--x_y");
+    assertEquals(skill?.metadata.name, "a_b--x_y");
+    assertEquals(skill?.metadata.displayName, "X Y");
+    assertEquals(skill?.ownerAgentId, "a.b");
+    assertEquals(skill?.shortName, "x_y");
+  } finally {
+    skillRegistryInternal.clearAll();
+    cleanupAgents(["a.b"]);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("a coordinator's skills: true does not include its delegate's owned skills", async () => {
   const root = await Deno.makeTempDir();
   skillRegistryInternal.clearAll();

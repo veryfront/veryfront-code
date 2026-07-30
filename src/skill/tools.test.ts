@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill, skillRegistryInternal } from "./registry.ts";
 import {
@@ -251,6 +251,88 @@ Review the asset files.`,
     const result = await tool.execute({ skillId: "my-skill" });
 
     assertEquals(result.references, ["assets/checklist.txt"]);
+  });
+
+  it("load_skill should reject skills outside the selector before reading storage", async () => {
+    let readCount = 0;
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/SKILL.md": `---
+name: my-skill
+description: Skill from adapter
+---
+# Instructions
+Do work.`,
+    });
+    const countingAdapter: FileSystemAdapter = {
+      ...fsAdapter,
+      async readFile(path) {
+        readCount++;
+        return await fsAdapter.readFile(path);
+      },
+    };
+    registerSkill("my-skill", createTestSkill(countingAdapter));
+
+    const tool = createLoadSkillTool();
+
+    await assertRejects(
+      () =>
+        tool.execute({ skillId: "my-skill" }, {
+          agentId: "agent",
+          allowedSkillIds: [],
+        }),
+      Error,
+      "not available to this agent",
+    );
+    assertEquals(readCount, 0);
+  });
+
+  it("load_skill should not disclose selector-disallowed skills in unavailable errors", async () => {
+    const allowedAdapter = createSkillTestAdapter({
+      "/project/skills/allowed-skill/SKILL.md": `---
+name: allowed-skill
+description: Allowed skill
+---
+# Instructions
+Allowed work.`,
+    });
+    const hiddenAdapter = createSkillTestAdapter({
+      "/project/skills/hidden-skill/SKILL.md": `---
+name: hidden-skill
+description: Hidden skill
+---
+# Instructions
+Hidden work.`,
+    });
+    registerSkill("allowed-skill", createNamedTestSkill("allowed-skill", allowedAdapter));
+    registerSkill("hidden-skill", createNamedTestSkill("hidden-skill", hiddenAdapter));
+
+    const tool = createLoadSkillTool();
+
+    const error = await assertRejects(
+      () =>
+        tool.execute({ skillId: "missing-skill" }, {
+          agentId: "agent",
+          allowedSkillIds: ["allowed-skill"],
+        }),
+      Error,
+    );
+
+    assert(error instanceof Error);
+    assertEquals(error.message.includes("hidden-skill"), false);
+    assertEquals(error.message.includes("allowed-skill"), false);
+
+    const hiddenError = await assertRejects(
+      () =>
+        tool.execute({ skillId: "hidden-skill" }, {
+          agentId: "agent",
+          allowedSkillIds: ["allowed-skill"],
+        }),
+      Error,
+    );
+
+    assert(hiddenError instanceof Error);
+    assertEquals(hiddenError.message.includes("hidden-skill"), false);
+    assertEquals(hiddenError.message.includes("allowed-skill"), false);
   });
 
   it("load_skill should omit prompt notes for unavailable file tools", async () => {
@@ -510,6 +592,43 @@ Do work.`,
         }),
       Error,
     );
+  });
+
+  it("load_skill_reference should reject stale active skill state outside the selector", async () => {
+    let readCount = 0;
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/references/guide.md": "Guide",
+    });
+    const countingAdapter: FileSystemAdapter = {
+      ...fsAdapter,
+      async readFile(path) {
+        readCount++;
+        return await fsAdapter.readFile(path);
+      },
+    };
+    registerSkill("my-skill", createNamedTestSkill("my-skill", countingAdapter));
+
+    const tool = createLoadSkillReferenceTool();
+
+    await assertRejects(
+      () =>
+        tool.execute({
+          skillId: "my-skill",
+          reference: "references/guide.md",
+        }, {
+          agentId: "agent",
+          allowedSkillIds: [],
+          activeSkillId: "my-skill",
+          activeSkillToolAvailability: {
+            hasActiveSkill: true,
+            references: ["references/guide.md"],
+            scripts: [],
+          },
+        }),
+      Error,
+      "not available to this agent",
+    );
+    assertEquals(readCount, 0);
   });
 
   it("execute_skill_script should run a local script from the skill directory", async () => {

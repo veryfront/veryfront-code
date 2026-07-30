@@ -9,6 +9,7 @@ import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   resolveContainedPackagePath,
   resolvePackageExportPath,
@@ -201,16 +202,33 @@ export function rewriteForDeno(
   return transformed;
 }
 
+interface PackageMetadataProbe {
+  readonly path: string;
+  /** SHA-256 of the authoritative package.json, or null when it was absent. */
+  readonly contentHash: string | null;
+}
+
+interface ResolvedSpecifierCacheEntry {
+  readonly resolvedUrl: string;
+  /**
+   * Every package.json search decision through the selected package.
+   * Missing probes prevent a newly installed nearer package from being hidden
+   * by a cached parent resolution.
+   */
+  readonly metadataProbes: readonly PackageMetadataProbe[];
+}
+
+type PackageMetadataSnapshot =
+  | { readonly kind: "missing" }
+  | { readonly kind: "present"; readonly text: string; readonly contentHash: string };
+
 // Memoizes resolved bare-specifier → file:// URL lookups across all
 // `rewriteDiscoveryImports` calls. Keyed by `${projectDir}::${specifier}`.
-// Most projects re-resolve the same handful of packages (react, zod,
-// pdf-parse, …) across every discovered tool/agent file — without this
-// cache, each discovery pass re-reads the same package.json files.
-// Bounded so the per-project specifier map cannot grow without limit in a
-// long-running server. Only positive resolutions are stored (see below), so
-// entries are deterministic and safe to evict/recompute.
+// Positive entries retain the package-search evidence that produced them and
+// are served only while every authoritative package.json fingerprint matches.
+// The cache remains bounded for long-running multi-project servers.
 const RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES = 1000;
-const resolvedSpecifierCache = new LRUCache<string, string>({
+const resolvedSpecifierCache = new LRUCache<string, ResolvedSpecifierCacheEntry>({
   maxEntries: RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES,
 });
 
@@ -235,6 +253,44 @@ export async function rewriteDiscoveryImports(
 
   const { pathToFileURL } = await import("node:url");
   const projectRoot = pathHelper.resolve(projectDir);
+  const packageMetadataSnapshots = new Map<string, Promise<PackageMetadataSnapshot>>();
+
+  const readPackageMetadataSnapshot = (
+    packageJsonPath: string,
+  ): Promise<PackageMetadataSnapshot> => {
+    const existing = packageMetadataSnapshots.get(packageJsonPath);
+    if (existing) return existing;
+
+    const pending = (async (): Promise<PackageMetadataSnapshot> => {
+      try {
+        const text = await fs.readTextFile(packageJsonPath);
+        return {
+          kind: "present",
+          text,
+          contentHash: await computeHash(text),
+        };
+      } catch (error) {
+        if (isNotFoundError(error)) return { kind: "missing" };
+        throw error;
+      }
+    })();
+    packageMetadataSnapshots.set(packageJsonPath, pending);
+    return pending;
+  };
+
+  const isCachedResolutionFresh = async (
+    cached: ResolvedSpecifierCacheEntry,
+  ): Promise<boolean> => {
+    for (const probe of cached.metadataProbes) {
+      const current = await readPackageMetadataSnapshot(probe.path);
+      if (current.kind === "missing") {
+        if (probe.contentHash !== null) return false;
+      } else if (current.contentHash !== probe.contentHash) {
+        return false;
+      }
+    }
+    return true;
+  };
 
   // Handle relative imports
   transformed = transformed.replace(
@@ -252,27 +308,32 @@ export async function rewriteDiscoveryImports(
   const resolvePackageToFileUrl = async (specifier: string): Promise<string | null> => {
     const cacheKey = `${projectRoot}::${specifier}`;
     const cached = resolvedSpecifierCache.get(cacheKey);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      if (await isCachedResolutionFresh(cached)) return cached.resolvedUrl;
+      resolvedSpecifierCache.delete(cacheKey);
+    }
 
     const { name: packageName, subpath } = splitPackageSubpath(specifier);
+    const metadataProbes: PackageMetadataProbe[] = [];
     let searchDir = projectRoot;
 
     while (true) {
       const packagePath = pathHelper.resolve(searchDir, "node_modules", packageName);
       const packageJsonPath = pathHelper.join(packagePath, "package.json");
-
-      let packageJsonText: string;
-      try {
-        packageJsonText = await fs.readTextFile(packageJsonPath);
-      } catch (error) {
-        if (!isNotFoundError(error)) throw error;
+      const packageJsonSnapshot = await readPackageMetadataSnapshot(packageJsonPath);
+      if (packageJsonSnapshot.kind === "missing") {
+        metadataProbes.push({ path: packageJsonPath, contentHash: null });
         const parent = pathHelper.dirname(searchDir);
         if (parent === searchDir) break;
         searchDir = parent;
         continue;
       }
+      metadataProbes.push({
+        path: packageJsonPath,
+        contentHash: packageJsonSnapshot.contentHash,
+      });
 
-      const pkgJson: unknown = JSON.parse(packageJsonText);
+      const pkgJson: unknown = JSON.parse(packageJsonSnapshot.text);
       if (!pkgJson || typeof pkgJson !== "object" || Array.isArray(pkgJson)) {
         throw new TypeError(`Package metadata at ${packageJsonPath} must be a JSON object`);
       }
@@ -301,7 +362,10 @@ export async function rewriteDiscoveryImports(
       if (!normalized) return null;
 
       const resolved = pathToFileURL(normalized).href;
-      resolvedSpecifierCache.set(cacheKey, resolved);
+      resolvedSpecifierCache.set(cacheKey, {
+        resolvedUrl: resolved,
+        metadataProbes,
+      });
       return resolved;
     }
 

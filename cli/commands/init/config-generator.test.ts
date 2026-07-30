@@ -39,6 +39,7 @@ describe("config-generator", () => {
           build: "veryfront build",
           start: "veryfront serve",
           eval: "veryfront eval",
+          deploy: "veryfront deploy",
         });
       } finally {
         await Deno.remove(tmpDir, { recursive: true });

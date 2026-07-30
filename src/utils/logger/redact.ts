@@ -213,12 +213,16 @@ function redactValue(
       if (mode === "serialization") {
         return redactValue(serialized, depth + 1, seen, mode, budget);
       }
-
+      if (typeof serialized === "string") {
+        const sanitized = sanitizeUrlCredentials(serialized);
+        return sanitized === serialized ? value : sanitized;
+      }
       if (serialized !== null && typeof serialized === "object") {
         if (classifyArray(serialized) === null) return REDACTED;
         return redactValue(serialized, depth + 1, seen, mode, budget);
       }
 
+      // Other scalar results serialize safely as-is in compatibility mode.
       return value;
     } catch {
       // A throwing toJSON must never let the raw object (whose own keys we

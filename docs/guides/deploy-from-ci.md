@@ -53,11 +53,13 @@ ignored local link in `.veryfront/project.json`.
 
 ## Define the managed source set
 
-Push and `pull --prune` reconcile supported text files only. The managed set
-includes TypeScript, JavaScript, JSON, stylesheets, HTML, Markdown, MDX, text,
-SVG, YAML, and TOML. Binary images, fonts, archives, and other unsupported
-files remain outside this handoff. Manage those files through another reviewed
-delivery path.
+Push uploads supported text files only and preserves remote-only files by
+default. In Git-authoritative CI, use `push --prune` to reconcile remote
+deletions. `pull --prune` performs the corresponding destructive local
+reconciliation. The managed set includes TypeScript, JavaScript, JSON,
+stylesheets, HTML, Markdown, MDX, text, SVG, YAML, and TOML.
+Binary images, fonts, archives, and other unsupported files remain outside
+this handoff. Manage those files through another reviewed delivery path.
 
 Both commands use the same `.vfignore` rules. Ignored files and unsupported
 extensions are not reconciled with Veryfront.
@@ -73,19 +75,21 @@ recomputing production bytes from the working tree.
 Preview the source reconciliation before it changes Veryfront:
 
 ```bash title="Terminal"
-veryfront push --branch main --dry-run
+veryfront push --branch main --prune --dry-run
 ```
 
 Push dry-run reads the local and remote source needed for the comparison but
 makes no mutation. It does not create a missing project or branch, upload or
-delete files, or write `.veryfront/push-receipt.json`.
+delete files, or write `.veryfront/push-receipt.json`. `--prune` includes
+remote-only managed files in the preview so CI can verify the exact mirror
+before applying it.
 
 ## Start with staging
 
 Run Push and Deploy from the same Git checkout and CI job:
 
 ```bash title="Terminal"
-veryfront push --branch main --yes
+veryfront push --branch main --prune --yes
 veryfront deploy --branch main --env staging --yes
 ```
 
@@ -101,6 +105,10 @@ commands across CI jobs or clean the checkout between them.
 
 Deploy creates an immutable release from the pushed source, then assigns that
 release to `staging`.
+
+This workflow uses `--prune` because Git `main` is the canonical managed
+source. Interactive Pushes should omit it when Studio-only files must remain
+available.
 
 The current directory is the Veryfront project directory. It maps to the Git
 repository root by default. For a monorepo, run both commands from the same
@@ -173,7 +181,7 @@ jobs:
             exit 0
           fi
 
-          npx --no-install veryfront push --branch main --yes
+          npx --no-install veryfront push --branch main --prune --yes
           npx --no-install veryfront deploy --branch main --env staging --yes
 ```
 
@@ -212,7 +220,7 @@ After that approval, use the same serialized job pattern with the production
 environment:
 
 ```bash title="Terminal"
-veryfront push --branch main --yes
+veryfront push --branch main --prune --yes
 veryfront deploy --branch main --env production --yes
 ```
 

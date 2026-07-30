@@ -34,7 +34,6 @@
   "src/security/path-validation/canonical.test.ts",
   "src/security/path-validation/index.test.ts",
   "src/server/build-service-worker.test.ts",
-  "src/server/service-server.test.ts",
   "src/transforms/import-rewriter/strategies/cross-project-strategy.test.ts",
   "src/transforms/import-rewriter/strategies/import-map-strategy.test.ts",
   "src/transforms/mdx/esm-module-loader/loader.test.ts",

@@ -88,7 +88,19 @@ interface RegistryTransaction {
 }
 
 const registryTransactionStorage = new AsyncLocalStorage<RegistryTransaction>();
-const registryTransactionLocks = new Map<string, Promise<void>>();
+interface RegistryTransactionQueue {
+  /** Serial tail for one scope; removed once the final waiter releases it. */
+  tail: Promise<void>;
+  /** Advances when authoritative cleanup retires work already in this queue. */
+  invalidationEpoch: number;
+}
+
+interface RegistryTransactionLock {
+  invalidatedWhileWaiting(): boolean;
+  release(): void;
+}
+
+const registryTransactionQueues = new Map<string, RegistryTransactionQueue>();
 const activeRegistryTransactions = new Map<string, RegistryTransaction>();
 const registryManagerReferences = new Set<
   WeakRef<ProjectScopedRegistryManager<unknown>>
@@ -126,11 +138,19 @@ function getLiveRegistryManagers(): ProjectScopedRegistryManager<unknown>[] {
 }
 
 function invalidateRegistryTransaction(scopeId: string): void {
+  const queue = registryTransactionQueues.get(scopeId);
+  if (queue) queue.invalidationEpoch++;
+
   const transaction = activeRegistryTransactions.get(scopeId);
   if (transaction?.state === "active") transaction.invalidated = true;
 }
 
 function invalidateProjectRegistryTransactions(projectId: string): void {
+  for (const [scopeId, queue] of registryTransactionQueues) {
+    if (isRegistryScopeForProject(scopeId, projectId)) {
+      queue.invalidationEpoch++;
+    }
+  }
   for (const [scopeId, transaction] of activeRegistryTransactions) {
     if (
       transaction.state === "active" &&
@@ -202,6 +222,9 @@ export function clearProjectRegistryScopes(projectId: string): void {
   for (const scopeId of activeRegistryTransactions.keys()) {
     if (isRegistryScopeForProject(scopeId, projectId)) scopeIds.add(scopeId);
   }
+  for (const scopeId of registryTransactionQueues.keys()) {
+    if (isRegistryScopeForProject(scopeId, projectId)) scopeIds.add(scopeId);
+  }
   for (const manager of getLiveRegistryManagers()) {
     for (const scopeId of manager.getScopeIdsForLifecycle()) {
       if (isRegistryScopeForProject(scopeId, projectId)) scopeIds.add(scopeId);
@@ -222,21 +245,39 @@ export function clearProjectRegistryScopes(projectId: string): void {
   );
 }
 
-async function acquireRegistryTransactionLock(scopeId: string): Promise<() => void> {
-  const previous = registryTransactionLocks.get(scopeId) ?? Promise.resolve();
+async function acquireRegistryTransactionLock(
+  scopeId: string,
+): Promise<RegistryTransactionLock> {
+  let queue = registryTransactionQueues.get(scopeId);
+  if (!queue) {
+    queue = {
+      tail: Promise.resolve(),
+      invalidationEpoch: 0,
+    };
+    registryTransactionQueues.set(scopeId, queue);
+  }
+
+  const enqueuedEpoch = queue.invalidationEpoch;
+  const previous = queue.tail;
   const gate = Promise.withResolvers<void>();
   const current = previous.then(() => gate.promise);
-  registryTransactionLocks.set(scopeId, current);
+  queue.tail = current;
   await previous;
 
   let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    gate.resolve();
-    if (registryTransactionLocks.get(scopeId) === current) {
-      registryTransactionLocks.delete(scopeId);
-    }
+  return {
+    invalidatedWhileWaiting: () => queue.invalidationEpoch !== enqueuedEpoch,
+    release: () => {
+      if (released) return;
+      released = true;
+      gate.resolve();
+      if (
+        registryTransactionQueues.get(scopeId) === queue &&
+        queue.tail === current
+      ) {
+        registryTransactionQueues.delete(scopeId);
+      }
+    },
   };
 }
 
@@ -275,7 +316,13 @@ export async function runWithRegistryTransaction<T>(fn: () => Promise<T>): Promi
   if (existing?.state === "active") return await fn();
 
   const targetScopeId = buildRegistryScopeId();
-  const releaseLock = await acquireRegistryTransactionLock(targetScopeId);
+  const lock = await acquireRegistryTransactionLock(targetScopeId);
+  if (lock.invalidatedWhileWaiting()) {
+    lock.release();
+    throw new Error(
+      `Registry transaction for scope "${targetScopeId}" was invalidated while waiting`,
+    );
+  }
   const transaction: RegistryTransaction = {
     targetScopeId,
     stages: new Map(),
@@ -319,7 +366,7 @@ export async function runWithRegistryTransaction<T>(fn: () => Promise<T>): Promi
     if (activeRegistryTransactions.get(targetScopeId) === transaction) {
       activeRegistryTransactions.delete(targetScopeId);
     }
-    releaseLock();
+    lock.release();
   }
 }
 

@@ -63,6 +63,36 @@ describe("agent/runtime-step", () => {
     assertStrictEquals(prepared.toolContext.abortSignal, trustedAbort.signal);
   });
 
+  it("does not let runtime context shadow trusted allowed skill ids", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: undefined,
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async (_toolsConfig, options) => {
+        assertEquals(options?.remoteToolContext?.allowedSkillIds, ["selected"]);
+        return [];
+      },
+      isLocalModel: false,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({
+        systemPrompt: "Base",
+        context: { allowedSkillIds: ["excluded"], keep: true },
+      }),
+      runtimeContext: { allowedSkillIds: ["selected"], keep: true },
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(prepared.toolContext.allowedSkillIds, ["selected"]);
+    assertEquals(prepared.runtimeContext, { allowedSkillIds: ["selected"], keep: true });
+  });
+
   it("resolves runtime state, merges tool context, and applies active skill policy", async () => {
     const messages: Message[] = [{
       id: "msg_1",
@@ -168,6 +198,32 @@ describe("agent/runtime-step", () => {
       references: ["references/guide.md"],
       scripts: ["scripts/run.sh"],
     });
+  });
+
+  it("does not include skill tools for the explicit none selector", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: undefined,
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true, skills: [] } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async (_toolsConfig, options) => {
+        assertEquals(options?.includeSkillTools, false);
+        return [toolDefinition("ordinary_tool")];
+      },
+      isLocalModel: false,
+      messages: [],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+    });
+
+    assertEquals(prepared.tools.map((tool) => tool.name), ["ordinary_tool"]);
   });
 
   it("stamps the validated source policy into child-visible tool context", async () => {

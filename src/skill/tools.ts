@@ -22,6 +22,8 @@ import type { Skill, SkillContent, SkillScriptExecutor } from "./types.ts";
 import {
   SKILL_ASSETS_DIR,
   SKILL_MD_FILENAME,
+  SKILL_NAME_REGEX,
+  SKILL_PROVIDER_SAFE_ID_REGEX,
   SKILL_READABLE_DIRS,
   SKILL_REFERENCES_DIR,
   SKILL_RESOURCES_DIR,
@@ -47,6 +49,10 @@ import { readValidatedSkillTextFile } from "./bounded-text-file.ts";
 import { createSkillOperationBudget, SkillOperationTimeoutError } from "./operation-budget.ts";
 
 type SkillFileKind = "reference" | "script";
+type SkillSelectorToolOptions = {
+  resolveAllowedSkillIds?: (context: ToolExecutionContext | undefined) => readonly string[];
+};
+
 const UTF8_ENCODER = new TextEncoder();
 
 function redactSkillRoot(text: string, skillRoot: string): string {
@@ -189,24 +195,93 @@ const getExecuteSkillScriptInputSchema = defineSchema((v) =>
 function resolveVisibleSkillOrThrow(
   skillId: string,
   context: ToolExecutionContext | undefined,
+  options: SkillSelectorToolOptions = {},
 ): Skill {
   const scope = { agentId: context?.agentId };
+  const allowedSkillIds = getSelectorAllowedSkillIds(context, options);
   const skill = skillRegistryInternal.resolveVisibleSkill(skillId, scope);
-  if (!skill) {
-    const visibleIds = skillRegistryInternal.getVisibleSkillIds(scope)
-      .sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
-    const visible = visibleIds.slice(0, SKILL_VISIBLE_ERROR_MAX_IDS).join(", ");
-    const omitted = Math.max(0, visibleIds.length - SKILL_VISIBLE_ERROR_MAX_IDS);
+  if (skill) {
+    assertSkillAllowedBySelector(skill, allowedSkillIds);
+    return skill;
+  }
+
+  // Once a selector boundary is present, all misses use one generic error so
+  // neither configured nor merely visible skill ids leak through diagnostics.
+  if (allowedSkillIds !== undefined) {
+    throw createSkillUnavailableError();
+  }
+
+  if (!isUnresolvedSkillSelectorValid(skillId)) {
+    const expectation = skillId.includes("--")
+      ? "must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters"
+      : "must be lowercase alphanumeric with hyphens, 1-64 characters";
     throw toError(
       createError({
         type: "agent",
-        message: `Skill "${skillId}" not found. Available skills: ${visible || "none"}${
-          omitted > 0 ? ` (${omitted} more omitted)` : ""
-        }`,
+        message: `Invalid skill id "${skillId}": ${expectation}`,
       }),
     );
   }
-  return skill;
+
+  const visibleIds = skillRegistryInternal.getVisibleSkillIds(scope)
+    .sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  const visible = visibleIds.slice(0, SKILL_VISIBLE_ERROR_MAX_IDS).join(", ");
+  const omitted = Math.max(0, visibleIds.length - SKILL_VISIBLE_ERROR_MAX_IDS);
+  throw toError(
+    createError({
+      type: "agent",
+      message: `Skill "${skillId}" not found. Available skills: ${visible || "none"}${
+        omitted > 0 ? ` (${omitted} more omitted)` : ""
+      }`,
+    }),
+  );
+}
+
+function isUnresolvedSkillSelectorValid(skillId: string): boolean {
+  if (SKILL_NAME_REGEX.test(skillId)) {
+    return true;
+  }
+
+  return skillId.includes("--") && SKILL_PROVIDER_SAFE_ID_REGEX.test(skillId);
+}
+
+function createSkillUnavailableError(): Error {
+  return toError(
+    createError({
+      type: "agent",
+      message: "Skill is not available to this agent.",
+    }),
+  );
+}
+
+function getSelectorAllowedSkillIds(
+  context: ToolExecutionContext | undefined,
+  options: SkillSelectorToolOptions,
+): readonly string[] | undefined {
+  const resolved = options.resolveAllowedSkillIds?.(context);
+  if (resolved !== undefined) {
+    return Array.isArray(resolved) && resolved.every((entry) => typeof entry === "string")
+      ? resolved
+      : [];
+  }
+
+  const contextAllowed = context?.allowedSkillIds;
+  if (contextAllowed === undefined) return undefined;
+  return Array.isArray(contextAllowed) &&
+      contextAllowed.every((entry): entry is string => typeof entry === "string")
+    ? contextAllowed
+    : [];
+}
+
+function assertSkillAllowedBySelector(
+  skill: Skill,
+  allowedSkillIds: readonly string[] | undefined,
+): void {
+  if (allowedSkillIds === undefined || allowedSkillIds.includes(skill.id)) {
+    return;
+  }
+
+  throw createSkillUnavailableError();
 }
 
 function hasRuntimeSkillBoundary(
@@ -267,7 +342,7 @@ function assertActiveSkillFileAvailable(
  * Create the load_skill tool.
  * Loads a skill's full instructions, available references, and scripts.
  */
-export function createLoadSkillTool(): Tool {
+export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Tool {
   return tool({
     id: "load_skill",
     description: "Load a skill's full instructions. Returns the skill's markdown instructions, " +
@@ -278,7 +353,7 @@ export function createLoadSkillTool(): Tool {
       let skillRoot: string | undefined;
       try {
         return await budget.run(async () => {
-          const skill = resolveVisibleSkillOrThrow(input.skillId, context);
+          const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
           skillRoot = skill.rootPath;
 
           // Read SKILL.md
@@ -296,6 +371,7 @@ export function createLoadSkillTool(): Tool {
           const currentMetadata = validateSkillFileMetadata(
             parsed.frontmatter,
             basename(skill.rootPath),
+            { providerSafeName: skill.ownerAgentId !== undefined },
           );
 
           // List available files the agent can load through load_skill_reference.
@@ -346,7 +422,7 @@ export function createLoadSkillTool(): Tool {
  * Create the load_skill_reference tool.
  * Reads a reference file from a skill's references/, resources/, or assets/ directory.
  */
-export function createLoadSkillReferenceTool(): Tool {
+export function createLoadSkillReferenceTool(options: SkillSelectorToolOptions = {}): Tool {
   return tool({
     id: "load_skill_reference",
     description: "Read a reference file from a skill. Only files in the skill's " +
@@ -357,7 +433,7 @@ export function createLoadSkillReferenceTool(): Tool {
       let skillRoot: string | undefined;
       try {
         return await budget.run(async () => {
-          const skill = resolveVisibleSkillOrThrow(input.skillId, context);
+          const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
           skillRoot = skill.rootPath;
           assertActiveSkillFileAvailable(
             {
@@ -410,7 +486,7 @@ function abortedScriptResult() {
  * Executes a script from a skill's scripts/ directory.
  */
 export function createExecuteSkillScriptTool(
-  options: { executor?: SkillScriptExecutor } = {},
+  options: { executor?: SkillScriptExecutor } & SkillSelectorToolOptions = {},
 ): Tool {
   return tool({
     id: "execute_skill_script",
@@ -426,7 +502,7 @@ export function createExecuteSkillScriptTool(
       });
       try {
         return await budget.run(async () => {
-          const skill = resolveVisibleSkillOrThrow(input.skillId, context);
+          const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
           skillRoot = skill.rootPath;
           assertActiveSkillFileAvailable(
             {

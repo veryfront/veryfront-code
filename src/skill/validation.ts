@@ -9,7 +9,7 @@ import {
   SKILL_METADATA_KEY_MAX_LENGTH,
   SKILL_METADATA_MAX_ENTRIES,
   SKILL_METADATA_VALUE_MAX_LENGTH,
-  SKILL_STRICT_NAME_REGEX,
+  SKILL_PROVIDER_SAFE_ID_REGEX,
   type SkillMetadata,
 } from "./types.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "./string-safety.ts";
@@ -131,6 +131,11 @@ function normalizeSkillMetadata(value: unknown): SkillMetadata {
     "Skill metadata description",
     SKILL_DESCRIPTION_MAX_LENGTH,
   );
+  const displayName = optionalBoundedIdentity(
+    ownDataValue(value, "displayName"),
+    "Skill metadata displayName",
+    SKILL_ID_MAX_LENGTH,
+  );
   const rawAllowedTools = ownDataValue(value, "allowedTools");
   if (rawAllowedTools !== undefined && !Array.isArray(rawAllowedTools)) {
     throw new TypeError("Skill metadata allowedTools must be an array");
@@ -152,6 +157,7 @@ function normalizeSkillMetadata(value: unknown): SkillMetadata {
 
   return Object.freeze({
     name,
+    ...(displayName === undefined ? {} : { displayName }),
     description,
     ...(allowedTools === undefined ? {} : { allowedTools }),
     ...(license === undefined ? {} : { license }),
@@ -196,7 +202,7 @@ export function normalizeSkillDefinition(id: string, value: Skill): Skill {
   if (ownerAgentId === undefined && shortName !== undefined) {
     throw new TypeError("Skill shortName requires ownerAgentId");
   }
-  if (shortName !== undefined && !SKILL_STRICT_NAME_REGEX.test(shortName)) {
+  if (shortName !== undefined && !SKILL_PROVIDER_SAFE_ID_REGEX.test(shortName)) {
     throw new TypeError(`Skill shortName "${shortName}" is not a valid skill name`);
   }
 
@@ -225,6 +231,9 @@ export function cloneSkillDefinition(value: Skill): Skill {
     id: value.id,
     metadata: {
       name: value.metadata.name,
+      ...(value.metadata.displayName === undefined
+        ? {}
+        : { displayName: value.metadata.displayName }),
       description: value.metadata.description,
       ...(value.metadata.allowedTools === undefined
         ? {}

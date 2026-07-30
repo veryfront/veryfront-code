@@ -33,6 +33,7 @@ type DiscoverySettings = {
 
 type ProjectDiscoveryConfigInput = {
   projectDir: string;
+  cacheNamespace?: string;
   config?: VeryfrontConfig | null;
   fsAdapter?: FileSystemAdapter;
   verbose?: boolean;
@@ -96,6 +97,21 @@ function normalizeDiscoveryBaseDir(value: unknown): string {
   return value;
 }
 
+function normalizeDiscoveryCacheNamespace(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_PATH_LENGTH_CHARS ||
+    containsControlCharacter(value)
+  ) {
+    invalidDiscoveryConfig(
+      `Discovery cacheNamespace must be a non-empty string of at most ${MAX_PATH_LENGTH_CHARS} characters without control characters`,
+    );
+  }
+  return value;
+}
+
 function normalizeDiscoveryPaths(
   value: unknown,
   defaults: readonly string[],
@@ -144,8 +160,11 @@ export function snapshotDiscoveryConfig(config: DiscoveryConfig): ProjectDiscove
     invalidDiscoveryConfig("Discovery configuration must be an object");
   }
 
+  const cacheNamespace = normalizeDiscoveryCacheNamespace(config.cacheNamespace);
+
   return Object.freeze({
     baseDir: normalizeDiscoveryBaseDir(config.baseDir),
+    ...(cacheNamespace === undefined ? {} : { cacheNamespace }),
     toolDirs: normalizeDiscoveryPaths(
       config.toolDirs,
       DEFAULT_PROJECT_DISCOVERY_DIRS.toolDirs,
@@ -238,6 +257,7 @@ export function createProjectDiscoveryConfig(
 
   return snapshotDiscoveryConfig({
     baseDir: resolveProjectDiscoveryBaseDir(input.projectDir, input.config),
+    cacheNamespace: input.cacheNamespace,
     toolDirs: resolveDiscoveryPaths(
       aiConfig?.tools?.discovery,
       DEFAULT_PROJECT_DISCOVERY_DIRS.toolDirs,

@@ -27,12 +27,26 @@ import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 type TranspileCacheEntry = {
   /** Content hashes of every file the bundler reports for the module. */
   deps: ReadonlyArray<{ path: string; hash: string }>;
+  /**
+   * File-existence decisions that selected each relative import target.
+   *
+   * Negative probes matter: adding `config.ts` must invalidate a cached bundle
+   * that previously resolved the same extensionless import to `config.tsx`.
+   */
+  resolutionProbes: ReadonlyArray<{ path: string; exists: boolean }>;
   module: unknown;
 };
 
+interface FsAdapterPluginObservers {
+  onDependencyLoaded?(path: string, content: string): void;
+  onResolutionProbed?(path: string, exists: boolean): void;
+}
+
+const DISCOVERY_RESOLVE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"] as const;
+
 // Keyed by entry file + entry source hash; each entry additionally records the
 // bundled dependency contents it was built from and is only served while those
-// still match (see findCachedModuleWithFreshDeps).
+// and the resolver decisions that selected them still match.
 const transpileCache = new Map<string, TranspileCacheEntry[]>();
 const inFlightImports = new Map<string, Promise<unknown>>();
 const fsAdapterIds = new WeakMap<FileSystemAdapter, number>();
@@ -74,19 +88,39 @@ function cacheTranspiledModule(key: string, entry: TranspileCacheEntry): void {
 }
 
 /**
- * Returns the first cached module whose recorded bundled-dependency contents
- * still match what the current adapter serves. esbuild inlines relative
- * imports into the bundle, so an unchanged entry file does not guarantee an
- * unchanged module: a dependency edited by a new release (or differing between
- * two projects that share the same entry source) must invalidate the entry.
+ * Returns the first cached module whose recorded resolution decisions and
+ * bundled-dependency contents still match the current filesystem. esbuild
+ * inlines relative imports into the bundle, so an unchanged entry file does
+ * not guarantee an unchanged module: a dependency edit or a newly available
+ * higher-priority extension candidate must invalidate the entry.
  */
-async function findCachedModuleWithFreshDeps(
+async function findCachedModuleWithFreshInputs(
   entries: readonly TranspileCacheEntry[],
   context: FileDiscoveryContext,
 ): Promise<unknown | undefined> {
   const hashByPath = new Map<string, string | undefined>();
+  const existenceByPath = new Map<string, boolean | undefined>();
+  const resolutionFs = context.fsAdapter ?? createFileSystem();
+
   for (const entry of entries) {
-    let depsMatch = true;
+    let inputsMatch = true;
+    for (const probe of entry.resolutionProbes) {
+      let exists = existenceByPath.get(probe.path);
+      if (!existenceByPath.has(probe.path)) {
+        try {
+          exists = await resolutionFs.exists(probe.path);
+        } catch {
+          exists = undefined;
+        }
+        existenceByPath.set(probe.path, exists);
+      }
+      if (exists === undefined || exists !== probe.exists) {
+        inputsMatch = false;
+        break;
+      }
+    }
+    if (!inputsMatch) continue;
+
     for (const dep of entry.deps) {
       let hash = hashByPath.get(dep.path);
       if (!hashByPath.has(dep.path)) {
@@ -101,11 +135,11 @@ async function findCachedModuleWithFreshDeps(
         hashByPath.set(dep.path, hash);
       }
       if (hash === undefined || hash !== dep.hash) {
-        depsMatch = false;
+        inputsMatch = false;
         break;
       }
     }
-    if (depsMatch) return entry.module;
+    if (inputsMatch) return entry.module;
   }
   return undefined;
 }
@@ -127,9 +161,19 @@ async function ensureVeryfrontGlobals(): Promise<void> {
 /**
  * Create an esbuild plugin for resolving files via fsAdapter
  */
+function relativeResolutionCandidates(basePath: string): readonly string[] {
+  if (/\.(ts|tsx|js|jsx|mjs|json)$/i.test(basePath)) return [basePath];
+  return [
+    ...DISCOVERY_RESOLVE_EXTENSIONS.map((extension) => basePath + extension),
+    ...DISCOVERY_RESOLVE_EXTENSIONS.map((extension) =>
+      pathHelper.join(basePath, `index${extension}`)
+    ),
+  ];
+}
+
 function createFsAdapterPlugin(
   fsAdapter: FileSystemAdapter,
-  onDependencyLoaded?: (path: string, content: string) => void,
+  observers: FsAdapterPluginObservers = {},
 ): Plugin {
   const existsCache = new Map<string, boolean>();
 
@@ -139,24 +183,13 @@ function createFsAdapterPlugin(
 
     const exists = await fsAdapter.exists(filePath);
     existsCache.set(filePath, exists);
+    observers.onResolutionProbed?.(filePath, exists);
     return exists;
   }
 
   async function resolveWithExtensions(basePath: string): Promise<string | null> {
-    if (/\.(ts|tsx|js|jsx|mjs|json)$/i.test(basePath)) {
-      return (await checkExists(basePath)) ? basePath : null;
-    }
-
-    const extensions = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
-
-    for (const ext of extensions) {
-      const fullPath = basePath + ext;
-      if (await checkExists(fullPath)) return fullPath;
-    }
-
-    for (const ext of extensions) {
-      const indexPath = pathHelper.join(basePath, `index${ext}`);
-      if (await checkExists(indexPath)) return indexPath;
+    for (const candidate of relativeResolutionCandidates(basePath)) {
+      if (await checkExists(candidate)) return candidate;
     }
 
     return null;
@@ -193,7 +226,7 @@ function createFsAdapterPlugin(
         wrapWithCurrentContext(async (args) => {
           try {
             const content = await fsAdapter.readFile(args.path);
-            onDependencyLoaded?.(args.path, content);
+            observers.onDependencyLoaded?.(args.path, content);
             return {
               contents: content,
               loader: getEsbuildLoader(args.path),
@@ -210,6 +243,32 @@ function createFsAdapterPlugin(
           }
         }),
       );
+    },
+  };
+}
+
+/**
+ * Observe native relative-import resolution without replacing the bundler's
+ * resolver. The configured candidate order matches `resolveExtensions` below;
+ * every negative decision before the selected path becomes cache evidence.
+ */
+function createNativeResolutionProbePlugin(
+  fs: ReturnType<typeof createFileSystem>,
+  onResolutionProbed: (path: string, exists: boolean) => void,
+): Plugin {
+  return {
+    name: "veryfront-native-resolution-probes",
+    setup(build: PluginBuild) {
+      build.onResolve({ filter: /^\.\.?\// }, async (args) => {
+        const importerDir = args.importer ? pathHelper.dirname(args.importer) : args.resolveDir;
+        const basePath = pathHelper.resolve(importerDir, args.path);
+        for (const candidate of relativeResolutionCandidates(basePath)) {
+          const exists = await fs.exists(candidate);
+          onResolutionProbed(candidate, exists);
+          if (exists) break;
+        }
+        return undefined;
+      });
     },
   };
 }
@@ -242,20 +301,26 @@ export async function importModule(
     });
   }
 
-  // The cache key must include the source content: a shared hosted runtime
-  // process serves many projects and releases, and the same relative path
-  // (e.g. "tools/foo.ts") recurs across them. A path-only key keeps serving
-  // the stale module after a deploy and can hand one project's module to
-  // another project's discovery. The entry hash alone is still not enough —
-  // bundled relative imports are inlined into the module — so cached entries
-  // are only served after their recorded dependency contents re-verify.
+  // A shared hosted runtime serves many registry scopes, projects, adapters,
+  // and source generations. Every one participates in the cache identity so
+  // identical relative paths cannot share request-bound module state across
+  // tenants or previews. Entry content alone is insufficient because bundled
+  // relative imports are inlined; recorded dependency contents are rechecked
+  // before a cached module is reused.
   const scopeId = tryGetRegistryScopeId() ?? "__default__";
   const adapterIdentity = getFsAdapterIdentity(context);
-  const cacheKey = `${scopeId}\0${adapterIdentity}\0${file}\0${await computeHash(source)}`;
+  const cacheNamespace = context.cacheNamespace ?? context.baseDir ?? "";
+  const cacheKey = JSON.stringify([
+    scopeId,
+    cacheNamespace,
+    adapterIdentity,
+    file,
+    await computeHash(source),
+  ]);
   const generation = transpileCacheGeneration;
   const cachedEntries = transpileCache.get(cacheKey);
   if (cachedEntries) {
-    const cached = await findCachedModuleWithFreshDeps(cachedEntries, context);
+    const cached = await findCachedModuleWithFreshInputs(cachedEntries, context);
     // A clear that happens while dependency contents are being read marks a
     // generation boundary. Restart so the caller cannot resurrect or consume
     // the just-invalidated module.
@@ -278,19 +343,28 @@ export async function importModule(
     const { build } = await import("veryfront/extensions/bundler");
     const fileDir = pathHelper.dirname(filePath);
 
-    const hasFsAdapter = !!context.fsAdapter;
+    const fsAdapter = context.fsAdapter;
+    const hasFsAdapter = fsAdapter !== undefined;
+    const localFs = createFileSystem();
 
     // Record every bundled dependency for cache re-validation. Adapter loads
     // report their contents through the plugin; native inputs are collected
     // from the bundler metafile below.
     const bundledDepContents = new Map<string, string>();
-    const plugins = hasFsAdapter
+    const resolutionProbeOutcomes = new Map<string, boolean>();
+    const recordResolutionProbe = (path: string, exists: boolean): void => {
+      resolutionProbeOutcomes.set(path, exists);
+    };
+    const plugins = fsAdapter
       ? [
-        createFsAdapterPlugin(context.fsAdapter!, (path, content) => {
-          bundledDepContents.set(path, content);
+        createFsAdapterPlugin(fsAdapter, {
+          onDependencyLoaded: (path, content) => {
+            bundledDepContents.set(path, content);
+          },
+          onResolutionProbed: recordResolutionProbe,
         }),
       ]
-      : [];
+      : [createNativeResolutionProbePlugin(localFs, recordResolutionProbe)];
 
     const result = await build({
       bundle: true,
@@ -300,7 +374,7 @@ export async function importModule(
       target: "es2022",
       jsx: "automatic",
       jsxImportSource: "react",
-      resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+      resolveExtensions: [...DISCOVERY_RESOLVE_EXTENSIONS],
       plugins,
       metafile: true,
       // Externalize all bare-specifier imports so npm packages a tool/agent file
@@ -338,7 +412,6 @@ export async function importModule(
       });
     }
 
-    const localFs = createFileSystem();
     if (!hasFsAdapter) {
       for (const inputPath of Object.keys(result.metafile?.inputs ?? {})) {
         const resolvedPath = pathHelper.isAbsolute(inputPath)
@@ -376,13 +449,17 @@ export async function importModule(
           hash: await computeHash(content),
         })),
       );
+      const resolutionProbes = Array.from(
+        resolutionProbeOutcomes,
+        ([path, exists]) => ({ path, exists }),
+      );
       // A native bundler that ignores `metafile: true` gives us no dependency
       // graph to revalidate. Serving that result from cache would make edits
       // to relative imports invisible, so such results remain deliberately
       // uncached. Adapter builds track dependencies through the load plugin.
       const cacheable = hasFsAdapter || result.metafile !== undefined;
       if (cacheable && generation === transpileCacheGeneration) {
-        cacheTranspiledModule(cacheKey, { deps, module });
+        cacheTranspiledModule(cacheKey, { deps, resolutionProbes, module });
       }
       return module;
     } finally {

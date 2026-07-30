@@ -69,7 +69,7 @@ Other instructions.`,
     );
   });
 
-  it("rejects discovered skills whose required name is missing or mismatches the directory", async () => {
+  it("uses the directory identity and preserves a mismatched authored name as display metadata", async () => {
     const result = await discoverAll({
       baseDir: "/project",
       toolDirs: [],
@@ -100,17 +100,18 @@ Valid.`,
       verbose: false,
     });
 
-    assertEquals([...result.skills.keys()], ["valid"]);
+    assertEquals([...result.skills.keys()], ["directory-name", "valid"]);
+    assertEquals(
+      result.skills.get("directory-name")?.metadata.displayName,
+      "different-name",
+    );
     assertEquals(
       result.skills.get("valid")?.metadata.description,
       "Valid skill\nwith a multiline description",
     );
     assertEquals(
       result.errors.map(({ code, sourceId }) => ({ code, sourceId })),
-      [
-        { code: "load_error", sourceId: "directory-name" },
-        { code: "load_error", sourceId: "missing" },
-      ],
+      [{ code: "load_error", sourceId: "missing" }],
     );
   });
 
@@ -229,5 +230,46 @@ Use the hosted skill.`,
     const loaded = await createLoadSkillTool().execute({ skillId: "demo" });
     assertEquals(loaded.instructions.trim(), "Use the hosted skill.");
     assertEquals(loaded.references, ["references/guide.md"]);
+  });
+
+  it("discovers legacy display-style names by canonical directory id", async () => {
+    const files = {
+      "/project/skills/process-email/SKILL.md": `---
+name: Process Email
+description: Processes support emails.
+metadata:
+  display_name: Support Email Processor
+  team: support
+---
+Use this skill for support email workflows.`,
+    };
+
+    const result = await discoverAll({
+      baseDir: "/project",
+      toolDirs: [],
+      agentDirs: [],
+      resourceDirs: [],
+      promptDirs: [],
+      workflowDirs: [],
+      taskDirs: [],
+      skillDirs: ["skills"],
+      fsAdapter: createSkillTestAdapter(files),
+      verbose: false,
+    });
+
+    const skill = result.skills.get("process-email");
+    assertExists(skill);
+    assertEquals(skill.id, "process-email");
+    assertEquals(skill.metadata.name, "process-email");
+    assertEquals(skill.metadata.displayName, "Support Email Processor");
+    assertEquals(skill.metadata.metadata, {
+      display_name: "Support Email Processor",
+      team: "support",
+    });
+
+    const registrySkill = skillRegistry.get("process-email");
+    assertExists(registrySkill);
+    assertEquals(registrySkill.metadata.displayName, "Support Email Processor");
+    assertEquals(result.skills.has("Process Email"), false);
   });
 });

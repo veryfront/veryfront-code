@@ -21,6 +21,9 @@ export const SKILL_NAME_REGEX = /^[a-z0-9][a-z0-9-]{0,63}$/;
  */
 export const SKILL_STRICT_NAME_REGEX = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/** Provider-safe owned skill id: sanitized namespace + short name, max 64 chars */
+export const SKILL_PROVIDER_SAFE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+
 /** Valid allowed-tool pattern: exact ID or prefix wildcard (e.g. "api:*") */
 export const SKILL_ALLOWED_TOOL_PATTERN_REGEX =
   /^[A-Za-z][A-Za-z0-9._-]*(:[A-Za-z][A-Za-z0-9._-]*)*(:\*)?$/;
@@ -81,6 +84,8 @@ export const SKILL_READABLE_DIRS = Object.freeze(
 export interface SkillMetadata {
   /** Skill identifier (lowercase, hyphenated) */
   name: string;
+  /** Optional human-readable label; never used for skill lookup/reference. */
+  displayName?: string;
   /** Human-readable description */
   description: string;
   /** Tool access restrictions (space-delimited in YAML, parsed to array) */

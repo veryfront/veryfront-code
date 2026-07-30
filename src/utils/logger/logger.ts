@@ -483,6 +483,10 @@ function limitLogEntry(entry: LogEntry): LogEntry {
   return entry;
 }
 
+function sanitizeStringFieldValue(value: unknown): string {
+  return sanitizeUrlCredentials(String(value));
+}
+
 class ConsoleLogger implements Logger {
   private boundContext: Record<string, unknown>;
   private componentName?: string;
@@ -547,14 +551,14 @@ class ConsoleLogger implements Logger {
     };
 
     // Extract known fields to top level for easier Grafana filtering
-    extractToEntryField(entry, mergedContext, "requestId", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "traceId", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "spanId", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "projectSlug", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "projectId", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "releaseId", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "branchId", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "branchName", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "requestId", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "traceId", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "spanId", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "projectSlug", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "projectId", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "releaseId", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "branchId", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "branchName", sanitizeStringFieldValue);
     extractToEntryField(entry, mergedContext, "durationMs", (v) => Number(v));
 
     // Auto-inject trace context from OTel when not already set
@@ -572,58 +576,76 @@ class ConsoleLogger implements Logger {
     }
 
     // Extract standard snake_case fields for Loki filtering
-    extractToEntryField(entry, mergedContext, "request_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "trace_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "span_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "project_slug", (v) => String(v));
-    // request_url / domain are URL-shaped and lifted out of mergedContext
-    // *before* the serialization redactor runs, so they bypass its key pass.
-    // Scrub embedded credentials (userinfo, ?access_token=, …) here (#1989).
-    extractToEntryField(
-      entry,
-      mergedContext,
-      "request_url",
-      (v) => sanitizeUrlCredentials(String(v)),
-    );
-    extractToEntryField(entry, mergedContext, "domain", (v) => sanitizeUrlCredentials(String(v)));
-    extractToEntryField(entry, mergedContext, "project_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "release_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "branch_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "branch_name", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "run_execution_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "run_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "agent_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "thread_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "schedule_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "schedule_name", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "tool_name", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "tool_call_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "batch_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "run_target", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "task", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "event_kind", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "user_visible", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "request_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "trace_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "span_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "project_slug", sanitizeStringFieldValue);
+    // Lifted string fields are removed from mergedContext before redactSensitive
+    // runs, so scrub credential-shaped text while preserving the field value.
+    extractToEntryField(entry, mergedContext, "request_url", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "domain", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "project_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "release_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "branch_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "branch_name", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "run_execution_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "run_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "agent_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "thread_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "schedule_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "schedule_name", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "tool_name", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "tool_call_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "batch_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "run_target", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "task", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "event_kind", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "user_visible", sanitizeStringFieldValue);
     extractToEntryField(entry, mergedContext, "duration_ms", (v) => Number(v));
-    extractToEntryField(entry, mergedContext, "user_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "conversation_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "environment", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "user_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "conversation_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "environment", sanitizeStringFieldValue);
 
     // Also extract camelCase variants so callers can use either convention
-    extractToEntryField(entry, mergedContext, "userId", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "conversationId", (v) => String(v));
-    extractAliasToEntryField(entry, mergedContext, "runId", "run_id", (v) => String(v));
-    extractAliasToEntryField(entry, mergedContext, "agentId", "agent_id", (v) => String(v));
-    extractAliasToEntryField(entry, mergedContext, "threadId", "thread_id", (v) => String(v));
-    extractAliasToEntryField(entry, mergedContext, "scheduleId", "schedule_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "userId", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "conversationId", sanitizeStringFieldValue);
+    extractAliasToEntryField(entry, mergedContext, "runId", "run_id", sanitizeStringFieldValue);
+    extractAliasToEntryField(entry, mergedContext, "agentId", "agent_id", sanitizeStringFieldValue);
+    extractAliasToEntryField(
+      entry,
+      mergedContext,
+      "threadId",
+      "thread_id",
+      sanitizeStringFieldValue,
+    );
+    extractAliasToEntryField(
+      entry,
+      mergedContext,
+      "scheduleId",
+      "schedule_id",
+      sanitizeStringFieldValue,
+    );
     extractAliasToEntryField(
       entry,
       mergedContext,
       "scheduleName",
       "schedule_name",
-      (v) => String(v),
+      sanitizeStringFieldValue,
     );
-    extractAliasToEntryField(entry, mergedContext, "toolName", "tool_name", (v) => String(v));
-    extractAliasToEntryField(entry, mergedContext, "toolCallId", "tool_call_id", (v) => String(v));
+    extractAliasToEntryField(
+      entry,
+      mergedContext,
+      "toolName",
+      "tool_name",
+      sanitizeStringFieldValue,
+    );
+    extractAliasToEntryField(
+      entry,
+      mergedContext,
+      "toolCallId",
+      "tool_call_id",
+      sanitizeStringFieldValue,
+    );
 
     // Emit snake_case aliases for camelCase fields (transition period)
     if (entry.requestId && !entry.request_id) entry.request_id = entry.requestId;

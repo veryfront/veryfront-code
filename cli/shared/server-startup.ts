@@ -294,6 +294,18 @@ export interface StartCliProxyModeServerOptions {
   linkedProjectSlug?: string;
 }
 
+export function prepareCliProxyModeEnvironment(): void {
+  // Proxy mode must be set before config loading/bootstrap.
+  setEnv("PROXY_MODE", "1");
+
+  // Ensure NODE_ENV is set for local proxy mode (the `start` command uses
+  // startProductionServer with PROXY_MODE=1, but this is a local dev scenario,
+  // not a deployed pod). Without this, validateProductionEnvironment throws.
+  if (!getEnv("NODE_ENV") && !getEnv("DENO_ENV")) {
+    setEnv("NODE_ENV", "development");
+  }
+}
+
 export function buildProxyRuntimeProjectIdentity(
   options: Pick<StartCliProxyModeServerOptions, "defaultProjectId" | "linkedProjectSlug">,
 ): Pick<StartProductionServerOptions, "defaultProjectSlug" | "defaultProjectId"> {
@@ -336,14 +348,9 @@ export function buildCliProxyProductionServerOptions(
 export async function startCliProxyModeServer(
   options: StartCliProxyModeServerOptions,
 ): Promise<Awaited<ReturnType<typeof startProductionServer>>> {
-  // Proxy mode must be set before config loading/bootstrap.
-  setEnv("PROXY_MODE", "1");
-
-  // NODE_ENV controls local runtime behavior only. The private CLI startup
-  // entrypoint, not this environment value, authorizes the proxy exemption.
-  if (!getEnv("NODE_ENV") && !getEnv("DENO_ENV")) {
-    setEnv("NODE_ENV", "development");
-  }
+  // Prepare ordinary proxy/runtime settings before bootstrap. The private
+  // entrypoint remains the authority for the local proxy exemption.
+  prepareCliProxyModeEnvironment();
 
   prefetchBuiltinContentProcessor();
   const result = await startLocalCliProxyProductionServer(

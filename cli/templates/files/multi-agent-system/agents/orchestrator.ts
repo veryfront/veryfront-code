@@ -9,18 +9,16 @@ export default agent({
     "Combine their outputs into a polished response.",
   tools: getAgentsAsTools(["researcher", "writer"]),
   maxSteps: 10,
-  suggestions: {
-    suggestions: [
-      {
-        type: "prompt",
-        title: "Research a topic",
-        prompt: "Research this topic and summarize the key findings: ",
-      },
-      {
-        type: "prompt",
-        title: "Write a brief",
-        prompt: "Research and write a concise brief about ",
-      },
-    ],
-  },
+  suggestions: [
+    {
+      type: "prompt",
+      title: "Research a topic",
+      prompt: "Research this topic and summarize the key findings: ",
+    },
+    {
+      type: "prompt",
+      title: "Write a brief",
+      prompt: "Research and write a concise brief about ",
+    },
+  ],
 });

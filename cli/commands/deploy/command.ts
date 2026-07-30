@@ -1,9 +1,8 @@
 /**
  * Deploy command - Create a release and deploy to an environment
  *
- * Creates a new release from the specified branch, the latest verified push,
- * or main when the project has not been pushed yet, then deploys it to the
- * target environment (default: production).
+ * Creates a new release from the specified branch, or main when no branch is
+ * specified, then deploys it to the target environment (default: production).
  *
  * @module cli/commands/deploy
  */
@@ -1238,7 +1237,7 @@ export async function deployCommand(options: DeployOptions): Promise<DeployResul
 
   const environmentConfig = await runWithProgress(getEnvironmentConfig);
   const receipt = await runWithProgress(() => readPushReceipt(projectDir));
-  const branch = requestedBranch ?? receipt?.branch ?? "main";
+  const branch = requestedBranch ?? "main";
   const setup = await runWithProgress(() =>
     ensureProjectLinkedForDeploy(projectDir, environmentConfig, receipt, dryRun, quiet)
   );
@@ -1478,7 +1477,7 @@ async function deployCommandJson(options: DeployOptions): Promise<DeployResult |
     streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
     const environmentConfig = getEnvironmentConfig();
     const receipt = await readPushReceipt(projectDir);
-    const branch = requestedBranch ?? receipt?.branch ?? "main";
+    const branch = requestedBranch ?? "main";
     const setup = await ensureProjectLinkedForDeploy(
       projectDir,
       environmentConfig,

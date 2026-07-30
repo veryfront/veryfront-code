@@ -23,6 +23,7 @@ import {
   createCliServerCleanup,
   finalizeCliServerStartup,
   loadCliReleaseAssetManifest,
+  prepareCliProxyModeEnvironment,
 } from "./server-startup.ts";
 
 function validReleaseManifest(): ReleaseAssetManifest {
@@ -350,6 +351,9 @@ describe("createCliServerCleanup()", () => {
 
 const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+const originalProxyMode = Deno.env.get("PROXY_MODE");
+const originalNodeEnv = Deno.env.get("NODE_ENV");
+const originalDenoEnv = Deno.env.get("DENO_ENV");
 
 function restoreEnv(): void {
   if (originalApiToken === undefined) {
@@ -362,6 +366,20 @@ function restoreEnv(): void {
     Deno.env.delete("VERYFRONT_PROJECT_SLUG");
   } else {
     Deno.env.set("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+  }
+
+  for (
+    const [key, value] of [
+      ["PROXY_MODE", originalProxyMode],
+      ["NODE_ENV", originalNodeEnv],
+      ["DENO_ENV", originalDenoEnv],
+    ] as const
+  ) {
+    if (value === undefined) {
+      Deno.env.delete(key);
+    } else {
+      Deno.env.set(key, value);
+    }
   }
 }
 
@@ -414,5 +432,32 @@ describe("buildProxyRuntimeProjectIdentity", () => {
         defaultProjectId: "local-my-agent",
       },
     );
+  });
+});
+
+describe("prepareCliProxyModeEnvironment", () => {
+  afterEach(restoreEnv);
+
+  it("sets proxy mode before bootstrap and defaults NODE_ENV to development", () => {
+    Deno.env.delete("PROXY_MODE");
+    Deno.env.delete("NODE_ENV");
+    Deno.env.delete("DENO_ENV");
+
+    prepareCliProxyModeEnvironment();
+
+    assertEquals(Deno.env.get("PROXY_MODE"), "1");
+    assertEquals(Deno.env.get("NODE_ENV"), "development");
+  });
+
+  it("preserves an existing runtime environment while setting proxy mode", () => {
+    Deno.env.delete("PROXY_MODE");
+    Deno.env.delete("NODE_ENV");
+    Deno.env.set("DENO_ENV", "test");
+
+    prepareCliProxyModeEnvironment();
+
+    assertEquals(Deno.env.get("PROXY_MODE"), "1");
+    assertEquals(Deno.env.get("NODE_ENV"), undefined);
+    assertEquals(Deno.env.get("DENO_ENV"), "test");
   });
 });

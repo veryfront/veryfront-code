@@ -8,7 +8,7 @@ export const deployHelp: CommandHelp = {
   options: [
     {
       flag: "-b, --branch <name>",
-      description: "Branch to release from (default: latest verified push, otherwise main)",
+      description: "Branch to release from (default: main)",
     },
     {
       flag: "-e, --env, --environment <name>",
@@ -37,7 +37,7 @@ export const deployHelp: CommandHelp = {
   notes: [
     "Requires VERYFRONT_API_TOKEN or an authenticated Veryfront login",
     "Creates or links a project when veryfront.json is not present",
-    "Promotes the latest verified push when --branch is omitted",
+    "Promotes main when --branch is omitted",
     "Pushes main before the first deploy when no verified push exists",
     "Creates a new release from the resolved branch",
     "Verifies the target environment points to the created deployment before succeeding",

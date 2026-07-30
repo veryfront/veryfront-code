@@ -246,6 +246,7 @@ async function discoverSnapshot(snapshot: ProjectDiscoveryConfig): Promise<Disco
   const context: FileDiscoveryContext = {
     platform: detectPlatform(),
     fsAdapter: snapshot.fsAdapter,
+    cacheNamespace: snapshot.cacheNamespace,
     baseDir,
     entryBudget: {
       scannedEntries: 0,

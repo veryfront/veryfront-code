@@ -80,6 +80,29 @@ describe("src/discovery/index", () => {
   });
 
   describe("project discovery configuration", () => {
+    it("preserves a bounded source-generation cache namespace", () => {
+      const config = createProjectDiscoveryConfig({
+        projectDir: "/project",
+        cacheNamespace: "project:preview:main:snapshot:7",
+      });
+
+      assertEquals(config.cacheNamespace, "project:preview:main:snapshot:7");
+    });
+
+    it("rejects invalid cache namespaces before discovery", () => {
+      for (const cacheNamespace of ["", "project\0snapshot", "x".repeat(4_097)]) {
+        assertThrows(
+          () =>
+            createProjectDiscoveryConfig({
+              projectDir: "/project",
+              cacheNamespace,
+            }),
+          Error,
+          "cacheNamespace",
+        );
+      }
+    });
+
     it("uses one enabled-path set for discovery and file watching", () => {
       const config = createProjectDiscoveryConfig({
         projectDir: "/project",

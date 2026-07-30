@@ -24,6 +24,8 @@ import type { FileDiscoveryEntryBudget } from "#veryfront/utils/file-discovery.t
 export interface FileDiscoveryContext {
   platform: Platform;
   fsAdapter?: FileSystemAdapter;
+  /** Stable project or source-snapshot identity for transpiled module reuse. */
+  cacheNamespace?: string;
   nodeDeps?: {
     fs: typeof import("node:fs");
     path: typeof import("node:path");
@@ -39,6 +41,8 @@ export interface FileDiscoveryContext {
  */
 export interface DiscoveryConfig {
   baseDir: string;
+  /** Stable project or source-snapshot identity for transpiled module reuse. */
+  cacheNamespace?: string;
   toolDirs?: readonly string[];
   agentDirs?: readonly string[];
   skillDirs?: readonly string[];

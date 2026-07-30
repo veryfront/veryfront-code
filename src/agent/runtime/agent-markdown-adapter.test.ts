@@ -70,7 +70,7 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves delegates and MCP 
   }]);
 });
 
-Deno.test("createRuntimeAgentFromMarkdownDefinition preserves an empty catalog and binds skill tools", async () => {
+Deno.test("createRuntimeAgentFromMarkdownDefinition preserves explicit empty skills and hides skill tools", async () => {
   skillRegistryInternal.clearAll();
   registerSkill("global-howto", {
     id: "global-howto",
@@ -86,11 +86,7 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves an empty catalog a
       skills: [],
     });
 
-    assertEquals(runtimeAgent.config.tools, {
-      load_skill: true,
-      load_skill_reference: true,
-      execute_skill_script: true,
-    });
+    assertEquals(runtimeAgent.config.tools, undefined);
     const system = getEffectiveAgentSystem(runtimeAgent);
     const prompt = typeof system === "function" ? await system() : system;
     assertEquals(prompt, "Work alone.");

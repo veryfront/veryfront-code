@@ -10,12 +10,15 @@ import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.t
 import type { AgentVeryfrontMcpServerConfig } from "../types.ts";
 import {
   type AgentServiceRuntimeBundle,
+  combineAgentServiceLifecycle,
   createAgentServiceRuntime,
   startAgentServiceRuntime,
   startNodeAgentService,
   type StartNodeAgentServiceResult,
 } from "../service/runtime.ts";
+import type { AgentServiceServerLifecycle } from "../service/server.ts";
 import type { CreateNodeAgentServiceRuntimeInfrastructureOptions } from "../service/node-runtime-infrastructure.ts";
+import type { NodeAgentServiceApplicationErrorLifecycle } from "../service/node-sentry.ts";
 import type { ProjectAgentRuntimeAgentSource } from "../project/agent-runtime.ts";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { resolveDefaultProcessTarget } from "./cloud-agent-paths.ts";
@@ -25,6 +28,7 @@ import {
   initializeNodeVeryfrontCloudAgentServiceContext,
 } from "./cloud-agent-config.ts";
 import {
+  buildHostedChildGlobalTools,
   buildHostedChildToolContext,
   getDiscoveredHostTools,
   resolveHostedChildAgentExecutionConfig,
@@ -39,6 +43,12 @@ import {
 } from "./cloud-agent-chat-execution.ts";
 
 const DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS = 20_000;
+
+type InitializeApplicationErrors = () =>
+  | NodeAgentServiceApplicationErrorLifecycle
+  | Promise<NodeAgentServiceApplicationErrorLifecycle>;
+
+let initializeApplicationErrorsForTests: InitializeApplicationErrors | undefined;
 
 /** Public API contract for node Veryfront Cloud agent service process target. */
 export type NodeVeryfrontCloudAgentServiceProcessTarget =
@@ -128,12 +138,69 @@ export { getDiscoveredHostTools };
 
 /** Internal test seams for hosted project-agent materialization. */
 export const veryfrontCloudAgentServiceInternals = {
+  buildHostedChildGlobalTools,
   buildHostedChildToolContext,
   resolveHostedDelegationBinding,
   resolveHostedChildAgentExecutionConfig,
   resolveHostedChildToolNames,
   resolveMcpServers,
+  setInitializeApplicationErrorsForTests(
+    initializeApplicationErrors: InitializeApplicationErrors | undefined,
+  ): () => void {
+    initializeApplicationErrorsForTests = initializeApplicationErrors;
+    return () => {
+      if (initializeApplicationErrorsForTests === initializeApplicationErrors) {
+        initializeApplicationErrorsForTests = undefined;
+      }
+    };
+  },
 };
+
+interface ApplicationErrorShutdownOwnership {
+  readonly lifecycle: AgentServiceServerLifecycle;
+  activateRuntimeOwnership(): void;
+}
+
+function createApplicationErrorShutdownOwnership(
+  getApplicationErrors: () => NodeAgentServiceApplicationErrorLifecycle,
+): ApplicationErrorShutdownOwnership {
+  let runtimeOwnsCleanup = false;
+  let cleanedUp = false;
+  return {
+    lifecycle: {
+      stop: async () => {
+        // Listener startup rollback must leave this lifecycle intact for
+        // onStartupError, which first captures the primary failure and then
+        // performs the single terminal flush/reset. Normal server shutdown
+        // takes ownership only after listener readiness has succeeded.
+        if (!runtimeOwnsCleanup || cleanedUp) return;
+        cleanedUp = true;
+        const applicationErrors = getApplicationErrors();
+        try {
+          await applicationErrors.flush();
+        } finally {
+          applicationErrors.reset();
+        }
+      },
+    },
+    activateRuntimeOwnership: () => {
+      runtimeOwnsCleanup = true;
+    },
+  };
+}
+
+async function stopRegistrationForStartupFailure(
+  lifecycle: AgentServiceServerLifecycle | undefined,
+  logger: Pick<typeof agentLogger, "warn">,
+): Promise<void> {
+  try {
+    await lifecycle?.stop?.();
+  } catch (error) {
+    logger.warn("Agent service registration cleanup failed during startup rollback", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 /** Create node Veryfront Cloud agent service runtime. */
 export async function createNodeVeryfrontCloudAgentServiceRuntime(
@@ -161,7 +228,10 @@ export async function startNodeVeryfrontCloudAgentService(
       hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
     });
   } catch (error) {
-    await registrationLifecycle?.stop?.();
+    await stopRegistrationForStartupFailure(
+      registrationLifecycle,
+      context.infrastructure.logger,
+    );
     throw error;
   }
 }
@@ -180,18 +250,19 @@ export async function startAgentService(
     ...resolvedOptions,
     processTarget,
   });
-  let applicationErrors = {
+  let applicationErrors: NodeAgentServiceApplicationErrorLifecycle = {
+    enabled: false,
     captureStartupError: (_error: unknown) => {},
     flush: () => Promise.resolve(true),
     reset: () => {},
   };
-  let startupErrorHandled = false;
   getRuntimeTraceContext = context.infrastructure.getTraceContext;
 
   await runAgentServiceMain({
     loadLogger: () => context.infrastructure.logger,
     initializeApplicationErrors: async () => {
-      applicationErrors = await context.infrastructure.initializeApplicationErrors();
+      applicationErrors = await (initializeApplicationErrorsForTests?.() ??
+        context.infrastructure.initializeApplicationErrors());
     },
     initializeTelemetry: async () => {
       return await context.infrastructure.initializeOpenTelemetry().catch((error) => {
@@ -209,30 +280,40 @@ export async function startAgentService(
     start: async () => {
       await initializeNodeVeryfrontCloudAgentServiceContext(context);
       const registrationLifecycle = await createControlPlaneRegistrationLifecycle(context);
+      const applicationErrorShutdown = createApplicationErrorShutdownOwnership(() =>
+        applicationErrors
+      );
       try {
         await startAgentServiceRuntime({
           ...createNodeVeryfrontCloudAgentServiceRuntimeOptions(context),
-          lifecycle: registrationLifecycle,
+          lifecycle: combineAgentServiceLifecycle(
+            registrationLifecycle ?? {},
+            applicationErrorShutdown.lifecycle,
+          ),
           signals: options.signals,
           hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
         });
+        applicationErrorShutdown.activateRuntimeOwnership();
       } catch (error) {
-        await registrationLifecycle?.stop?.();
+        await stopRegistrationForStartupFailure(
+          registrationLifecycle,
+          context.infrastructure.logger,
+        );
         throw error;
       }
     },
     onStartupError: async (error) => {
       applicationErrors.captureStartupError(error);
       agentLogger.error("Error in server startup:", { error });
-      await applicationErrors.flush();
-      applicationErrors.reset();
-      startupErrorHandled = true;
-    },
-    onFinally: async () => {
-      if (!startupErrorHandled) {
+      try {
         await applicationErrors.flush();
+      } catch (flushError) {
+        agentLogger.warn("Failed to flush application errors during startup failure", {
+          error: flushError instanceof Error ? flushError.message : String(flushError),
+        });
+      } finally {
+        applicationErrors.reset();
       }
-      applicationErrors.reset();
     },
     exit: processTarget?.exit,
     processTarget,

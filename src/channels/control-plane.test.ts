@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import type { Agent, Suggestions } from "#veryfront/agent";
+import type { Agent, SuggestionsConfig } from "#veryfront/agent";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -103,7 +103,7 @@ function createAgent(overrides: {
   model?: string;
   version?: string;
   skills?: true | string[];
-  suggestions?: Suggestions;
+  suggestions?: SuggestionsConfig;
 } = {}): Agent {
   return {
     id: overrides.id ?? "agent-1",
@@ -570,6 +570,51 @@ describe("channels/control-plane", () => {
           }],
         }),
       );
+    });
+
+    it("normalizes flat Studio suggestions for runtime clients", async () => {
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) =>
+          id === "assistant"
+            ? createAgent({
+              id,
+              suggestions: [
+                "Review status",
+                {
+                  title: "Summarize",
+                  prompt: "Summarize the latest context.",
+                },
+                {
+                  type: "prompt",
+                  title: "Plan work",
+                  prompt: "Turn this idea into a concrete plan.",
+                },
+              ],
+            })
+            : undefined,
+        getAllAgentIds: () => ["assistant"],
+      });
+
+      assertEquals(response.agents[0]?.suggestions, {
+        suggestions: [
+          {
+            type: "prompt",
+            title: "Review status",
+            prompt: "Review status",
+          },
+          {
+            type: "prompt",
+            title: "Summarize",
+            prompt: "Summarize the latest context.",
+          },
+          {
+            type: "prompt",
+            title: "Plan work",
+            prompt: "Turn this idea into a concrete plan.",
+          },
+        ],
+      });
     });
 
     it("serializes a source avatarUrl as control-plane avatar_url", async () => {

@@ -3,8 +3,15 @@ import { getAgent } from "#veryfront/agent";
 import { toolRegistry } from "#veryfront/tool";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import type { HandlerContext } from "../../types.ts";
@@ -45,6 +52,19 @@ function createHandlerContext(
     cspUserHeader: null,
     isLocalProject: false,
   } as HandlerContext;
+}
+
+function assertConfiguredSkillInfrastructure(
+  tools: unknown,
+): asserts tools is Record<string, unknown> {
+  assertExists(tools);
+  if (tools === true || typeof tools !== "object") {
+    throw new Error("Expected a concrete agent tool map");
+  }
+  const toolMap = tools as Record<string, unknown>;
+  assertEquals(typeof toolMap.load_skill, "object");
+  assertEquals(typeof toolMap.load_skill_reference, "object");
+  assertEquals(typeof toolMap.execute_skill_script, "object");
 }
 
 async function writeAgentFile(
@@ -179,6 +199,202 @@ describe(
       assertExists(promptRegistry.get("newPrompt"));
     });
 
+    it("reuses unchanged preview primitive modules across requests", async () => {
+      agentRegistryInternal.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
+
+      const ctx = createHandlerContext(
+        "/preview-module-cache-project",
+        "preview-module-cache-project",
+        "preview",
+      );
+      const counterKey = "__veryfrontPreviewDiscoveryImportCount";
+      const globals = globalThis as typeof globalThis & Record<string, unknown>;
+      delete globals[counterKey];
+
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/tools/counter.ts`,
+        [
+          'import { defineSchema } from "veryfront/schemas";',
+          'import { tool } from "veryfront/tool";',
+          "",
+          `const counterKey = "${counterKey}";`,
+          "const globals = globalThis as typeof globalThis & Record<string, unknown>;",
+          "globals[counterKey] = Number(globals[counterKey] ?? 0) + 1;",
+          "",
+          "export default tool({",
+          '  id: "counter",',
+          '  description: "Count module evaluations.",',
+          "  inputSchema: defineSchema((v) => v.object({}))(),",
+          "  execute: async () => ({ count: globals[counterKey] }),",
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      try {
+        await ensureProjectDiscovery(ctx);
+        await ensureProjectDiscovery(ctx);
+
+        assertEquals(globals[counterKey], 1);
+      } finally {
+        delete globals[counterKey];
+      }
+    });
+
+    it("does not reuse API-backed modules across projects", async () => {
+      agentRegistryInternal.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
+
+      const firstCtx = createHandlerContext("/runtime/first", "first-project", "preview");
+      const secondCtx = createHandlerContext("/runtime/second", "second-project", "preview");
+      firstCtx.projectId = "first-project-id";
+      secondCtx.projectId = "second-project-id";
+      firstCtx.config = { fs: { type: "veryfront-api" } } as HandlerContext["config"];
+      secondCtx.config = { fs: { type: "veryfront-api" } } as HandlerContext["config"];
+
+      const counterKey = "__veryfrontCrossProjectDiscoveryImportCount";
+      const globals = globalThis as typeof globalThis & Record<string, unknown>;
+      delete globals[counterKey];
+      const toolSource = [
+        'import { defineSchema } from "veryfront/schemas";',
+        'import { tool } from "veryfront/tool";',
+        "",
+        `const counterKey = "${counterKey}";`,
+        "const globals = globalThis as typeof globalThis & Record<string, unknown>;",
+        "globals[counterKey] = Number(globals[counterKey] ?? 0) + 1;",
+        "",
+        "export default tool({",
+        '  id: "counter",',
+        '  description: "Count module evaluations.",',
+        "  inputSchema: defineSchema((v) => v.object({}))(),",
+        "  execute: async () => ({ count: globals[counterKey] }),",
+        "});",
+        "",
+      ].join("\n");
+
+      await firstCtx.adapter.fs.writeFile("tools/counter.ts", toolSource);
+      await secondCtx.adapter.fs.writeFile("tools/counter.ts", toolSource);
+
+      try {
+        await ensureProjectDiscovery(firstCtx);
+        await ensureProjectDiscovery(secondCtx);
+
+        assertEquals(globals[counterKey], 2);
+      } finally {
+        delete globals[counterKey];
+      }
+    });
+
+    it("invalidates extensionless import resolution after a source snapshot change", async () => {
+      agentRegistryInternal.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
+
+      const ctx = createHandlerContext(
+        "/runtime/resolution",
+        "resolution-project",
+        "preview",
+      );
+      ctx.projectId = "resolution-project-id";
+      ctx.config = { fs: { type: "veryfront-api" } } as HandlerContext["config"];
+      let sourceSnapshotVersion = 1;
+      (
+        ctx.adapter.fs as typeof ctx.adapter.fs & {
+          getSourceSnapshotVersion: () => number;
+        }
+      ).getSourceSnapshotVersion = () => sourceSnapshotVersion;
+      const resolvedConfigBase = `${Deno.cwd()}/tools/config`;
+
+      await ctx.adapter.fs.writeFile(
+        "tools/resolution.ts",
+        [
+          'import { tool } from "veryfront/tool";',
+          'import { defineSchema } from "veryfront/schemas";',
+          'import { description } from "./config";',
+          "",
+          "export default tool({",
+          '  id: "resolution_tool",',
+          "  description,",
+          "  inputSchema: defineSchema((v) => v.object({}))(),",
+          "  execute: async () => ({}),",
+          "});",
+          "",
+        ].join("\n"),
+      );
+      await ctx.adapter.fs.writeFile(
+        `${resolvedConfigBase}.tsx`,
+        'export const description = "TSX candidate";\n',
+      );
+
+      const first = await ensureProjectDiscovery(ctx);
+      assertEquals(first.tools.get("resolution_tool")?.description, "TSX candidate");
+
+      await ctx.adapter.fs.writeFile(
+        `${resolvedConfigBase}.ts`,
+        'export const description = "TypeScript candidate";\n',
+      );
+      sourceSnapshotVersion++;
+
+      const second = await ensureProjectDiscovery(ctx);
+      assertEquals(second.tools.get("resolution_tool")?.description, "TypeScript candidate");
+    });
+
+    it("invalidates extensionless import resolution without snapshot versioning", async () => {
+      agentRegistryInternal.clearAll();
+      toolRegistryInternal.clearAll();
+      skillRegistryInternal.clearAll();
+
+      const ctx = createHandlerContext(
+        "/runtime/versionless-resolution",
+        "versionless-resolution-project",
+        "preview",
+      );
+      ctx.projectId = "versionless-resolution-project-id";
+      ctx.config = { fs: { type: "veryfront-api" } } as HandlerContext["config"];
+      const resolvedConfigBase = `${Deno.cwd()}/tools/versionless-config`;
+
+      await ctx.adapter.fs.writeFile(
+        "tools/versionless-resolution.ts",
+        [
+          'import { tool } from "veryfront/tool";',
+          'import { defineSchema } from "veryfront/schemas";',
+          'import { description } from "./versionless-config";',
+          "",
+          "export default tool({",
+          '  id: "versionless_resolution_tool",',
+          "  description,",
+          "  inputSchema: defineSchema((v) => v.object({}))(),",
+          "  execute: async () => ({}),",
+          "});",
+          "",
+        ].join("\n"),
+      );
+      await ctx.adapter.fs.writeFile(
+        `${resolvedConfigBase}.tsx`,
+        'export const description = "TSX candidate";\n',
+      );
+
+      const first = await ensureProjectDiscovery(ctx);
+      assertEquals(
+        first.tools.get("versionless_resolution_tool")?.description,
+        "TSX candidate",
+      );
+
+      await ctx.adapter.fs.writeFile(
+        `${resolvedConfigBase}.ts`,
+        'export const description = "TypeScript candidate";\n',
+      );
+
+      const second = await ensureProjectDiscovery(ctx);
+      assertEquals(
+        second.tools.get("versionless_resolution_tool")?.description,
+        "TypeScript candidate",
+      );
+    });
+
     it("reuses preview discovery for one source snapshot generation", async () => {
       agentRegistryInternal.clearAll();
       toolRegistryInternal.clearAll();
@@ -212,6 +428,98 @@ describe(
       const updatedAgent = getAgent(agentId);
       assertExists(updatedAgent);
       assertEquals(updatedAgent.config.system, "SECOND");
+    });
+
+    it("contains hostile source-refresh failures and retries without a cache record", async () => {
+      agentRegistryInternal.clearAll();
+      toolRegistryInternal.clearAll();
+
+      const ctx = createHandlerContext(
+        "/hostile-source-refresh-project",
+        "hostile-source-refresh-project",
+        "preview",
+      );
+      const hostileFailure = new Proxy(Object.create(null), {
+        get() {
+          throw new Error("hostile get trap escaped");
+        },
+        getPrototypeOf() {
+          throw new Error("hostile prototype trap escaped");
+        },
+      });
+      let refreshAttempts = 0;
+      (
+        ctx.adapter.fs as typeof ctx.adapter.fs & {
+          ensureSourceSnapshotFresh: (reason?: string) => Promise<void>;
+        }
+      ).ensureSourceSnapshotFresh = async () => {
+        refreshAttempts++;
+        if (refreshAttempts === 1) throw hostileFailure;
+      };
+
+      const failure = await assertRejects(
+        () => ensureProjectDiscovery(ctx),
+        VeryfrontError,
+        "Runtime discovery failed: Unknown error",
+      );
+      assertInstanceOf(failure, VeryfrontError);
+      assertStrictEquals(failure.cause, hostileFailure);
+
+      const recovered = await ensureProjectDiscovery(ctx);
+      assertEquals(recovered.errors.length, 0);
+      assertEquals(refreshAttempts, 2);
+    });
+
+    it("redacts source-version credentials, preserves the cause, and retries", async () => {
+      agentRegistryInternal.clearAll();
+      toolRegistryInternal.clearAll();
+
+      const ctx = createHandlerContext(
+        "/credential-source-version-project",
+        "credential-source-version-project",
+        "preview",
+      );
+      const sourceFailure = new Error(
+        "snapshot unavailable at https://user:basic-secret@example.test/source?access_token=query-secret",
+      );
+      let versionReads = 0;
+      (
+        ctx.adapter.fs as typeof ctx.adapter.fs & {
+          getSourceSnapshotVersion: () => number;
+        }
+      ).getSourceSnapshotVersion = () => {
+        versionReads++;
+        if (versionReads === 1) throw sourceFailure;
+        return 1;
+      };
+
+      const logEntries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => logEntries.push(entry));
+
+      let failure: unknown;
+      try {
+        failure = await assertRejects(
+          () => ensureProjectDiscovery(ctx),
+          VeryfrontError,
+          "Runtime discovery failed:",
+        );
+      } finally {
+        __resetLogRecordEmitterForTests();
+      }
+
+      assertInstanceOf(failure, VeryfrontError);
+      assertStrictEquals(failure.cause, sourceFailure);
+      assertEquals(failure.message.includes("[REDACTED]"), true);
+      assertEquals(failure.message.includes("basic-secret"), false);
+      assertEquals(failure.message.includes("query-secret"), false);
+      const serializedLogs = JSON.stringify(logEntries);
+      assertEquals(serializedLogs.includes("[REDACTED]"), true);
+      assertEquals(serializedLogs.includes("basic-secret"), false);
+      assertEquals(serializedLogs.includes("query-secret"), false);
+
+      const recovered = await ensureProjectDiscovery(ctx);
+      assertEquals(recovered.errors.length, 0);
+      assertEquals(versionReads, 2);
     });
 
     it("keeps a newer source generation cached when an older discovery fails", async () => {
@@ -270,6 +578,92 @@ describe(
       const cachedAgent = getAgent(agentId);
       assertExists(cachedAgent);
       assertEquals(cachedAgent.config.system, "FIRST");
+    });
+
+    it("prevents queued discovery generations from publishing after project invalidation", async () => {
+      agentRegistryInternal.clearAll();
+      toolRegistryInternal.clearAll();
+
+      const ctx = createHandlerContext(
+        "/queued-invalidation-project",
+        "queued-invalidation-project",
+        "preview",
+      );
+      ctx.projectId = "queued-invalidation-project-id";
+      const agentId = "queued-invalidation-agent";
+      let sourceSnapshotVersion = 1;
+      (
+        ctx.adapter.fs as typeof ctx.adapter.fs & {
+          getSourceSnapshotVersion: () => number;
+        }
+      ).getSourceSnapshotVersion = () => sourceSnapshotVersion;
+      await writeAgentFile(ctx, agentId, "FIRST");
+
+      const firstDiscoveryPaused = Promise.withResolvers<void>();
+      const resumeFirstDiscovery = Promise.withResolvers<void>();
+      const originalExists = ctx.adapter.fs.exists.bind(ctx.adapter.fs);
+      let skillDirectoryReads = 0;
+      ctx.adapter.fs.exists = async (path: string) => {
+        if (path === `${ctx.projectDir}/skills`) {
+          skillDirectoryReads++;
+          if (skillDirectoryReads === 1) {
+            firstDiscoveryPaused.resolve();
+            await resumeFirstDiscovery.promise;
+          }
+        }
+        return await originalExists(path);
+      };
+
+      const registryScope = {
+        projectId: ctx.projectId,
+        mode: "preview" as const,
+        versionId: "source-generation",
+      };
+      const first = runWithCacheKeyContext(
+        registryScope,
+        () => ensureProjectDiscovery(ctx),
+      );
+      await firstDiscoveryPaused.promise;
+
+      sourceSnapshotVersion++;
+      await writeAgentFile(ctx, agentId, "SECOND");
+      const queued = runWithCacheKeyContext(
+        registryScope,
+        () => ensureProjectDiscovery(ctx),
+      );
+      // Give the replacement generation time to enqueue behind the paused
+      // transaction before authoritative project cleanup retires the scope.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const firstRejection = assertRejects(
+        () => first,
+        Error,
+        "invalidated",
+      );
+      const queuedRejection = assertRejects(
+        () => queued,
+        Error,
+        "invalidated while waiting",
+      );
+      clearProjectDiscoveryCacheForProject(ctx.projectId);
+      resumeFirstDiscovery.resolve();
+      await Promise.all([firstRejection, queuedRejection]);
+
+      assertEquals(skillDirectoryReads, 1);
+      await runWithCacheKeyContext(registryScope, async () => {
+        assertEquals(getAgent(agentId), undefined);
+      });
+
+      sourceSnapshotVersion++;
+      await writeAgentFile(ctx, agentId, "THIRD");
+      await runWithCacheKeyContext(
+        registryScope,
+        () => ensureProjectDiscovery(ctx),
+      );
+      await runWithCacheKeyContext(registryScope, async () => {
+        assertEquals(getAgent(agentId)?.config.system, "THIRD");
+      });
+      assertEquals(skillDirectoryReads, 2);
     });
 
     it("keeps production discovery cached for the same release", async () => {
@@ -994,12 +1388,8 @@ describe(
       assertExists(discoveredAgent);
       assertEquals(toolRegistry.has("write-report"), true);
       assertEquals(toolRegistry.has("writeReport"), false);
-      assertEquals(discoveredAgent.config.tools, {
-        "write-report": true,
-        load_skill: true,
-        load_skill_reference: true,
-        execute_skill_script: true,
-      });
+      assertConfiguredSkillInfrastructure(discoveredAgent.config.tools);
+      assertEquals(discoveredAgent.config.tools["write-report"], true);
     });
 
     it("keeps explicit generated-looking tool ids available for request-time project-agent runs", async () => {
@@ -1049,12 +1439,8 @@ describe(
       assertExists(discoveredAgent);
       assertEquals(toolRegistry.has("tool_2024_01"), true);
       assertEquals(toolRegistry.has("writeReport"), false);
-      assertEquals(discoveredAgent.config.tools, {
-        tool_2024_01: true,
-        load_skill: true,
-        load_skill_reference: true,
-        execute_skill_script: true,
-      });
+      assertConfiguredSkillInfrastructure(discoveredAgent.config.tools);
+      assertEquals(discoveredAgent.config.tools.tool_2024_01, true);
     });
 
     it("keeps object-spread overridden tool ids available for request-time project-agent runs", async () => {
@@ -1105,12 +1491,8 @@ describe(
       assertExists(discoveredAgent);
       assertEquals(toolRegistry.has("my-tool"), true);
       assertEquals(toolRegistry.has("writeReport"), false);
-      assertEquals(discoveredAgent.config.tools, {
-        "my-tool": true,
-        load_skill: true,
-        load_skill_reference: true,
-        execute_skill_script: true,
-      });
+      assertConfiguredSkillInfrastructure(discoveredAgent.config.tools);
+      assertEquals(discoveredAgent.config.tools["my-tool"], true);
     });
   },
 );

@@ -170,6 +170,38 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       }
     });
 
+    it("invalidates native extensionless resolution when a higher-priority file appears", async () => {
+      const dir = await Deno.makeTempDir();
+      const entry = `${dir}/entry.ts`;
+      const lowerPriorityDependency = `${dir}/config.tsx`;
+      const higherPriorityDependency = `${dir}/config.ts`;
+      try {
+        await Deno.writeTextFile(
+          entry,
+          'import { value } from "./config"; export default { value };',
+        );
+        await Deno.writeTextFile(lowerPriorityDependency, 'export const value = "tsx";');
+
+        const first = await importModule(toFileUrl(entry).href, {
+          platform: "node",
+        }) as { default: { value: string } };
+        assertEquals(first.default.value, "tsx");
+
+        await Deno.writeTextFile(higherPriorityDependency, 'export const value = "ts";');
+        const second = await importModule(toFileUrl(entry).href, {
+          platform: "node",
+        }) as { default: { value: string } };
+        const cachedSecond = await importModule(toFileUrl(entry).href, {
+          platform: "node",
+        });
+
+        assertEquals(second.default.value, "ts");
+        assertEquals(cachedSecond === second, true);
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
     it("does not cache native builds when a bundler omits dependency metadata", async () => {
       await ensureDefaultBundlerContracts();
       const originalBundler = tryResolve<Bundler>("Bundler");
@@ -448,6 +480,39 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         context,
       );
       assertEquals(third === first, true);
+    });
+
+    it("invalidates extensionless resolution without a source-snapshot namespace", async () => {
+      const entryPath = "/project/agents/assistant.ts";
+      const lowerPriorityDependency = "/project/agents/config.tsx";
+      const higherPriorityDependency = "/project/agents/config.ts";
+      const files: Record<string, string> = {
+        [entryPath]: [
+          'import { model } from "./config";',
+          "export default { model };",
+        ].join("\n"),
+        [lowerPriorityDependency]: 'export const model = "tsx";',
+      };
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter(files),
+        baseDir: "/project",
+        cacheNamespace: "project:preview:main",
+      };
+
+      const first = await importModule(`file://${entryPath}`, context) as {
+        default: { model: string };
+      };
+      assertEquals(first.default.model, "tsx");
+
+      files[higherPriorityDependency] = 'export const model = "ts";';
+      const second = await importModule(`file://${entryPath}`, context) as {
+        default: { model: string };
+      };
+      const cachedSecond = await importModule(`file://${entryPath}`, context);
+
+      assertEquals(second.default.model, "ts");
+      assertEquals(cachedSecond === second, true);
     });
 
     it("deduplicates concurrent imports from the same source adapter", async () => {

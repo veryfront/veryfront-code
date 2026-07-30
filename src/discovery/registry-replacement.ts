@@ -1,6 +1,5 @@
 import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { discoverAll } from "./discovery-engine.ts";
-import { clearTranspileCache } from "./transpiler.ts";
 import type { DiscoveryConfig, DiscoveryResult } from "./types.ts";
 
 export type DiscoveryGenerationErrorPolicy = "reject" | "publish-valid";
@@ -46,8 +45,10 @@ export async function replaceDiscoveredProjectPrimitives(
   options: ReplaceDiscoveredProjectPrimitivesOptions = {},
 ): Promise<DiscoveryResult> {
   return await runWithRegistryTransaction(async () => {
-    clearTranspileCache();
-
+    // The transpiler cache is content- and dependency-aware and includes the
+    // registry scope, adapter identity, and source-generation namespace. Keep
+    // valid modules across transactional registry replacement so repeated
+    // preview discovery does not accumulate duplicate ESM module instances.
     const result = await discoverAll(config);
     if (result.errors.length > 0 && options.errorPolicy !== "publish-valid") {
       throw new DiscoveryGenerationError(result);

@@ -1,4 +1,5 @@
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { getErrorMessage } from "#veryfront/errors";
 import {
   createNodeServerWithStartupOwner,
   type NodeServer,
@@ -101,15 +102,13 @@ type DenoServeOptions = {
 type DenoServeHandler = (request: Request) => Response | Promise<Response>;
 
 type DenoHttpServer = {
-  addr?: {
-    port?: number;
-  };
+  port?: number;
   finished?: Promise<void>;
   shutdown?: () => void | Promise<void>;
 };
 
 type DenoServeRuntime = {
-  serve: (options: DenoServeOptions, handler: DenoServeHandler) => DenoHttpServer;
+  serve: (options: DenoServeOptions, handler: DenoServeHandler) => unknown;
   addSignalListener?: (signal: NodeJS.Signals, handler: SignalHandler) => void;
   removeSignalListener?: (signal: NodeJS.Signals, handler: SignalHandler) => void;
   exit?: (code: number) => never | void;
@@ -123,12 +122,12 @@ type BunServeOptions = {
 
 type BunHttpServer = {
   port?: number;
-  url?: URL;
-  stop?: () => void | Promise<void>;
+  url?: string;
+  stop: () => void | Promise<void>;
 };
 
 type BunServeRuntime = {
-  serve: (options: BunServeOptions) => BunHttpServer;
+  serve: (options: BunServeOptions) => unknown;
 };
 
 type SignalHandler = () => void;
@@ -177,6 +176,9 @@ function runSynchronousLifecyclePhases(
   }
 
   if (failures.length > 0) {
+    if (failures.length === 1) {
+      throw failures[0]!.error;
+    }
     throw new AggregateError(
       failures.map(({ error }) => error),
       lifecycleFailureMessage(operation, failures),
@@ -187,6 +189,7 @@ function runSynchronousLifecyclePhases(
 async function runLifecyclePhases(
   phases: readonly LifecyclePhase[],
   operation: string,
+  preserveSingleFailure = false,
 ): Promise<void> {
   const failures: Array<{ label: string; error: unknown }> = [];
   for (const phase of phases) {
@@ -200,6 +203,9 @@ async function runLifecyclePhases(
   }
 
   if (failures.length > 0) {
+    if (preserveSingleFailure && failures.length === 1) {
+      throw failures[0]!.error;
+    }
     throw new AggregateError(
       failures.map(({ error }) => error),
       lifecycleFailureMessage(operation, failures),
@@ -210,12 +216,18 @@ async function runLifecyclePhases(
 function createRetryableLifecycle(
   phases: readonly LifecyclePhase[],
   operation: string,
+  preserveSingleFailure = false,
 ): () => Promise<void> {
   let lifecyclePromise: Promise<void> | undefined;
   return () => {
     if (lifecyclePromise) return lifecyclePromise;
 
-    const attempt = runLifecyclePhases(phases, operation);
+    // Publish the shared attempt before invoking any lifecycle callback. A
+    // callback is allowed to re-enter stop(); running it synchronously here
+    // would otherwise create a second cleanup generation.
+    const attempt = Promise.resolve().then(() =>
+      runLifecyclePhases(phases, operation, preserveSingleFailure)
+    );
     lifecyclePromise = attempt;
     void attempt.then(
       () => undefined,
@@ -231,14 +243,30 @@ function defaultNotFound(): Response {
   return new Response("Not Found", { status: 404 });
 }
 
+function safelyLog(
+  logger: VeryfrontServiceServerLogger,
+  level: keyof VeryfrontServiceServerLogger,
+  message: string,
+  metadata?: Record<string, unknown>,
+): void {
+  try {
+    const write = logger[level];
+    if (typeof write === "function") {
+      Reflect.apply(write, logger, [message, metadata]);
+    }
+  } catch {
+    // Observability is best-effort and must never own request or lifecycle flow.
+  }
+}
+
 function defaultErrorResponse(
   error: unknown,
   request: Request,
   logger: VeryfrontServiceServerLogger,
 ): Response {
-  logger.error?.("Veryfront service request failed", {
+  safelyLog(logger, "error", "Veryfront service request failed", {
     url: request.url,
-    error: error instanceof Error ? error.message : String(error),
+    error: getErrorMessage(error),
   });
   return new Response("Internal Server Error", { status: 500 });
 }
@@ -271,7 +299,11 @@ export function createVeryfrontServer(
         }]
         : [],
   );
-  const stop = createRetryableLifecycle(moduleStopPhases, "Veryfront service module cleanup");
+  const stop = createRetryableLifecycle(
+    moduleStopPhases,
+    "Veryfront service module cleanup",
+    true,
+  );
 
   return {
     fetch: async (request) => {
@@ -302,30 +334,84 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function isDenoHttpServer(value: unknown): value is DenoHttpServer {
+function snapshotDenoHttpServer(
+  value: unknown,
+  ownShutdown: (shutdown: () => void | Promise<void>) => void,
+  ownAbortCompletion: (finished: Promise<void>) => void,
+): DenoHttpServer {
   if (!isObject(value)) {
-    return false;
+    throw new TypeError("Deno.serve() did not return an HTTP server object");
   }
-  const finished = value.finished;
+
   const shutdown = value.shutdown;
+  let ownedShutdown: (() => void | Promise<void>) | undefined;
+  if (typeof shutdown === "function") {
+    ownedShutdown = () => Reflect.apply(shutdown, value, []);
+    // Publish transport ownership before inspecting any remaining caller-
+    // supplied fields, whose getters may still fail validation.
+    ownShutdown(ownedShutdown);
+  }
+
+  const finished = value.finished;
+  if (finished !== undefined && !(finished instanceof Promise)) {
+    throw new TypeError("Deno.serve() returned an invalid finished promise");
+  }
+  if (ownedShutdown === undefined && finished !== undefined) {
+    // The abort fallback also owns listener termination. Publish it before
+    // reading address metadata so a later hostile getter cannot strand a
+    // pending server after startup rollback begins.
+    ownAbortCompletion(finished);
+  }
+  if (shutdown !== undefined && typeof shutdown !== "function") {
+    throw new TypeError("Deno.serve() returned an invalid shutdown capability");
+  }
+
   const addr = value.addr;
   const port = isObject(addr) ? addr.port : undefined;
-  return (addr === undefined || isObject(addr)) &&
-    (port === undefined || typeof port === "number") &&
-    (finished === undefined || finished instanceof Promise) &&
-    (shutdown === undefined || typeof shutdown === "function");
+  if (addr !== undefined && !isObject(addr)) {
+    throw new TypeError("Deno.serve() returned an invalid listener address");
+  }
+  if (port !== undefined && typeof port !== "number") {
+    throw new TypeError("Deno.serve() returned an invalid listener port");
+  }
+  return {
+    ...(port !== undefined ? { port } : {}),
+    ...(finished !== undefined ? { finished } : {}),
+    ...(ownedShutdown !== undefined ? { shutdown: ownedShutdown } : {}),
+  };
 }
 
-function isBunHttpServer(value: unknown): value is BunHttpServer {
+function snapshotBunHttpServer(
+  value: unknown,
+  ownStop: (stop: () => void | Promise<void>) => void,
+): BunHttpServer {
   if (!isObject(value)) {
-    return false;
+    throw new TypeError("Bun.serve() did not return an HTTP server object");
   }
+
+  const stop = value.stop;
+  if (typeof stop !== "function") {
+    throw new TypeError("Bun.serve() returned a server without a stop capability");
+  }
+  const ownedStop = () => Reflect.apply(stop, value, []);
+  // Publish transport ownership before inspecting any remaining caller-
+  // supplied fields, whose getters may still fail validation.
+  ownStop(ownedStop);
+
   const port = value.port;
   const url = value.url;
-  const stop = value.stop;
-  return (port === undefined || typeof port === "number") &&
-    (url === undefined || url instanceof URL) &&
-    (stop === undefined || typeof stop === "function");
+  if (port !== undefined && typeof port !== "number") {
+    throw new TypeError("Bun.serve() returned an invalid listener port");
+  }
+  if (url !== undefined && !(url instanceof URL)) {
+    throw new TypeError("Bun.serve() returned an invalid listener URL");
+  }
+
+  return {
+    ...(port !== undefined ? { port } : {}),
+    ...(url !== undefined ? { url: url.toString() } : {}),
+    stop: ownedStop,
+  };
 }
 
 function getDenoServeRuntime(): DenoServeRuntime | null {
@@ -341,13 +427,7 @@ function getDenoServeRuntime(): DenoServeRuntime | null {
     return null;
   }
   const runtime: DenoServeRuntime = {
-    serve: (options, handler) => {
-      const server: unknown = Reflect.apply(serve, denoGlobal, [options, handler]);
-      if (!isDenoHttpServer(server)) {
-        return {};
-      }
-      return server;
-    },
+    serve: (options, handler) => Reflect.apply(serve, denoGlobal, [options, handler]),
   };
   if (typeof addSignalListener === "function") {
     runtime.addSignalListener = (signal, handler) => {
@@ -375,13 +455,7 @@ function getBunServeRuntime(): BunServeRuntime | null {
     return null;
   }
   return {
-    serve: (options) => {
-      const server: unknown = Reflect.apply(serve, bunGlobal, [options]);
-      if (!isBunHttpServer(server)) {
-        return {};
-      }
-      return server;
-    },
+    serve: (options) => Reflect.apply(serve, bunGlobal, [options]),
   };
 }
 
@@ -468,22 +542,25 @@ function createServiceServerStop(
       },
     ],
     `Veryfront ${runtimeKind} service server cleanup`,
+    true,
   );
 }
 
-function installSignalHandlers(options: {
+interface SignalHandlerLifecycle {
+  install(): void;
+  remove(): void;
+}
+
+function createSignalHandlerLifecycle(options: {
   signalRuntime: SignalRuntime | null;
   signals?: readonly NodeJS.Signals[];
   logger: VeryfrontServiceServerLogger;
   stop: () => Promise<void>;
   hardShutdownTimeoutMs?: number;
   runtime: VeryfrontServiceServerRuntimeKind;
-}): () => void {
-  if (!options.signalRuntime) {
-    return () => undefined;
-  }
-
+}): SignalHandlerLifecycle {
   const hardShutdownTimeoutMs = options.hardShutdownTimeoutMs ?? 20_000;
+  const signals = options.signals ?? ["SIGTERM"];
   const installedHandlers: Array<{
     signal: NodeJS.Signals;
     handler: SignalHandler;
@@ -491,58 +568,7 @@ function installSignalHandlers(options: {
   }> = [];
   let signalShutdownStarted = false;
 
-  for (const signal of options.signals ?? ["SIGTERM"]) {
-    const handler = () => {
-      if (signalShutdownStarted) {
-        return;
-      }
-
-      signalShutdownStarted = true;
-      options.logger.info?.("Veryfront service server received shutdown signal", {
-        signal,
-        runtime: options.runtime,
-      });
-      const hardTimeout = setTimeout(() => {
-        options.logger.error?.("Veryfront service server graceful shutdown timed out", {
-          signal,
-          runtime: options.runtime,
-        });
-        options.signalRuntime?.exit?.(1);
-      }, hardShutdownTimeoutMs);
-
-      void options.stop()
-        .then(() => {
-          options.signalRuntime?.exit?.(0);
-        })
-        .catch((error: unknown) => {
-          options.logger.error?.("Veryfront service server shutdown failed", {
-            signal,
-            runtime: options.runtime,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          options.signalRuntime?.exit?.(1);
-        })
-        .finally(() => {
-          // Always cancel the hard-shutdown timer — exit() is synchronous so this
-          // only matters when signalRuntime.exit is undefined, but using finally
-          // ensures the timer never leaks regardless of how the promise settles.
-          clearTimeout(hardTimeout);
-        });
-    };
-
-    try {
-      options.signalRuntime.add(signal, handler);
-      installedHandlers.push({ signal, handler, removed: false });
-    } catch (error) {
-      options.logger.warn?.("Veryfront service server could not install shutdown signal handler", {
-        signal,
-        runtime: options.runtime,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  return () => {
+  const remove = (): void => {
     const failures: Array<{ label: string; error: unknown }> = [];
     for (const installed of installedHandlers) {
       if (installed.removed) continue;
@@ -555,28 +581,134 @@ function installSignalHandlers(options: {
         installed.removed = true;
       } catch (error) {
         failures.push({ label: signal, error });
-        try {
-          options.logger.warn?.(
-            "Veryfront service server could not remove shutdown signal handler",
-            {
-              signal,
-              runtime: options.runtime,
-              error: error instanceof Error ? error.message : String(error),
-            },
-          );
-        } catch {
-          // Observability failures must not prevent the remaining signal cleanup attempts.
-        }
+        safelyLog(
+          options.logger,
+          "warn",
+          "Veryfront service server could not remove shutdown signal handler",
+          {
+            signal,
+            runtime: options.runtime,
+            error: getErrorMessage(error),
+          },
+        );
       }
     }
 
     if (failures.length > 0) {
+      if (failures.length === 1) {
+        throw failures[0]!.error;
+      }
       throw new AggregateError(
         failures.map(({ error }) => error),
         lifecycleFailureMessage("Veryfront service signal cleanup", failures),
       );
     }
   };
+
+  const install = (): void => {
+    if (!options.signalRuntime) {
+      if (signals.length === 0) return;
+      throw new TypeError(`Signal handling is unavailable in the ${options.runtime} runtime`);
+    }
+    if (signals.length > 0 && !options.signalRuntime.remove) {
+      throw new TypeError(
+        `Signal listener removal is unavailable in the ${options.runtime} runtime`,
+      );
+    }
+
+    const failures: Array<{ label: string; error: unknown }> = [];
+    for (const signal of signals) {
+      const handler = () => {
+        if (signalShutdownStarted) {
+          return;
+        }
+
+        signalShutdownStarted = true;
+        safelyLog(options.logger, "info", "Veryfront service server received shutdown signal", {
+          signal,
+          runtime: options.runtime,
+        });
+        const hardTimeout = setTimeout(() => {
+          safelyLog(
+            options.logger,
+            "error",
+            "Veryfront service server graceful shutdown timed out",
+            {
+              signal,
+              runtime: options.runtime,
+            },
+          );
+          options.signalRuntime?.exit?.(1);
+        }, hardShutdownTimeoutMs);
+
+        void options.stop()
+          .then(() => {
+            options.signalRuntime?.exit?.(0);
+          })
+          .catch((error: unknown) => {
+            safelyLog(options.logger, "error", "Veryfront service server shutdown failed", {
+              signal,
+              runtime: options.runtime,
+              error: getErrorMessage(error),
+            });
+            options.signalRuntime?.exit?.(1);
+          })
+          .finally(() => {
+            // Always cancel the hard-shutdown timer — exit() is synchronous so this
+            // only matters when signalRuntime.exit is undefined, but using finally
+            // ensures the timer never leaks regardless of how the promise settles.
+            clearTimeout(hardTimeout);
+          });
+      };
+
+      try {
+        options.signalRuntime.add(signal, handler);
+        installedHandlers.push({ signal, handler, removed: false });
+      } catch (error) {
+        failures.push({ label: signal, error });
+        safelyLog(
+          options.logger,
+          "warn",
+          "Veryfront service server could not install shutdown signal handler",
+          {
+            signal,
+            runtime: options.runtime,
+            error: getErrorMessage(error),
+          },
+        );
+      }
+    }
+
+    if (failures.length > 0) {
+      if (failures.length === 1) {
+        throw failures[0]!.error;
+      }
+      throw new AggregateError(
+        failures.map(({ error }) => error),
+        lifecycleFailureMessage("Veryfront service signal installation", failures),
+      );
+    }
+  };
+
+  return { install, remove };
+}
+
+async function rethrowAfterServiceStartupCleanup(
+  scope: string,
+  primaryError: unknown,
+  retryCleanup: () => Promise<void>,
+): Promise<never> {
+  try {
+    await retryCleanup();
+  } catch (cleanupError) {
+    throw new ServerStartupCleanupError(
+      scope,
+      primaryError,
+      cleanupError,
+      retryCleanup,
+    );
+  }
+  throw primaryError;
 }
 
 async function startDenoVeryfrontServer(
@@ -586,29 +718,18 @@ async function startDenoVeryfrontServer(
   const logger = options.logger ?? serverLogger.component("service-server");
   const bindAddress = options.bindAddress ?? "0.0.0.0";
   const abortController = new AbortController();
-  const server = deno.serve({
-    port: options.port,
-    hostname: bindAddress,
-    signal: abortController.signal,
-    onListen: () => undefined,
-  }, options.runtime.fetch);
+  let stopListener = async (): Promise<void> => {
+    if (!abortController.signal.aborted) abortController.abort();
+  };
   let removeSignalHandlers: () => void = () => undefined;
 
   const stop = createServiceServerStop(
     options.runtime,
-    async () => {
-      if (server.shutdown) {
-        await server.shutdown();
-        return;
-      }
-      abortController.abort();
-      await server.finished?.catch(() => undefined);
-    },
+    () => stopListener(),
     () => removeSignalHandlers(),
     "deno",
   );
-
-  removeSignalHandlers = installSignalHandlers({
+  const signalHandlers = createSignalHandlerLifecycle({
     signalRuntime: createDenoSignalRuntime(deno),
     signals: options.signals,
     logger,
@@ -616,20 +737,52 @@ async function startDenoVeryfrontServer(
     hardShutdownTimeoutMs: options.hardShutdownTimeoutMs,
     runtime: "deno",
   });
+  removeSignalHandlers = signalHandlers.remove;
 
-  logger.info?.("Veryfront service server listening", {
-    port: server.addr?.port ?? options.port,
-    bindAddress,
-    runtime: "deno",
-  });
+  try {
+    const candidate = deno.serve({
+      port: options.port,
+      hostname: bindAddress,
+      signal: abortController.signal,
+      onListen: () => undefined,
+    }, options.runtime.fetch);
+    const server = snapshotDenoHttpServer(
+      candidate,
+      (shutdown) => {
+        stopListener = async () => await shutdown();
+      },
+      (finished) => {
+        stopListener = async () => {
+          if (!abortController.signal.aborted) abortController.abort();
+          // A rejected `finished` promise still proves that the listener has
+          // terminated; wait for that terminal outcome without converting a
+          // prior runtime failure into permanently unretryable cleanup.
+          await finished.catch(() => undefined);
+        };
+      },
+    );
+    signalHandlers.install();
+    const listeningPort = server.port ?? options.port;
+    safelyLog(logger, "info", "Veryfront service server listening", {
+      port: listeningPort,
+      bindAddress,
+      runtime: "deno",
+    });
 
-  return {
-    ready: Promise.resolve(),
-    stop,
-    port: server.addr?.port ?? options.port,
-    url: `http://${bindAddress}:${server.addr?.port ?? options.port}`,
-    runtime: "deno",
-  };
+    return {
+      ready: Promise.resolve(),
+      stop,
+      port: listeningPort,
+      url: `http://${bindAddress}:${listeningPort}`,
+      runtime: "deno",
+    };
+  } catch (primaryError) {
+    return await rethrowAfterServiceStartupCleanup(
+      "Veryfront Deno service server startup",
+      primaryError,
+      stop,
+    );
+  }
 }
 
 async function startBunVeryfrontServer(
@@ -638,26 +791,16 @@ async function startBunVeryfrontServer(
 ): Promise<VeryfrontServiceServer> {
   const logger = options.logger ?? serverLogger.component("service-server");
   const bindAddress = options.bindAddress ?? "0.0.0.0";
-  const server = bun.serve({
-    port: options.port,
-    hostname: bindAddress,
-    fetch: options.runtime.fetch,
-  });
+  let stopListener = (): void | Promise<void> => undefined;
   let removeSignalHandlers: () => void = () => undefined;
 
   const stop = createServiceServerStop(
     options.runtime,
-    async () => {
-      if (!server.stop) {
-        throw new TypeError("Bun server does not expose a stop method");
-      }
-      await server.stop();
-    },
+    () => stopListener(),
     () => removeSignalHandlers(),
     "bun",
   );
-
-  removeSignalHandlers = installSignalHandlers({
+  const signalHandlers = createSignalHandlerLifecycle({
     signalRuntime: getProcessSignalRuntime(),
     signals: options.signals,
     logger,
@@ -665,20 +808,40 @@ async function startBunVeryfrontServer(
     hardShutdownTimeoutMs: options.hardShutdownTimeoutMs,
     runtime: "bun",
   });
+  removeSignalHandlers = signalHandlers.remove;
 
-  logger.info?.("Veryfront service server listening", {
-    port: server.port ?? options.port,
-    bindAddress,
-    runtime: "bun",
-  });
+  try {
+    const candidate = bun.serve({
+      port: options.port,
+      hostname: bindAddress,
+      fetch: options.runtime.fetch,
+    });
+    const server = snapshotBunHttpServer(candidate, (ownedStop) => {
+      stopListener = ownedStop;
+    });
+    signalHandlers.install();
 
-  return {
-    ready: Promise.resolve(),
-    stop,
-    port: server.port ?? options.port,
-    url: server.url?.toString() ?? `http://${bindAddress}:${options.port}`,
-    runtime: "bun",
-  };
+    const listeningPort = server.port ?? options.port;
+    safelyLog(logger, "info", "Veryfront service server listening", {
+      port: listeningPort,
+      bindAddress,
+      runtime: "bun",
+    });
+
+    return {
+      ready: Promise.resolve(),
+      stop,
+      port: listeningPort,
+      url: server.url ?? `http://${bindAddress}:${listeningPort}`,
+      runtime: "bun",
+    };
+  } catch (primaryError) {
+    return await rethrowAfterServiceStartupCleanup(
+      "Veryfront Bun service server startup",
+      primaryError,
+      stop,
+    );
+  }
 }
 
 /** Starts veryfront server. */
@@ -730,7 +893,7 @@ export async function startNodeVeryfrontServer(
       onListen: (address) => {
         listeningPort = address.port;
         listeningUrl = `http://${bindAddress}:${listeningPort}`;
-        logger.info?.("Veryfront service server listening", {
+        safelyLog(logger, "info", "Veryfront service server listening", {
           port: listeningPort,
           bindAddress,
         });
@@ -753,7 +916,7 @@ export async function startNodeVeryfrontServer(
     "node",
   );
 
-  removeSignalHandlers = installSignalHandlers({
+  const signalHandlers = createSignalHandlerLifecycle({
     signalRuntime: getProcessSignalRuntime(),
     signals: options.signals,
     logger,
@@ -761,6 +924,16 @@ export async function startNodeVeryfrontServer(
     hardShutdownTimeoutMs: options.hardShutdownTimeoutMs,
     runtime: "node",
   });
+  removeSignalHandlers = signalHandlers.remove;
+  try {
+    signalHandlers.install();
+  } catch (primaryError) {
+    return await rethrowAfterServiceStartupCleanup(
+      "Veryfront Node service server signal installation",
+      primaryError,
+      stop,
+    );
+  }
 
   const ready = listenerReady.then(() => undefined).catch(async (startupError) => {
     try {

@@ -103,7 +103,8 @@ Deno.test("unsafe legacy runtime prompt renders its historical catalog", () => {
   const block = buildUnsafeLegacyRuntimeAvailableSkillsPromptBlock([
     createSkill({
       id: "build-ui",
-      name: "Build UI guidance",
+      name: "build-ui",
+      displayName: "Build UI guidance",
       description: "Build UI",
       allowedTools: ["bash", "writeFile"],
     }),
@@ -187,6 +188,23 @@ Deno.test("unsafe legacy runtime prompt does not repeat an id-only name", () => 
     "- code-review: Review code",
   );
   assertEquals(block.includes("code-review (`code-review`)"), false);
+});
+
+Deno.test("buildRuntimeAvailableSkillsPromptBlock keeps canonical name out of display metadata", () => {
+  const block = buildRuntimeAvailableSkillsPromptBlock([
+    createSkill({
+      id: "process-email",
+      name: "process-email",
+      displayName: "Process Email",
+      description: "Process email",
+    }),
+  ]);
+
+  assertStringIncludes(
+    block,
+    '- {"skillId":"process-email","displayName":"Process Email","description":"Process email"}',
+  );
+  assertEquals(block.includes('"name":"process-email"'), false);
 });
 
 Deno.test("unsafe legacy runtime prompt truncates long skill lists", () => {

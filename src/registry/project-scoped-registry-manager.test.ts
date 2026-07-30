@@ -8,6 +8,7 @@ import {
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import {
   clearProjectRegistryScopes,
+  clearRegistryScope,
   ProjectScopedRegistryManager,
   registerRegistryScopeEvictionListener,
   runWithRegistryTransaction,
@@ -701,6 +702,68 @@ describe("ProjectScopedRegistryManager transactions", () => {
     runWithCacheKeyContext(scope, () => {
       assertEquals(manager.get("first-agent"), "first");
       assertEquals(manager.get("second-agent"), "second");
+    });
+  });
+
+  it("invalidates active and queued transactions when their scope is retired", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("agent");
+    const scopeId = buildVersionedRegistryScopeId(
+      scope.projectId,
+      scope.mode,
+      scope.versionId,
+    );
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let queuedStarted = false;
+
+    const first = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.register("first-agent", "first");
+          firstStarted.resolve();
+          await releaseFirst.promise;
+        }),
+    );
+    await firstStarted.promise;
+
+    const queued = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          queuedStarted = true;
+          manager.register("queued-agent", "queued");
+        }),
+    );
+    await Promise.resolve();
+    assertEquals(queuedStarted, false);
+
+    const firstRejection = assertRejects(
+      () => first,
+      Error,
+      "invalidated",
+    );
+    const queuedRejection = assertRejects(
+      () => queued,
+      Error,
+      "invalidated while waiting",
+    );
+    clearRegistryScope(scopeId);
+    const retry = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.register("retry-agent", "retry");
+        }),
+    );
+    releaseFirst.resolve();
+    await Promise.all([firstRejection, queuedRejection, retry]);
+
+    assertEquals(queuedStarted, false);
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("first-agent"), undefined);
+      assertEquals(manager.get("queued-agent"), undefined);
+      assertEquals(manager.get("retry-agent"), "retry");
     });
   });
 

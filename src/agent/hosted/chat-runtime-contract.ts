@@ -9,6 +9,7 @@ import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
 
 /** Public API contract for hosted chat runtime finish part. */
 export type HostedChatRuntimeFinishPart = {
@@ -98,9 +99,10 @@ export type HostedChatRuntimeCreationResult<TMessageMetadata = MessageMetadata> 
 /** Public API contract for hosted chat runtime project steering. */
 export type HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition> = {
   agent: TRuntimeAgentDefinition;
+  skillSelectorPolicy?: ResolvedSkillSelectorPolicy;
   environmentContext?: string;
   initialProjectInstructions?: string;
-  initialSkills?: RuntimeSkillDefinition[];
+  initialSkills?: readonly RuntimeSkillDefinition[];
 };
 
 /** Submitted form_input result carried across hosted runtime continuations. */
@@ -138,6 +140,7 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   parentRunId?: string;
   parentMessageId?: string;
   availableSkillIds?: string[];
+  skillSelectorPolicy?: ResolvedSkillSelectorPolicy;
   /** Per-run skill id -> discovered SKILL.md source path (owner-aware catalog). */
   skillSourcePaths?: Readonly<Record<string, string>>;
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;

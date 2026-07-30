@@ -83,6 +83,21 @@ const SKILL_TOOL_REGISTRATIONS = [
   { id: "execute_skill_script", create: createExecuteSkillScriptTool },
 ] as const;
 
+function isExplicitNoneSkillSelector(skills: AgentConfig["skills"]): boolean {
+  return skills === false || (Array.isArray(skills) && skills.length === 0);
+}
+
+function withAllowedSkillIdsContext(
+  context: Record<string, unknown> | undefined,
+  allowedSkillIds: readonly string[],
+  shouldAttachAllowedSkillIds: boolean,
+): Record<string, unknown> | undefined {
+  if (!shouldAttachAllowedSkillIds) {
+    return context;
+  }
+  return { ...context, allowedSkillIds: [...allowedSkillIds] };
+}
+
 function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStreamResult {
   return {
     toDataStreamResponse(options): Response {
@@ -108,6 +123,15 @@ export function agent(config: AgentConfig): Agent {
 
   const id = config.id ?? generateAgentId();
   const delegates = normalizeAgentDelegateIds(id, config.delegates);
+  const skillsConfig = config.skills === false ? [] : config.skills;
+  const shouldAttachAllowedSkillIds = skillsConfig !== undefined;
+
+  const resolveSkillSnapshot = () =>
+    skillRegistryInternal.resolveSelectorForAgent(skillsConfig, { agentId: id });
+
+  if (Array.isArray(skillsConfig) && skillsConfig.length > 0) {
+    resolveSkillSnapshot();
+  }
 
   const publicConfig: ResolvedAgentConfig = {
     ...config,
@@ -128,9 +152,10 @@ export function agent(config: AgentConfig): Agent {
     }
   }
 
-  // Skill tools are framework infrastructure shared by every agent. Project
-  // skills remain project-scoped and owner-aware at resolution time.
+  // Skill tools are framework infrastructure shared by skill-enabled agents.
+  // Project skills remain project-scoped and owner-aware at resolution time.
   let mergedToolsConfig = config.tools;
+  const shouldExposeSkillTools = !isExplicitNoneSkillSelector(config.skills);
 
   ensureBuiltinSchemaValidator();
   for (const registration of SKILL_TOOL_REGISTRATIONS) {
@@ -142,14 +167,24 @@ export function agent(config: AgentConfig): Agent {
   if (config.tools !== true) {
     const configuredTools = { ...(config.tools ?? {}) };
     for (const registration of SKILL_TOOL_REGISTRATIONS) {
-      const configuredTool = configuredTools[registration.id];
-      // Skill infrastructure cannot be disabled with `false`. Preserve
-      // concrete tools because hosted runs bind them to request context.
-      if (typeof configuredTool !== "object" || configuredTool === null) {
-        configuredTools[registration.id] = true;
+      if (!shouldExposeSkillTools) {
+        delete configuredTools[registration.id];
+        continue;
       }
+
+      const configuredTool = configuredTools[registration.id];
+      if (typeof configuredTool === "object" && configuredTool !== null) {
+        continue;
+      }
+
+      configuredTools[registration.id] = registration.create({
+        resolveAllowedSkillIds: () => resolveSkillSnapshot().allowedSkillIds,
+      });
     }
-    mergedToolsConfig = configuredTools;
+    const hasConfiguredTools = Object.keys(configuredTools).length > 0;
+    mergedToolsConfig = hasConfiguredTools || config.tools !== undefined
+      ? configuredTools
+      : undefined;
   }
 
   if (delegates?.length) {
@@ -168,13 +203,13 @@ export function agent(config: AgentConfig): Agent {
   // System prompt augmentation with skill manifest.
   // Re-resolve registry-backed entries at invocation time so HMR changes are picked up.
   const originalSystem = config.system;
-  const skillsConfig = config.skills === false ? [] : config.skills ?? true;
 
   const augmentedSystem = async () => {
     // Owner-aware: omitted selectors advertise every skill visible to this
     // agent (unowned project skills plus its own). Explicit lists, including
     // an empty list, retain their authored catalog selection.
-    const currentSkills = skillRegistryInternal.resolveForAgent(skillsConfig, { agentId: id });
+    const snapshot = resolveSkillSnapshot();
+    const currentSkills = new Map(snapshot.definitions.map((skill) => [skill.id, skill]));
     const basePrompt =
       (typeof originalSystem === "function" ? await originalSystem() : originalSystem) ??
         "You are a helpful assistant.";
@@ -227,10 +262,15 @@ export function agent(config: AgentConfig): Agent {
     generate(input): Promise<AgentResponse> {
       return withSpan(
         "agent.factory.generate",
-        () =>
-          runtime.generate(
+        () => {
+          const skillSnapshot = resolveSkillSnapshot();
+          return runtime.generate(
             input.input,
-            input.context,
+            withAllowedSkillIdsContext(
+              input.context,
+              skillSnapshot.allowedSkillIds,
+              shouldAttachAllowedSkillIds,
+            ),
             input.model,
             input.maxOutputTokens,
             input.abortSignal,
@@ -238,7 +278,8 @@ export function agent(config: AgentConfig): Agent {
               toolReplacements: input.tools,
               retainSkillLoaderTools: input.retainSkillLoaderTools,
             },
-          ),
+          );
+        },
         { "agent.id": id },
       );
     },
@@ -257,9 +298,14 @@ export function agent(config: AgentConfig): Agent {
             ]
             : (input.messages ?? []);
 
+          const skillSnapshot = resolveSkillSnapshot();
           const stream = await runtime.stream(
             inputMessages,
-            input.context,
+            withAllowedSkillIdsContext(
+              input.context,
+              skillSnapshot.allowedSkillIds,
+              shouldAttachAllowedSkillIds,
+            ),
             {
               onToolCall: input.onToolCall,
               onChunk: input.onChunk,
@@ -299,9 +345,14 @@ export function agent(config: AgentConfig): Agent {
           }
 
           const messages = body.messages;
+          const skillSnapshot = resolveSkillSnapshot();
           const stream = await runtime.stream(
             messages,
-            body.context,
+            withAllowedSkillIdsContext(
+              body.context,
+              skillSnapshot.allowedSkillIds,
+              shouldAttachAllowedSkillIds,
+            ),
             undefined,
             modelOverride,
             body.maxOutputTokens,

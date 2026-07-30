@@ -821,11 +821,12 @@ async function bootstrapProdWithValidation(
 ): Promise<BootstrapResult> {
   bootstrapProdLog.debug("Starting production mode initialization");
 
-  await ensureEnvLoaded(projectDir, adapter);
-
-  // Validate host-owned proxy configuration before tenant-aware bootstrap work.
+  // Validate host-owned proxy configuration before project .env loading can
+  // write tenant-controlled values into the process environment.
   // @see plans/architecture-audit/014.1-node-env-missing.md
   validateEnvironment();
+
+  await ensureEnvLoaded(projectDir, adapter);
 
   try {
     const result = await bootstrap(projectDir, adapter);
@@ -889,12 +890,19 @@ export function validateProductionEnvironment(): void {
   validateProductionEnvironmentForAuthorization(undefined);
 }
 
+function getProcessOwnedEnvironmentValue(key: string): string | undefined {
+  return getEnvSource(key).source === "process" ? getHostEnv(key) : undefined;
+}
+
 function validateProductionEnvironmentForAuthorization(
   authorization: typeof LOCAL_CLI_PROXY_STARTUP_AUTHORIZATION | undefined,
 ): void {
-  const nodeEnv = getHostEnv("NODE_ENV") ?? getHostEnv("DENO_ENV");
-  const proxyMode = getHostEnv("PROXY_MODE");
-  const controlPlanePublicKey = getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+  const nodeEnv = getProcessOwnedEnvironmentValue("NODE_ENV") ??
+    getProcessOwnedEnvironmentValue("DENO_ENV");
+  const proxyMode = getProcessOwnedEnvironmentValue("PROXY_MODE");
+  const controlPlanePublicKey = getProcessOwnedEnvironmentValue(
+    "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY",
+  );
   const isAuthorizedLocalProxy = authorization === LOCAL_CLI_PROXY_STARTUP_AUTHORIZATION;
 
   // Only a host-owned call site can authorize the local CLI exemption. Hosted
