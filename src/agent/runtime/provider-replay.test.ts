@@ -241,9 +241,39 @@ Deno.test("provider replay parses and restores an ordered unique checkpoint set"
 
 Deno.test("provider replay provider resolution is explicit and fail closed", () => {
   assertEquals(resolveProviderReplayProvider("anthropic/claude-sonnet-4-6"), "anthropic");
-  assertEquals(resolveProviderReplayProvider("openai/gpt-5.4"), "openai-responses");
+  for (
+    const model of [
+      "gpt-5.4",
+      "gpt-5.4-mini",
+      "gpt-5.4-pro",
+      "gpt-5.5",
+      "gpt-5.6",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+    ]
+  ) {
+    assertEquals(resolveProviderReplayProvider(`openai/${model}`), "openai-responses");
+    assertEquals(
+      resolveProviderReplayProvider(`openai/${model}-2026-07-30`),
+      "openai-responses",
+    );
+  }
   assertEquals(resolveProviderReplayProvider("anthropic/claude-3-7-sonnet"), undefined);
-  assertEquals(resolveProviderReplayProvider("openai/gpt-5.3"), undefined);
+  for (
+    const model of [
+      "gpt-5.3",
+      "gpt-5.4-nano",
+      "gpt-5.5-pro",
+      "gpt-5.6-codex",
+      "gpt-5.6-arbitrary",
+      "gpt-5.6-sol-codex",
+      "gpt-5.6-sol-2026-07",
+      "gpt-5.6-sol-2026-07-30-extra",
+    ]
+  ) {
+    assertEquals(resolveProviderReplayProvider(`openai/${model}`), undefined);
+  }
   assertEquals(resolveProviderReplayProvider("veryfront-cloud/openai/gpt-5.4"), undefined);
   assertEquals(
     resolveProviderReplayProvider("veryfront-cloud/anthropic/claude-sonnet-4-6"),

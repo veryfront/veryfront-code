@@ -468,6 +468,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
           latestExternalEventSequence: 0,
         },
         durableRunMirror: null,
+        privateDurableRunMirror: null,
       },
       abortSignal: new AbortController().signal,
       responseMessageId: "response-message-1",
@@ -523,6 +524,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
           rootRunContext: {
             durableRootRun: null,
             durableRunMirror: null,
+            privateDurableRunMirror: null,
           },
           abortSignal: new AbortController().signal,
           tracer: tracer.tracer,
@@ -575,6 +577,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
               latestExternalEventSequence: 0,
             },
             durableRunMirror: null,
+            privateDurableRunMirror: null,
           },
           abortSignal: new AbortController().signal,
           tracer: tracer.tracer,
