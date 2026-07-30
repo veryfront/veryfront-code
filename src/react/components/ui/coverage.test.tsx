@@ -129,17 +129,17 @@ export const UI_COMPONENTS: UiComponent[] = [
   // ---- PLANNED (cross-library gaps vs shadcn / Radix / Base UI / React Aria) ----
   // Scoped in from a catalog audit of the four engines + shadcn; build to spec
   // (build · story · docs-in-story · test · JSDoc) after the chat suite + gate 2.
-  { name: "Calendar", kind: "structure", interactive: true, status: "planned" },
-  { name: "DatePicker", kind: "overlay", interactive: true, status: "planned" },
-  { name: "AlertDialog", kind: "overlay", interactive: true, status: "planned" },
-  { name: "NavigationMenu", kind: "overlay", interactive: true, status: "planned" },
-  { name: "Toolbar", kind: "structure", interactive: true, status: "planned" },
-  { name: "Breadcrumb", kind: "structure", interactive: false, status: "planned" },
-  { name: "Pagination", kind: "structure", interactive: false, status: "planned" },
-  { name: "ScrollArea", kind: "structure", interactive: false, status: "planned" },
-  { name: "Meter", kind: "visual", interactive: false, status: "planned" },
-  { name: "InputOTP", kind: "form", interactive: false, status: "planned" },
-  { name: "Field", kind: "form", interactive: false, status: "planned" },
+  { name: "Calendar", kind: "structure", interactive: true, status: "shipped" },
+  { name: "DatePicker", kind: "overlay", interactive: true, status: "shipped" },
+  { name: "AlertDialog", kind: "overlay", interactive: true, status: "shipped" },
+  { name: "NavigationMenu", kind: "overlay", interactive: true, status: "shipped" },
+  { name: "Toolbar", kind: "structure", interactive: true, status: "shipped" },
+  { name: "Breadcrumb", kind: "structure", interactive: false, status: "shipped" },
+  { name: "Pagination", kind: "structure", interactive: false, status: "shipped" },
+  { name: "ScrollArea", kind: "structure", interactive: false, status: "shipped" },
+  { name: "Meter", kind: "visual", interactive: false, status: "shipped" },
+  { name: "InputOTP", kind: "form", interactive: false, status: "shipped" },
+  { name: "Field", kind: "form", interactive: false, status: "shipped" },
 ];
 
 let storyFiles: string[] = [];

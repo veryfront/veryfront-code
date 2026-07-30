@@ -291,6 +291,105 @@ export {
   type ToggleGroupItemProps,
   type ToggleGroupProps,
 } from "./toggle-group.tsx";
+export { Meter, type MeterProps } from "./meter.tsx";
+export { ScrollArea, type ScrollAreaProps, scrollAreaVariants } from "./scroll-area.tsx";
+export { InputOTP, type InputOTPProps } from "./input-otp.tsx";
+export {
+  Breadcrumb,
+  BreadcrumbEllipsis,
+  type BreadcrumbEllipsisProps,
+  BreadcrumbItem,
+  type BreadcrumbItemProps,
+  BreadcrumbLink,
+  type BreadcrumbLinkProps,
+  BreadcrumbList,
+  type BreadcrumbListProps,
+  BreadcrumbPage,
+  type BreadcrumbPageProps,
+  type BreadcrumbProps,
+  BreadcrumbSeparator,
+  type BreadcrumbSeparatorProps,
+} from "./breadcrumb.tsx";
+export {
+  Pagination,
+  PaginationContent,
+  type PaginationContentProps,
+  PaginationEllipsis,
+  type PaginationEllipsisProps,
+  PaginationItem,
+  type PaginationItemProps,
+  PaginationLink,
+  type PaginationLinkProps,
+  PaginationNext,
+  type PaginationNextProps,
+  PaginationPrevious,
+  type PaginationPreviousProps,
+  type PaginationProps,
+} from "./pagination.tsx";
+export {
+  Field,
+  FieldControl,
+  type FieldControlProps,
+  FieldDescription,
+  type FieldDescriptionProps,
+  FieldError,
+  type FieldErrorProps,
+  FieldLabel,
+  type FieldLabelProps,
+  type FieldProps,
+} from "./field.tsx";
+export { Calendar, type CalendarProps } from "./calendar.tsx";
+export {
+  DatePicker,
+  DatePickerContent,
+  type DatePickerContentProps,
+  type DatePickerProps,
+  DatePickerTrigger,
+  type DatePickerTriggerProps,
+} from "./date-picker.tsx";
+export {
+  AlertDialog,
+  AlertDialogAction,
+  type AlertDialogActionProps,
+  AlertDialogCancel,
+  type AlertDialogCancelProps,
+  AlertDialogContent,
+  type AlertDialogContentProps,
+  AlertDialogDescription,
+  type AlertDialogDescriptionProps,
+  AlertDialogFooter,
+  type AlertDialogFooterProps,
+  type AlertDialogProps,
+  AlertDialogTitle,
+  type AlertDialogTitleProps,
+  AlertDialogTrigger,
+  type AlertDialogTriggerProps,
+} from "./alert-dialog.tsx";
+export {
+  Toolbar,
+  ToolbarButton,
+  type ToolbarButtonProps,
+  ToolbarLink,
+  type ToolbarLinkProps,
+  type ToolbarProps,
+  ToolbarSeparator,
+  type ToolbarSeparatorProps,
+  toolbarVariants,
+} from "./toolbar.tsx";
+export {
+  NavigationMenu,
+  NavigationMenuContent,
+  type NavigationMenuContentProps,
+  NavigationMenuItem,
+  type NavigationMenuItemProps,
+  NavigationMenuLink,
+  type NavigationMenuLinkProps,
+  NavigationMenuList,
+  type NavigationMenuListProps,
+  type NavigationMenuProps,
+  NavigationMenuTrigger,
+  type NavigationMenuTriggerProps,
+} from "./navigation-menu.tsx";
 export { UIAdapterProvider, useAdapter } from "./adapter/context.tsx";
 export { useTokenScope } from "./adapter/token-scope.tsx";
 export type {
