@@ -4,7 +4,6 @@
  * `viewportRef`, `scrollToStart`/`scrollToEnd`, `scrollToMessage`, and
  * `getViewportProps`. Methods no-op safely when refs are unattached.
  */
-import * as React from "react";
 import { renderToString } from "react-dom/server";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";

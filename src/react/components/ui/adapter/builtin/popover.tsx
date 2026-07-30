@@ -11,7 +11,6 @@
  *
  * @module react/components/ui/adapter/builtin/popover
  */
-import * as React from "react";
 import { createAnchoredSurfaceParts } from "../../anchored-surface.tsx";
 import type { PopoverParts } from "../contract.ts";
 

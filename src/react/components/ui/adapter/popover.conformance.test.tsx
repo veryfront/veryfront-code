@@ -249,7 +249,7 @@ export function runPopoverConformance(
         assertEquals(scope.querySelector('[role="dialog"]'), null, "closed initially");
         const trigger = scope.querySelector("button")!;
         flushSync(() => {
-          trigger.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+          trigger.dispatchEvent(new globalThis.MouseEvent("click", { bubbles: true }));
         });
         assertEquals(clicks, 1, "consumer onClick fired");
         assert(

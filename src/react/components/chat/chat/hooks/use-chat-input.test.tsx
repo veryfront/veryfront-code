@@ -89,7 +89,7 @@ describe("useChatInput", () => {
     const order: string[] = [];
     const base = { onClick: () => order.push("internal") };
     const composed = mergeProps(base, {
-      onClick: (e: { preventDefault?: () => void }) => {
+      onClick: () => {
         order.push("consumer");
       },
     });
