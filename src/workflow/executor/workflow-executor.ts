@@ -45,6 +45,7 @@ import {
   captureWorkflowStaticValue,
   cloneCapturedWorkflowStaticValue,
 } from "./workflow-definition-snapshot.ts";
+import { throwIfAbortedWithCleanup } from "./abortable-operation.ts";
 import { MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS } from "../limits.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
@@ -885,7 +886,12 @@ export class WorkflowExecutor {
       return await Promise.race([fencedOperation, abortPromise]);
     } catch (error) {
       if (executionController.signal.aborted) {
-        await this.waitForCancellationGrace(fencedOperation);
+        const cleanup = await this.waitForCancellationSettlement(fencedOperation);
+        throwIfAbortedWithCleanup(
+          executionController.signal,
+          cleanup?.status === "rejected" ? [cleanup.reason] : [],
+          "Workflow execution",
+        );
       }
       throw error;
     } finally {
@@ -895,21 +901,27 @@ export class WorkflowExecutor {
   }
 
   private async waitForCancellationGrace(operation: Promise<unknown>): Promise<void> {
+    await this.waitForCancellationSettlement(operation);
+  }
+
+  private async waitForCancellationSettlement(
+    operation: Promise<unknown>,
+  ): Promise<PromiseSettledResult<unknown> | undefined> {
     const gracePeriod = Math.max(
       0,
       this.config.cancellationGracePeriod ?? DEFAULT_CANCELLATION_GRACE_PERIOD_MS,
     );
     let graceTimeoutId: ReturnType<typeof setTimeout> | undefined;
     const settled = operation.then(
-      () => undefined,
-      () => undefined,
+      (value): PromiseFulfilledResult<unknown> => ({ status: "fulfilled", value }),
+      (reason): PromiseRejectedResult => ({ status: "rejected", reason }),
     );
-    const graceExpired = new Promise<void>((resolve) => {
-      graceTimeoutId = setTimeout(resolve, gracePeriod);
+    const graceExpired = new Promise<undefined>((resolve) => {
+      graceTimeoutId = setTimeout(() => resolve(undefined), gracePeriod);
     });
 
     try {
-      await Promise.race([settled, graceExpired]);
+      return await Promise.race([settled, graceExpired]);
     } finally {
       if (graceTimeoutId !== undefined) clearTimeout(graceTimeoutId);
     }

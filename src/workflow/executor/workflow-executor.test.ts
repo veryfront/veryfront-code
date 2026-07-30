@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertInstanceOf,
   assertRejects,
   assertStrictEquals,
   assertThrows,
@@ -15,6 +16,7 @@ import { branch, dependsOn, step, waitForApproval, workflow } from "../dsl/index
 import { ApprovalManager } from "../runtime/approval-manager.ts";
 import type { WorkflowDefinition, WorkflowRun } from "../types.ts";
 import { reserveWorkflowStart, WorkflowExecutor } from "./workflow-executor.ts";
+import { getPrimaryAbortReason, isAbortCleanupError } from "./abortable-operation.ts";
 import { FakeTime } from "#std/testing/time";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils";
 import {
@@ -1420,6 +1422,60 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(cancelledRun.status, "cancelled");
   });
 
+  it("keeps cancellation terminal when cooperative cleanup rejects distinctly", async () => {
+    const backend = new MemoryBackend();
+    const cleanupFailure = new Error("cancelled tool cleanup failed");
+    const started = Promise.withResolvers<void>();
+    const cleanupObserved = Promise.withResolvers<void>();
+    let cancellationReason: unknown;
+    let errorCallbacks = 0;
+    const executor = new WorkflowExecutor({
+      backend,
+      cancellationGracePeriod: 5,
+      onError: () => {
+        errorCallbacks++;
+      },
+    });
+    const blockingTool: Tool = {
+      id: "cancellation-cleanup-failure",
+      type: "function",
+      description: "Reject with a distinct cleanup failure after cancellation",
+      inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+      execute: (_input, context) => {
+        const signal = context?.abortSignal;
+        started.resolve();
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            cancellationReason = signal.reason;
+            reject(cleanupFailure);
+            cleanupObserved.resolve();
+          }, { once: true });
+        });
+      },
+    };
+    executor.register(
+      workflow({
+        id: "cancellation-cleanup-failure",
+        steps: [step("blocking", { tool: blockingTool })],
+      }).definition,
+    );
+
+    const handle = await executor.start("cancellation-cleanup-failure", {});
+    await started.promise;
+    await handle.cancel();
+    await cleanupObserved.promise;
+    await handle.settled();
+
+    const cancelledRun = await backend.getRun(handle.runId);
+    assertExists(cancelledRun);
+    assertInstanceOf(cancellationReason, Error);
+    assertEquals(Object.is(cancellationReason, cleanupFailure), false);
+    assertEquals(cancelledRun.status, "cancelled");
+    assertEquals(cancelledRun.error, undefined);
+    assertEquals(cancelledRun.output, undefined);
+    assertEquals(errorCallbacks, 0);
+  });
+
   it("cancels a result waiter without leaking its poll timer or cancelling the run", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend });
@@ -1625,6 +1681,67 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(receivedSignal?.aborted, true);
     assertEquals(dependentExecutions, 0);
     assertEquals(timedOutRun.status, "failed");
+  });
+
+  it("preserves ordered cleanup diagnostics behind the exact workflow timeout", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    const cleanupFailure = new Error("timed-out tool cleanup failed");
+    const started = Promise.withResolvers<void>();
+    let receivedSignal: AbortSignal | undefined;
+    const executor = new WorkflowExecutor({
+      backend,
+      cancellationGracePeriod: 5,
+    });
+    const blockingTool: Tool = {
+      id: "timeout-cleanup-failure",
+      type: "function",
+      description: "Reject with a distinct cleanup failure after timeout",
+      inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+      execute: (_input, context) => {
+        receivedSignal = context?.abortSignal;
+        started.resolve();
+        return new Promise((_resolve, reject) => {
+          receivedSignal?.addEventListener(
+            "abort",
+            () => reject(cleanupFailure),
+            { once: true },
+          );
+        });
+      },
+    };
+    executor.register(
+      workflow({
+        id: "timeout-cleanup-failure",
+        timeout: 5,
+        steps: [step("blocking", { tool: blockingTool })],
+      }).definition,
+    );
+    const run = createRun("timeout-cleanup-failure");
+    await backend.createRun(run);
+
+    const rejection = executor.executeAsync(run.id).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await started.promise;
+    await time.tickAsync(5);
+    const error = await rejection;
+
+    assertEquals(isAbortCleanupError(error), true);
+    assertInstanceOf(error, AggregateError);
+    if (!isAbortCleanupError(error)) return;
+    const primaryReason = getPrimaryAbortReason(error);
+    assertStrictEquals(error.errors[0], primaryReason);
+    assertStrictEquals(error.cause, primaryReason);
+    assertStrictEquals(receivedSignal?.reason, primaryReason);
+    assertStrictEquals(error.errors[1], cleanupFailure);
+    assertEquals(error.errors.length, 2);
+
+    const timedOutRun = await backend.getRun(run.id);
+    assertExists(timedOutRun);
+    assertEquals(timedOutRun.status, "failed");
+    assertEquals(Object.hasOwn(timedOutRun.error ?? {}, "cleanupErrors"), false);
   });
 
   it("bounds timeout cleanup and fences a branch that ignores cancellation", async () => {
