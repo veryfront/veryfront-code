@@ -30,9 +30,15 @@ export function Popover(props: PopoverProps): React.ReactElement {
   return <_Root {...props} />;
 }
 
-/** Trigger — toggles the popover. `asChild` merges onto the child element. */
+/**
+ * Trigger — toggles the popover; the positioning anchor. `asChild` merges onto
+ * the child element, which must forward `ref` to its DOM node.
+ */
 export function PopoverTrigger(
-  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    asChild?: boolean;
+    ref?: React.Ref<HTMLButtonElement>;
+  },
 ): React.ReactElement {
   return <_Trigger {...props} haspopup="dialog" />;
 }

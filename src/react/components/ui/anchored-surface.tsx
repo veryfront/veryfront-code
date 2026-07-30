@@ -70,6 +70,11 @@ export function createAnchoredSurfaceParts() {
    * click; carries the positioning-anchor ref (composed with any consumer
    * `ref`, including through `asChild`). Skins differ only in the `haspopup`
    * value they supply.
+   *
+   * `asChild` contract: the child must forward `ref` to its DOM node (every
+   * `ui` component does; refs pass as regular props on function components in
+   * React 19). A child that drops `ref` leaves the surface unanchored —
+   * `Floating` warns in that case instead of silently rendering nothing.
    */
   function AnchoredTrigger(
     { children, asChild, onClick, haspopup, ref, ...props }: AnchoredTriggerProps,
