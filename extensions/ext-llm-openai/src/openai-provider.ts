@@ -31,7 +31,6 @@ import {
   requestStream,
   stringifyJsonValue,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
-  withToolInputStatusTransitions,
 } from "veryfront/provider/shared";
 import {
   buildOpenAIChatRequest,
@@ -58,7 +57,6 @@ export {
   ProviderRateLimitError,
   ProviderRequestError,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
-  withToolInputStatusTransitions,
 };
 
 export interface OpenAIRuntimeConfig {
@@ -491,7 +489,7 @@ export function createOpenAIModelRuntime(
         const drained = warnings.drain();
         return {
           stream: ReadableStream.from(
-            withToolInputStatusTransitions(streamOpenAICompatibleParts(responseStream)),
+            streamOpenAICompatibleParts(responseStream),
           ),
           ...(drained.length > 0 ? { warnings: drained } : {}),
         };
@@ -568,7 +566,7 @@ export function createOpenAIResponsesRuntime(
         const drained = warnings.drain();
         return {
           stream: ReadableStream.from(
-            withToolInputStatusTransitions(streamOpenAIResponsesParts(responseStream)),
+            streamOpenAIResponsesParts(responseStream),
           ),
           ...(drained.length > 0 ? { warnings: drained } : {}),
         };

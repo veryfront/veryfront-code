@@ -48,9 +48,21 @@ describe("hydration-script-builder/templates/renderer", () => {
     it("should use the RSC module endpoint only for app router RSC client pages", () => {
       const result = getRendererScript();
       assertIncludes(result, "data.clientModuleStrategy === 'rsc-module'");
+      assertIncludes(result, "!hasReleaseAssetModules");
       assertIncludes(result, "isAppRouterPath(normalizedPagePath)");
-      assertIncludes(result, "'/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)");
+      assertIncludes(result, "buildPinnedRscModuleUrl(data.pagePath, data)");
       assertIncludes(result, "const moduleUrl = shouldRenderRscClientPage");
+      assertIncludes(result, "pageModule = await importSnapshotBoundModule(moduleUrl)");
+    });
+
+    it("prefers release asset modules over the RSC module endpoint", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "const hasReleaseAssetModules");
+      assertIncludes(
+        result,
+        "data.releaseAssetModules && Object.keys(data.releaseAssetModules).length > 0",
+      );
+      assertIncludes(result, "!hasReleaseAssetModules");
     });
 
     it("uses the configured App Router root for pages and layouts", () => {
@@ -96,7 +108,8 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "loadHydrationComponent");
       assertIncludes(result, "layouts[i].path");
       assertIncludes(result, "shouldRenderRscClientPage");
-      assertIncludes(result, "'/_veryfront/rsc/module?rel=' + encodeURIComponent(path)");
+      assertIncludes(result, "buildPinnedRscModuleUrl(path, data)");
+      assertIncludes(result, "const module = await importSnapshotBoundModule(moduleUrl)");
     });
 
     it("should recreate initial layouts with their serialized props", () => {
@@ -155,7 +168,7 @@ describe("hydration-script-builder/templates/renderer", () => {
       const result = getRendererScript();
       assertIncludes(
         result,
-        "data.clientModuleStrategy === 'rsc-module' && isAppRouterPath(normalizedPagePath)",
+        "data.clientModuleStrategy === 'rsc-module' &&\n          !hasReleaseAssetModules &&\n          isAppRouterPath(normalizedPagePath)",
       );
       assertIncludes(result, "container.__reactRoot = createRoot(container)");
       assertIncludes(result, "container.__reactRoot.render(tree)");

@@ -16,7 +16,7 @@ import * as React from "react";
 type AnyProps = Record<string, unknown>;
 
 /** Compose multiple refs into one callback ref. */
-function composeRefs<T>(
+export function composeRefs<T>(
   ...refs: Array<React.Ref<T> | undefined>
 ): React.RefCallback<T> {
   return (node) => {

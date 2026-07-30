@@ -157,7 +157,7 @@ function createImportMapPlugin(
 
   if (importMapEntries.length === 0) return { name: "import-map", setup() {} };
 
-  logger.info(`Using import map with ${importMapEntries.length} entries`);
+  logger.debug(`Using import map with ${importMapEntries.length} entries`);
 
   return {
     name: "import-map",
@@ -430,7 +430,10 @@ function loadAndTranspileModule(
       const allowedHosts = await loadSecurityConfig(projectDir, adapter);
       validateHTTPImports(source, allowedHosts);
 
-      const allDeps = await readProjectDependencies(projectDir, fs);
+      const projectSourceReader = {
+        readTextFile: (filePath: string) => adapter.fs.readFile(filePath),
+      };
+      const allDeps = await readProjectDependencies(projectDir, projectSourceReader);
 
       // Filter out framework-managed packages from user deps. These are already
       // handled by the framework's own external/rewrite logic and should not be
@@ -518,7 +521,7 @@ function loadAndTranspileModule(
         );
       }
 
-      logger.info(`built handler ${resolvedPath}`);
+      logger.debug(`built handler ${resolvedPath}`);
       const js = result.outputFiles?.[0]?.text ?? "export {}";
       logger.debug(`transpiled size ${js.length} bytes`);
 

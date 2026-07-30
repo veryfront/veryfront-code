@@ -52,6 +52,7 @@ import { parseEvalArgs } from "./handler.ts";
 const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+const originalServiceLayer = Deno.env.get("VERYFRONT_SERVICE_LAYER");
 const originalXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
 const originalEvalExport = Deno.env.get("VERYFRONT_EVAL_EXPORT");
 const originalEvalExporters = Deno.env.get("VERYFRONT_EVAL_EXPORTERS");
@@ -82,6 +83,12 @@ function restoreEnv(): void {
     Deno.env.delete("VERYFRONT_PROJECT_SLUG");
   } else {
     Deno.env.set("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+  }
+
+  if (originalServiceLayer === undefined) {
+    Deno.env.delete("VERYFRONT_SERVICE_LAYER");
+  } else {
+    Deno.env.set("VERYFRONT_SERVICE_LAYER", originalServiceLayer);
   }
 
   if (originalApiBaseUrl === undefined) {
@@ -335,23 +342,32 @@ async function captureConsoleOutput(fn: () => Promise<unknown>): Promise<{
 }
 
 function relevantEvalHumanLines(output: { stdout: string[]; stderr: string[] }): string[] {
-  return [...output.stdout, ...output.stderr].filter((line) =>
-    line.startsWith("Eval ") ||
-    line.startsWith("Target: ") ||
-    line.startsWith("Result: ") ||
-    line.startsWith("Report directory: ") ||
-    line.startsWith("Report markdown: ") ||
-    line.startsWith("Report: ") ||
-    line.startsWith("JUnit: ") ||
-    line.startsWith("Baseline written: ") ||
-    line.startsWith("Suite report: ") ||
-    line.startsWith("Model: ") ||
-    line.startsWith("Recommendation: ") ||
-    line.startsWith("  - ") ||
-    line.startsWith("Comparison: ") ||
-    line.startsWith("Comparison markdown: ") ||
-    line.startsWith("Eval suite: ")
-  );
+  return [...output.stdout, ...output.stderr]
+    .map((line) => {
+      // Strip logger text-mode prefix before matching content.
+      // Server preset (default in tests): "HH:MM:SS  TAGNAME    G " = 23 chars (PREFIX_WIDTH).
+      // CLI preset (when entry point sets it): "  G " = 4 chars.
+      if (/^\d{2}:\d{2}:\d{2}\s{2}/.test(line)) return line.slice(23);
+      if (/^\s{2}[·●!✗]\s/.test(line)) return line.slice(4);
+      return line;
+    })
+    .filter((line) =>
+      line.startsWith("Eval ") ||
+      line.startsWith("Target: ") ||
+      line.startsWith("Result: ") ||
+      line.startsWith("Report directory: ") ||
+      line.startsWith("Report markdown: ") ||
+      line.startsWith("Report: ") ||
+      line.startsWith("JUnit: ") ||
+      line.startsWith("Baseline written: ") ||
+      line.startsWith("Suite report: ") ||
+      line.startsWith("Model: ") ||
+      line.startsWith("Recommendation: ") ||
+      line.startsWith("  - ") ||
+      line.startsWith("Comparison: ") ||
+      line.startsWith("Comparison markdown: ") ||
+      line.startsWith("Eval suite: ")
+    );
 }
 
 function parseLastJsonEnvelope(output: { stdout: string[] }): {
@@ -1511,6 +1527,7 @@ describe("eval CLI command helpers", () => {
     try {
       Deno.env.delete("VERYFRONT_API_TOKEN");
       Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_SERVICE_LAYER");
       Deno.env.set("XDG_CONFIG_HOME", configHome);
       await saveToken("stored-token");
 
@@ -1520,6 +1537,7 @@ describe("eval CLI command helpers", () => {
 
       assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "stored-token");
       assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-eval-project");
+      assertEquals(Deno.env.get("VERYFRONT_SERVICE_LAYER"), "cloud");
     } finally {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });

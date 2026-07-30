@@ -25,6 +25,8 @@ export interface ResolveUnresolvedModuleViaHttpFallbackInput {
   esmCacheDir: string;
   pathCache: Map<string, string>;
   reactVersion?: string;
+  dependencyPinningCacheKey?: string;
+  moduleServerOrigin?: string;
   fetchViaHttp?: FetchModuleViaHttpFn;
   cacheLocalModule?: CacheLocalModuleFn;
 }
@@ -45,6 +47,7 @@ export async function resolveUnresolvedModuleViaHttpFallback(
     input.log,
     input.projectSlug,
     input.isLocalProject,
+    input.dependencyPinningCacheKey,
   );
 
   if (moduleCode) {
@@ -55,6 +58,8 @@ export async function resolveUnresolvedModuleViaHttpFallback(
       input.pathCache,
       input.log,
       input.reactVersion,
+      input.dependencyPinningCacheKey,
+      input.moduleServerOrigin,
     );
   }
 

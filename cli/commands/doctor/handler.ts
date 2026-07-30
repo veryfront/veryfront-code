@@ -5,7 +5,7 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import { cwd } from "veryfront/platform";
 import { doctorCommand } from "./index.ts";
-import { showLogo } from "#cli/utils";
+import { showHeader } from "#cli/utils";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
@@ -24,6 +24,6 @@ export const parseDoctorArgs = createArgParser(DoctorArgsSchema, {
 });
 
 export async function handleDoctorCommand(args: ParsedArgs): Promise<void> {
-  showLogo();
+  showHeader();
   await doctorCommand(cwd(), parseArgsOrThrow(parseDoctorArgs, "doctor", args));
 }

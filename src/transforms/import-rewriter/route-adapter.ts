@@ -11,7 +11,12 @@ import {
 
 const logger = serverLogger.component("api");
 
-/** Node.js built-in module names, shared across route-loader external rewrites. */
+/**
+ * Bare builtins supported by Deno's Node compatibility layer.
+ *
+ * This intentionally stays separate from the Node-runtime list used by MDX:
+ * Deno does not implement every `node:` module exposed by current Node.
+ */
 export const NODE_BUILTINS = [
   "assert",
   "buffer",
@@ -50,7 +55,7 @@ export const NODE_BUILTINS = [
 
 export async function readProjectDependenciesForRoute(
   projectDir: string,
-  fs: FileSystem,
+  fs: Pick<FileSystem, "readTextFile">,
 ): Promise<Map<string, string>> {
   try {
     const content = await fs.readTextFile(pathHelper.join(projectDir, "package.json"));

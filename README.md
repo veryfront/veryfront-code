@@ -19,7 +19,7 @@ It gives you agents, tools, workflows, and a complete React rendering stack in a
 Create a new Veryfront Code app:
 
 ```bash
-npm create veryfront
+npm create veryfront@latest my-agent
 ```
 
 <details>
@@ -34,7 +34,7 @@ deno init --npm veryfront
 
 </details>
 
-Start from a template directly:
+The default starter is `ai-agent`. Choose another template directly:
 
 ```bash
 npx veryfront init <PROJECT_NAME> --template <TEMPLATE>

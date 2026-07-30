@@ -53,6 +53,8 @@ export class SSRCacheManager {
         reactVersion: this.options.reactVersion,
         dev: this.options.dev,
         apiBaseUrl: this.options.apiBaseUrl,
+        moduleServerOrigin: this.options.moduleServerOrigin,
+        dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
       });
     }
     return this.cachedConfigHash;

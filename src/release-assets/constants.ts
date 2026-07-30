@@ -47,6 +47,9 @@ export const RELEASE_ASSET_MANIFEST_ENV_FLAG = "VERYFRONT_RELEASE_ASSET_MANIFEST
 export const RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG =
   "VERYFRONT_RELEASE_ASSET_DEPENDENCY_IMPORT_MAP";
 
+/** Env flag that enables dependency version pinning for bare npm imports (default OFF). */
+export const DEPENDENCY_PINNING_ENV_FLAG = "VERYFRONT_DEPENDENCY_PINNING";
+
 /** Map a 64-hex content hash + extension to its public asset URL. */
 export function releaseAssetUrl(contentHash: string, extension: ReleaseAssetExtension): string {
   return `${RELEASE_ASSET_BASE_PATH}/${contentHash}.${extension}`;

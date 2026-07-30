@@ -1,12 +1,68 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import * as esbuild from "veryfront/extensions/bundler";
+import { generateDevClientRendererScript } from "./dev-client-renderer.ts";
 import {
   generateProdHydrationModule,
   getProdHydrationModulePath,
   getProdScripts,
   PROD_HYDRATION_MODULE_PATH,
 } from "./prod-scripts.ts";
+
+async function bundleHydrationModuleAgainstLegacyRouter(hydrationModule: string): Promise<void> {
+  const fixtureModules = new Map([
+    ["react", "export function createElement() { return null; }"],
+    ["react-dom/client", "export function createRoot() { return { render() {} }; }"],
+    [
+      "veryfront/router",
+      [
+        "export function RouterProvider({ children }) { return children; }",
+        "export function useRouter() { return {}; }",
+      ].join("\n"),
+    ],
+    [
+      "veryfront/context",
+      "export function PageContextProvider({ children }) { return children; }",
+    ],
+  ]);
+
+  await esbuild.build({
+    stdin: {
+      contents: hydrationModule,
+      sourcefile: "hydration-runtime.js",
+      loader: "js",
+    },
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "browser",
+    // A missing namespace property is the compatibility path under test, so the
+    // expected esbuild warning is intentionally quiet. Any static named import
+    // still fails the build.
+    logLevel: "silent",
+    plugins: [{
+      name: "legacy-router-fixture",
+      setup(build) {
+        build.onResolve(
+          { filter: /^(react|react-dom\/client|veryfront\/router|veryfront\/context)$/ },
+          (args) => ({ path: args.path, namespace: "legacy-router-fixture" }),
+        );
+        build.onLoad(
+          { filter: /.*/, namespace: "legacy-router-fixture" },
+          (args) => ({ contents: fixtureModules.get(args.path), loader: "js" }),
+        );
+      },
+    }],
+  });
+}
+
+function extractModuleScript(scriptTag: string): string {
+  const start = scriptTag.indexOf(">") + 1;
+  const end = scriptTag.lastIndexOf("</script>");
+  if (start === 0 || end < start) throw new Error("Expected a module script tag");
+  return scriptTag.slice(start, end);
+}
 
 describe("hydration-script-builder/prod-scripts", () => {
   describe("getProdScripts", () => {
@@ -80,4 +136,18 @@ describe("hydration-script-builder/prod-scripts", () => {
       assertEquals(result.includes("renderPage"), true);
     });
   });
+});
+
+Deno.test({
+  name: "generated hydration modules link against router assets from existing releases",
+  async fn() {
+    try {
+      await bundleHydrationModuleAgainstLegacyRouter(generateProdHydrationModule());
+      await bundleHydrationModuleAgainstLegacyRouter(
+        extractModuleScript(generateDevClientRendererScript()),
+      );
+    } finally {
+      await esbuild.stop();
+    }
+  },
 });

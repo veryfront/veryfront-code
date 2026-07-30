@@ -130,6 +130,8 @@ export {
 } from "./provider-tool-compat.ts";
 export { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 export { createStreamState, processStream } from "./chat-stream-handler.ts";
+import { resolveStreamLifecycleModeFromEnv } from "./stream-lifecycle-mode.ts";
+import { createRuntimeStreamSource } from "./chat-stream-handler.ts";
 export type {
   ChatStreamCallbacks,
   ChatStreamState,
@@ -526,6 +528,14 @@ function warnLocalToolSkipping(agentId: string, modelId: string): void {
   );
 }
 
+function debugRuntimeModelRemap(requestedModel: string, resolvedModelString: string): void {
+  if (resolvedModelString === requestedModel) return;
+
+  logger.debug(
+    `⚡ Using runtime model "${resolvedModelString}" instead of "${requestedModel}".`,
+  );
+}
+
 type RuntimeStepState = {
   systemPrompt: string;
   context?: Record<string, unknown>;
@@ -652,11 +662,7 @@ export class AgentRuntime {
     const transport = await this.resolveModelTransport(context, modelOverride, "generate");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
-    if (resolvedModelString !== requestedModel) {
-      logger.info(
-        `⚡ Using runtime model "${resolvedModelString}" instead of "${requestedModel}".`,
-      );
-    }
+    debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
     return withSpan("agent.generate", async (span) => {
       setSpanAttributes(span, {
@@ -725,11 +731,7 @@ export class AgentRuntime {
     const transport = await this.resolveModelTransport(context, modelOverride, "stream");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
-    if (resolvedModelString !== requestedModel) {
-      logger.info(
-        `⚡ Using runtime model "${resolvedModelString}" instead of "${requestedModel}".`,
-      );
-    }
+    debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
     const memoryMessages = await this.prepareTurnMessages(messages);
 
@@ -1512,26 +1514,31 @@ export class AgentRuntime {
       );
       const maxOutputTokens = this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride);
       const genAiProviderName = resolveRuntimeGenAiProviderName(effectiveModel);
-      const result = streamText({
-        model: languageModel,
-        system: currentSystemPrompt,
-        messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
-        tools: runtimeTools,
-        experimental_repairToolCall: repairToolCall,
-        maxOutputTokens,
-        ...(temperature === undefined ? {} : { temperature }),
-        ...(headers ? { headers } : {}),
-        ...(providerOptions ? { providerOptions } : {}),
-        ...(reasoning ? { reasoning } : {}),
-        abortSignal,
-      });
+      const streamSource = createRuntimeStreamSource((streamSignal) =>
+        streamText({
+          model: languageModel,
+          system: currentSystemPrompt,
+          messages: convertToTextGenerationRuntimeRequestMessages(
+            currentMessages,
+          ),
+          tools: runtimeTools,
+          experimental_repairToolCall: repairToolCall,
+          maxOutputTokens,
+          ...(temperature === undefined ? {} : { temperature }),
+          ...(headers ? { headers } : {}),
+          ...(providerOptions ? { providerOptions } : {}),
+          ...(reasoning ? { reasoning } : {}),
+          abortSignal: streamSignal,
+        })
+      );
 
       const state = createStreamState();
-      await processStream(result, state, controller, encoder, textPartId, {
+      await processStream(streamSource, state, controller, encoder, textPartId, {
         onChunk: callbacks?.onChunk,
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
         availableToolNames: runtimeToolNames,
+        streamLifecycleMode: resolveStreamLifecycleModeFromEnv(),
         traceSpanName: `chat ${effectiveModel}`,
         traceAttributes: {
           ...(genAiProviderName ? { "gen_ai.provider.name": genAiProviderName } : {}),
@@ -1595,23 +1602,6 @@ export class AgentRuntime {
       latestAssistantText = getTextFromParts(assistantMessage.parts);
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
-
-      if (state.suppressedToolCalls.length > 0) {
-        const unavailableNames = [
-          ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
-        ];
-        currentMessages.push({
-          id: `runtime_note_${Date.now()}_${step}`,
-          role: "user",
-          parts: [{
-            type: "text",
-            text: `Runtime recovery: ignored unavailable tool call(s): ${
-              unavailableNames.join(", ")
-            }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
-          }],
-          timestamp: Date.now(),
-        });
-      }
 
       const finalToolResults = collectFinalStreamToolResults(state);
 
@@ -1937,6 +1927,23 @@ export class AgentRuntime {
 
       for (const toolResult of finalToolResults.values()) {
         await persistToolResult(toolResult);
+      }
+
+      if (state.suppressedToolCalls.length > 0) {
+        const unavailableNames = [
+          ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
+        ];
+        currentMessages.push({
+          id: `runtime_note_${Date.now()}_${step}`,
+          role: "user",
+          parts: [{
+            type: "text",
+            text: `Runtime recovery: ignored unavailable tool call(s): ${
+              unavailableNames.join(", ")
+            }. Continue using only currently available tools: ${runtimeToolNames.join(", ")}.`,
+          }],
+          timestamp: Date.now(),
+        });
       }
 
       throwIfAborted(abortSignal);

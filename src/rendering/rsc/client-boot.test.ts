@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  buildPageHydrationModuleUrl,
+  buildRSCTransportQuery,
   selectHydrationRoot,
   shouldAttemptRSCTransport,
   shouldHydrateOnly,
@@ -32,6 +34,42 @@ function toCandidate(element: MockElement) {
 }
 
 describe("rendering/rsc/client-boot", () => {
+  describe("dependency snapshot propagation", () => {
+    it("preserves application pins regardless of the captured snapshot flag", () => {
+      assertEquals(
+        buildRSCTransportQuery(
+          "?name=Ada&pins=on%3Astale",
+          "on:pins-a",
+        ),
+        "?name=Ada&pins=on%3Astale",
+      );
+      assertEquals(
+        buildRSCTransportQuery("?pins=user-a&pins=user-b", "on:pins-a"),
+        "?pins=user-a&pins=user-b",
+      );
+      assertEquals(buildRSCTransportQuery("?pins=application", "off"), "?pins=application");
+    });
+
+    it("versions direct full-document page module imports", () => {
+      assertEquals(
+        buildPageHydrationModuleUrl(
+          "app/page.tsx",
+          "rsc-module",
+          { dependencyPinningCacheKey: "on:pins-a" },
+        ),
+        "/_veryfront/rsc/module?rel=app%2Fpage.tsx&pins=on%3Apins-a",
+      );
+      assertEquals(
+        buildPageHydrationModuleUrl(
+          "/project/app/page.tsx",
+          "fs",
+          { dependencyPinningCacheKey: "on:pins-a" },
+        ),
+        "/_veryfront/fs/L3Byb2plY3QvYXBwL3BhZ2UudHN4.js?pins=on%3Apins-a",
+      );
+    });
+  });
+
   describe("shouldRenderPageComponent", () => {
     it("client-renders proxy modules that cannot hydrate server-owned markup", () => {
       assertEquals(shouldRenderPageComponent("rsc-module"), true);

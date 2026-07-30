@@ -59,6 +59,34 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
       const b = buildMdxEsmTransformCacheKey("p2", "s", "19", "/a.js", "h");
       assertEquals(a !== b, true);
     });
+
+    it("isolates distributed transforms by dependency pinning state", () => {
+      const unkeyed = buildMdxEsmTransformCacheKey(
+        "p",
+        "s",
+        "19",
+        "/a.js",
+        "h",
+      );
+      const flagOff = buildMdxEsmTransformCacheKey(
+        "p",
+        "s",
+        "19",
+        "/a.js",
+        "h",
+        "off",
+      );
+      const flagOn = buildMdxEsmTransformCacheKey(
+        "p",
+        "s",
+        "19",
+        "/a.js",
+        "h",
+        "on:pins",
+      );
+      assertEquals(flagOff === flagOn, false);
+      assertEquals(flagOff, unkeyed);
+    });
   });
 
   describe("buildMdxEsmPathCacheKey", () => {
@@ -76,6 +104,16 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
       // Default version segment is non-empty.
       const segments = key.split(":");
       assertEquals(segments[1]!.length > 0, true);
+    });
+
+    it("isolates cached module paths by dependency pinning state", () => {
+      const unkeyed = buildMdxEsmPathCacheKey("/a.js", "19.1.1");
+      const flagOff = buildMdxEsmPathCacheKey("/a.js", "19.1.1", "off");
+      const firstPins = buildMdxEsmPathCacheKey("/a.js", "19.1.1", "on:first");
+      const changedPins = buildMdxEsmPathCacheKey("/a.js", "19.1.1", "on:second");
+
+      assertEquals(new Set([flagOff, firstPins, changedPins]).size, 3);
+      assertEquals(flagOff, unkeyed);
     });
   });
 

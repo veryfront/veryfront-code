@@ -18,3 +18,8 @@ export {
   matchesAnyEtag,
   parseIfNoneMatch,
 } from "./etag.ts";
+export {
+  createHandlerDependencyPinningSource,
+  getHandlerDependencyPinningIdentity,
+  type HandlerDependencyPinningIdentity,
+} from "./dependency-pinning-source.ts";

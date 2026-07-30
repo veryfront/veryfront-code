@@ -241,6 +241,47 @@ describe(
       assertEquals(owned.importMapHash === unowned.importMapHash, false);
     });
 
+    it("pins direct same-origin HTTP module imports and preserves foreign URLs", async () => {
+      const projectDir = "/project";
+      const entryPath = `${projectDir}/app/Counter.tsx`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        entryPath,
+        [
+          'import A from "https://preview.example/_vf_modules/A.js";',
+          'import B from "//preview.example/_vf_modules/B.js";',
+          'import C from "HTTPS://preview.example/_vf_modules/C.js";',
+          'import Foreign from "https://cdn.example/_vf_modules/Foreign.js";',
+          "export default [A, B, C, Foreign];",
+        ].join("\n"),
+      );
+
+      const bundle = await bundleBrowserModuleWithMetadata(entryPath, {
+        adapter,
+        projectDir,
+        moduleServerOrigin: "https://preview.example",
+        dependencyPinningCacheKey: "on:54uvgwr2ih7p",
+        dependencyPinningDependencies: {},
+      });
+
+      assertStringIncludes(
+        bundle.source,
+        'from "/_vf_modules/_pins/on%3A54uvgwr2ih7p/A.js"',
+      );
+      assertStringIncludes(
+        bundle.source,
+        'from "/_vf_modules/_pins/on%3A54uvgwr2ih7p/B.js"',
+      );
+      assertStringIncludes(
+        bundle.source,
+        'from "/_vf_modules/_pins/on%3A54uvgwr2ih7p/C.js"',
+      );
+      assertStringIncludes(
+        bundle.source,
+        'from "https://cdn.example/_vf_modules/Foreign.js"',
+      );
+    });
+
     it("accepts top-level await in browser modules", async () => {
       const projectDir = "/project";
       const entryPath = `${projectDir}/app/Counter.tsx`;

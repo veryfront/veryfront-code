@@ -12,7 +12,7 @@ import type {
   RewriteContext,
   RewriteResult,
 } from "../types.ts";
-import { buildCrossProjectUrl } from "../url-builder.ts";
+import { appendDependencyPinningPathKey, buildCrossProjectUrl } from "../url-builder.ts";
 import {
   isCrossProjectImport,
   parseCrossProjectImport,
@@ -36,10 +36,13 @@ export class CrossProjectStrategy implements ImportRewriteStrategy {
     const parsed = parseCrossProjectImport(info.specifier);
     if (!parsed) return { specifier: null };
 
-    const url = buildCrossProjectUrl(
-      parsed.projectSlug,
-      parsed.version === "latest" ? null : parsed.version,
-      parsed.path,
+    const url = appendDependencyPinningPathKey(
+      buildCrossProjectUrl(
+        parsed.projectSlug,
+        parsed.version === "latest" ? null : parsed.version,
+        parsed.path,
+      ),
+      ctx.dependencyPinningCacheKey,
     );
 
     logger.debug("Rewriting", {

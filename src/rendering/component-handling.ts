@@ -11,6 +11,8 @@ import { getProjectReact } from "#veryfront/react";
 import { buildComponentCacheKey } from "#veryfront/cache/keys.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
+import { getDependencyPinningCacheKey } from "#veryfront/transforms/esm/package-registry.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
@@ -43,7 +45,11 @@ interface BundleComponentForClientDeps {
       dev: boolean;
       jsxImportSource: string;
       moduleServerUrl?: string;
+      moduleServerOrigin?: string;
       reactVersion?: string;
+      dependencyPinningCacheKey?: string;
+      dependencyPinningDependencies?: Readonly<Record<string, string>>;
+      dependencyPinningSource?: DependencyPinningSourceInput;
     },
   ) => Promise<string>;
 }
@@ -84,6 +90,8 @@ export async function handleComponentPage(
     props?: Record<string, unknown>;
     cachedClientModule?: string;
     moduleServerUrl?: string;
+    /** Absolute request origin used to identify same-origin module URLs. */
+    moduleServerOrigin?: string;
     /** Project ID for multi-project SSR module isolation */
     projectId?: string;
     /** Enable node position injection for Studio Navigator */
@@ -94,6 +102,12 @@ export async function handleComponentPage(
     contentSourceId?: string;
     /** React version for transforms (from project config) */
     reactVersion?: string;
+    /** Request-scoped dependency-pinning state used by transform caches. */
+    dependencyPinningCacheKey?: string;
+    /** Immutable package map paired with dependencyPinningCacheKey. */
+    dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    /** Exact package source namespace paired with the immutable snapshot. */
+    dependencyPinningSource?: DependencyPinningSourceInput;
   },
 ): Promise<ComponentPageResult> {
   try {
@@ -103,6 +117,8 @@ export async function handleComponentPage(
     // including this entry point) when dev || mode === "preview" — no need
     // to inject here to avoid double-injection which shifts positions.
     const fileContent = await adapter.fs.readFile(pageInfo.entity.path);
+    const dependencyPinningCacheKey = options?.dependencyPinningCacheKey ??
+      await getDependencyPinningCacheKey(projectDir);
 
     const clientModuleCode = options?.cachedClientModule ??
       (await bundleComponentForClient(
@@ -113,6 +129,11 @@ export async function handleComponentPage(
         options?.moduleServerUrl,
         options?.projectId,
         options?.reactVersion,
+        undefined,
+        options?.moduleServerOrigin,
+        dependencyPinningCacheKey,
+        options?.dependencyPinningDependencies,
+        options?.dependencyPinningSource,
       ));
 
     const { loadComponentFromSource } = await import("#veryfront/modules/react-loader/index.ts");
@@ -126,9 +147,13 @@ export async function handleComponentPage(
         projectId: options?.projectId ?? projectDir,
         dev,
         moduleServerUrl: options?.moduleServerUrl,
+        moduleServerOrigin: options?.moduleServerOrigin,
         ssr: true,
         contentSourceId: options?.contentSourceId,
         reactVersion: options?.reactVersion,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies: options?.dependencyPinningDependencies,
+        dependencyPinningSource: options?.dependencyPinningSource,
         mode: options?.mode,
       },
     );
@@ -178,6 +203,10 @@ export async function bundleComponentForClient(
   projectId?: string,
   reactVersion?: string,
   injectedDeps?: BundleComponentForClientDeps,
+  moduleServerOrigin?: string,
+  dependencyPinningCacheKey = "off",
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
 ): Promise<string> {
   try {
     const cacheHash = await buildComponentHydrationCacheHash(
@@ -185,7 +214,13 @@ export async function bundleComponentForClient(
       moduleServerUrl,
       reactVersion,
     );
-    const cacheKey = buildComponentCacheKey(projectId ?? projectDir, filePath, cacheHash);
+    const cacheKey = buildComponentCacheKey(
+      projectId ?? projectDir,
+      filePath,
+      cacheHash,
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
+    );
     const cached = componentHydrationCache.get(cacheKey);
     if (cached) return cached;
 
@@ -201,7 +236,11 @@ export async function bundleComponentForClient(
           dev: true,
           jsxImportSource: "react",
           moduleServerUrl,
+          moduleServerOrigin,
           reactVersion,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          dependencyPinningSource,
         });
 
         if (control.isCurrent()) {

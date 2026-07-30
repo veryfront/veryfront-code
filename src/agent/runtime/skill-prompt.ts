@@ -62,7 +62,7 @@ export function formatRuntimeSkillMetadata(skill: RuntimeSkillDefinition): strin
 }
 
 function formatRuntimeSkillLabel(skill: RuntimeSkillDefinition): string {
-  return skill.name === skill.id ? skill.id : `${skill.name} (\`${skill.id}\`)`;
+  return skill.displayName ? `${skill.displayName} (\`${skill.id}\`)` : skill.id;
 }
 
 /** Builds runtime available skills prompt block. */

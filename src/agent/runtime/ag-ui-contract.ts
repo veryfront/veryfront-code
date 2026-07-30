@@ -112,11 +112,37 @@ export const getAgUiRuntimeSystemMessageSchema = defineSchema((v) =>
   }).strict()
 );
 
+export const getAgUiRuntimeAttachmentSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({
+      type: v.literal("image"),
+      url: v.string().min(1),
+      mediaType: v.string().min(1),
+      uploadId: v.string().min(1).optional(),
+      upload_id: v.string().min(1).optional(),
+      uploadPath: v.string().min(1).optional(),
+      upload_path: v.string().min(1).optional(),
+      filename: v.string().min(1).optional(),
+    }).strict(),
+    v.object({
+      type: v.literal("file"),
+      url: v.string().min(1),
+      mediaType: v.string().min(1),
+      uploadId: v.string().min(1).optional(),
+      upload_id: v.string().min(1).optional(),
+      uploadPath: v.string().min(1).optional(),
+      upload_path: v.string().min(1).optional(),
+      filename: v.string().min(1).optional(),
+    }).strict(),
+  ])
+);
+
 export const getAgUiRuntimeUserMessageSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
     role: v.literal("user"),
     content: v.string(),
+    attachments: v.array(getAgUiRuntimeAttachmentSchema()).optional(),
     ...runtimeMessageExtensionFields(v),
   }).strict()
 );

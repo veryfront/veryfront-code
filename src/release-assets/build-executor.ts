@@ -38,7 +38,11 @@ import { cacheHttpImportsToLocal, normalizeHttpUrl } from "#veryfront/transforms
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import {
+  createDependencyPinningSource,
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
   getReactUrls,
+  resolveDependencyPinningSnapshot,
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
@@ -47,6 +51,7 @@ import { register, tryResolve } from "../extensions/contracts.ts";
 import type { Plugin } from "veryfront/extensions/bundler";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
+import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
 import { validatePathSync } from "#veryfront/security/path-validation.ts";
 import {
   collectCssImportPaths,
@@ -62,7 +67,12 @@ import {
   RELEASE_ASSET_UPLOAD_CONCURRENCY,
   releaseAssetUrl,
 } from "./constants.ts";
-import { routeForPage } from "./route-path.ts";
+import {
+  configuredRoutePath,
+  normalizeLogicalPath,
+  routeForConfiguredPage,
+  routeForPage,
+} from "./route-path.ts";
 export { routeForPage } from "./route-path.ts";
 import type {
   ReleaseAssetCssEntry,
@@ -75,7 +85,8 @@ const logger = serverLogger.component("release-asset-build");
 /** Browser module source extensions eligible for transform. */
 const BROWSER_MODULE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 /** Directories used as browser graph entry seeds. Imports may reach any project directory. */
-const BROWSER_MODULE_DIRS = ["pages/", "components/", "layouts/", "lib/", "src/"];
+const BROWSER_MODULE_DIRS = ["components/", "layouts/", "lib/", "src/"];
+const PROJECT_IMPORT_ROOTS = ["app/", "pages/", ...BROWSER_MODULE_DIRS];
 const FRAMEWORK_MODULE_URL_PREFIX = "/_vf_modules/_veryfront/";
 const REACT_IMPORT_MAP_DEPENDENCIES = [
   "react",
@@ -132,7 +143,16 @@ export type ReleaseAssetTransform = (
   projectDir: string,
   // deno-lint-ignore no-explicit-any -- adapter is opaque to the executor
   adapter: any,
-  options: { projectId: string; dev: boolean; ssr: boolean; reactVersion?: string },
+  options: {
+    projectId: string;
+    dev: boolean;
+    ssr: boolean;
+    reactVersion?: string;
+    /** Immutable dependency state shared by every transform in this build. */
+    dependencyPinningSnapshot?: DependencyPinningSnapshot;
+    /** Package source paired with dependencyPinningSnapshot. */
+    dependencyPinningSource?: DependencyPinningSourceInput;
+  },
 ) => Promise<string>;
 
 export interface ReleaseAssetVendorDependency {
@@ -236,6 +256,11 @@ interface FinalizedDependencyModules {
   fallbackUrls: Map<string, string>;
 }
 
+interface ReleaseRouterDirectories {
+  app: string;
+  pages: string;
+}
+
 function frameworkModuleUrlToSourceKey(moduleUrl: string): string | null {
   if (!moduleUrl.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) return null;
   return moduleUrl
@@ -245,6 +270,14 @@ function frameworkModuleUrlToSourceKey(moduleUrl: string): string | null {
 
 function frameworkSourceKeyToModuleUrl(sourceKey: string): string {
   return `${FRAMEWORK_MODULE_URL_PREFIX}${sourceKey}.js`;
+}
+
+function embeddedFrameworkModuleCode(sourceKey: string): string | null {
+  if (sourceKey === "_deno-config") {
+    return `export default ${JSON.stringify({ version: VERSION })};\n`;
+  }
+
+  return null;
 }
 
 function frameworkSourcePathToSourceKey(sourcePath: string, lookupDirs: string[]): string | null {
@@ -273,9 +306,54 @@ function isTransformableBrowserModule(path: string): boolean {
 }
 
 /** True when a logical path should seed the browser module graph. */
-function isBrowserModule(path: string): boolean {
+function isBrowserModule(path: string, directories: ReleaseRouterDirectories): boolean {
   if (!isTransformableBrowserModule(path)) return false;
-  return BROWSER_MODULE_DIRS.some((dir) => path.startsWith(dir));
+  if (routeForConfiguredPage(path, directories) !== null) return true;
+  return isConfiguredAppRouterLayout(path, directories) ||
+    BROWSER_MODULE_DIRS.some((dir) => path.startsWith(dir));
+}
+
+function isConfiguredAppRouterLayout(path: string, directories: ReleaseRouterDirectories): boolean {
+  const appPath = configuredRoutePath(path, directories, "app");
+  if (!appPath?.startsWith("app/")) return false;
+  const withoutPrefix = appPath.slice("app/".length);
+  const segments = withoutPrefix.split("/");
+  const fileName = segments.pop();
+  if (!fileName || !/^layout\.(tsx|ts|jsx|mdx|js)$/.test(fileName)) return false;
+  return !segments.some((segment) => segment.startsWith("@") || segment.startsWith("_"));
+}
+
+function collectConfiguredAppRouterLayoutsForPage(
+  logicalPath: string,
+  directories: ReleaseRouterDirectories,
+  knownPaths: Set<string>,
+): string[] {
+  const appPath = configuredRoutePath(logicalPath, directories, "app");
+  if (!appPath || routeForPage(appPath) === null) return [];
+
+  const segments = logicalPath.split("/");
+  segments.pop();
+  const appRootDepth = normalizeLogicalPath(directories.app).split("/").filter(Boolean).length;
+
+  const layouts: string[] = [];
+  for (let depth = appRootDepth; depth <= segments.length; depth++) {
+    const dir = segments.slice(0, depth).join("/");
+    for (const ext of BROWSER_MODULE_EXTENSIONS) {
+      const candidate = dir ? `${dir}/layout${ext}` : `layout${ext}`;
+      if (knownPaths.has(candidate)) {
+        layouts.push(candidate);
+        break;
+      }
+    }
+  }
+  return layouts;
+}
+
+function releaseRouterDirectories(config: VeryfrontConfig): ReleaseRouterDirectories {
+  return {
+    app: config.directories?.app ?? "app",
+    pages: config.directories?.pages ?? "pages",
+  };
 }
 
 function resolveKnownModulePath(path: string, knownPaths: Set<string>): string | null {
@@ -296,19 +374,6 @@ function resolveKnownModulePath(path: string, knownPaths: Set<string>): string |
   }
 
   return null;
-}
-
-function normalizeLogicalPath(path: string): string {
-  const parts: string[] = [];
-  for (const part of path.split("/")) {
-    if (!part || part === ".") continue;
-    if (part === "..") {
-      parts.pop();
-      continue;
-    }
-    parts.push(part);
-  }
-  return parts.join("/");
 }
 
 function normalizeProjectSpecifier(specifier: string, logicalPath: string): string | null {
@@ -336,7 +401,7 @@ function normalizeProjectSpecifier(specifier: string, logicalPath: string): stri
 
   if (specifier.startsWith("/")) return specifier;
 
-  if (BROWSER_MODULE_DIRS.some((dir) => specifier.startsWith(dir))) return specifier;
+  if (PROJECT_IMPORT_ROOTS.some((dir) => specifier.startsWith(dir))) return specifier;
 
   return null;
 }
@@ -1181,6 +1246,8 @@ async function buildFrameworkDependencies(
   input: ReleaseAssetBuildInput,
   tempDir: string,
   transform: ReleaseAssetTransform,
+  dependencyPinningSnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSourceInput,
   dependencyUrls: Map<string, string>,
   uploadQueue: PreparedAsset[],
   pendingBytes: Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>,
@@ -1223,7 +1290,8 @@ async function buildFrameworkDependencies(
     const frameworkSource = await resolveFrameworkSourcePath(sourceKey, {
       extraLookupDirs: [join(tempDir, "src")],
     });
-    if (!frameworkSource) {
+    const embeddedCode = frameworkSource ? null : embeddedFrameworkModuleCode(sourceKey);
+    if (!frameworkSource && embeddedCode === null) {
       gaps.push(`dependency-missing:${publicSpecifier}:${sourceKey}`);
       return null;
     }
@@ -1231,12 +1299,15 @@ async function buildFrameworkDependencies(
     visiting.add(sourceKey);
     let code: string;
     try {
-      const source = await fs.readTextFile(frameworkSource.path);
-      code = await transform(source, frameworkSource.path, tempDir, input.adapter, {
+      const sourcePath = frameworkSource?.path ?? join(tempDir, `${sourceKey}.js`);
+      const source = embeddedCode ?? await fs.readTextFile(sourcePath);
+      code = await transform(source, sourcePath, tempDir, input.adapter, {
         projectId: input.projectId,
         dev: false,
         ssr: false,
         reactVersion: input.reactVersion,
+        dependencyPinningSnapshot,
+        dependencyPinningSource,
       });
 
       const frameworkImportUrls = new Map<string, string>();
@@ -1244,7 +1315,7 @@ async function buildFrameworkDependencies(
       for (const imp of await parseImports(code)) {
         if (!imp.n) continue;
 
-        const importedSourceKey = await resolveFrameworkImport(imp.n, frameworkSource.path);
+        const importedSourceKey = await resolveFrameworkImport(imp.n, sourcePath);
         if (!importedSourceKey) continue;
 
         const importedAsset = await processFrameworkModule(importedSourceKey, publicSpecifier);
@@ -1316,6 +1387,8 @@ export async function buildFrameworkDependencyAssets(options: {
   projectId?: string;
   transform?: ReleaseAssetTransform;
   dependencyUrls: Map<string, string>;
+  dependencyPinningSnapshot?: DependencyPinningSnapshot;
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }): Promise<{
   dependencies: Record<string, PreparedAsset>;
   assets: PreparedReleaseAsset[];
@@ -1324,7 +1397,25 @@ export async function buildFrameworkDependencyAssets(options: {
   const uploadQueue: PreparedAsset[] = [];
   const pendingBytes = new Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
   const gaps: string[] = [];
-  const transform = options.transform ?? transformToESM;
+  const dependencyPinningSource = options.dependencyPinningSource ??
+    createDependencyPinningSource({
+      projectDir: options.tempDir,
+      adapter: options.adapter,
+      contentSourceId: "local-framework-assets",
+    });
+  const dependencyPinningSnapshot = options.dependencyPinningSnapshot ??
+    await resolveDependencyPinningSnapshot(dependencyPinningSource);
+  const transform: ReleaseAssetTransform = options.transform ??
+    ((source, sourceFile, projectDir, adapter, transformOptions) =>
+      transformToESM(source, sourceFile, projectDir, adapter, {
+        projectId: transformOptions.projectId,
+        dev: transformOptions.dev,
+        ssr: transformOptions.ssr,
+        reactVersion: transformOptions.reactVersion,
+        dependencyPinningCacheKey: transformOptions.dependencyPinningSnapshot?.cacheKey,
+        dependencyPinningDependencies: transformOptions.dependencyPinningSnapshot?.dependencies,
+        dependencyPinningSource: transformOptions.dependencyPinningSource,
+      }));
   const dependencies = await buildFrameworkDependencies(
     {
       projectReference: options.projectId ?? "local",
@@ -1339,6 +1430,8 @@ export async function buildFrameworkDependencyAssets(options: {
     },
     options.tempDir,
     transform,
+    dependencyPinningSnapshot,
+    dependencyPinningSource,
     options.dependencyUrls,
     uploadQueue,
     pendingBytes,
@@ -1434,6 +1527,9 @@ export async function runReleaseAssetBuild(
         ssr: options.ssr,
         studioEmbed: false,
         reactVersion: options.reactVersion,
+        dependencyPinningCacheKey: options.dependencyPinningSnapshot?.cacheKey,
+        dependencyPinningDependencies: options.dependencyPinningSnapshot?.dependencies,
+        dependencyPinningSource: options.dependencyPinningSource,
       }));
 
   // H1: wrap the whole build so any non-transform failure also reports failed.
@@ -1474,6 +1570,8 @@ async function resolveReleaseReactVersion(
   releaseConfig: VeryfrontConfig,
   fallbackReactVersion: string | undefined,
   tempDir: string,
+  dependencyPinningSnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSourceInput,
 ): Promise<string | undefined> {
   const hasReleaseReactConfig = !!releaseConfig.react?.version ||
     (releaseConfig.client?.cdn?.versions !== undefined &&
@@ -1482,6 +1580,9 @@ async function resolveReleaseReactVersion(
   const releaseReactVersion = await resolveProjectReactVersion({
     projectDir: tempDir,
     config: releaseConfig,
+    dependencyPinningSource,
+    dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
+    dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
   });
 
   if (hasReleaseReactConfig || hasReleasePackageJson || fallbackReactVersion === undefined) {
@@ -1489,6 +1590,34 @@ async function resolveReleaseReactVersion(
   }
 
   return fallbackReactVersion;
+}
+
+function dependencyConfigForRelease(
+  sourceByPath: Map<string, string>,
+  releaseConfig: VeryfrontConfig,
+  fallbackReactVersion: string | undefined,
+): VeryfrontConfig {
+  const hasReleaseReactConfig = !!releaseConfig.react?.version ||
+    (releaseConfig.client?.cdn?.versions !== undefined &&
+      releaseConfig.client.cdn.versions !== "auto");
+  if (
+    hasReleaseReactConfig ||
+    sourceByPath.has("package.json") ||
+    fallbackReactVersion === undefined
+  ) {
+    return releaseConfig;
+  }
+
+  // The request-context React version is the established fallback when a
+  // release has no package/config declaration. Capture it in the build
+  // snapshot so its cache key and transforms cannot diverge.
+  return {
+    ...releaseConfig,
+    react: {
+      ...releaseConfig.react,
+      version: fallbackReactVersion,
+    },
+  };
 }
 
 async function runBuildInner(
@@ -1508,8 +1637,9 @@ async function runBuildInner(
 
   for (const file of files) {
     if (typeof file.content !== "string") continue;
-    const abs = resolveMaterializedReleasePath(tempDir, file.path);
-    sourceByPath.set(file.path, file.content);
+    const logicalPath = file.path.replace(/\\/g, "/");
+    const abs = resolveMaterializedReleasePath(tempDir, logicalPath);
+    sourceByPath.set(normalizeLogicalPath(logicalPath), file.content);
     await fs.mkdir(dirname(abs), { recursive: true });
     await fs.writeTextFile(abs, file.content);
   }
@@ -1526,11 +1656,30 @@ async function runBuildInner(
   const vendorHttpImports = input.vendorHttpImports ?? vendorHttpImportsWithCache;
   const vendorDependencies = isDependencyImportMapEnabled();
   const releaseConfig = await resolveReleaseConfigFromSourceFiles(sourceByPath, input, tempDir);
-  const releaseReactVersion = await resolveReleaseReactVersion(
+  const routeDirectories = releaseRouterDirectories(releaseConfig);
+  const dependencyConfig = dependencyConfigForRelease(
     sourceByPath,
     releaseConfig,
     input.reactVersion,
+  );
+  const dependencyPinningSource = createDependencyPinningSource({
+    projectDir: tempDir,
+    projectId: input.projectId,
+    releaseId: input.releaseId,
+    contentSourceId: `release-assets:${input.releaseVersionRef}`,
+    isLocalProject: true,
+    config: dependencyConfig,
+  });
+  const dependencyPinningSnapshot = await resolveDependencyPinningSnapshot(
+    dependencyPinningSource,
+  );
+  const releaseReactVersion = await resolveReleaseReactVersion(
+    sourceByPath,
+    dependencyConfig,
+    input.reactVersion,
     tempDir,
+    dependencyPinningSnapshot,
+    dependencyPinningSource,
   );
   const transformingModules = new Set<string>();
 
@@ -1556,6 +1705,8 @@ async function runBuildInner(
           dev: false,
           ssr: false,
           reactVersion: releaseReactVersion,
+          dependencyPinningSnapshot,
+          dependencyPinningSource,
         });
       } catch (error) {
         const sanitized = sanitizeError(error);
@@ -1615,7 +1766,7 @@ async function runBuildInner(
   }
 
   for (const logicalPath of sourceByPath.keys()) {
-    if (!isBrowserModule(logicalPath)) continue;
+    if (!isBrowserModule(logicalPath, routeDirectories)) continue;
 
     const failure = await transformProjectModule(logicalPath);
     if (failure) return failure;
@@ -1671,6 +1822,8 @@ async function runBuildInner(
     { ...input, reactVersion: releaseReactVersion },
     tempDir,
     transform,
+    dependencyPinningSnapshot,
+    dependencyPinningSource,
     dependencyUrls,
     uploadQueue,
     pendingBytes,
@@ -1764,14 +1917,20 @@ async function runBuildInner(
   // B2. Routes: walk the transformed browser import closure from each page entrypoint.
   // Modules missing from transformedModules are recorded as closure gaps.
   const routes: Record<string, ReleaseAssetRouteEntry> = {};
-  const pageModules = Object.keys(modules).filter((p) => p.startsWith("pages/"));
+  const pageModules = Object.keys(modules).filter((p) =>
+    routeForConfiguredPage(p, routeDirectories) !== null
+  );
 
   for (const logicalPath of pageModules) {
-    const route = routeForPage(logicalPath);
+    const route = routeForConfiguredPage(logicalPath, routeDirectories);
     if (!route) continue;
 
+    const entryModules = [
+      logicalPath,
+      ...collectConfiguredAppRouterLayoutsForPage(logicalPath, routeDirectories, knownPaths),
+    ];
     const { modules: closureModules, gaps: closureGaps } = await collectRouteClosure(
-      [logicalPath],
+      entryModules,
       transformedModules,
       knownPaths,
     );
@@ -2052,9 +2211,11 @@ function mergeModuleCssImports(
 
 /** Extract Tailwind class candidates from materialized source. */
 function collectClassCandidates(sourceByPath: Map<string, string>): Set<string> {
-  return extractCandidatesFromFiles(
+  const candidates = extractCandidatesFromFiles(
     [...sourceByPath.entries()].map(([path, content]) => ({ path, content })),
   );
+  for (const candidate of FRAMEWORK_CANDIDATES) candidates.add(candidate);
+  return candidates;
 }
 
 /** Run an async task over items with a fixed concurrency limit.

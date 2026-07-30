@@ -144,6 +144,32 @@ describe("logger/redact", () => {
       assertEquals(result.nil, null);
     });
 
+    it("scrubs credential-shaped text from URL objects", () => {
+      const result = redactSensitive({
+        callback: new URL("https://api.example.com/cb?access_token=synthetic-url-secret&page=2"),
+      }) as Record<string, unknown>;
+
+      assertEquals(
+        result.callback,
+        `https://api.example.com/cb?access_token=${REDACTED}&page=2`,
+      );
+    });
+
+    it("scrubs credential-shaped text from scalar toJSON strings", () => {
+      const sensitive = {
+        toJSON: () => "https://api.example.com/cb?access_token=synthetic-to-json-secret&page=2",
+      };
+      const benign = { toJSON: () => "https://api.example.com/cb?page=2" };
+
+      const result = redactSensitive({ sensitive, benign }) as Record<string, unknown>;
+
+      assertEquals(
+        result.sensitive,
+        `https://api.example.com/cb?access_token=${REDACTED}&page=2`,
+      );
+      assertEquals(result.benign, benign);
+    });
+
     it("fails closed on cyclic references (no unredacted back-reference)", () => {
       const cyclic: Record<string, unknown> = { token: "t", keep: 1 };
       cyclic.self = cyclic;

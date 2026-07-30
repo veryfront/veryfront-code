@@ -162,3 +162,52 @@ export function recordSecurityHeaders(attributes?: Record<string, string>): void
 export function recordErrorCount(attributes?: Record<string, string>): void {
   getRecorder()?.recordError(attributes);
 }
+
+/** Record one stream lifecycle terminal outcome (internal). */
+export function recordStreamLifecycleOutcome(
+  attributes: Record<string, string>,
+): void {
+  getRecorder()?.recordStreamLifecycleOutcome(attributes);
+}
+
+/** Record one fired stream lifecycle deadline (internal). */
+export function recordStreamLifecycleDeadline(
+  attributes: Record<string, string>,
+): void {
+  getRecorder()?.recordStreamLifecycleDeadline(attributes);
+}
+
+/** Record one stream lifecycle telemetry frame (internal). */
+export function recordStreamLifecycleTelemetry(
+  attributes: Record<string, string>,
+): void {
+  getRecorder()?.recordStreamLifecycleTelemetry(attributes);
+}
+
+/** Record one stream lifecycle protocol repair (internal). */
+export function recordStreamLifecycleRepair(
+  attributes: Record<string, string>,
+): void {
+  getRecorder()?.recordStreamLifecycleRepair(attributes);
+}
+
+/** Record one stream lifecycle shadow divergence (internal). */
+export function recordStreamLifecycleShadowDivergence(
+  attributes: Record<string, string>,
+): void {
+  getRecorder()?.recordStreamLifecycleShadowDivergence(attributes);
+}
+
+/** Record a bounded stream lifecycle duration (internal). */
+export function recordStreamLifecycleDuration(
+  kind:
+    | "attempt"
+    | "first_progress"
+    | "semantic_idle"
+    | "tool_input"
+    | "tool_execution",
+  durationMs: number,
+  attributes: Record<string, string>,
+): void {
+  getRecorder()?.recordStreamLifecycleDuration(kind, durationMs, attributes);
+}

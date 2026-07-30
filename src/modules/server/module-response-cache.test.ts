@@ -14,6 +14,9 @@ import {
 // (veryfront-api `CACHE_KEY_PATTERN`): only alphanumeric, underscore, colon,
 // dot, hyphen, and forward slash are accepted by GET/SET operations.
 const CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
+const API_CACHE_KEY_MAX_LENGTH = 512;
+const CANONICAL_PIN_KEY = "on:z7bg3qnfgtcb";
+const CHANGED_CANONICAL_PIN_KEY = "on:z7bg3qnfgtcc";
 
 function baseKeyOptions(modulePath: string) {
   return {
@@ -106,6 +109,86 @@ describe("release module response cache", () => {
     // "-"; the path hash keeps the keys apart.
     const b = buildReleaseModuleResponseCacheKey(baseKeyOptions("-vite/env"));
     assertEquals(a === b, false);
+  });
+
+  it("isolates responses by dependency pinning flag and package map state", () => {
+    const unkeyed = buildReleaseModuleResponseCacheKey(
+      baseKeyOptions("@vite/env"),
+    );
+    const flagOff = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions("@vite/env"),
+      dependencyPinningCacheKey: "off",
+    });
+    const firstPins = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions("@vite/env"),
+      dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+    });
+    const changedPins = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions("@vite/env"),
+      dependencyPinningCacheKey: CHANGED_CANONICAL_PIN_KEY,
+    });
+
+    assertEquals(new Set([flagOff, firstPins, changedPins]).size, 3);
+    assertEquals(flagOff, unkeyed);
+  });
+
+  it("isolates pin-on responses by module server origin without changing flag-off keys", () => {
+    const unkeyed = buildReleaseModuleResponseCacheKey(
+      baseKeyOptions("@vite/env"),
+    );
+    const flagOffFirstOrigin = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions("@vite/env"),
+      dependencyPinningCacheKey: "off",
+      moduleServerOrigin: "https://first.example.test",
+    });
+    const flagOffSecondOrigin = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions("@vite/env"),
+      dependencyPinningCacheKey: "off",
+      moduleServerOrigin: "https://second.example.test",
+    });
+    const pinOnFirstOrigin = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions("@vite/env"),
+      dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      moduleServerOrigin: "https://first.example.test",
+    });
+    const pinOnSecondOrigin = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions("@vite/env"),
+      dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      moduleServerOrigin: "https://second.example.test",
+    });
+
+    assertEquals(flagOffFirstOrigin, unkeyed);
+    assertEquals(flagOffSecondOrigin, unkeyed);
+    assertEquals(pinOnFirstOrigin === pinOnSecondOrigin, false);
+  });
+
+  it("bounds the complete distributed key and uses the same identity for reads and writes", async () => {
+    const distributedCache = new FakeDistributedCache();
+    __setReleaseModuleResponseDistributedCacheForTests(distributedCache);
+    const rawCacheKey = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions(`src/${"nested/".repeat(58)}module.tsx`),
+      dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      moduleServerOrigin: "https://preview.example.test",
+    });
+    const entry: ReleaseModuleResponseCacheEntry = {
+      body: "export const value = 1;\n",
+      status: 200,
+      headers: [["cache-control", "public, max-age=31536000, immutable"]],
+    };
+
+    await rememberReleaseModuleResponse(rawCacheKey, entry);
+
+    const distributedKeys = [...distributedCache.values.keys()];
+    assertEquals(distributedKeys.length, 1);
+    assertEquals(distributedKeys[0] === rawCacheKey, false);
+    const completeDistributedKey = `module:${distributedKeys[0]}`;
+    assertEquals(completeDistributedKey.length <= API_CACHE_KEY_MAX_LENGTH, true);
+    assertEquals(CACHE_KEY_PATTERN.test(completeDistributedKey), true);
+
+    clearReleaseModuleResponseCache();
+    const recovered = await getReleaseModuleResponse(rawCacheKey);
+    assertEquals(recovered?.source, "distributed");
+    assertEquals(recovered?.entry, entry);
   });
 
   it("does not use disk cache backends for release module responses", async () => {

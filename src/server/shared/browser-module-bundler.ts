@@ -16,6 +16,7 @@ import {
   inspectBrowserModuleBoundary,
 } from "./browser-module-boundary.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 function createIgnoreCSSImportsPlugin(): Plugin {
   return {
@@ -36,9 +37,15 @@ function createIgnoreCSSImportsPlugin(): Plugin {
 export interface BrowserModuleBundlerOptions {
   adapter: RuntimeAdapter;
   projectDir: string;
+  projectId?: string;
   config?: VeryfrontConfig;
   projectSlug?: string;
   importMapJson?: string;
+  /** Absolute request origin used to identify same-origin module-map targets. */
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }
 
 export function getSafeBrowserModuleIdentity(absPath: string, projectDir: string): string {
@@ -140,6 +147,10 @@ export function bundleBrowserModuleWithMetadata(
       const importMapJson = options.importMapJson ?? await buildImportMapJson({
         projectDir: options.projectDir,
         config: options.config,
+        moduleServerOrigin: options.moduleServerOrigin,
+        dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+        dependencyPinningDependencies: options.dependencyPinningDependencies,
+        dependencyPinningSource: options.dependencyPinningSource,
       });
       const importMap = JSON.parse(importMapJson) as { imports?: Record<string, string> };
 
@@ -165,8 +176,16 @@ export function bundleBrowserModuleWithMetadata(
           }),
           createBareExternalPlugin({
             importMapImports: importMap.imports,
+            projectDir: options.projectDir,
+            projectId: options.projectId ?? options.projectSlug,
+            dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+            dependencyPinningDependencies: options.dependencyPinningDependencies,
+            dependencyPinningSource: options.dependencyPinningSource,
           }),
-          createHttpExternalPlugin(),
+          createHttpExternalPlugin({
+            moduleServerOrigin: options.moduleServerOrigin,
+            dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+          }),
         ],
       });
 

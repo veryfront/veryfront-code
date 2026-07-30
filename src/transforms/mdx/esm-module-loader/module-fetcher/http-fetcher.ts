@@ -30,6 +30,7 @@ export async function fetchModuleViaHTTP(
   log: Logger,
   projectSlug?: string,
   isLocalProject?: boolean,
+  dependencyPinningCacheKey?: string,
 ): Promise<string | null> {
   if (!isLocalProject) {
     log.warn(
@@ -42,14 +43,18 @@ export async function fetchModuleViaHTTP(
 
   const port = adapter.env.get("VERYFRONT_DEV_PORT") || adapter.env.get("PORT") || "3001";
   const host = projectSlug ? `${projectSlug}.lvh.me` : "localhost";
-  const moduleUrl = `http://${host}:${port}/${normalizedPath}?ssr=true`;
+  const moduleUrl = new URL(`http://${host}:${port}/${normalizedPath}`);
+  moduleUrl.searchParams.set("ssr", "true");
+  if (dependencyPinningCacheKey?.startsWith("on:")) {
+    moduleUrl.searchParams.set("pins", dependencyPinningCacheKey);
+  }
 
   const response = await withSpan(
     SpanNames.HTTP_CLIENT_FETCH,
     () => fetch(moduleUrl),
     {
       "http.method": "GET",
-      "http.url": moduleUrl,
+      "http.url": moduleUrl.toString(),
       "http.target": `/${normalizedPath}`,
       "http.host": host,
       "mdx.module_path": normalizedPath,
@@ -57,7 +62,9 @@ export async function fetchModuleViaHTTP(
   );
 
   if (!response.ok) {
-    log.warn(`${LOG_PREFIX_MDX_LOADER} HTTP fetch also failed: ${moduleUrl} (${response.status})`);
+    log.warn(
+      `${LOG_PREFIX_MDX_LOADER} HTTP fetch also failed: ${moduleUrl} (${response.status})`,
+    );
     return null;
   }
 

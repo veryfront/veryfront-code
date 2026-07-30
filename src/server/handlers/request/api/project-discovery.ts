@@ -156,7 +156,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
     sourceSnapshotVersion,
     promise: (async () => {
       return await runWithRegistryTransaction(async () => {
-        const { clearTranspileCache, discoverAll } = await import("#veryfront/discovery");
+        const { discoverAll } = await import("#veryfront/discovery");
         const { agentRegistry } = await import(
           "#veryfront/agent/composition/composition.ts"
         );
@@ -165,13 +165,18 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
         // Clear stale entries in a transaction-local copy. Concurrent runs keep
         // using the prior live registry until discovery succeeds and the staged
         // replacement is committed atomically.
+        // Keep the content-aware transpile cache: preview discovery runs on every
+        // API request, and clearing it would import unchanged modules under new
+        // temporary URLs that the runtime's ESM module map cannot unload.
         clearTrackedAgents();
-        clearTranspileCache();
         agentRegistry.clear();
         toolRegistry.clear();
 
         const discoveryOptions = createProjectDiscoveryConfig({
           projectDir: ctx.projectDir,
+          cacheNamespace: sourceSnapshotVersion === undefined
+            ? key
+            : `${key}:snapshot:${sourceSnapshotVersion}`,
           config: ctx.config,
           fsAdapter: ctx.adapter.fs,
         });
@@ -196,9 +201,9 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
         } else if (
           result.agents.size === 0 && result.tools.size === 0 && shouldWarnOnEmptyAiDiscovery
         ) {
-          logger.info("Primitive discovery found 0 agents and 0 tools", logData);
+          logger.debug("Primitive discovery found 0 agents and 0 tools", logData);
         } else {
-          logger.info("Primitive discovery completed", logData);
+          logger.debug("Primitive discovery completed", logData);
         }
 
         return result;

@@ -1,5 +1,6 @@
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { isStdoutTTY } from "#veryfront/platform/compat/process/lifecycle.ts";
+import { isTruthyEnvValue } from "../constants/env.ts";
 import { RUNTIME_VERSION } from "../version.ts";
 import {
   ANSI,
@@ -107,13 +108,15 @@ export interface Logger {
 type LoggerConfig = {
   level: LogLevel;
   format: LogFormat;
+  /** Output preset: "server" emits timestamp+tag prefix; "cli" emits 2-space indent + glyph only. */
+  preset: "cli" | "server";
 };
 
 type ConsoleLoggerOptions = {
   injectTraceContext?: boolean;
 };
 
-type LogRecordEmitter = (entry: LogEntry) => void;
+export type LogRecordEmitter = (entry: LogEntry) => void;
 
 // ---- Config helpers (must be declared before the eager init below) ----
 
@@ -140,7 +143,7 @@ export function getDefaultLevel(
 ): LogLevel {
   const parsedLevel = parseLogLevel(envLevel);
   if (parsedLevel !== undefined) return parsedLevel;
-  if (debugFlag === "1" || debugFlag === "true") return LogLevel.DEBUG;
+  if (isTruthyEnvValue(debugFlag)) return LogLevel.DEBUG;
   return LogLevel.INFO;
 }
 
@@ -167,17 +170,41 @@ function getDefaultFormat(
  */
 let loggerConfig: LoggerConfig | null = null;
 
-let logRecordEmitter: LogRecordEmitter | null = null;
+let legacyLogRecordEmitter: LogRecordEmitter | null = null;
+const logRecordSubscribers = new Set<LogRecordEmitter>();
 
 /**
  * Re-read logger configuration from environment variables.
  * Call after loading .env files so the logger picks up any overrides.
+ * The active preset (cli/server) is preserved across refreshes.
  */
 export function refreshLoggerConfig(): void {
   loggerConfig = {
     level: getDefaultLevel(),
     format: getDefaultFormat(),
+    preset: loggerConfig?.preset ?? "server",
   };
+}
+
+/**
+ * Switch the text output format between server-style (timestamp + tag prefix)
+ * and CLI-style (2-space indent + glyph only, no timestamp or tag). JSON output
+ * is unaffected by this setting. Call before any framework code runs in CLI
+ * entry points so framework messages render in the CLI's visual language.
+ */
+export function setLoggerPreset(preset: "cli" | "server"): void {
+  const config = resolveLoggerConfig();
+  loggerConfig = { ...config, preset };
+}
+
+/**
+ * Override the active log level without re-reading environment variables.
+ * Use when a verbosity flag (--verbose, --quiet) has been parsed and its effect
+ * needs to propagate to all loggers immediately.
+ */
+export function setLogLevel(level: LogLevel): void {
+  const config = resolveLoggerConfig();
+  loggerConfig = { ...config, level };
 }
 
 /** @internal Alias kept for tests. */
@@ -185,12 +212,21 @@ export const __resetLoggerConfigForTests = refreshLoggerConfig;
 
 /** Register a process-level structured log emitter, for example an OTel bridge. */
 export function __registerLogRecordEmitter(emitter: LogRecordEmitter | null): void {
-  logRecordEmitter = emitter;
+  legacyLogRecordEmitter = emitter;
+}
+
+/** Subscribe to process-level structured log records. Returns an unregister function. */
+export function __subscribeLogRecordEmitter(emitter: LogRecordEmitter): () => void {
+  logRecordSubscribers.add(emitter);
+  return () => {
+    logRecordSubscribers.delete(emitter);
+  };
 }
 
 /** Reset the process-level structured log emitter. Only intended for tests. */
 export function __resetLogRecordEmitterForTests(): void {
-  logRecordEmitter = null;
+  legacyLogRecordEmitter = null;
+  logRecordSubscribers.clear();
 }
 
 function resolveLoggerConfig(): LoggerConfig {
@@ -198,6 +234,7 @@ function resolveLoggerConfig(): LoggerConfig {
     loggerConfig = {
       level: getDefaultLevel(),
       format: getDefaultFormat(),
+      preset: "server",
     };
   }
   return loggerConfig;
@@ -245,6 +282,14 @@ const TAG_COLORS: Record<string, string> = {
   VERYFRONT: ANSI.cyan,
 };
 
+/** Glyphs used in CLI preset mode — deliberately different from server glyphs. */
+const CLI_LEVEL_GLYPHS: Record<LogLevelName, string> = {
+  debug: "·",
+  info: "●",
+  warn: "!",
+  error: "✗",
+};
+
 function isTty(): boolean {
   try {
     return isStdoutTTY();
@@ -290,6 +335,10 @@ function extractAliasToEntryField(
   delete context[sourceKey];
 }
 
+function sanitizeStringFieldValue(value: unknown): string {
+  return sanitizeUrlCredentials(String(value));
+}
+
 class ConsoleLogger implements Logger {
   private boundContext: Record<string, unknown>;
   private componentName?: string;
@@ -332,10 +381,10 @@ class ConsoleLogger implements Logger {
     if (this.componentName) entry.component = this.componentName;
 
     // Extract known fields to top level for easier Grafana filtering
-    extractToEntryField(entry, mergedContext, "requestId", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "traceId", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "spanId", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "projectSlug", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "requestId", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "traceId", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "spanId", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "projectSlug", sanitizeStringFieldValue);
     extractToEntryField(entry, mergedContext, "durationMs", (v) => Number(v));
 
     // Auto-inject trace context from OTel when not already set
@@ -348,57 +397,75 @@ class ConsoleLogger implements Logger {
     }
 
     // Extract standard snake_case fields for Loki filtering
-    extractToEntryField(entry, mergedContext, "request_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "trace_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "span_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "project_slug", (v) => String(v));
-    // request_url / domain are URL-shaped and lifted out of mergedContext
-    // *before* redactSensitive runs, so they bypass the key-based redactor.
-    // Scrub embedded credentials (userinfo, ?access_token=, …) here (#1989).
-    extractToEntryField(
-      entry,
-      mergedContext,
-      "request_url",
-      (v) => sanitizeUrlCredentials(String(v)),
-    );
-    extractToEntryField(entry, mergedContext, "domain", (v) => sanitizeUrlCredentials(String(v)));
-    extractToEntryField(entry, mergedContext, "project_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "release_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "branch_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "branch_name", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "run_execution_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "run_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "agent_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "thread_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "schedule_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "schedule_name", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "tool_name", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "tool_call_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "batch_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "run_target", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "task", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "event_kind", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "user_visible", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "request_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "trace_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "span_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "project_slug", sanitizeStringFieldValue);
+    // Lifted string fields are removed from mergedContext before redactSensitive
+    // runs, so scrub credential-shaped text while preserving the field value.
+    extractToEntryField(entry, mergedContext, "request_url", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "domain", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "project_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "release_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "branch_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "branch_name", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "run_execution_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "run_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "agent_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "thread_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "schedule_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "schedule_name", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "tool_name", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "tool_call_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "batch_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "run_target", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "task", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "event_kind", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "user_visible", sanitizeStringFieldValue);
     extractToEntryField(entry, mergedContext, "duration_ms", (v) => Number(v));
-    extractToEntryField(entry, mergedContext, "user_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "conversation_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "user_id", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "conversation_id", sanitizeStringFieldValue);
 
     // Also extract camelCase variants so callers can use either convention
-    extractToEntryField(entry, mergedContext, "userId", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "conversationId", (v) => String(v));
-    extractAliasToEntryField(entry, mergedContext, "runId", "run_id", (v) => String(v));
-    extractAliasToEntryField(entry, mergedContext, "agentId", "agent_id", (v) => String(v));
-    extractAliasToEntryField(entry, mergedContext, "threadId", "thread_id", (v) => String(v));
-    extractAliasToEntryField(entry, mergedContext, "scheduleId", "schedule_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "userId", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "conversationId", sanitizeStringFieldValue);
+    extractAliasToEntryField(entry, mergedContext, "runId", "run_id", sanitizeStringFieldValue);
+    extractAliasToEntryField(entry, mergedContext, "agentId", "agent_id", sanitizeStringFieldValue);
+    extractAliasToEntryField(
+      entry,
+      mergedContext,
+      "threadId",
+      "thread_id",
+      sanitizeStringFieldValue,
+    );
+    extractAliasToEntryField(
+      entry,
+      mergedContext,
+      "scheduleId",
+      "schedule_id",
+      sanitizeStringFieldValue,
+    );
     extractAliasToEntryField(
       entry,
       mergedContext,
       "scheduleName",
       "schedule_name",
-      (v) => String(v),
+      sanitizeStringFieldValue,
     );
-    extractAliasToEntryField(entry, mergedContext, "toolName", "tool_name", (v) => String(v));
-    extractAliasToEntryField(entry, mergedContext, "toolCallId", "tool_call_id", (v) => String(v));
+    extractAliasToEntryField(
+      entry,
+      mergedContext,
+      "toolName",
+      "tool_name",
+      sanitizeStringFieldValue,
+    );
+    extractAliasToEntryField(
+      entry,
+      mergedContext,
+      "toolCallId",
+      "tool_call_id",
+      sanitizeStringFieldValue,
+    );
 
     // Emit snake_case aliases for camelCase fields (transition period)
     if (entry.requestId && !entry.request_id) entry.request_id = entry.requestId;
@@ -433,18 +500,25 @@ class ConsoleLogger implements Logger {
     const mergedContext = { ...this.boundContext, ...context };
     const enableColor = shouldUseColor();
 
-    const timestamp = colorize(formatTimestamp(), ANSI.dim, enableColor);
-    const tag = colorize(padTag(this.prefix), TAG_COLORS[this.prefix] ?? ANSI.cyan, enableColor);
-    const glyph = colorize(LEVEL_GLYPHS[level], LEVEL_COLORS[level], enableColor);
-    const componentTag = this.componentName
-      ? ` ${colorize(`[${this.componentName}]`, ANSI.dim, enableColor)}`
-      : "";
     const contextText = formatContextText(
       redactSensitive(mergedContext),
       sanitizeSerializedError(error),
       enableColor,
     );
 
+    const { preset } = resolveLoggerConfig();
+    if (preset === "cli") {
+      // CLI preset: no timestamp or tag — 2-space indent + glyph only.
+      const glyph = colorize(CLI_LEVEL_GLYPHS[level], LEVEL_COLORS[level], enableColor);
+      return `  ${glyph} ${message}${contextText}`;
+    }
+
+    const timestamp = colorize(formatTimestamp(), ANSI.dim, enableColor);
+    const tag = colorize(padTag(this.prefix), TAG_COLORS[this.prefix] ?? ANSI.cyan, enableColor);
+    const glyph = colorize(LEVEL_GLYPHS[level], LEVEL_COLORS[level], enableColor);
+    const componentTag = this.componentName
+      ? ` ${colorize(`[${this.componentName}]`, ANSI.dim, enableColor)}`
+      : "";
     return `${timestamp}  ${tag} ${glyph}${componentTag} ${message}${contextText}`;
   }
 
@@ -466,9 +540,18 @@ class ConsoleLogger implements Logger {
       })()
       : this.formatTextLine(level, message, args);
 
-    if (logRecordEmitter) {
+    const emittedEntry = entry ?? this.createEntry(level, message, args);
+    if (legacyLogRecordEmitter) {
       try {
-        logRecordEmitter(entry ?? this.createEntry(level, message, args));
+        legacyLogRecordEmitter(emittedEntry);
+      } catch (_) {
+        /* do not let telemetry export failures affect application logging */
+      }
+    }
+    for (const subscriber of logRecordSubscribers) {
+      if (subscriber === legacyLogRecordEmitter) continue;
+      try {
+        subscriber(emittedEntry);
       } catch (_) {
         /* do not let telemetry export failures affect application logging */
       }

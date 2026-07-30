@@ -88,6 +88,7 @@ the same contract.
 | Package                                                                           | Contract                                   | Description                                                                  |
 | --------------------------------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------- |
 | [`@veryfront/ext-observability-opentelemetry`](./ext-observability-opentelemetry) | `TracingExporter`, `NodeTelemetryProvider` | OpenTelemetry trace export, metrics API bridge, and Node telemetry bootstrap |
+| [`@veryfront/ext-observability-sentry`](./ext-observability-sentry)                 | Application error reporter                 | Sentry error capture with service and trace correlation                      |
 
 ### Sandbox
 
@@ -132,6 +133,7 @@ to satisfy Veryfront runtime features.
 | Redis-backed cache or token store           | `@veryfront/ext-cache-redis`                                                                                                   |
 | SQLite-backed persistence                   | `@veryfront/ext-db-sqlite`                                                                                                     |
 | OpenTelemetry export or Node telemetry      | `@veryfront/ext-observability-opentelemetry`                                                                                   |
+| Sentry application error capture            | `@veryfront/ext-observability-sentry`                                                                                          |
 | Local shell-tool agent runtime              | `@veryfront/ext-sandbox-shell-tools`                                                                                           |
 | Eval report export to MLflow                | `@veryfront/ext-eval-report-mlflow`                                                                                            |
 
@@ -282,6 +284,7 @@ check for drift and to enforce the sensitive capability policies below.
 | `ext-db-sqlite`                        | `fs:read`, `fs:write`                                          | Opens native SQLite databases               |
 | `ext-document-kreuzberg`               | `fs:read`                                                      | Parses uploaded or user-provided documents  |
 | `ext-observability-opentelemetry`      | `net:outbound`, `env:read` for `OTEL_*`                        | Exports telemetry and reads collector config |
+| `ext-observability-sentry`             | `net:outbound`                                                 | Sends scrubbed application errors to Sentry |
 | `ext-eval-report-http`                 | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*`         | Exports eval reports to an external endpoint |
 
 Use `veryfront.contracts` for contract ownership and dependency ordering. Use

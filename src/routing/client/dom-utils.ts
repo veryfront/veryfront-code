@@ -145,7 +145,11 @@ export function extractPageDataFromScript(): PageData | null {
   }
 }
 
-export function parsePageDataFromHTML(html: string): { content: string; pageData: PageData } {
+export function parsePageDataFromHTML(html: string): {
+  content: string;
+  pageData: PageData;
+  dependencyPinningCacheKey?: string;
+} {
   const doc = new DOMParser().parseFromString(html, "text/html");
 
   const root = doc.getElementById("root");
@@ -170,5 +174,20 @@ export function parsePageDataFromHTML(html: string): { content: string; pageData
     }
   }
 
-  return { content, pageData };
+  let dependencyPinningCacheKey: string | undefined;
+  const hydrationDataScript = doc.getElementById("veryfront-hydration-data");
+  if (hydrationDataScript?.textContent) {
+    try {
+      const hydrationData = JSON.parse(hydrationDataScript.textContent) as {
+        dependencyPinningCacheKey?: unknown;
+      };
+      if (typeof hydrationData.dependencyPinningCacheKey === "string") {
+        dependencyPinningCacheKey = hydrationData.dependencyPinningCacheKey;
+      }
+    } catch (error) {
+      logger.error("Failed to parse hydration data from HTML:", error);
+    }
+  }
+
+  return { content, pageData, dependencyPinningCacheKey };
 }

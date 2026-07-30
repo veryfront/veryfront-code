@@ -7,7 +7,7 @@
  */
 
 import { writeStdout } from "veryfront/platform";
-import { brand, dim, error, muted, success } from "./colors.ts";
+import { brand, dim, error, muted } from "./colors.ts";
 import { isTTY } from "./layout.ts";
 import { getSpinnerFrame, screen } from "./ansi.ts";
 import {
@@ -36,7 +36,7 @@ export function formatStep(step: Step, spinnerFrame = 0): string {
       const durationText = step.duration === undefined
         ? ""
         : dim(` (${formatDuration(step.duration)})`);
-      return `${success("✓")} ${dim(step.label)}${durationText}`;
+      return `✓ ${dim(step.label)}${durationText}`;
     }
     case "error":
       return `${error("✗")} ${step.label}`;
@@ -125,17 +125,22 @@ export function createNoopSpinner(): SpinnerController {
   };
 }
 
+export function createTransientSpinner(text: string): SpinnerController {
+  if (!isTTY() || isAnimationDisabled()) return createNoopSpinner();
+  return createSpinner(text);
+}
+
 export function createSpinner(text: string): SpinnerController {
   if (!isTTY() || isAnimationDisabled()) {
     const print = (prefix: string, msg: string): void => {
-      console.log(`  ${prefix} ${msg}`);
+      console.error(`  ${prefix} ${msg}`);
     };
 
     print(muted("○"), text);
 
     return {
       update: (newText: string) => print(muted("○"), newText),
-      success: (newText?: string) => print(success("✓"), newText ?? text),
+      success: (newText?: string) => print("✓", newText ?? text),
       error: (newText?: string) => print(error("✗"), newText ?? text),
       stop: () => {},
     };
@@ -169,7 +174,7 @@ export function createSpinner(text: string): SpinnerController {
     },
     success(finalText?: string) {
       stopInterval(interval);
-      write(`${screen.clearLineReturn}  ${success("✓")} ${finalText ?? currentText}\n`);
+      write(`${screen.clearLineReturn}  ✓ ${finalText ?? currentText}\n`);
     },
     error(finalText?: string) {
       stopInterval(interval);

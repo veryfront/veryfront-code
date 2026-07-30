@@ -2,8 +2,15 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleScriptPage } from "./script-page-handling.ts";
+import { PageRenderer } from "./page-renderer.ts";
 import { flattenRouteParams } from "#veryfront/routing";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { FakeTime } from "#std/testing/time";
+
+const PIN_KEY_A = "on:z7bg3qnfgtcb";
+const PIN_KEY_B = "on:3w5e11264sgsf";
+const ENCODED_PIN_KEY_A = encodeURIComponent(PIN_KEY_A);
+const ENCODED_PIN_KEY_B = encodeURIComponent(PIN_KEY_B);
 
 type ScriptModuleOutput =
   | string
@@ -88,6 +95,60 @@ function getStringMeta(meta: Record<string, unknown>, key: string): string | und
 }
 
 const APP_COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
+
+function extractInlineJson(
+  html: string,
+  idOrType: "veryfront-hydration-data" | "importmap",
+): Record<string, unknown> {
+  const pattern = idOrType === "importmap"
+    ? /<script type="importmap"[^>]*>\s*([\s\S]*?)\s*<\/script>/i
+    : /<script id="veryfront-hydration-data" type="application\/json"[^>]*>([\s\S]*?)<\/script>/i;
+  const match = html.match(pattern);
+  if (!match?.[1]) throw new Error(`Missing ${idOrType} script`);
+  return JSON.parse(match[1]) as Record<string, unknown>;
+}
+
+function createScriptAdapter(): RuntimeAdapter {
+  return {
+    fs: {
+      exists: async () => false,
+    },
+  } as unknown as RuntimeAdapter;
+}
+
+async function renderWithPageRenderer(
+  projectDir: string,
+  pagePath: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+): Promise<string> {
+  const renderer = new PageRenderer({
+    projectDir,
+    mode: "production",
+    config: {
+      client: { cdn: { provider: "unpkg" } },
+    },
+    adapter: createScriptAdapter(),
+    componentRegistry: {} as never,
+    compileMDX: () => Promise.reject(new Error("not used for script pages")),
+  });
+  const result = await renderer.preparePageBundles(
+    {
+      entity: {
+        path: pagePath,
+        frontmatter: {},
+      },
+    } as never,
+    "script-page",
+    undefined,
+    {
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+    },
+  );
+  if (!result.scriptResult) throw new Error("Expected script page result");
+  return result.scriptResult.html;
+}
 
 describe("script-page-handling helpers", () => {
   describe("extractHtmlAndMetadata", () => {
@@ -295,6 +356,129 @@ describe("script-page-handling helpers", () => {
   });
 
   describe("handleScriptPage", () => {
+    it("keeps wrapped script-page import maps and hydration on snapshot A after B", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-snapshot-" });
+
+      try {
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(
+          pagePath,
+          `export default "<main>Snapshot page</main>";`,
+        );
+
+        const snapshotB = await renderWithPageRenderer(
+          projectDir,
+          pagePath,
+          PIN_KEY_B,
+          { react: "19.0.0", veryfront: "0.2.0" },
+        );
+        const snapshotA = await renderWithPageRenderer(
+          projectDir,
+          pagePath,
+          PIN_KEY_A,
+          { react: "18.3.1", veryfront: "0.1.10" },
+        );
+        const importsB = extractInlineJson(snapshotB, "importmap").imports as
+          | Record<string, string>
+          | undefined;
+        const importsA = extractInlineJson(snapshotA, "importmap").imports as
+          | Record<string, string>
+          | undefined;
+
+        assertEquals(
+          importsB?.["veryfront/router"],
+          `/_vf_modules/_pins/${ENCODED_PIN_KEY_B}/_veryfront/react/runtime/core.js`,
+        );
+        assertEquals(
+          importsA?.["veryfront/router"],
+          `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/_veryfront/react/runtime/core.js`,
+        );
+        assertEquals(importsA?.react?.includes("react@18.3.1"), true);
+        assertEquals(importsB?.react?.includes("react@19.0.0"), true);
+        assertEquals(
+          extractInlineJson(snapshotA, "veryfront-hydration-data")
+            .dependencyPinningCacheKey,
+          PIN_KEY_A,
+        );
+        assertEquals(snapshotA.includes(ENCODED_PIN_KEY_B), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("injects snapshot A into non-client full-document RSC boot state", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-full-doc-" });
+
+      try {
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(
+          pagePath,
+          `export default \`<!DOCTYPE html><html><head><title>Script</title></head><body><main>Hello</main></body></html>\`;`,
+        );
+
+        const html = await renderWithPageRenderer(
+          projectDir,
+          pagePath,
+          PIN_KEY_A,
+          { react: "18.3.1", veryfront: "0.1.10" },
+        );
+        const imports = extractInlineJson(html, "importmap").imports as
+          | Record<string, string>
+          | undefined;
+        const hydrationData = extractInlineJson(html, "veryfront-hydration-data");
+
+        assertEquals(
+          imports?.["veryfront/router"],
+          `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/_veryfront/react/runtime/core.js`,
+        );
+        assertEquals(hydrationData, {
+          dependencyPinningCacheKey: PIN_KEY_A,
+        });
+        assertEquals(html.includes("/_veryfront/rsc/client.js"), true);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("keeps wrapped script-page output byte-identical when pinning is off", async () => {
+      using _time = new FakeTime(new Date("2026-07-26T00:00:00.000Z"));
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-off-" });
+
+      try {
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(
+          pagePath,
+          `export default "<main>Flag-off page</main>";`,
+        );
+
+        const unkeyed = await renderWithPageRenderer(projectDir, pagePath);
+        const flagOff = await renderWithPageRenderer(
+          projectDir,
+          pagePath,
+          "off",
+        );
+
+        assertEquals(flagOff, unkeyed);
+
+        const fullPagePath = `${projectDir}/full.js`;
+        await Deno.writeTextFile(
+          fullPagePath,
+          `export default \`<!DOCTYPE html><html><head><title>Off</title></head><body><main>Flag-off full page</main></body></html>\`;`,
+        );
+        const unkeyedFull = await renderWithPageRenderer(projectDir, fullPagePath);
+        const flagOffFull = await renderWithPageRenderer(
+          projectDir,
+          fullPagePath,
+          "off",
+        );
+
+        assertEquals(flagOffFull, unkeyedFull);
+        assertEquals(flagOffFull.includes('type="importmap"'), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
     it("forwards the request nonce when enhancing full HTML script pages", async () => {
       const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-" });
 
@@ -305,11 +489,7 @@ describe("script-page-handling helpers", () => {
           `export default \`<!DOCTYPE html><html><head><title>Script</title></head><body><main>Hello</main></body></html>\`;`,
         );
 
-        const adapter = {
-          fs: {
-            exists: async () => false,
-          },
-        } as unknown as RuntimeAdapter;
+        const adapter = createScriptAdapter();
 
         const result = await handleScriptPage(
           {

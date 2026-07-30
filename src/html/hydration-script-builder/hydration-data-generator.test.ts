@@ -211,6 +211,62 @@ describe("hydration-data-generator", () => {
       );
     });
 
+    it("includes App Router release asset module URLs for hydration", () => {
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 1,
+        projectId: "project-id",
+        releaseId: "release-id",
+        releaseVersion: 1,
+        manifestVersion: 5,
+        builderVersion: "0.1.1156",
+        sourceContentHash: "",
+        createdAt: "2026-07-27T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {
+          "app/page.tsx": {
+            contentHash: "c".repeat(64),
+            size: 100,
+            contentType: "text/javascript",
+          },
+          "app/layout.tsx": {
+            contentHash: "d".repeat(64),
+            size: 100,
+            contentType: "text/javascript",
+          },
+        },
+        css: [],
+        routes: {
+          "/": { modules: ["app/page.tsx", "app/layout.tsx"], css: [] },
+        },
+        dependencies: {},
+        fallback: { mode: "jit", gaps: [] },
+      };
+      const parsed = parseHydrationData(
+        "page",
+        {},
+        {},
+        {
+          ...baseOptions,
+          mode: "production",
+          pagePath: "/project/app/page.tsx",
+          nestedLayouts: [{ kind: "tsx", path: "/project/app/layout.tsx" }],
+          projectDir: "/project",
+          releaseAssetManifest: manifest,
+        } as HTMLGenerationOptions & { releaseAssetManifest: ReleaseAssetManifest },
+      ) as {
+        releaseAssetModules?: Record<string, string>;
+      };
+
+      assertEquals(
+        parsed.releaseAssetModules?.["app/page.tsx"],
+        `/_vf/assets/${"c".repeat(64)}.js`,
+      );
+      assertEquals(
+        parsed.releaseAssetModules?.["app/layout.tsx"],
+        `/_vf/assets/${"d".repeat(64)}.js`,
+      );
+    });
+
     it("includes release id for production fallback module versioning", () => {
       const parsed = parseHydrationData(
         "page",
@@ -290,6 +346,20 @@ describe("hydration-data-generator", () => {
         clientModuleStrategy?: unknown;
       };
       assertEquals(parsed.clientModuleStrategy, "rsc-module");
+    });
+
+    it("serializes dependency pin state for RSC module cache identity", () => {
+      const parsed = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        dependencyPinningCacheKey: "on:pins-a",
+      }) as { dependencyPinningCacheKey?: unknown };
+      const flagOff = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        dependencyPinningCacheKey: "off",
+      }) as { dependencyPinningCacheKey?: unknown };
+
+      assertEquals(parsed.dependencyPinningCacheKey, "on:pins-a");
+      assertEquals(flagOff.dependencyPinningCacheKey, undefined);
     });
 
     it("should include frontmatter when provided", () => {

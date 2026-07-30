@@ -9,6 +9,10 @@ import type { RendererAdapter } from "../../shared/renderer-factory.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors/index.ts";
 import { notFound, redirect } from "#veryfront/data/helpers.ts";
+import {
+  type ApplicationErrorContext,
+  setApplicationErrorReporter,
+} from "#veryfront/observability/application-errors.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -306,6 +310,39 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(delivery, "string");
       });
 
+      it("forwards the exact dependency snapshot to the renderer", async () => {
+        let observedCacheKey: string | undefined;
+        let observedDependencies: Readonly<Record<string, string>> | undefined;
+        const adapter = createMockRendererAdapter({
+          renderPage: (_slug, options) => {
+            observedCacheKey = options?.dependencyPinningCacheKey;
+            observedDependencies = options?.dependencyPinningDependencies;
+            return Promise.resolve({
+              html: "<html>snapshot A</html>",
+              stream: undefined,
+              ssrHash: "snapshot-a",
+              frontmatter: {},
+            });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+        const dependencies = Object.freeze({ react: "18.3.1" });
+
+        const result = await service.renderPage(
+          makeCtx(),
+          makeRenderOptions({
+            dependencyPinningCacheKey: "on:snapshot-a",
+            dependencyPinningDependencies: dependencies,
+          }),
+        );
+
+        assertEquals(observedCacheKey, "on:snapshot-a");
+        assertEquals(observedDependencies, dependencies);
+        assertEquals(result.dependencyPinningCacheKey, "on:snapshot-a");
+      });
+
       it("keeps streaming delivery for no-cache responses", async () => {
         let delivery: unknown;
         const adapter = createMockRendererAdapter({
@@ -567,6 +604,14 @@ describe("server/services/rendering/ssr.service", () => {
       });
 
       it("returns server-error for generic errors in production", async () => {
+        const captured: Array<{ error: unknown; context: ApplicationErrorContext }> = [];
+        setApplicationErrorReporter({
+          capture(error, context) {
+            captured.push({ error, context });
+            return "event-id";
+          },
+          flush: () => Promise.resolve(true),
+        });
         const adapter = createMockRendererAdapter({
           renderPage: () => {
             throw new Error("Something broke");
@@ -576,11 +621,58 @@ describe("server/services/rendering/ssr.service", () => {
           rendererProvider: createMockRendererProvider(adapter),
         });
 
-        const result = await service.renderPage(makeCtx(), makeRenderOptions());
-        assertEquals(result.status, 500);
-        assertEquals(result.errorType, "server-error");
-        assertEquals(result.showDevOverlay, undefined);
-        assertEquals(typeof result.html, "string");
+        try {
+          const result = await service.renderPage(makeCtx(), makeRenderOptions());
+          assertEquals(result.status, 500);
+          assertEquals(result.errorType, "server-error");
+          assertEquals(result.showDevOverlay, undefined);
+          assertEquals(typeof result.html, "string");
+          assertEquals(captured.length, 1);
+          assertEquals((captured[0]?.error as Error).message, "Something broke");
+          assertEquals(captured[0]?.context, {
+            boundary: "ssr.render",
+            method: "GET",
+          });
+        } finally {
+          setApplicationErrorReporter(undefined);
+        }
+      });
+
+      it("captures app-router error-boundary failures before returning boundary HTML", async () => {
+        const captured: Array<{ error: unknown; context: ApplicationErrorContext }> = [];
+        setApplicationErrorReporter({
+          capture(error, context) {
+            captured.push({ error, context });
+            return "event-id";
+          },
+          flush: () => Promise.resolve(true),
+        });
+        const renderError = Object.assign(new Error("App router render failed"), {
+          errorBoundaryHtml: "<!doctype html><html><body>Error boundary</body></html>",
+        });
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw renderError;
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        try {
+          const result = await service.renderPage(makeCtx(), makeRenderOptions());
+          assertEquals(result.status, 500);
+          assertEquals(result.errorType, "app-router-error-boundary");
+          assertEquals(result.html, renderError.errorBoundaryHtml);
+          assertEquals(captured.length, 1);
+          assertEquals((captured[0]?.error as Error).message, "App router render failed");
+          assertEquals(captured[0]?.context, {
+            boundary: "ssr.app-router-error-boundary",
+            method: "GET",
+          });
+        } finally {
+          setApplicationErrorReporter(undefined);
+        }
       });
 
       it("returns 503 for service-overloaded errors", async () => {

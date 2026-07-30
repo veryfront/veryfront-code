@@ -21,6 +21,10 @@ import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { FILE_NOT_FOUND, RENDER_ERROR, VeryfrontError } from "#veryfront/errors";
 import { buildQueryAwareCacheKey } from "#veryfront/cache/keys.ts";
+import {
+  buildDependencyPinnedRenderCacheKey,
+  type RenderCacheKeyComposition,
+} from "#veryfront/cache/keys/dependency-pinning.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import {
   extractRelativePath as extractRelativePathShared,
@@ -73,7 +77,11 @@ import {
 } from "#veryfront/modules/react-loader/css-import-collector.ts";
 import { assembleRenderResult } from "./render-result-assembly.ts";
 import { isMdxEsmExportMismatchError, recoverStaleMdxEsmPreviewCaches } from "../page-rendering.ts";
-import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  createDependencyPinningSource,
+  resolveDependencyPinningSnapshot,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import {
   type ClientPageIslandPlan,
   planClientPageIsland,
@@ -138,6 +146,8 @@ export interface RenderPipelineConfig {
   directories?: RouterDirectories;
   /** Query parameter handling for cache keys (from config.cache.queryParams) */
   queryParamOptions?: import("#veryfront/cache/keys.ts").QueryParamCacheOptions;
+  /** Prefixes applied after the pipeline returns a render cache override. */
+  renderCacheKeyComposition?: Omit<RenderCacheKeyComposition, "colorScheme">;
 }
 
 interface DataResolutionResult {
@@ -195,7 +205,33 @@ export class RenderPipeline {
     };
   }
 
-  private getReactVersion(): Promise<string> {
+  private getDependencyPinningSource() {
+    return createDependencyPinningSource({
+      projectDir: this.config.projectDir,
+      adapter: this.config.adapter,
+      isLocalProject: this.config.isLocalProject,
+      projectId: this.config.projectId,
+      contentSourceId: this.config.contentSourceId,
+      config: this.config.config,
+    });
+  }
+
+  private getReactVersion(
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  ): Promise<string> {
+    if (
+      dependencyPinningDependencies !== undefined ||
+      dependencyPinningCacheKey?.startsWith("on:")
+    ) {
+      return resolveProjectReactVersion({
+        projectDir: this.config.projectDir,
+        config: this.config.config,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+      });
+    }
+
     this.reactVersionPromise ??= resolveProjectReactVersion({
       projectDir: this.config.projectDir,
       config: this.config.config,
@@ -235,13 +271,38 @@ export class RenderPipeline {
    * mutable state while module transforms are in flight.
    */
   private async resolveModuleLoaderConfig(
-    options?: Pick<RenderOptions, "projectId" | "contentSourceId">,
+    options?: Pick<
+      RenderOptions,
+      | "projectId"
+      | "contentSourceId"
+      | "url"
+      | "dependencyPinningCacheKey"
+      | "dependencyPinningDependencies"
+      | "dependencyPinningSource"
+    >,
   ): Promise<ModuleLoaderConfig> {
+    const dependencyPinningSource = options?.dependencyPinningSource ??
+      this.getDependencyPinningSource();
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      dependencyPinningSource,
+      options?.dependencyPinningCacheKey,
+      options?.dependencyPinningDependencies,
+    );
+    const reactVersion = await this.getReactVersion(
+      dependencySnapshot.cacheKey,
+      dependencySnapshot.dependencies,
+    );
     return {
       ...this.moduleLoaderConfig,
       projectId: options?.projectId ?? this.config.projectId ?? this.config.projectDir,
       contentSourceId: options?.contentSourceId ?? this.config.contentSourceId,
-      reactVersion: await this.getReactVersion(),
+      reactVersion,
+      moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
+        ? options?.url?.origin
+        : undefined,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
     };
   }
 
@@ -286,7 +347,15 @@ export class RenderPipeline {
    */
   private async loadModulesInParallel(
     modules: ModuleToLoad[],
-    options?: Pick<RenderOptions, "projectId" | "contentSourceId">,
+    options?: Pick<
+      RenderOptions,
+      | "projectId"
+      | "contentSourceId"
+      | "url"
+      | "dependencyPinningCacheKey"
+      | "dependencyPinningDependencies"
+      | "dependencyPinningSource"
+    >,
     timeoutControl?: ProgressTimeoutControl,
   ): Promise<LoadedModule[]> {
     const moduleLoaderConfig = await this.resolveModuleLoaderConfig(options);
@@ -523,9 +592,23 @@ export class RenderPipeline {
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
     const pipelineStartTime = performance.now();
     const timing: Record<string, number> = {};
+    const dependencyPinningSource = options?.dependencyPinningSource ??
+      this.getDependencyPinningSource();
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      dependencyPinningSource,
+      options?.dependencyPinningCacheKey,
+      options?.dependencyPinningDependencies,
+    );
+    const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
+    options = {
+      ...options,
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
+    };
     const projectSlug = options?.projectSlug || options?.projectId || "unknown";
     const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
-    const cacheKey = this.buildCacheKey(slug, options);
+    const cacheKey = this.buildCacheKey(slug, options, dependencyPinningCacheKey);
 
     let cacheResult: Awaited<ReturnType<typeof this.config.cacheCoordinator.checkCache>> | null =
       null;
@@ -591,7 +674,13 @@ export class RenderPipeline {
               timing.layoutCollect = Math.round(performance.now() - layoutCollectStart);
 
               const layoutPreloadPromise = !skipLayouts && layoutResult.nestedLayouts.length > 0
-                ? this.config.layoutOrchestrator.preloadLayoutModules(layoutResult.nestedLayouts)
+                ? this.config.layoutOrchestrator.preloadLayoutModules(
+                  layoutResult.nestedLayouts,
+                  options?.dependencyPinningCacheKey,
+                  options?.dependencyPinningDependencies,
+                  options?.dependencyPinningSource,
+                  options?.url?.origin,
+                )
                 : Promise.resolve();
 
               let dataFetchingProps: Record<string, unknown> | undefined;
@@ -738,6 +827,9 @@ export class RenderPipeline {
                         options?.projectSlug,
                         clientPageIsland,
                         dataFetchingProps,
+                        options?.dependencyPinningCacheKey,
+                        options?.dependencyPinningDependencies,
+                        options?.dependencyPinningSource,
                       ),
                     {
                       "render.slug": slug,
@@ -854,6 +946,19 @@ export class RenderPipeline {
   /** Resolve page data for SPA client-side navigation without rendering HTML. */
   async resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
     setupSSRGlobals();
+    const dependencyPinningSource = options?.dependencyPinningSource ??
+      this.getDependencyPinningSource();
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      dependencyPinningSource,
+      options?.dependencyPinningCacheKey,
+      options?.dependencyPinningDependencies,
+    );
+    options = {
+      ...options,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
+    };
 
     const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
 
@@ -979,6 +1084,9 @@ export class RenderPipeline {
       params,
       layoutProps,
       buildVersion: createBuildVersion(projectUpdatedAt),
+      ...(dependencySnapshot.cacheKey === "off"
+        ? {}
+        : { dependencyPinningCacheKey: dependencySnapshot.cacheKey }),
       appPath,
       errorPath,
       isolatedClientPage: pageIslandPlan ? true : undefined,
@@ -1073,6 +1181,8 @@ export class RenderPipeline {
       options?.environment,
       slug,
       projectUpdatedAt,
+      options?.dependencyPinningCacheKey,
+      options?.url?.origin,
     );
 
     const cachedCss = getCachedPageCss(cssCacheKey);
@@ -1185,13 +1295,34 @@ export class RenderPipeline {
    *
    * Query param handling uses config.queryParamOptions for filtering (utm_*, gclid, etc.).
    */
-  private buildCacheKey(slug: string, options?: RenderOptions): string | null {
-    if (options?.cacheKey) return options.cacheKey;
+  private buildCacheKey(
+    slug: string,
+    options: RenderOptions | undefined,
+    dependencyPinningCacheKey: string,
+  ): string | null {
+    const composition: RenderCacheKeyComposition = {
+      ...(this.config.renderCacheKeyComposition ?? {}),
+      colorScheme: options?.colorScheme,
+    };
+    if (options?.cacheKey) {
+      return buildDependencyPinnedRenderCacheKey(
+        options.cacheKey,
+        dependencyPinningCacheKey,
+        options.url?.origin,
+        composition,
+      );
+    }
     const req = options?.request;
     if (req) {
       if (requestHasCacheSensitiveState(req)) return null;
     }
 
-    return buildQueryAwareCacheKey(slug, options?.url, this.config.queryParamOptions);
+    const baseKey = buildQueryAwareCacheKey(slug, options?.url, this.config.queryParamOptions);
+    return buildDependencyPinnedRenderCacheKey(
+      baseKey,
+      dependencyPinningCacheKey,
+      options?.url?.origin,
+      composition,
+    );
   }
 }

@@ -41,8 +41,9 @@ import { ssrVfModulesPlugin } from "../../pipeline/stages/ssr-vf-modules.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { extractFrameworkBundlePaths } from "../../shared/framework-bundle-paths.ts";
 import {
+  pinSameOriginSSRModuleImports,
+  rewriteMdxRootDependencyImports,
   rewriteProjectAliasImports,
-  transformImports,
   transformJsxImports,
   transformReactToLocalPaths,
 } from "./import-transformer.ts";
@@ -54,9 +55,59 @@ import {
   resolveProjectDir,
 } from "./loader-helpers.ts";
 import { hasUnresolvedImports } from "./module-fetcher/nested-imports.ts";
+import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
 
 /** Singleflight for MDX module file writes to prevent race conditions */
 const mdxWriteFlight = new Singleflight<void>();
+
+export function buildMdxModuleNamespaceKey(
+  projectId: string,
+  reactVersion: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): Promise<string> {
+  const pinIdentity = dependencyPinningCacheKey?.startsWith("on:")
+    ? `:pins-${dependencyPinningCacheKey}`
+    : "";
+  const originIdentity = dependencyPinningCacheKey?.startsWith("on:") && moduleServerOrigin
+    ? `:origin-${moduleServerOrigin}`
+    : "";
+  return computeHash(`${projectId}:react-${reactVersion}${pinIdentity}${originIdentity}`);
+}
+
+export async function buildMdxModuleCacheIdentity(
+  esmCacheDir: string,
+  projectId: string,
+  reactVersion: string,
+  rewrittenCode: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): Promise<{
+  namespaceKey: string;
+  codeHash: string;
+  compositeKey: string;
+  namespaceDir: string;
+  filePath: string;
+  importUrl: string;
+}> {
+  const namespaceKey = await buildMdxModuleNamespaceKey(
+    projectId,
+    reactVersion,
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
+  const codeHash = hashString(rewrittenCode);
+  const namespaceDir = join(esmCacheDir, namespaceKey);
+  const filePath = join(namespaceDir, `${codeHash}.mjs`);
+  return {
+    namespaceKey,
+    codeHash,
+    compositeKey: `${namespaceKey}:${codeHash}`,
+    namespaceDir,
+    filePath,
+    importUrl: `${toFileUrl(filePath).href}?v=${codeHash}`,
+  };
+}
 
 /**
  * Cache HTTP imports to local file:// paths for SSR.
@@ -108,22 +159,55 @@ export async function doLoadModuleESM(
     let rewritten = await rewriteProjectAliasImports(compiledProgramCode);
 
     const projectDir = resolveProjectDir(context);
+    const dependencyPinningSource = context.dependencyPinningSource ?? projectDir;
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      dependencyPinningSource,
+      context.dependencyPinningCacheKey,
+      context.dependencyPinningDependencies,
+    );
+    const effectiveContext: ESMLoaderContext = {
+      ...context,
+      moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
+        ? context.moduleServerOrigin
+        : undefined,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
+    };
+    if (!effectiveContext.projectId) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Missing projectId for MDX module cache (projectSlug: ${effectiveContext.projectSlug})`,
+      });
+    }
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: loadImportMap START`, { projectSlug });
     const importMap = await loadImportMap(projectDir, adapter);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: loadImportMap DONE`, { projectSlug });
 
-    rewritten = transformImports(rewritten, importMap);
+    rewritten = await rewriteMdxRootDependencyImports(rewritten, importMap, {
+      projectDir,
+      projectId: effectiveContext.projectId,
+      reactVersion: effectiveContext.reactVersion ?? REACT_DEFAULT_VERSION,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
+    });
+    rewritten = await pinSameOriginSSRModuleImports(
+      rewritten,
+      dependencySnapshot.cacheKey,
+      effectiveContext.moduleServerOrigin,
+    );
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports START`, { projectSlug });
     const vfModuleImports = findVfModuleImports(rewritten);
-    const strictMissingModules = context.strictMissingModules ?? true;
+    const strictMissingModules = effectiveContext.strictMissingModules ?? true;
     rewritten = await withSpan(
       SpanNames.MDX_PROCESS_VF_MODULES,
       () =>
         processVfModuleImports(
           rewritten,
           vfModuleImports,
-          context,
+          effectiveContext,
           projectDir,
           strictMissingModules,
         ),
@@ -146,7 +230,7 @@ export async function doLoadModuleESM(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: cacheHttpImports START`, { projectSlug });
     rewritten = await withSpan(
       SpanNames.MDX_CACHE_HTTP,
-      () => cacheHttpImports(rewritten, importMap, context.reactVersion),
+      () => cacheHttpImports(rewritten, importMap, effectiveContext.reactVersion),
       { "mdx.project_slug": projectSlug },
     );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: cacheHttpImports DONE`, { projectSlug });
@@ -157,18 +241,20 @@ export async function doLoadModuleESM(
     rewritten = await transformReactToLocalPaths(rewritten);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths DONE`, { projectSlug });
 
-    if (!context.projectId) {
-      throw INVALID_ARGUMENT.create({
-        detail: `Missing projectId for MDX module cache (projectSlug: ${context.projectSlug})`,
-      });
-    }
+    const effectiveReactVersion = effectiveContext.reactVersion ?? REACT_DEFAULT_VERSION;
+    const cacheIdentity = await buildMdxModuleCacheIdentity(
+      esmCacheDir,
+      effectiveContext.projectId,
+      effectiveReactVersion,
+      rewritten,
+      dependencySnapshot.cacheKey,
+      effectiveContext.moduleServerOrigin,
+    );
+    const namespaceKey = cacheIdentity.namespaceKey;
+    let codeHash = cacheIdentity.codeHash;
+    let compositeKey = cacheIdentity.compositeKey;
 
-    let codeHash = hashString(rewritten);
-    const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
-    const namespaceKey = await computeHash(`${context.projectId}:react-${effectiveReactVersion}`);
-    let compositeKey = `${namespaceKey}:${codeHash}`;
-
-    const cached = context.moduleCache.get(compositeKey);
+    const cached = effectiveContext.moduleCache.get(compositeKey);
     if (cached) {
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Module cache hit`, { projectSlug, compositeKey });
       return cached as MDXModule;
@@ -186,10 +272,10 @@ export async function doLoadModuleESM(
       throw IMPORT_RESOLUTION_ERROR.create({ detail: errorMsg });
     }
 
-    const nsDir = join(esmCacheDir, namespaceKey);
+    const nsDir = cacheIdentity.namespaceDir;
     const localFs = getLocalFs();
 
-    let filePath = join(nsDir, `${codeHash}.mjs`);
+    let filePath = cacheIdentity.filePath;
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight START`, { projectSlug, filePath });
     await mdxWriteFlight.do(filePath, async () => {
@@ -253,7 +339,7 @@ export async function doLoadModuleESM(
           const refreshResult = await cacheHttpImportsToLocal(rewritten, {
             cacheDir,
             importMap,
-            reactVersion: context.reactVersion,
+            reactVersion: effectiveContext.reactVersion,
           });
           rewritten = refreshResult.code;
 
@@ -332,7 +418,7 @@ export async function doLoadModuleESM(
           filePath: filePath,
           projectDir,
           target: "ssr" as const,
-          reactVersion: context.reactVersion ?? REACT_DEFAULT_VERSION,
+          reactVersion: effectiveContext.reactVersion ?? REACT_DEFAULT_VERSION,
         } as Parameters<typeof ssrVfModulesPlugin.transform>[0];
 
         rewritten = await ssrVfModulesPlugin.transform(transformCtx);
@@ -419,7 +505,7 @@ export async function doLoadModuleESM(
       MainLayout: mod?.MainLayout as React.ComponentType<unknown> | undefined,
     };
 
-    context.moduleCache.set(compositeKey, result);
+    effectiveContext.moduleCache.set(compositeKey, result);
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} loadModuleESM completed`, {
       durationMs: (performance.now() - loadStart).toFixed(1),

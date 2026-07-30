@@ -14,6 +14,7 @@ import { ComponentRegistry } from "./ssr/component-registry.ts";
 import type { RenderResult } from "./orchestrator/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 interface PageRenderOptions {
   params?: Record<string, string | string[]>;
@@ -28,6 +29,12 @@ interface PageRenderOptions {
   projectSlug?: string;
   /** Content source identifier for cache isolation (branch name or release ID) */
   contentSourceId?: string;
+  /** Request-scoped dependency-pinning state used by transform caches. */
+  dependencyPinningCacheKey?: string;
+  /** Immutable package map paired with dependencyPinningCacheKey. */
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Exact package source namespace paired with the immutable snapshot. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }
 
 interface PageBundleResult {
@@ -75,14 +82,40 @@ export class PageRenderer {
     this.moduleServerUrl = options.moduleServerUrl;
   }
 
-  private getMergedComponents(): MDXComponents {
+  private async getMergedComponents(
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+    dependencyPinningSource?: DependencyPinningSourceInput,
+    moduleServerOrigin?: string,
+  ): Promise<MDXComponents> {
+    const snapshotKey = await this.componentRegistry.prepareDependencySnapshot(
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+      dependencyPinningSource,
+      moduleServerOrigin,
+    );
     return {
       ...createDefaultMDXComponents(),
-      ...this.componentRegistry.getAllAsComponents(),
+      ...this.componentRegistry.getAllAsComponents(snapshotKey),
     };
   }
 
-  private getReactVersion(): Promise<string> {
+  private getReactVersion(
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  ): Promise<string> {
+    if (
+      dependencyPinningDependencies !== undefined ||
+      dependencyPinningCacheKey?.startsWith("on:")
+    ) {
+      return resolveProjectReactVersion({
+        projectDir: this.projectDir,
+        config: this.config,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+      });
+    }
+
     this.reactVersionPromise ??= resolveProjectReactVersion({
       projectDir: this.projectDir,
       config: this.config,
@@ -138,6 +171,8 @@ export class PageRenderer {
                 url: options?.url,
                 props: options?.props,
                 nonce: options?.nonce,
+                dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
+                dependencyPinningDependencies: options?.dependencyPinningDependencies,
               }),
             { "render.script_path": pageInfo.entity.path },
           );
@@ -145,7 +180,10 @@ export class PageRenderer {
           return { collectedMetadata: {}, scriptResult };
         }
 
-        const reactVersion = await this.getReactVersion();
+        const reactVersion = await this.getReactVersion(
+          options?.dependencyPinningCacheKey,
+          options?.dependencyPinningDependencies,
+        );
 
         if (pageType.type === "component") {
           let params = options?.params;
@@ -178,11 +216,15 @@ export class PageRenderer {
                     ? cachedModule.code
                     : undefined,
                   moduleServerUrl: this.moduleServerUrl,
+                  moduleServerOrigin: options?.url?.origin,
                   projectId: options?.projectId,
                   studioEmbed: options?.studioEmbed,
                   mode: this.mode,
                   contentSourceId: options?.contentSourceId,
                   reactVersion,
+                  dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
+                  dependencyPinningDependencies: options?.dependencyPinningDependencies,
+                  dependencyPinningSource: options?.dependencyPinningSource,
                 },
               ),
             { "render.component_path": pageInfo.entity.path },
@@ -199,12 +241,17 @@ export class PageRenderer {
 
         const mdxResult = await withSpan(
           "render.handle_mdx",
-          () =>
+          async () =>
             handleMDXPage(
               pageInfo,
               slug,
               this.projectDir,
-              this.getMergedComponents(),
+              await this.getMergedComponents(
+                options?.dependencyPinningCacheKey,
+                options?.dependencyPinningDependencies,
+                options?.dependencyPinningSource,
+                options?.url?.origin,
+              ),
               this.compileMDX,
               this.adapter,
               {
@@ -216,6 +263,9 @@ export class PageRenderer {
                 projectSlug: options?.projectSlug,
                 contentSourceId: options?.contentSourceId,
                 reactVersion,
+                dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
+                dependencyPinningDependencies: options?.dependencyPinningDependencies,
+                dependencyPinningSource: options?.dependencyPinningSource,
               },
             ),
           { "render.mdx_path": pageInfo.entity.path },

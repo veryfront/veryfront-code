@@ -6,6 +6,7 @@ import type { ApiClient } from "./config.ts";
 const RECEIPT_VERSION = 2 as const;
 const RECEIPT_DIRECTORY = ".veryfront";
 const RECEIPT_FILENAME = "push-receipt.json";
+export const PUSH_RECEIPT_RELATIVE_PATH = `${RECEIPT_DIRECTORY}/${RECEIPT_FILENAME}`;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40,64}$/i;
 const SOURCE_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
@@ -43,7 +44,6 @@ interface PushReceiptExpectation {
   branch: string;
   commitSha?: string | null;
   clean?: boolean;
-  requireClean?: boolean;
 }
 
 function receiptPath(projectDir: string): string {
@@ -52,7 +52,13 @@ function receiptPath(projectDir: string): string {
 
 function receiptPathError(): Error {
   return new Error(
-    `Veryfront cannot use ${RECEIPT_DIRECTORY}/${RECEIPT_FILENAME} through a symbolic link. Remove the link and run the command again.`,
+    `Veryfront cannot use ${PUSH_RECEIPT_RELATIVE_PATH} through a symbolic link. Remove the link and run the command again.`,
+  );
+}
+
+function invalidReceiptError(): Error {
+  return new Error(
+    `Veryfront could not read ${PUSH_RECEIPT_RELATIVE_PATH}; remove it and run veryfront push again.`,
   );
 }
 
@@ -88,7 +94,7 @@ async function inspectReceiptPath(
   if (!receiptInfo) return { directoryExists: true, receiptExists: false };
   if (receiptInfo.isSymlink) throw receiptPathError();
   if (!receiptInfo.isFile) {
-    throw new Error(`${RECEIPT_DIRECTORY}/${RECEIPT_FILENAME} must be a file.`);
+    throw new Error(`${PUSH_RECEIPT_RELATIVE_PATH} must be a file.`);
   }
   return { directoryExists: true, receiptExists: true };
 }
@@ -239,13 +245,15 @@ export async function writePushReceipt(
 
 export async function readPushReceipt(projectDir: string): Promise<PushReceipt | null> {
   const fs = createFileSystem();
-  await inspectReceiptPath(projectDir);
+  const inspected = await inspectReceiptPath(projectDir);
+  if (!inspected.receiptExists) return null;
   try {
     const value: unknown = JSON.parse(await fs.readTextFile(receiptPath(projectDir)));
-    return isPushReceipt(value) ? value : null;
+    if (isPushReceipt(value)) return value;
   } catch {
-    return null;
+    throw invalidReceiptError();
   }
+  throw invalidReceiptError();
 }
 
 export async function clearPushReceipt(projectDir: string): Promise<void> {
@@ -258,7 +266,7 @@ export async function clearPushReceipt(projectDir: string): Promise<void> {
 export function validatePushReceipt(
   receipt: PushReceipt,
   expected: PushReceiptExpectation,
-): string {
+): string | null {
   if (
     normalizeControlPlane(receipt.controlPlane) !== normalizeControlPlane(expected.controlPlane)
   ) {
@@ -270,17 +278,17 @@ export function validatePushReceipt(
     throw new Error("The latest push targeted a different project. Run veryfront push again.");
   }
   if (receipt.branch !== expected.branch) {
-    throw new Error("The latest push targeted a different branch. Run veryfront push again.");
-  }
-  if (!receipt.commitSha) {
-    throw new Error("The latest push has no Git commit SHA. Commit the source and push again.");
+    throw new Error(
+      `The latest push is for branch "${receipt.branch}", but deploy targets "${expected.branch}". ` +
+        `Run veryfront deploy --branch ${receipt.branch} to deploy the latest push, ` +
+        `or veryfront push --branch ${expected.branch} to preview ${expected.branch} first.`,
+    );
   }
   if (expected.commitSha && receipt.commitSha !== expected.commitSha.toLowerCase()) {
-    throw new Error("The latest push came from a different commit. Run veryfront push again.");
-  }
-  if (expected.requireClean && (!receipt.clean || expected.clean === false)) {
     throw new Error(
-      "The latest push included uncommitted changes. Commit the source and push again.",
+      receipt.commitSha
+        ? "The latest push came from a different commit. Run veryfront push again."
+        : "The latest push has no Git commit SHA. Run veryfront push again from the checked-out commit.",
     );
   }
   return receipt.commitSha;

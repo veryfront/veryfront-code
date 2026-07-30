@@ -151,7 +151,7 @@ let manifestStore: BundleManifestStore = new InMemoryBundleManifestStore();
 
 export function setBundleManifestStore(store: BundleManifestStore): void {
   manifestStore = store;
-  logger.info("Bundle manifest store configured", {
+  logger.debug("Bundle manifest store configured", {
     type: store.constructor.name,
   });
 }

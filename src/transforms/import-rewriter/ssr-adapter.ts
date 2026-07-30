@@ -1,10 +1,20 @@
 import {
   DEFAULT_REACT_VERSION,
+  type DependencyPinningSourceInput,
   getReactImportMap,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
+import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import {
+  type DependencyResolutionObservation,
+  resolveDependencyPinForImport,
+} from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
+import {
+  applyImportEdits,
+  parseImportEdits,
+} from "#veryfront/transforms/import-rewriter/import-edit.ts";
 
 type CacheBuster = number | string;
 
@@ -59,6 +69,37 @@ export interface SSRRewriteOptions {
   crossProjectRef?: string;
   /** React version to use for import rewrites */
   reactVersion?: string;
+  /** Project root directory for dependency pin lookup (used when VERYFRONT_DEPENDENCY_PINNING=1). */
+  projectDir?: string;
+  /** Project reference used by the best-effort platform range resolver. */
+  projectId?: string;
+  /** Stable dependency-pinning key paired with the immutable dependency map. */
+  dependencyPinningCacheKey?: string;
+  /** Immutable dependency map captured with dependencyPinningCacheKey. */
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Exact package source namespace used to prove write-back authority. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Collect unresolved dependency observations for cache replay. */
+  onDependencyResolutionObserved?: (
+    observation: DependencyResolutionObservation,
+  ) => void;
+}
+
+/** Replay cached SSR observations through the same live resolver as rewriting. */
+export function replaySSRDependencyResolutionObservations(
+  observations: readonly DependencyResolutionObservation[],
+  options: SSRRewriteOptions,
+): void {
+  for (const observation of observations) {
+    resolveDependencyPinForImport(observation.packageName, {
+      projectDir: options.projectDir,
+      projectId: options.projectId,
+      dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+      dependencyPinningDependencies: options.dependencyPinningDependencies,
+      dependencyPinningSource: options.dependencyPinningSource,
+      onDependencyResolutionObserved: options.onDependencyResolutionObserved,
+    });
+  }
 }
 
 function shouldKeepBareSpecifier(specifier: string): boolean {
@@ -66,14 +107,7 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
   // In Node.js, we need to convert them to esm.sh URLs (handled in rewriteBareImports)
   if (specifier.startsWith("npm:")) return isDeno;
 
-  if (
-    specifier.startsWith("http://") ||
-    specifier.startsWith("https://") ||
-    specifier.startsWith("file://") ||
-    specifier.startsWith("node:")
-  ) {
-    return true;
-  }
+  if (/^(?:https?|file|node):/i.test(specifier)) return true;
 
   if (specifier.startsWith("@/")) return true;
   if (specifier.startsWith("veryfront/")) return true;
@@ -110,10 +144,122 @@ function resolveReactForRuntime(specifier: string, version?: string): string | n
   return null;
 }
 
-function rewriteBareImports(code: string, version?: string): string {
+function resolveBareImportPin(
+  bareSpecifier: string,
+  projectDir?: string,
+  projectId?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  onDependencyResolutionObserved?: (
+    observation: DependencyResolutionObservation,
+  ) => void,
+): string | undefined {
+  const parsed = parseBarePackageSpecifier(bareSpecifier);
+  if (!parsed || parsed.version) return undefined; // already versioned inline
+
+  return resolveDependencyPinForImport(parsed.packageName, {
+    projectDir,
+    projectId,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    onDependencyResolutionObserved,
+  });
+}
+
+function observeSpecialImportDependency(
+  bareSpecifier: string,
+  projectDir?: string,
+  projectId?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  onDependencyResolutionObserved?: (
+    observation: DependencyResolutionObservation,
+  ) => void,
+): void {
+  const parsed = parseBarePackageSpecifier(bareSpecifier);
+  if (
+    parsed?.version ||
+    (
+      parsed?.packageName !== "react" &&
+      parsed?.packageName !== "react-dom" &&
+      parsed?.packageName !== "veryfront"
+    )
+  ) {
+    return;
+  }
+
+  resolveDependencyPinForImport(parsed.packageName, {
+    projectDir,
+    projectId,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    onDependencyResolutionObserved,
+  });
+}
+
+function observeSpecialImportDependencies(
+  code: string,
+  projectDir?: string,
+  projectId?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  onDependencyResolutionObserved?: (
+    observation: DependencyResolutionObservation,
+  ) => void,
+): void {
+  const patterns = [
+    /\bfrom\s*["']([^"']+)["']/g,
+    /\bimport\s+["']([^"']+)["']/g,
+    /\bimport\s*\(\s*["']([^"']+)["']/g,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of code.matchAll(pattern)) {
+      const specifier = match[1];
+      if (!specifier) continue;
+      observeSpecialImportDependency(
+        specifier.startsWith("npm:") ? specifier.slice(4) : specifier,
+        projectDir,
+        projectId,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+        dependencyPinningSource,
+        onDependencyResolutionObserved,
+      );
+    }
+  }
+}
+
+function rewriteBareImports(
+  code: string,
+  version?: string,
+  projectDir?: string,
+  projectId?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  onDependencyResolutionObserved?: (
+    observation: DependencyResolutionObservation,
+  ) => void,
+): string {
   const v = version ?? DEFAULT_REACT_VERSION;
 
-  return code.replace(/from\s+["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
+  observeSpecialImportDependencies(
+    code,
+    projectDir,
+    projectId,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    onDependencyResolutionObserved,
+  );
+
+  return code.replace(/from\s*["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
     const bareSpecifier = specifier.startsWith("npm:") ? specifier.slice(4) : specifier;
 
     const reactUrl = resolveReactForRuntime(bareSpecifier, v);
@@ -121,12 +267,30 @@ function rewriteBareImports(code: string, version?: string): string {
 
     if (shouldKeepBareSpecifier(specifier)) return `from "${specifier}"`;
 
+    const pinVersion = resolveBareImportPin(
+      bareSpecifier,
+      projectDir,
+      projectId,
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+      dependencyPinningSource,
+      onDependencyResolutionObserved,
+    );
+    if (pinVersion) {
+      const parsed = parseBarePackageSpecifier(bareSpecifier);
+      // Insert the version between package name and subpath (if any).
+      const versionedBase = parsed
+        ? `${parsed.packageName}@${pinVersion}${parsed.subpath ?? ""}`
+        : `${bareSpecifier}@${pinVersion}`;
+      return `from "https://esm.sh/${versionedBase}?external=react&target=es2022"`;
+    }
+
     return `from "https://esm.sh/${bareSpecifier}?external=react&target=es2022"`;
   });
 }
 
 function getDefaultCacheBuster(target: SSRImportRewriteTarget, options: SSRRewriteOptions): string {
-  return hashString([
+  const fields = [
     target.kind,
     target.modulePath,
     target.rewrittenPath,
@@ -134,7 +298,11 @@ function getDefaultCacheBuster(target: SSRImportRewriteTarget, options: SSRRewri
     options.branch ?? "",
     options.crossProjectRef ?? "",
     options.reactVersion ?? "",
-  ].join("\0"));
+  ];
+  if (options.dependencyPinningCacheKey?.startsWith("on:")) {
+    fields.push(options.dependencyPinningCacheKey);
+  }
+  return hashString(fields.join("\0"));
 }
 
 function getCacheBusterSync(
@@ -204,87 +372,117 @@ function buildRelativeRewrite(
 function buildScopedParams(options: SSRRewriteOptions): string {
   const projectParam = options.projectSlug ? `&project=${options.projectSlug}` : "";
   const branchParam = options.branch ? `&branch=${options.branch}` : "";
-  return `${projectParam}${branchParam}`;
+  const dependencyPinningParam = options.dependencyPinningCacheKey?.startsWith("on:")
+    ? `&pins=${encodeURIComponent(options.dependencyPinningCacheKey)}`
+    : "";
+  return `${projectParam}${branchParam}${dependencyPinningParam}`;
 }
+
+const ALIAS_IMPORT_PATTERNS = [
+  /(\bfrom\s+)["']@\/([^"']+)["']/g,
+  /(\bimport\s+)["']@\/([^"']+)["']/g,
+  /(\bimport\s*\(\s*)["']@\/([^"']+)["']/g,
+];
+
+const RELATIVE_IMPORT_PATTERNS = [
+  /(\bfrom\s+)["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
+  /(\bimport\s+)["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
+  /(\bimport\s*\(\s*)["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
+];
 
 function rewritePathAliases(code: string, options: SSRRewriteOptions): string {
   const scopedParams = buildScopedParams(options);
+  let result = code;
 
-  return code.replace(/from\s+["']@\/([^"']+)["']/g, (_match, path: string) => {
-    const { target, prefix } = buildAliasRewrite(path, options);
-    const cacheBuster = getCacheBusterSync(target, options);
-    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
-  });
+  for (const pattern of ALIAS_IMPORT_PATTERNS) {
+    result = result.replace(
+      pattern,
+      (_match, prefix: string, path: string) => {
+        const { target, prefix: rewrittenPrefix } = buildAliasRewrite(path, options);
+        const cacheBuster = getCacheBusterSync(target, options);
+        return `${prefix}"${rewrittenPrefix}${scopedParams}&v=${cacheBuster}"`;
+      },
+    );
+  }
+
+  return result;
 }
 
 function rewriteRelativeImports(code: string, options: SSRRewriteOptions): string {
   const scopedParams = buildScopedParams(options);
+  let result = code;
 
-  return code.replace(/from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g, (_match, path: string) => {
-    const { target, prefix } = buildRelativeRewrite(path);
-    const cacheBuster = getCacheBusterSync(target, options);
-    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
-  });
+  for (const pattern of RELATIVE_IMPORT_PATTERNS) {
+    result = result.replace(
+      pattern,
+      (_match, prefix: string, path: string) => {
+        const { target, prefix: rewrittenPrefix } = buildRelativeRewrite(path);
+        const cacheBuster = getCacheBusterSync(target, options);
+        return `${prefix}"${rewrittenPrefix}${scopedParams}&v=${cacheBuster}"`;
+      },
+    );
+  }
+
+  return result;
 }
 
 export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions = {}): string {
-  let result = rewriteBareImports(code, options.reactVersion);
+  let result = rewriteBareImports(
+    code,
+    options.reactVersion,
+    options.projectDir,
+    options.projectId,
+    options.dependencyPinningCacheKey,
+    options.dependencyPinningDependencies,
+    options.dependencyPinningSource,
+    options.onDependencyResolutionObserved,
+  );
   result = rewritePathAliases(result, options);
   result = rewriteRelativeImports(result, options);
   return result;
 }
 
-async function replaceAsync(
+async function rewriteInternalModuleImportsAsync(
   code: string,
-  pattern: RegExp,
-  replacer: (match: RegExpExecArray) => Promise<string>,
+  options: SSRRewriteOptions,
 ): Promise<string> {
-  const chunks: string[] = [];
-  let lastIndex = 0;
-  pattern.lastIndex = 0;
+  const parsed = await parseImportEdits(code);
+  const rewrites = new Map<number, { specifier: string }>();
+  const scopedParams = buildScopedParams(options);
 
-  for (let match = pattern.exec(code); match; match = pattern.exec(code)) {
-    chunks.push(code.slice(lastIndex, match.index));
-    chunks.push(await replacer(match));
-    lastIndex = match.index + match[0].length;
+  for (let index = 0; index < parsed.imports.length; index++) {
+    const imported = parsed.imports[index]!;
+    const specifier = imported.specifier;
+    const rewrite = specifier.startsWith("@/")
+      ? buildAliasRewrite(specifier.slice(2), options)
+      : /^(?:\.\.?\/|\/)[^?#]+\.js$/.test(specifier)
+      ? buildRelativeRewrite(specifier)
+      : null;
+    if (!rewrite) continue;
+
+    const cacheBuster = await getCacheBusterAsync(rewrite.target, options);
+    rewrites.set(index, {
+      specifier: `${rewrite.prefix}${scopedParams}&v=${cacheBuster}`,
+    });
   }
 
-  chunks.push(code.slice(lastIndex));
-  return chunks.join("");
-}
-
-async function rewritePathAliasesAsync(
-  code: string,
-  options: SSRRewriteOptions,
-): Promise<string> {
-  const scopedParams = buildScopedParams(options);
-  return await replaceAsync(code, /from\s+["']@\/([^"']+)["']/g, async (match) => {
-    const path = match[1] ?? "";
-    const { target, prefix } = buildAliasRewrite(path, options);
-    const cacheBuster = await getCacheBusterAsync(target, options);
-    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
-  });
-}
-
-async function rewriteRelativeImportsAsync(
-  code: string,
-  options: SSRRewriteOptions,
-): Promise<string> {
-  const scopedParams = buildScopedParams(options);
-  return await replaceAsync(code, /from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g, async (match) => {
-    const path = match[1] ?? "";
-    const { target, prefix } = buildRelativeRewrite(path);
-    const cacheBuster = await getCacheBusterAsync(target, options);
-    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
-  });
+  return rewrites.size === 0 ? code : applyImportEdits(parsed, rewrites);
 }
 
 export async function rewriteSSRImportsCompatAsync(
   code: string,
   options: SSRRewriteOptions = {},
 ): Promise<string> {
-  let result = rewriteBareImports(code, options.reactVersion);
-  result = await rewritePathAliasesAsync(result, options);
-  result = await rewriteRelativeImportsAsync(result, options);
+  let result = rewriteBareImports(
+    code,
+    options.reactVersion,
+    options.projectDir,
+    options.projectId,
+    options.dependencyPinningCacheKey,
+    options.dependencyPinningDependencies,
+    options.dependencyPinningSource,
+    options.onDependencyResolutionObserved,
+  );
+  result = await rewriteInternalModuleImportsAsync(result, options);
   return result;
 }

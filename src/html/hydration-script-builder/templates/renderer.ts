@@ -103,6 +103,8 @@ export const getRendererScript = () => `
           typeof data.appRouterRoot === 'string' && data.appRouterRoot.replace(/^\\/+|\\/+$/g, '')
             ? data.appRouterRoot.replace(/^\\/+|\\/+$/g, '')
             : 'app';
+        const hasReleaseAssetModules =
+          data.releaseAssetModules && Object.keys(data.releaseAssetModules).length > 0;
 
         function isAppRouterPath(path) {
           const normalizedPath = typeof path === 'string' ? path.replace(/^\\/+/, '') : '';
@@ -117,20 +119,21 @@ export const getRendererScript = () => `
         }
 
         const shouldRenderRscClientPage =
-          data.clientModuleStrategy === 'rsc-module' && isAppRouterPath(normalizedPagePath);
-        const isolatedClientPage =
-          shouldRenderRscClientPage && data.isolatedClientPage === true;
+          data.clientModuleStrategy === 'rsc-module' &&
+          !hasReleaseAssetModules &&
+          isAppRouterPath(normalizedPagePath);
+        const isolatedClientPage = data.isolatedClientPage === true;
 
         async function loadHydrationComponent(path, preferRscModule) {
           const normalizedPath = typeof path === 'string' ? path.replace(/^\\/+/, '') : '';
           if (preferRscModule && isAppRouterPath(normalizedPath)) {
-            const moduleUrl = '/_veryfront/rsc/module?rel=' + encodeURIComponent(path);
+            const moduleUrl = buildPinnedRscModuleUrl(path, data);
             log('Loading App Router component from RSC module:', moduleUrl);
-            const module = await import(moduleUrl);
+            const module = await importSnapshotBoundModule(moduleUrl);
             return module.default || module;
           }
 
-          return loadComponent(path);
+          return loadComponent(path, data);
         }
 
         function unwrapAppRouterDocumentLayout(LayoutComponent) {
@@ -151,12 +154,12 @@ export const getRendererScript = () => `
 
         if (data.pagePath) {
           const moduleUrl = shouldRenderRscClientPage
-            ? '/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)
-            : pathToModuleUrl(data.pagePath, data.studioEmbed);
+            ? buildPinnedRscModuleUrl(data.pagePath, data)
+            : pathToModuleUrl(data.pagePath, data.studioEmbed, data);
           log('Loading page from hydration data:', moduleUrl);
 
           try {
-            pageModule = await import(moduleUrl);
+            pageModule = await importSnapshotBoundModule(moduleUrl);
           } catch (error) {
             pageModuleError = error;
             logError('Failed to load page from hydration data:', error);
@@ -174,7 +177,8 @@ export const getRendererScript = () => `
             basePath,
             pageSlug,
             pageModuleError,
-            (moduleUrl) => import(moduleUrl),
+            (moduleUrl) =>
+              importSnapshotBoundModule(appendDependencyPinningVersion(moduleUrl, data)),
           );
         }
 

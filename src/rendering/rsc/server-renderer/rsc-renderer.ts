@@ -26,6 +26,7 @@ export class RSCRenderer {
   renderToPayload<Props extends RSCComponentProps = RSCComponentProps>(
     Component: React.ComponentType<Props> | React.ReactElement,
     props: Props = {} as Props,
+    options: { reactVersion?: string } = {},
   ): Promise<RSCPayload> {
     return withSpan(
       "rsc.renderToPayload",
@@ -38,7 +39,7 @@ export class RSCRenderer {
             props,
             this.clientManifest,
             clientRefs,
-            this.reactVersion,
+            options.reactVersion ?? this.reactVersion,
           );
           const html = await treeToHTML(tree, clientRefs, this.clientManifest);
 

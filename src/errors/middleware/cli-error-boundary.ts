@@ -13,7 +13,7 @@ import { UNKNOWN_ERROR } from "../error-registry.ts";
 import { getErrorMessage } from "../veryfront-error.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { attachErrorToActiveSpan } from "../tracing.ts";
-import { isProduction } from "#veryfront/platform/environment.ts";
+import { getEnv, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
 
 /**
  * Color formatting functions (compatible with CLI colors)
@@ -21,104 +21,58 @@ import { isProduction } from "#veryfront/platform/environment.ts";
  */
 interface ColorFormatter {
   red: (text: string) => string;
-  yellow: (text: string) => string;
-  cyan: (text: string) => string;
   dim: (text: string) => string;
-  bold: (text: string) => string;
 }
 
-/**
- * Check if output is a TTY (supports colors)
- */
-function isTTY(): boolean {
-  const deno = globalThis as {
-    Deno?: {
-      stdout?: { isTerminal?: () => boolean };
-    };
-    process?: {
-      stdout?: { isTTY?: boolean };
-    };
-  };
-
-  if (typeof deno.Deno?.stdout?.isTerminal === "function") {
-    return deno.Deno.stdout.isTerminal();
-  }
-
-  return deno.process?.stdout?.isTTY ?? false;
+function shouldUseDefaultColor(): boolean {
+  const forceColor = getEnv("FORCE_COLOR");
+  if (forceColor !== undefined) return forceColor !== "0";
+  if (getEnv("NO_COLOR") !== undefined || getEnv("TERM") === "dumb") return false;
+  return isStdoutTTY();
 }
 
-/**
- * Check if running in development mode
- */
-function isDevelopment(): boolean {
-  return !isProduction();
-}
-
-/**
- * Simple color formatters (no-op if not TTY)
- */
-function createColorFormatters(): ColorFormatter {
-  const noColor = !isTTY();
-
-  if (noColor) {
+function createColorFormatters(useColor: boolean): ColorFormatter {
+  if (!useColor) {
     const identity = (text: string) => text;
     return {
       red: identity,
-      yellow: identity,
-      cyan: identity,
       dim: identity,
-      bold: identity,
     };
   }
 
   return {
     red: (text: string) => `\x1b[31m${text}\x1b[0m`,
-    yellow: (text: string) => `\x1b[33m${text}\x1b[0m`,
-    cyan: (text: string) => `\x1b[36m${text}\x1b[0m`,
     dim: (text: string) => `\x1b[2m${text}\x1b[0m`,
-    bold: (text: string) => `\x1b[1m${text}\x1b[0m`,
   };
 }
 
-/**
- * Format a VeryfrontError for CLI output
- *
- * Format: [slug] title
- *   Detail: {detail}
- *   Suggestion: {suggestion}
- *   Docs: https://veryfront.com/docs/errors/{slug}
- *   (Stack trace in dev mode)
- */
-function formatVeryfrontError(error: VeryfrontError, colors: ColorFormatter): string {
-  const lines: string[] = [];
+export interface CLIErrorFormatOptions {
+  color?: boolean;
+  verbose?: boolean;
+}
 
-  // Header: [slug] title
-  lines.push("");
-  lines.push(
-    colors.red(colors.bold(`✖ [${error.slug}]`)) + " " + colors.bold(error.title),
-  );
-  lines.push("");
+function formatVeryfrontError(
+  error: VeryfrontError,
+  colors: ColorFormatter,
+  options: CLIErrorFormatOptions,
+): string {
+  const lines = ["", `${colors.red("✗")} ${error.detail ?? error.title}`];
 
-  // Detail
-  if (error.detail) {
-    lines.push(colors.dim("  Detail: ") + error.detail);
+  if (error.slug === "unknown-error") {
+    lines.push(colors.dim("  Run with --verbose for details"));
+  } else if (error.suggestion) {
+    lines.push(colors.dim(`  ${error.suggestion}`));
   }
 
-  // Suggestion
-  if (error.suggestion) {
-    lines.push(colors.yellow("  💡 Suggestion: ") + error.suggestion);
-  }
-
-  // Docs link
-  lines.push(colors.dim("  📚 Docs: ") + colors.cyan(error.getDocsUrl()));
-
-  // Stack trace in dev mode
-  if (isDevelopment() && error.stack) {
+  if (options.verbose) {
     lines.push("");
-    lines.push(colors.dim("  Stack trace:"));
-    const stackLines = error.stack.split("\n").slice(1, 6); // First 5 lines
-    for (const line of stackLines) {
-      lines.push(colors.dim(`    ${line.trim()}`));
+    lines.push(colors.dim(`  Code: ${error.slug}`));
+    lines.push(colors.dim(`  Docs: ${error.getDocsUrl()}`));
+    if (error.stack) {
+      lines.push(colors.dim("  Stack trace:"));
+      for (const line of error.stack.split("\n").slice(1, 6)) {
+        lines.push(colors.dim(`    ${line.trim()}`));
+      }
     }
   }
 
@@ -130,22 +84,23 @@ function formatVeryfrontError(error: VeryfrontError, colors: ColorFormatter): st
 /**
  * Format any error for CLI output
  */
-export function formatCLIError(error: unknown): string {
-  const colors = createColorFormatters();
+export function formatCLIError(
+  error: unknown,
+  options: CLIErrorFormatOptions = {},
+): string {
+  const colors = createColorFormatters(options.color ?? shouldUseDefaultColor());
 
-  // Handle VeryfrontError
   if (error instanceof VeryfrontError) {
-    return formatVeryfrontError(error, colors);
+    return formatVeryfrontError(error, colors, options);
   }
 
-  // Wrap unknown errors
   const message = getErrorMessage(error);
   const unknownError = UNKNOWN_ERROR.create({
     detail: message,
     cause: error instanceof Error ? error : undefined,
   });
 
-  return formatVeryfrontError(unknownError, colors);
+  return formatVeryfrontError(unknownError, colors, options);
 }
 
 /**

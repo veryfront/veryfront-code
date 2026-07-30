@@ -1,7 +1,7 @@
 ---
 title: "veryfront/sandbox"
 description: "Ephemeral compute environments for isolated execution."
-order: 27
+order: 28
 ---
 
 ## Import
@@ -62,13 +62,13 @@ Create a lazily-provisioned sandbox session with automatic heartbeats.
 
 ### `sandbox.executeCommand(command, options)`
 
-Execute a bash command in the sandbox and return buffered result.
+Execute a bash command in the sandbox and return buffered stdout/stderr plus the exit code.
 
 **Returns:** <code>Promise&lt;ExecResult&gt;</code>
 
 ### `sandbox.executeStream(command, options)`
 
-Execute a bash command with streaming output (NDJSON).
+Execute a bash command in the sandbox and stream newline-delimited JSON (NDJSON) output events as they arrive.
 
 **Returns:** <code>AsyncGenerator&lt;ExecStreamEvent&gt;</code>
 
@@ -80,7 +80,7 @@ Read a file from the sandbox workspace.
 
 ### `sandbox.writeFiles(files)`
 
-Write files to the sandbox workspace.
+Write one or more files to the sandbox workspace.
 
 **Returns:** <code>Promise&lt;void&gt;</code>
 
@@ -116,13 +116,13 @@ Cancel an async background command.
 
 ### `sandbox.heartbeat()`
 
-Send a heartbeat to prevent idle timeout.
+Send a heartbeat to keep the sandbox session alive.
 
 **Returns:** <code>Promise&lt;void&gt;</code>
 
 ### `sandbox.close()`
 
-Close the sandbox session and mark for deletion.
+Close the sandbox session and mark it for deletion.
 
 **Returns:** <code>Promise&lt;void&gt;</code>
 

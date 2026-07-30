@@ -1,4 +1,5 @@
 import type { ParsedArgs } from "#cli/shared/types";
+import { exitProcess, logUsageError } from "#cli/utils";
 import {
   generateBashCompletions,
   generateFishCompletions,
@@ -21,8 +22,10 @@ export async function handleCompletionsCommand(
       console.log(generateFishCompletions());
       break;
     default:
-      console.error("Usage: veryfront completions <bash|zsh|fish>");
-      console.error('Example: eval "$(veryfront completions bash)"');
-      Deno.exit(1);
+      logUsageError(
+        "Usage: veryfront completions <bash|zsh|fish>",
+        'Example: eval "$(veryfront completions bash)"',
+      );
+      exitProcess(2);
   }
 }

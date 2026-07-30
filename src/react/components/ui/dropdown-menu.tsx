@@ -31,11 +31,15 @@ export function DropdownMenu(props: DropdownMenuProps): React.ReactElement {
   return <menu.Root {...props} />;
 }
 
-/** Trigger — toggles the menu. `asChild` merges onto the child element. */
+/**
+ * Trigger — toggles the menu; the positioning anchor. `asChild` merges onto
+ * the child element, which must forward `ref` to its DOM node.
+ */
 export function DropdownMenuTrigger(
-  props:
-    & React.ButtonHTMLAttributes<HTMLButtonElement>
-    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    asChild?: boolean;
+    ref?: React.Ref<HTMLButtonElement>;
+  },
 ): React.ReactElement {
   const { menu } = useAdapter();
   return <menu.Trigger {...props} />;

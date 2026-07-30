@@ -17,6 +17,22 @@ function createCtx(csrf?: boolean | Record<string, unknown>): HandlerContext {
 describe("security/http/csrf/csrf-handler", () => {
   const handler = new CsrfHandler();
 
+  describe("Server Actions documentation", () => {
+    it("binds dependency snapshots with the transport header, not application query state", async () => {
+      const source = await Deno.readTextFile(new URL("./csrf-handler.ts", import.meta.url));
+      const exampleStart = source.indexOf("* Example (client-side fetch wrapper):");
+      const exampleEnd = source.indexOf("* @module security/http/csrf/csrf-handler");
+      const example = source.slice(exampleStart, exampleEnd);
+
+      assertEquals(exampleStart >= 0 && exampleEnd > exampleStart, true);
+      assertEquals(
+        example.includes('headers["x-veryfront-dependency-pins"] = pinKey;'),
+        true,
+      );
+      assertEquals(example.includes('searchParams.set("pins"'), false);
+    });
+  });
+
   describe("when CSRF is not configured", () => {
     it("should pass through all requests when securityConfig is null", async () => {
       const ctx = createCtx();

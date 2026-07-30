@@ -183,4 +183,26 @@ describe("agent/fork-runtime-part-mapper", () => {
       },
     ]);
   });
+
+  it("preserves the concrete upstream error when errorText is absent", () => {
+    const state = createForkRuntimeStreamMappingState();
+
+    const parts = mapAgUiRuntimeEventToForkParts(
+      {
+        type: "error",
+        error: 'Tool "gmail__upload_attachment" is not registered',
+      },
+      state,
+    );
+
+    assertEquals(parts.length, 1);
+    assertEquals(parts[0]?.type, "error");
+    if (parts[0]?.type !== "error") {
+      throw new Error("Expected an error part");
+    }
+    assertEquals(
+      parts[0].error.message,
+      'Tool "gmail__upload_attachment" is not registered',
+    );
+  });
 });

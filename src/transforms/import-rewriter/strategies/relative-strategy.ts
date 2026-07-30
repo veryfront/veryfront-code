@@ -4,7 +4,12 @@ import type {
   RewriteContext,
   RewriteResult,
 } from "../types.ts";
-import { buildModuleServerUrl, normalizeExtension } from "../url-builder.ts";
+import {
+  appendDependencyPinningKey,
+  appendDependencyPinningPathKey,
+  buildModuleServerUrl,
+  normalizeExtension,
+} from "../url-builder.ts";
 import { getProjectRelativePath } from "../project-paths.ts";
 
 export class RelativeStrategy implements ImportRewriteStrategy {
@@ -28,12 +33,36 @@ export class RelativeStrategy implements ImportRewriteStrategy {
     // causing multiple React instances (bundled-in vs esm.sh) and breaking hooks.
     if (ctx.moduleServerUrl) {
       const relativeFilePath = getProjectRelativePath(ctx.filePath, ctx.projectDir);
-      const fileDir = relativeFilePath.slice(0, relativeFilePath.lastIndexOf("/"));
+      const separatorIndex = relativeFilePath.lastIndexOf("/");
+      const fileDir = separatorIndex === -1 ? "" : relativeFilePath.slice(0, separatorIndex);
       const resolvedPath = this.resolveRelativePath(fileDir, rewrittenSpecifier);
-      return { specifier: buildModuleServerUrl(ctx.moduleServerUrl, resolvedPath) };
+      const moduleUrl = buildModuleServerUrl(ctx.moduleServerUrl, resolvedPath);
+      return {
+        specifier: ctx.target === "browser"
+          ? appendDependencyPinningPathKey(
+            moduleUrl,
+            ctx.dependencyPinningCacheKey,
+          )
+          : appendDependencyPinningKey(
+            moduleUrl,
+            ctx.dependencyPinningCacheKey,
+          ),
+      };
     }
 
-    if (/\.(tsx?|jsx|mdx)$/.test(specifier)) return { specifier: rewrittenSpecifier };
+    if (/\.(tsx?|jsx|mdx)$/.test(specifier)) {
+      return { specifier: rewrittenSpecifier };
+    }
+
+    // Browser-relative edges inherit the snapshot from the path-scoped parent
+    // module URL. Keeping them query-free also covers computed dynamic imports,
+    // which the lexer deliberately cannot rewrite.
+    if (
+      ctx.target === "browser" &&
+      ctx.dependencyPinningCacheKey?.startsWith("on:")
+    ) {
+      return { specifier: null };
+    }
 
     return { specifier: null };
   }

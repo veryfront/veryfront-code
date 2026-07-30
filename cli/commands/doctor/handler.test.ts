@@ -25,6 +25,13 @@ describe("commands/doctor/handler", () => {
       if (result.success) assertEquals(result.data.port, 4321);
     });
 
+    it("keeps -p as a compatibility alias for --port", () => {
+      const result = parseDoctorArgs(parseCliArgs(["doctor", "-p", "4321"]));
+
+      assertEquals(result.success, true);
+      if (result.success) assertEquals(result.data.port, 4321);
+    });
+
     it("strict defaults to false when not provided", () => {
       const result = parseDoctorArgs({ _: ["doctor"] });
       assertEquals(result.success, true);

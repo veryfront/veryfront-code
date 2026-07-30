@@ -101,6 +101,14 @@ type RuntimeMessage = AgUiRuntimeMessage;
 type InternalAgentCompatibilityMessage = InferSchema<
   ReturnType<typeof getInternalAgentCompatibilityMessageSchema>
 >;
+type RuntimeAttachment = {
+  type: "image" | "file";
+  url: string;
+  mediaType: string;
+  uploadId?: string;
+  uploadPath?: string;
+  filename?: string;
+};
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -223,6 +231,34 @@ function stringifyToolResult(result: unknown): string {
   }
 }
 
+function getRuntimeAttachment(
+  part: Record<string, unknown>,
+): RuntimeAttachment | null {
+  const type = getPartString(part, "type");
+  if (type !== "image" && type !== "file") {
+    return null;
+  }
+
+  const url = getPartString(part, "url");
+  const mediaType = getPartString(part, "mediaType", "media_type");
+  if (!url || !mediaType) {
+    return null;
+  }
+
+  const uploadId = getPartString(part, "uploadId", "upload_id");
+  const uploadPath = getPartString(part, "uploadPath", "upload_path");
+  const filename = getPartString(part, "filename");
+
+  return {
+    type,
+    url,
+    mediaType,
+    ...(uploadId ? { uploadId } : {}),
+    ...(uploadPath ? { uploadPath } : {}),
+    ...(filename ? { filename } : {}),
+  };
+}
+
 function toRuntimeMessage(
   message: RuntimeMessage | InternalAgentCompatibilityMessage,
 ): RuntimeMessage {
@@ -238,6 +274,11 @@ function toRuntimeMessage(
     .filter((part) => part.type === "text" && typeof part.text === "string")
     .map((part) => part.text as string)
     .join("\n");
+  const attachments = (message.parts as ReadonlyArray<Record<string, unknown>>)
+    .flatMap((part) => {
+      const attachment = getRuntimeAttachment(part);
+      return attachment ? [attachment] : [];
+    });
 
   // Use the conditional-spread pattern (omitting keys entirely when not
   // present) to preserve the pre-migration runtime semantics. Cast the
@@ -261,6 +302,7 @@ function toRuntimeMessage(
         id: message.id,
         role: "user",
         content: textContent,
+        ...(attachments.length ? { attachments } : {}),
         ...sharedFields,
       } as RuntimeMessage;
     case "assistant": {

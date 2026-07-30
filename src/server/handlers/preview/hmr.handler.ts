@@ -57,7 +57,7 @@ export class HMRHandler extends BaseHandler {
     if (HMRHandler.initialized) return;
     HMRHandler.initialized = true;
 
-    logger.info("Subscribing to ReloadNotifier");
+    logger.debug("Subscribing to ReloadNotifier");
 
     HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, project) => {
       logger.debug("ReloadNotifier callback triggered", {
@@ -261,7 +261,7 @@ export class HMRHandler extends BaseHandler {
         proxyToken,
         async () => {
           await fs.exists("veryfront.config.ts");
-          logger.info("Adapter initialized for poke reception", {
+          logger.debug("Adapter initialized for poke reception", {
             projectSlug,
           });
         },

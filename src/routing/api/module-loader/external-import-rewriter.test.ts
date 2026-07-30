@@ -314,6 +314,25 @@ describe("external-import-rewriter", () => {
       const code = `import express from "express";`;
       assertEquals(rewriteDenoNodeBuiltinImports(code), code);
     });
+
+    it("leaves Node-only builtin names available to Deno npm dependencies", async () => {
+      const code = `import traceEvents from "trace_events";`;
+      const afterBuiltins = rewriteDenoNodeBuiltinImports(code);
+      const fs = createFakeFileSystem({
+        "/srv/app/node_modules/trace_events/package.json": JSON.stringify({
+          version: "1.0.0",
+        }),
+      });
+      const out = await rewriteDenoNpmDependencyImports(
+        afterBuiltins,
+        "/srv/app",
+        fs,
+        new Map([["trace_events", "^1"]]),
+      );
+
+      assertEquals(afterBuiltins, code);
+      assertStringIncludes(out, `from "npm:trace_events@1.0.0"`);
+    });
   });
 
   describe("generateCompiledBinaryRequireShim", () => {

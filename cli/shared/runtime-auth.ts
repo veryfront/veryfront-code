@@ -1,15 +1,16 @@
 import { getEnv, setEnv } from "veryfront/platform";
-import { basename } from "veryfront/platform/path";
 import { readToken } from "../auth/token-store.ts";
+import { readConfigFile } from "./config.ts";
+import { readProjectLink } from "./project-link.ts";
 
 export interface RuntimeAuthOptions {
-  projectDir: string;
-  projectSlug?: string;
+  linkedProjectSlug?: string;
 }
 
 export interface RuntimeAuthContext {
   apiToken?: string;
   projectSlug?: string;
+  serviceLayer?: string;
 }
 
 function normalizeEnvValue(value: string | undefined): string | undefined {
@@ -17,10 +18,17 @@ function normalizeEnvValue(value: string | undefined): string | undefined {
   return normalized ? normalized : undefined;
 }
 
-export function inferRuntimeProjectSlug(projectDir: string): string | undefined {
-  const dirName = basename(projectDir).replace(/^@[^/]+[/\\]/, "");
-  const slug = dirName.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
-  return slug || undefined;
+export async function resolveLinkedProjectSlug(
+  projectDir: string,
+  configuredProjectSlug?: string,
+): Promise<string | undefined> {
+  const configured = normalizeEnvValue(configuredProjectSlug);
+  if (configured) return configured;
+
+  const configProjectSlug = normalizeEnvValue((await readConfigFile(projectDir))?.projectSlug);
+  if (configProjectSlug) return configProjectSlug;
+
+  return normalizeEnvValue((await readProjectLink(projectDir))?.projectSlug);
 }
 
 export async function resolveRuntimeAuthContext(
@@ -31,12 +39,14 @@ export async function resolveRuntimeAuthContext(
   const apiToken = envToken ?? storedToken;
 
   const envProjectSlug = normalizeEnvValue(getEnv("VERYFRONT_PROJECT_SLUG"));
-  const projectSlug = envProjectSlug ?? normalizeEnvValue(options.projectSlug) ??
-    inferRuntimeProjectSlug(options.projectDir);
+  const projectSlug = envProjectSlug ?? normalizeEnvValue(options.linkedProjectSlug);
+  const envServiceLayer = normalizeEnvValue(getEnv("VERYFRONT_SERVICE_LAYER"));
+  const serviceLayer = envServiceLayer ?? (apiToken ? "cloud" : undefined);
 
   return {
     ...(apiToken ? { apiToken } : {}),
     ...(projectSlug ? { projectSlug } : {}),
+    ...(serviceLayer ? { serviceLayer } : {}),
   };
 }
 
@@ -53,6 +63,13 @@ export async function applyRuntimeAuthContext(
     context.apiToken && context.projectSlug && !normalizeEnvValue(getEnv("VERYFRONT_PROJECT_SLUG"))
   ) {
     setEnv("VERYFRONT_PROJECT_SLUG", context.projectSlug);
+  }
+
+  if (
+    context.apiToken && context.serviceLayer &&
+    !normalizeEnvValue(getEnv("VERYFRONT_SERVICE_LAYER"))
+  ) {
+    setEnv("VERYFRONT_SERVICE_LAYER", context.serviceLayer);
   }
 
   return context;

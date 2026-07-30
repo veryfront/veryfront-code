@@ -2,6 +2,7 @@ import * as BundledReact from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { normalizePath } from "#veryfront/utils/path-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 type ReservedComponent = BundledReact.ComponentType<{ error?: Error; reset?: () => void }>;
 
@@ -87,6 +88,10 @@ export async function loadReservedWithPath(
   projectId?: string,
   contentSourceId?: string,
   reactVersion?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<{ component: ReservedComponent; filePath: string } | null> {
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
@@ -104,6 +109,10 @@ export async function loadReservedWithPath(
           dev: true,
           contentSourceId,
           reactVersion,
+          moduleServerOrigin,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          dependencyPinningSource,
         });
         if (typeof Cmp === "function") {
           return { component: Cmp as ReservedComponent, filePath: file };
@@ -126,6 +135,10 @@ export async function tryLoadReservedInDirs(
   projectId?: string,
   contentSourceId?: string,
   reactVersion?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<ReservedComponent | null> {
   const loaded = await loadReservedWithPath(
     dirs,
@@ -136,6 +149,10 @@ export async function tryLoadReservedInDirs(
     projectId,
     contentSourceId,
     reactVersion,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    moduleServerOrigin,
   );
   return loaded?.component ?? null;
 }

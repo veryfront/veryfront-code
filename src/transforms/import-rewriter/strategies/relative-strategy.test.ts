@@ -105,6 +105,63 @@ describe("RelativeStrategy", () => {
       );
     });
 
+    it("should preserve the captured snapshot on a browser child-module URL", () => {
+      const result = relativeStrategy.rewrite(
+        makeInfo("./child.ts"),
+        makeCtx({
+          target: "browser",
+          dependencyPinningCacheKey: "on:snapshot-a",
+        }),
+      );
+
+      assertEquals(
+        result.specifier,
+        "http://localhost:3000/_vf_modules/_pins/on%3Asnapshot-a/pages/child.js",
+      );
+    });
+
+    it("should resolve a root module child without truncating the parent filename", () => {
+      const result = relativeStrategy.rewrite(
+        makeInfo("./child.ts"),
+        makeCtx({
+          target: "browser",
+          filePath: "/project/page.ts",
+          moduleServerUrl: "/_vf_modules",
+          dependencyPinningCacheKey: "on:snapshot-a",
+        }),
+      );
+
+      assertEquals(
+        result.specifier,
+        "/_vf_modules/_pins/on%3Asnapshot-a/child.js",
+      );
+    });
+
+    it("should preserve the captured snapshot when the browser resolves the child relatively", () => {
+      const sourceExtensionResult = relativeStrategy.rewrite(
+        makeInfo("./child.ts"),
+        makeCtx({
+          target: "browser",
+          moduleServerUrl: undefined,
+          dependencyPinningCacheKey: "on:snapshot-a",
+        }),
+      );
+      const javascriptResult = relativeStrategy.rewrite(
+        makeInfo("./already-compiled.js"),
+        makeCtx({
+          target: "browser",
+          moduleServerUrl: undefined,
+          dependencyPinningCacheKey: "on:snapshot-a",
+        }),
+      );
+
+      assertEquals(
+        sourceExtensionResult.specifier,
+        "./child.js",
+      );
+      assertEquals(javascriptResult.specifier, null);
+    });
+
     it("should return normalized specifier when no moduleServerUrl", () => {
       const result = relativeStrategy.rewrite(
         makeInfo("./component.tsx"),

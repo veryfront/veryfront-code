@@ -19,6 +19,7 @@ export type AgentServiceBootstrapExit = (code: number) => never | void;
 /** Options accepted by bootstrap agent service. */
 export type BootstrapAgentServiceOptions = {
   loadLogger?: () => AbortRejectionGuardLogger | Promise<AbortRejectionGuardLogger>;
+  initializeApplicationErrors?: () => void | Promise<void>;
   initializeTelemetry?: () => boolean | Promise<boolean>;
   onTelemetryInitialized?: () => void | Promise<void>;
   getTraceContext?: AgentServiceTraceContextGetter;
@@ -29,6 +30,7 @@ export type BootstrapAgentServiceOptions = {
 /** Options accepted by run agent service main. */
 export type RunAgentServiceMainOptions = BootstrapAgentServiceOptions & {
   onStartupError?: (error: unknown) => void | Promise<void>;
+  onFinally?: () => void | Promise<void>;
   exit?: AgentServiceBootstrapExit;
   processTarget?: AbortRejectionProcessTarget | null;
 };
@@ -40,6 +42,12 @@ async function initializeTelemetry(
   if (enabled) {
     await options.onTelemetryInitialized?.();
   }
+}
+
+async function initializeApplicationErrors(
+  options: Pick<BootstrapAgentServiceOptions, "initializeApplicationErrors">,
+): Promise<void> {
+  await options.initializeApplicationErrors?.();
 }
 
 async function registerTraceContext(
@@ -60,6 +68,7 @@ export async function bootstrapAgentService(
     loadLogger: options.loadLogger,
   });
 
+  await initializeApplicationErrors(options);
   await initializeTelemetry(options);
   await registerTraceContext(options);
   await options.start();
@@ -72,7 +81,8 @@ export function runAgentServiceMain(options: RunAgentServiceMainOptions): Promis
     processTarget: options.processTarget,
   });
 
-  return initializeTelemetry(options)
+  return initializeApplicationErrors(options)
+    .then(() => initializeTelemetry(options))
     .then(() => registerTraceContext(options))
     .then(() => options.start())
     .catch(async (error: unknown) => {
@@ -82,5 +92,8 @@ export function runAgentServiceMain(options: RunAgentServiceMainOptions): Promis
         return;
       }
       throw error;
+    })
+    .finally(async () => {
+      await options.onFinally?.();
     });
 }

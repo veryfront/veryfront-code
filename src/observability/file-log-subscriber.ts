@@ -1,3 +1,4 @@
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import type { LogEntry, LogLevel, LogSubscriber } from "./log-buffer.ts";
 
 /** Configuration used by file log. */
@@ -79,9 +80,9 @@ export class FileLogSubscriber {
 
   private enqueue(entry: LogEntry): void {
     this.writeQueue = this.writeQueue.then(() => this.writeEntry(entry)).catch((error) => {
-      console.error(
-        `[FileLogSubscriber] Failed writing to ${this.config.path}. File logging will continue.`,
-        error instanceof Error ? error.message : String(error),
+      serverLogger.error(
+        `FileLogSubscriber: failed writing to ${this.config.path}, file logging will continue`,
+        { error: error instanceof Error ? error : new Error(String(error)) },
       );
     });
   }
@@ -102,8 +103,8 @@ export class FileLogSubscriber {
     } catch (err) {
       if (err instanceof Deno.errors.PermissionDenied) {
         this.permissionFailed = true;
-        console.error(
-          `[FileLogSubscriber] Permission denied writing to ${this.config.path}. File logging disabled.`,
+        serverLogger.error(
+          `FileLogSubscriber: permission denied writing to ${this.config.path}, file logging disabled`,
         );
         return;
       }

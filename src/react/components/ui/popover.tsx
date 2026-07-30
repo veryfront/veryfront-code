@@ -32,11 +32,15 @@ export function Popover(props: PopoverProps): React.ReactElement {
   return <popover.Root {...props} />;
 }
 
-/** Trigger — toggles the popover. `asChild` merges onto the child element. */
+/**
+ * Trigger — toggles the popover; the positioning anchor. `asChild` merges onto
+ * the child element, which must forward `ref` to its DOM node.
+ */
 export function PopoverTrigger(
-  props:
-    & React.ButtonHTMLAttributes<HTMLButtonElement>
-    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    asChild?: boolean;
+    ref?: React.Ref<HTMLButtonElement>;
+  },
 ): React.ReactElement {
   // `aria-haspopup` is supplied by the adapter's trigger (a mechanics concern),
   // so the skin stays engine-neutral.

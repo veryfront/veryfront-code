@@ -52,3 +52,16 @@ export default schedule({
 The platform reports the schedule as stale when it has not succeeded within
 that budget, and as failed after a newer terminal failure. Health settings are
 not sent to the target as run input.
+
+## Run a pushed schedule on demand
+
+Use remote mode when the schedule needs the same hosted tools, integrations,
+delegation, and durable run context as its cloud recurrence:
+
+```sh
+veryfront schedule run daily-support-triage --remote --json
+```
+
+Push the source schedule first. Remote runs use the pushed definition and do
+not accept `--input`; omit `--remote` when you intentionally want the existing
+local execution path.

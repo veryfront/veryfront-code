@@ -3,16 +3,16 @@ import type { CommandHelp } from "../../help/types.ts";
 export const startHelp: CommandHelp = {
   name: "start",
   category: "project",
-  description: "Start the production dashboard and proxy server",
+  description: "Run the production dashboard with proxy and TUI",
   usage: "veryfront start [options]",
   options: [
     {
-      flag: "-p, --port <number>",
+      flag: "--port <number>",
       description: "Port to run on",
       default: "8080",
     },
     {
-      flag: "--project <path>",
+      flag: "--project-dir <path>",
       description: "Path to a Veryfront project directory (single-project mode)",
     },
     {
@@ -23,7 +23,7 @@ export const startHelp: CommandHelp = {
   examples: [
     "veryfront start",
     "veryfront start --port 9000",
-    "veryfront start --project ./my-app",
+    "veryfront start --project-dir ./my-app",
     "veryfront start --headless",
   ],
   notes: [

@@ -24,6 +24,10 @@ interface SpanInfo {
   context: unknown;
 }
 
+interface SpanWithContext {
+  spanContext(): { traceId: string; spanId: string };
+}
+
 /**
  * Start tracing for an incoming request.
  * Extracts parent context from headers and creates a server span.
@@ -72,6 +76,20 @@ export function setProjectAttributes(
  */
 export function endRequestTracing(span: unknown, status: number, error?: Error): void {
   endServerSpan(span, status, error);
+}
+
+export function getRequestTraceContext(
+  span: unknown,
+): { traceId?: string; spanId?: string } {
+  if (
+    !span || typeof span !== "object" || !("spanContext" in span) ||
+    typeof (span as SpanWithContext).spanContext !== "function"
+  ) {
+    return {};
+  }
+
+  const context = (span as SpanWithContext).spanContext();
+  return { traceId: context.traceId, spanId: context.spanId };
 }
 
 /**

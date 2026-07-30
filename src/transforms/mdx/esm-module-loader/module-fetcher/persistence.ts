@@ -22,6 +22,8 @@ export interface PersistResolvedModuleInput {
   log: Logger;
   projectSlug: string;
   reactVersion?: string;
+  dependencyPinningCacheKey?: string;
+  moduleServerOrigin?: string;
   distributedCacheWrite?: {
     distributedCache: DistributedCache;
     transformCacheKey: string;
@@ -66,6 +68,8 @@ export async function persistResolvedModule(
     input.pathCache,
     input.log,
     input.reactVersion,
+    input.dependencyPinningCacheKey,
+    input.moduleServerOrigin,
   );
   input.log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
     projectSlug: input.projectSlug,

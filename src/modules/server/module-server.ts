@@ -39,10 +39,12 @@ import {
 } from "#veryfront/release-assets/module-consumption.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import {
+  DEPENDENCY_PINNING_ENV_FLAG,
   RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS,
   RELEASE_MODULE_RUNTIME_VERSION_PARAM,
   RELEASE_MODULE_VERSION_PARAM,
 } from "#veryfront/release-assets/constants.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
   buildSourceMissCacheKey,
   hasSourceMiss,
@@ -57,9 +59,21 @@ import { findFirstExistingFile } from "./fs-probe.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
 import { classifyModuleRequest, DEV_MODULE_PREFIX } from "./classify.ts";
 import { transformModuleToServable } from "./module-transform.ts";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSourceInput,
+  resolveProjectReactVersion,
+  resolveRequestedDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  appendDependencyPinningPathKey,
+  extractDependencyPinningPathKey,
+} from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 const logger = serverLogger.component("module-server");
 const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
+const DEPENDENCY_PIN_PATTERN = /^on:[A-Za-z0-9._-]+$/;
 
 /**
  * Embedded polyfills for compiled Deno binaries.
@@ -166,22 +180,29 @@ async function addReleaseVersionToFallbackImports(
   code: string,
   modulePath: string,
   releaseId: string | null | undefined,
+  dependencyPinningCacheKey?: string,
 ): Promise<string> {
   if (!releaseId) return code;
   const moduleBaseUrl = `https://veryfront.local/_vf_modules/${modulePath}`;
 
   return await replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("/_vf_modules/")) {
-      return appendReleaseModuleVersion(specifier, releaseId);
+      return appendDependencyPinningPathKey(
+        appendReleaseModuleVersion(specifier, releaseId),
+        dependencyPinningCacheKey,
+      );
     }
     if (!specifier.startsWith("./") && !specifier.startsWith("../")) return null;
 
     const resolved = new URL(specifier, moduleBaseUrl);
     if (resolved.origin !== "https://veryfront.local") return null;
     if (!resolved.pathname.startsWith("/_vf_modules/")) return null;
-    return appendReleaseModuleVersion(
-      `${resolved.pathname}${resolved.search}${resolved.hash}`,
-      releaseId,
+    return appendDependencyPinningPathKey(
+      appendReleaseModuleVersion(
+        `${resolved.pathname}${resolved.search}${resolved.hash}`,
+        releaseId,
+      ),
+      dependencyPinningCacheKey,
     );
   });
 }
@@ -211,6 +232,10 @@ export interface ModuleServerOptions {
   branch?: string | null;
   /** Release ID for production mode (published files) */
   releaseId?: string | null;
+  /** Stable release/branch identity paired with dependency snapshot history. */
+  contentSourceId?: string;
+  /** Explicitly selects host FS for local projects and adapter FS for proxy projects. */
+  isLocalProject?: boolean;
   /**
    * Restrict module imports to specific directories (opt-in security).
    * When not set, users can import from any directory in the project.
@@ -218,6 +243,10 @@ export interface ModuleServerOptions {
   allowedImportDirs?: string[];
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Project config whose explicit React override wins over dependency detection. */
+  config?: VeryfrontConfig;
+  /** Canonical request-scoped package source supplied by the server handler. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
   /** Request mode ("preview" | "production") for studio features like node positions */
   mode?: string;
 }
@@ -225,6 +254,12 @@ export interface ModuleServerOptions {
 /** Serve transformed module at /_vf_modules/* path */
 export function serveModule(req: Request, options: ModuleServerOptions): Promise<Response> {
   const url = new URL(req.url);
+  const pathPin = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) === "1"
+    ? extractDependencyPinningPathKey(url.pathname)
+    : { pathname: url.pathname, found: false, malformed: false };
+  if (pathPin.found && !pathPin.malformed) {
+    url.pathname = pathPin.pathname;
+  }
 
   return withSpan(
     "modules.serve",
@@ -238,12 +273,58 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         dev = true,
         projectUUID,
         allowedImportDirs,
-        reactVersion,
+        reactVersion: explicitReactVersion,
+        config,
       } = options;
 
       const effectiveProjectId = projectUUID ?? projectId;
       const method = req.method.toUpperCase();
       const isHeadRequest = method === "HEAD";
+      const queryPinValues = url.searchParams.getAll("pins");
+      const requestedPinKey = pathPin.found ? pathPin.cacheKey : queryPinValues[0];
+      const requestedPinCount = queryPinValues.length + (pathPin.found ? 1 : 0);
+      const hasRequestedPinKey = requestedPinCount > 0;
+      const dependencySource = options.dependencyPinningSource ??
+        createDependencyPinningSource({
+          projectDir,
+          adapter,
+          isLocalProject: options.isLocalProject,
+          projectId: effectiveProjectId,
+          projectSlug: options.projectSlug,
+          contentSourceId: options.contentSourceId,
+          releaseId: options.releaseId,
+          branch: options.branch,
+          config,
+        });
+      const dependencySnapshot = pathPin.malformed ||
+          requestedPinCount > 1 ||
+          (hasRequestedPinKey &&
+            (!requestedPinKey || !DEPENDENCY_PIN_PATTERN.test(requestedPinKey)))
+        ? undefined
+        : await resolveRequestedDependencyPinningSnapshot(
+          dependencySource,
+          requestedPinKey,
+        );
+      if (
+        !dependencySnapshot ||
+        (!requestedPinKey && dependencySnapshot.cacheKey.startsWith("on:"))
+      ) {
+        return createModuleResponse(method, "Unknown dependency snapshot", 409, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+      }
+      const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
+      const dependencyPinningDependencies = dependencySnapshot.dependencies;
+      const snapshotReactVersion = await resolveProjectReactVersion({
+        projectDir,
+        config,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+      });
+      const reactVersion = dependencyPinningCacheKey.startsWith("on:")
+        ? snapshotReactVersion
+        : explicitReactVersion ?? snapshotReactVersion;
 
       const secureFs = createSecureFs({
         baseDir: projectDir,
@@ -316,11 +397,27 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             sourceFile: `_snippets/${hash}.tsx`,
             projectDir,
             adapter,
-            transformOpts: { projectId: effectiveProjectId, dev, ssr: isSSR, reactVersion },
+            transformOpts: {
+              projectId: effectiveProjectId,
+              dev,
+              ssr: isSSR,
+              moduleServerUrl: !isSSR &&
+                  dependencyPinningCacheKey.startsWith("on:") &&
+                  !pathPin.found
+                ? "/_vf_modules"
+                : undefined,
+              moduleServerOrigin: url.origin,
+              reactVersion,
+              dependencyPinningCacheKey,
+              dependencyPinningDependencies,
+              dependencyPinningSource: dependencySource,
+            },
             isSSR,
             ssrRewriteOptions: {
               projectSlug: snippetProjectSlug,
               branch: snippetBranch,
+              projectDir,
+              projectId: effectiveProjectId,
               resolveCacheBuster: createSSRTargetCacheBusterResolver({
                 secureFs,
                 projectDir,
@@ -401,6 +498,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           }
 
           const isSSR = isSSRModuleRequest(req, url);
+          const crossProjectModuleServerUrl = `/_vf_modules/_cross/${projectRef}/@`;
+          const browserCrossProjectModuleServerUrl = dependencyPinningCacheKey.startsWith("on:")
+            ? pathPin.found ? undefined : `/_vf_modules/_cross/${projectRef}/@`
+            : `http://${url.host}`;
 
           const code = await transformModuleToServable({
             source,
@@ -411,12 +512,20 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               projectId: effectiveProjectId,
               dev,
               ssr: isSSR,
-              moduleServerUrl: `http://${url.host}`,
+              moduleServerUrl: isSSR
+                ? crossProjectModuleServerUrl
+                : browserCrossProjectModuleServerUrl,
+              moduleServerOrigin: url.origin,
               reactVersion,
+              dependencyPinningCacheKey,
+              dependencyPinningDependencies,
+              dependencyPinningSource: dependencySource,
             },
             isSSR,
             ssrRewriteOptions: {
               crossProjectRef: projectRef,
+              projectDir,
+              projectId: effectiveProjectId,
               resolveCacheBuster: createSSRTargetCacheBusterResolver({
                 secureFs,
                 projectDir,
@@ -492,6 +601,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           releaseId: options.releaseId!,
           runtimeVersion: VERSION,
           reactVersion,
+          dependencyPinningCacheKey,
+          moduleServerOrigin: url.origin,
           releaseDependencyManifestVersion,
           modulePath,
         })
@@ -591,8 +702,17 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             projectId: effectiveProjectId,
             dev,
             ssr: isSSR,
+            moduleServerUrl: !isSSR &&
+                dependencyPinningCacheKey.startsWith("on:") &&
+                !pathPin.found
+              ? "/_vf_modules"
+              : undefined,
+            moduleServerOrigin: url.origin,
             studioEmbed,
             reactVersion,
+            dependencyPinningCacheKey,
+            dependencyPinningDependencies,
+            dependencyPinningSource: dependencySource,
           };
 
           // The dev-module path has two post-steps that stay outside
@@ -613,6 +733,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             ssrRewriteOptions: {
               projectSlug,
               branch,
+              projectDir,
+              projectId: effectiveProjectId,
               resolveCacheBuster: createSSRTargetCacheBusterResolver({
                 secureFs,
                 projectDir,
@@ -643,7 +765,12 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           }
 
           if (!isSSR) {
-            code = await addReleaseVersionToFallbackImports(code, modulePath, options.releaseId);
+            code = await addReleaseVersionToFallbackImports(
+              code,
+              modulePath,
+              options.releaseId,
+              dependencyPinningCacheKey,
+            );
           }
         }
 

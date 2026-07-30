@@ -6,7 +6,12 @@ import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
-import { readDistributedCache, writeDistributedCache } from "./distributed-cache.ts";
+import {
+  readDistributedCache,
+  resolveMdxDistributedTransformCacheKey,
+  writeDistributedCache,
+} from "./distributed-cache.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 interface LogEntry {
   level: "debug" | "warn" | "info" | "error";
@@ -23,10 +28,12 @@ interface SetCall {
 class FakeDistributedCache implements CacheBackend {
   readonly type = "redis" as const;
   readonly values = new Map<string, string>();
+  readonly getCalls: string[] = [];
   readonly setCalls: SetCall[] = [];
   readonly failingGetKeys = new Set<string>();
 
   get(key: string): Promise<string | null> {
+    this.getCalls.push(key);
     if (this.failingGetKeys.has(key)) {
       return Promise.reject(new Error(`get failed for ${key}`));
     }
@@ -67,6 +74,13 @@ function createCapturingLogger(): { log: Logger; entries: LogEntry[] } {
 
 function installDistributedCache(cache: FakeDistributedCache): void {
   __injectCachesForTests({ cacheBackend: cache });
+}
+
+async function waitForSetKeys(cache: FakeDistributedCache, keys: string[]): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (keys.every((key) => cache.setCalls.some((call) => call.key === key))) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
 }
 
 async function readCache(
@@ -188,5 +202,91 @@ describe("module-fetcher/distributed-cache", () => {
     assertEquals(cache.setCalls[0]?.ttlSeconds, TRANSFORM_DISTRIBUTED_TTL_SEC);
     assertEquals(recovery?.ttlSeconds, TRANSFORM_DISTRIBUTED_TTL_SEC);
     assertEquals(recovery?.value, primary);
+  });
+
+  it("hashes keys whose fully prefixed identity exceeds API constraints", async () => {
+    const prefix = "transform:";
+    const boundaryKey = "k".repeat(512 - prefix.length);
+    const oversizedKey = `${boundaryKey}k`;
+    const unsafeKey = "_vf_modules/app/(marketing)/[slug].tsx";
+
+    assertEquals(
+      await resolveMdxDistributedTransformCacheKey(boundaryKey),
+      boundaryKey,
+    );
+    assertEquals(
+      await resolveMdxDistributedTransformCacheKey(oversizedKey),
+      `sha256:${await computeHash(`${prefix}${oversizedKey}`)}`,
+    );
+    assertEquals(
+      await resolveMdxDistributedTransformCacheKey(unsafeKey),
+      `sha256:${await computeHash(`${prefix}${unsafeKey}`)}`,
+    );
+  });
+
+  it("uses the same bounded identity for long transform and manifest reads and writes", async () => {
+    await withTempDir(async (projectDir) => {
+      const cache = new FakeDistributedCache();
+      const { log } = createCapturingLogger();
+      const longKey = `mdx:${"nested/".repeat(90)}module:content`;
+      const primaryKey = await resolveMdxDistributedTransformCacheKey(longKey);
+      const manifestKey = await resolveMdxDistributedTransformCacheKey(`${longKey}:bm`);
+
+      cache.values.set(primaryKey, "export const cached = true;");
+      const result = await readCache(cache, longKey, projectDir, log);
+
+      assertEquals(result?.code, "export const cached = true;");
+      assertEquals(cache.getCalls.includes(primaryKey), true);
+      assertEquals(cache.getCalls.includes(manifestKey), true);
+
+      writeDistributedCache(
+        cache,
+        longKey,
+        "project-a",
+        "preview-main",
+        `import "./http-deadbeef.mjs"; export const written = true;`,
+        "app/page.mdx",
+        log,
+      );
+      await waitForSetKeys(cache, [primaryKey, manifestKey]);
+
+      assertEquals(cache.setCalls.some((call) => call.key === primaryKey), true);
+      assertEquals(cache.setCalls.some((call) => call.key === manifestKey), true);
+      assertEquals(cache.setCalls.some((call) => call.key === longKey), false);
+      assertEquals(cache.setCalls.some((call) => call.key === `${longKey}:bm`), false);
+    });
+  });
+
+  it("uses the same safe identity for short unsafe transform and manifest reads and writes", async () => {
+    await withTempDir(async (projectDir) => {
+      const cache = new FakeDistributedCache();
+      const { log } = createCapturingLogger();
+      const unsafeKey = "_vf_modules/app/(marketing)/[slug].tsx";
+      const primaryKey = await resolveMdxDistributedTransformCacheKey(unsafeKey);
+      const manifestKey = await resolveMdxDistributedTransformCacheKey(`${unsafeKey}:bm`);
+
+      cache.values.set(primaryKey, "export const cached = true;");
+      const result = await readCache(cache, unsafeKey, projectDir, log);
+
+      assertEquals(result?.code, "export const cached = true;");
+      assertEquals(cache.getCalls.includes(primaryKey), true);
+      assertEquals(cache.getCalls.includes(manifestKey), true);
+
+      writeDistributedCache(
+        cache,
+        unsafeKey,
+        "project-a",
+        "preview-main",
+        `import "./http-deadbeef.mjs"; export const written = true;`,
+        "app/(marketing)/[slug].mdx",
+        log,
+      );
+      await waitForSetKeys(cache, [primaryKey, manifestKey]);
+
+      assertEquals(cache.setCalls.some((call) => call.key === primaryKey), true);
+      assertEquals(cache.setCalls.some((call) => call.key === manifestKey), true);
+      assertEquals(cache.setCalls.some((call) => call.key === unsafeKey), false);
+      assertEquals(cache.setCalls.some((call) => call.key === `${unsafeKey}:bm`), false);
+    });
   });
 });

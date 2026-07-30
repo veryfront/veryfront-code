@@ -4,7 +4,7 @@ import type {
   RewriteContext,
   RewriteResult,
 } from "../types.ts";
-import { normalizeExtension } from "../url-builder.ts";
+import { appendDependencyPinningPathKey, normalizeExtension } from "../url-builder.ts";
 import { getProjectRelativePath } from "../project-paths.ts";
 
 export class AliasStrategy implements ImportRewriteStrategy {
@@ -25,6 +25,9 @@ export class AliasStrategy implements ImportRewriteStrategy {
       if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css)$/.test(normalizedPath)) {
         normalizedPath = `${normalizedPath}.js`;
       }
+      // The SSR adapter adds `ssr`, routing, cache-buster, and dependency
+      // snapshot params together after this strategy runs. Keeping this URL
+      // query-free ensures its `.js` matcher still sees the edge.
       return { specifier: `/_vf_modules/${normalizedPath}` };
     }
 
@@ -37,7 +40,12 @@ export class AliasStrategy implements ImportRewriteStrategy {
       if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css)$/.test(normalizedPath)) {
         normalizedPath = `${normalizedPath}.js`;
       }
-      return { specifier: `${ctx.moduleServerUrl}/${normalizedPath}` };
+      return {
+        specifier: appendDependencyPinningPathKey(
+          `${ctx.moduleServerUrl}/${normalizedPath}`,
+          ctx.dependencyPinningCacheKey,
+        ),
+      };
     }
 
     // Fallback: Use relative paths when no module server is configured.
@@ -53,6 +61,9 @@ export class AliasStrategy implements ImportRewriteStrategy {
       relativePath = `${relativePath}.js`;
     }
 
+    // Browser-relative edges inherit the snapshot from the path-scoped parent
+    // module URL. Adding a query token here would create an ambiguous
+    // path+query request at the strict module endpoint.
     return { specifier: relativePath };
   }
 }

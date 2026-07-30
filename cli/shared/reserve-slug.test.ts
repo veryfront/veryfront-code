@@ -49,4 +49,28 @@ describe("reserveProjectSlug", () => {
     );
     assertEquals(requests, 1);
   });
+
+  it("uses problem JSON detail and suggestion for create-project failures", async () => {
+    await assertRejects(
+      () =>
+        withMockFetch(() =>
+          Promise.resolve(
+            Response.json({
+              title: "Validation failed",
+              status: 400,
+              detail: "Project slug is reserved.",
+              suggestion: "Choose another project name.",
+              slug: "validation-failed",
+            }, { status: 400 }),
+          ), () =>
+          reserveProjectSlug(
+            "admin",
+            "token",
+            undefined,
+            "https://control.example.test/api",
+          )),
+      Error,
+      "Project slug is reserved. Choose another project name.",
+    );
+  });
 });

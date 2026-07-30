@@ -68,7 +68,7 @@ function render(): void {
   if (state.steps.length > 0) {
     const stepLine = state.steps
       .map((s, i) => {
-        const icon = s.done ? success("✓") : i === state.currentStep ? brand(spinner) : dim("○");
+        const icon = s.done ? "✓" : i === state.currentStep ? brand(spinner) : dim("○");
         const text = s.done ? dim(s.label) : s.label;
         return `${icon} ${text}`;
       })

@@ -86,6 +86,222 @@ describe("Hydration Parity", () => {
       // Browser uses relative paths
       expect(browserResult).toContain("../../components/Button.js");
     });
+
+    it("keeps every browser child-module edge on the captured snapshot", async () => {
+      const code = [
+        `import RelativeChild from "./RelativeChild.js";`,
+        `import AliasChild from "@/components/AliasChild";`,
+        `import { Head } from "veryfront/head";`,
+        `import RemoteChild from "shared@1.0.0/@/components/RemoteChild";`,
+        `import { AsyncLocalStorage } from "node:async_hooks";`,
+        `import "./RelativeSideEffect.js";`,
+        `const AliasDynamic = import("@/components/AliasDynamic");`,
+      ].join("\n");
+
+      const result = await rewriteImports(
+        code,
+        createContext({
+          target: "browser",
+          dependencyPinningCacheKey: "on:snapshot-a",
+        }),
+      );
+
+      expect(result).toContain("./RelativeChild.js");
+      expect(result).toContain("../components/AliasChild.js");
+      expect(result).toContain(
+        "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/runtime/core.js",
+      );
+      expect(result).toContain(
+        "/_vf_modules/_pins/on%3Asnapshot-a/_cross/shared@1.0.0/@/components/RemoteChild.tsx",
+      );
+      expect(result).toContain(
+        "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/platform/polyfills/node-async-hooks.js",
+      );
+      expect(result).toContain("./RelativeSideEffect.js");
+      expect(result).toContain("../components/AliasDynamic.js");
+      expect(result).not.toContain("pins=");
+    });
+
+    it("path-binds literal and computed browser module imports without changing options", async () => {
+      const code = [
+        `import AbsoluteChild from "https://app.example/_vf_modules/components/Absolute.js?pins=on%3Astale#entry";`,
+        `import ProtocolChild from "//app.example/_vf_modules/components/Protocol.js";`,
+        `import ForeignChild from "https://cdn.example.com/_vf_modules/components/Foreign.js";`,
+        `const relativePath = "./RelativeLazy.js";`,
+        `const rootPath = "/_vf_modules/components/RootLazy.js?pins=on%3Astale";`,
+        `const barePath = "feature-package";`,
+        `const remotePath = "https://cdn.example.com/remote.js";`,
+        `const nonStringPath = { toString() { throw new Error("native coercion"); } };`,
+        `export const relative = () => import(relativePath);`,
+        `export const root = () => import(rootPath, { with: { type: "json" } });`,
+        `export const bare = () => import(barePath);`,
+        `export const remote = () => import(remotePath);`,
+        `export const nonString = () => import(nonStringPath);`,
+        `export const literal = () => import("/_vf_modules/components/Literal.js");`,
+        `export const absoluteLiteral = () => import("https://app.example/_vf_modules/components/AbsoluteLazy.js");`,
+        `export const protocolLiteral = () => import("//app.example/_vf_modules/components/ProtocolLazy.js");`,
+        `export { AbsoluteChild, ProtocolChild, ForeignChild };`,
+      ].join("\n");
+      const context = createContext({
+        target: "browser",
+        filePath: "/project/components/Parent.ts",
+        moduleServerOrigin: "https://app.example",
+        dependencyPinningCacheKey: "on:snapshot-a",
+      });
+
+      const result = await rewriteImports(code, context);
+      expect(result).toContain(
+        `import("/_vf_modules/_pins/on%3Asnapshot-a/components/Literal.js")`,
+      );
+      expect(result).toContain(
+        `from "/_vf_modules/_pins/on%3Asnapshot-a/components/Absolute.js#entry"`,
+      );
+      expect(result).toContain(
+        `from "/_vf_modules/_pins/on%3Asnapshot-a/components/Protocol.js"`,
+      );
+      expect(result).toContain(
+        `import("/_vf_modules/_pins/on%3Asnapshot-a/components/AbsoluteLazy.js")`,
+      );
+      expect(result).toContain(
+        `import("/_vf_modules/_pins/on%3Asnapshot-a/components/ProtocolLazy.js")`,
+      );
+      expect(result).toContain(
+        `from "https://cdn.example.com/_vf_modules/components/Foreign.js"`,
+      );
+      expect(result).toContain("/*__vf_dependency_pinned__*/");
+      expect(result).toContain(`, { with: { type: "json" } })`);
+
+      const helperMatch = result.match(
+        /\n(function (__veryfrontPinDynamicImport_*)[\s\S]+)\n$/,
+      );
+      expect(helperMatch).not.toBeNull();
+      const helper = new Function(
+        `${helperMatch?.[1]}; return ${helperMatch?.[2]};`,
+      )() as (value: unknown, parentUrl: string, modulePath?: string) => unknown;
+      const parentUrl =
+        "https://app.example/_vf_modules/_pins/on%3Asnapshot-a/components/Parent.js";
+      const modulePath = "/_vf_modules/_pins/on%3Asnapshot-a/components/Parent.js";
+
+      expect(helper("./RelativeLazy.js", parentUrl, modulePath)).toBe(
+        "/_vf_modules/_pins/on%3Asnapshot-a/components/RelativeLazy.js",
+      );
+      expect(
+        helper(
+          "/_vf_modules/components/RootLazy.js?pins=on%3Astale#entry",
+          parentUrl,
+          modulePath,
+        ),
+      ).toBe(
+        "/_vf_modules/_pins/on%3Asnapshot-a/components/RootLazy.js#entry",
+      );
+      expect(
+        helper(
+          "HTTPS://app.example/_vf_modules/components/Uppercase.js",
+          parentUrl,
+          modulePath,
+        ),
+      ).toBe(
+        "/_vf_modules/_pins/on%3Asnapshot-a/components/Uppercase.js",
+      );
+      expect(helper("feature-package", parentUrl, modulePath)).toBe("feature-package");
+      expect(helper("https://cdn.example.com/remote.js", parentUrl, modulePath)).toBe(
+        "https://cdn.example.com/remote.js",
+      );
+      const nonString = {
+        toString(): string {
+          throw new Error("native coercion");
+        },
+      };
+      expect(helper(nonString, parentUrl, modulePath)).toBe(nonString);
+      expect(
+        helper("../../../Escape.js", parentUrl, modulePath),
+      ).toBe("/_vf_modules/_pins/invalid");
+
+      expect(await rewriteImports(result, context)).toBe(result);
+    });
+
+    it("keeps computed cross-project SSR children on the snapshot and SSR target", async () => {
+      const code = [
+        `import StaticAbsolute from "HTTPS://app.example/_vf_modules/shared/StaticAbsolute.js";`,
+        `import StaticProtocol from "//app.example/_vf_modules/shared/StaticProtocol.js";`,
+        `import StaticForeign from "https://cdn.example/_vf_modules/shared/StaticForeign.js";`,
+        `const relativePath = "./Relative.js";`,
+        `const aliasPath = "@/shared/Alias.js";`,
+        `const rootPath = "/_vf_modules/shared/Root.js";`,
+        `const absolutePath = "HTTPS://app.example/_vf_modules/shared/Absolute.js";`,
+        `const protocolPath = "//app.example/_vf_modules/shared/Protocol.js";`,
+        `const foreignPath = "https://cdn.example/_vf_modules/shared/Foreign.js";`,
+        `export const relative = () => import(relativePath);`,
+        `export const alias = () => import(aliasPath);`,
+        `export const root = () => import(rootPath);`,
+        `export const absolute = () => import(absolutePath);`,
+        `export const protocol = () => import(protocolPath);`,
+        `export const foreign = () => import(foreignPath);`,
+        `export { StaticAbsolute, StaticProtocol, StaticForeign };`,
+      ].join("\n");
+      const result = await rewriteImports(
+        code,
+        createContext({
+          target: "ssr",
+          filePath: "components/Parent.ts",
+          moduleServerUrl: "/_vf_modules/_cross/remote@1.0.0/@",
+          moduleServerOrigin: "https://app.example",
+          dependencyPinningCacheKey: "on:snapshot-a",
+        }),
+      );
+      const helperMatch = result.match(
+        /\n(function (__veryfrontPinDynamicImport_*)[\s\S]+)\n$/,
+      );
+      expect(result).toContain(
+        `from "https://app.example/_vf_modules/shared/StaticAbsolute.js?ssr=true&pins=on%3Asnapshot-a"`,
+      );
+      expect(result).toContain(
+        `from "https://app.example/_vf_modules/shared/StaticProtocol.js?ssr=true&pins=on%3Asnapshot-a"`,
+      );
+      expect(result).toContain(
+        `from "https://cdn.example/_vf_modules/shared/StaticForeign.js"`,
+      );
+      expect(helperMatch).not.toBeNull();
+      const helper = new Function(
+        `${helperMatch?.[1]}; return ${helperMatch?.[2]};`,
+      )() as (value: unknown, parentUrl: string, modulePath?: string) => unknown;
+      const parentUrl =
+        "https://app.example/_vf_modules/_cross/remote@1.0.0/@/components/Parent.js?ssr=true&pins=on%3Asnapshot-a";
+      const modulePath =
+        "/_vf_modules/_pins/on%3Asnapshot-a/_cross/remote@1.0.0/@/components/Parent.js";
+
+      expect(helper("./Relative.js", parentUrl, modulePath)).toBe(
+        "/_vf_modules/_pins/on%3Asnapshot-a/_cross/remote@1.0.0/@/components/Relative.js?ssr=true",
+      );
+      expect(helper("@/shared/Alias.js", parentUrl, modulePath)).toBe(
+        "/_vf_modules/_pins/on%3Asnapshot-a/_cross/remote@1.0.0/@/shared/Alias.js?ssr=true",
+      );
+      for (
+        const [value, expected] of [
+          [
+            "/_vf_modules/shared/Root.js",
+            "/_vf_modules/_pins/on%3Asnapshot-a/shared/Root.js?ssr=true",
+          ],
+          [
+            "HTTPS://app.example/_vf_modules/shared/Absolute.js",
+            "/_vf_modules/_pins/on%3Asnapshot-a/shared/Absolute.js?ssr=true",
+          ],
+          [
+            "//app.example/_vf_modules/shared/Protocol.js",
+            "/_vf_modules/_pins/on%3Asnapshot-a/shared/Protocol.js?ssr=true",
+          ],
+        ] as const
+      ) {
+        expect(helper(value, parentUrl, modulePath)).toBe(expected);
+      }
+      expect(
+        helper(
+          "https://cdn.example/_vf_modules/shared/Foreign.js",
+          parentUrl,
+          modulePath,
+        ),
+      ).toBe("https://cdn.example/_vf_modules/shared/Foreign.js");
+    });
   });
 
   describe("Strategy priority", () => {

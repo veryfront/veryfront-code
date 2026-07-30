@@ -60,14 +60,21 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
   error: 3,
 };
 
-// Log level configuration
-const MIN_LOG_LEVEL: LogLevel = (() => {
+/**
+ * Resolve the minimum log level per call so that flags set after module
+ * initialization (e.g. --debug parsed in the CLI router) take effect.
+ * Reading eagerly at module load would freeze the level at import time,
+ * which broke --debug when the proxy module was imported before flag parsing.
+ */
+function getMinLogLevel(): LogLevel {
   const level = getEnv("LOG_LEVEL")?.toLowerCase();
   if (level === "debug" || level === "info" || level === "warn" || level === "error") {
     return level;
   }
-  return "info"; // Default: suppress debug logs
-})();
+  const debugFlag = getEnv("VERYFRONT_DEBUG");
+  if (debugFlag === "1" || debugFlag === "true") return "debug";
+  return "info";
+}
 
 function isTty(): boolean {
   try {
@@ -143,17 +150,17 @@ function getLogFormat(): "json" | "text" {
 }
 
 class ProxyLogger {
-  private format = getLogFormat();
-
   private log(
     level: LogLevel,
     message: string,
     context?: Record<string, unknown>,
     error?: unknown,
   ): void {
-    if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[MIN_LOG_LEVEL]) return;
+    // Resolve level and format per call so --debug flags set after module init take effect.
+    if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[getMinLogLevel()]) return;
+    const format = getLogFormat();
 
-    if (this.format !== "json") {
+    if (format !== "json") {
       console.log(formatTextLine(level, message, context, serializeError(error)));
       return;
     }

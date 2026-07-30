@@ -5,12 +5,16 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  resetInteractiveMode,
-  setAutoConfirm,
-  setNonInteractive,
-} from "../../shared/interactive.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { setJsonMode } from "../../shared/json-output.ts";
+import type {
+  DeployEvent,
+  DeployProject,
+  DeployProjectRequest,
+} from "../../shared/deployment/deploy-project.ts";
+import type { DeployResult } from "../../shared/deployment/result.ts";
+import { stripAnsi } from "../../ui/ansi.ts";
 import {
   assertProjectOwnership,
   createDeployment,
@@ -23,13 +27,16 @@ import {
   getRelease,
   getReleaseSourceDigest,
   parseDeployArgs,
-  requiresExplicitDeployConfirmation,
+  resolvePushedSource,
   verifyDeployment,
   verifyReleaseSource,
+  waitForEnvironmentReady,
+  waitForReleaseAssetManifest,
 } from "./index.ts";
+import { deployCommandWithProjectForTesting } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
-import { computeSourceDigest } from "../../shared/deployment-provenance.ts";
+import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -52,6 +59,24 @@ function createMockClient(overrides: MockClientOverrides = {}): ApiClient {
   };
 }
 
+async function captureConsole<T>(fn: () => Promise<T>): Promise<{ result: T; output: string[] }> {
+  const output: string[] = [];
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  console.log = (...args: unknown[]) => {
+    output.push(args.map(String).join(" "));
+  };
+  console.warn = (...args: unknown[]) => {
+    output.push(args.map(String).join(" "));
+  };
+  try {
+    return { result: await fn(), output };
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+  }
+}
+
 async function expectErrorMessage(fn: () => Promise<unknown>): Promise<string | undefined> {
   try {
     await fn();
@@ -61,13 +86,511 @@ async function expectErrorMessage(fn: () => Promise<unknown>): Promise<string | 
   }
 }
 
+async function runGit(projectDir: string, ...args: string[]) {
+  const result = await new Deno.Command("git", {
+    args,
+    cwd: projectDir,
+    clearEnv: true,
+    env: Object.fromEntries(
+      Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
+    ),
+    stdout: "null",
+    stderr: "piped",
+  }).output();
+  assertEquals(result.success, true, new TextDecoder().decode(result.stderr));
+}
+
+async function commitProject(projectDir: string) {
+  await runGit(projectDir, "init", "--quiet");
+  await runGit(projectDir, "config", "user.email", "test@veryfront.com");
+  await runGit(projectDir, "config", "user.name", "Veryfront Test");
+  await runGit(projectDir, "add", ".");
+  await runGit(projectDir, "commit", "--quiet", "-m", "initial");
+  return new TextDecoder().decode(
+    (await new Deno.Command("git", {
+      args: ["rev-parse", "HEAD"],
+      cwd: projectDir,
+      clearEnv: true,
+      env: Object.fromEntries(
+        Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
+      ),
+      stdout: "piped",
+    }).output()).stdout,
+  ).trim();
+}
+
+describe("deploy command adapters", () => {
+  it("render human and JSON output from one injected deployment executor", async () => {
+    const sentinelResult: DeployResult = {
+      projectId: "project-sentinel",
+      projectSlug: "sentinel-project",
+      release: {
+        id: "release-sentinel",
+        name: "release-from-fake",
+        version: "2026.07.30-1",
+      },
+      environment: "production",
+      environmentId: "environment-sentinel",
+      deploymentId: "deployment-sentinel",
+      url: "https://sentinel.example.test/dashboard",
+      protected: true,
+      routingConvergence: { status: "converged", acknowledged: 3, recipients: 3 },
+      commitSha: "f".repeat(40),
+      sourceDigest: "sha256:sentinel",
+      controlPlane: "https://control.example.test/api",
+      branch: "main",
+    };
+    const observedRequests: DeployProjectRequest[] = [];
+    const createFakeDeployment = (): DeployProject => ({
+      async execute(request, observer) {
+        observedRequests.push(request);
+        const events: DeployEvent[] = [
+          { kind: "step", step: "resolve-config", phase: "started" },
+          { kind: "step", step: "resolve-config", phase: "completed" },
+          { kind: "step", step: "create-deployment", phase: "started" },
+          { kind: "step", step: "create-deployment", phase: "completed" },
+          {
+            kind: "warning",
+            code: "routing-convergence-unconfirmed",
+            message: "sentinel warning",
+          },
+        ];
+        for (const event of events) await observer?.onEvent(event);
+        return { kind: "deployed", result: sentinelResult };
+      },
+    });
+    const options = {
+      projectDir: "adapter-must-not-read",
+      branch: "main",
+      env: "production",
+      releaseName: "release-from-options",
+      dryRun: false,
+      force: false,
+      quiet: false,
+      skipSourcePush: true,
+      environmentPollIntervalMs: 1,
+      environmentTimeoutMs: 1,
+    };
+
+    const human = await withMockFetch(
+      () => {
+        throw new Error("adapter performed fetch orchestration");
+      },
+      () =>
+        captureConsole(() =>
+          deployCommandWithProjectForTesting(options, {
+            createDeployProject: createFakeDeployment,
+          })
+        ),
+    );
+
+    let json: { result: DeployResult | null; output: string[] };
+    try {
+      setJsonMode(true);
+      json = await withMockFetch(
+        () => {
+          throw new Error("adapter performed fetch orchestration");
+        },
+        () =>
+          captureConsole(() =>
+            deployCommandWithProjectForTesting(options, {
+              createDeployProject: createFakeDeployment,
+            })
+          ),
+      );
+    } finally {
+      setJsonMode(false);
+    }
+
+    assertEquals(observedRequests.length, 2);
+    assertEquals(observedRequests[0], observedRequests[1]);
+    assertEquals(observedRequests[0], {
+      projectDir: "adapter-must-not-read",
+      branch: "main",
+      environment: "production",
+      releaseName: "release-from-options",
+      mode: "apply",
+      source: { kind: "already-pushed" },
+    });
+    assertEquals(human.result, sentinelResult);
+    assertEquals(json.result, sentinelResult);
+
+    const humanOutput = stripAnsi(human.output.join("\n"));
+    assertEquals(humanOutput.includes("Deployed sentinel-project to production"), true);
+    const expectedUrlLine = `  ${sentinelResult.url}`;
+    assertEquals(
+      human.output.map(stripAnsi).find((line) => line === expectedUrlLine),
+      expectedUrlLine,
+    );
+    assertEquals(humanOutput.includes("Release 2026.07.30-1"), true);
+    assertEquals(humanOutput.includes("sentinel warning"), true);
+
+    const jsonRecords = json.output.map((line) => JSON.parse(line));
+    assertEquals(
+      jsonRecords
+        .filter((record) => record.type === "step")
+        .map((record) => `${record.name}:${record.status}`),
+      [
+        "resolve-config:started",
+        "resolve-config:completed",
+        "deploy:started",
+        "deploy:completed",
+      ],
+    );
+    assertEquals(jsonRecords.at(-2), {
+      type: "warning",
+      code: "routing-convergence-unconfirmed",
+      message: "sentinel warning",
+    });
+    assertEquals(jsonRecords.at(-1), {
+      type: "result",
+      success: true,
+      data: sentinelResult,
+    });
+  });
+});
+
+describe("pushed source provenance", () => {
+  it("accepts dirty metadata when the pushed source digest targets the current commit", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+      const commitSha = await commitProject(projectDir);
+      const sourceDigest = await computeSourceDigest([
+        { path: "app.ts", content: "export const value = 1;\n" },
+      ]);
+      await writePushReceipt(projectDir, {
+        controlPlane: "https://control.example.test/api",
+        projectId: "550e8400-e29b-41d4-a716-446655440000",
+        projectSlug: "my-project",
+        branch: "main",
+        commitSha,
+        sourceDigest,
+        clean: false,
+        pushedAt: "2026-07-10T09:20:00.000Z",
+      });
+      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+
+      const result = await resolvePushedSource({
+        projectDir,
+        controlPlane: "https://control.example.test/api",
+        projectId: "550e8400-e29b-41d4-a716-446655440000",
+        projectSlug: "my-project",
+        branch: "main",
+      });
+
+      assertEquals(result, { commitSha, sourceDigest });
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+});
+
+describe("environment URL readiness", () => {
+  const hostedTarget = {
+    projectSlug: "my-project",
+    environmentName: "production",
+    url: "https://my-project.production.veryfront.com",
+    protected: false,
+    apiToken: "test-token",
+  };
+
+  it("retries a transient 404 before accepting the environment URL", async () => {
+    const statuses = [404, 200];
+    let requests = 0;
+
+    await withMockFetch(
+      () => Promise.resolve(new Response("ready", { status: statuses[requests++] })),
+      () =>
+        waitForEnvironmentReady(hostedTarget, {
+          pollIntervalMs: 1,
+          timeoutMs: 1_000,
+        }),
+    );
+
+    assertEquals(requests, 2);
+  });
+
+  it("probes the discovered page route instead of requiring the root route", async () => {
+    let requestedUrl = "";
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestedUrl = request.url;
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          route: "/dashboard",
+        }),
+    );
+
+    assertEquals(
+      requestedUrl,
+      "https://my-project.production.veryfront.com/dashboard",
+    );
+  });
+
+  it("does not require a browser URL for projects without page routes", async () => {
+    let requests = 0;
+
+    await withMockFetch(
+      () => {
+        requests++;
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          route: null,
+        }),
+    );
+
+    assertEquals(requests, 0);
+  });
+
+  it("authenticates a protected Veryfront environment with the stored token", async () => {
+    let cookie: string | null = null;
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        cookie = request.headers.get("cookie");
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+        }),
+    );
+
+    assertEquals(cookie, "authToken=test-token");
+  });
+
+  it("upgrades authenticated Veryfront environment probes to HTTPS", async () => {
+    let requestedUrl = "";
+    let cookie: string | null = null;
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestedUrl = request.url;
+        cookie = request.headers.get("cookie");
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "http://my-project.production.veryfront.com",
+          protected: true,
+        }),
+    );
+
+    assertEquals(requestedUrl, "https://my-project.production.veryfront.com/");
+    assertEquals(cookie, "authToken=test-token");
+  });
+
+  it("does not send credentials to a mismatched Veryfront project host", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({
+          url: request.url,
+          cookie: request.headers.get("cookie"),
+        });
+        return Promise.resolve(
+          request.url === "https://other-project.production.veryfront.com/"
+            ? new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            })
+            : new Response("ready"),
+        );
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://other-project.production.veryfront.com",
+          protected: true,
+        }),
+    );
+
+    assertEquals(requests, [
+      {
+        url: "https://other-project.production.veryfront.com/",
+        cookie: null,
+      },
+      {
+        url: "https://my-project.production.veryfront.com/",
+        cookie: "authToken=test-token",
+      },
+    ]);
+  });
+
+  it("authenticates a protected veryfront.org environment directly", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({
+          url: request.url,
+          cookie: request.headers.get("cookie"),
+        });
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://my-project.production.veryfront.org",
+          protected: true,
+        }),
+    );
+
+    assertEquals(requests, [{
+      url: "https://my-project.production.veryfront.org/",
+      cookie: "authToken=test-token",
+    }]);
+  });
+
+  it("checks a protected custom domain without sending it the token", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({
+          url: request.url,
+          cookie: request.headers.get("cookie"),
+        });
+        return Promise.resolve(
+          request.url === "https://app.example.com/"
+            ? new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            })
+            : new Response("ready"),
+        );
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://app.example.com",
+          protected: true,
+        }),
+    );
+
+    assertEquals(requests, [
+      { url: "https://app.example.com/", cookie: null },
+      {
+        url: "https://my-project.production.veryfront.com/",
+        cookie: "authToken=test-token",
+      },
+    ]);
+  });
+
+  it("checks a public custom domain directly without credentials", async () => {
+    let requestedUrl = "";
+    let cookie: string | null = null;
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestedUrl = request.url;
+        cookie = request.headers.get("cookie");
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://app.example.com",
+        }),
+    );
+
+    assertEquals(requestedUrl, "https://app.example.com/");
+    assertEquals(cookie, null);
+  });
+
+  it("reports malformed environment URLs without polling", async () => {
+    await assertRejects(
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://[invalid",
+        }),
+      Error,
+      'Environment URL "https://[invalid" is invalid',
+    );
+  });
+
+  it("does not crash on a malformed redirect location", async () => {
+    await withMockFetch(
+      () =>
+        Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://[" },
+          }),
+        ),
+      () => waitForEnvironmentReady(hostedTarget),
+    );
+  });
+
+  it("reports an actionable authentication error for sign-in redirects", async () => {
+    await withMockFetch(
+      () =>
+        Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        ),
+      () =>
+        assertRejects(
+          () =>
+            waitForEnvironmentReady({
+              ...hostedTarget,
+              protected: true,
+            }),
+          Error,
+          "veryfront login",
+        ),
+    );
+  });
+
+  it("reports the URL and last status when readiness times out", async () => {
+    const error = await withMockFetch(
+      () => Promise.resolve(new Response("not ready", { status: 404 })),
+      () =>
+        expectErrorMessage(
+          () =>
+            waitForEnvironmentReady(hostedTarget, {
+              pollIntervalMs: 1,
+              timeoutMs: 2,
+            }),
+        ),
+    );
+
+    assertEquals(
+      error,
+      "Environment URL https://my-project.production.veryfront.com did not become ready within 1s (last response: HTTP 404). Check the deployment and run deploy again.",
+    );
+  });
+});
+
 describe("DeployArgsSchema", () => {
   it("should use default values", () => {
     const result = DeployArgsSchema.safeParse({});
     assertEquals(result.success, true);
     if (!result.success) return;
 
-    assertEquals(result.data.branch, "main");
+    assertEquals(result.data.branch, undefined);
     assertEquals(result.data.env, "production");
   });
 
@@ -89,25 +612,6 @@ describe("DeployArgsSchema", () => {
   });
 });
 
-describe("deploy confirmation policy", () => {
-  afterEach(() => resetInteractiveMode());
-
-  it("requires --force or --yes in non-interactive environments", () => {
-    setNonInteractive(true);
-    assertEquals(requiresExplicitDeployConfirmation(false), true);
-  });
-
-  it("accepts explicit --yes auto-confirmation", () => {
-    setAutoConfirm(true);
-    assertEquals(requiresExplicitDeployConfirmation(false), false);
-  });
-
-  it("accepts the command-specific force flag", () => {
-    setNonInteractive(true);
-    assertEquals(requiresExplicitDeployConfirmation(true), false);
-  });
-});
-
 describe("parseDeployArgs", () => {
   it("should use defaults when no args provided", () => {
     const args = { _: ["deploy"] } as ParsedArgs;
@@ -115,7 +619,7 @@ describe("parseDeployArgs", () => {
     assertEquals(result.success, true);
     if (!result.success) return;
 
-    assertEquals(result.data.branch, "main");
+    assertEquals(result.data.branch, undefined);
     assertEquals(result.data.env, "production");
   });
 
@@ -199,6 +703,34 @@ describe("getEnvironmentByName", () => {
     const env = await getEnvironmentByName(mockClient, "my-project", "nonexistent");
     assertEquals(env, null);
   });
+
+  it("preserves environment ownership aliases from the API response", async () => {
+    const mockClient = createMockClient({
+      get: () =>
+        Promise.resolve({
+          data: [
+            {
+              id: "env-1",
+              name: "production",
+              protected: true,
+              project_id: "project-1",
+              projectId: "project-1-alias",
+              project: { id: "project-1-reference" },
+            },
+          ],
+        }),
+    });
+
+    const env = await getEnvironmentByName(mockClient, "my-project", "production");
+    assertEquals(env, {
+      id: "env-1",
+      name: "production",
+      protected: true,
+      project_id: "project-1",
+      projectId: "project-1-alias",
+      project: { id: "project-1-reference" },
+    });
+  });
 });
 
 describe("createRelease", () => {
@@ -264,6 +796,35 @@ describe("createRelease", () => {
 
     await createRelease(mockClient, "my-project", { name: "v2.0.0", branch: "develop" });
     assertEquals(capturedBody, { name: "v2.0.0", branch_reference: "develop" });
+  });
+
+  it("preserves API-supplied release status fields and ownership aliases", async () => {
+    const mockClient = createMockClient({
+      post: () =>
+        Promise.resolve({
+          id: "rel-123",
+          name: "v2.0.0",
+          version: "1.0.0",
+          project_id: "project-1",
+          projectId: "project-1-alias",
+          project: { id: "project-1-reference" },
+          export_status: "exported",
+          build_status: "built",
+          deploy_status: "ready",
+        }),
+    });
+
+    assertEquals(await createRelease(mockClient, "my-project", { name: "v2.0.0" }), {
+      id: "rel-123",
+      name: "v2.0.0",
+      version: "1.0.0",
+      project_id: "project-1",
+      projectId: "project-1-alias",
+      project: { id: "project-1-reference" },
+      export_status: "exported",
+      build_status: "built",
+      deploy_status: "ready",
+    });
   });
 });
 
@@ -1082,5 +1643,107 @@ describe("deployment verification", () => {
 
     assertEquals(result.sourceDigest, sourceDigest);
     assertEquals(sourceReads, 2);
+  });
+});
+
+describe("waitForReleaseAssetManifest", () => {
+  function readyManifest(routes: Record<string, { modules: string[]; css: string[] }> = {
+    "/": { modules: ["app/page.tsx"], css: [] },
+  }) {
+    return {
+      state: "ready",
+      manifest_version: 1,
+      manifest: {
+        schemaVersion: 1,
+        projectId: "proj-1",
+        releaseId: "rel-1",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "test",
+        sourceContentHash: "sha256:abc",
+        createdAt: "2026-07-27T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {
+          "app/page.tsx": {
+            contentHash: "a".repeat(64),
+            size: 1,
+            contentType: "text/javascript",
+          },
+        },
+        css: [],
+        routes,
+        dependencies: {},
+        fallback: { mode: "jit", gaps: [] },
+      },
+    };
+  }
+
+  it("returns a ready manifest that covers expected routes", async () => {
+    const mockClient = createMockClient({
+      get: () => Promise.resolve(readyManifest()),
+    });
+
+    const result = await waitForReleaseAssetManifest(mockClient, "my-project", "rel-1", {
+      expectedRoutes: ["/"],
+      pollIntervalMs: 100,
+      timeoutMs: 100,
+    });
+
+    assertEquals(result.state, "ready");
+  });
+
+  it("rejects ready empty manifests before deployment", async () => {
+    const mockClient = createMockClient({
+      get: () => Promise.resolve(readyManifest({})),
+    });
+
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(mockClient, "my-project", "rel-1", {
+          expectedRoutes: ["/", "/about"],
+          pollIntervalMs: 100,
+          timeoutMs: 100,
+        }),
+      Error,
+      "Missing routes: /, /about",
+    );
+  });
+
+  it("rejects ready manifests with empty route module coverage", async () => {
+    const mockClient = createMockClient({
+      get: () => Promise.resolve(readyManifest({ "/": { modules: [], css: [] } })),
+    });
+
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(mockClient, "my-project", "rel-1", {
+          expectedRoutes: ["/"],
+          pollIntervalMs: 100,
+          timeoutMs: 100,
+        }),
+      Error,
+      "Missing routes: /",
+    );
+  });
+
+  it("accepts empty manifests when no page routes are expected", async () => {
+    const mockClient = createMockClient({
+      get: () =>
+        Promise.resolve({
+          ...readyManifest({}),
+          manifest: {
+            ...readyManifest({}).manifest,
+            modules: {},
+          },
+        }),
+    });
+
+    const result = await waitForReleaseAssetManifest(mockClient, "my-project", "rel-1", {
+      expectedRoutes: [],
+      pollIntervalMs: 100,
+      timeoutMs: 100,
+    });
+
+    assertEquals(result.state, "ready");
   });
 });

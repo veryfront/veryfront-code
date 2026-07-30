@@ -29,7 +29,7 @@ export async function initLexer(): Promise<void> {
 }
 
 // Matches HTTP/HTTPS URLs in string literals (single, double, or backtick quotes)
-const HTTP_URL_PATTERN = /(?<!\\)(['"`])(https?:\/\/[^'"`\n\\]+)\1/g;
+const HTTP_URL_PATTERN = /(?<!\\)(['"`])(https?:\/\/[^'"`\n\\]+)\1/gi;
 
 interface UrlMaskResult {
   masked: string;
@@ -43,7 +43,10 @@ function maskHttpUrls(code: string): UrlMaskResult {
   const masked = code.replace(
     HTTP_URL_PATTERN,
     (_match, quote: string, url: string) => {
-      const placeholder = `__VFURL_${counter++}__`;
+      let placeholder: string;
+      do {
+        placeholder = `__VFURL_${counter++}__`;
+      } while (code.includes(placeholder) || urlMap.has(placeholder));
       urlMap.set(placeholder, url);
       return `${quote}${placeholder}${quote}`;
     },
@@ -70,6 +73,12 @@ function unmaskUrl(specifier: string, urlMap: Map<string, string>): string {
 export interface ParsedImportEdits {
   /** All imports found in the code */
   imports: ImportSpecifierInfo[];
+  /** Dynamic imports whose specifier is an expression rather than a literal. */
+  computedDynamicImports: Array<{
+    start: number;
+    end: number;
+    dynamicImportStart: number;
+  }>;
   /** URL map for restoring masked HTTP URLs */
   urlMap: Map<string, string>;
   /** Original masked code (for position calculations) */
@@ -97,8 +106,138 @@ export async function parseImportEdits(code: string): Promise<ParsedImportEdits>
       statementEnd: imp.se,
       raw: imp as ImportSpecifier,
     }));
+  const computedDynamicImports = rawImports
+    .filter((imp) => imp.n === undefined && imp.d >= 0)
+    .map((imp) => ({
+      start: imp.s,
+      end: imp.e,
+      dynamicImportStart: imp.d,
+    }));
 
-  return { imports, urlMap, maskedCode: masked };
+  return { imports, computedDynamicImports, urlMap, maskedCode: masked };
+}
+
+const COMPUTED_DYNAMIC_IMPORT_MARKER = "__vf_dependency_pinned__";
+
+function restoreMaskedUrls(result: string, urlMap: Map<string, string>): string {
+  if (urlMap.size === 0) return result;
+
+  for (const [placeholder, url] of urlMap) {
+    result = result.replaceAll(placeholder, url);
+  }
+  return result;
+}
+
+function buildComputedDynamicImportHelper(name: string, isSSR: boolean): string {
+  return `
+function ${name}(value, parentUrl, modulePath) {
+  if (typeof value !== "string") return value;
+  const isRelative = value.startsWith("./") || value.startsWith("../");
+  const isProjectAlias = value.startsWith("@/");
+  const isRootModule = value.startsWith("/_vf_modules/");
+  const isAbsoluteUrl = /^https?:\\/\\//i.test(value) || value.startsWith("//");
+  if (!isRelative && !isProjectAlias && !isRootModule && !isAbsoluteUrl) return value;
+
+  try {
+    const parent = new URL(parentUrl);
+    const base = modulePath ? new URL(modulePath, parent.origin) : parent;
+    const pathMatch = base.pathname.match(/^\\/_vf_modules\\/_pins\\/([^/]+)\\//);
+    const queryPins = parent.searchParams.getAll("pins");
+    const cacheKey = pathMatch
+      ? decodeURIComponent(pathMatch[1])
+      : queryPins.length === 1
+      ? queryPins[0]
+      : undefined;
+    if (!cacheKey || !/^on:[A-Za-z0-9._-]+$/.test(cacheKey)) return value;
+
+    const modulePrefix = "/_vf_modules/";
+    const anchor = modulePrefix + "_pins/" + encodeURIComponent(cacheKey) + "/";
+    const crossProjectMatch = base.pathname.match(
+      /^\\/_vf_modules\\/_pins\\/[^/]+\\/(_cross\\/[^/]+\\/@\\/)/
+    );
+    const crossProjectRoot = crossProjectMatch
+      ? anchor + crossProjectMatch[1]
+      : undefined;
+    if (isProjectAlias) {
+      if (!crossProjectRoot) return value;
+      const target = new URL(crossProjectRoot + value.slice(2), parent.origin);
+      ${isSSR ? 'target.searchParams.set("ssr", "true");' : ""}
+      return target.pathname.startsWith(crossProjectRoot)
+        ? target.pathname + target.search + target.hash
+        : modulePrefix + "_pins/invalid";
+    }
+
+    const target = new URL(value, isRelative ? base : parent);
+    if (target.origin !== parent.origin) return value;
+    if (!target.pathname.startsWith(modulePrefix)) return value;
+
+    if (isRelative) {
+      const requiredRoot = crossProjectRoot ?? anchor;
+      ${isSSR ? 'target.searchParams.set("ssr", "true");' : ""}
+      return target.pathname.startsWith(requiredRoot)
+        ? target.pathname + target.search + target.hash
+        : modulePrefix + "_pins/invalid";
+    }
+
+    let targetPath = target.pathname.slice(modulePrefix.length);
+    if (targetPath.startsWith("_pins/")) {
+      const existingKeyEnd = targetPath.indexOf("/", "_pins/".length);
+      const encodedExistingKey = existingKeyEnd < 0
+        ? targetPath.slice("_pins/".length)
+        : targetPath.slice("_pins/".length, existingKeyEnd);
+      let existingKey;
+      try {
+        existingKey = decodeURIComponent(encodedExistingKey);
+      } catch {
+        existingKey = undefined;
+      }
+      if (existingKey && /^on:[A-Za-z0-9._-]+$/.test(existingKey)) {
+        if (existingKeyEnd < 0) return modulePrefix + "_pins/invalid";
+        targetPath = targetPath.slice(existingKeyEnd + 1);
+      }
+    }
+    target.pathname = anchor + targetPath;
+    target.searchParams.delete("pins");
+    ${isSSR ? 'target.searchParams.set("ssr", "true");' : ""}
+    return target.pathname + target.search + target.hash;
+  } catch {
+    return value;
+  }
+}`.trim();
+}
+
+/**
+ * Wrap computed browser imports without changing native import options.
+ *
+ * es-module-lexer 2.3 exposes `s..e` as the first-argument expression even
+ * when a second import-options argument exists. Non-string values are returned
+ * untouched so the native import operation retains responsibility for coercion.
+ */
+export function applyComputedDynamicImportPinning(
+  parsed: ParsedImportEdits,
+  modulePath?: string,
+  options: { ssr?: boolean } = {},
+): string {
+  const pending = parsed.computedDynamicImports.filter((imp) =>
+    !parsed.maskedCode
+      .slice(imp.dynamicImportStart, imp.start)
+      .includes(COMPUTED_DYNAMIC_IMPORT_MARKER)
+  );
+  if (pending.length === 0) return restoreMaskedUrls(parsed.maskedCode, parsed.urlMap);
+
+  let helperName = "__veryfrontPinDynamicImport";
+  while (parsed.maskedCode.includes(helperName)) helperName += "_";
+
+  let result = parsed.maskedCode;
+  for (const imported of pending.sort((left, right) => right.start - left.start)) {
+    const expression = parsed.maskedCode.slice(imported.start, imported.end);
+    const replacement = `/*${COMPUTED_DYNAMIC_IMPORT_MARKER}*/${helperName}(` +
+      `${expression},import.meta.url,${modulePath ? JSON.stringify(modulePath) : "undefined"})`;
+    result = result.slice(0, imported.start) + replacement + result.slice(imported.end);
+  }
+
+  result += `\n${buildComputedDynamicImportHelper(helperName, options.ssr === true)}\n`;
+  return restoreMaskedUrls(result, parsed.urlMap);
 }
 
 /**
@@ -156,13 +295,7 @@ export function applyImportEdits(
     result = result.substring(0, imp.start) + specifier + result.substring(imp.end);
   }
 
-  if (parsed.urlMap.size === 0) return result;
-
-  for (const [placeholder, url] of parsed.urlMap) {
-    result = result.replaceAll(placeholder, url);
-  }
-
-  return result;
+  return restoreMaskedUrls(result, parsed.urlMap);
 }
 
 /**

@@ -67,6 +67,17 @@ describe("VendorStrategy", () => {
       assertEquals(result.specifier?.includes("v=abc123"), true);
     });
 
+    it("should path-bind vendor URLs to the browser dependency snapshot", () => {
+      const result = vendorStrategy.rewrite(
+        makeInfo("react"),
+        makeCtx({ dependencyPinningCacheKey: "on:snapshot-a" }),
+      );
+      assertEquals(
+        result.specifier,
+        "http://localhost:3000/_vf_modules/_pins/on%3Asnapshot-a/_vendor.js?v=abc123",
+      );
+    });
+
     it("should rewrite dynamic import with statement replacement", () => {
       const result = vendorStrategy.rewrite(makeInfo("react", true), makeCtx());
       assertEquals(result.specifier, null);

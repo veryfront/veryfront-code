@@ -109,6 +109,8 @@ function hasToJson(value: object): value is { toJSON: () => unknown } {
 }
 
 function redactValue(value: unknown, depth: number, seen: Set<object>): unknown {
+  if (typeof value === "string") return sanitizeUrlCredentials(value);
+
   if (Array.isArray(value)) {
     if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
     seen.add(value);
@@ -135,6 +137,10 @@ function redactValue(value: unknown, depth: number, seen: Set<object>): unknown 
       const serialized = value.toJSON();
       if (isRecord(serialized) || Array.isArray(serialized)) {
         return redactValue(serialized, depth + 1, seen);
+      }
+      if (typeof serialized === "string") {
+        const sanitized = sanitizeUrlCredentials(serialized);
+        return sanitized === serialized ? value : sanitized;
       }
       // Scalar result (string/number/…): the object serializes safely as-is.
       return value;
@@ -166,7 +172,8 @@ function redactValue(value: unknown, depth: number, seen: Set<object>): unknown 
   }
 
   // Primitives and scalar-serializing objects (Date, URL, …) are returned
-  // untouched: they are not key/value bags we can safely rewrite.
+  // untouched: except for string values above, they are not key/value bags we
+  // can safely rewrite.
   return value;
 }
 

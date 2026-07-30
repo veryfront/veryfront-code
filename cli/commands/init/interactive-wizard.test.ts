@@ -6,33 +6,18 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { shouldRunWizard, validateProjectName } from "./interactive-wizard.ts";
+import { formatWizardIntro, SETUP_COPY, shouldRunWizard } from "./interactive-wizard.ts";
 
 describe("interactive-wizard", () => {
-  describe("validateProjectName", () => {
-    it("should accept a simple name", () => {
-      assertEquals(validateProjectName("my-app"), null);
-    });
+  it("starts directly with the setup task", () => {
+    assertEquals(formatWizardIntro(), "\nLet's set up your project.");
+  });
 
-    it("should reject forward slashes", () => {
-      assertEquals(typeof validateProjectName("foo/bar"), "string");
-    });
-
-    it("should reject backslashes", () => {
-      assertEquals(typeof validateProjectName("foo\\bar"), "string");
-    });
-
-    it("should reject dot-dot", () => {
-      assertEquals(typeof validateProjectName(".."), "string");
-    });
-
-    it("should reject single dot", () => {
-      assertEquals(typeof validateProjectName("."), "string");
-    });
-
-    it("should accept dotfiles", () => {
-      assertEquals(validateProjectName(".my-app"), null);
-    });
+  it("uses concise decision prompts", () => {
+    assertEquals(SETUP_COPY.location, "Create project in:");
+    assertEquals(SETUP_COPY.template, "Choose a starter template:");
+    assertEquals(SETUP_COPY.runtime, "Select runtime:");
+    assertEquals(SETUP_COPY.git, "Initialize Git?");
   });
 
   describe("shouldRunWizard", () => {

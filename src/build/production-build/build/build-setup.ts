@@ -9,7 +9,7 @@ export async function setupBuildDirectories(
   outputDir: string,
   dryRun: boolean,
 ): Promise<void> {
-  logger.info("Setting up build directories...");
+  logger.debug("Setting up build directories...");
 
   await handleErrorWithFallback(
     () => adapter.fs.remove(outputDir, { recursive: true }),
@@ -18,7 +18,7 @@ export async function setupBuildDirectories(
   );
 
   if (dryRun) {
-    logger.info("Build directories ready");
+    logger.debug("Build directories ready");
     return;
   }
 
@@ -43,5 +43,5 @@ export async function setupBuildDirectories(
     }
   }
 
-  logger.info("Build directories ready");
+  logger.debug("Build directories ready");
 }

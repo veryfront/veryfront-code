@@ -6,6 +6,9 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { bundleComponentForClient } from "./component-handling.ts";
 
+const PIN_KEY_A = "on:z7bg3qnfgtcb";
+const PIN_KEY_B = "on:3w5e11264sgsf";
+
 async function waitFor(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 1_000;
   while (!predicate()) {
@@ -158,6 +161,62 @@ describe("rendering/component-handling", () => {
       "https://modules-a.example.test:19.1.0",
       "https://modules-b.example.test:19.1.0",
       "https://modules-a.example.test:19.2.0",
+    ]);
+  });
+
+  it("keeps mainline off identity and isolates enabled snapshots and origins", async () => {
+    const transformed: string[] = [];
+    const deps = {
+      transformToESM: (
+        _source: string,
+        _filePath: string,
+        _projectDir: string,
+        _adapter: RuntimeAdapter,
+        options: {
+          moduleServerOrigin?: string;
+          dependencyPinningCacheKey?: string;
+        },
+      ) => {
+        const result = `${options.dependencyPinningCacheKey}:${options.moduleServerOrigin}`;
+        transformed.push(result);
+        return Promise.resolve(result);
+      },
+    };
+    const bundle = (dependencyPinningCacheKey: string, moduleServerOrigin: string) =>
+      bundleComponentForClient(
+        "export default function Page() { return null; }",
+        "/project/app/pin-identity.tsx",
+        "/project",
+        {} as RuntimeAdapter,
+        "https://modules.example.test",
+        "project-pin-identity",
+        "19.1.0",
+        deps,
+        moduleServerOrigin,
+        dependencyPinningCacheKey,
+      );
+
+    const flagOffA = await bundle("off", "https://app-a.example");
+    const flagOffB = await bundle("off", "https://app-b.example");
+    const snapshotA = await bundle(PIN_KEY_A, "https://app-a.example");
+    const snapshotAOtherOrigin = await bundle(
+      PIN_KEY_A,
+      "https://app-b.example",
+    );
+    const snapshotB = await bundle(PIN_KEY_B, "https://app-a.example");
+
+    assertEquals(flagOffB, flagOffA);
+    assertEquals(snapshotA, `${PIN_KEY_A}:https://app-a.example`);
+    assertEquals(
+      snapshotAOtherOrigin,
+      `${PIN_KEY_A}:https://app-b.example`,
+    );
+    assertEquals(snapshotB, `${PIN_KEY_B}:https://app-a.example`);
+    assertEquals(transformed, [
+      "off:https://app-a.example",
+      `${PIN_KEY_A}:https://app-a.example`,
+      `${PIN_KEY_A}:https://app-b.example`,
+      `${PIN_KEY_B}:https://app-a.example`,
     ]);
   });
 

@@ -1,17 +1,13 @@
-import { brand, dim, muted } from "#cli/ui";
-import { getAgentFace } from "../../ui/dot-matrix.ts";
+import { muted } from "#cli/ui";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
+import { isInteractive as isCliInteractive } from "../../shared/interactive.ts";
+import { validateProjectName } from "../../shared/project-name.ts";
 import { select, textInput } from "../../utils/terminal-select.ts";
-import { getTemplateSelectOptions, TEMPLATES } from "./catalog.ts";
+import { DEFAULT_TEMPLATE, getTemplateSelectOptions } from "./catalog.ts";
 import type { InitRuntime, InitTemplate } from "./types.ts";
 
-/** Reject path separators and traversal so the name stays a single directory. */
-export function validateProjectName(name: string): string | null {
-  if (/[/\\]/.test(name)) return 'Project name cannot contain "/" or "\\"';
-  if (name === "." || name === "..") return 'Project name cannot be "." or ".."';
-  return null;
-}
+export { validateProjectName };
 
 export interface WizardResult {
   projectName: string | null; // null = use current directory
@@ -23,8 +19,26 @@ export interface WizardResult {
 }
 
 function canRunWizard(): boolean {
-  return !(isCiEnv() || isDenoTestingEnv()) && checkIsInteractive();
+  return isCliInteractive() && !(isCiEnv() || isDenoTestingEnv()) && checkIsInteractive();
 }
+
+export function formatWizardIntro(): string {
+  return `\n${SETUP_COPY.intro}`;
+}
+
+export const SETUP_COPY = {
+  intro: "Let's set up your project.",
+  location: "Create project in:",
+  template: "Choose a starter template:",
+  runtime: "Select runtime:",
+  git: "Initialize Git?",
+} as const;
+
+const SETUP_PROMPT_DISPLAY = {
+  showMarker: false,
+  showInstructions: false,
+  showDescriptions: false,
+} as const;
 
 export async function runInteractiveWizard(
   existingName?: string,
@@ -33,7 +47,7 @@ export async function runInteractiveWizard(
   if (!canRunWizard()) {
     return {
       projectName: existingName ?? null,
-      template: "minimal",
+      template: DEFAULT_TEMPLATE,
       runtime: presetRuntime ?? "node",
       initGit: false,
       skipped: true,
@@ -41,40 +55,37 @@ export async function runInteractiveWizard(
     };
   }
 
-  // Show logo
-  console.log("");
-  console.log(getAgentFace({ litColor: "\x1b[38;2;252;143;93m" }));
-  console.log("");
-  console.log(`┌  ${brand("Veryfront")}`);
-  console.log(`│  Let's set up your project.`);
-  console.log("│");
+  console.log(formatWizardIntro());
 
   let projectName: string | null = existingName ?? null;
 
   // Location prompt (skip when name was provided via CLI)
   if (!existingName) {
     const locationChoice = await select(
-      "Where should we create your project?",
+      SETUP_COPY.location,
       [
         {
           value: "current",
-          label: "Current folder",
+          label: "Current directory",
           description: "Use this directory",
         },
         {
           value: "new",
-          label: "New folder",
+          label: "New directory",
           description: "Create a new directory",
         },
       ],
       0,
+      SETUP_PROMPT_DISPLAY,
     );
 
     if (locationChoice === null) {
-      console.log(muted("\n  Cancelled.\n"));
+      console.log();
+      console.log(muted("  Cancelled."));
+      console.log();
       return {
         projectName: null,
-        template: "minimal",
+        template: DEFAULT_TEMPLATE,
         runtime: "node",
         initGit: false,
         skipped: false,
@@ -83,12 +94,14 @@ export async function runInteractiveWizard(
     }
 
     if (locationChoice === "new") {
-      const name = await textInput("Project name", "my-app");
+      const name = await textInput("Project name", "my-app", SETUP_PROMPT_DISPLAY);
       if (name === null) {
-        console.log(muted("\n  Cancelled.\n"));
+        console.log();
+        console.log(muted("  Cancelled."));
+        console.log();
         return {
           projectName: null,
-          template: "minimal",
+          template: DEFAULT_TEMPLATE,
           runtime: "node",
           initGit: false,
           skipped: false,
@@ -101,7 +114,7 @@ export async function runInteractiveWizard(
         console.log(muted(`\n  ${nameError}\n`));
         return {
           projectName: null,
-          template: "minimal",
+          template: DEFAULT_TEMPLATE,
           runtime: "node",
           initGit: false,
           skipped: false,
@@ -114,16 +127,19 @@ export async function runInteractiveWizard(
 
   // Template selection
   const templateChoice = await select(
-    "What would you like to build?",
+    SETUP_COPY.template,
     getTemplateSelectOptions(),
     0,
+    SETUP_PROMPT_DISPLAY,
   );
 
   if (templateChoice === null) {
-    console.log(muted("\n  Cancelled.\n"));
+    console.log();
+    console.log(muted("  Cancelled."));
+    console.log();
     return {
       projectName: null,
-      template: "minimal",
+      template: DEFAULT_TEMPLATE,
       runtime: "node",
       initGit: false,
       skipped: false,
@@ -137,20 +153,23 @@ export async function runInteractiveWizard(
   let runtime: InitRuntime = presetRuntime ?? "node";
   if (presetRuntime === undefined) {
     const runtimeChoice = await select(
-      "What runtime should this project use?",
+      SETUP_COPY.runtime,
       [
         { value: "node", label: "Node.js", description: "Default" },
         { value: "bun", label: "Bun", description: "Fast JS runtime" },
         { value: "deno", label: "Deno", description: "Secure-by-default" },
       ],
       0,
+      SETUP_PROMPT_DISPLAY,
     );
 
     if (runtimeChoice === null) {
-      console.log(muted("\n  Cancelled.\n"));
+      console.log();
+      console.log(muted("  Cancelled."));
+      console.log();
       return {
         projectName: null,
-        template: "minimal",
+        template: DEFAULT_TEMPLATE,
         runtime: "node",
         initGit: false,
         skipped: false,
@@ -163,19 +182,22 @@ export async function runInteractiveWizard(
 
   // Git init prompt
   const gitChoice = await select(
-    "Initialize a git repository?",
+    SETUP_COPY.git,
     [
       { value: "yes", label: "Yes", description: "Initialize git and create first commit" },
       { value: "no", label: "No", description: "Skip git initialization" },
     ],
     0,
+    SETUP_PROMPT_DISPLAY,
   );
 
   if (gitChoice === null) {
-    console.log(muted("\n  Cancelled.\n"));
+    console.log();
+    console.log(muted("  Cancelled."));
+    console.log();
     return {
       projectName: null,
-      template: "minimal",
+      template: DEFAULT_TEMPLATE,
       runtime: "node",
       initGit: false,
       skipped: false,
@@ -184,21 +206,6 @@ export async function runInteractiveWizard(
   }
 
   const initGit = gitChoice === "yes";
-
-  // Summary
-  const templateLabel = TEMPLATES.find((t) => t.id === template)?.label ?? template;
-  console.log("");
-  console.log(brand("Perfect!") + " Here's what we'll create:");
-  console.log("");
-  if (projectName) {
-    console.log(`  ${brand("Location:")} ./${projectName}/`);
-  } else {
-    console.log(`  ${brand("Location:")} ./  ${dim("(current folder)")}`);
-  }
-  console.log(`  ${brand("Template:")} ${templateLabel}`);
-  console.log(`  ${brand("Runtime:")} ${runtime}`);
-  console.log(`  ${brand("Git:")} ${initGit ? "Yes" : "No"}`);
-  console.log("");
 
   return {
     projectName,
