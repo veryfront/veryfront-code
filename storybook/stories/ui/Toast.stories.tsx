@@ -66,6 +66,55 @@ function ToastDemo({ variant }: { variant: ToastVariant }) {
   );
 }
 
+const triggerClass =
+  "inline-flex h-[38px] items-center rounded-md bg-[var(--foreground)] px-4 text-sm font-medium text-[var(--background)]";
+
+const TrashIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+    <path d="M3 6h18M8 6V4h8v2m-9 0v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6" />
+  </svg>
+);
+
+function ActionTrigger() {
+  const { toast } = useToast();
+  return (
+    <button
+      type="button"
+      className={triggerClass}
+      onClick={() =>
+        toast({
+          title: "File deleted",
+          description: "report.pdf was removed.",
+          icon: <TrashIcon />,
+          duration: Infinity,
+          action: { label: "Undo", onClick: () => {} },
+          cancel: { label: "Dismiss" },
+        })}
+    >
+      Delete file
+    </button>
+  );
+}
+
+function CustomTrigger() {
+  const { toast, dismiss } = useToast();
+  return (
+    <button
+      type="button"
+      className={triggerClass}
+      onClick={() =>
+        toast.custom((id) => (
+          <div className="pointer-events-auto flex items-center gap-3 rounded-lg bg-[var(--foreground)] px-4 py-3 text-sm text-[var(--background)] shadow-lg">
+            🎉 Fully custom toast
+            <button type="button" className="underline" onClick={() => dismiss(id)}>close</button>
+          </div>
+        ))}
+    >
+      Show custom toast
+    </button>
+  );
+}
+
 function ToastDocsPage() {
   return (
     <DocsPage>
@@ -87,6 +136,20 @@ function ToastDocsPage() {
         description="Error / failure, accented with --status-error."
       >
         <DocsExampleAuto of={Destructive} />
+      </DocsSection>
+
+      <DocsSection
+        title="Icon + actions"
+        description="Add a leading icon and action / cancel buttons; each dismisses after its handler runs."
+      >
+        <DocsExampleAuto of={WithActions} />
+      </DocsSection>
+
+      <DocsSection
+        title="Custom"
+        description="toast.custom((id) => node) — you own the markup; the provider owns the queue + lifecycle."
+      >
+        <DocsExampleAuto of={Custom} />
       </DocsSection>
 
       <DocsSection title="Import">
@@ -120,6 +183,17 @@ function ToastDocsPage() {
               type: '"default" | "success" | "destructive"',
               default: '"default"',
               description: "Colour scheme",
+            },
+            { name: "icon", type: "React.ReactNode", description: "Leading icon shown before the text" },
+            {
+              name: "action",
+              type: "{ label; onClick }",
+              description: "Primary button; runs onClick then dismisses",
+            },
+            {
+              name: "cancel",
+              type: "{ label; onClick? }",
+              description: "Secondary/cancel button; dismisses",
             },
             {
               name: "duration",
@@ -160,4 +234,23 @@ export const Success: Story = {
 export const Destructive: Story = {
   tags: ["!dev"],
   render: () => <ToastDemo variant="destructive" />,
+};
+
+export const WithActions: Story = {
+  name: "Icon + actions",
+  tags: ["!dev"],
+  render: () => (
+    <ToastProvider>
+      <ActionTrigger />
+    </ToastProvider>
+  ),
+};
+
+export const Custom: Story = {
+  tags: ["!dev"],
+  render: () => (
+    <ToastProvider>
+      <CustomTrigger />
+    </ToastProvider>
+  ),
 };

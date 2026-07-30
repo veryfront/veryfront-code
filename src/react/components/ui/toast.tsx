@@ -19,12 +19,19 @@
  *     <button
  *       type="button"
  *       onClick={() =>
- *         toast({ title: "Saved", description: "Your changes are live.", variant: "success" })}
+ *         toast({
+ *           title: "Saved",
+ *           description: "Your changes are live.",
+ *           variant: "success",
+ *           action: { label: "Undo", onClick: undo },
+ *         })}
  *     >
  *       Save
  *     </button>
  *   );
  * }
+ *
+ * // Fully custom node: toast.custom((id) => <MyToast onClose={() => dismiss(id)} />);
  *
  * export function App() {
  *   return (
@@ -58,12 +65,26 @@ const toastVariants = cva(
 /** One of the `cva` colour schemes a toast can take. */
 export type ToastVariant = NonNullable<VariantProps<typeof toastVariants>["variant"]>;
 
+/** A toast button: a label plus what to do when it's pressed. */
+export interface ToastAction {
+  /** Button text. */
+  label: React.ReactNode;
+  /** Runs when the button is pressed (the toast is dismissed afterwards). */
+  onClick: () => void;
+}
+
 /** Options accepted by `toast(...)` when enqueuing a notification. */
 export interface ToastOptions {
   /** Heading line. */
   title?: React.ReactNode;
   /** Secondary supporting line shown under the title. */
   description?: React.ReactNode;
+  /** Leading icon shown before the text (any node — an SVG, emoji, etc.). */
+  icon?: React.ReactNode;
+  /** Primary action button; pressing it runs `onClick` then dismisses the toast. */
+  action?: ToastAction;
+  /** Secondary/cancel button; pressing it runs `onClick` (if given) then dismisses. */
+  cancel?: { label: React.ReactNode; onClick?: () => void };
   /** Colour scheme. @default "default" */
   variant?: ToastVariant;
   /** Milliseconds before auto-dismiss; pass `Infinity` to persist. Overrides the provider default. */
@@ -73,11 +94,21 @@ export interface ToastOptions {
 interface ToastRecord extends ToastOptions {
   /** Stable identifier used as the React key and dismiss handle. */
   id: string;
+  /** When set (via `toast.custom`), renders this node instead of the built-in surface. */
+  render?: (id: string) => React.ReactNode;
+}
+
+/** Imperative enqueue function: call `toast(options)`, or `toast.custom(render)`. */
+export interface ToastFn {
+  /** Enqueue a structured toast; returns its id (for `dismiss`). */
+  (options: ToastOptions): string;
+  /** Enqueue a fully custom node — you own the markup, the provider owns the lifecycle (queue + auto-dismiss). */
+  custom: (render: (id: string) => React.ReactNode) => string;
 }
 
 interface ToastContextValue {
   toasts: ToastRecord[];
-  toast: (options: ToastOptions) => string;
+  toast: ToastFn;
   dismiss: (id: string) => void;
 }
 
@@ -109,11 +140,17 @@ export function ToastProvider({
     setToasts((list) => list.filter((t) => t.id !== id));
   }, []);
 
-  const toast = React.useCallback((options: ToastOptions) => {
+  const enqueue = React.useCallback((record: Omit<ToastRecord, "id">) => {
     const id = `toast-${idRef.current++}`;
-    setToasts((list) => [...list, { duration, ...options, id }]);
+    setToasts((list) => [...list, { duration, ...record, id }]);
     return id;
   }, [duration]);
+
+  const toast = React.useMemo<ToastFn>(() => {
+    const fn = ((options: ToastOptions) => enqueue(options)) as ToastFn;
+    fn.custom = (render: (id: string) => React.ReactNode) => enqueue({ render });
+    return fn;
+  }, [enqueue]);
 
   const value = React.useMemo<ToastContextValue>(
     () => ({ toasts, toast, dismiss }),
@@ -165,26 +202,92 @@ export function ToastViewport({
       )}
       {...props}
     >
-      {toasts.map((t) => (
-        <Toast
-          key={t.id}
-          variant={t.variant}
-          duration={t.duration}
-          onClose={() => dismiss(t.id)}
-        >
-          <div className="flex-1 space-y-1">
-            {t.title ? <ToastTitle>{t.title}</ToastTitle> : null}
-            {t.description ? <ToastDescription>{t.description}</ToastDescription> : null}
-          </div>
-          <ToastClose onClick={() => dismiss(t.id)} />
-        </Toast>
-      ))}
+      {toasts.map((t) => <ToastItem key={t.id} record={t} onDismiss={() => dismiss(t.id)} />)}
     </ol>
   );
 }
 ToastViewport.displayName = "ToastViewport";
 
 export { ToastViewport as Toaster };
+
+/** Renders one queued toast — a `toast.custom` node, or the built-in surface. */
+function ToastItem(
+  { record, onDismiss }: { record: ToastRecord; onDismiss: () => void },
+): React.ReactElement {
+  if (record.render) {
+    return (
+      <CustomToastItem duration={record.duration} onClose={onDismiss}>
+        {record.render(record.id)}
+      </CustomToastItem>
+    );
+  }
+  const { icon, title, description, action, cancel, variant, duration } = record;
+  return (
+    <Toast variant={variant} duration={duration} onClose={onDismiss}>
+      {icon
+        ? (
+          <span
+            aria-hidden="true"
+            className="mt-0.5 shrink-0 text-[var(--foreground)] [&_svg]:size-5"
+          >
+            {icon}
+          </span>
+        )
+        : null}
+      <div className="flex-1 space-y-1">
+        {title ? <ToastTitle>{title}</ToastTitle> : null}
+        {description ? <ToastDescription>{description}</ToastDescription> : null}
+        {action || cancel
+          ? (
+            <div className="mt-2 flex gap-2">
+              {cancel
+                ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      cancel.onClick?.();
+                      onDismiss();
+                    }}
+                    className="rounded-md px-2 py-1 text-sm font-medium text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]"
+                  >
+                    {cancel.label}
+                  </button>
+                )
+                : null}
+              {action
+                ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      action.onClick();
+                      onDismiss();
+                    }}
+                    className="rounded-md bg-[var(--primary)] px-2 py-1 text-sm font-medium text-[var(--secondary)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]"
+                  >
+                    {action.label}
+                  </button>
+                )
+                : null}
+            </div>
+          )
+          : null}
+      </div>
+      <ToastClose onClick={onDismiss} />
+    </Toast>
+  );
+}
+
+/** Bare list item for a `toast.custom` node — arms the auto-dismiss timer only. */
+function CustomToastItem(
+  { duration, onClose, children }: {
+    duration?: number;
+    onClose: () => void;
+    children: React.ReactNode;
+  },
+): React.ReactElement {
+  useAutoDismiss(duration, onClose);
+  return <li className="pointer-events-auto">{children}</li>;
+}
 
 /** Props accepted by `<Toast>`. */
 export interface ToastProps
@@ -201,6 +304,17 @@ export interface ToastProps
  * that calls `onClose` after `duration`. Compose `ToastTitle`, `ToastDescription`
  * and `ToastClose` inside it.
  */
+/** Arm an auto-dismiss timer: calls `onClose` after `duration` ms (Infinity/0 disables). */
+function useAutoDismiss(duration: number | undefined, onClose?: () => void): void {
+  const onCloseRef = React.useRef(onClose);
+  onCloseRef.current = onClose;
+  React.useEffect(() => {
+    if (duration == null || duration === Infinity || duration <= 0) return;
+    const timer = setTimeout(() => onCloseRef.current?.(), duration);
+    return () => clearTimeout(timer);
+  }, [duration]);
+}
+
 export function Toast({
   variant,
   duration = 5000,
@@ -210,14 +324,7 @@ export function Toast({
   ref,
   ...props
 }: ToastProps): React.ReactElement {
-  const onCloseRef = React.useRef(onClose);
-  onCloseRef.current = onClose;
-
-  React.useEffect(() => {
-    if (duration == null || duration === Infinity || duration <= 0) return;
-    const timer = setTimeout(() => onCloseRef.current?.(), duration);
-    return () => clearTimeout(timer);
-  }, [duration]);
+  useAutoDismiss(duration, onClose);
 
   return (
     <li

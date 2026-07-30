@@ -267,8 +267,10 @@ export {
 export { NumberField, type NumberFieldProps } from "./number-field.tsx";
 export {
   Toast,
+  type ToastAction,
   ToastClose,
   ToastDescription,
+  type ToastFn,
   type ToastOptions,
   type ToastProps,
   ToastProvider,

@@ -143,4 +143,73 @@ describe("react/components/ui/toast", () => {
       restore();
     }
   });
+
+  it("renders an action button that runs its handler then dismisses", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() =>
+        root.render(
+          <ToastProvider>
+            <Probe />
+          </ToastProvider>,
+        )
+      );
+
+      let undone = false;
+      flushSync(() =>
+        toastApi!.toast({
+          title: "Deleted",
+          duration: Infinity,
+          action: { label: "Undo", onClick: () => undone = true },
+        })
+      );
+      await waitFor(() => document.body.textContent?.includes("Undo") ?? false);
+
+      const btn = [...document.body.querySelectorAll("button")].find((b) =>
+        b.textContent === "Undo"
+      )!;
+      flushSync(() => btn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+
+      assert(undone, "action onClick fired");
+      await waitFor(() => document.body.querySelectorAll('[role="status"]').length === 0);
+      root.unmount();
+    } finally {
+      toastApi = null;
+      restore();
+    }
+  });
+
+  it("toast.custom renders a fully custom node managed by the queue", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() =>
+        root.render(
+          <ToastProvider>
+            <Probe />
+          </ToastProvider>,
+        )
+      );
+
+      flushSync(() => toastApi!.toast.custom((id) => <div data-testid="custom">custom {id}</div>));
+      await waitFor(() => document.body.querySelector('[data-testid="custom"]') != null);
+      assert(
+        document.body.textContent?.includes("custom toast-"),
+        "custom node rendered with its id",
+      );
+      root.unmount();
+    } finally {
+      toastApi = null;
+      restore();
+    }
+  });
 });
