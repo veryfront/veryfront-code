@@ -245,11 +245,11 @@ describe("eval/tool-loading-benchmark", () => {
     assertEquals(artifact.sourceArtifact, {
       repository: "veryfront-agent",
       path: ".veryfront/evals/tool-loading/live/report.json",
-      sha256: "5b66e63f0056c43029e284921a04678767e5ec1521398cbc3d0ea16155ac292b",
+      sha256: "887a6be7a1e813d1d6e4cdc9fac40a220f3cc5f9e712a1f86a64b6c188ce7e32",
     });
     assertEquals(artifact.producer, {
-      revision: "edd567309805313a5ae8cbdbed2da3b183a9628b",
-      tree: "d759003be79278da9e827627e4c034fccda7e853",
+      revision: "582b5430d04dbf3c64e979c1a0d6d0d4ce433fb3",
+      tree: "97ff6a0c698003abbb8adc3ad85a9e5c9044a7ce",
       clean: true,
     });
     assertEquals(artifact.frameworkPackage, {
@@ -366,6 +366,14 @@ describe("eval/tool-loading-benchmark", () => {
     );
     assertStringIncludes(privacyTestSource, "token: 'opaque-value'");
     assertStringIncludes(privacyTestSource, "token: '[REDACTED]'");
+    assertStringIncludes(
+      privacyTestSource,
+      "preserves sibling values when multiple project identity keys are redacted",
+    );
+    assertStringIncludes(
+      privacyTestSource,
+      "'[REDACTED_PROJECT_ID_2]': { kind: 'slug' }",
+    );
     for (const snapshot of [producer.agentProducer, producer.frameworkProducer]) {
       for (const file of snapshot.files) {
         assertEquals(

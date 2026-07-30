@@ -2,7 +2,7 @@
   "kind": "veryfront-agent-tool-loading-live-producer-manifest",
   "report": {
     "path": "veryfront-agent/.veryfront/evals/tool-loading/live/report.json",
-    "sha256": "5b66e63f0056c43029e284921a04678767e5ec1521398cbc3d0ea16155ac292b"
+    "sha256": "887a6be7a1e813d1d6e4cdc9fac40a220f3cc5f9e712a1f86a64b6c188ce7e32"
   },
   "execution": {
     "workingDirectory": "veryfront-agent",
@@ -48,8 +48,8 @@
     "environmentValuesPersisted": false
   },
   "agentProducer": {
-    "repositoryRevision": "edd567309805313a5ae8cbdbed2da3b183a9628b",
-    "repositoryTree": "d759003be79278da9e827627e4c034fccda7e853",
+    "repositoryRevision": "582b5430d04dbf3c64e979c1a0d6d0d4ce433fb3",
+    "repositoryTree": "97ff6a0c698003abbb8adc3ad85a9e5c9044a7ce",
     "workingTreeState": "clean",
     "snapshotRoot": "tests/fixtures/eval/tool-loading-live-producer/agent",
     "files": [
@@ -86,8 +86,8 @@
       {
         "sourcePath": "evals/tool-loading/runToolLoadingBenchmark.ts",
         "artifactPath": "evals/tool-loading/runToolLoadingBenchmark.ts.snapshot",
-        "sourceSha256": "e2a662c50fbe2f03386f2c61c060fb79f6ad058d33f37f25c18ee072723a6876",
-        "sha256": "e2a662c50fbe2f03386f2c61c060fb79f6ad058d33f37f25c18ee072723a6876"
+        "sourceSha256": "0d6faf7cf1c3733344cd587f4bc736588d90997645fdc5cedc12dd1f8f60259f",
+        "sha256": "0d6faf7cf1c3733344cd587f4bc736588d90997645fdc5cedc12dd1f8f60259f"
       },
       {
         "sourcePath": "evals/tool-loading/taskSuccessCases.ts",
@@ -116,8 +116,8 @@
       {
         "sourcePath": "tests/unit/evals/toolLoadingEval.test.ts",
         "artifactPath": "tests/unit/evals/toolLoadingEval.test.ts.snapshot",
-        "sourceSha256": "f7111a2881ccf8994d4d41f4edc705a36961e3ad9554b244332b429318e4b6bb",
-        "sha256": "f7111a2881ccf8994d4d41f4edc705a36961e3ad9554b244332b429318e4b6bb"
+        "sourceSha256": "b1e7855dadb8cdacbb2059f0831f8e3ec978399fbeef1cad7e5c4458fec3f2be",
+        "sha256": "b1e7855dadb8cdacbb2059f0831f8e3ec978399fbeef1cad7e5c4458fec3f2be"
       },
       {
         "sourcePath": "veryfront.config.ts",

@@ -467,6 +467,16 @@ type CanonicalJsonSanitizer = {
   sensitiveKey?: (key: string) => boolean
 }
 
+function uniqueSanitizedKey(key: string, usedKeys: ReadonlySet<string>): string {
+  if (!usedKeys.has(key)) return key
+
+  const redactedMarker = key.match(/^\[REDACTED_([A-Z0-9_]+)\]$/)
+  for (let suffix = 2; ; suffix += 1) {
+    const candidate = redactedMarker ? `[REDACTED_${redactedMarker[1]}_${suffix}]` : `${key}_${suffix}`
+    if (!usedKeys.has(candidate)) return candidate
+  }
+}
+
 export function benchmarkErrorFields(
   error: unknown,
   projectIdentities: readonly string[] = []
@@ -512,6 +522,7 @@ function canonicalJsonValue(
     if (ancestors.has(value)) throw new Error(`${label} contains a cycle`)
     ancestors.add(value)
     try {
+      const usedKeys = new Set<string>()
       return Object.fromEntries(
         Object.entries(value)
           .filter(([, entry]) => {
@@ -519,16 +530,20 @@ function canonicalJsonValue(
             return entry !== undefined && entryType !== 'function' && entryType !== 'symbol'
           })
           .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, entry]) => [
-            sanitizer?.key?.(key) ?? key,
-            canonicalJsonValue(
-              entry,
-              `${label}.${key}`,
-              sanitizer,
-              ancestors,
-              redactValue || sanitizer?.sensitiveKey?.(key) === true
-            ),
-          ])
+          .map(([key, entry]) => {
+            const sanitizedKey = uniqueSanitizedKey(sanitizer?.key?.(key) ?? key, usedKeys)
+            usedKeys.add(sanitizedKey)
+            return [
+              sanitizedKey,
+              canonicalJsonValue(
+                entry,
+                `${label}.${key}`,
+                sanitizer,
+                ancestors,
+                redactValue || sanitizer?.sensitiveKey?.(key) === true
+              ),
+            ]
+          })
       )
     } finally {
       ancestors.delete(value)

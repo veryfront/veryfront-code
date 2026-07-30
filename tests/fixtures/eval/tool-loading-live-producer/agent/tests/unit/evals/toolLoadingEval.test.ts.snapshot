@@ -198,6 +198,21 @@ describe('Veryfront agent tool-loading eval', () => {
     })
   })
 
+  it('preserves sibling values when multiple project identity keys are redacted', () => {
+    expect(
+      sanitizePersistedBenchmarkValue(
+        {
+          'project-secret-id': { kind: 'id' },
+          'secret-project-slug': { kind: 'slug' },
+        },
+        ['project-secret-id', 'secret-project-slug']
+      )
+    ).toEqual({
+      '[REDACTED_PROJECT_ID]': { kind: 'id' },
+      '[REDACTED_PROJECT_ID_2]': { kind: 'slug' },
+    })
+  })
+
   it('restricts the live canary to list_projects and requires the exact search-then-read sequence', () => {
     const surface = createReadOnlyCanaryToolSurface({
       effectiveToolNames: ['get_release', 'list_projects', 'studio_suggestions'],
