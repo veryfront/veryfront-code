@@ -2,7 +2,7 @@
 
 ## Goal
 
-Give CLI, App, MCP, and demo callers one deterministic project-creation interface with an observable result. Keep prompts, terminal formatting, JSON and MCP formatting, remote registration, source push, and optional deployment in their adapters.
+Give CLI, App, MCP, and demo callers one deterministic project-creation interface with an observable result. Keep prompts, terminal progress and result formatting, JSON and MCP formatting, remote registration, source push, and optional deployment in their adapters. Existing diagnostic debug and validation messages may remain beside the creation rules that produce them.
 
 The refactor must preserve existing generated files, conflict handling, package-manager selection, dependency installation, Git initialization, non-fatal installation and Git failures, and non-fatal deployment behavior.
 
