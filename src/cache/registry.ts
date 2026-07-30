@@ -1,4 +1,4 @@
-import { rendererLogger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils/logger/index.ts";
 import { tryResolve as tryResolveExtensionContract } from "#veryfront/extensions/contracts.ts";
 import {
   captureDistributedCacheAdministration,
@@ -20,13 +20,27 @@ import {
 } from "./backends/distributed-keyspace.ts";
 import { encodeCacheSourceIdentity } from "./keys/source-identity.ts";
 import { decodeCacheKeyPercentSegment } from "./keys/segment-codec.ts";
+import {
+  type CacheStoreProjectOwnership,
+  getSharedLocalCacheRegistryState,
+  LocalCacheRegistry,
+  type LocalCacheRegistryState,
+} from "./local-registry.ts";
+
+export {
+  type CacheStatsSource,
+  type CacheStore,
+  type CacheStoreProjectOwnership,
+  LRUCacheStore,
+  MapCacheStore,
+  registerLRUCache,
+  registerMapCache,
+} from "./local-registry.ts";
 
 const logger = rendererLogger.component("cache-registry");
 
 const DEFAULT_DISTRIBUTED_LIST_LIMIT = 1_000;
 const MAX_DISTRIBUTED_SCANNED_KEYS = 100_000;
-const MAX_REGISTERED_CACHE_STORES = 1_000;
-const MAX_CACHE_STORE_NAME_CODE_UNITS = 256;
 
 function matchesDistributedProjectIdentity(
   descriptor: DistributedCacheNamespaceDescriptor,
@@ -103,271 +117,13 @@ const defaultDistributedProvider: CacheRegistryDistributedProvider = {
   },
 };
 
-export interface CacheStore {
-  readonly name: string;
-  readonly projectOwnership?: CacheStoreProjectOwnership;
-  get(key: string): unknown;
-  keys(): Iterable<string>;
-  size(): number;
-  deleteWhere?(predicate: (key: string) => boolean): number;
-}
-
-/**
- * Project invalidation is opt-in for local stores. A registry entry without an
- * ownership descriptor remains observable for diagnostics, but opaque keys are
- * never reinterpreted and deleted merely because one segment resembles a
- * project identifier.
- */
-export interface CacheStoreProjectOwnership {
-  isKeyForProject(key: string, projectId: string): boolean;
-  isKeyForProjectEnvironment(
-    key: string,
-    projectId: string,
-    environment: "production" | "preview",
-  ): boolean;
-  isKeyForContentSource(key: string, projectId: string, contentSourceId: string): boolean;
-}
-
-function deleteWhereFromKeys(
-  keys: Iterable<string>,
-  deleteKey: (key: string) => boolean,
-  predicate: (key: string) => boolean,
-): number {
-  let deleted = 0;
-  for (const key of keys) {
-    if (!predicate(key)) continue;
-    deleteKey(key);
-    deleted++;
-  }
-  return deleted;
-}
-
-export class MapCacheStore implements CacheStore {
-  readonly name: string;
-
-  constructor(
-    name: string,
-    private readonly map: CacheStatsSource,
-    readonly projectOwnership?: CacheStoreProjectOwnership,
-  ) {
-    this.name = name;
-  }
-
-  get(key: string): unknown {
-    return this.map.get(key);
-  }
-
-  keys(): Iterable<string> {
-    return this.map.keys();
-  }
-
-  size(): number {
-    return this.map.size;
-  }
-
-  deleteWhere(predicate: (key: string) => boolean): number {
-    return deleteWhereFromKeys(this.map.keys(), (key) => this.map.delete(key), predicate);
-  }
-}
-
-interface LRULike {
-  get(key: string): unknown;
-  keys(): Iterable<string>;
-  size: number;
-  delete(key: string): boolean;
-}
-
-/**
- * Narrow view of a key/value store sufficient for cache stats + inspection.
- * Both native `Map` and the LRU cache wrapper structurally satisfy this, so
- * callers can register lightweight wrappers without unsound `Map` casts.
- */
-export interface CacheStatsSource {
-  get(key: string): unknown;
-  keys(): Iterable<string>;
-  readonly size: number;
-  delete(key: string): boolean;
-}
-
-export class LRUCacheStore implements CacheStore {
-  readonly name: string;
-
-  constructor(
-    name: string,
-    private readonly cache: LRULike,
-    readonly projectOwnership?: CacheStoreProjectOwnership,
-  ) {
-    this.name = name;
-  }
-
-  get(key: string): unknown {
-    return this.cache.get(key);
-  }
-
-  keys(): Iterable<string> {
-    return this.cache.keys();
-  }
-
-  size(): number {
-    return this.cache.size;
-  }
-
-  deleteWhere(predicate: (key: string) => boolean): number {
-    return deleteWhereFromKeys(this.cache.keys(), (key) => this.cache.delete(key), predicate);
-  }
-}
-
-export class CacheRegistry {
-  private stores = new Map<string, CacheStore>();
-
+export class CacheRegistry extends LocalCacheRegistry {
   constructor(
     private readonly distributedProvider: CacheRegistryDistributedProvider =
       defaultDistributedProvider,
-  ) {}
-
-  register(store: CacheStore): () => boolean {
-    const name = store.name;
-    if (
-      typeof name !== "string" ||
-      name.length === 0 ||
-      name.length > MAX_CACHE_STORE_NAME_CODE_UNITS ||
-      name.trim() !== name ||
-      /\p{Cc}/u.test(name)
-    ) {
-      throw new TypeError(
-        "Cache store name must be a trimmed 1-256 character string without control characters",
-      );
-    }
-    if (!this.stores.has(name) && this.stores.size >= MAX_REGISTERED_CACHE_STORES) {
-      throw new RangeError(
-        `Cache registry may retain at most ${MAX_REGISTERED_CACHE_STORES} stores`,
-      );
-    }
-    if (this.stores.has(name)) {
-      logger.warn(`Replacing existing store: ${name}`);
-    }
-    this.stores.set(name, store);
-    logger.debug(`Registered store: ${name}`);
-
-    return () => {
-      if (this.stores.get(name) !== store) return false;
-      return this.stores.delete(name);
-    };
-  }
-
-  unregister(name: string): boolean {
-    return this.stores.delete(name);
-  }
-
-  get(name: string): CacheStore | undefined {
-    return this.stores.get(name);
-  }
-
-  getStoreNames(): string[] {
-    return [...this.stores.keys()];
-  }
-
-  getAllKeys(): Map<string, string[]> {
-    const result = new Map<string, string[]>();
-    for (const [name, store] of this.stores) {
-      result.set(name, [...store.keys()]);
-    }
-    return result;
-  }
-
-  getKeysForProject(projectId: string): Map<string, string[]> {
-    const result = new Map<string, string[]>();
-
-    for (const [name, store] of this.stores) {
-      const matchingKeys = [...store.keys()].filter((key) =>
-        store.projectOwnership?.isKeyForProject(key, projectId) ?? false
-      );
-      if (matchingKeys.length) result.set(name, matchingKeys);
-    }
-
-    return result;
-  }
-
-  countKeysForProject(projectId: string): number {
-    let count = 0;
-    for (const store of this.stores.values()) {
-      for (const key of store.keys()) {
-        if (store.projectOwnership?.isKeyForProject(key, projectId)) count++;
-      }
-    }
-    return count;
-  }
-
-  deleteKeysForProject(projectId: string): number {
-    let totalDeleted = 0;
-
-    for (const store of this.stores.values()) {
-      totalDeleted += store.deleteWhere?.((key) =>
-        store.projectOwnership?.isKeyForProject(key, projectId) ?? false
-      ) ?? 0;
-    }
-
-    return totalDeleted;
-  }
-
-  /** Delete cache entries for a specific project and environment */
-  deleteKeysForProjectEnvironment(
-    projectId: string,
-    environment: "production" | "preview",
-  ): number {
-    let totalDeleted = 0;
-
-    for (const store of this.stores.values()) {
-      totalDeleted += store.deleteWhere?.((key) =>
-        store.projectOwnership?.isKeyForProjectEnvironment(key, projectId, environment) ?? false
-      ) ?? 0;
-    }
-
-    logger.debug("Deleted keys for project environment", {
-      projectId,
-      environment,
-      deleted: totalDeleted,
-    });
-
-    return totalDeleted;
-  }
-
-  /** Delete cache entries for a specific content source (branch or release) */
-  deleteKeysForContentSource(projectId: string, contentSourceId: string): number {
-    let totalDeleted = 0;
-
-    for (const store of this.stores.values()) {
-      totalDeleted += store.deleteWhere?.((key) =>
-        store.projectOwnership?.isKeyForContentSource(key, projectId, contentSourceId) ?? false
-      ) ?? 0;
-    }
-
-    logger.debug("Deleted keys for content source", {
-      projectId,
-      contentSourceId,
-      deleted: totalDeleted,
-    });
-
-    return totalDeleted;
-  }
-
-  getStats(): Array<{ name: string; size: number; sampleKeys: string[] }> {
-    const stats: Array<{ name: string; size: number; sampleKeys: string[] }> = [];
-
-    for (const [name, store] of this.stores) {
-      const sampleKeys: string[] = [];
-      for (const key of store.keys()) {
-        sampleKeys.push(key);
-        if (sampleKeys.length === 5) break;
-      }
-      stats.push({ name, size: store.size(), sampleKeys });
-    }
-
-    return stats;
-  }
-
-  clear(): void {
-    this.stores.clear();
+    localState?: LocalCacheRegistryState,
+  ) {
+    super(localState);
   }
 
   listDistributedKeys(
@@ -806,20 +562,7 @@ function isKeyForContentSource(
   return false;
 }
 
-export const cacheRegistry = new CacheRegistry();
-
-export function registerMapCache(
-  name: string,
-  map: CacheStatsSource,
-  projectOwnership?: CacheStoreProjectOwnership,
-): () => boolean {
-  return cacheRegistry.register(new MapCacheStore(name, map, projectOwnership));
-}
-
-export function registerLRUCache(
-  name: string,
-  cache: LRULike,
-  projectOwnership?: CacheStoreProjectOwnership,
-): () => boolean {
-  return cacheRegistry.register(new LRUCacheStore(name, cache, projectOwnership));
-}
+export const cacheRegistry = new CacheRegistry(
+  defaultDistributedProvider,
+  getSharedLocalCacheRegistryState(),
+);

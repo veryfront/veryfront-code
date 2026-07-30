@@ -193,7 +193,7 @@ Deno.test({
       const jsxRuntimeHash = "4".repeat(64);
       const jsxDevRuntimeHash = "5".repeat(64);
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "local-project",
         releaseId: "standalone-dev",
         releaseVersion: 0,
@@ -205,6 +205,7 @@ Deno.test({
         modules: {},
         css: [],
         routes: {},
+        dependencyMode: "immutable",
         dependencies: {
           react: {
             contentHash: reactHash,
@@ -232,7 +233,6 @@ Deno.test({
             contentType: "text/javascript",
           },
         },
-        fallback: { mode: "jit", gaps: [] },
       };
       const releaseHtml = await renderAppRouteToHTML({
         adapter: denoAdapter,

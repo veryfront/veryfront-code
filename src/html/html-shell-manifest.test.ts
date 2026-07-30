@@ -65,8 +65,8 @@ function manifest(): ReleaseAssetManifest {
     },
     css: [],
     routes: { "/": { modules: ["pages/index.tsx"], css: [] } },
+    dependencyMode: "source",
     dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
   };
 }
 
@@ -91,7 +91,7 @@ describe("html shell release asset manifest consumption", () => {
   it("is byte-identical with the flag off (no hashed URLs)", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "");
     configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest() })
+      Promise.resolve({ state: "ready", manifest_version: 1, manifest: manifest() })
     );
 
     const withReleaseId = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
@@ -106,7 +106,7 @@ describe("html shell release asset manifest consumption", () => {
   it("emits a hashed asset URL for a covered page when the flag is on", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest() })
+      Promise.resolve({ state: "ready", manifest_version: 1, manifest: manifest() })
     );
 
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
@@ -128,6 +128,7 @@ describe("html shell release asset manifest consumption", () => {
     configureReleaseAssetManifestFetcher(() =>
       Promise.resolve({
         state: "ready",
+        manifest_version: 1,
         manifest: {
           ...manifest(),
           modules: {
@@ -150,12 +151,55 @@ describe("html shell release asset manifest consumption", () => {
     assertStringIncludes(result.start, `/_vf/assets/${COMPONENT_HASH}.js`);
   });
 
+  it("uses configured router directories for manifest route closure preloads", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({
+        state: "ready",
+        manifest_version: 1,
+        manifest: {
+          ...manifest(),
+          modules: {
+            "src/site/page.tsx": {
+              contentHash: PAGE_HASH,
+              size: 1,
+              contentType: "text/javascript",
+            },
+            "components/Hero.tsx": {
+              contentHash: COMPONENT_HASH,
+              size: 1,
+              contentType: "text/javascript",
+            },
+          },
+          routes: {
+            "/": { modules: ["src/site/page.tsx", "components/Hero.tsx"], css: [] },
+          },
+        },
+      })
+    );
+
+    const result = await generateHTMLShellParts(
+      meta(),
+      prodOptions({
+        releaseId: "rel-1",
+        pagePath: "/proj/src/site/page.tsx",
+        config: {
+          dev: { components: [] },
+          directories: { app: "src/site", pages: "src/pages" },
+        },
+      }),
+    );
+
+    assertStringIncludes(result.start, `/_vf/assets/${COMPONENT_HASH}.js`);
+  });
+
   it("emits the manifest CSS asset link when the manifest carries CSS", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     const CSS_HASH = "c".repeat(64);
     configureReleaseAssetManifestFetcher(() =>
       Promise.resolve({
         state: "ready",
+        manifest_version: 1,
         manifest: {
           ...manifest(),
           css: [{
@@ -182,6 +226,7 @@ describe("html shell release asset manifest consumption", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       return {
         state: "ready",
+        manifest_version: 1,
         manifest: {
           ...manifest(),
           css: [{
@@ -213,8 +258,10 @@ describe("html shell release asset manifest consumption", () => {
     configureReleaseAssetManifestFetcher(() =>
       Promise.resolve({
         state: "ready",
+        manifest_version: 1,
         manifest: {
           ...manifest(),
+          dependencyMode: "immutable",
           dependencies: {
             "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022": {
               contentHash: REACT_HASH,
@@ -237,8 +284,10 @@ describe("html shell release asset manifest consumption", () => {
     configureReleaseAssetManifestFetcher(() =>
       Promise.resolve({
         state: "ready",
+        manifest_version: 1,
         manifest: {
           ...manifest(),
+          dependencyMode: "immutable",
           dependencies: {
             "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022": {
               contentHash: REACT_HASH,
@@ -259,8 +308,10 @@ describe("html shell release asset manifest consumption", () => {
     configureReleaseAssetManifestFetcher(() =>
       Promise.resolve({
         state: "ready",
+        manifest_version: 1,
         manifest: {
           ...manifest(),
+          dependencyMode: "immutable",
           css: [{
             contentHash: "f".repeat(64),
             size: 10,
@@ -288,7 +339,7 @@ describe("html shell release asset manifest consumption", () => {
   it("treats an undefined manifest option as absent and fetches the ready manifest", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest() })
+      Promise.resolve({ state: "ready", manifest_version: 1, manifest: manifest() })
     );
 
     const result = await generateHTMLShellParts(
@@ -309,6 +360,7 @@ describe("html shell release asset manifest consumption", () => {
     configureReleaseAssetManifestFetcher(() =>
       Promise.resolve({
         state: "ready",
+        manifest_version: 1,
         manifest: {
           ...manifest(),
           dependencies: {
@@ -331,17 +383,40 @@ describe("html shell release asset manifest consumption", () => {
     assertEquals(imports["@/"], "/_vf_modules/");
   });
 
-  it("falls back to the existing URL for an uncovered page when the flag is on", async () => {
+  it("keeps dependency-only manifest misses on the release-scoped JIT path", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest() })
+      Promise.resolve({
+        state: "ready",
+        manifest_version: 1,
+        manifest: {
+          ...manifest(),
+          modules: {},
+          css: [],
+          routes: {},
+          dependencyMode: "immutable",
+          dependencies: {
+            react: {
+              contentHash: REACT_HASH,
+              size: 10,
+              contentType: "text/javascript",
+            },
+          },
+        },
+      })
     );
 
     const result = await generateHTMLShellParts(
       meta(),
       prodOptions({ releaseId: "rel-1", pagePath: "/proj/pages/uncovered.tsx" }),
     );
-    assertStringIncludes(result.start, "/_vf_modules/pages/uncovered.js");
+    assertStringIncludes(
+      result.start,
+      `/_vf_modules/pages/uncovered.js?vf_release=rel-1&amp;vf_runtime=${VERYFRONT_VERSION}`,
+    );
+    assertStringIncludes(result.start, "/_vf/css/");
     assert(!result.start.includes(`/_vf/assets/${PAGE_HASH}.js`));
+    assertStringIncludes(result.start, `"react":"/_vf/assets/${REACT_HASH}.js"`);
   });
 });

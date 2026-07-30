@@ -14,6 +14,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join } from "#veryfront/compat/path";
 import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
+import { toScopedCssModuleClass } from "#veryfront/transforms/css-modules/naming.ts";
 import {
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
   RELEASE_ASSET_MANIFEST_LIMITS,
@@ -22,13 +23,27 @@ import {
 import {
   type ReleaseAssetBuildClient,
   type ReleaseAssetBuildInput,
+  type ReleaseAssetBuildResult,
+  releaseAssetDependencyUrlForSpecifier,
   type ReleaseAssetHttpDependencyVendor,
   type ReleaseAssetVendorResult,
   routeForPage,
   runReleaseAssetBuild,
 } from "./build-executor.ts";
 import { parseReleaseAssetManifest, type ReleaseAssetManifest } from "./manifest-schema.ts";
+import type { CompileProjectCssResult } from "./css-compile.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+
+const STYLE_PROFILE_HASH = "d".repeat(64);
+const CSS_PIPELINE_IDENTITY = "test-css-pipeline@1";
+
+function compiledCss(
+  css: string,
+  styleProfileHash = STYLE_PROFILE_HASH,
+  cssPipelineIdentity = CSS_PIPELINE_IDENTITY,
+): CompileProjectCssResult {
+  return { css, styleProfileHash, cssPipelineIdentity };
+}
 
 interface Recorded {
   began: boolean;
@@ -38,7 +53,7 @@ interface Recorded {
 }
 
 function makeClient(
-  files: Array<{ path: string; content?: string }>,
+  files: Array<{ path: string; content: string }>,
   rec: Recorded,
   overrides: Partial<ReleaseAssetBuildClient> = {},
 ): ReleaseAssetBuildClient {
@@ -60,14 +75,40 @@ function makeClient(
       rec.states.push({ state, error });
       return Promise.resolve(undefined);
     },
+    compileProjectCss: () => Promise.resolve(compiledCss("/* test release CSS */")),
     ...overrides,
   };
+}
+
+function assertCoverageFailure(
+  result: ReleaseAssetBuildResult,
+  rec: Recorded,
+  expectedFailure: string,
+): void {
+  assertEquals(result.success, false);
+  assertEquals(result.state, "failed");
+  assertEquals(rec.manifest, null);
+  assertEquals(rec.uploads, []);
+  assertEquals(rec.states.map(({ state }) => state), ["failed"]);
+  assert(
+    result.coverageFailures.some((failure) => failure.startsWith(expectedFailure)),
+    `expected coverage failure ${JSON.stringify(expectedFailure)} in ${
+      JSON.stringify(result.coverageFailures)
+    }`,
+  );
+}
+
+function releaseConfigLoader(
+  config: Partial<VeryfrontConfig> = {},
+): ReleaseAssetBuildInput["loadConfig"] {
+  return () => Promise.resolve(config as VeryfrontConfig);
 }
 
 function baseInput(
   client: ReleaseAssetBuildClient,
   transform: ReleaseAssetBuildInput["transform"],
 ): ReleaseAssetBuildInput {
+  const immutableDependencies = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG) === "1";
   return {
     projectReference: "demo",
     projectId: "proj-uuid",
@@ -75,9 +116,11 @@ function baseInput(
     releaseVersion: 5,
     releaseVersionRef: "rel-uuid",
     adapter: {} as RuntimeAdapter,
+    dependencyMode: immutableDependencies ? "immutable" : "source",
+    loadConfig: releaseConfigLoader(),
     client,
     transform,
-    vendorHttpImports: fakeVendorHttpImports,
+    ...(immutableDependencies ? { vendorHttpImports: fakeVendorHttpImports } : {}),
   };
 }
 
@@ -211,12 +254,11 @@ describe("release asset build executor", () => {
     assertEquals(manifest.modules["pages/_app.tsx"], undefined);
     // Page route maps to its module (single module, no imports).
     assertEquals(manifest.routes["/"]?.modules, ["pages/index.tsx"]);
-    // No CSS pipeline injected → css empty + gap recorded.
-    assertEquals(manifest.css.length, 0);
-    assert(manifest.fallback.gaps.includes("css:no-pipeline"));
-    // Project modules plus framework import-map dependencies are uploaded.
+    assertEquals(manifest.css.length, 1);
+    // Project modules, framework dependencies, and compiled CSS are uploaded.
     assert(rec.uploads.length >= 2);
-    assert(rec.uploads.every((u) => u.contentType === "text/javascript"));
+    assert(rec.uploads.some((u) => u.contentType === "text/javascript"));
+    assert(rec.uploads.some((u) => u.contentType === "text/css"));
   });
 
   it("assembles App Router page routes from app/page modules", async () => {
@@ -296,7 +338,93 @@ describe("release asset build executor", () => {
     assert(!pageUpload.text.includes("/_vf/assets/"));
   });
 
-  it("keeps the manifest ready when one module transform fails", async () => {
+  it("uses the explicit source dependency mode regardless of the consumer flag", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const sourceUrl = "https://cdn.example.com/dependency.js#source";
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: `import ${JSON.stringify(sourceUrl)};` }],
+      rec,
+    );
+    const transform = (source: string) => Promise.resolve(source);
+
+    const result = await runReleaseAssetBuild({
+      ...baseInput(client, transform),
+      dependencyMode: "source",
+      vendorHttpImports: undefined,
+    }, await tmp());
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.dependencyMode, "source");
+    assertEquals(Object.keys(manifest.dependencies), []);
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(pageHash);
+    assertStringIncludes(rec.uploads.find((upload) => upload.hash === pageHash)!.text, sourceUrl);
+  });
+
+  it("rejects immutable dependency mode without a vendor before materialization", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: "export default null;" }],
+      rec,
+    );
+    const tempDir = await tmp();
+
+    const result = await runReleaseAssetBuild({
+      ...baseInput(client, (source) => Promise.resolve(source)),
+      dependencyMode: "immutable",
+      vendorHttpImports: undefined,
+    }, tempDir);
+
+    assertEquals(result.success, false);
+    assertStringIncludes(
+      result.error ?? "",
+      "Immutable release dependencies require a policy-enforced vendor extension",
+    );
+    assertEquals(rec.began, false);
+    assertEquals(rec.uploads, []);
+    assertEquals([...Deno.readDirSync(tempDir)], []);
+  });
+
+  it("keeps distinct HTTP query variants as distinct dependency identities", () => {
+    const baseUrl = "https://cdn.example/pkg.js";
+    const dependencyUrls = new Map([[baseUrl, "/_vf/assets/es2020.js"]]);
+
+    assertEquals(
+      releaseAssetDependencyUrlForSpecifier(
+        dependencyUrls,
+        `${baseUrl}?target=es2022`,
+      ),
+      null,
+    );
+  });
+
+  it("keeps distinct HTTP fragment variants as distinct dependency identities", () => {
+    const baseUrl = "https://cdn.example/pkg.js";
+    const dependencyUrls = new Map([
+      [
+        `${baseUrl}#a`,
+        "/_vf/assets/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.js#a",
+      ],
+      [
+        `${baseUrl}#b`,
+        "/_vf/assets/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.js#b",
+      ],
+    ]);
+
+    assertEquals(
+      releaseAssetDependencyUrlForSpecifier(dependencyUrls, `${baseUrl}#a`),
+      dependencyUrls.get(`${baseUrl}#a`),
+    );
+    assertEquals(
+      releaseAssetDependencyUrlForSpecifier(dependencyUrls, `${baseUrl}#b`),
+      dependencyUrls.get(`${baseUrl}#b`),
+    );
+  });
+
+  it("fails closed when one module transform fails", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       { path: "pages/index.tsx", content: "export default () => null;" },
@@ -312,17 +440,10 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
-    assertEquals(result.success, true);
-    assertEquals(result.state, "ready");
-    assertEquals(rec.states, []);
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    assertExists(manifest.modules["pages/index.tsx"]);
-    assertEquals(manifest.modules["pages/broken.tsx"], undefined);
-    assert(manifest.fallback.gaps.includes("module-transform-failed:pages/broken.tsx"));
+    assertCoverageFailure(result, rec, "module-transform-failed:pages/broken.tsx");
   });
 
-  it("falls back to unvendored module code when HTTP dependency vendoring fails", async () => {
+  it("fails closed when HTTP dependency vendoring fails", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
@@ -338,21 +459,8 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(input, await tmp());
 
-    assertEquals(result.success, true);
-    assertEquals(result.state, "ready");
-    assertEquals(rec.states, []);
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    assertExists(manifest.modules["pages/index.tsx"]);
-    assert(manifest.fallback.gaps.includes("module-dependency-vendor-failed:pages/index.tsx"));
-    assert(manifest.fallback.gaps.includes("dependency-vendor-failed:react-import-map"));
-
-    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
-    assertExists(pageHash);
-    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
-    assertExists(pageUpload);
-    assert(pageUpload.text.includes(reactUrl));
-    assert(!pageUpload.text.includes("file://"));
+    assertCoverageFailure(result, rec, "module-dependency-vendor-failed:pages/index.tsx");
+    assert(result.coverageFailures.includes("dependency-vendor-failed:react-import-map"));
   });
 
   it("bounds dependency aliases and atomically discards an oversized vendor batch", async () => {
@@ -385,19 +493,7 @@ describe("release asset build executor", () => {
       await tmp(),
     );
 
-    assertEquals(result.success, true);
-    assertEquals(result.state, "ready");
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    assert(
-      manifest.fallback.gaps.includes("dependency-finalize-failed"),
-      "alias overflow must be explicit",
-    );
-    assertEquals(manifest.dependencies["dependency-alias-0"], undefined);
-    assert(
-      rec.uploads.every(({ text }) => text !== dependencyCode),
-      "discarded dependency assets must not be uploaded",
-    );
+    assertCoverageFailure(result, rec, "dependency-finalize-failed");
   });
 
   it("rejects accessor-backed vendor results without executing accessors", async () => {
@@ -428,15 +524,12 @@ describe("release asset build executor", () => {
       await tmp(),
     );
 
-    assertEquals(result.success, true);
-    assertEquals(accessorCalls, 0);
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    assert(
-      manifest.fallback.gaps.includes(
-        "module-dependency-vendor-failed:pages/index.tsx",
-      ),
+    assertCoverageFailure(
+      result,
+      rec,
+      "module-dependency-vendor-failed:pages/index.tsx",
     );
+    assertEquals(accessorCalls, 0);
   });
 
   it("never publishes project modules with unresolved local file imports", async () => {
@@ -458,17 +551,78 @@ describe("release asset build executor", () => {
       await tmp(),
     );
 
-    assertEquals(result.success, true);
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    assertEquals(manifest.modules["pages/index.tsx"], undefined);
-    assert(
-      manifest.fallback.gaps.includes("module-rewrite-failed:pages/index.tsx"),
-    );
-    assert(rec.uploads.every(({ text }) => !text.includes("file:///tmp/")));
+    assertCoverageFailure(result, rec, "module-rewrite-failed:pages/index.tsx");
   });
 
-  it("keeps project modules ready when React import-map dependency vendoring fails", async () => {
+  it("never publishes project modules with unresolved relative imports", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: 'import "./missing.ts"; export default null;' }],
+      rec,
+    );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertCoverageFailure(result, rec, "module-rewrite-failed:pages/index.tsx");
+  });
+
+  it("never publishes non-literal dynamic imports", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([{
+      path: "pages/index.tsx",
+      content: 'const name = "feature"; export default import("./" + name);',
+    }], rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertCoverageFailure(result, rec, "module-rewrite-failed:pages/index.tsx");
+  });
+
+  it("rejects HTTP imports retained by a composed vendor", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const sourceUrl = "https://cdn.example/retained.js";
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: `import ${JSON.stringify(sourceUrl)};` }],
+      rec,
+    );
+    const vendorHttpImports = withFakeReactVendor((code) =>
+      Promise.resolve({ code, dependencies: [] })
+    );
+
+    const result = await runReleaseAssetBuild(
+      {
+        ...baseInput(client, (source) => Promise.resolve(source)),
+        vendorHttpImports,
+      },
+      await tmp(),
+    );
+
+    assertCoverageFailure(result, rec, "module-rewrite-failed:pages/index.tsx");
+  });
+
+  it("rejects case-insensitive local file URL schemes", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([{
+      path: "pages/index.tsx",
+      content: 'import "FILE:///tmp/secret.mjs"; export default null;',
+    }], rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertCoverageFailure(result, rec, "module-rewrite-failed:pages/index.tsx");
+  });
+
+  it("fails closed when React import-map dependency vendoring fails", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
@@ -482,16 +636,10 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(input, await tmp());
 
-    assertEquals(result.success, true);
-    assertEquals(result.state, "ready");
-    assertEquals(rec.states, []);
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    assertExists(manifest.modules["pages/index.tsx"]);
-    assert(manifest.fallback.gaps.includes("dependency-vendor-failed:react-import-map"));
+    assertCoverageFailure(result, rec, "dependency-vendor-failed:react-import-map");
   });
 
-  it("records framework import-map modules as manifest dependencies when dependency vendoring is enabled", async () => {
+  it("records React import-map dependencies without publishing unused framework modules", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
@@ -508,16 +656,9 @@ describe("release asset build executor", () => {
     assertExists(manifest.dependencies["react-dom/client"]);
     assertExists(manifest.dependencies["react/jsx-runtime"]);
     assertExists(manifest.dependencies["react/jsx-dev-runtime"]);
-    assertExists(manifest.dependencies["veryfront/chat"]);
-    assertExists(manifest.dependencies["veryfront/workflow"]);
-    assertEquals(
-      manifest.fallback.gaps.some((gap) => gap.includes("_deno-config")),
-      false,
-    );
-    assertEquals(
-      manifest.dependencies["veryfront/head"]?.contentHash,
-      manifest.dependencies["veryfront/react/head"]?.contentHash,
-    );
+    assertEquals(manifest.dependencies["veryfront/chat"], undefined);
+    assertEquals(manifest.dependencies["veryfront/workflow"], undefined);
+    assertEquals(manifest.dependencies["veryfront/head"], undefined);
   });
 
   it("keeps framework dependency assets on the vendored React instance", async () => {
@@ -641,7 +782,7 @@ describe("release asset build executor", () => {
     assertExists(manifest.dependencies["react/jsx-runtime"]);
   });
 
-  it("records a gap when React import-map dependencies cannot be vendored", async () => {
+  it("fails closed when React import-map dependencies cannot be vendored", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
@@ -654,13 +795,7 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(input, await tmp());
 
-    assertEquals(result.success, true);
-    assertEquals(result.state, "ready");
-    assertEquals(rec.states, []);
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    assertExists(manifest.modules["pages/index.tsx"]);
-    assert(manifest.fallback.gaps.includes("dependency-vendor-failed:react-import-map"));
+    assertCoverageFailure(result, rec, "dependency-vendor-failed:react-import-map");
   });
 
   it("rewrites covered project module imports to immutable asset URLs", async () => {
@@ -880,7 +1015,7 @@ describe("release asset build executor", () => {
     assert(!bParentUpload.text.includes(`"/_vf/assets/${aSharedHash}.js"`));
   });
 
-  it("falls back to source URLs when vendored dependency assets contain a cycle", async () => {
+  it("fails closed when vendored dependency assets contain a cycle", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
@@ -922,25 +1057,10 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(input, await tmp());
 
-    assertEquals(result.success, true);
-    assertEquals(result.state, "ready");
-    assert(result.gaps.some((gap) => gap.startsWith("dependency-cycle:")));
-
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    assertEquals(manifest.dependencies["https://esm.sh/parent@1"], undefined);
-    assertEquals(manifest.dependencies["https://esm.sh/child@1"], undefined);
-
-    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
-    assertExists(pageHash);
-    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
-    assertExists(pageUpload);
-    assert(pageUpload.text.includes('"https://esm.sh/parent@1"'));
-    assert(!pageUpload.text.includes("file:///tmp/veryfront-http-bundle"));
-    assertEquals(rec.states.find((state) => state.state === "failed"), undefined);
+    assertCoverageFailure(result, rec, "dependency-cycle:");
   });
 
-  it("falls back to source URLs when a vendored dependency keeps an unresolved file import", async () => {
+  it("fails closed when a vendored dependency keeps an unresolved file import", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
@@ -974,22 +1094,10 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(input, await tmp());
 
-    assertEquals(result.success, true);
-    assertEquals(result.state, "ready");
-    assertEquals(rec.states, []);
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    assertExists(manifest.modules["pages/index.tsx"]);
-    assert(manifest.fallback.gaps.includes("dependency-finalize-failed"));
-    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
-    assertExists(pageHash);
-    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
-    assertExists(pageUpload);
-    assert(pageUpload.text.includes("https://esm.sh/parent@1"));
-    assert(!pageUpload.text.includes("file://"));
+    assertCoverageFailure(result, rec, "dependency-finalize-failed");
   });
 
-  it("falls back to source URLs when a vendored dependency asset exceeds the size limit", async () => {
+  it("fails closed when a vendored dependency asset exceeds the size limit", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
@@ -1023,23 +1131,7 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(input, await tmp());
 
-    assertEquals(result.success, true);
-    assertEquals(result.state, "ready");
-    assertEquals(rec.states, []);
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    assertExists(manifest.modules["pages/index.tsx"]);
-    assert(
-      manifest.fallback.gaps.includes(
-        "module-dependency-vendor-failed:pages/index.tsx",
-      ),
-    );
-    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
-    assertExists(pageHash);
-    const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
-    assertExists(pageUpload);
-    assert(pageUpload.text.includes("https://esm.sh/parent@1"));
-    assert(!pageUpload.text.includes("file://"));
+    assertCoverageFailure(result, rec, "module-dependency-vendor-failed:pages/index.tsx");
   });
 
   it("rewrites transformed relative project imports to immutable asset URLs", async () => {
@@ -1203,16 +1295,13 @@ describe("release asset build executor", () => {
       return Promise.resolve("export default function Header() { return null; }");
     };
 
-    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
     const manifest = parseReleaseAssetManifest(rec.manifest);
     assertExists(manifest);
+    assertEquals(result.coverageFailures, []);
     assertEquals(manifest.modules["providers/BreakpointsProvider.ts"], undefined);
     assertEquals(manifest.routes["/"]?.modules.includes("providers/BreakpointsProvider.ts"), false);
-    assertEquals(
-      manifest.fallback.gaps.some((gap) => gap.includes("providers/BreakpointsProvider.ts")),
-      false,
-    );
   });
 
   it("does not preload inline type-only import or export specifiers", async () => {
@@ -1250,20 +1339,13 @@ describe("release asset build executor", () => {
       return Promise.resolve("export default function Header() { return null; }");
     };
 
-    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
     const manifest = parseReleaseAssetManifest(rec.manifest);
     assertExists(manifest);
+    assertEquals(result.coverageFailures, []);
     assertEquals(manifest.modules["providers/BreakpointsProvider.ts"], undefined);
     assertEquals(manifest.modules["providers/BreakpointTokens.ts"], undefined);
-    assertEquals(
-      manifest.fallback.gaps.some((gap) => gap.includes("providers/BreakpointsProvider.ts")),
-      false,
-    );
-    assertEquals(
-      manifest.fallback.gaps.some((gap) => gap.includes("providers/BreakpointTokens.ts")),
-      false,
-    );
   });
 
   it("builds route closure from transformed modules when raw page source is not JavaScript", async () => {
@@ -1301,10 +1383,7 @@ describe("release asset build executor", () => {
     const routeModules = manifest.routes["/blog"]?.modules ?? [];
     assert(routeModules.includes("pages/blog.mdx"));
     assert(routeModules.includes("components/Hero.tsx"));
-    assertEquals(
-      manifest.fallback.gaps.some((gap) => gap.startsWith("closure-import-parse-failed:")),
-      false,
-    );
+    assertEquals(result.coverageFailures, []);
   });
 
   it("does not rewrite import-like strings or comments in transformed modules", async () => {
@@ -1345,7 +1424,7 @@ describe("release asset build executor", () => {
     assert(!pageUpload.text.includes(`/_vf/assets/${buttonHash}.js`));
   });
 
-  it("keeps framework module imports on the module-server path", async () => {
+  it("rewrites framework module imports to immutable release assets", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {
@@ -1374,15 +1453,15 @@ describe("release asset build executor", () => {
 
     const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
     assertExists(pageUpload);
-    assert(pageUpload.text.includes(`"${frameworkUrl}"`));
+    assert(!pageUpload.text.includes(`"${frameworkUrl}"`));
     assert(
-      !pageUpload.text.includes(
+      pageUpload.text.includes(
         `"/_vf/assets/${manifest.dependencies["veryfront/workflow"]?.contentHash}.js"`,
       ),
     );
   });
 
-  it("keeps cyclic project imports on the JIT fallback path", async () => {
+  it("fails closed on cyclic project imports", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       { path: "pages/a.tsx", content: 'import B from "../components/B.tsx"; export default B;' },
@@ -1398,15 +1477,10 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
-    assert(result.gaps.includes("cycle:pages/a.tsx->components/B.tsx->pages/a.tsx"));
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    assertEquals(manifest.modules["pages/a.tsx"], undefined);
-    assertEquals(manifest.modules["components/B.tsx"], undefined);
-    assertEquals(manifest.routes["/a"], undefined);
+    assertCoverageFailure(result, rec, "cycle:pages/a.tsx->components/B.tsx->pages/a.tsx");
   });
 
-  it("records a gap and still PUTs when a project module transform fails", async () => {
+  it("fails closed when a project module transform fails", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [{ path: "pages/index.tsx", content: "boom" }];
     const client = makeClient(files, rec);
@@ -1414,13 +1488,7 @@ describe("release asset build executor", () => {
 
     const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
-    assertEquals(result.success, true);
-    assertEquals(result.state, "ready");
-    assertEquals(rec.states, []);
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    assertEquals(manifest.modules["pages/index.tsx"], undefined);
-    assert(manifest.fallback.gaps.includes("module-transform-failed:pages/index.tsx"));
+    assertCoverageFailure(result, rec, "module-transform-failed:pages/index.tsx");
   });
 
   it("dedupes identical transformed bytes into a single upload", async () => {
@@ -1449,17 +1517,17 @@ describe("release asset build executor", () => {
       content: 'export default () => "<div class=\\"p-4\\"/>";',
     }];
     const client = makeClient(files, rec, {
-      compileProjectCss: () =>
-        Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" }),
+      compileProjectCss: () => Promise.resolve(compiledCss(".p-4{padding:1rem}")),
     });
-    const transform = (s: string) => Promise.resolve(s);
+    const transform = () => Promise.resolve("export default null;");
 
     const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
     assertEquals(result.cssCount, 1);
     const manifest = parseReleaseAssetManifest(rec.manifest);
     assertExists(manifest);
-    assertEquals(manifest.css[0]?.styleProfileHash, "sp-1");
+    assertEquals(manifest.css[0]?.styleProfileHash, STYLE_PROFILE_HASH);
+    assertEquals(manifest.css[0]?.cssPipelineIdentity, CSS_PIPELINE_IDENTITY);
     assertEquals(manifest.css[0]?.contentType, "text/css");
     // The route entry must carry the compiled CSS hash (project-level CSS is
     // applied to every route per the executor contract).
@@ -1468,7 +1536,7 @@ describe("release asset build executor", () => {
     assertEquals(manifest.routes["/"]?.css, [cssHash]);
   });
 
-  it("records css:compile-failed when the compiler returns null", async () => {
+  it("fails the release when requested CSS compilation returns null", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [{
       path: "pages/index.tsx",
@@ -1477,21 +1545,94 @@ describe("release asset build executor", () => {
     const client = makeClient(files, rec, {
       compileProjectCss: () => Promise.resolve(null),
     });
-    const transform = (s: string) => Promise.resolve(s);
+    const transform = () => Promise.resolve("export default null;");
 
     const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
-    assertEquals(result.cssCount, 0);
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    assertEquals(manifest.css.length, 0);
-    assert(manifest.fallback.gaps.includes("css:compile-failed"), "null compile records gap");
+    assertEquals(result.success, false);
+    assertEquals(result.state, "failed");
+    assertEquals(rec.manifest, null);
+    assertEquals(rec.states.at(-1)?.state, "failed");
+    assertStringIncludes(result.error ?? "", "returned no requested output");
+  });
+
+  it("fails the release when compiled CSS identity metadata is invalid", async () => {
+    const files = [{
+      path: "pages/index.tsx",
+      content: 'export default () => "<div class=\\"p-4\\"/>";',
+    }];
+    const invalidResults: Array<{ label: string; result: unknown }> = [
+      {
+        label: "noncanonical profile hash",
+        result: compiledCss(".p-4{}", "profile-1"),
+      },
+      {
+        label: "missing pipeline identity",
+        result: { css: ".p-4{}", styleProfileHash: STYLE_PROFILE_HASH },
+      },
+      {
+        label: "noncanonical pipeline identity",
+        result: compiledCss(".p-4{}", STYLE_PROFILE_HASH, " pipeline\nidentity "),
+      },
+      {
+        label: "empty output",
+        result: compiledCss(""),
+      },
+    ];
+
+    for (const invalid of invalidResults) {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const client = makeClient(files, rec, {
+        compileProjectCss: () => Promise.resolve(invalid.result as CompileProjectCssResult),
+      });
+
+      const result = await runReleaseAssetBuild(
+        baseInput(client, (source) => Promise.resolve(source)),
+        await tmp(),
+      );
+
+      assertEquals(result.success, false, invalid.label);
+      assertEquals(result.state, "failed", invalid.label);
+      assertEquals(rec.manifest, null, invalid.label);
+      assertEquals(rec.states.at(-1)?.state, "failed", invalid.label);
+      assertStringIncludes(result.error ?? "", "invalid identity result");
+    }
+  });
+
+  it("does not execute accessors on a forged CSS compiler result", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    let getterCalls = 0;
+    const forgedResult = {
+      get css(): string {
+        getterCalls++;
+        throw new Error("must not execute");
+      },
+      styleProfileHash: STYLE_PROFILE_HASH,
+      cssPipelineIdentity: CSS_PIPELINE_IDENTITY,
+    };
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: "export default null;" }],
+      rec,
+      {
+        compileProjectCss: () => Promise.resolve(forgedResult as CompileProjectCssResult),
+      },
+    );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(getterCalls, 0);
+    assertEquals(rec.manifest, null);
+    assertStringIncludes(result.error ?? "", "invalid identity result");
   });
 
   it("passes the resolved stylesheet to compileProjectCss", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
-      { path: "globals.css", content: '@import "tailwindcss"; /* custom */' },
+      { path: "globals.css", content: ":root { --brand: blue; } /* custom */" },
       {
         path: "pages/index.tsx",
         content: 'export default () => "<div class=\\"p-4\\"/>";',
@@ -1501,26 +1642,26 @@ describe("release asset build executor", () => {
     const client = makeClient(files, rec, {
       compileProjectCss: (_candidates, stylesheet) => {
         seenStylesheet = stylesheet;
-        return Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" });
+        return Promise.resolve(compiledCss(".p-4{padding:1rem}"));
       },
     });
     const transform = (s: string) => Promise.resolve(s);
 
     await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
-    assertEquals(seenStylesheet, '@import "tailwindcss"; /* custom */');
+    assertEquals(seenStylesheet, ":root { --brand: blue; } /* custom */");
   });
 
-  it("loads release config from materialized files for CSS compilation", async () => {
+  it("passes the exact materialized config source to the trusted config loader", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {
         path: "veryfront.config.ts",
         content: `import { defineConfig } from "veryfront";
-export default defineConfig({ tailwind: { stylesheet: "src/styles/app.css" } });`,
+export default defineConfig({ styles: { stylesheet: "src/styles/app.css" } });`,
       },
       { path: "globals.css", content: "/* fallback stylesheet that should not be used */" },
-      { path: "src/styles/app.css", content: '@import "tailwindcss"; /* release-config */' },
+      { path: "src/styles/app.css", content: ":root { --brand: blue; } /* release-config */" },
       {
         path: "pages/index.tsx",
         content: 'export default () => "<div class=\\"p-4\\"/>";',
@@ -1532,29 +1673,42 @@ export default defineConfig({ tailwind: { stylesheet: "src/styles/app.css" } });
       compileProjectCss: (_candidates, stylesheet, options) => {
         seenStylesheet = stylesheet;
         seenConfig = options?.config;
-        return Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" });
+        return Promise.resolve(compiledCss(".p-4{padding:1rem}"));
       },
     });
     const transform = (s: string) => Promise.resolve(s);
+    let selectedConfigSource: Parameters<ReleaseAssetBuildInput["loadConfig"]>[0] | undefined;
 
-    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+    await runReleaseAssetBuild({
+      ...baseInput(client, transform),
+      loadConfig: (source) => {
+        selectedConfigSource = source;
+        return releaseConfigLoader({
+          styles: { stylesheet: "src/styles/app.css" },
+        })(source);
+      },
+    }, await tmp());
 
-    assertEquals(seenStylesheet, '@import "tailwindcss"; /* release-config */');
-    assertEquals(seenConfig?.tailwind?.stylesheet, "src/styles/app.css");
+    assertEquals(seenStylesheet, ":root { --brand: blue; } /* release-config */");
+    assertEquals(seenConfig?.styles?.stylesheet, "src/styles/app.css");
+    assertEquals(selectedConfigSource, {
+      fileName: "veryfront.config.ts",
+      source: files[0]!.content,
+    });
   });
 
-  it("prefers release-file config over stale request-context stylesheet input", async () => {
+  it("uses only the config returned for the immutable release source", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {
         path: "veryfront.config.ts",
         content: `import { defineConfig } from "veryfront";
-export default defineConfig({ tailwind: { stylesheet: "src/styles/release.css" } });`,
+export default defineConfig({ styles: { stylesheet: "src/styles/release.css" } });`,
       },
       { path: "src/styles/stale.css", content: "/* stale request-context config */" },
       {
         path: "src/styles/release.css",
-        content: '@import "tailwindcss"; /* release config wins */',
+        content: ":root { --brand: blue; } /* release config wins */",
       },
       {
         path: "pages/index.tsx",
@@ -1565,33 +1719,58 @@ export default defineConfig({ tailwind: { stylesheet: "src/styles/release.css" }
     const client = makeClient(files, rec, {
       compileProjectCss: (_candidates, stylesheet) => {
         seenStylesheet = stylesheet;
-        return Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" });
+        return Promise.resolve(compiledCss(".p-4{padding:1rem}"));
       },
     });
     const transform = (s: string) => Promise.resolve(s);
 
     await runReleaseAssetBuild({
       ...baseInput(client, transform),
-      stylesheetPath: "src/styles/stale.css",
+      loadConfig: releaseConfigLoader({
+        styles: { stylesheet: "src/styles/release.css" },
+      }),
     }, await tmp());
 
-    assertEquals(seenStylesheet, '@import "tailwindcss"; /* release config wins */');
+    assertEquals(seenStylesheet, ":root { --brand: blue; } /* release config wins */");
   });
 
-  it("loads config relative imports from the materialized release file tree", async () => {
+  it("fails closed when the configured release stylesheet is missing", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    let compileCalls = 0;
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: "export default () => null;" }],
+      rec,
+      {
+        compileProjectCss: () => {
+          compileCalls++;
+          return Promise.resolve(compiledCss(".unexpected{}"));
+        },
+      },
+    );
+
+    const result = await runReleaseAssetBuild({
+      ...baseInput(client, (source) => Promise.resolve(source)),
+      loadConfig: releaseConfigLoader({
+        styles: { stylesheet: "src/styles/missing.css" },
+      }),
+    }, await tmp());
+
+    assertCoverageFailure(result, rec, "stylesheet-missing:src/styles/missing.css");
+    assertEquals(compileCalls, 0);
+  });
+
+  it("never executes materialized config source in the build host", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {
         path: "veryfront.config.ts",
-        content: `import { defineConfig } from "veryfront";
-import { stylesheet } from "./style-config.ts";
-export default defineConfig({ tailwind: { stylesheet } });`,
+        content: `throw new Error("tenant config executed in build host");
+export default { styles: { stylesheet: "src/styles/imported.css" } };`,
       },
-      { path: "style-config.ts", content: 'export const stylesheet = "src/styles/imported.css";' },
       { path: "globals.css", content: "/* fallback stylesheet that should not be used */" },
       {
         path: "src/styles/imported.css",
-        content: '@import "tailwindcss"; /* imported release config */',
+        content: ":root { --brand: blue; } /* imported release config */",
       },
       {
         path: "pages/index.tsx",
@@ -1604,62 +1783,70 @@ export default defineConfig({ tailwind: { stylesheet } });`,
       compileProjectCss: (_candidates, stylesheet, options) => {
         seenStylesheet = stylesheet;
         seenConfig = options?.config;
-        return Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" });
+        return Promise.resolve(compiledCss(".p-4{padding:1rem}"));
       },
     });
     const transform = (s: string) => Promise.resolve(s);
 
-    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+    const result = await runReleaseAssetBuild({
+      ...baseInput(client, transform),
+      loadConfig: releaseConfigLoader({
+        styles: { stylesheet: "src/styles/imported.css" },
+      }),
+    }, await tmp());
 
-    assertEquals(seenStylesheet, '@import "tailwindcss"; /* imported release config */');
-    assertEquals(seenConfig?.tailwind?.stylesheet, "src/styles/imported.css");
+    assertEquals(result.success, true);
+    assertEquals(seenStylesheet, ":root { --brand: blue; } /* imported release config */");
+    assertEquals(seenConfig?.styles?.stylesheet, "src/styles/imported.css");
   });
 
-  it("fails the build when materialized release config has unknown keys", async () => {
+  it("fails closed when the trusted config loader rejects release config", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {
         path: "veryfront.config.ts",
         content: `import { defineConfig } from "veryfront";
-export default defineConfig({ tailwind: { stylesheet: "globals.css" }, typoKey: true });`,
+export default defineConfig({ styles: { stylesheet: "globals.css" }, typoKey: true });`,
       },
-      { path: "globals.css", content: '@import "tailwindcss";' },
+      { path: "globals.css", content: ":root { --brand: blue; }" },
       { path: "pages/index.tsx", content: "export default () => null;" },
     ];
     const client = makeClient(files, rec);
     const transform = (s: string) => Promise.resolve(s);
 
-    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+    const result = await runReleaseAssetBuild({
+      ...baseInput(client, transform),
+      loadConfig: () => Promise.reject(new Error("release config rejected")),
+    }, await tmp());
 
     assertEquals(result.success, false);
     assertEquals(result.state, "failed");
     assertStringIncludes(
       result.error ?? "",
-      'Invalid veryfront.config at <root>: Unrecognized key: "typoKey".',
+      "release config rejected",
     );
     assertEquals(rec.states.length, 1);
     assertEquals(rec.states[0]?.state, "failed");
     assertStringIncludes(
       rec.states[0]?.error ?? "",
-      'Invalid veryfront.config at <root>: Unrecognized key: "typoKey".',
+      "release config rejected",
     );
   });
 
-  it("loads release config that uses framework config helpers", async () => {
+  it("uses the validated helper result returned by the config boundary", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
-    setEnv("VERYFRONT_RELEASE_CONFIG_STYLESHEET", "src/styles/helper.css");
     const files = [
       {
         path: "veryfront.config.ts",
         content: `import { defineConfigWithEnv, getEnv, mergeConfigs } from "veryfront";
-const shared = { tailwind: { stylesheet: getEnv("VERYFRONT_RELEASE_CONFIG_STYLESHEET") } };
+const shared = { styles: { stylesheet: getEnv("VERYFRONT_RELEASE_CONFIG_STYLESHEET") } };
 export default defineConfigWithEnv((env) =>
   mergeConfigs(shared, { react: { version: env === "production" ? "19.2.8" : "19.2.9" } })
 );`,
       },
       {
         path: "src/styles/helper.css",
-        content: '@import "tailwindcss"; /* helper config */',
+        content: ":root { --brand: blue; } /* helper config */",
       },
       { path: "pages/index.tsx", content: "export default () => null;" },
     ];
@@ -1668,7 +1855,7 @@ export default defineConfigWithEnv((env) =>
     const client = makeClient(files, rec, {
       compileProjectCss: (_candidates, stylesheet) => {
         seenStylesheet = stylesheet;
-        return Promise.resolve({ css: ".helper{}", styleProfileHash: "sp-helper" });
+        return Promise.resolve(compiledCss(".helper{}"));
       },
     });
     const transform: ReleaseAssetBuildInput["transform"] = (
@@ -1682,14 +1869,20 @@ export default defineConfigWithEnv((env) =>
       return Promise.resolve("export default () => null;");
     };
 
-    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+    await runReleaseAssetBuild({
+      ...baseInput(client, transform),
+      loadConfig: releaseConfigLoader({
+        styles: { stylesheet: "src/styles/helper.css" },
+        react: { version: "19.2.8" },
+      }),
+    }, await tmp());
 
-    assertEquals(seenStylesheet, '@import "tailwindcss"; /* helper config */');
+    assertEquals(seenStylesheet, ":root { --brand: blue; } /* helper config */");
     assert(seenReactVersions.length > 0);
     assert(seenReactVersions.every((version) => version === "19.2.8"));
   });
 
-  it("loads React version from materialized release config for module transforms", async () => {
+  it("uses the source-bound React version for module transforms", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {
@@ -1714,7 +1907,7 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
 
     await runReleaseAssetBuild({
       ...baseInput(client, transform),
-      reactVersion: "18.0.0",
+      loadConfig: releaseConfigLoader({ react: { version: "19.2.1" } }),
     }, await tmp());
 
     assert(seenReactVersions.length > 0);
@@ -1743,19 +1936,16 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
       return Promise.resolve("export default () => null;");
     };
 
-    await runReleaseAssetBuild({
-      ...baseInput(client, transform),
-      reactVersion: "18.0.0",
-    }, await tmp());
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
     assert(seenReactVersions.length > 0);
     assert(seenReactVersions.every((version) => version === "19.2.3"));
   });
 
-  it("keeps fallback stylesheet and React version when release files have no config", async () => {
+  it("uses conventional stylesheet and default React version when config is absent", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
-      { path: "globals.css", content: '@import "tailwindcss"; /* fallback */' },
+      { path: "globals.css", content: ":root { --brand: blue; } /* fallback */" },
       { path: "pages/index.tsx", content: 'export default () => "<div class="p-4"/>";' },
     ];
     let seenStylesheet: string | undefined;
@@ -1763,7 +1953,7 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     const client = makeClient(files, rec, {
       compileProjectCss: (_candidates, stylesheet) => {
         seenStylesheet = stylesheet;
-        return Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" });
+        return Promise.resolve(compiledCss(".p-4{padding:1rem}"));
       },
     });
     const transform: ReleaseAssetBuildInput["transform"] = (
@@ -1777,20 +1967,17 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
       return Promise.resolve("export default () => null;");
     };
 
-    await runReleaseAssetBuild({
-      ...baseInput(client, transform),
-      reactVersion: "18.3.1",
-    }, await tmp());
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
-    assertEquals(seenStylesheet, '@import "tailwindcss"; /* fallback */');
+    assertEquals(seenStylesheet, ":root { --brand: blue; } /* fallback */");
     assert(seenReactVersions.length > 0);
-    assert(seenReactVersions.every((version) => version === "18.3.1"));
+    assert(seenReactVersions.every((version) => version === "19.2.4"));
   });
 
   it("merges module-imported CSS into the stylesheet passed to compileProjectCss", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
-      { path: "globals.css", content: '@import "tailwindcss";' },
+      { path: "globals.css", content: ":root { --brand: blue; }" },
       { path: "app/styles.css", content: ".calc { background: #191919; }" },
       {
         path: "app/layout.tsx",
@@ -1805,16 +1992,16 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     const client = makeClient(files, rec, {
       compileProjectCss: (_candidates, stylesheet) => {
         seenStylesheet = stylesheet;
-        return Promise.resolve({ css: ".calc{background:#191919}", styleProfileHash: "sp-1" });
+        return Promise.resolve(compiledCss(".calc{background:#191919}"));
       },
     });
-    const transform = (s: string) => Promise.resolve(s);
+    const transform = () => Promise.resolve("export default null;");
 
     await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
     assertExists(seenStylesheet);
     assert(
-      seenStylesheet!.includes('@import "tailwindcss";'),
+      seenStylesheet!.includes(":root { --brand: blue; }"),
       "resolved stylesheet must be preserved",
     );
     assert(
@@ -1826,7 +2013,7 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
   it("does not duplicate the resolved stylesheet when a module imports it directly", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
-      { path: "globals.css", content: '@import "tailwindcss"; /* custom */' },
+      { path: "globals.css", content: ":root { --brand: blue; } /* custom */" },
       {
         path: "app/layout.tsx",
         content: 'import "../globals.css";\nexport default ({ children }) => children;',
@@ -1840,10 +2027,10 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     const client = makeClient(files, rec, {
       compileProjectCss: (_candidates, stylesheet) => {
         seenStylesheet = stylesheet;
-        return Promise.resolve({ css: ".p-4{padding:1rem}", styleProfileHash: "sp-1" });
+        return Promise.resolve(compiledCss(".p-4{padding:1rem}"));
       },
     });
-    const transform = (s: string) => Promise.resolve(s);
+    const transform = () => Promise.resolve("export default null;");
 
     await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
@@ -1851,10 +2038,10 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(seenStylesheet!.split("/* custom */").length - 1, 1);
   });
 
-  it("keeps CSS module files out of the merged release stylesheet", async () => {
+  it("merges CSS Modules with the same scoped classes used by transformed code", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
-      { path: "globals.css", content: '@import "tailwindcss";' },
+      { path: "globals.css", content: ":root { --brand: blue; }" },
       { path: "components/button.module.css", content: ".button { color: red; }" },
       {
         path: "components/Button.tsx",
@@ -1869,22 +2056,97 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     const client = makeClient(files, rec, {
       compileProjectCss: (_candidates, stylesheet) => {
         seenStylesheet = stylesheet;
-        return Promise.resolve({ css: "body{}", styleProfileHash: "sp-1" });
+        return Promise.resolve(compiledCss("body{}"));
       },
     });
-    const transform = (s: string) => Promise.resolve(s);
-
-    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
-
-    assertExists(seenStylesheet);
-    assertEquals(
-      seenStylesheet!.includes(".button"),
-      false,
-      "CSS module content must not be inlined unscoped into the release stylesheet",
+    const scopedButtonClass = toScopedCssModuleClass(
+      "/components/button.module.css",
+      "button",
     );
+    const transform = (source: string, sourceFile: string) =>
+      Promise.resolve(
+        sourceFile.endsWith("components/Button.tsx")
+          ? `export const buttonClass = ${JSON.stringify(scopedButtonClass)};`
+          : source,
+      );
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(result.success, true);
+    assertExists(seenStylesheet);
+    assertStringIncludes(seenStylesheet!, `.${scopedButtonClass} { color: red; }`);
+    assertEquals(seenStylesheet!.includes(".button { color: red; }"), false);
   });
 
-  it("passes helper-composed Tailwind candidates to compileProjectCss", async () => {
+  it("produces identical module and CSS assets across temporary roots", async () => {
+    const files = [
+      { path: "components/card.module.css", content: ".root { color: red; }" },
+      {
+        path: "pages/index.tsx",
+        content: 'import styles from "../components/card.module.css"; export default styles.root;',
+      },
+    ];
+    const scopedClass = toScopedCssModuleClass("/components/card.module.css", "root");
+
+    async function build(): Promise<ReleaseAssetManifest> {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const client = makeClient(files, rec, {
+        compileProjectCss: (_candidates, stylesheet) =>
+          Promise.resolve(compiledCss(stylesheet ?? "")),
+      });
+      const result = await runReleaseAssetBuild(
+        baseInput(client, () => Promise.resolve(`export default ${JSON.stringify(scopedClass)};`)),
+        await tmp(),
+      );
+      assertEquals(result.success, true);
+      const manifest = parseReleaseAssetManifest(rec.manifest);
+      assertExists(manifest);
+      return manifest;
+    }
+
+    const first = await build();
+    const second = await build();
+    assertEquals(first.modules["pages/index.tsx"], second.modules["pages/index.tsx"]);
+    assertEquals(first.css, second.css);
+  });
+
+  it("fails closed when an imported stylesheet is missing or unsupported", async () => {
+    for (
+      const specifier of ["./missing.css", "theme-package/theme.css", "https://cdn.test/x.css"]
+    ) {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      let compileCalls = 0;
+      const client = makeClient(
+        [{
+          path: "pages/index.tsx",
+          content: `import ${JSON.stringify(specifier)}; export default null;`,
+        }],
+        rec,
+        {
+          compileProjectCss: () => {
+            compileCalls++;
+            return Promise.resolve(compiledCss("body{}"));
+          },
+        },
+      );
+
+      const result = await runReleaseAssetBuild(
+        baseInput(client, () => Promise.resolve("export default null;")),
+        await tmp(),
+      );
+
+      assertCoverageFailure(
+        result,
+        rec,
+        specifier.startsWith("./")
+          ? "stylesheet-import-missing:pages/missing.css"
+          : "stylesheet-import-unsupported:pages/index.tsx",
+      );
+      assertEquals(compileCalls, 0, specifier);
+    }
+  });
+
+  it("passes helper-composed CSS candidates to compileProjectCss", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       {
@@ -1905,7 +2167,7 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     const client = makeClient(files, rec, {
       compileProjectCss: (candidates) => {
         seenCandidates = new Set(candidates);
-        return Promise.resolve({ css: ".h-16{height:4rem}", styleProfileHash: "sp-1" });
+        return Promise.resolve(compiledCss(".h-16{height:4rem}"));
       },
     });
     const transform = (s: string) => Promise.resolve(s);
@@ -2006,7 +2268,12 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     const client = makeClient(files, rec);
     const transform = (s: string) => Promise.resolve(s);
 
-    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+    await runReleaseAssetBuild({
+      ...baseInput(client, transform),
+      loadConfig: releaseConfigLoader({
+        directories: { app: "src\\site", pages: "src\\pages" },
+      }),
+    }, await tmp());
 
     const manifest = parseReleaseAssetManifest(rec.manifest);
     assertExists(manifest);
@@ -2017,6 +2284,24 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
       "src/site/layout.tsx",
     ]);
     assertEquals(manifest.routes["/about"]?.modules, ["src/pages/about.tsx"]);
+  });
+
+  it("fails closed on route collisions independently of release file order", async () => {
+    const collidingFiles = [
+      { path: "pages/index.tsx", content: "export default () => null;" },
+      { path: "app/page.tsx", content: "export default () => null;" },
+    ];
+
+    for (const files of [collidingFiles, [...collidingFiles].reverse()]) {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const client = makeClient(files, rec);
+      const result = await runReleaseAssetBuild(
+        baseInput(client, (source) => Promise.resolve(source)),
+        await tmp(),
+      );
+
+      assertCoverageFailure(result, rec, "route-collision:/");
+    }
   });
 
   // H1: non-transform failures (e.g., listAllReleaseFiles throws) report failed.
@@ -2036,6 +2321,44 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(rec.states[0]?.state, "failed");
     // Error is sanitized.
     assert(!(rec.states[0]?.error ?? "").includes("/internal/path"));
+  });
+
+  it("reports downstream failures for both acknowledged active build states", async () => {
+    for (const state of ["queued", "building"] as const) {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const client = makeClient([], rec, {
+        beginReleaseAssetManifestBuild: () => {
+          rec.began = true;
+          return Promise.resolve({ id: `build-${state}`, manifest_version: 7, state });
+        },
+        listAllReleaseFiles: () => Promise.reject(new Error(`source listing failed: ${state}`)),
+      });
+
+      const result = await runReleaseAssetBuild(
+        baseInput(client, (source) => Promise.resolve(source)),
+        await tmp(),
+      );
+
+      assertEquals(result.success, false, state);
+      assertEquals(rec.states.map(({ state }) => state), ["failed"], state);
+    }
+  });
+
+  it("preserves the primary build failure when failure reporting also fails", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([], rec, {
+      listAllReleaseFiles: () => Promise.reject(new Error("primary source listing failure")),
+      reportReleaseAssetManifestState: () =>
+        Promise.reject(new Error("secondary state reporting failure")),
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertStringIncludes(result.error ?? "", "primary source listing failure");
   });
 
   // H1: PUT failure also reports failed.
@@ -2119,6 +2442,38 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(rec.states.map(({ state }) => state), ["failed"]);
   });
 
+  it("does not execute accessors on upload acknowledgements", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    let accessorCalls = 0;
+    const forgedAcknowledgement: Record<string, unknown> = { existed: false };
+    Object.defineProperty(forgedAcknowledgement, "stored", {
+      enumerable: true,
+      get() {
+        accessorCalls++;
+        return true;
+      },
+    });
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: "export default null;" }],
+      rec,
+      {
+        uploadReleaseAsset: () =>
+          Promise.resolve(
+            forgedAcknowledgement as unknown as { stored: boolean; existed: boolean },
+          ),
+      },
+    );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(accessorCalls, 0);
+    assertEquals(rec.manifest, null);
+  });
+
   it("fails closed when PUT does not acknowledge the expected manifest", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const client = makeClient(
@@ -2142,6 +2497,63 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(rec.states.map(({ state }) => state), ["failed"]);
   });
 
+  it("requires the PUT acknowledgement to name the exact manifest generation", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: "export default null;" }],
+      rec,
+      {
+        putReleaseAssetManifest: (_version, manifest) => {
+          rec.manifest = manifest;
+          return Promise.resolve({ state: "ready" });
+        },
+      },
+    );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(result.state, "failed");
+    assertEquals(rec.states.map(({ state }) => state), ["failed"]);
+  });
+
+  it("does not execute accessors on manifest PUT acknowledgements", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    let accessorCalls = 0;
+    const forgedAcknowledgement: Record<string, unknown> = { manifest_version: 7 };
+    Object.defineProperty(forgedAcknowledgement, "state", {
+      enumerable: true,
+      get() {
+        accessorCalls++;
+        return "ready";
+      },
+    });
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: "export default null;" }],
+      rec,
+      {
+        putReleaseAssetManifest: (_version, manifest) => {
+          rec.manifest = manifest;
+          return Promise.resolve(
+            forgedAcknowledgement as unknown as { state: string; manifest_version?: number },
+          );
+        },
+      },
+    );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(accessorCalls, 0);
+    assertEquals(rec.states.map(({ state }) => state), ["failed"]);
+  });
+
   it("rejects unsafe manifest versions before materializing release files", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     let listed = false;
@@ -2161,7 +2573,112 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
 
     assertEquals(result.success, false);
     assertEquals(listed, false);
-    assertEquals(rec.states.map(({ state }) => state), ["failed"]);
+    assertEquals(rec.states, []);
+  });
+
+  it("does not execute accessors on build-start acknowledgements", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    let accessorCalls = 0;
+    let listed = false;
+    const forgedAcknowledgement: Record<string, unknown> = {
+      id: "build-1",
+      manifest_version: 7,
+    };
+    Object.defineProperty(forgedAcknowledgement, "state", {
+      enumerable: true,
+      get() {
+        accessorCalls++;
+        return "building";
+      },
+    });
+    const client = makeClient([], rec, {
+      beginReleaseAssetManifestBuild: () =>
+        Promise.resolve(
+          forgedAcknowledgement as unknown as {
+            id: string;
+            manifest_version: number;
+            state: string;
+          },
+        ),
+      listAllReleaseFiles: () => {
+        listed = true;
+        return Promise.resolve([]);
+      },
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(accessorCalls, 0);
+    assertEquals(listed, false);
+    assertEquals(rec.states, []);
+  });
+
+  it("does not mutate remote state for terminal build-start acknowledgements", async () => {
+    for (const state of ["ready", "partial", "failed", "superseded"] as const) {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      let listed = false;
+      const client = makeClient([], rec, {
+        beginReleaseAssetManifestBuild: () => {
+          rec.began = true;
+          return Promise.resolve({ id: `build-${state}`, manifest_version: 7, state });
+        },
+        listAllReleaseFiles: () => {
+          listed = true;
+          return Promise.resolve([]);
+        },
+      });
+
+      const result = await runReleaseAssetBuild(
+        baseInput(client, (source) => Promise.resolve(source)),
+        await tmp(),
+      );
+
+      assertEquals(result.success, false, state);
+      assertEquals(listed, false, state);
+      assertEquals(rec.uploads, [], state);
+      assertEquals(rec.manifest, null, state);
+      assertEquals(rec.states, [], state);
+    }
+  });
+
+  it("does not report failure when build start rejects", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    let listed = false;
+    const client = makeClient([], rec, {
+      beginReleaseAssetManifestBuild: () => Promise.reject(new Error("build start unavailable")),
+      listAllReleaseFiles: () => {
+        listed = true;
+        return Promise.resolve([]);
+      },
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(listed, false);
+    assertEquals(rec.states, []);
+  });
+
+  it("does not report failure before build ownership is established", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([], rec);
+    const input = {
+      ...baseInput(client, (source) => Promise.resolve(source)),
+      projectId: "",
+    };
+
+    const result = await runReleaseAssetBuild(input, await tmp());
+
+    assertEquals(result.success, false);
+    assertEquals(rec.began, false);
+    assertEquals(rec.states, []);
   });
 
   it("rejects non-canonical release file paths", async () => {
@@ -2198,6 +2715,50 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(rec.manifest, null);
   });
 
+  it("rejects portable case-folding path collisions before materialization", async () => {
+    const fileOrders = [
+      ["components/Foo.tsx", "components/foo.tsx"],
+      ["components/foo.tsx", "components/Foo.tsx"],
+    ];
+    for (const paths of fileOrders) {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const tempDir = await tmp();
+      const client = makeClient(
+        paths.map((path) => ({ path, content: "export default null;" })),
+        rec,
+      );
+
+      const result = await runReleaseAssetBuild(
+        baseInput(client, (source) => Promise.resolve(source)),
+        tempDir,
+      );
+
+      assertEquals(result.success, false, paths.join(","));
+      assertEquals(rec.manifest, null, paths.join(","));
+      const materialized: string[] = [];
+      for await (const entry of Deno.readDir(tempDir)) materialized.push(entry.name);
+      assertEquals(materialized, [], paths.join(","));
+    }
+  });
+
+  it("rejects non-NFC and Windows-reserved release paths", async () => {
+    for (const path of ["components/cafe\u0301.tsx", "components/CON.tsx", "lib/name:ads.ts"]) {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const tempDir = await tmp();
+      const client = makeClient([{ path, content: "export default null;" }], rec);
+
+      const result = await runReleaseAssetBuild(
+        baseInput(client, (source) => Promise.resolve(source)),
+        tempDir,
+      );
+
+      assertEquals(result.success, false, path);
+      const materialized: string[] = [];
+      for await (const entry of Deno.readDir(tempDir)) materialized.push(entry.name);
+      assertEquals(materialized, [], path);
+    }
+  });
+
   it("uploads equal JavaScript and CSS bytes under both content identities", async () => {
     const shared = "same release asset bytes";
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
@@ -2205,7 +2766,7 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
       [{ path: "pages/index.tsx", content: "source" }],
       rec,
       {
-        compileProjectCss: () => Promise.resolve({ css: shared, styleProfileHash: "profile-1" }),
+        compileProjectCss: () => Promise.resolve(compiledCss(shared)),
       },
     );
 
@@ -2222,15 +2783,14 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     );
   });
 
-  it("keeps oversized CSS out of uploads and records the fallback", async () => {
+  it("fails the release when compiled CSS exceeds the upload boundary", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const oversizedCss = "x".repeat(RELEASE_ASSET_MAX_SIZE_BYTES + 1);
     const client = makeClient(
       [{ path: "pages/index.tsx", content: "export default null;" }],
       rec,
       {
-        compileProjectCss: () =>
-          Promise.resolve({ css: oversizedCss, styleProfileHash: "profile-1" }),
+        compileProjectCss: () => Promise.resolve(compiledCss(oversizedCss)),
       },
     );
 
@@ -2238,17 +2798,16 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
       baseInput(client, (source) => Promise.resolve(source)),
       await tmp(),
     );
-    const parsed = parseReleaseAssetManifest(rec.manifest);
-    assertExists(parsed);
-
-    assertEquals(result.success, true);
-    assertEquals(parsed.css, []);
-    assert(parsed.fallback.gaps.includes("css:oversized"));
+    assertEquals(result.success, false);
+    assertEquals(result.state, "failed");
+    assertEquals(rec.manifest, null);
+    assertEquals(rec.states.at(-1)?.state, "failed");
+    assertStringIncludes(result.error ?? "", "CSS output exceeds");
     assertEquals(rec.uploads.some(({ text }) => text.length > RELEASE_ASSET_MAX_SIZE_BYTES), false);
   });
 
-  // M2: modules exceeding the 10 MB limit are skipped with a gap.
-  it("skips oversized modules with a gap instead of uploading (M2)", async () => {
+  // M2: modules exceeding the 10 MB limit fail before any upload.
+  it("fails closed on oversized modules without uploading (M2)", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [{ path: "pages/index.tsx", content: "export default () => null;" }];
     const client = makeClient(files, rec);
@@ -2258,12 +2817,7 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
 
     const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
 
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    // Module is skipped — not uploaded as a page asset, not in manifest modules.
-    assertEquals(Object.keys(manifest.modules).length, 0);
-    // Gap is recorded.
-    assert(result.gaps.some((g) => g.startsWith("oversized:")));
+    assertCoverageFailure(result, rec, "oversized:pages/index.tsx");
   });
 
   // L3: nested index route derivation.
@@ -2295,7 +2849,7 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(routeForPage(`pages/${"a".repeat(2_048)}.tsx`), null);
   });
 
-  it("bounds oversized cycle diagnostics without failing the manifest", async () => {
+  it("bounds oversized cycle diagnostics before failing the build", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const firstUrl = `https://example.com/${"a".repeat(1_400)}`;
@@ -2334,11 +2888,8 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     };
 
     const result = await runReleaseAssetBuild(input, await tmp());
-    const manifest = parseReleaseAssetManifest(rec.manifest);
 
-    assertEquals(result.success, true, result.error);
-    assertExists(manifest);
-    assert(manifest.fallback.gaps.includes("gaps:detail-limit-exceeded"));
+    assertCoverageFailure(result, rec, "coverage-failures:detail-limit-exceeded");
   });
 });
 

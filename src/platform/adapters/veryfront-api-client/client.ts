@@ -492,7 +492,7 @@ export class VeryfrontApiClient {
 
   reportReleaseAssetManifestState(
     version: string,
-    state: "partial" | "failed",
+    state: "failed",
     error?: string,
     projectRef = this.requireProjectSlug(),
   ) {

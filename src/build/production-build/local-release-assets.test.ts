@@ -11,6 +11,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  RELEASE_ASSET_MAX_SIZE_BYTES,
   RELEASE_ASSET_UPLOAD_CONCURRENCY,
 } from "#veryfront/release-assets/constants.ts";
 import { parseReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
@@ -137,6 +138,9 @@ describe("build/production-build/local-release-assets", () => {
     assertExists(manifest);
     assertExists(manifest.dependencies.react);
     assertExists(manifest.dependencies["react-dom/client"]);
+    assertEquals(manifest.modules, {});
+    assertEquals(manifest.css, []);
+    assertEquals(manifest.routes, {});
 
     const manifestText = writes.get("/project/dist/_veryfront/release-asset-manifest.json");
     assertExists(manifestText);
@@ -630,6 +634,31 @@ describe("build/production-build/local-release-assets", () => {
     assertEquals(removed.includes("/tmp/vf-local-release-assets-test"), true);
   });
 
+  it("fails before writing when any local dependency coverage is incomplete", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const { adapter, byteWrites, removed, writes } = makeAdapter();
+    const oversizedFrameworkModule = "x".repeat(RELEASE_ASSET_MAX_SIZE_BYTES + 1);
+
+    await assertRejects(
+      () =>
+        generateLocalReleaseAssetManifest({
+          adapter,
+          projectDir: "/project",
+          outputDir: "/project/dist",
+          dryRun: false,
+          config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+          vendorHttpImports: fakeVendorHttpImports,
+          frameworkTransform: () => Promise.resolve(oversizedFrameworkModule),
+        }),
+      Error,
+      "Local release dependency coverage is incomplete",
+    );
+
+    assertEquals(writes.size, 0);
+    assertEquals(byteWrites.size, 0);
+    assertEquals(removed.includes("/tmp/vf-local-release-assets-test"), true);
+  });
+
   it("reports cleanup failures and preserves both failures when generation also fails", async () => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const successful = makeAdapter();
@@ -641,7 +670,7 @@ describe("build/production-build/local-release-assets", () => {
           adapter: successful.adapter,
           projectDir: "/project",
           outputDir: "/output",
-          dryRun: true,
+          dryRun: false,
           config: { react: { version: "18.3.1" } } as VeryfrontConfig,
           vendorHttpImports: fakeVendorHttpImports,
           frameworkTransform: fakeFrameworkTransform,
@@ -649,6 +678,8 @@ describe("build/production-build/local-release-assets", () => {
       Error,
       "Failed to clean up",
     );
+    assertEquals(successful.writes.size, 0);
+    assertEquals(successful.byteWrites.size, 0);
 
     const failed = makeAdapter();
     failed.adapter.fs.remove = () => Promise.reject(new Error("cleanup also denied"));
@@ -663,6 +694,7 @@ describe("build/production-build/local-release-assets", () => {
         vendorHttpImports: () => {
           throw new Error("vendoring failed");
         },
+        frameworkTransform: fakeFrameworkTransform,
       });
     } catch (error) {
       received = error;

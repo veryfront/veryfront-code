@@ -53,6 +53,13 @@ describe("html/styles-builder/css-import-extraction", () => {
       );
     });
 
+    it("resolves project-root specifiers against the project root", () => {
+      assertEquals(
+        resolveCssImportPath("/theme/tokens.css", "/project/app/layout.tsx", "/project"),
+        "/project/theme/tokens.css",
+      );
+    });
+
     it("ignores bare and URL specifiers", () => {
       assertEquals(
         resolveCssImportPath("some-package/dist.css", "/project/a.tsx", "/project"),

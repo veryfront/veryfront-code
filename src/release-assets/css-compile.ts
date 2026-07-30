@@ -23,7 +23,11 @@
  * @module release-assets/css-compile
  */
 
-import { assertCSSPipelineIdentity, assertStyleProfileHash, serverLogger } from "#veryfront/utils";
+import {
+  assertCSSPipelineIdentity,
+  assertStyleProfileHash,
+} from "#veryfront/utils/css-artifact-identity.ts";
+import { serverLogger } from "#veryfront/utils/logger/index.ts";
 import { COMPILATION_ERROR } from "#veryfront/errors";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
@@ -52,14 +56,12 @@ export interface CompileProjectCssResult {
 export interface CompileProjectCssOptions {
   /** Project scope (slug or id) — isolates the compiler cache per project. */
   projectScope: string;
-  /** Fallback project config, used when the executor cannot provide release config. */
-  config?: VeryfrontConfig;
 }
 
 /** Per-build configuration resolved from the materialized release. */
 export interface CompileProjectCssRuntimeOptions {
-  /** Project config resolved from the materialized release file set. */
-  config?: VeryfrontConfig;
+  /** Validated project config resolved from the exact materialized release. */
+  config: VeryfrontConfig;
 }
 
 /**
@@ -77,7 +79,7 @@ export function createCompileProjectCss(
 ): (
   candidates: Set<string>,
   stylesheet: string | undefined,
-  runtimeOptions?: CompileProjectCssRuntimeOptions,
+  runtimeOptions: CompileProjectCssRuntimeOptions,
 ) => Promise<CompileProjectCssResult | null> {
   if (
     !options ||
@@ -94,7 +96,7 @@ export function createCompileProjectCss(
   return async (
     candidates: Set<string>,
     stylesheet: string | undefined,
-    runtimeOptions?: CompileProjectCssRuntimeOptions,
+    runtimeOptions: CompileProjectCssRuntimeOptions,
   ): Promise<CompileProjectCssResult | null> => {
     if (!(candidates instanceof Set) || candidates.size > MAX_CSS_CANDIDATES) {
       throw new TypeError(
@@ -133,8 +135,12 @@ export function createCompileProjectCss(
       return null;
     }
 
+    if (!runtimeOptions || typeof runtimeOptions !== "object" || !runtimeOptions.config) {
+      throw new TypeError("Release CSS config is unavailable");
+    }
+
     const styleProfileHash = assertStyleProfileHash(
-      createStyleScopeProfile(runtimeOptions?.config ?? options.config).hash,
+      createStyleScopeProfile(runtimeOptions.config).hash,
       "Release CSS style profile hash",
     );
     const generationSession = await acquireCSSGenerationSession(true);

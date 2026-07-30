@@ -54,6 +54,37 @@ describe("css-strip plugin", () => {
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
+  it("preserves css module bindings in minified static imports", async () => {
+    const cases = [
+      {
+        code: 'import styles from"./Button.module.css";export const c=styles.container;',
+        expected: "const styles = new Proxy({},",
+      },
+      {
+        code: 'import{container as root}from"./Button.module.css";export const c=root;',
+        expected: 'root = "Button_container__',
+      },
+      {
+        code: 'import*as styles from"./Button.module.css";export const c=styles.container;',
+        expected: "const styles = new Proxy({},",
+      },
+      {
+        code:
+          'import styles,{container as root}from"./Button.module.css";export const c=styles.container+root;',
+        expected: 'root = "Button_container__',
+      },
+    ];
+
+    for (const testCase of cases) {
+      const ctx = createContext(testCase.code);
+      const result = await cssStripPlugin.transform(ctx);
+
+      assertEquals(result.includes('.module.css"'), false);
+      assertStringIncludes(result, testCase.expected);
+      assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+    }
+  });
+
   it("keeps dynamic non-css imports untouched", async () => {
     const code = `async function load(){ return await import("./feature.js"); }`;
     const ctx = createContext(code);

@@ -117,7 +117,7 @@ describe("cache/keys", () => {
 
   describe("render cache prefix + manifest consumption", () => {
     const makeManifest = (): ReleaseAssetManifest => ({
-      schemaVersion: 1,
+      schemaVersion: 2,
       manifestVersion: 1,
       projectId: "proj_123",
       releaseId: "rel_456",
@@ -129,7 +129,7 @@ describe("cache/keys", () => {
       modules: {},
       css: [],
       routes: {},
-      fallback: { mode: "jit" as const, gaps: [] },
+      dependencyMode: "source",
       dependencies: {},
     });
 
@@ -147,6 +147,7 @@ describe("cache/keys", () => {
       } catch (_) { /* ok */ }
       configureReleaseAssetManifestFetcher(async () => ({
         state: "ready",
+        manifest_version: 1,
         manifest: makeManifest(),
       }));
       // With flag off, must return null
@@ -167,7 +168,11 @@ describe("cache/keys", () => {
       Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
 
       configureReleaseAssetManifestFetcher(() =>
-        Promise.resolve({ state: "ready", manifest: makeManifest() })
+        Promise.resolve({
+          state: "ready",
+          manifest_version: 1,
+          manifest: makeManifest(),
+        })
       );
 
       // First call: cache miss → background fetch scheduled → returns null

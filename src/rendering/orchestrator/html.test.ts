@@ -56,7 +56,7 @@ function extractBridgeConfig(html: string): Record<string, unknown> {
 
 function releaseManifest(): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: "p",
     releaseId: "rel-1",
     releaseVersion: 1,
@@ -68,6 +68,7 @@ function releaseManifest(): ReleaseAssetManifest {
     modules: {},
     css: [],
     routes: {},
+    dependencyMode: "immutable",
     dependencies: {
       [REACT_CDN_URL]: {
         contentHash: REACT_HASH,
@@ -75,7 +76,6 @@ function releaseManifest(): ReleaseAssetManifest {
         contentType: "text/javascript",
       },
     },
-    fallback: { mode: "jit", gaps: [] },
   };
 }
 
@@ -87,6 +87,7 @@ function releaseManifestWithCSS(): ReleaseAssetManifest {
       size: 1,
       contentType: "text/css",
       styleProfileHash: "c".repeat(64),
+      cssPipelineIdentity: "test-css-pipeline@1",
     }],
     routes: { "/": { modules: [], css: [RELEASE_CSS_HASH] } },
   };
@@ -696,7 +697,7 @@ describe("HTMLGenerator helpers", () => {
       setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
       setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
       configureReleaseAssetManifestFetcher(() =>
-        Promise.resolve({ state: "ready", manifest: releaseManifest() })
+        Promise.resolve({ state: "ready", manifest_version: 1, manifest: releaseManifest() })
       );
       const generator = createHTMLGenerator({
         readFile: async (path: string) => path.endsWith("/app/page.tsx") ? `'use client';` : "",
@@ -1846,6 +1847,28 @@ describe("HTMLGenerator helpers", () => {
       );
       assertEquals(merged?.includes(".a_root__"), true);
       assertEquals(merged?.indexOf(".a_root__")! > merged?.indexOf(".b { color: blue; }")!, true);
+    });
+
+    it("keeps CSS Module selectors stable across project roots", async () => {
+      async function mergeAt(projectDir: string): Promise<string | undefined> {
+        const modulePath = `${projectDir}/components/card.module.css`;
+        return await mergeImportedCSS({
+          fs: {
+            readFile: (path: string) =>
+              Promise.resolve(path === modulePath ? ".root { color: red; }" : ""),
+          },
+          logger: { debug: () => {} },
+          projectDir,
+          globalCSS: undefined,
+          cssImports: [modulePath],
+          stylesheetPath: "globals.css",
+        });
+      }
+
+      assertEquals(
+        await mergeAt("/tmp/release-a/project"),
+        await mergeAt("/tmp/release-b/project"),
+      );
     });
 
     it("propagates imported stylesheet read failures", async () => {

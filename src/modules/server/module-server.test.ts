@@ -124,6 +124,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
   function manifest(
     dependencies: ReleaseAssetManifest["dependencies"],
     releaseId = "release-id",
+    dependencyMode: ReleaseAssetManifest["dependencyMode"] = "immutable",
   ): ReleaseAssetManifest {
     return {
       schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
@@ -138,8 +139,8 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       modules: {},
       css: [],
       routes: {},
+      dependencyMode,
       dependencies,
-      fallback: { mode: "jit", gaps: [] },
     };
   }
 
@@ -889,7 +890,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     );
 
     configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "building", manifest: null })
+      Promise.resolve({ state: "building", manifest_version: 1, manifest: null })
     );
 
     async function serveWithProfile(): Promise<{
@@ -1083,6 +1084,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       configureReleaseAssetManifestFetcher(() =>
         Promise.resolve({
           state: "ready",
+          manifest_version: 1,
           manifest: manifest({
             [sourceUrl]: {
               contentHash: hash,
@@ -1114,7 +1116,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
-  it("caches dependency-bearing release modules with partial manifest bodies", async () => {
+  it("rejects partial manifests and keeps dependency-bearing modules uncached", async () => {
     setEnv("VERYFRONT_ENABLE_SERVER_TIMING", "1");
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
@@ -1144,6 +1146,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       configureReleaseAssetManifestFetcher(() =>
         Promise.resolve({
           state: "partial",
+          manifest_version: 1,
           manifest: manifest({
             [sourceUrl]: {
               contentHash: hash,
@@ -1159,21 +1162,26 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
 
       assertEquals(first.status, 200);
       assertEquals(second.status, 200);
-      assertEquals(first.cacheControl, "public, max-age=31536000, immutable");
-      assertEquals(second.cacheControl, "public, max-age=31536000, immutable");
-      assertStringIncludes(first.body, `"/_vf/assets/${hash}.js"`);
+      assertEquals(first.cacheControl, "no-cache");
+      assertEquals(second.cacheControl, "no-cache");
+      assertEquals(first.body.includes(`"/_vf/assets/${hash}.js"`), false);
+      assertStringIncludes(first.body, sourceUrl);
       assertEquals(first.body.includes("file://"), false);
+      assertStringIncludes(second.body, sourceUrl);
+      assertEquals(second.body.includes("file://"), false);
       assertEquals(second.body, first.body);
       assertEquals(first.record.phases["release_manifest.fetch_partial"], 0);
-      assertEquals(second.record.phases["module.response_cache_hit"], 0);
-      assertEquals("module.source_lookup" in second.record.phases, false);
+      assertEquals(first.record.phases["release_manifest.fetch_not_ready"], 0);
+      assertEquals("module.response_cache_store" in first.record.phases, false);
+      assertEquals("module.response_cache_hit" in second.record.phases, false);
+      assertEquals(Boolean(second.record.phases["module.source_lookup"]), true);
     } finally {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(cacheDir, { recursive: true });
     }
   });
 
-  it("keeps dependency-bearing release modules uncached when manifest rewrites miss", async () => {
+  it("keeps source-mode dependencies on verified source URLs and uncached", async () => {
     setEnv("VERYFRONT_ENABLE_SERVER_TIMING", "1");
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
@@ -1183,6 +1191,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     const dependencyDir = `${cacheDir}/veryfront-http-bundle`;
     const dependencyPath = `${dependencyDir}/http-123abc.mjs`;
     const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
+    const hash = "d".repeat(64);
     const releaseId = `release-manifest-miss-${crypto.randomUUID()}`;
     const request = new Request(
       `http://localhost:3000/_vf_modules/components/App.js?vf_release=${releaseId}&vf_runtime=${VERSION}`,
@@ -1200,7 +1209,21 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
       );
       configureReleaseAssetManifestFetcher(() =>
-        Promise.resolve({ state: "ready", manifest: manifest({}, releaseId) })
+        Promise.resolve({
+          state: "ready",
+          manifest_version: 1,
+          manifest: manifest(
+            {
+              [sourceUrl]: {
+                contentHash: hash,
+                size: 100,
+                contentType: "text/javascript",
+              },
+            },
+            releaseId,
+            "source",
+          ),
+        })
       );
 
       const first = await serveProductionModuleWithProfile(request, projectDir, releaseId);
@@ -1210,7 +1233,9 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(second.status, 200);
       assertEquals(first.cacheControl, "no-cache");
       assertEquals(second.cacheControl, "no-cache");
-      assertEquals(first.body.includes(`"/_vf/assets/`), false);
+      assertEquals(first.body.includes(`"/_vf/assets/${hash}.js"`), false);
+      assertStringIncludes(first.body, sourceUrl);
+      assertEquals(first.body.includes("file://"), false);
       assertEquals("module.response_cache_store" in first.record.phases, false);
       assertEquals(first.record.phases["module.response_cache_dependency_blocked"], 0);
       assertEquals("module.response_cache_hit" in second.record.phases, false);
@@ -1319,6 +1344,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
           ready
             ? {
               state: "ready",
+              manifest_version: 1,
               manifest: manifest({
                 [sourceUrl]: {
                   contentHash: hash,
@@ -1327,7 +1353,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
                 },
               }, releaseId),
             }
-            : { state: "building", manifest: null },
+            : { state: "building", manifest_version: 1, manifest: null },
         )
       );
 
@@ -1344,6 +1370,8 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(second.cacheControl, "public, max-age=31536000, immutable");
       assertEquals(third.cacheControl, "public, max-age=31536000, immutable");
       assertEquals(first.body.includes(`"/_vf/assets/${hash}.js"`), false);
+      assertStringIncludes(first.body, sourceUrl);
+      assertEquals(first.body.includes("file://"), false);
       assertEquals(second.body.includes(`"/_vf/assets/${hash}.js"`), true);
       assertEquals(third.body, second.body);
       assertEquals("module.response_cache_store" in first.record.phases, false);

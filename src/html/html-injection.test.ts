@@ -41,8 +41,8 @@ function releaseManifest(): ReleaseAssetManifest {
     },
     css: [],
     routes: { "/": { modules: ["app/page.tsx"], css: [] } },
+    dependencyMode: "source",
     dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
   };
 }
 

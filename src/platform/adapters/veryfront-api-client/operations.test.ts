@@ -14,7 +14,7 @@ import {
   type LogEntry,
 } from "#veryfront/utils/logger/index.ts";
 import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
-import { VeryfrontAPIOperations } from "./operations.ts";
+import { type FileListResult, VeryfrontAPIOperations } from "./operations.ts";
 
 function createOps(
   token: string | (() => string) = "token",
@@ -32,6 +32,34 @@ function assertMethodExists<T extends object>(obj: T, key: keyof T): void {
   const value = obj[key];
   assertExists(value);
   assertEquals(typeof value, "function");
+}
+
+function releaseProjectFile(
+  content: string,
+  index = 0,
+  declaredSize = content.length,
+): FileListResult["files"][number] {
+  return {
+    id: `file-${index}`,
+    version_id: `version-${index}`,
+    path: `files/${index}.ts`,
+    content,
+    type: "file",
+    size: declaredSize,
+    updated_at: "2026-07-30T00:00:00.000Z",
+  };
+}
+
+function releaseFilePage(
+  files: FileListResult["files"],
+  next: string | null,
+): FileListResult {
+  return {
+    files,
+    page_info: { self: null, first: null, next, prev: null },
+    release_id: "release-id",
+    release_version: "1",
+  };
 }
 
 describe("VeryfrontAPIOperations", () => {
@@ -558,6 +586,102 @@ describe("VeryfrontAPIOperations", () => {
       }
       assertEquals(requests, 0);
     });
+
+    it("rejects release pages that exceed the requested entry limit", async () => {
+      stubJsonFetch(() => ({
+        data: Array.from({ length: 101 }, (_, index) => releaseProjectFile("", index)),
+        page_info: { self: null, first: null, next: null, prev: null },
+        release_id: "release-id",
+        release_version: "1",
+      }));
+
+      await assertRejects(
+        () => createOps().listReleaseFiles("project-slug", "release-id"),
+        Error,
+        "release file page exceeded 100 entries",
+      );
+    });
+
+    it("measures release file limits in UTF-8 bytes", async () => {
+      const oversizedContent = "é".repeat(5 * 1024 * 1024 + 1);
+      const file = releaseProjectFile(oversizedContent, 0, 0);
+      // A dishonest small declaration must not bypass the actual UTF-8 budget.
+      stubJsonFetch(() => ({
+        data: [file],
+        page_info: { self: null, first: null, next: null, prev: null },
+        release_id: "release-id",
+        release_version: "1",
+      }));
+
+      await assertRejects(
+        () => createOps().listReleaseFiles("project-slug", "release-id"),
+        Error,
+        "release file exceeded 10485760 UTF-8 bytes",
+      );
+    });
+
+    it("rejects an oversized release page before returning its files", async () => {
+      const sharedContent = "x".repeat(8 * 1024 * 1024);
+      const files = Array.from(
+        { length: 9 },
+        (_, index) => releaseProjectFile(sharedContent, index, sharedContent.length),
+      );
+      const operations = createOps();
+      const internal = operations as unknown as {
+        request: () => Promise<unknown>;
+      };
+      internal.request = () =>
+        Promise.resolve({
+          data: files,
+          page_info: { self: null, first: null, next: null, prev: null },
+          release_id: "release-id",
+          release_version: "1",
+        });
+
+      await assertRejects(
+        () => operations.listReleaseFiles("project-slug", "release-id"),
+        Error,
+        "release file page exceeded 67108864 UTF-8 bytes",
+      );
+    });
+
+    it("stops release pagination before exceeding the cumulative UTF-8 budget", async () => {
+      const sharedContent = "x".repeat(8 * 1024 * 1024);
+      const sharedFile = releaseProjectFile(sharedContent);
+      const operations = createOps();
+      let requests = 0;
+      operations.listReleaseFiles = (() => {
+        requests += 1;
+        return Promise.resolve(
+          releaseFilePage([sharedFile], requests < 9 ? String(requests) : null),
+        );
+      }) as typeof operations.listReleaseFiles;
+
+      await assertRejects(
+        () => operations.listAllReleaseFiles("project-slug", "release-id"),
+        Error,
+        "pagination exceeded 67108864 UTF-8 bytes",
+      );
+      assertEquals(requests, 9);
+    });
+
+    it("stops release pagination before exceeding the cumulative file count", async () => {
+      const sharedFile = releaseProjectFile("");
+      const page = Array.from({ length: 100 }, () => sharedFile);
+      const operations = createOps();
+      let requests = 0;
+      operations.listReleaseFiles = (() => {
+        requests += 1;
+        return Promise.resolve(releaseFilePage(page, String(requests)));
+      }) as typeof operations.listReleaseFiles;
+
+      await assertRejects(
+        () => operations.listAllReleaseFiles("project-slug", "release-id"),
+        Error,
+        "pagination exceeded 50000 entries",
+      );
+      assertEquals(requests, 501);
+    });
   });
 
   describe("request input and routing boundaries", () => {
@@ -729,7 +853,7 @@ describe("VeryfrontAPIOperations", () => {
       });
 
       const res = await createOps().putReleaseAssetManifest("project-slug", "rel-1", {
-        schemaVersion: 1,
+        schemaVersion: 2,
       });
 
       assertEquals(method, "PUT");
@@ -759,7 +883,7 @@ describe("VeryfrontAPIOperations", () => {
       let requestedUrl = "";
       stubJsonFetch((url) => {
         requestedUrl = url;
-        return { state: "ready", manifest_version: 1, manifest: { schemaVersion: 1 } };
+        return { state: "ready", manifest_version: 1, manifest: { schemaVersion: 2 } };
       });
 
       const res = await createOps().getReleaseAssetManifest("project-slug", "rel-1");

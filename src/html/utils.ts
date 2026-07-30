@@ -7,7 +7,10 @@ import {
   RELEASE_MODULE_VERSION_PARAM,
   releaseAssetUrl,
 } from "#veryfront/release-assets/constants.ts";
-import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import {
+  hasImmutableReleaseAssetDependencies,
+  type ReleaseAssetManifest,
+} from "#veryfront/release-assets/manifest-schema.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import {
@@ -290,9 +293,12 @@ function stableManifestDependencyKey(manifest?: ReleaseAssetManifest | null): st
       assetBasePath: manifest.assetBasePath,
       releaseId: manifest.releaseId,
       manifestVersion: manifest.manifestVersion,
-      dependencies: Object.entries(manifest.dependencies)
-        .map(([specifier, entry]) => [specifier, entry.contentHash])
-        .sort(([a], [b]) => String(a).localeCompare(String(b))),
+      dependencyMode: manifest.dependencyMode,
+      dependencies: hasImmutableReleaseAssetDependencies(manifest)
+        ? Object.entries(manifest.dependencies)
+          .map(([specifier, entry]) => [specifier, entry.contentHash])
+          .sort(([a], [b]) => String(a).localeCompare(String(b)))
+        : [],
     })
     : "";
 }
@@ -320,12 +326,14 @@ function applyManifestDependencies(
   imports: Record<string, string>,
   manifest?: ReleaseAssetManifest | null,
 ): Record<string, string> {
-  if (!manifest) return imports;
+  if (!hasImmutableReleaseAssetDependencies(manifest)) return imports;
   if (getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG) !== "1") return imports;
 
   const dependencyAssets = new Map<string, string>();
   for (const [specifier, entry] of Object.entries(manifest.dependencies)) {
-    const assetUrl = releaseAssetUrl(entry.contentHash, "js");
+    const fragmentIndex = specifier.indexOf("#");
+    const fragment = fragmentIndex >= 0 ? specifier.slice(fragmentIndex) : "";
+    const assetUrl = `${releaseAssetUrl(entry.contentHash, "js")}${fragment}`;
     dependencyAssets.set(specifier, assetUrl);
     dependencyAssets.set(canonicalDependencyUrl(specifier), assetUrl);
   }
@@ -402,9 +410,9 @@ export async function buildImportMap(
 
   if (mode === "bundled") {
     let imports: Record<string, string> = { ...esmShReactImports(versions.react) };
+    imports = { ...imports, ...customImports };
     imports = applyManifestDependencies(imports, releaseAssetManifest);
     imports = applyReleaseModuleVersions(imports, releaseAssetManifest);
-    imports = { ...imports, ...customImports };
 
     return { imports, json: stringifyImportMap(imports, pretty) };
   }
@@ -420,12 +428,11 @@ export async function buildImportMap(
   }
 
   imports["@/"] = "/_vf_modules/";
-  imports = applyManifestDependencies(imports, releaseAssetManifest);
-  imports = applyReleaseModuleVersions(imports, releaseAssetManifest);
-
   if (customImports) {
     imports = { ...imports, ...customImports };
   }
+  imports = applyManifestDependencies(imports, releaseAssetManifest);
+  imports = applyReleaseModuleVersions(imports, releaseAssetManifest);
 
   const cacheKey = JSON.stringify({
     projectDir: projectDir ?? "",

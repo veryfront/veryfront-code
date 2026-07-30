@@ -2,6 +2,7 @@ import { join } from "#veryfront/compat/path";
 import {
   normalizeCssModuleKey,
   rewriteCssModuleContent,
+  toProjectRelativeCssModuleKey,
 } from "#veryfront/transforms/css-modules/naming.ts";
 
 interface CssFsAdapterLike {
@@ -43,7 +44,9 @@ export async function mergeImportedCSS({
     }
   }
 
-  const sortedImports = [...uniqueImports.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const sortedImports = [...uniqueImports.entries()].sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0
+  );
   const regularCssSegments: string[] = [];
   const moduleCssSegments: string[] = [];
 
@@ -56,7 +59,8 @@ export async function mergeImportedCSS({
     if (!content) continue;
 
     if (normalizedCssPath.endsWith(".module.css")) {
-      moduleCssSegments.push(rewriteCssModuleContent(content, normalizedCssPath));
+      const moduleKey = toProjectRelativeCssModuleKey(normalizedCssPath, projectDir);
+      moduleCssSegments.push(rewriteCssModuleContent(content, moduleKey));
     } else {
       regularCssSegments.push(content);
     }

@@ -153,6 +153,14 @@ When `VERYFRONT_RELEASE_ASSET_DEPENDENCY_IMPORT_MAP=1`,
 `generateLocalReleaseAssetManifest()` vendors content-addressed React,
 framework, and eligible cached HTTP modules.
 
+Generation is dependency-only: the local manifest intentionally has empty
+project-module, CSS, and route collections, and consumers keep release-scoped
+JIT URLs for those per-entry misses. An authorized caller must supply the browser
+transform and a policy-enforced HTTP dependency vendor implemented by an
+extension. The default production-build entry point installs neither capability,
+so enabling local immutable dependencies fails closed. Local generation does not
+import a vendor implementation or fall back to the legacy HTTP cache.
+
 Cached modules must be bounded regular UTF-8 files with validated HTTP(S)
 provenance. Conflicting claims, hash mismatches, symbolic links, unsafe cache
 roots, and unreferenced outputs fail the build. Writes are bounded,

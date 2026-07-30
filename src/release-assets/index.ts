@@ -4,11 +4,16 @@
  *
  * @example Validate an API response before consuming its manifest body.
  * ```ts
- * import { parseReleaseAssetManifest } from "veryfront/release-assets";
+ * import { parseReadyReleaseAssetManifestResponse } from "veryfront/release-assets";
  *
+ * const expectedReleaseId = "release-123";
  * const response = await fetch("/api/releases/current/asset-manifest");
- * const manifest = parseReleaseAssetManifest(await response.json());
- * if (!manifest) throw new Error("Invalid release asset manifest");
+ * const ready = parseReadyReleaseAssetManifestResponse(
+ *   await response.json(),
+ *   expectedReleaseId,
+ * );
+ * if (!ready) throw new Error("Invalid release asset manifest response");
+ * const manifest = ready.manifest;
  * ```
  *
  * @module release-assets
@@ -37,8 +42,13 @@ export {
 } from "./constants.ts";
 export {
   getReleaseAssetManifestSchema,
+  hasImmutableReleaseAssetDependencies,
+  type ImmutableReleaseAssetManifest,
+  parseReadyReleaseAssetManifestResponse,
   parseReleaseAssetManifest,
+  type ReadyReleaseAssetManifestResponse,
   type ReleaseAssetCssEntry,
+  type ReleaseAssetDependencyMode,
   type ReleaseAssetEntry,
   type ReleaseAssetManifest,
   type ReleaseAssetManifestResponse,
@@ -64,21 +74,4 @@ export {
   resolveManifestModuleUrl,
   resolveManifestRoutePreloadUrls,
 } from "./html-consumption.ts";
-export {
-  type PreparedReleaseAsset,
-  type ReleaseAssetBuildClient,
-  type ReleaseAssetBuildInput,
-  type ReleaseAssetBuildResult,
-  type ReleaseAssetHttpDependencyVendor,
-  type ReleaseAssetTransform,
-  type ReleaseAssetVendorDependency,
-  type ReleaseAssetVendorResult,
-  runReleaseAssetBuild,
-} from "./build-executor.ts";
-export {
-  type CompileProjectCssOptions,
-  type CompileProjectCssResult,
-  type CompileProjectCssRuntimeOptions,
-  createCompileProjectCss,
-} from "./css-compile.ts";
 export { routeForPage } from "./route-path.ts";

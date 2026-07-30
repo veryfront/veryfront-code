@@ -21,7 +21,10 @@ import {
   isStyleProfileHash,
 } from "#veryfront/utils/css-artifact-identity.ts";
 import { acquireCSSGenerationSession } from "#veryfront/html/styles-builder/css-compiler.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { createCompileProjectCss } from "./css-compile.ts";
+
+const RELEASE_CONFIG = { config: {} as VeryfrontConfig };
 
 describe("release-assets/css-compile", () => {
   let restoreCSSOptimizationEngine: (() => void) | undefined;
@@ -40,7 +43,7 @@ describe("release-assets/css-compile", () => {
     const expectedPipelineIdentity = (await acquireCSSGenerationSession(true)).cacheIdentity;
 
     const candidates = new Set(["p-4", "text-red-500", "flex"]);
-    const result = await compile(candidates, '@import "tailwindcss";');
+    const result = await compile(candidates, '@import "tailwindcss";', RELEASE_CONFIG);
 
     assert(result !== null, "expected a compiled result");
     assert(result.css.length > 0, "expected non-empty CSS output");
@@ -57,7 +60,7 @@ describe("release-assets/css-compile", () => {
 
   it("returns null only when there are no candidates AND no stylesheet", async () => {
     const compile = createCompileProjectCss({ projectScope: "css-compile-empty" });
-    const result = await compile(new Set<string>(), undefined);
+    const result = await compile(new Set<string>(), undefined, RELEASE_CONFIG);
     assertEquals(result, null);
   });
 
@@ -66,6 +69,7 @@ describe("release-assets/css-compile", () => {
     const result = await compile(
       new Set<string>(),
       '@import "tailwindcss"; :root { --brand: #123456; }',
+      RELEASE_CONFIG,
     );
     // Stylesheet-only compiles must not be skipped: base/custom rules ship.
     assertExists(result);
@@ -82,7 +86,7 @@ describe("release-assets/css-compile", () => {
     );
     try {
       await assertRejects(
-        () => compile(candidates, '@import "tailwindcss";'),
+        () => compile(candidates, '@import "tailwindcss";', RELEASE_CONFIG),
         Error,
         "release CSS optimization failed",
       );
@@ -101,7 +105,7 @@ describe("release-assets/css-compile", () => {
     const candidates = new Set<string>(["text-red-500", "bad\u0000candidate"]);
 
     await assertRejects(
-      () => compile(candidates, undefined),
+      () => compile(candidates, undefined, RELEASE_CONFIG),
       TypeError,
       "candidate is invalid",
     );

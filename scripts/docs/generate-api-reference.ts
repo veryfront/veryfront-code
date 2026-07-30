@@ -352,8 +352,8 @@ const IMPORT_PRIORITY: Record<string, string[]> = {
     "mkdir",
   ],
   "veryfront/release-assets": [
+    "parseReadyReleaseAssetManifestResponse",
     "parseReleaseAssetManifest",
-    "runReleaseAssetBuild",
     "getReadyManifestForRenderAsync",
     "registerManifestFetcherForRelease",
     "releaseAssetUrl",

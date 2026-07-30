@@ -9,7 +9,7 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { createFileSystem, cwd, runtime } from "veryfront/platform";
+import { createFileSystem, cwd, isNotFoundError, runtime } from "veryfront/platform";
 import { join, relative, resolve } from "veryfront/platform/path";
 import { type EnvironmentConfig, getConfig, getEnvironmentConfig } from "veryfront/config";
 import {
@@ -47,7 +47,11 @@ import {
   resolveGitSource,
   validatePushReceipt,
 } from "../../shared/deployment-provenance.ts";
-import { type ReleaseAssetManifestResponse, routeForPage } from "veryfront/release-assets";
+import {
+  parseReadyReleaseAssetManifestResponse,
+  type ReleaseAssetManifestResponse,
+  routeForPage,
+} from "veryfront/release-assets";
 import { parseProjectDomain } from "#veryfront/server-cli-domain";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
 
@@ -1091,8 +1095,9 @@ async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
     try {
       if (!(await fs.exists(dir))) return;
       entries = await fs.readDir(dir);
-    } catch {
-      return;
+    } catch (error) {
+      if (isNotFoundError(error)) return;
+      throw error;
     }
 
     for await (const entry of entries) {
@@ -1148,6 +1153,16 @@ function assertReadyManifestCoversPageRoutes(
   }
 }
 
+function readReleaseAssetResponseDataProperty(value: unknown, key: PropertyKey): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function waitForReleaseAssetManifest(
   client: ApiClient,
   projectSlug: string,
@@ -1166,17 +1181,35 @@ export async function waitForReleaseAssetManifest(
 
   for (;;) {
     try {
-      const result = await client.get<ReleaseAssetManifestResponse>(
+      const raw = await client.get<unknown>(
         `/projects/${projectSlug}/releases/${releaseId}/asset-manifest`,
       );
-      lastState = result.state;
+      const state = readReleaseAssetResponseDataProperty(raw, "state");
+      if (typeof state !== "string" || state.length === 0 || state.length > 64) {
+        throw new Error(`Release assets for ${releaseId} returned an invalid state response`);
+      }
+      lastState = state;
 
-      if (result.state === "ready") {
+      if (state === "ready") {
+        const result = parseReadyReleaseAssetManifestResponse(raw, releaseId);
+        if (!result) {
+          throw new Error(
+            `Release assets for ${releaseId} returned an invalid or mismatched ready manifest. Rebuild the release assets and run deploy again.`,
+          );
+        }
         assertReadyManifestCoversPageRoutes(releaseId, result, expectedRoutes);
         return result;
       }
-      if (result.state === "failed") {
+      if (state === "partial") {
+        throw new Error(
+          `Release asset build produced an unsupported partial manifest for release ${releaseId}. Rebuild the release assets and run deploy again.`,
+        );
+      }
+      if (state === "failed" || state === "superseded") {
         throw new Error(`Release asset build failed for release ${releaseId}`);
+      }
+      if (state !== "queued" && state !== "building") {
+        throw new Error(`Release assets for ${releaseId} returned an unsupported state response`);
       }
     } catch (error) {
       if (getErrorStatus(error) !== 404) throw error;

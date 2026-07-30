@@ -9,6 +9,7 @@ import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limi
 import {
   createCanonicalVeryfrontApiTransport,
   createVeryfrontApiTransport,
+  MAX_VERYFRONT_API_SUCCESS_BODY_BYTES,
   type TransportRetryConfig,
 } from "./veryfront-api-transport.ts";
 
@@ -171,6 +172,161 @@ describe("Veryfront API transport retry boundaries", () => {
 });
 
 describe("Veryfront API transport authority and response boundaries", () => {
+  it("rejects invalid success-body limits before reading credentials or fetching", async () => {
+    const originalFetch = globalThis.fetch;
+    let tokenReads = 0;
+    let fetchCalls = 0;
+
+    try {
+      globalThis.fetch = (() => {
+        fetchCalls += 1;
+        return Promise.resolve(Response.json({ ok: true }));
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport({
+        baseUrl: baseConfig.baseUrl,
+        getToken: () => {
+          tokenReads += 1;
+          return "secret";
+        },
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+
+      for (
+        const maxResponseBytes of [
+          0,
+          1.5,
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          MAX_VERYFRONT_API_SUCCESS_BODY_BYTES + 1,
+        ]
+      ) {
+        await assertRejects(
+          () => transport.request("/files", { maxResponseBytes }),
+          RangeError,
+          "maxResponseBytes",
+        );
+      }
+      assertEquals(tokenReads, 0);
+      assertEquals(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("bounds and cancels successful response bodies before parsing", async () => {
+    const originalFetch = globalThis.fetch;
+    let cancellations = 0;
+    let fetchCalls = 0;
+
+    try {
+      globalThis.fetch = (() => {
+        fetchCalls += 1;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"ok":true}'));
+          },
+          cancel() {
+            cancellations += 1;
+          },
+        });
+        return Promise.resolve(new Response(body));
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 3, initialDelay: 0, maxDelay: 0 },
+        wrapFinalError: (error) => error,
+      });
+
+      await assertRejects(
+        () => transport.request("/files", { maxResponseBytes: 4 }),
+        Error,
+        "successful response exceeded 4 bytes",
+      );
+      assertEquals(fetchCalls, 1);
+      assertEquals(cancellations, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("accepts a successful JSON body exactly at the configured byte limit", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (() => Promise.resolve(new Response("null"))) as typeof fetch;
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+
+      assertEquals(
+        await transport.request("/files", { maxResponseBytes: 4 }),
+        null,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects invalid UTF-8 success bodies without retrying", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    try {
+      globalThis.fetch = (() => {
+        fetchCalls += 1;
+        return Promise.resolve(new Response(new Uint8Array([0xff])));
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 3, initialDelay: 0, maxDelay: 0 },
+        wrapFinalError: (error) => error,
+      });
+
+      await assertRejects(
+        () => transport.request("/files", { maxResponseBytes: 1 }),
+        Error,
+        "not valid UTF-8",
+      );
+      assertEquals(fetchCalls, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects and cancels oversized declared success bodies", async () => {
+    const originalFetch = globalThis.fetch;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{}"));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    try {
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(body, { headers: { "content-length": "100" } }),
+        )) as typeof fetch;
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        shouldRetry: () => false,
+        wrapFinalError: (error) => error,
+      });
+
+      await assertRejects(
+        () => transport.request("/files", { maxResponseBytes: 4 }),
+        Error,
+        "successful response exceeded 4 bytes",
+      );
+      assertEquals(cancelled, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("rejects invalid or credential-bearing API base URLs at construction", () => {
     for (
       const baseUrl of [

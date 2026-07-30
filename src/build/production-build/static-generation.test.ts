@@ -708,7 +708,7 @@ describe(
         const jsxDevRuntimeHash = "5".repeat(64);
         const headHash = "6".repeat(64);
         const manifest: ReleaseAssetManifest = {
-          schemaVersion: 1,
+          schemaVersion: 2,
           projectId: "local-project",
           releaseId: "standalone-dev",
           releaseVersion: 0,
@@ -720,6 +720,7 @@ describe(
           modules: {},
           css: [],
           routes: {},
+          dependencyMode: "immutable",
           dependencies: {
             react: {
               contentHash: reactHash,
@@ -757,7 +758,6 @@ describe(
               contentType: "text/javascript",
             },
           },
-          fallback: { mode: "jit", gaps: [] },
         };
         const renderer = {
           renderPage: (

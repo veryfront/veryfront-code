@@ -49,9 +49,9 @@ import {
   registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type {
+  ReleaseAssetManifestFetcher,
   ReleaseAssetManifestFetcherCleanup,
 } from "#veryfront/release-assets/manifest-cache.ts";
-import { parseReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 const logger = baseLogger.component("veryfront-fs-adapter");
 const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
@@ -166,16 +166,8 @@ function copyStylePregenerationFiles(
  */
 function buildManifestFetcher(
   client: VeryfrontApiClient,
-): (
-  releaseId: string,
-) => Promise<{ state: string; manifest: ReturnType<typeof parseReleaseAssetManifest> } | null> {
-  return async (releaseId: string) => {
-    const response = await client.getReleaseAssetManifest(releaseId);
-    return {
-      state: response.state,
-      manifest: response.manifest ? parseReleaseAssetManifest(response.manifest) : null,
-    };
-  };
+): ReleaseAssetManifestFetcher {
+  return (releaseId: string) => client.getReleaseAssetManifest(releaseId);
 }
 
 export class VeryfrontFSAdapter implements FSAdapter {

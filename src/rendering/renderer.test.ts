@@ -144,8 +144,8 @@ function makeReadyManifest(): ReleaseAssetManifest {
     modules: {},
     css: [],
     routes: {},
+    dependencyMode: "source",
     dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
   };
 }
 
@@ -325,7 +325,11 @@ describe("Renderer release asset cache isolation", () => {
   it("checks the manifest-versioned cache prefix after awaiting a ready manifest", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: makeReadyManifest() })
+      Promise.resolve({
+        state: "ready",
+        manifest_version: 1,
+        manifest: makeReadyManifest(),
+      })
     );
 
     const store = createInMemoryStore();
@@ -366,7 +370,7 @@ describe("Renderer release asset cache isolation", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     const manifestRequested = Promise.withResolvers<void>();
     const releaseManifest = Promise.withResolvers<
-      { state: "ready"; manifest: ReleaseAssetManifest }
+      { state: "ready"; manifest_version: number; manifest: ReleaseAssetManifest }
     >();
     configureReleaseAssetManifestFetcher(() => {
       manifestRequested.resolve();
@@ -436,7 +440,11 @@ describe("Renderer release asset cache isolation", () => {
     context.cachePrefix = "mutated-prefix";
     originalConfig.title = "Mutated title";
     url.searchParams.set("variant", "mutated");
-    releaseManifest.resolve({ state: "ready", manifest: makeReadyManifest() });
+    releaseManifest.resolve({
+      state: "ready",
+      manifest_version: 1,
+      manifest: makeReadyManifest(),
+    });
 
     const result = await pending;
     assertEquals(result.html, "<html>snapshotted render</html>");
@@ -482,7 +490,7 @@ describe("Renderer release asset cache isolation", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     const manifestRequested = Promise.withResolvers<void>();
     const releaseManifest = Promise.withResolvers<
-      { state: "ready"; manifest: ReleaseAssetManifest }
+      { state: "ready"; manifest_version: number; manifest: ReleaseAssetManifest }
     >();
     configureReleaseAssetManifestFetcher(() => {
       manifestRequested.resolve();
@@ -542,7 +550,11 @@ describe("Renderer release asset cache isolation", () => {
     await manifestRequested.promise;
     request.headers.set("x-render-variant", "mutated");
     url.searchParams.set("variant", "mutated");
-    releaseManifest.resolve({ state: "ready", manifest: makeReadyManifest() });
+    releaseManifest.resolve({
+      state: "ready",
+      manifest_version: 1,
+      manifest: makeReadyManifest(),
+    });
 
     assertEquals((await pending).html, "<html>snapshotted request</html>");
     assertEquals(observedHeader, "original");
@@ -555,7 +567,11 @@ describe("Renderer release asset cache isolation", () => {
   it("persists rendered HTML under the manifest-versioned cache prefix", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: makeReadyManifest() })
+      Promise.resolve({
+        state: "ready",
+        manifest_version: 1,
+        manifest: makeReadyManifest(),
+      })
     );
 
     const store = createInMemoryStore();

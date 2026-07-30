@@ -159,7 +159,7 @@ function primeCssCache(slug: string, projectId: string): void {
 
 function releaseManifestWithCss(releaseId = "rel-css"): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: "p",
     releaseId,
     releaseVersion: 1,
@@ -174,10 +174,11 @@ function releaseManifestWithCss(releaseId = "rel-css"): ReleaseAssetManifest {
       size: 10,
       contentType: "text/css",
       styleProfileHash: "c".repeat(64),
+      cssPipelineIdentity: "test-css-pipeline@1",
     }],
     routes: { "/behavior-release-css": { modules: [], css: [RELEASE_CSS_HASH] } },
+    dependencyMode: "source",
     dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
   };
 }
 
@@ -2701,7 +2702,11 @@ describe("RenderPipeline behavior", () => {
       fetchCalls++;
       assertEquals(requestedReleaseId, releaseId);
       await Promise.resolve();
-      return { state: "ready", manifest: releaseManifestWithCss(releaseId) };
+      return {
+        state: "ready",
+        manifest_version: 1,
+        manifest: releaseManifestWithCss(releaseId),
+      };
     });
 
     (pipeline as any).loadModule = async () => ({});
@@ -2749,7 +2754,11 @@ describe("RenderPipeline behavior", () => {
     configureReleaseAssetManifestFetcher(async (requestedReleaseId) => {
       fetchCalls++;
       assertEquals(requestedReleaseId, releaseId);
-      return { state: "ready", manifest: releaseManifestWithCss(releaseId) };
+      return {
+        state: "ready",
+        manifest_version: 1,
+        manifest: releaseManifestWithCss(releaseId),
+      };
     });
 
     (pipeline as any).loadModule = async () => ({});
@@ -2791,7 +2800,7 @@ describe("RenderPipeline behavior", () => {
       fetchCalls++;
       assertEquals(requestedReleaseId, releaseId);
       await Promise.resolve();
-      return { state: "building", manifest: null };
+      return { state: "building", manifest_version: 1, manifest: null };
     });
 
     (pipeline as any).loadModule = async () => ({});
@@ -2830,7 +2839,11 @@ describe("RenderPipeline behavior", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     configureReleaseAssetManifestFetcher(async () => {
       fetchCalls++;
-      return { state: "ready", manifest: releaseManifestWithCss("rel-must-not-load") };
+      return {
+        state: "ready",
+        manifest_version: 1,
+        manifest: releaseManifestWithCss("rel-must-not-load"),
+      };
     });
 
     (pipeline as any).loadModule = async () => ({});

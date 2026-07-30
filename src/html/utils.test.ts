@@ -233,8 +233,8 @@ describe("html-generation/utils", () => {
         modules: {},
         css: [],
         routes: {},
+        dependencyMode: "immutable",
         dependencies,
-        fallback: { mode: "jit", gaps: [] },
       };
 
       const result = await buildImportMapJson({
@@ -281,8 +281,8 @@ describe("html-generation/utils", () => {
         modules: {},
         css: [],
         routes: {},
+        dependencyMode: "immutable",
         dependencies,
-        fallback: { mode: "jit", gaps: [] },
       };
 
       const result = await buildImportMapJson({
@@ -296,6 +296,87 @@ describe("html-generation/utils", () => {
       assertEquals(imports["react-dom/client"], `/_vf/assets/${"3".repeat(64)}.js`);
       assertEquals(imports["react/jsx-runtime"], `/_vf/assets/${"4".repeat(64)}.js`);
       assertEquals(imports["react/jsx-dev-runtime"], `/_vf/assets/${"5".repeat(64)}.js`);
+    });
+
+    it("preserves distinct dependency fragments in immutable import-map assets", async () => {
+      setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+      const firstHash = "1".repeat(64);
+      const secondHash = "2".repeat(64);
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 2,
+        projectId: "project-id",
+        releaseId: "release-id",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "0.1.802",
+        sourceContentHash: "a".repeat(64),
+        createdAt: "2026-06-14T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {},
+        css: [],
+        routes: {},
+        dependencyMode: "immutable",
+        dependencies: {
+          "https://cdn.example/module.js#a": {
+            contentHash: firstHash,
+            size: 10,
+            contentType: "text/javascript",
+          },
+          "https://cdn.example/module.js#b": {
+            contentHash: secondHash,
+            size: 10,
+            contentType: "text/javascript",
+          },
+        },
+      };
+
+      const result = await buildImportMapJson({
+        pretty: false,
+        customImports: {
+          "variant-a": "https://cdn.example/module.js#a",
+          "variant-b": "https://cdn.example/module.js#b",
+        },
+        releaseAssetManifest: manifest,
+      });
+      const imports = JSON.parse(result).imports as Record<string, string>;
+
+      assertEquals(imports["variant-a"], `/_vf/assets/${firstHash}.js#a`);
+      assertEquals(imports["variant-b"], `/_vf/assets/${secondHash}.js#b`);
+    });
+
+    it("does not rewrite import-map aliases from source-mode dependency entries", async () => {
+      setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 2,
+        projectId: "project-id",
+        releaseId: "release-id",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "0.1.802",
+        sourceContentHash: "a".repeat(64),
+        createdAt: "2026-06-14T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {},
+        css: [],
+        routes: {},
+        dependencyMode: "source",
+        dependencies: {
+          react: {
+            contentHash: "1".repeat(64),
+            size: 10,
+            contentType: "text/javascript",
+          },
+        },
+      };
+
+      const result = await buildImportMapJson({
+        pretty: false,
+        releaseAssetManifest: manifest,
+      });
+      const imports = JSON.parse(result).imports as Record<string, string>;
+
+      assertStringIncludes(imports.react!, "https://esm.sh/react@");
+      assertEquals(imports.react?.includes("/_vf/assets/"), false);
     });
 
     it("rewrites local Veryfront import-map aliases from manifest dependency keys", async () => {
@@ -315,6 +396,7 @@ describe("html-generation/utils", () => {
         modules: {},
         css: [],
         routes: {},
+        dependencyMode: "immutable",
         dependencies: {
           "veryfront/head": {
             contentHash: headHash,
@@ -332,7 +414,6 @@ describe("html-generation/utils", () => {
             contentType: "text/javascript",
           },
         },
-        fallback: { mode: "jit", gaps: [] },
       };
 
       const result = await buildImportMapJson({
@@ -360,8 +441,8 @@ describe("html-generation/utils", () => {
         modules: {},
         css: [],
         routes: {},
+        dependencyMode: "source",
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
       };
 
       const result = await buildImportMapJson({

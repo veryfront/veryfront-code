@@ -19,6 +19,9 @@ const log = serverLogger.component("veryfront-api-transport");
 const apiClientLog = serverLogger.component("veryfront-api-client");
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_VERYFRONT_API_ERROR_BODY_BYTES = 8 * 1024;
+export const DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES = 64 * 1024 * 1024;
+export const MAX_VERYFRONT_API_SUCCESS_BODY_BYTES = 128 * 1024 * 1024;
+const NON_RETRYABLE_RESPONSE_PROTOCOL_ERRORS = new WeakSet<object>();
 
 interface ValidatedBaseUrl {
   origin: string;
@@ -32,6 +35,8 @@ export interface TransportRequestInit {
   headers?: HeadersInit;
   body?: BodyInit | null;
   returnText?: boolean;
+  /** Maximum decoded success-body bytes accepted before JSON/text parsing. */
+  maxResponseBytes?: number;
   expected404?: boolean;
   timeoutMs?: number;
   /** Caller-owned cancellation signal, composed with the per-attempt timeout. */
@@ -104,6 +109,10 @@ function createValidatedVeryfrontApiTransport<T>(
       init: TransportRequestInit = {},
     ): Promise<T> {
       init.signal?.throwIfAborted();
+      const maxResponseBytes = requireSuccessResponseByteLimit(init.maxResponseBytes);
+      const responseInit = init.maxResponseBytes === maxResponseBytes
+        ? init
+        : { ...init, maxResponseBytes };
       const url = resolveRequestUrl(validatedBaseUrl, pathOrUrl);
       const method = init.method ?? "GET";
       const timeoutMs = init.timeoutMs ?? cfgTimeout;
@@ -128,7 +137,7 @@ function createValidatedVeryfrontApiTransport<T>(
               signal,
             });
             afterFetch?.(res.status, performance.now() - start);
-            return await onResponse(res, init, url, signal);
+            return await onResponse(res, responseInit, url, signal);
           };
           try {
             return await (wrapFetch ? wrapFetch(doFetch, url, method, attempt) : doFetch());
@@ -256,10 +265,193 @@ async function defaultOnResponse(
       },
     });
   }
-  return init.returnText ? response.text() : response.json();
+
+  const maxResponseBytes = requireSuccessResponseByteLimit(init.maxResponseBytes);
+  const text = await readSuccessfulResponseText(
+    response,
+    maxResponseBytes,
+    url,
+    signal,
+  );
+  if (init.returnText) return text;
+  try {
+    return JSON.parse(text);
+  } catch (cause) {
+    throw successfulResponseProtocolError(
+      "Veryfront API successful response body is not valid JSON",
+      url,
+      cause,
+    );
+  }
+}
+
+function requireSuccessResponseByteLimit(value: number | undefined): number {
+  const limit = value ?? DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES;
+  if (
+    !Number.isSafeInteger(limit) ||
+    limit <= 0 ||
+    limit > MAX_VERYFRONT_API_SUCCESS_BODY_BYTES
+  ) {
+    throw new RangeError(
+      `maxResponseBytes must be a positive safe integer no greater than ${MAX_VERYFRONT_API_SUCCESS_BODY_BYTES}`,
+    );
+  }
+  return limit;
+}
+
+function successfulResponseProtocolError(
+  detail: string,
+  url: string,
+  cause?: unknown,
+): VeryfrontError {
+  const error = API_CLIENT_ERROR.create({
+    detail,
+    status: 502,
+    cause,
+    context: { details: { url: sanitizeUrlCredentials(url) } },
+  });
+  NON_RETRYABLE_RESPONSE_PROTOCOL_ERRORS.add(error);
+  return error;
+}
+
+function cancelResponseReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  reason?: unknown,
+): void {
+  try {
+    void reader.cancel(reason).catch(() => {});
+  } catch {
+    // Cancellation is best-effort; the body limit has already failed closed.
+  }
+}
+
+async function readResponseChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal?: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (!signal) return await reader.read();
+  signal.throwIfAborted();
+
+  return await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+
+    reader.read().then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
+async function readSuccessfulResponseText(
+  response: Response,
+  maxResponseBytes: number,
+  url: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const rawContentLength = response.headers.get("content-length");
+  if (rawContentLength !== null) {
+    if (!/^\d+$/.test(rawContentLength)) {
+      cancelResponseReaderIfPresent(response, "invalid content-length");
+      throw successfulResponseProtocolError(
+        "Veryfront API returned an invalid successful response Content-Length",
+        url,
+      );
+    }
+    const contentLength = Number(rawContentLength);
+    if (!Number.isSafeInteger(contentLength)) {
+      cancelResponseReaderIfPresent(response, "invalid content-length");
+      throw successfulResponseProtocolError(
+        "Veryfront API returned an invalid successful response Content-Length",
+        url,
+      );
+    }
+    if (contentLength > maxResponseBytes) {
+      cancelResponseReaderIfPresent(response, "response body exceeds limit");
+      throw successfulResponseProtocolError(
+        `Veryfront API successful response exceeded ${maxResponseBytes} bytes`,
+        url,
+      );
+    }
+  }
+
+  signal?.throwIfAborted();
+  const body = response.body;
+  if (!body) return "";
+
+  const reader = body.getReader();
+  let bytes = new Uint8Array(Math.min(8 * 1024, maxResponseBytes));
+  let byteLength = 0;
+  let completed = false;
+  let failure: unknown;
+
+  try {
+    while (true) {
+      const { done, value } = await readResponseChunk(reader, signal);
+      if (done) {
+        completed = true;
+        break;
+      }
+
+      if (value.byteLength > maxResponseBytes - byteLength) {
+        throw successfulResponseProtocolError(
+          `Veryfront API successful response exceeded ${maxResponseBytes} bytes`,
+          url,
+        );
+      }
+
+      const requiredLength = byteLength + value.byteLength;
+      if (requiredLength > bytes.byteLength) {
+        let capacity = bytes.byteLength;
+        while (capacity < requiredLength) {
+          capacity = Math.min(maxResponseBytes, Math.max(requiredLength, capacity * 2));
+        }
+        const grown = new Uint8Array(capacity);
+        grown.set(bytes.subarray(0, byteLength));
+        bytes = grown;
+      }
+      bytes.set(value, byteLength);
+      byteLength = requiredLength;
+    }
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    if (!completed) cancelResponseReader(reader, failure);
+    reader.releaseLock();
+  }
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, byteLength));
+  } catch (cause) {
+    throw successfulResponseProtocolError(
+      "Veryfront API successful response body is not valid UTF-8",
+      url,
+      cause,
+    );
+  }
+}
+
+function cancelResponseReaderIfPresent(response: Response, reason: unknown): void {
+  const body = response.body;
+  if (!body) return;
+  try {
+    const reader = body.getReader();
+    cancelResponseReader(reader, reason);
+    reader.releaseLock();
+  } catch {
+    // Cancellation is best-effort; the Content-Length limit has already failed closed.
+  }
 }
 
 function defaultShouldRetry(error: unknown): boolean {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    NON_RETRYABLE_RESPONSE_PROTOCOL_ERRORS.has(error)
+  ) {
+    return false;
+  }
   if (!(error instanceof VeryfrontError) || error.slug !== "api-client-error") return true;
   const { status } = error as VeryfrontError;
   return !status || status < 400 || status >= 500 || status === 429;

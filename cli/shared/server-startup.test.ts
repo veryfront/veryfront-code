@@ -10,6 +10,8 @@ import {
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearCachedReleaseAssetManifests,
+  configureReleaseAssetManifestFetcher,
+  getReadyManifestForRenderAsync,
   type ReleaseAssetManifest,
   type ReleaseAssetManifestFetcher,
 } from "veryfront/release-assets";
@@ -28,7 +30,7 @@ import {
 
 function validReleaseManifest(): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: "11111111-1111-1111-1111-111111111111",
     releaseId: "22222222-2222-2222-2222-222222222222",
     releaseVersion: 7,
@@ -40,15 +42,20 @@ function validReleaseManifest(): ReleaseAssetManifest {
     modules: {},
     css: [],
     routes: {},
+    dependencyMode: "immutable",
     dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
   };
 }
 
 function manifestFetcher(
   manifest: ReleaseAssetManifest,
 ): ReleaseAssetManifestFetcher {
-  return () => Promise.resolve({ state: "ready", manifest });
+  return () =>
+    Promise.resolve({
+      state: "ready",
+      manifest_version: manifest.manifestVersion,
+      manifest,
+    });
 }
 
 describe("buildCliProxyProductionServerOptions()", () => {
@@ -154,6 +161,30 @@ describe("loadCliReleaseAssetManifest()", () => {
 describe("CLI production manifest ownership", () => {
   it("uses the cache-only primitive exported by the public release-assets barrel", () => {
     assertEquals(typeof clearCachedReleaseAssetManifests, "function");
+  });
+
+  it("serves a local production manifest through the process fallback cache", async () => {
+    const envKey = "VERYFRONT_RELEASE_ASSET_MANIFEST";
+    const originalFlag = Deno.env.get(envKey);
+    const coordinator = createCliProductionManifestCoordinator({
+      configureFetcher: configureReleaseAssetManifestFetcher,
+      clearCachedManifests: clearCachedReleaseAssetManifests,
+    });
+    const manifest = validReleaseManifest();
+    const lease = coordinator.acquire();
+
+    try {
+      Deno.env.set(envKey, "1");
+      lease.register(manifestFetcher(manifest));
+
+      const cached = await getReadyManifestForRenderAsync(manifest.releaseId);
+
+      assertEquals(cached, manifest);
+    } finally {
+      lease.release();
+      if (originalFlag === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, originalFlag);
+    }
   });
 
   it("prevents a contender from overwriting a live generation and makes stale cleanup inert", () => {

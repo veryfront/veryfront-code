@@ -12,6 +12,7 @@ import {
   createDeployment,
   createRelease,
   DeployArgsSchema,
+  deployCommand,
   getDeployment,
   getDeploymentRoutingConvergenceWarning,
   getEnvironmentByName,
@@ -28,6 +29,7 @@ import {
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
+import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -124,6 +126,139 @@ describe("pushed source provenance", () => {
 
       assertEquals(result, { commitSha, sourceDigest });
     } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+});
+
+describe("page route discovery", () => {
+  it("propagates non-not-found directory traversal errors before accepting coverage", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const projectId = "550e8400-e29b-41d4-a716-446655440000";
+    const environmentId = "660e8400-e29b-41d4-a716-446655440000";
+    const releaseId = "770e8400-e29b-41d4-a716-446655440000";
+    const appSource = "export const value = 1;\n";
+    const projectConfig = '{"projectSlug":"my-project"}\n';
+    const routePathContents = "this path is intentionally not a directory\n";
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+    ] as const;
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const requests: string[] = [];
+
+    try {
+      await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+      await Deno.writeTextFile(`${projectDir}/veryfront.json`, projectConfig);
+      await Deno.writeTextFile(`${projectDir}/app.ts`, appSource);
+      // Default page discovery treats `app` as a directory. A regular file at
+      // that path makes exists() succeed and readDir() fail with ENOTDIR.
+      await Deno.writeTextFile(`${projectDir}/app`, routePathContents);
+      const commitSha = await commitProject(projectDir);
+      const sourceFiles = [
+        { path: "app", content: routePathContents },
+        { path: "app.ts", content: appSource },
+        { path: "veryfront.json", content: projectConfig },
+      ];
+      const sourceDigest = await computeSourceDigest(sourceFiles);
+      await writePushReceipt(projectDir, {
+        controlPlane: "https://control.example.test/api",
+        projectId,
+        projectSlug: "my-project",
+        branch: "main",
+        commitSha,
+        sourceDigest,
+        clean: true,
+        pushedAt: "2026-07-30T00:00:00.000Z",
+      });
+
+      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+      Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+      Deno.env.delete("VERYFRONT_PROJECT_ID");
+      _resetEnvironmentConfig();
+
+      await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        requests.push(`${request.method} ${url.pathname}`);
+
+        if (request.method === "GET" && url.pathname === "/api/projects/my-project") {
+          return Response.json({ id: projectId, slug: "my-project" });
+        }
+        if (request.method === "GET" && url.pathname.endsWith("/environments")) {
+          return Response.json({
+            data: [{
+              id: environmentId,
+              name: "production",
+              project_id: projectId,
+              protected: false,
+              deployment: null,
+            }],
+          });
+        }
+        if (request.method === "POST" && url.pathname.endsWith("/releases")) {
+          return Response.json({
+            id: releaseId,
+            name: "production-release",
+            version: "0.0.41",
+            project_id: projectId,
+          }, { status: 201 });
+        }
+        if (request.method === "GET" && url.pathname.endsWith(`/releases/${releaseId}`)) {
+          return Response.json({
+            id: releaseId,
+            name: "production-release",
+            version: "0.0.41",
+            project_id: projectId,
+          });
+        }
+        if (
+          request.method === "GET" &&
+          url.pathname.endsWith(`/releases/${releaseId}/versions`)
+        ) {
+          return Response.json({
+            data: sourceFiles.map(({ path, content }) => ({
+              path,
+              data: JSON.stringify({ body: content, path }),
+            })),
+            page_info: {},
+          });
+        }
+        if (url.pathname.endsWith(`/releases/${releaseId}/asset-manifest`)) {
+          throw new Error("asset manifest polling was reached after a traversal error");
+        }
+        return Response.json({ message: "not found" }, { status: 404 });
+      }, () =>
+        assertRejects(
+          () =>
+            deployCommand({
+              projectDir,
+              branch: "main",
+              env: "production",
+              releaseName: "production-release",
+              dryRun: false,
+              force: true,
+              quiet: true,
+              skipSourcePush: true,
+              assetManifestTimeoutMs: 1,
+            }),
+          Deno.errors.NotADirectory,
+        ));
+
+      assertEquals(
+        requests.some((request) => request.endsWith(`/releases/${releaseId}/asset-manifest`)),
+        false,
+      );
+    } finally {
+      envKeys.forEach((key, index) => {
+        const value = savedEnv[index];
+        if (value === undefined) Deno.env.delete(key);
+        else Deno.env.set(key, value);
+      });
+      _resetEnvironmentConfig();
       await Deno.remove(projectDir, { recursive: true });
     }
   });
@@ -1439,13 +1574,13 @@ describe("waitForReleaseAssetManifest", () => {
       state: "ready",
       manifest_version: 1,
       manifest: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "proj-1",
         releaseId: "rel-1",
         releaseVersion: 1,
         manifestVersion: 1,
         builderVersion: "test",
-        sourceContentHash: "sha256:abc",
+        sourceContentHash: "b".repeat(64),
         createdAt: "2026-07-27T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {
@@ -1457,8 +1592,8 @@ describe("waitForReleaseAssetManifest", () => {
         },
         css: [],
         routes,
+        dependencyMode: "source",
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
       },
     };
   }
@@ -1475,6 +1610,94 @@ describe("waitForReleaseAssetManifest", () => {
     });
 
     assertEquals(result.state, "ready");
+  });
+
+  it("rejects legacy ready manifests instead of deploying unverifiable assets", async () => {
+    const current = readyManifest();
+    const mockClient = createMockClient({
+      get: () =>
+        Promise.resolve({
+          ...current,
+          manifest: { ...current.manifest, schemaVersion: 1 },
+        }),
+    });
+
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(mockClient, "my-project", "rel-1", {
+          expectedRoutes: ["/"],
+          pollIntervalMs: 100,
+          timeoutMs: 100,
+        }),
+      Error,
+      "invalid or mismatched ready manifest",
+    );
+  });
+
+  it("rejects partial manifests as terminal incomplete builds", async () => {
+    const mockClient = createMockClient({
+      get: () => Promise.resolve({ ...readyManifest(), state: "partial" }),
+    });
+
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(mockClient, "my-project", "rel-1", {
+          expectedRoutes: ["/"],
+          pollIntervalMs: 100,
+          timeoutMs: 100,
+        }),
+      Error,
+      "unsupported partial manifest",
+    );
+  });
+
+  it("rejects ready manifests whose release identity does not match", async () => {
+    const current = readyManifest();
+    const mockClient = createMockClient({
+      get: () =>
+        Promise.resolve({
+          ...current,
+          manifest: { ...current.manifest, releaseId: "rel-other" },
+        }),
+    });
+
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(mockClient, "my-project", "rel-1", {
+          expectedRoutes: ["/"],
+          pollIntervalMs: 100,
+          timeoutMs: 100,
+        }),
+      Error,
+      "invalid or mismatched ready manifest",
+    );
+  });
+
+  it("rejects accessor-backed state responses without executing accessors", async () => {
+    let accessorCalls = 0;
+    const hostileResponse: Record<string, unknown> = {};
+    Object.defineProperty(hostileResponse, "state", {
+      enumerable: true,
+      get() {
+        accessorCalls++;
+        return "ready";
+      },
+    });
+    const mockClient = createMockClient({
+      get: () => Promise.resolve(hostileResponse),
+    });
+
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(mockClient, "my-project", "rel-1", {
+          expectedRoutes: ["/"],
+          pollIntervalMs: 100,
+          timeoutMs: 100,
+        }),
+      Error,
+      "invalid state response",
+    );
+    assertEquals(accessorCalls, 0);
   });
 
   it("rejects ready empty manifests before deployment", async () => {

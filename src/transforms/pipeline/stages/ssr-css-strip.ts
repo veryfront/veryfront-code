@@ -11,7 +11,7 @@
  * import is replaced with a Proxy stub that returns the property name
  * as the class name. This matches the Next.js convention where
  * `styles.container` → `"container"` (identity mapping), which works
- * correctly with Tailwind CSS class-based styling.
+ * correctly with class-based styling systems.
  */
 
 import type { TransformPlugin } from "../types.ts";
@@ -87,13 +87,13 @@ function generateCSSStub(statement: string, specifier: string): string {
     return `/* css import: ${specifier} */`;
   }
 
-  const fromIndex = trimmed.lastIndexOf(" from ");
-  if (fromIndex === -1) {
+  const importMatch = trimmed.match(/^import\s*(.*?)\s*\bfrom\s*["'`]/s);
+  const importClause = importMatch?.[1]?.trim();
+  if (!importClause) {
     return `/* css import: ${specifier} */`;
   }
 
   const cssModuleKey = isCssModuleImport(specifier) ? specifier : undefined;
-  const importClause = trimmed.slice(6, fromIndex).trim(); // Skip "import "
 
   // Default import: import styles from "./Button.module.css"
   // → const styles = new Proxy({}, { get: (_, p) => String(p) })
@@ -106,7 +106,7 @@ function generateCSSStub(statement: string, specifier: string): string {
   }
 
   // Namespace import: import * as styles from "./X.module.css"
-  const nsMatch = importClause.match(/^\*\s+as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
+  const nsMatch = importClause.match(/^\*\s*as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
   if (nsMatch) {
     const expr = cssModuleKey
       ? scopedCssModuleProxyExpression(cssModuleKey)

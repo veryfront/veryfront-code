@@ -8,7 +8,7 @@ support. It does not cover runtime request handling.
 The build pipeline collects static routes, compiles and renders source files,
 bundles browser runtimes, copies public assets, emits validated manifests, and
 publishes a complete production output. Standalone Build utilities also
-compile MDX and optimize CSS, Tailwind sources, and images.
+compile MDX and orchestrate CSS and image processing.
 
 Primary source areas:
 
@@ -39,7 +39,7 @@ Primary source areas:
 9. Publication resources, renderer state, and transform caches are cleaned up;
    cleanup failures remain observable.
 
-The CSS, image, Tailwind, MDX-directory, and embedded-preset APIs have their own
+The CSS, image, MDX-directory, and embedded-preset APIs have their own
 transactional output boundaries. They are Build capabilities, but they are not
 all implicit stages of `buildProduction()`.
 
@@ -48,6 +48,18 @@ all implicit stages of `buildProduction()`.
 - Server runtime consumes build output but does not own production build steps.
 - Runtime adapters describe host capabilities, not build graph semantics.
 - Extension-provided bundler contracts belong in [extension system](./12-extension-system.md).
+- Core owns CSS candidate collection, artifact identity, caching, and
+  publication. Compilation, optimization, and purging are supplied through the
+  provider-neutral `CSSProcessor`, `CSSOptimizationEngine`, and
+  `CSSPurgingEngine` contracts.
+- Vendor CSS implementations and their dependencies belong to explicitly
+  composed extension packages. A missing required contract fails the build
+  instead of selecting a built-in vendor or compatibility fallback.
+- Release dependency mode is an explicit build input, not an ambient feature
+  flag. Source mode may retain canonical HTTP imports. Immutable mode requires a
+  policy-enforced HTTP dependency vendor supplied by explicit extension
+  composition; without one, the build fails before materializing release files.
+  Hosted execution remains in source mode until such a provider is composed.
 - The final production output is local and same-filesystem rename capable.
 - Build output must not contain the project or overlap `public`, Pages, or App
   source directories.

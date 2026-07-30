@@ -5,6 +5,7 @@ import {
 } from "#veryfront/utils";
 import {
   createCanonicalVeryfrontApiTransport,
+  MAX_VERYFRONT_API_SUCCESS_BODY_BYTES,
   type TransportRequestInit,
   type TransportRetryConfig,
   type VeryfrontApiTransport,
@@ -41,6 +42,10 @@ const logger = baseLogger.component("api");
 
 const DEFAULT_PAGE_LIMIT = 100;
 const MAX_LIST_ALL_PAGES = 10_000;
+const MAX_RELEASE_FILE_ENTRIES = 50_000;
+const MAX_RELEASE_FILE_CONTENT_BYTES = 10 * 1024 * 1024;
+const MAX_RELEASE_FILE_PAGE_CONTENT_BYTES = 64 * 1024 * 1024;
+const MAX_RELEASE_FILE_TOTAL_CONTENT_BYTES = 64 * 1024 * 1024;
 const MAX_DOMAIN_CODE_UNITS = 253;
 const MAX_DOMAIN_INPUT_CODE_UNITS = MAX_DOMAIN_CODE_UNITS + 8;
 
@@ -353,6 +358,88 @@ function mapProjectFile<T extends ProjectFile>(file: T): ProjectFile {
   };
 }
 
+function releaseFileBoundaryError(detail: string): VeryfrontError {
+  return API_CLIENT_ERROR.create({ detail, status: 502 });
+}
+
+/** Compute UTF-8 length without allocating an encoded copy, stopping once over limit. */
+function boundedUtf8ByteLength(value: string, limit: number): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x7f) {
+      bytes += 1;
+    } else if (codeUnit <= 0x7ff) {
+      bytes += 2;
+    } else if (
+      codeUnit >= 0xd800 &&
+      codeUnit <= 0xdbff &&
+      index + 1 < value.length
+    ) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index++;
+      } else {
+        bytes += 3;
+      }
+    } else {
+      // BMP code points and unpaired surrogates (encoded as U+FFFD) use 3 bytes.
+      bytes += 3;
+    }
+
+    if (bytes > limit) return bytes;
+  }
+  return bytes;
+}
+
+function measureReleaseFilePageContent(
+  files: readonly ProjectFile[],
+  maximumEntries: number,
+): number {
+  if (files.length > maximumEntries) {
+    throw releaseFileBoundaryError(
+      `Veryfront API release file page exceeded ${maximumEntries} entries`,
+    );
+  }
+
+  let pageBytes = 0;
+  for (const file of files) {
+    if (typeof file.content !== "string") {
+      throw releaseFileBoundaryError(
+        "Veryfront API release file page omitted string content",
+      );
+    }
+    if (!Number.isSafeInteger(file.size) || file.size < 0) {
+      throw releaseFileBoundaryError(
+        "Veryfront API release file page returned an invalid declared size",
+      );
+    }
+    if (file.size > MAX_RELEASE_FILE_CONTENT_BYTES) {
+      throw releaseFileBoundaryError(
+        `Veryfront API release file exceeded ${MAX_RELEASE_FILE_CONTENT_BYTES} bytes`,
+      );
+    }
+
+    const contentBytes = boundedUtf8ByteLength(
+      file.content,
+      MAX_RELEASE_FILE_CONTENT_BYTES,
+    );
+    if (contentBytes > MAX_RELEASE_FILE_CONTENT_BYTES) {
+      throw releaseFileBoundaryError(
+        `Veryfront API release file exceeded ${MAX_RELEASE_FILE_CONTENT_BYTES} UTF-8 bytes`,
+      );
+    }
+    if (contentBytes > MAX_RELEASE_FILE_PAGE_CONTENT_BYTES - pageBytes) {
+      throw releaseFileBoundaryError(
+        `Veryfront API release file page exceeded ${MAX_RELEASE_FILE_PAGE_CONTENT_BYTES} UTF-8 bytes`,
+      );
+    }
+    pageBytes += contentBytes;
+  }
+  return pageBytes;
+}
+
 function buildStyleArtifactParams(
   tuple: StyleArtifactTuple,
 ): URLSearchParams {
@@ -593,13 +680,36 @@ function normalizeLookupDomain(
 
 async function listAllFiles(
   list: (cursor?: string) => Promise<FileListResult>,
+  limits?: {
+    maxFiles: number;
+    maxContentBytes: number;
+    measurePageContent: (files: readonly ProjectFile[]) => number;
+    label: string;
+  },
 ): Promise<ProjectFile[]> {
   const allFiles: ProjectFile[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
+  let contentBytes = 0;
 
   for (let page = 0; page < MAX_LIST_ALL_PAGES; page++) {
     const result = await list(cursor);
+    if (limits) {
+      if (result.files.length > limits.maxFiles - allFiles.length) {
+        throw API_CLIENT_ERROR.create({
+          detail: `${limits.label} pagination exceeded ${limits.maxFiles} entries`,
+          status: 502,
+        });
+      }
+      const pageBytes = limits.measurePageContent(result.files);
+      if (pageBytes > limits.maxContentBytes - contentBytes) {
+        throw API_CLIENT_ERROR.create({
+          detail: `${limits.label} pagination exceeded ${limits.maxContentBytes} UTF-8 bytes`,
+          status: 502,
+        });
+      }
+      contentBytes += pageBytes;
+    }
     allFiles.push(...result.files);
     const nextCursor = result.page_info.next ?? undefined;
     if (!nextCursor) return allFiles;
@@ -874,11 +984,16 @@ export class VeryfrontAPIOperations {
     }/files?${params}`;
     logger.debug("listReleaseFiles", { projectRef, version, pattern: options.pattern });
 
-    const raw = await this.request(url, { signal: options.signal });
+    const raw = await this.request(url, {
+      signal: options.signal,
+      maxResponseBytes: MAX_VERYFRONT_API_SUCCESS_BODY_BYTES,
+    });
     const response = getListReleaseFilesResponseSchema().parse(raw);
+    const files = response.data.map(mapProjectFile);
+    measureReleaseFilePageContent(files, options.limit ?? DEFAULT_PAGE_LIMIT);
 
     return {
-      files: response.data.map(mapProjectFile),
+      files,
       page_info: response.page_info,
       release_id: response.release_id,
       release_version: response.release_version,
@@ -890,8 +1005,19 @@ export class VeryfrontAPIOperations {
     version = "latest",
     options: Omit<ListFilesOptions, "cursor"> = {},
   ): Promise<ProjectFile[]> {
-    return listAllFiles((cursor) =>
-      this.listReleaseFiles(projectRef, version, { ...options, cursor, limit: DEFAULT_PAGE_LIMIT })
+    return listAllFiles(
+      (cursor) =>
+        this.listReleaseFiles(projectRef, version, {
+          ...options,
+          cursor,
+          limit: DEFAULT_PAGE_LIMIT,
+        }),
+      {
+        maxFiles: MAX_RELEASE_FILE_ENTRIES,
+        maxContentBytes: MAX_RELEASE_FILE_TOTAL_CONTENT_BYTES,
+        measurePageContent: (files) => measureReleaseFilePageContent(files, DEFAULT_PAGE_LIMIT),
+        label: "Veryfront API release file",
+      },
     );
   }
 
@@ -1188,7 +1314,7 @@ export class VeryfrontAPIOperations {
   async reportReleaseAssetManifestState(
     projectRef: string,
     version: string,
-    state: "partial" | "failed",
+    state: "failed",
     error?: string,
   ): Promise<ReleaseAssetManifestStateResponse> {
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${

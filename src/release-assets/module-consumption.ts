@@ -11,16 +11,21 @@
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isAbsolute, normalize, relative } from "#veryfront/compat/path/index.ts";
-import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
+import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import {
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  RELEASE_ASSET_MANIFEST_LIMITS,
   RELEASE_ASSET_MAX_SIZE_BYTES,
   releaseAssetUrl,
 } from "./constants.ts";
 import { getReadyManifestForRenderAsync, type ReadyManifestReadOptions } from "./manifest-cache.ts";
-import type { ReleaseAssetManifest } from "./manifest-schema.ts";
+import {
+  hasImmutableReleaseAssetDependencies,
+  type ReleaseAssetManifest,
+} from "./manifest-schema.ts";
+import { hasControlCharacters } from "./string-validation.ts";
 
 const textEncoder = new TextEncoder();
 
@@ -79,14 +84,18 @@ function dependencyAssetUrl(
   manifest: ReleaseAssetManifest,
   specifier: string,
 ): string | null {
-  const direct = ownDependency(manifest, specifier) ??
-    ownDependency(manifest, specifier.replace(/[?#].*$/, ""));
-  if (direct) return releaseAssetUrl(direct.contentHash, "js");
+  if (!hasImmutableReleaseAssetDependencies(manifest)) return null;
+  const canonicalSpecifier = canonicalHttpSourceUrl(specifier);
+  if (!canonicalSpecifier) return null;
+  const fragmentIndex = specifier.indexOf("#");
+  const fragment = fragmentIndex >= 0 ? specifier.slice(fragmentIndex) : "";
+  const direct = ownDependency(manifest, specifier);
+  if (direct) return `${releaseAssetUrl(direct.contentHash, "js")}${fragment}`;
 
-  const normalized = normalizeHttpUrl(specifier);
-  const normalizedEntry = ownDependency(manifest, normalized) ??
-    ownDependency(manifest, normalized.replace(/[?#].*$/, ""));
-  return normalizedEntry ? releaseAssetUrl(normalizedEntry.contentHash, "js") : null;
+  const normalizedEntry = ownDependency(manifest, canonicalSpecifier);
+  return normalizedEntry
+    ? `${releaseAssetUrl(normalizedEntry.contentHash, "js")}${fragment}`
+    : null;
 }
 
 function ownDependency(
@@ -145,6 +154,38 @@ function authorizedLocalHttpBundlePath(
   return path;
 }
 
+function canonicalHttpSourceUrl(value: unknown): string | null {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > RELEASE_ASSET_MANIFEST_LIMITS.manifestKeyLength ||
+    value.trim() !== value ||
+    hasControlCharacters(value)
+  ) {
+    return null;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return null;
+  }
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    parsed.username !== "" ||
+    parsed.password !== ""
+  ) {
+    return null;
+  }
+
+  const canonical = normalizeHttpUrl(parsed.toString());
+  return canonical.length <= RELEASE_ASSET_MANIFEST_LIMITS.manifestKeyLength &&
+      !hasControlCharacters(canonical)
+    ? canonical
+    : null;
+}
+
 async function sourceUrlForLocalHttpBundle(
   specifier: string,
   dependencyCacheRoot: string,
@@ -161,7 +202,7 @@ async function sourceUrlForLocalHttpBundle(
     ) {
       return null;
     }
-    return extractSourceUrl(source);
+    return canonicalHttpSourceUrl(extractSourceUrl(source));
   } catch {
     return null;
   }
@@ -178,13 +219,12 @@ export async function rewriteReleaseDependencyImportsForModule(
   const manifest = options.manifest !== undefined
     ? options.manifest
     : await getReadyManifestForRenderAsync(options.releaseId, options.manifestReadOptions);
-  if (!manifest || Object.keys(manifest.dependencies).length === 0) return code;
 
   const replacements = new Map<string, string>();
   for (const imp of await parseImports(code)) {
     if (!imp.n || replacements.has(imp.n)) continue;
 
-    const direct = dependencyAssetUrl(manifest, imp.n);
+    const direct = manifest ? dependencyAssetUrl(manifest, imp.n) : null;
     if (direct) {
       replacements.set(imp.n, direct);
       continue;
@@ -197,8 +237,11 @@ export async function rewriteReleaseDependencyImportsForModule(
     );
     if (!sourceUrl) continue;
 
-    const assetUrl = dependencyAssetUrl(manifest, sourceUrl);
-    if (assetUrl) replacements.set(imp.n, assetUrl);
+    const assetUrl = manifest ? dependencyAssetUrl(manifest, sourceUrl) : null;
+    // A non-ready or incomplete manifest must never leak a local cache path to
+    // the browser. Preserve the authenticated JIT path by restoring the
+    // bundle's verified HTTP source URL, and keep the response uncached.
+    replacements.set(imp.n, assetUrl ?? sourceUrl);
   }
 
   if (replacements.size === 0) return code;

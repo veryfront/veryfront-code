@@ -23,13 +23,16 @@
  * @module release-assets/manifest-cache
  */
 
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils/logger/index.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { registerLRUCache } from "#veryfront/cache";
+import { registerLRUCache } from "#veryfront/cache/local-registry.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { markRequestProfilePhase, profilePhase } from "#veryfront/observability";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG, RELEASE_ASSET_MANIFEST_LIMITS } from "./constants.ts";
-import { parseReleaseAssetManifest, type ReleaseAssetManifest } from "./manifest-schema.ts";
+import {
+  parseReadyReleaseAssetManifestResponse,
+  type ReleaseAssetManifest,
+} from "./manifest-schema.ts";
 import { hasControlCharacters } from "./string-validation.ts";
 
 const logger = serverLogger.component("release-asset-manifest");
@@ -90,6 +93,13 @@ export interface ReleaseAssetManifestFetchContext {
   readonly signal: AbortSignal;
 }
 
+/** Untrusted control-plane response returned by a registered fetcher. */
+export interface ReleaseAssetManifestFetchResult {
+  readonly state: string;
+  readonly manifest_version: number;
+  readonly manifest: unknown;
+}
+
 /**
  * Fetcher used to retrieve a manifest for a release. Registered per-releaseId
  * by the runtime adapter that owns that release, so the correct project-scoped
@@ -99,9 +109,7 @@ export interface ReleaseAssetManifestFetcher {
   (
     releaseId: string,
     context: ReleaseAssetManifestFetchContext,
-  ): Promise<
-    { state: string; manifest: ReleaseAssetManifest | null } | null
-  >;
+  ): Promise<ReleaseAssetManifestFetchResult | null>;
 }
 
 /** Idempotent cleanup for one fetcher registration. */
@@ -258,6 +266,16 @@ function maybeScheduleReadyRefresh(releaseId: string, entry: CacheEntry): void {
   }
 }
 
+function evictReadyManifests(releaseId: string, ownerToken: symbol): void {
+  const keys: string[] = [];
+  for (const [key, entry] of manifestCache.entries()) {
+    if (entry.releaseId === releaseId && entry.ownerToken === ownerToken && entry.manifest) {
+      keys.push(key);
+    }
+  }
+  for (const key of keys) manifestCache.delete(key);
+}
+
 /**
  * Return a ready manifest for `releaseId` if one is cached, else null.
  *
@@ -400,18 +418,27 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
 
       if (!result) {
         markManifestDecision("fetch_missing");
+        evictReadyManifests(releaseId, active.token);
         cacheNonReadyManifest(releaseId, active.token);
         return null;
       }
 
-      const state = typeof result.state === "string" ? result.state : "invalid";
+      const rawState = readOwnDataProperty(result, "state");
+      const rawManifestVersion = readOwnDataProperty(result, "manifest_version");
+      const state = typeof rawState === "string" && rawState.length <= 64 &&
+          typeof rawManifestVersion === "number" &&
+          Number.isSafeInteger(rawManifestVersion) &&
+          rawManifestVersion >= 0
+        ? rawState
+        : "invalid";
       const manifestState = normalizeManifestState(state);
-      const manifest = isUsableManifestState(state) && result.manifest
-        ? parseReleaseAssetManifest(result.manifest)
+      const readyResponse = isUsableManifestState(state)
+        ? parseReadyReleaseAssetManifestResponse(result, releaseId)
         : null;
+      const manifest = readyResponse?.manifest ?? null;
 
-      if (manifest?.releaseId === releaseId) {
-        markManifestDecision(manifestState === "partial" ? "fetch_partial" : "fetch_ready");
+      if (manifest) {
+        markManifestDecision("fetch_ready");
         const key = cacheKey(releaseId, manifest.manifestVersion);
         manifestCache.set(key, {
           releaseId,
@@ -429,11 +456,10 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         });
         return manifest;
       } else {
-        if (manifest && manifest.releaseId !== releaseId) {
-          markManifestDecision("fetch_release_mismatch");
-        }
+        if (state === "ready") markManifestDecision("fetch_ready_invalid");
         markManifestDecision(`fetch_${manifestState}`);
         markManifestDecision("fetch_not_ready");
+        evictReadyManifests(releaseId, active.token);
         cacheNonReadyManifest(releaseId, active.token);
         return null;
       }
@@ -480,7 +506,7 @@ async function invokeManifestFetcher(
   registration: FetcherRegistration,
   releaseId: string,
   controller: AbortController,
-): Promise<{ state: string; manifest: ReleaseAssetManifest | null } | null> {
+): Promise<ReleaseAssetManifestFetchResult | null> {
   if (controller.signal.aborted) {
     const reason = controller.signal.reason;
     throw reason instanceof Error ? reason : new Error("Release manifest fetch aborted");
@@ -513,7 +539,17 @@ async function invokeManifestFetcher(
 }
 
 function isUsableManifestState(state: string): boolean {
-  return state === "ready" || state === "partial";
+  return state === "ready";
+}
+
+function readOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeManifestState(state: string): string {

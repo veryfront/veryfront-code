@@ -182,8 +182,8 @@ describe("hydration-data-generator", () => {
         },
         css: [],
         routes: {},
+        dependencyMode: "source",
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
       };
       const parsed = parseHydrationData(
         "page",
@@ -243,8 +243,8 @@ describe("hydration-data-generator", () => {
         routes: {
           "/": { modules: ["app/page.tsx", "app/layout.tsx"], css: [] },
         },
+        dependencyMode: "source",
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
       };
       const parsed = parseHydrationData(
         "page",
@@ -413,8 +413,8 @@ describe("hydration-data-generator", () => {
         },
         css: [],
         routes: {},
+        dependencyMode: "source",
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
       };
       const generated = parseHydrationData(
         "docs",

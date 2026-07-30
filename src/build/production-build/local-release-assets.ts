@@ -24,14 +24,14 @@ import {
   parseReleaseAssetManifest,
   type ReleaseAssetManifest,
 } from "#veryfront/release-assets/manifest-schema.ts";
-import { computeHashBytes } from "#veryfront/utils";
+import { computeHashBytes } from "#veryfront/utils/hash-utils.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 export const LOCAL_RELEASE_ASSET_MANIFEST_PATH = "_veryfront/release-asset-manifest.json";
-const LOCAL_RELEASE_ASSET_SOURCE_IDENTITY_VERSION = 1;
+const LOCAL_RELEASE_ASSET_SOURCE_IDENTITY_VERSION = 2;
 
 export interface LocalReleaseAssetOptions {
   adapter: RuntimeAdapter;
@@ -105,14 +105,21 @@ function mergeDependencyRecords(
   );
 }
 
-function mergeGaps(...groups: string[][]): string[] {
-  const gaps = [...new Set(groups.flat())].sort(compareText);
-  if (gaps.length > RELEASE_ASSET_MANIFEST_LIMITS.fallbackGaps) {
+function mergeCoverageFailures(...groups: string[][]): readonly string[] {
+  const failures = [...new Set(groups.flat())].sort(compareText);
+  if (failures.length > RELEASE_ASSET_MANIFEST_LIMITS.coverageFailures) {
     throw new Error(
-      `Local release dependency gaps exceed ${RELEASE_ASSET_MANIFEST_LIMITS.fallbackGaps} entries`,
+      `Local release dependency coverage failures exceed ${RELEASE_ASSET_MANIFEST_LIMITS.coverageFailures} entries`,
     );
   }
-  return gaps;
+  return Object.freeze(failures);
+}
+
+function assertCompleteLocalReleaseCoverage(failures: readonly string[]): void {
+  if (failures.length === 0) return;
+  const summary = failures.slice(0, 3).map((failure) => failure.slice(0, 200)).join(", ");
+  const remaining = failures.length > 3 ? ` (+${failures.length - 3} more)` : "";
+  throw new Error(`Local release dependency coverage is incomplete: ${summary}${remaining}`);
 }
 
 async function collectVerifiedAssets(
@@ -188,7 +195,6 @@ async function collectVerifiedAssets(
 async function computeSourceContentHash(
   reactVersion: string,
   dependencies: Record<string, PreparedAssetMetadata>,
-  gaps: string[],
 ): Promise<string> {
   const identity = {
     version: LOCAL_RELEASE_ASSET_SOURCE_IDENTITY_VERSION,
@@ -199,7 +205,6 @@ async function computeSourceContentHash(
       size: entry.size,
       contentType: entry.contentType,
     })),
-    gaps,
   };
   return await computeHashBytes(
     new TextEncoder().encode(JSON.stringify(identity)) as Uint8Array<ArrayBuffer>,
@@ -393,6 +398,13 @@ async function buildLocalReleaseAssets(
   options: LocalReleaseAssetOptions,
   tempDir: string,
 ): Promise<{ manifest: ReleaseAssetManifest; assets: PreparedReleaseAsset[] }> {
+  const vendorHttpImports = options.vendorHttpImports;
+  const frameworkTransform = options.frameworkTransform;
+  if (typeof vendorHttpImports !== "function" || typeof frameworkTransform !== "function") {
+    throw new Error(
+      "Local release dependency assets require explicitly composed transform and vendor extensions",
+    );
+  }
   const reactVersion = await resolveProjectReactVersion({
     projectDir: options.projectDir,
     config: options.config,
@@ -400,7 +412,7 @@ async function buildLocalReleaseAssets(
   const built = await buildReactImportMapDependencyAssets({
     tempDir,
     reactVersion,
-    vendorHttpImports: options.vendorHttpImports,
+    vendorHttpImports,
   });
   const cached = await buildCachedHttpDependencyAssets({
     cacheDir: join(options.projectDir, ".cache", "veryfront-http-bundle"),
@@ -412,11 +424,12 @@ async function buildLocalReleaseAssets(
     adapter: options.adapter,
     reactVersion,
     projectId: options.projectId ?? "local",
-    transform: options.frameworkTransform,
+    transform: frameworkTransform,
     dependencyUrls,
   });
   dependencies = mergeDependencyRecords(dependencies, framework.dependencies);
-  const gaps = mergeGaps(cached.gaps, built.gaps, framework.gaps);
+  const coverageFailures = mergeCoverageFailures(cached.gaps, built.gaps, framework.gaps);
+  assertCompleteLocalReleaseCoverage(coverageFailures);
   const assets = await collectVerifiedAssets(
     [cached.assets, built.assets, framework.assets],
     dependencies,
@@ -424,11 +437,14 @@ async function buildLocalReleaseAssets(
   const sourceContentHash = await computeSourceContentHash(
     reactVersion,
     dependencies,
-    gaps,
   );
 
+  // Local production builds currently precompute dependency assets only.
+  // Empty project-module and CSS collections are an explicit per-entry miss,
+  // so consumers must retain release-scoped JIT URLs for those resources.
   const candidate: ReleaseAssetManifest = {
     schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+    dependencyMode: "immutable",
     projectId: options.projectId ?? "local",
     releaseId: options.releaseId ?? "standalone-dev",
     releaseVersion: 0,
@@ -447,7 +463,6 @@ async function buildLocalReleaseAssets(
         contentType: entry.contentType,
       }]),
     ),
-    fallback: { mode: "jit", gaps },
   };
   const manifest = parseReleaseAssetManifest(candidate);
   if (!manifest) {
@@ -471,19 +486,12 @@ export async function generateLocalReleaseAssetManifest(
     );
   }
 
-  let result: ReleaseAssetManifest | undefined;
+  let builtResult:
+    | { manifest: ReleaseAssetManifest; assets: PreparedReleaseAsset[] }
+    | undefined;
   let generationFailure: Error | undefined;
   try {
-    const built = await buildLocalReleaseAssets(options, tempDir);
-    if (!options.dryRun) {
-      await writeLocalReleaseOutputs(
-        options.adapter,
-        options.outputDir,
-        built.assets,
-        built.manifest,
-      );
-    }
-    result = built.manifest;
+    builtResult = await buildLocalReleaseAssets(options, tempDir);
   } catch (error) {
     generationFailure = new Error(
       `Failed to generate local release dependency assets: ${errorMessage(error)}`,
@@ -511,8 +519,27 @@ export async function generateLocalReleaseAssetManifest(
   }
   if (generationFailure) throw generationFailure;
   if (cleanupFailure) throw cleanupFailure;
-  if (!result) {
+  if (!builtResult) {
     throw new Error("Local release dependency asset generation produced no manifest");
   }
-  return result;
+
+  // Commit output only after the temporary build state is gone. A cleanup
+  // failure therefore cannot report generation failure after durable output
+  // has already been published and trigger a misleading retry.
+  if (!options.dryRun) {
+    try {
+      await writeLocalReleaseOutputs(
+        options.adapter,
+        options.outputDir,
+        builtResult.assets,
+        builtResult.manifest,
+      );
+    } catch (error) {
+      throw new Error(
+        `Failed to generate local release dependency assets: ${errorMessage(error)}`,
+        { cause: error },
+      );
+    }
+  }
+  return builtResult.manifest;
 }

@@ -420,8 +420,8 @@ describe("html-generation/html-shell-generator", () => {
         routes: {
           "/dashboard": { modules: ["pages/dashboard.tsx"], css: [] },
         },
+        dependencyMode: "source",
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
       };
       const options = {
         ...createOptions({
@@ -524,8 +524,8 @@ describe("html-generation/html-shell-generator", () => {
           cssPipelineIdentity: "test-css-pipeline@1",
         }],
         routes: { "/": { modules: [], css: [hash] } },
+        dependencyMode: "source",
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
       };
 
       const result = await generateHTMLShellPartsWithStylesheetArtifact(
@@ -569,8 +569,8 @@ describe("html-generation/html-shell-generator", () => {
           cssPipelineIdentity: "test-css-pipeline@1",
         }],
         routes: { "/": { modules: [], css: [hash] } },
+        dependencyMode: "source",
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
       };
 
       const result = await generateHTMLShellPartsWithStylesheetArtifact(
@@ -639,8 +639,8 @@ describe("html-generation/html-shell-generator", () => {
           cssPipelineIdentity: "test-css-pipeline@1",
         }],
         routes: { "/": { modules: [], css: [hostileHash] } },
+        dependencyMode: "source",
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
       } as unknown as ReleaseAssetManifest;
 
       await assertRejects(

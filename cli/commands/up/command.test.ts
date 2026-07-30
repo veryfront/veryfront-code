@@ -31,6 +31,29 @@ function restoreEnv(name: string, value: string | undefined): void {
   Deno.env.set(name, value);
 }
 
+function readyReleaseAssetManifestResponse(projectId: string) {
+  return {
+    state: "ready",
+    manifest_version: 1,
+    manifest: {
+      schemaVersion: 2,
+      projectId,
+      releaseId: "release-1",
+      releaseVersion: 1,
+      manifestVersion: 1,
+      builderVersion: "test",
+      sourceContentHash: "a".repeat(64),
+      createdAt: "2026-07-30T00:00:00.000Z",
+      assetBasePath: "/_vf/assets",
+      modules: {},
+      css: [],
+      routes: {},
+      dependencyMode: "source",
+      dependencies: {},
+    },
+  };
+}
+
 class ExitSentinel extends Error {
   constructor(readonly code: number) {
     super(`exit(${code})`);
@@ -351,16 +374,7 @@ describe("Up Command", () => {
 
           if (url.endsWith("/releases/release-1/asset-manifest")) {
             return Promise.resolve(
-              Response.json({
-                state: "ready",
-                manifest: {
-                  modules: {},
-                  css: [],
-                  routes: {},
-                  dependencies: {},
-                  fallback: { mode: "jit", gaps: [] },
-                },
-              }),
+              Response.json(readyReleaseAssetManifestResponse("project-1")),
             );
           }
 
@@ -630,16 +644,7 @@ describe("Up Command", () => {
               "/projects/pulled-up/releases/release-1/asset-manifest",
             ].includes(url.pathname)
           ) {
-            return Response.json({
-              state: "ready",
-              manifest: {
-                modules: {},
-                css: [],
-                routes: {},
-                dependencies: {},
-                fallback: { mode: "jit", gaps: [] },
-              },
-            });
+            return Response.json(readyReleaseAssetManifestResponse("project-linked"));
           }
 
           if (

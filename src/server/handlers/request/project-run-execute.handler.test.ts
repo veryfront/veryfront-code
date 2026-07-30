@@ -26,6 +26,7 @@ import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
+  projectRunExecuteHandlerInternals,
 } from "./project-run-execute.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -366,6 +367,41 @@ async function withEnvValue<T>(
 describe("server/handlers/request/project-run-execute.handler", () => {
   afterAll(async () => {
     await stopEsbuild();
+  });
+
+  it("reports release temp cleanup failures without discarding a successful build result", async () => {
+    const buildResult = {
+      state: "ready",
+      moduleCount: 3,
+      cssCount: 1,
+      routeCount: 2,
+    };
+    const removedPaths: string[] = [];
+
+    const response = await projectRunExecuteHandlerInternals.finalizeReleaseAssetBuildTempDir({
+      tempDir: "/tmp/veryfront-release-assets-test",
+      response: {
+        success: true,
+        result: buildResult,
+        logs: null,
+        duration_ms: 20,
+      },
+      startedAt: 100,
+      removeTempDir: (path) => {
+        removedPaths.push(path);
+        return Promise.reject(new Error("filesystem refused cleanup"));
+      },
+      now: () => 145,
+    });
+
+    assertEquals(removedPaths, ["/tmp/veryfront-release-assets-test"]);
+    assertStrictEquals(response.result, buildResult);
+    assertEquals(response, {
+      success: true,
+      result: buildResult,
+      logs: "Temporary release build cleanup failed",
+      duration_ms: 45,
+    });
   });
 
   it("runs a discovered task and returns canonical runtime execution output", async () => {

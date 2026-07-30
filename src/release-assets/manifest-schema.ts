@@ -1,5 +1,5 @@
 /**
- * Release Asset Manifest — v1 body schema, types, and validator.
+ * Release Asset Manifest — v2 body schema, types, and validator.
  *
  * The manifest body is content-addressed metadata describing transformed
  * browser modules and compiled CSS for a release, plus the per-route closure
@@ -14,6 +14,10 @@
 
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, SchemaValidator } from "veryfront/extensions/schema";
+import {
+  isCSSPipelineIdentity,
+  isStyleProfileHash,
+} from "#veryfront/utils/css-artifact-identity.ts";
 import {
   isValidContentHash,
   RELEASE_ASSET_BASE_PATH,
@@ -30,18 +34,18 @@ const {
   builderVersionLength: MAX_BUILDER_VERSION_LENGTH,
   manifestKeyLength: MAX_MANIFEST_KEY_LENGTH,
   styleProfileHashLength: MAX_STYLE_PROFILE_HASH_LENGTH,
-  gapLength: MAX_GAP_LENGTH,
+  cssPipelineIdentityLength: MAX_CSS_PIPELINE_IDENTITY_LENGTH,
   moduleEntries: MAX_MODULE_ENTRIES,
   dependencyEntries: MAX_DEPENDENCY_ENTRIES,
   cssEntries: MAX_CSS_ENTRIES,
   routeEntries: MAX_ROUTE_ENTRIES,
   routeModules: MAX_ROUTE_MODULES,
   routeCssEntries: MAX_ROUTE_CSS_ENTRIES,
-  fallbackGaps: MAX_FALLBACK_GAPS,
   totalRouteReferences: MAX_TOTAL_ROUTE_REFERENCES,
 } = RELEASE_ASSET_MANIFEST_LIMITS;
 const MODULE_EXTENSION_PATTERN = /\.(?:tsx?|jsx?|mdx)$/;
 const CANONICAL_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+const RELEASE_ASSET_DEPENDENCY_MODES = ["source", "immutable"] as const;
 
 const MANIFEST_KEYS = new Set([
   "schemaVersion",
@@ -56,8 +60,8 @@ const MANIFEST_KEYS = new Set([
   "modules",
   "css",
   "routes",
+  "dependencyMode",
   "dependencies",
-  "fallback",
 ]);
 const ASSET_ENTRY_KEYS = new Set(["contentHash", "size", "contentType"]);
 const CSS_ENTRY_KEYS = new Set([
@@ -65,9 +69,9 @@ const CSS_ENTRY_KEYS = new Set([
   "size",
   "contentType",
   "styleProfileHash",
+  "cssPipelineIdentity",
 ]);
 const ROUTE_ENTRY_KEYS = new Set(["modules", "css"]);
-const FALLBACK_KEYS = new Set(["mode", "gaps"]);
 
 function isSafeBoundedText(value: unknown, maxLength: number): value is string {
   return typeof value === "string" &&
@@ -204,7 +208,7 @@ function hasValidManifestReferences(manifest: ManifestReferenceShape): boolean {
   return true;
 }
 
-/** Extension-backed validator for the strict release asset manifest v1 body. */
+/** Extension-backed validator for the strict release asset manifest v2 body. */
 export const getReleaseAssetManifestSchema = defineSchema((v) =>
   v.object({
     schemaVersion: v.literal(RELEASE_ASSET_MANIFEST_SCHEMA_VERSION),
@@ -229,29 +233,24 @@ export const getReleaseAssetManifestSchema = defineSchema((v) =>
         size: v.number().int().nonnegative().max(RELEASE_ASSET_MAX_SIZE_BYTES),
         contentType: v.literal(RELEASE_ASSET_CONTENT_TYPES.css),
         styleProfileHash: v.string()
-          .min(1)
+          .min(MAX_STYLE_PROFILE_HASH_LENGTH)
           .max(MAX_STYLE_PROFILE_HASH_LENGTH)
-          .refine((value) => isSafeBoundedText(value, MAX_STYLE_PROFILE_HASH_LENGTH))
-          .nullable(),
+          .refine(isStyleProfileHash),
+        cssPipelineIdentity: v.string()
+          .min(1)
+          .max(MAX_CSS_PIPELINE_IDENTITY_LENGTH)
+          .refine(isCSSPipelineIdentity),
       }).strict(),
     ).max(MAX_CSS_ENTRIES),
     routes: v.record(
       v.string().min(1).max(MAX_MANIFEST_KEY_LENGTH).refine(isCanonicalRoutePath),
       routeEntrySchema(v),
     ).refine((value) => recordEntryCountWithin(value, MAX_ROUTE_ENTRIES)),
+    dependencyMode: v.enum(RELEASE_ASSET_DEPENDENCY_MODES),
     dependencies: v.record(
       v.string().min(1).max(MAX_MANIFEST_KEY_LENGTH).refine(isSafeDependencyKey),
       assetEntrySchema(v, RELEASE_ASSET_CONTENT_TYPES.js),
     ).refine((value) => recordEntryCountWithin(value, MAX_DEPENDENCY_ENTRIES)),
-    fallback: v.object({
-      mode: v.literal("jit"),
-      gaps: v.array(
-        v.string()
-          .min(1)
-          .max(MAX_GAP_LENGTH)
-          .refine((value) => isSafeBoundedText(value, MAX_GAP_LENGTH)),
-      ).max(MAX_FALLBACK_GAPS),
-    }).strict(),
   }).strict().refine(hasValidManifestReferences, "Manifest route references must resolve")
 );
 
@@ -259,7 +258,7 @@ export const getReleaseAssetManifestSchema = defineSchema((v) =>
 // Inferred public types
 // ---------------------------------------------------------------------------
 
-/** Validated, immutable release asset manifest v1 body. */
+/** Validated, immutable release asset manifest v2 body. */
 export type ReleaseAssetManifest = InferSchema<
   ReturnType<typeof getReleaseAssetManifestSchema>
 >;
@@ -269,12 +268,24 @@ export type ReleaseAssetEntry = ReleaseAssetManifest["modules"][string];
 export type ReleaseAssetCssEntry = ReleaseAssetManifest["css"][number];
 /** Per-route module and CSS closure. */
 export type ReleaseAssetRouteEntry = ReleaseAssetManifest["routes"][string];
+/** Capability represented by entries in the manifest dependency map. */
+export type ReleaseAssetDependencyMode = ReleaseAssetManifest["dependencyMode"];
+/** Manifest whose dependency entries name uploaded content-addressed assets. */
+export type ImmutableReleaseAssetManifest = ReleaseAssetManifest & {
+  readonly dependencyMode: "immutable";
+};
+
+/** True only when manifest dependency entries are safe immutable rewrite targets. */
+export function hasImmutableReleaseAssetDependencies(
+  manifest: ReleaseAssetManifest | null | undefined,
+): manifest is ImmutableReleaseAssetManifest {
+  return manifest?.dependencyMode === "immutable";
+}
 
 /** Manifest lifecycle states (DB-owned; mirrored here for runtime checks). */
 export type ReleaseAssetManifestState =
   | "queued"
   | "building"
-  | "partial"
   | "ready"
   | "failed"
   | "superseded";
@@ -284,6 +295,13 @@ export interface ReleaseAssetManifestResponse {
   state: ReleaseAssetManifestState;
   manifest_version: number;
   manifest: ReleaseAssetManifest | null;
+}
+
+/** Strict ready response with a generation-matched validated manifest body. */
+export interface ReadyReleaseAssetManifestResponse {
+  readonly state: "ready";
+  readonly manifest_version: number;
+  readonly manifest: ReleaseAssetManifest;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,22 +322,71 @@ export function parseReleaseAssetManifest(value: unknown): ReleaseAssetManifest 
   }
 }
 
-function parseReleaseAssetManifestImpl(value: unknown): ReleaseAssetManifest | null {
-  if (!isPlainRecord(value) || !hasExactKeys(value, MANIFEST_KEYS)) return null;
-  if (value.schemaVersion !== RELEASE_ASSET_MANIFEST_SCHEMA_VERSION) return null;
-  if (!isSafeBoundedText(value.projectId, MAX_IDENTIFIER_LENGTH)) return null;
-  if (!isSafeBoundedText(value.releaseId, MAX_IDENTIFIER_LENGTH)) return null;
-  if (!isSafeIntegerInRange(value.releaseVersion, Number.MAX_SAFE_INTEGER)) return null;
-  if (!isSafeIntegerInRange(value.manifestVersion, Number.MAX_SAFE_INTEGER)) return null;
-  if (!isSafeBoundedText(value.builderVersion, MAX_BUILDER_VERSION_LENGTH)) return null;
-  if (typeof value.sourceContentHash !== "string" || !isValidContentHash(value.sourceContentHash)) {
+/**
+ * Parse an untrusted ready response without executing accessors.
+ *
+ * The response envelope and manifest body must identify the same release and
+ * manifest generation. Extra envelope fields are ignored so the control plane
+ * can add unrelated metadata without weakening these identity checks.
+ */
+export function parseReadyReleaseAssetManifestResponse(
+  value: unknown,
+  expectedReleaseId: string,
+): ReadyReleaseAssetManifestResponse | null {
+  try {
+    if (!isSafeBoundedText(expectedReleaseId, MAX_IDENTIFIER_LENGTH)) return null;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+
+    const state = readOwnDataProperty(value, "state");
+    const manifestVersion = readOwnDataProperty(value, "manifest_version");
+    const manifest = parseReleaseAssetManifest(readOwnDataProperty(value, "manifest"));
+    if (
+      state !== "ready" ||
+      !isSafeIntegerInRange(manifestVersion, Number.MAX_SAFE_INTEGER) ||
+      !manifest ||
+      manifest.releaseId !== expectedReleaseId ||
+      manifest.manifestVersion !== manifestVersion
+    ) {
+      return null;
+    }
+
+    return Object.freeze({
+      state: "ready",
+      manifest_version: manifestVersion,
+      manifest,
+    });
+  } catch {
     return null;
   }
-  if (typeof value.createdAt !== "string" || !isCanonicalTimestamp(value.createdAt)) return null;
-  if (value.assetBasePath !== RELEASE_ASSET_BASE_PATH) return null;
+}
+
+function parseReleaseAssetManifestImpl(value: unknown): ReleaseAssetManifest | null {
+  const candidate = snapshotExactDataRecord(value, MANIFEST_KEYS);
+  if (!candidate) return null;
+  if (candidate.schemaVersion !== RELEASE_ASSET_MANIFEST_SCHEMA_VERSION) return null;
+  if (!isSafeBoundedText(candidate.projectId, MAX_IDENTIFIER_LENGTH)) return null;
+  if (!isSafeBoundedText(candidate.releaseId, MAX_IDENTIFIER_LENGTH)) return null;
+  if (!isSafeIntegerInRange(candidate.releaseVersion, Number.MAX_SAFE_INTEGER)) return null;
+  if (!isSafeIntegerInRange(candidate.manifestVersion, Number.MAX_SAFE_INTEGER)) return null;
+  if (!isSafeBoundedText(candidate.builderVersion, MAX_BUILDER_VERSION_LENGTH)) return null;
+  if (
+    typeof candidate.sourceContentHash !== "string" ||
+    !isValidContentHash(candidate.sourceContentHash)
+  ) {
+    return null;
+  }
+  if (
+    typeof candidate.createdAt !== "string" ||
+    !isCanonicalTimestamp(candidate.createdAt)
+  ) return null;
+  if (candidate.assetBasePath !== RELEASE_ASSET_BASE_PATH) return null;
+  if (
+    candidate.dependencyMode !== "source" &&
+    candidate.dependencyMode !== "immutable"
+  ) return null;
 
   const modules = snapshotAssetRecord(
-    value.modules,
+    candidate.modules,
     MAX_MODULE_ENTRIES,
     isCanonicalModuleKey,
     RELEASE_ASSET_CONTENT_TYPES.js,
@@ -327,37 +394,34 @@ function parseReleaseAssetManifestImpl(value: unknown): ReleaseAssetManifest | n
   if (!modules) return null;
 
   const dependencies = snapshotAssetRecord(
-    value.dependencies,
+    candidate.dependencies,
     MAX_DEPENDENCY_ENTRIES,
     isSafeDependencyKey,
     RELEASE_ASSET_CONTENT_TYPES.js,
   );
   if (!dependencies) return null;
 
-  const css = snapshotCssEntries(value.css);
+  const css = snapshotCssEntries(candidate.css);
   if (!css) return null;
 
-  const routes = snapshotRoutes(value.routes);
+  const routes = snapshotRoutes(candidate.routes);
   if (!routes) return null;
-
-  const fallback = snapshotFallback(value.fallback);
-  if (!fallback) return null;
 
   const manifest = Object.freeze({
     schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
-    projectId: value.projectId,
-    releaseId: value.releaseId,
-    releaseVersion: value.releaseVersion,
-    manifestVersion: value.manifestVersion,
-    builderVersion: value.builderVersion,
-    sourceContentHash: value.sourceContentHash,
-    createdAt: value.createdAt,
+    projectId: candidate.projectId,
+    releaseId: candidate.releaseId,
+    releaseVersion: candidate.releaseVersion,
+    manifestVersion: candidate.manifestVersion,
+    builderVersion: candidate.builderVersion,
+    sourceContentHash: candidate.sourceContentHash,
+    createdAt: candidate.createdAt,
     assetBasePath: RELEASE_ASSET_BASE_PATH,
     modules,
     css,
     routes,
+    dependencyMode: candidate.dependencyMode,
     dependencies,
-    fallback,
   }) satisfies ReleaseAssetManifest;
 
   return hasValidManifestReferences(manifest) ? manifest : null;
@@ -374,6 +438,32 @@ function hasExactKeys(value: Record<string, unknown>, expected: ReadonlySet<stri
   return keys.length === expected.size && keys.every((key) => expected.has(key));
 }
 
+function readOwnDataProperty(value: object, key: PropertyKey): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function snapshotExactDataRecord(
+  value: unknown,
+  expected: ReadonlySet<string>,
+): Record<string, unknown> | null {
+  if (!isPlainRecord(value) || !hasExactKeys(value, expected)) return null;
+
+  const snapshot: Record<string, unknown> = Object.create(null);
+  for (const key of expected) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return null;
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
+}
+
+function boundedArrayLength(value: unknown, maximumLength: number): number | null {
+  if (!Array.isArray(value)) return null;
+  const length = readOwnDataProperty(value, "length");
+  return isSafeIntegerInRange(length, maximumLength) ? length : null;
+}
+
 function snapshotAssetRecord(
   value: unknown,
   maxEntries: number,
@@ -387,7 +477,7 @@ function snapshotAssetRecord(
   const snapshot: Record<string, ReleaseAssetEntry> = Object.create(null);
   for (const key of keys) {
     if (!validateKey(key)) return null;
-    const entry = snapshotAssetEntry(value[key], contentType);
+    const entry = snapshotAssetEntry(readOwnDataProperty(value, key), contentType);
     if (!entry) return null;
     Object.defineProperty(snapshot, key, {
       value: entry,
@@ -404,31 +494,40 @@ function snapshotAssetEntry(
   value: unknown,
   contentType: ReleaseAssetContentType,
 ): ReleaseAssetEntry | null {
-  if (!isPlainRecord(value) || !hasExactKeys(value, ASSET_ENTRY_KEYS)) return null;
-  if (typeof value.contentHash !== "string" || !isValidContentHash(value.contentHash)) return null;
-  if (!isSafeIntegerInRange(value.size, RELEASE_ASSET_MAX_SIZE_BYTES)) return null;
-  if (value.contentType !== contentType) return null;
+  const candidate = snapshotExactDataRecord(value, ASSET_ENTRY_KEYS);
+  if (!candidate) return null;
+  if (
+    typeof candidate.contentHash !== "string" ||
+    !isValidContentHash(candidate.contentHash)
+  ) return null;
+  if (!isSafeIntegerInRange(candidate.size, RELEASE_ASSET_MAX_SIZE_BYTES)) return null;
+  if (candidate.contentType !== contentType) return null;
 
   return Object.freeze({
-    contentHash: value.contentHash,
-    size: value.size,
+    contentHash: candidate.contentHash,
+    size: candidate.size,
     contentType,
   });
 }
 
 function snapshotCssEntries(value: unknown): ReleaseAssetCssEntry[] | null {
-  if (!Array.isArray(value) || value.length > MAX_CSS_ENTRIES) return null;
+  const length = boundedArrayLength(value, MAX_CSS_ENTRIES);
+  if (length === null) return null;
   const entries: ReleaseAssetCssEntry[] = [];
 
-  for (const candidate of value) {
-    if (!isPlainRecord(candidate) || !hasExactKeys(candidate, CSS_ENTRY_KEYS)) return null;
+  for (let index = 0; index < length; index++) {
+    const candidate = snapshotExactDataRecord(
+      readOwnDataProperty(value as unknown[], index),
+      CSS_ENTRY_KEYS,
+    );
+    if (!candidate) return null;
     if (
       typeof candidate.contentHash !== "string" ||
       !isValidContentHash(candidate.contentHash) ||
       !isSafeIntegerInRange(candidate.size, RELEASE_ASSET_MAX_SIZE_BYTES) ||
       candidate.contentType !== RELEASE_ASSET_CONTENT_TYPES.css ||
-      (candidate.styleProfileHash !== null &&
-        !isSafeBoundedText(candidate.styleProfileHash, MAX_STYLE_PROFILE_HASH_LENGTH))
+      !isStyleProfileHash(candidate.styleProfileHash) ||
+      !isCSSPipelineIdentity(candidate.cssPipelineIdentity)
     ) {
       return null;
     }
@@ -438,6 +537,7 @@ function snapshotCssEntries(value: unknown): ReleaseAssetCssEntry[] | null {
       size: candidate.size,
       contentType: RELEASE_ASSET_CONTENT_TYPES.css,
       styleProfileHash: candidate.styleProfileHash,
+      cssPipelineIdentity: candidate.cssPipelineIdentity,
     }));
   }
 
@@ -452,8 +552,11 @@ function snapshotRoutes(value: unknown): Record<string, ReleaseAssetRouteEntry> 
   const routes: Record<string, ReleaseAssetRouteEntry> = Object.create(null);
   for (const key of keys) {
     if (!isCanonicalRoutePath(key)) return null;
-    const candidate = value[key];
-    if (!isPlainRecord(candidate) || !hasExactKeys(candidate, ROUTE_ENTRY_KEYS)) return null;
+    const candidate = snapshotExactDataRecord(
+      readOwnDataProperty(value, key),
+      ROUTE_ENTRY_KEYS,
+    );
+    if (!candidate) return null;
 
     const modules = snapshotStringArray(
       candidate.modules,
@@ -478,31 +581,19 @@ function snapshotRoutes(value: unknown): Record<string, ReleaseAssetRouteEntry> 
   return Object.freeze(routes);
 }
 
-function snapshotFallback(
-  value: unknown,
-): ReleaseAssetManifest["fallback"] | null {
-  if (!isPlainRecord(value) || !hasExactKeys(value, FALLBACK_KEYS)) return null;
-  if (value.mode !== "jit") return null;
-  const gaps = snapshotStringArray(
-    value.gaps,
-    MAX_FALLBACK_GAPS,
-    (gap) => isSafeBoundedText(gap, MAX_GAP_LENGTH),
-    false,
-  );
-  return gaps ? Object.freeze({ mode: "jit" as const, gaps }) : null;
-}
-
 function snapshotStringArray(
   value: unknown,
   maximumLength: number,
   validate: (item: string) => boolean,
   requireUnique = true,
 ): string[] | null {
-  if (!Array.isArray(value) || value.length > maximumLength) return null;
+  const length = boundedArrayLength(value, maximumLength);
+  if (length === null) return null;
   const result: string[] = [];
   const seen = requireUnique ? new Set<string>() : null;
 
-  for (const item of value) {
+  for (let index = 0; index < length; index++) {
+    const item = readOwnDataProperty(value as unknown[], index);
     if (typeof item !== "string" || !validate(item) || seen?.has(item)) return null;
     seen?.add(item);
     result.push(item);

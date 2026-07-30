@@ -197,20 +197,20 @@ function createDeployFetchHandler(options: {
         state: "ready",
         manifest_version: 1,
         manifest: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           projectId: PROJECT_ID,
           releaseId: RELEASE_ID,
           releaseVersion: 41,
           manifestVersion: 1,
           builderVersion: "test",
-          sourceContentHash: options.sourceDigest,
+          sourceContentHash: options.sourceDigest.slice("sha256:".length),
           createdAt: "2026-07-10T09:20:00.000Z",
           assetBasePath: "/_vf/assets",
           modules: {},
           css: [],
           routes: {},
+          dependencyMode: "source",
           dependencies: {},
-          fallback: { mode: "jit", gaps: [] },
         },
       });
     }
@@ -833,13 +833,13 @@ it("uses canonical production read-back in human and JSON modes", {
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
             manifestVersion: 1,
             builderVersion: "test",
-            sourceContentHash: sourceDigest,
+            sourceContentHash: sourceDigest.slice("sha256:".length),
             createdAt: "2026-07-10T09:20:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {
@@ -853,10 +853,11 @@ it("uses canonical production read-back in human and JSON modes", {
             routes: {
               "/dashboard": {
                 modules: ["pages/dashboard.tsx"],
+                css: [],
               },
             },
+            dependencyMode: "source",
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         });
       }
@@ -1179,13 +1180,13 @@ it("deploys production from a dirty worktree when the pushed digest matches the 
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
             manifestVersion: 1,
             builderVersion: "test",
-            sourceContentHash: sourceDigest,
+            sourceContentHash: sourceDigest.slice("sha256:".length),
             createdAt: "2026-07-10T09:20:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {
@@ -1199,10 +1200,11 @@ it("deploys production from a dirty worktree when the pushed digest matches the 
             routes: {
               "/dashboard": {
                 modules: ["pages/dashboard.tsx"],
+                css: [],
               },
             },
+            dependencyMode: "source",
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         });
       }
@@ -1541,20 +1543,20 @@ it("uses an alternative slug when inferred first deploy project creation conflic
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
             manifestVersion: 1,
             builderVersion: "test",
-            sourceContentHash: sourceDigest,
+            sourceContentHash: sourceDigest.slice("sha256:".length),
             createdAt: "2026-07-10T09:20:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {},
             css: [],
             routes: {},
+            dependencyMode: "source",
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         });
       }
@@ -1726,20 +1728,20 @@ it("collects configured app and pages routes when projectDir has a trailing slas
           state: "ready",
           manifest_version: 1,
           manifest: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             projectId: PROJECT_ID,
             releaseId: RELEASE_ID,
             releaseVersion: 41,
             manifestVersion: 1,
             builderVersion: "test",
-            sourceContentHash: sourceDigest,
+            sourceContentHash: sourceDigest.slice("sha256:".length),
             createdAt: "2026-07-10T09:20:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {},
             css: [],
             routes: {},
+            dependencyMode: "source",
             dependencies: {},
-            fallback: { mode: "jit", gaps: [] },
           },
         }));
       }

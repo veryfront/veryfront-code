@@ -421,7 +421,13 @@ export async function startCliProductionServer(
   try {
     const manifest = await loadCliReleaseAssetManifest(adapter.fs, manifestPath);
     if (manifest) {
-      manifestLease.register(() => Promise.resolve({ state: "ready", manifest }));
+      manifestLease.register(() =>
+        Promise.resolve({
+          state: "ready",
+          manifest_version: manifest.manifestVersion,
+          manifest,
+        })
+      );
       localReleaseId = manifest.releaseId;
     }
   } catch (error) {

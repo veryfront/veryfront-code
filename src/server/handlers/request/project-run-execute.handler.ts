@@ -30,6 +30,7 @@ import type { StyleScopeProfile } from "#veryfront/html/styles-builder/style-sco
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { buildConfigCacheKey } from "#veryfront/cache/keys.ts";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { findProjectRuntimeTask } from "#veryfront/task/project-runtime.ts";
 import { runTask, type RunTaskOptions, type TaskRunResult } from "#veryfront/task/runner.ts";
@@ -1062,6 +1063,7 @@ async function executeReleaseAssetBuildRun(input: {
   const releaseId = getStringConfig(config, ["release_id", "releaseId"]);
   const releaseVersion = getNumberConfig(config, ["release_version", "releaseVersion"]);
   const tempDir = await Deno.makeTempDir({ prefix: "veryfront-release-assets-" });
+  let response: ProjectRunExecuteResponse;
 
   try {
     if (!releaseId || releaseVersion === undefined) {
@@ -1074,9 +1076,11 @@ async function executeReleaseAssetBuildRun(input: {
       "#veryfront/platform/adapters/veryfront-api-client/client.ts"
     );
     const { runReleaseAssetBuild } = await import("#veryfront/release-assets/build-executor.ts");
+    const { transformToESM } = await import("#veryfront/transforms/esm-transform.ts");
     const { createCompileProjectCss } = await import(
       "#veryfront/release-assets/css-compile.ts"
     );
+    const { evaluateHostedConfigSource } = await import("#veryfront/config/loader.ts");
 
     const apiBaseUrl = getEnvironmentConfig().apiBaseUrl;
     const token = input.req.headers.get("x-token") ?? input.ctx.proxyToken ??
@@ -1099,7 +1103,6 @@ async function executeReleaseAssetBuildRun(input: {
     // compilation failures propagate so the release fails closed.
     const compileProjectCss = createCompileProjectCss({
       projectScope: projectReference,
-      config: input.ctx.config,
     });
 
     const result = await runReleaseAssetBuild({
@@ -1109,10 +1112,42 @@ async function executeReleaseAssetBuildRun(input: {
       releaseVersion,
       releaseVersionRef,
       adapter: input.ctx.adapter,
+      dependencyMode: "source",
+      transform: (source, sourceFile, projectDir, adapter, options) =>
+        transformToESM(source, sourceFile, projectDir, adapter, {
+          projectId: options.projectId,
+          dev: options.dev,
+          ssr: options.ssr,
+          studioEmbed: false,
+          reactVersion: options.reactVersion,
+        }),
+      loadConfig: (source) =>
+        evaluateHostedConfigSource({
+          cacheKey: buildConfigCacheKey(
+            input.ctx.projectId ?? input.request.projectId,
+            true,
+            { productionMode: true, releaseId },
+          ),
+          source,
+          environmentName: "release",
+          environment: {},
+          signal: input.req.signal,
+        }),
       client: {
         beginReleaseAssetManifestBuild: (version) =>
           apiClient.beginReleaseAssetManifestBuild(version),
-        listAllReleaseFiles: (version) => apiClient.listAllReleaseFiles(version),
+        listAllReleaseFiles: async (version) => {
+          const files = await apiClient.listAllReleaseFiles(version);
+          return files.map((file) => {
+            if (typeof file.content !== "string") {
+              throw API_CLIENT_ERROR.create({
+                detail: "Release file list omitted file content",
+                status: 502,
+              });
+            }
+            return { path: file.path, content: file.content };
+          });
+        },
         uploadReleaseAsset: (version, hash, contentType, bytes) =>
           apiClient.uploadReleaseAsset(version, hash, contentType, bytes),
         putReleaseAssetManifest: (version, manifest) =>
@@ -1123,7 +1158,7 @@ async function executeReleaseAssetBuildRun(input: {
       },
     }, tempDir);
 
-    return {
+    response = {
       success: result.success,
       result,
       error: result.error ?? null,
@@ -1131,16 +1166,47 @@ async function executeReleaseAssetBuildRun(input: {
       duration_ms: Date.now() - startedAt,
     };
   } catch (error) {
-    return {
+    response = {
       success: false,
       error: errorMessage(error),
       logs: null,
       duration_ms: Date.now() - startedAt,
     };
-  } finally {
-    await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+  }
+
+  return await finalizeReleaseAssetBuildTempDir({
+    tempDir,
+    response,
+    startedAt,
+    removeTempDir: (path) => Deno.remove(path, { recursive: true }),
+    now: Date.now,
+  });
+}
+
+async function finalizeReleaseAssetBuildTempDir(input: {
+  tempDir: string;
+  response: ProjectRunExecuteResponse;
+  startedAt: number;
+  removeTempDir: (path: string) => Promise<void>;
+  now: () => number;
+}): Promise<ProjectRunExecuteResponse> {
+  try {
+    await input.removeTempDir(input.tempDir);
+    return input.response;
+  } catch {
+    const cleanupLog = "Temporary release build cleanup failed";
+    return {
+      ...input.response,
+      logs: input.response.logs ? `${input.response.logs}\n${cleanupLog}` : cleanupLog,
+      duration_ms: input.now() - input.startedAt,
+    };
   }
 }
+
+/** @internal Deterministic lifecycle seams for focused handler tests. */
+export const projectRunExecuteHandlerInternals = Object.freeze({
+  finalizeReleaseAssetBuildTempDir,
+});
 
 type StyleArtifactSourceFile = { path: string; content?: string };
 

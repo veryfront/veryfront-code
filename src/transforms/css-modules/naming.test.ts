@@ -5,6 +5,7 @@ import {
   normalizeCssModuleKey,
   resolveCssModuleKey,
   rewriteCssModuleContent,
+  toProjectRelativeCssModuleKey,
   toScopedCssModuleClass,
 } from "./naming.ts";
 
@@ -21,8 +22,32 @@ describe("css-modules/naming", () => {
       "/project",
     );
 
-    assertEquals(relative, "/project/pages/home/Button.module.css");
-    assertEquals(alias, "/project/styles/Button.module.css");
+    assertEquals(relative, "/pages/home/Button.module.css");
+    assertEquals(alias, "/styles/Button.module.css");
+  });
+
+  it("excludes temporary project roots from CSS Module identities", () => {
+    const first = resolveCssModuleKey(
+      "./Button.module.css",
+      "/tmp/build-a/project/components/Card.tsx",
+      "/tmp/build-a/project",
+    );
+    const second = resolveCssModuleKey(
+      "./Button.module.css",
+      "/tmp/build-b/project/components/Card.tsx",
+      "/tmp/build-b/project",
+    );
+
+    assertEquals(first, "/components/Button.module.css");
+    assertEquals(second, first);
+    assertEquals(
+      toProjectRelativeCssModuleKey(
+        "/tmp/build-a/project/components/Button.module.css",
+        "/tmp/build-a/project",
+      ),
+      first,
+    );
+    assertEquals(toScopedCssModuleClass(first, "root"), toScopedCssModuleClass(second, "root"));
   });
 
   it("generates stable scoped class names", () => {

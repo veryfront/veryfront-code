@@ -4,6 +4,7 @@ import {
   RELEASE_ASSET_CONTENT_TYPE_ALLOWLIST,
   RELEASE_ASSET_CONTENT_TYPES,
   RELEASE_ASSET_MANIFEST_LIMITS,
+  RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
   releaseAssetUrl,
 } from "./constants.ts";
 
@@ -19,5 +20,11 @@ describe("release asset constants", () => {
     assertEquals(Object.isFrozen(RELEASE_ASSET_CONTENT_TYPES), true);
     assertEquals(Object.isFrozen(RELEASE_ASSET_CONTENT_TYPE_ALLOWLIST), true);
     assertEquals(Object.isFrozen(RELEASE_ASSET_MANIFEST_LIMITS), true);
+  });
+
+  it("publishes the strict CSS identity manifest version and bounds", () => {
+    assertEquals(RELEASE_ASSET_MANIFEST_SCHEMA_VERSION, 2);
+    assertEquals(RELEASE_ASSET_MANIFEST_LIMITS.styleProfileHashLength, 64);
+    assertEquals(RELEASE_ASSET_MANIFEST_LIMITS.cssPipelineIdentityLength, 2_048);
   });
 });

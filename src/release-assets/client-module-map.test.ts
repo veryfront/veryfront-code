@@ -2,6 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildReleaseAssetModules } from "./client-module-map.ts";
 import type { ReleaseAssetManifest } from "./manifest-schema.ts";
+import { RELEASE_ASSET_MANIFEST_SCHEMA_VERSION } from "./constants.ts";
 
 const PAGE_HASH = "a".repeat(64);
 const FALLBACK_HASH = "b".repeat(64);
@@ -11,7 +12,7 @@ function manifestWithModules(
   routes: ReleaseAssetManifest["routes"] = {},
 ): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
     projectId: "project-1",
     releaseId: "release-1",
     releaseVersion: 1,
@@ -23,8 +24,8 @@ function manifestWithModules(
     modules,
     css: [],
     routes,
+    dependencyMode: "source",
     dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
   };
 }
 

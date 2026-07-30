@@ -16,6 +16,7 @@ import {
   __observePromiseForTests,
   __setHostedConfigEvaluatorForTests,
   clearConfigCache,
+  evaluateHostedConfigSource,
   getCachedConfigSync,
   getConfig,
   getConfigWithProvenance,
@@ -767,6 +768,145 @@ export default config as const;
       const config = await getConfig(projectDir, adapter);
       assertEquals(config.integrations, {
         allow: { linear: { allowedTools: ["search_issues"] } },
+      });
+    });
+
+    describe("evaluateHostedConfigSource", () => {
+      it("rejects host APIs and dynamic or relative imports without executing them", async () => {
+        clearConfigCache();
+        const marker = "__veryfrontExactHostedConfigMutation";
+        const host = globalThis as Record<string, unknown>;
+        const previousMarker = Object.getOwnPropertyDescriptor(host, marker);
+        Object.defineProperty(host, marker, {
+          configurable: true,
+          value: 0,
+          writable: true,
+        });
+        const sources = [
+          `const hidden = false || eval("globalThis.${marker} = 1"); export default {};`,
+          'const hidden = true ? null : import("./evil.ts"); export default {};',
+          'import { defineConfig } from "./local.ts"; export default defineConfig({});',
+        ];
+
+        try {
+          for (let index = 0; index < sources.length; index += 1) {
+            const error = await assertRejects(
+              () =>
+                evaluateHostedConfigSource({
+                  cacheKey: `exact-hostile-${index}`,
+                  source: {
+                    source: sources[index]!,
+                    fileName: "veryfront.config.ts",
+                  },
+                  environmentName: "release",
+                  environment: {},
+                }),
+              VeryfrontError,
+            ) as VeryfrontError;
+
+            assertEquals(error.slug, "config-parse-error");
+            assert(error.cause instanceof DeclarativeConfigEvaluationError);
+          }
+          assertEquals(host[marker], 0);
+        } finally {
+          if (previousMarker) Object.defineProperty(host, marker, previousMarker);
+          else delete host[marker];
+        }
+      });
+
+      it("binds exact release evaluation to an empty tenant environment", async () => {
+        clearConfigCache();
+        const envKey = "VERYFRONT_EXACT_CONFIG_HOST_SECRET_TEST";
+        const previousValue = getHostEnv(envKey);
+        setEnv(envKey, "host-secret");
+
+        try {
+          const config = await evaluateHostedConfigSource({
+            cacheKey: "exact-release-empty-environment",
+            source: {
+              fileName: "veryfront.config.ts",
+              source: `
+                import { defineConfigWithEnv, getEnv } from "veryfront";
+                export default defineConfigWithEnv((environmentName) => ({
+                  title: \`\${environmentName}:\${getEnv(${JSON.stringify(envKey)}) ?? "missing"}\`,
+                }));
+              `,
+            },
+            environmentName: "release",
+            environment: {},
+          });
+
+          assertEquals(config.title, "release:missing");
+        } finally {
+          if (previousValue === undefined) deleteEnv(envKey);
+          else setEnv(envKey, previousValue);
+        }
+      });
+
+      it("rejects a pre-aborted request before invoking the worker evaluator", async () => {
+        clearConfigCache();
+        let evaluations = 0;
+        __setHostedConfigEvaluatorForTests(async () => {
+          evaluations += 1;
+          return {};
+        });
+        const controller = new AbortController();
+        controller.abort();
+
+        const error = await assertRejects(
+          () =>
+            evaluateHostedConfigSource({
+              cacheKey: "exact-release-pre-aborted",
+              source: {
+                source: "export default {};",
+                fileName: "veryfront.config.ts",
+              },
+              environmentName: "release",
+              environment: {},
+              signal: controller.signal,
+            }),
+          DeclarativeConfigEvaluationError,
+        ) as DeclarativeConfigEvaluationError;
+
+        assertEquals(error.reason, "worker-aborted");
+        assertEquals(evaluations, 0);
+      });
+
+      it("returns deeply frozen defaults for an absent exact source", async () => {
+        clearConfigCache();
+        let evaluations = 0;
+        __setHostedConfigEvaluatorForTests(async () => {
+          evaluations += 1;
+          return {};
+        });
+
+        const config = await evaluateHostedConfigSource({
+          cacheKey: "exact-release-defaults",
+          source: null,
+          environmentName: "release",
+          environment: {},
+        });
+        const visited = new WeakSet<object>();
+        const assertDeeplyFrozen = (value: unknown): void => {
+          if (
+            (typeof value !== "object" && typeof value !== "function") ||
+            value === null || visited.has(value)
+          ) return;
+          visited.add(value);
+          assert(Object.isFrozen(value));
+          for (const key of Reflect.ownKeys(value)) {
+            const descriptor = Object.getOwnPropertyDescriptor(value, key);
+            if (descriptor && "value" in descriptor) {
+              assertDeeplyFrozen(descriptor.value);
+            }
+          }
+        };
+
+        assertDeeplyFrozen(config);
+        assertEquals(evaluations, 0);
+        assertThrows(() => {
+          (config as { title?: string }).title = "mutated";
+        }, TypeError);
       });
     });
 

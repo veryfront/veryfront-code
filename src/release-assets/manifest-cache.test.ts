@@ -9,10 +9,11 @@ import {
   registerManifestFetcherForRelease,
 } from "./manifest-cache.ts";
 import type { ReleaseAssetManifest } from "./manifest-schema.ts";
+import { RELEASE_ASSET_MANIFEST_SCHEMA_VERSION } from "./constants.ts";
 
 function manifest(releaseId: string, manifestVersion: number): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
     projectId: "project-1",
     releaseId,
     releaseVersion: 1,
@@ -24,8 +25,17 @@ function manifest(releaseId: string, manifestVersion: number): ReleaseAssetManif
     modules: {},
     css: [],
     routes: {},
+    dependencyMode: "source",
     dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
+  };
+}
+
+function readyManifestResponse(releaseId: string, manifestVersion: number) {
+  const value = manifest(releaseId, manifestVersion);
+  return {
+    state: "ready",
+    manifest_version: value.manifestVersion,
+    manifest: value,
   };
 }
 
@@ -72,11 +82,11 @@ describe("release asset manifest fetcher ownership", () => {
     const calls: string[] = [];
     registerManifestFetcherForRelease("release", () => {
       calls.push("release");
-      return Promise.resolve({ state: "ready", manifest: manifest("release", 1) });
+      return Promise.resolve(readyManifestResponse("release", 1));
     });
     registerManifestFetcherForRelease("release:1", () => {
       calls.push("release:1");
-      return Promise.resolve({ state: "ready", manifest: manifest("release:1", 2) });
+      return Promise.resolve(readyManifestResponse("release:1", 2));
     });
 
     assertEquals((await getReadyManifestForRenderAsync("release"))?.releaseId, "release");
@@ -87,9 +97,9 @@ describe("release asset manifest fetcher ownership", () => {
   it("does not let a superseded in-flight fetch publish stale state", async () => {
     Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
     let resolveOlder:
-      | ((value: { state: string; manifest: ReleaseAssetManifest }) => void)
+      | ((value: ReturnType<typeof readyManifestResponse>) => void)
       | undefined;
-    const olderResult = new Promise<{ state: string; manifest: ReleaseAssetManifest }>(
+    const olderResult = new Promise<ReturnType<typeof readyManifestResponse>>(
       (resolve) => {
         resolveOlder = resolve;
       },
@@ -100,10 +110,10 @@ describe("release asset manifest fetcher ownership", () => {
 
     registerManifestFetcherForRelease(
       "release-1",
-      () => Promise.resolve({ state: "ready", manifest: manifest("release-1", 2) }),
+      () => Promise.resolve(readyManifestResponse("release-1", 2)),
     );
     const newerRead = getReadyManifestForRenderAsync("release-1");
-    resolveOlder?.({ state: "ready", manifest: manifest("release-1", 1) });
+    resolveOlder?.(readyManifestResponse("release-1", 1));
 
     assertEquals((await newerRead)?.manifestVersion, 2);
     await olderRead;
@@ -136,7 +146,7 @@ describe("release asset manifest fetcher ownership", () => {
     Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
     registerManifestFetcherForRelease(
       "release-1",
-      () => Promise.resolve({ state: "ready", manifest: manifest("release-2", 1) }),
+      () => Promise.resolve(readyManifestResponse("release-2", 1)),
     );
 
     assertEquals(await getReadyManifestForRenderAsync("release-1"), null);
@@ -144,12 +154,10 @@ describe("release asset manifest fetcher ownership", () => {
 
   it("does not reserve a real release ID for the global fallback", async () => {
     Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest("other", 1) })
-    );
+    configureReleaseAssetManifestFetcher(() => Promise.resolve(readyManifestResponse("other", 1)));
     registerManifestFetcherForRelease(
       "*",
-      () => Promise.resolve({ state: "ready", manifest: manifest("*", 2) }),
+      () => Promise.resolve(readyManifestResponse("*", 2)),
     );
 
     const resolved = await getReadyManifestForRenderAsync("*");
@@ -161,7 +169,7 @@ describe("release asset manifest fetcher ownership", () => {
   it("does not reuse a cached manifest across fallback owners", async () => {
     Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
     configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest("release-1", 1) })
+      Promise.resolve(readyManifestResponse("release-1", 1))
     );
     assertEquals(
       (await getReadyManifestForRenderAsync("release-1"))?.manifestVersion,
@@ -169,7 +177,7 @@ describe("release asset manifest fetcher ownership", () => {
     );
 
     configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: manifest("release-1", 2) })
+      Promise.resolve(readyManifestResponse("release-1", 2))
     );
     assertEquals(
       (await getReadyManifestForRenderAsync("release-1"))?.manifestVersion,

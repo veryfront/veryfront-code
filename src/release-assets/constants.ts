@@ -5,7 +5,7 @@
  */
 
 /** Current manifest body schema version. */
-export const RELEASE_ASSET_MANIFEST_SCHEMA_VERSION = 1 as const;
+export const RELEASE_ASSET_MANIFEST_SCHEMA_VERSION = 2 as const;
 
 /** Public asset base path served on the project's own domain (proxy-owned). */
 export const RELEASE_ASSET_BASE_PATH = "/_vf/assets" as const;
@@ -42,16 +42,19 @@ export const RELEASE_ASSET_MANIFEST_LIMITS = Object.freeze(
     identifierLength: 256,
     builderVersionLength: 128,
     manifestKeyLength: 2_048,
-    styleProfileHashLength: 256,
-    gapLength: 4_096,
+    styleProfileHashLength: 64,
+    cssPipelineIdentityLength: 2_048,
+    coverageFailureLength: 4_096,
     moduleEntries: 20_000,
     dependencyEntries: 10_000,
     dependencySpecifiers: 40_000,
-    cssEntries: 512,
+    // v2 publishes one release-global stylesheet. Consumers intentionally use
+    // that single immutable asset rather than selecting per-route variants.
+    cssEntries: 1,
     routeEntries: 20_000,
     routeModules: 20_000,
-    routeCssEntries: 512,
-    fallbackGaps: 20_000,
+    routeCssEntries: 1,
+    coverageFailures: 20_000,
     totalRouteReferences: 200_000,
   } as const,
 );

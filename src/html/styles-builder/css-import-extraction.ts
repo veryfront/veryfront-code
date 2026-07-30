@@ -59,9 +59,9 @@ function collapseSegments(path: string): string | null {
 
 /**
  * Resolve a CSS import specifier to an absolute project path.
- * Supports `./`/`../` (relative to the importing file) and the `@/` project
- * alias. Bare and URL specifiers are ignored. Returns null when the resolved
- * path would escape the project directory.
+ * Supports `./`/`../` (relative to the importing file), the `@/` project
+ * alias, and project-root `/` paths. Bare and URL specifiers are ignored.
+ * Returns null when the resolved path would escape the project directory.
  */
 export function resolveCssImportPath(
   specifier: string,
@@ -78,6 +78,8 @@ export function resolveCssImportPath(
     candidate = `${normalizedImporter.slice(0, dirEnd)}/${specifier}`;
   } else if (specifier.startsWith("@/")) {
     candidate = `${normalizedProjectDir}/${specifier.slice(2)}`;
+  } else if (specifier.startsWith("/")) {
+    candidate = `${normalizedProjectDir}/${specifier.replace(/^\/+/, "")}`;
   } else {
     return null;
   }

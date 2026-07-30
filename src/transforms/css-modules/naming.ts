@@ -15,9 +15,9 @@ export function normalizeCssModuleKey(path: string): string {
   const withoutFilePrefix = path.startsWith("file://") ? path.slice("file://".length) : path;
   const withoutQuery = withoutFilePrefix.replace(/[?#].*$/, "");
   const slashed = withoutQuery.replace(/\\/g, "/");
+  if (slashed.startsWith("http://") || slashed.startsWith("https://")) return slashed;
   const collapsed = slashed.replace(/\/{2,}/g, "/");
   if (collapsed.startsWith("/")) return collapsed;
-  if (collapsed.startsWith("http://") || collapsed.startsWith("https://")) return collapsed;
   return `/${collapsed.replace(/^\/+/, "")}`;
 }
 
@@ -47,6 +47,34 @@ function normalizePathSegments(path: string): string {
 }
 
 /**
+ * Convert an absolute CSS Module path to its canonical project-relative
+ * identity. The project root is deliberately excluded so temporary checkout
+ * locations cannot change generated class names.
+ */
+export function toProjectRelativeCssModuleKey(
+  modulePath: string,
+  projectDir: string,
+): string {
+  const normalizedModulePath = normalizePathSegments(modulePath);
+  if (
+    normalizedModulePath.startsWith("http://") ||
+    normalizedModulePath.startsWith("https://")
+  ) {
+    return normalizedModulePath;
+  }
+
+  const normalizedProjectDir = normalizePathSegments(projectDir);
+  if (normalizedProjectDir === "/") return normalizedModulePath;
+  if (normalizedModulePath === normalizedProjectDir) return "/";
+
+  const projectPrefix = `${normalizedProjectDir}/`;
+  if (!normalizedModulePath.startsWith(projectPrefix)) {
+    throw new Error("CSS Module path must stay within the project directory");
+  }
+  return `/${normalizedModulePath.slice(projectPrefix.length)}`;
+}
+
+/**
  * Resolve a CSS import specifier to a deterministic module key.
  * Supports relative imports, @/ aliases, absolute paths, and URLs.
  */
@@ -61,7 +89,10 @@ export function resolveCssModuleKey(
 
   if (specifier.startsWith("@/")) {
     const aliasPath = specifier.slice(2).replace(/^\/+/, "");
-    return normalizePathSegments(`${normalizeCssModuleKey(projectDir)}/${aliasPath}`);
+    return toProjectRelativeCssModuleKey(
+      normalizePathSegments(`${normalizeCssModuleKey(projectDir)}/${aliasPath}`),
+      projectDir,
+    );
   }
 
   if (specifier.startsWith("/")) {
@@ -70,11 +101,13 @@ export function resolveCssModuleKey(
 
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
     const importerDir = dirname(importerFilePath);
-    return normalizePathSegments(`${importerDir}/${specifier}`);
+    return toProjectRelativeCssModuleKey(
+      normalizePathSegments(`${importerDir}/${specifier}`),
+      projectDir,
+    );
   }
 
-  // Bare specifiers are uncommon for CSS in this system, but keep deterministic behavior.
-  return normalizeCssModuleKey(specifier);
+  throw new Error("CSS Module imports must use a local path or an explicit URL");
 }
 
 function hashString(input: string): string {

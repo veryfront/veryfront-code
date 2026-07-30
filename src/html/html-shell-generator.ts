@@ -17,7 +17,7 @@ import {
   resolveManifestModuleUrl,
   resolveManifestRoutePreloadUrls,
 } from "#veryfront/release-assets/html-consumption.ts";
-import { routeForPage } from "#veryfront/release-assets/route-path.ts";
+import { routeForConfiguredPage } from "#veryfront/release-assets/route-path.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { buildNonceAttribute, escapeHTML } from "./html-escape.ts";
@@ -203,9 +203,11 @@ function generateModulePreloadHints(
   const addedUrls = new Set<string>();
   const projectDir = options.projectDir ?? "";
   const studioEmbed = options.studioEmbed;
-  const fallbackReleaseId = !studioEmbed && !releaseManifest && options.releaseId &&
-      isReleaseAssetManifestEnabled()
-    ? options.releaseId
+  // A ready manifest can intentionally cover only dependencies. Keep every
+  // uncovered project module on the release-scoped JIT path instead of
+  // treating the mere presence of a manifest as complete module coverage.
+  const fallbackReleaseId = !studioEmbed && isReleaseAssetManifestEnabled()
+    ? options.releaseId || releaseManifest?.releaseId
     : undefined;
 
   function addHint(moduleUrl: string): void {
@@ -237,7 +239,9 @@ function generateModulePreloadHints(
   const relativePagePath = options.pagePath
     ? getRelativePagePath(options.pagePath, projectDir)
     : "";
-  const releaseManifestRoute = relativePagePath ? routeForPage(relativePagePath) ?? "" : "";
+  const releaseManifestRoute = relativePagePath
+    ? routeForConfiguredPage(relativePagePath, options.config?.directories) ?? ""
+    : "";
 
   // Manifest-covered routes: preload the full closure from the manifest.
   if (releaseManifest) {

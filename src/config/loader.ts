@@ -40,6 +40,7 @@ import {
   type DeclarativeConfigFileName,
   type PreparedDeclarativeConfigContext,
   type PreparedDeclarativeConfigWorkerPayload,
+  prepareDeclarativeConfigContext,
 } from "./declarative-evaluator.ts";
 import {
   DECLARATIVE_CONFIG_WORKER_ADMISSION_LIMITS,
@@ -1778,6 +1779,27 @@ export interface HostedConfigOptions {
   readonly signal?: AbortSignal;
 }
 
+/** Exact declarative source selected by a trusted composition boundary. */
+export type HostedConfigSource = Readonly<{
+  source: string;
+  fileName: DeclarativeConfigFileName;
+}>;
+
+/**
+ * Explicit context for evaluating one hosted configuration source.
+ *
+ * Callers must derive both the source and environment from authenticated
+ * control-plane state. Passing `null` selects immutable framework defaults.
+ */
+export interface EvaluateHostedConfigSourceOptions {
+  /** Trusted immutable source identity, including project and release. */
+  readonly cacheKey: string;
+  readonly source: HostedConfigSource | null;
+  readonly environmentName: string;
+  readonly environment: unknown;
+  readonly signal?: AbortSignal;
+}
+
 interface InternalGetConfigOptions extends GetConfigOptions {
   readonly hosted?: Readonly<{
     preparedContext: PreparedDeclarativeConfigContext;
@@ -2268,6 +2290,53 @@ export function getHostedConfig(
     }),
     (result) => result.config,
   );
+}
+
+/**
+ * Evaluate an already-selected untrusted configuration source through the
+ * bounded declarative worker and return the same validated, merged, deeply
+ * frozen snapshot used by hosted request configuration.
+ *
+ * This seam exists for immutable-source jobs (for example release asset
+ * builds) whose source bytes are selected outside the runtime filesystem. It
+ * never imports or evaluates tenant JavaScript in the host realm.
+ *
+ * @internal
+ */
+export async function evaluateHostedConfigSource(
+  options: EvaluateHostedConfigSourceOptions,
+): Promise<VeryfrontConfig> {
+  throwIfHostedConfigAborted(options.signal);
+  if (options.source === null) {
+    return deepFreezeHostedConfig(validateAndMergeConfig({}));
+  }
+
+  try {
+    const preparedContext = await prepareDeclarativeConfigContext({
+      environmentName: options.environmentName,
+      environment: options.environment,
+    });
+    return await loadHostedConfigFromSource(
+      options.source.fileName,
+      options.source.fileName,
+      options.cacheKey,
+      options.source.source,
+      preparedContext,
+      options.signal,
+      true,
+      cacheRevision,
+    );
+  } catch (error) {
+    if (error instanceof DeclarativeConfigEvaluationError) {
+      throw translateHostedConfigEvaluationError(error, options.source.fileName);
+    }
+    if (isPreservedConfigLoadError(error)) throw error;
+    throw CONFIG_PARSE_ERROR.create({
+      detail: `Failed to load ${options.source.fileName}`,
+      cause: error,
+      context: { configFile: options.source.fileName },
+    });
+  }
 }
 
 /** @internal Test-only evaluator seam. Passing `undefined` restores production behavior. */
