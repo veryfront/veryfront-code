@@ -12,7 +12,7 @@ describe("RSC Streaming Tests", { sanitizeOps: false, sanitizeResources: false }
   });
 
   describe("RSC Streaming", {}, () => {
-    it("should emit multi-slot updates in order", async () => {
+    it("streams the rendered project root without fabricated slots", async () => {
       await withTestContext("rsc-stream", async (context) => {
         await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
@@ -80,33 +80,10 @@ export default function HomePage({ searchParams }: { searchParams: { name?: stri
           }
         }
 
-        const rootEvents = events.filter((e) => e.id === "root");
-        const sidebarEvents = events.filter((e) => e.id === "sidebar");
-
-        assertEquals(
-          rootEvents.length >= 2,
-          true,
-          "Should receive at least 2 root events (loading + final)",
-        );
-        assertEquals(
-          sidebarEvents.length >= 2,
-          true,
-          "Should receive at least 2 sidebar events (loading + final)",
-        );
-
-        const lastRootHtml = rootEvents.at(-1)?.html ?? "";
-        assertEquals(
-          /Hello|OK/.test(lastRootHtml),
-          true,
-          "Final root content should contain expected text",
-        );
-
-        const lastSidebarHtml = sidebarEvents.at(-1)?.html ?? "";
-        assertEquals(
-          /<li>/.test(lastSidebarHtml),
-          true,
-          "Final sidebar content should contain list items",
-        );
+        assertEquals(events.length, 1);
+        assertEquals(events[0]?.id, "root");
+        assertEquals(events[0]?.html.includes("Hello"), true);
+        assertEquals(events[0]?.html.includes("Eve"), true);
       });
     });
   });

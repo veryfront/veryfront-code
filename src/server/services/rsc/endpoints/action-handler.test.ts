@@ -66,7 +66,8 @@ describe(
       await delay(50);
     });
     describe("handleActionRequest", () => {
-      it("allows a missing optional action guard module", async () => {
+      it("fails closed when the action guard module is missing", async () => {
+        let actionStatCalls = 0;
         const missingGuardError = Object.assign(
           new TypeError('Module not found "file:///project/server-action-guard.ts".'),
           { code: "ERR_MODULE_NOT_FOUND" },
@@ -75,25 +76,38 @@ describe(
           {
             req: createActionRequest(),
             projectDir: "/tmp/test",
-            adapter: createMockAdapter(),
+            adapter: createMockAdapter({
+              stat: () => {
+                actionStatCalls++;
+                return Promise.reject(new Error("not found"));
+              },
+            }),
           },
           () => Promise.reject(missingGuardError),
         );
 
-        assertEquals(response.status, 404);
+        assertEquals(response.status, 500);
+        assertEquals(actionStatCalls, 0);
       });
 
-      it("allows an action guard module with no guard export", async () => {
+      it("fails closed when the action guard export is missing", async () => {
+        let actionStatCalls = 0;
         const response = await handleActionRequestWithGuardLoader(
           {
             req: createActionRequest(),
             projectDir: "/tmp/test",
-            adapter: createMockAdapter(),
+            adapter: createMockAdapter({
+              stat: () => {
+                actionStatCalls++;
+                return Promise.reject(new Error("not found"));
+              },
+            }),
           },
-          () => Promise.resolve({}),
+          () => Promise.resolve({} as never),
         );
 
-        assertEquals(response.status, 404);
+        assertEquals(response.status, 500);
+        assertEquals(actionStatCalls, 0);
       });
 
       it("returns 403 without resolving the action when the guard rejects it", async () => {
@@ -216,7 +230,7 @@ describe(
         assertStringIncludes(JSON.stringify(body), "missing id");
       });
 
-      it("returns 400 when body is invalid JSON (falls back to empty object)", async () => {
+      it("returns 400 when the body is invalid JSON", async () => {
         const req = new Request("http://localhost/_veryfront/rsc/action", {
           method: "POST",
           headers: { "content-type": "application/json" },

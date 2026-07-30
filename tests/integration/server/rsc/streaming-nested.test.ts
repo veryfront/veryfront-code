@@ -13,7 +13,7 @@ describe("RSC Stream Nested Tests", { sanitizeOps: false, sanitizeResources: fal
   });
 
   describe("RSC stream nested", {}, () => {
-    it("emits loading placeholders before final slot replacements", async () => {
+    it("emits only the rendered project root slot", async () => {
       await withTestContext("rsc-stream-nested", async (context) => {
         await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
@@ -31,8 +31,13 @@ describe("RSC Stream Nested Tests", { sanitizeOps: false, sanitizeResources: fal
         try {
           await remove(join(context.projectDir, "app"), { recursive: true });
           await remove(join(context.projectDir, "pages"), { recursive: true });
-          await mkdir(join(context.projectDir, "pages"), { recursive: true });
-          await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
+          await mkdir(join(context.projectDir, "app"), { recursive: true });
+          await writeTextFile(
+            join(context.projectDir, "app", "page.tsx"),
+            `export default function Page({ searchParams }: { searchParams: { name?: string } }) {
+              return <main>Hello {searchParams.name ?? "World"}</main>;
+            }`,
+          );
 
           const port = await getFreePort();
           server = await startProductionServer({
@@ -62,15 +67,10 @@ describe("RSC Stream Nested Tests", { sanitizeOps: false, sanitizeResources: fal
             .filter((line): line is { type: string; id: string; html: string } => line !== null)
             .filter((line) => line.type === "slot");
 
-          assertEquals(slotLines.length, 4);
+          assertEquals(slotLines.length, 1);
           assertEquals(slotLines[0]?.id, "root");
-          assertEquals(slotLines[0]?.html, "<div>Loading Eve…</div>");
-          assertEquals(slotLines[1]?.id, "sidebar");
-          assertEquals(slotLines[1]?.html, '<aside data-state="loading">Sidebar loading…</aside>');
-          assertEquals(slotLines[2]?.id, "root");
-          assertEquals(slotLines[2]?.html, "<div>Hello Eve</div>");
-          assertEquals(slotLines[3]?.id, "sidebar");
-          assertEquals(slotLines[3]?.html, "<aside><ul><li>Eve ready</li></ul></aside>");
+          assertEquals(slotLines[0]?.html.includes("Hello"), true);
+          assertEquals(slotLines[0]?.html.includes("Eve"), true);
         } finally {
           try {
             await server?.stop?.();

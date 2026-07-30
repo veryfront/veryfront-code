@@ -32,6 +32,16 @@ describe("server/services/rsc/endpoints/action-parser", () => {
       assertEquals(body.args, []);
     });
 
+    it("snapshots the argument array at the request boundary", async () => {
+      const args: unknown[] = [{ value: 1 }];
+      const result = await parseActionBody({ id: "myAction", args });
+      const body = assertActionBody(result);
+
+      args.push("late mutation");
+
+      assertEquals(body.args, [{ value: 1 }]);
+    });
+
     it("should accept action ids with slashes", async () => {
       const result = await parseActionBody({ id: "module/action", args: [] });
       const body = assertActionBody(result);
@@ -59,6 +69,51 @@ describe("server/services/rsc/endpoints/action-parser", () => {
       assertErrorResponse(result, 400);
     });
 
+    it("rejects non-array and oversized args", async () => {
+      assertErrorResponse(await parseActionBody({ id: "action", args: "not-array" }), 400);
+      assertErrorResponse(
+        await parseActionBody({ id: "action", args: Array.from({ length: 51 }) }),
+        400,
+      );
+    });
+
+    it("rejects inherited and accessor-backed action fields", async () => {
+      const inherited = Object.create({ id: "inherited" }) as Record<string, unknown>;
+      assertErrorResponse(await parseActionBody(inherited), 400);
+
+      let getterCalls = 0;
+      const accessorBody = Object.create(null);
+      Object.defineProperty(accessorBody, "id", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "action";
+        },
+      });
+
+      assertErrorResponse(await parseActionBody(accessorBody), 400);
+      assertEquals(getterCalls, 0);
+    });
+
+    it("rejects sparse or accessor-backed argument arrays without invoking getters", async () => {
+      const sparse = new Array(1);
+      assertErrorResponse(await parseActionBody({ id: "action", args: sparse }), 400);
+
+      let getterCalls = 0;
+      const accessorArgs: unknown[] = [];
+      Object.defineProperty(accessorArgs, 0, {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "argument";
+        },
+      });
+      Object.defineProperty(accessorArgs, "length", { value: 1 });
+
+      assertErrorResponse(await parseActionBody({ id: "action", args: accessorArgs }), 400);
+      assertEquals(getterCalls, 0);
+    });
+
     it("should return error Response for id starting with slash", async () => {
       const result = await parseActionBody({ id: "/leading-slash", args: [] });
       assertErrorResponse(result, 400);
@@ -83,6 +138,11 @@ describe("server/services/rsc/endpoints/action-parser", () => {
       const result = await parseActionBody({ id: "a/b/c/d/e", args: [] });
       const body = assertActionBody(result);
       assertEquals(body.id, "a/b/c/d/e");
+    });
+
+    it("rejects action ids beyond the bounded route length", async () => {
+      const result = await parseActionBody({ id: "a".repeat(513), args: [] });
+      assertErrorResponse(result, 400);
     });
 
     it("should reject ids with consecutive slashes", async () => {

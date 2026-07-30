@@ -83,13 +83,16 @@ describe("RSC Stream DOM Tests", { sanitizeOps: false, sanitizeResources: false 
   });
 
   describe("RSC stream DOM", {}, () => {
-    it("applies interleaved slots to DOM (prod)", async () => {
+    it("applies the rendered root slot to the DOM (prod)", async () => {
       await withTestContext("rsc-stream-dom-prod", async (context) => {
         await remove(join(context.projectDir, "app"), { recursive: true });
         await remove(join(context.projectDir, "pages"), { recursive: true });
 
-        await mkdir(join(context.projectDir, "pages"), { recursive: true });
-        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
+        await mkdir(join(context.projectDir, "app"), { recursive: true });
+        await writeTextFile(
+          join(context.projectDir, "app", "page.tsx"),
+          `export default function Page() { return <main>Project home</main>; }`,
+        );
         await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
@@ -104,17 +107,14 @@ describe("RSC Stream DOM Tests", { sanitizeOps: false, sanitizeResources: false 
           await consumeNdjsonStream(res, doc as any);
 
           const root = getContainer(doc as any, "root") as any;
-          const sidebar = getContainer(doc as any, "sidebar") as any;
-
-          assert(root.innerHTML.length > 0);
-          assert(sidebar.innerHTML.length > 0);
+          assert(/Project home/.test(root.innerHTML));
         } finally {
           await closeResponse(res);
         }
       });
     });
 
-    it("ignores malformed NDJSON lines (dev)", async () => {
+    it("does not expose query-controlled malformed NDJSON (dev)", async () => {
       await withTestContext("rsc-stream-dom-dev", async (context) => {
         await remove(join(context.projectDir, "pages"), { recursive: true });
 
@@ -163,10 +163,7 @@ describe("RSC Stream DOM Tests", { sanitizeOps: false, sanitizeResources: false 
           await consumeNdjsonStream(res, doc as any);
 
           const root = getContainer(doc as any, "root") as any;
-          const sidebar = getContainer(doc as any, "sidebar") as any;
-
-          assert(/<aside>/.test(sidebar.innerHTML));
-          assert(root.innerHTML.length > 0);
+          assert(/App Home/.test(root.innerHTML));
         } finally {
           await closeResponse(res);
         }

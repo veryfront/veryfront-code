@@ -24,7 +24,7 @@ import { preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 const logger = serverLogger.component("rsc");
 
 interface ActionGuardModule {
-  rscActionGuard?: (
+  rscActionGuard: (
     req: Request,
     context: { id: string; args: unknown[] },
   ) => boolean | Promise<boolean>;
@@ -78,20 +78,18 @@ export async function handleActionRequestWithGuardLoader(
   const guardModule = await loadGuardModule(actionGuardLoader);
   if (guardModule instanceof Response) return guardModule;
 
-  const guard = guardModule?.rscActionGuard;
-  if (guard !== undefined && typeof guard !== "function") {
+  const guard = guardModule.rscActionGuard;
+  if (typeof guard !== "function") {
     logger.error("Action guard export is not a function");
     return jsonErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "action guard failed");
   }
 
-  if (guard) {
-    try {
-      const ok = await guard(req, { id, args });
-      if (!ok) return jsonErrorResponse(HttpStatus.FORBIDDEN, "unauthorized");
-    } catch (error) {
-      logger.error("Action guard execution failed", { error });
-      return jsonErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "action guard failed");
-    }
+  try {
+    const ok = await guard(req, { id, args });
+    if (!ok) return jsonErrorResponse(HttpStatus.FORBIDDEN, "unauthorized");
+  } catch (error) {
+    logger.error("Action guard execution failed", { error });
+    return jsonErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "action guard failed");
   }
 
   const appRoot = normalizePath(joinPath(projectDir, config?.directories?.app ?? "app"));
@@ -138,31 +136,13 @@ export async function handleActionRequestWithGuardLoader(
 
 async function loadGuardModule(
   loader: ActionGuardLoader,
-): Promise<ActionGuardModule | null | Response> {
+): Promise<ActionGuardModule | Response> {
   try {
     return await loader();
   } catch (error) {
-    if (isMissingActionGuardModule(error)) return null;
     logger.error("Action guard module failed to load", { error });
     return jsonErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "action guard failed");
   }
-}
-
-function isMissingActionGuardModule(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-
-  const candidate = error as { code?: unknown; message?: unknown };
-  const message = typeof candidate.message === "string" ? candidate.message : "";
-  const isMissingModule = candidate.code === "ERR_MODULE_NOT_FOUND" ||
-    /^(?:Module not found|Cannot find module)\b/i.test(message);
-  if (!isMissingModule) return false;
-
-  const missingSpecifier = message.match(
-    /^(?:Module not found|Cannot find module)\s+["']([^"']+)["']/i,
-  )?.[1]?.replaceAll("\\", "/");
-
-  return missingSpecifier === "#veryfront/rendering/rsc/server-action-guard.ts" ||
-    missingSpecifier?.endsWith("/server-action-guard.ts") === true;
 }
 
 async function findActionFile(

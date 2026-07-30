@@ -1,12 +1,15 @@
-import { serverLogger } from "#veryfront/utils";
 import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import type { ActionBody } from "./types.ts";
-import { ActionPayloadSchema } from "../../../schemas/index.ts";
 
+const ACTION_ID_MAX_LENGTH = 512;
+const ACTION_ARGS_MAX_LENGTH = 50;
 const ACTION_ID_PATTERN = /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/;
+const arrayIsArray = Array.isArray;
+const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 
 function isValidActionId(id: string): boolean {
   return (
+    id.length <= ACTION_ID_MAX_LENGTH &&
     ACTION_ID_PATTERN.test(id) &&
     !id.startsWith("/") &&
     !id.includes("..") &&
@@ -14,31 +17,61 @@ function isValidActionId(id: string): boolean {
   );
 }
 
-export async function parseActionBody(body: unknown): Promise<ActionBody | Response> {
-  let id = "";
-  let args: unknown[] = [];
+function snapshotArgs(value: unknown): unknown[] | null {
+  if (!arrayIsArray(value)) return null;
 
   try {
-    const parsed = ActionPayloadSchema.parse(body);
-    id = parsed.id;
-    args = parsed.args;
-  } catch (schemaError) {
-    serverLogger.warn(
-      "[ActionParser] Zod validation failed, falling back to manual parsing",
-      { error: schemaError instanceof Error ? schemaError.message : String(schemaError) },
-    );
+    const descriptors = getOwnPropertyDescriptors(value) as unknown as Record<
+      string,
+      PropertyDescriptor
+    >;
+    const lengthDescriptor = descriptors.length;
+    const length = lengthDescriptor && "value" in lengthDescriptor
+      ? lengthDescriptor.value
+      : undefined;
+    if (
+      typeof length !== "number" || !Number.isSafeInteger(length) || length < 0 ||
+      length > ACTION_ARGS_MAX_LENGTH
+    ) return null;
 
-    if (!body || typeof body !== "object") {
-      return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid request body");
+    const snapshot: unknown[] = [];
+    for (let index = 0; index < length; index++) {
+      const descriptor = descriptors[index];
+      if (!descriptor || !("value" in descriptor)) return null;
+      snapshot.push(descriptor.value);
     }
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
 
-    const bodyObj = body as Record<string, unknown>;
-    id = typeof bodyObj.id === "string" ? bodyObj.id : "";
-    args = Array.isArray(bodyObj.args) ? bodyObj.args : [];
+export async function parseActionBody(body: unknown): Promise<ActionBody | Response> {
+  if (!body || typeof body !== "object" || arrayIsArray(body)) {
+    return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid request body");
   }
 
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = getOwnPropertyDescriptors(body);
+  } catch {
+    return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid request body");
+  }
+
+  const idDescriptor = descriptors.id;
+  const id = idDescriptor && "value" in idDescriptor && typeof idDescriptor.value === "string"
+    ? idDescriptor.value
+    : "";
   if (!id) return jsonErrorResponse(HttpStatus.BAD_REQUEST, "missing id");
   if (!isValidActionId(id)) return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid id");
+
+  const argsDescriptor = descriptors.args;
+  const args = argsDescriptor === undefined
+    ? []
+    : "value" in argsDescriptor
+    ? snapshotArgs(argsDescriptor.value)
+    : null;
+  if (!args) return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid args");
 
   return { id, args };
 }

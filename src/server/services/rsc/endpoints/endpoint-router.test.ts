@@ -25,6 +25,26 @@ import {
 } from "./handler-registry.ts";
 import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 
+async function withInjectedRSCHandler<T>(
+  handler: Pick<RSCDevServerHandler, "handleStream">,
+  run: () => Promise<T>,
+): Promise<T> {
+  const cache: HandlerCache<RSCDevServerHandler> = {
+    get: () => handler as RSCDevServerHandler,
+    set: () => {},
+    delete: () => false,
+    clear: () => {},
+    keys: () => new Map<string, RSCDevServerHandler>().keys(),
+    size: 1,
+  };
+  __injectCacheForTests(cache);
+  try {
+    return await run();
+  } finally {
+    __destroyRSCHandlerForTests();
+  }
+}
+
 describe("server/services/rsc/endpoints/endpoint-router", () => {
   afterEach(async () => {
     resetBrowserModuleEndpointStateForTesting();
@@ -1194,86 +1214,47 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
   });
 
   describe("stream endpoint (root)", () => {
-    it("returns NDJSON with name parameter", async () => {
-      const result = await handleRSCEndpoint(
-        makeParams({
-          pathname: "/_veryfront/rsc/stream",
-          config: rscEnabledConfig,
-          req: new Request("http://localhost/_veryfront/rsc/stream?name=Alice"),
-        }),
+    it("delegates to the project renderer with the root pathname", async () => {
+      let receivedPathname: string | undefined;
+      let receivedName: string | null | undefined;
+      const expected = new Response(
+        `${JSON.stringify({ type: "slot", id: "root", html: "<main>Alice</main>" })}\n`,
+        { headers: { "content-type": "application/x-ndjson; charset=utf-8" } },
       );
-      assertEquals(result instanceof Response, true);
-      assertEquals(result!.status, 200);
-      assertEquals(result!.headers.get("content-type"), "application/x-ndjson");
 
-      const body = await result!.text();
-      assertStringIncludes(body, "Alice");
-      // Verify it's NDJSON (lines of JSON)
-      const lines = body.trim().split("\n");
-      assertEquals(lines.length >= 4, true);
-      // Each non-malformed line should be valid JSON
-      for (const line of lines) {
-        const parsed = JSON.parse(line);
-        assertEquals(typeof parsed.type, "string");
-      }
+      const result = await withInjectedRSCHandler({
+        handleStream(pathname, searchParams) {
+          receivedPathname = pathname;
+          receivedName = searchParams.get("name");
+          return Promise.resolve(expected);
+        },
+      }, () =>
+        handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/stream",
+            config: rscEnabledConfig,
+            req: new Request("http://localhost/_veryfront/rsc/stream?name=Alice"),
+          }),
+        ));
+
+      assertEquals(result, expected);
+      assertEquals(receivedPathname, "/");
+      assertEquals(receivedName, "Alice");
     });
 
-    it("defaults name to World when no name param", async () => {
-      const result = await handleRSCEndpoint(
-        makeParams({
-          pathname: "/_veryfront/rsc/stream",
-          config: rscEnabledConfig,
-          req: new Request("http://localhost/_veryfront/rsc/stream"),
-        }),
-      );
-      const body = await result!.text();
-      assertStringIncludes(body, "World");
-    });
+    it("propagates project render failures", async () => {
+      const result = await withInjectedRSCHandler({
+        handleStream: () => Promise.resolve(new Response("render failed", { status: 503 })),
+      }, () =>
+        handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/stream",
+            config: rscEnabledConfig,
+          }),
+        ));
 
-    it("escapes HTML in name (XSS prevention)", async () => {
-      const result = await handleRSCEndpoint(
-        makeParams({
-          pathname: "/_veryfront/rsc/stream",
-          config: rscEnabledConfig,
-          req: new Request(
-            "http://localhost/_veryfront/rsc/stream?name=<script>alert(1)</script>",
-          ),
-        }),
-      );
-      const body = await result!.text();
-      // The raw <script> tag should NOT appear in the output
-      assertEquals(body.includes("<script>"), false);
-      // Escaped version should appear
-      assertStringIncludes(body, "&lt;script&gt;");
-    });
-
-    it("includes malformed JSON when ?bad param present", async () => {
-      const result = await handleRSCEndpoint(
-        makeParams({
-          pathname: "/_veryfront/rsc/stream",
-          config: rscEnabledConfig,
-          req: new Request("http://localhost/_veryfront/rsc/stream?bad"),
-        }),
-      );
-      const body = await result!.text();
-      assertStringIncludes(body, "{malformed json}");
-      // Should have 5 lines (4 normal + 1 malformed)
-      const lines = body.trim().split("\n");
-      assertEquals(lines.length, 5);
-    });
-
-    it("does not include malformed JSON without ?bad param", async () => {
-      const result = await handleRSCEndpoint(
-        makeParams({
-          pathname: "/_veryfront/rsc/stream",
-          config: rscEnabledConfig,
-          req: new Request("http://localhost/_veryfront/rsc/stream"),
-        }),
-      );
-      const body = await result!.text();
-      assertEquals(body.includes("{malformed json}"), false);
-      const lines = body.trim().split("\n");
-      assertEquals(lines.length, 4);
+      assertEquals(result?.status, 503);
+      assertEquals(await result?.text(), "render failed");
     });
   });
 

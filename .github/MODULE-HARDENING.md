@@ -5976,4 +5976,39 @@ The focused staged portfolio passes five suites with 63 nested steps. This
 follow-up changes no production source and does not by itself close the still
 open top-level `server` revalidation.
 
+### Server RSC transport and action-admission checkpoint
+
+The current Server review removed two live fail-open compatibility paths
+without claiming top-level closure:
+
+- **Symptom -> Source -> Consequence -> Remedy:** the browser's canonical RSC
+  stream endpoint returned fabricated `Hello World` and sidebar markup, exposed
+  a query-controlled malformed-NDJSON branch, slept between fake events, and
+  translated renderer failures into `200 OK` with `<div>OK</div>`. This was a
+  tactical demo implementation on a production route, so clients could display
+  content unrelated to the requested project and could not distinguish a
+  render failure from success. Root and nested stream routes now share the
+  project renderer, non-success responses retain their status and body,
+  malformed render payloads fail closed, and the stream contains only the real
+  rendered root slot.
+- **Symptom -> Source -> Consequence -> Remedy:** server-action admission tried
+  an extension-backed schema and then accepted a weaker hand-written fallback;
+  that path bypassed the schema's 50-argument limit. A missing guard module or
+  missing guard export also disabled the guard. The request boundary now uses
+  one core-native, bounded, own-data validation path, snapshots the admitted
+  argument array without invoking accessors, rejects oversized or malformed
+  identifiers and arrays, and treats every guard load/export failure as an
+  internal error before action lookup. The unused server-local schema wrapper
+  and its duplicate tests were removed.
+
+Current focused evidence passes 132 RSC endpoint/action/stream unit steps,
+seven real development and production streaming integration steps, and all
+three production RSC integration steps. The broader adapter-backed production
+server suite also passed both affected RSC scenarios; one unrelated App Router
+not-found marker assertion remains red while the React module's active wrapper
+changes are uncheckpointed. Formatting, lint, type, dependency, and boundary
+gates are recorded with the staged checkpoint. The `server` unit remains in
+`Touched, revalidation required` pending the rest of its runtime, watcher,
+configuration, public-surface, and lifecycle review.
+
 Update this ledger in the same commit that closes or reopens an audit unit.

@@ -51,24 +51,18 @@ describe("StreamHandler", () => {
       expect(response.headers.get("cache-control")).toBe("no-cache");
     });
 
-    it("should stream slot updates as NDJSON", async () => {
+    it("streams only the rendered project HTML as NDJSON", async () => {
       const response = await streamHandler.handle("/test", new URLSearchParams());
 
       const text = await response.text();
       const lines = text.trim().split("\n");
 
-      expect(lines.length).toBeGreaterThan(0);
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-
-        expect(() => JSON.parse(trimmed)).not.toThrow();
-        const parsed = JSON.parse(trimmed);
-        expect(parsed.type).toBe("slot");
-        expect(parsed.id).toBeDefined();
-        expect(parsed.html).toBeDefined();
-      }
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0]!)).toEqual({
+        type: "slot",
+        id: "root",
+        html: "<div>Test Content</div>",
+      });
     });
 
     it("should use page query param when provided", async () => {
@@ -85,28 +79,35 @@ describe("StreamHandler", () => {
       expect(handleCalls[0]?.[0]).toBe("/my-page");
     });
 
-    it("should handle render handler returning non-ok response", async () => {
-      mockRenderHandler.setHandler(() => Promise.resolve(new Response(null, { status: 500 })));
+    it("propagates a non-ok render response instead of masking it", async () => {
+      mockRenderHandler.setHandler(() =>
+        Promise.resolve(new Response("render failed", { status: 503 }))
+      );
 
       const response = await streamHandler.handle("/", new URLSearchParams());
 
-      expect(await response.text()).toContain("OK");
+      expect(response.status).toBe(503);
+      expect(await response.text()).toBe("render failed");
     });
 
-    it("should handle invalid JSON from render handler", async () => {
+    it("fails closed when the render handler returns invalid JSON", async () => {
       mockRenderHandler.setHandler(() =>
         Promise.resolve(new Response("not-json", { status: 200 }))
       );
 
       const response = await streamHandler.handle("/", new URLSearchParams());
 
-      expect(await response.text()).toContain("OK");
+      expect(response.status).toBe(500);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.text()).toBe("Invalid RSC render payload");
     });
 
-    it("should include malformed JSON when bad query param is set", async () => {
+    it("does not expose a query-controlled malformed-protocol path", async () => {
       const response = await streamHandler.handle("/", new URLSearchParams({ bad: "1" }));
+      const lines = (await response.text()).trim().split("\n");
 
-      expect(await response.text()).toContain("MALFORMED_JSON");
+      expect(lines).toHaveLength(1);
+      expect(() => JSON.parse(lines[0]!)).not.toThrow();
     });
   });
 
@@ -119,14 +120,14 @@ describe("StreamHandler", () => {
       );
     });
 
-    it("should return valid response even with non-ok render response", async () => {
+    it("does not translate an upstream failure into a successful stream", async () => {
       mockRenderHandler.setHandler(() => Promise.resolve(new Response("Error", { status: 500 })));
 
       const response = await streamHandler.handle("/", new URLSearchParams());
 
       expect(response).toBeInstanceOf(Response);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toContain("OK");
+      expect(response.status).toBe(500);
+      expect(await response.text()).toBe("Error");
     });
   });
 });
