@@ -608,16 +608,24 @@ describe("HTMLGenerator helpers", () => {
       );
     });
 
-    it("selects client modules from project trust instead of render mode", async () => {
+    it("preserves the exact client module strategy independently from render mode", async () => {
       const readFile = async () => `'use client';`;
       const remoteDevelopmentHtml = await createHTMLGenerator({
         mode: "development",
         isLocalProject: false,
+        clientModuleStrategy: "rsc-module",
         readFile,
       }).generateFullHTML(createHTMLContext({ options: { environment: "preview" } }));
       const localProductionHtml = await createHTMLGenerator({
         mode: "production",
         isLocalProject: true,
+        clientModuleStrategy: "rsc-module",
+        readFile,
+      }).generateFullHTML(createHTMLContext({ options: { environment: "preview" } }));
+      const localDevelopmentHtml = await createHTMLGenerator({
+        mode: "development",
+        isLocalProject: true,
+        clientModuleStrategy: "fs",
         readFile,
       }).generateFullHTML(createHTMLContext({ options: { environment: "preview" } }));
 
@@ -630,7 +638,9 @@ describe("HTMLGenerator helpers", () => {
       };
 
       assertEquals(parseHydrationData(remoteDevelopmentHtml).clientModuleStrategy, "rsc-module");
-      assertEquals(parseHydrationData(localProductionHtml).clientModuleStrategy, "fs");
+      assertEquals(parseHydrationData(localProductionHtml).clientModuleStrategy, "rsc-module");
+      assertEquals(parseHydrationData(localDevelopmentHtml).clientModuleStrategy, "fs");
+      assertEquals(localProductionHtml.includes("/_veryfront/hmr"), false);
     });
 
     it("publishes only client-owned layouts for an isolated page island", async () => {

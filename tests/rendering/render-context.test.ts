@@ -59,6 +59,7 @@ function createRenderContextFixture(
     projectDir: "/projects/test-project",
     config: mockConfig as any,
     mode: "production",
+    clientModuleStrategy: "rsc-module",
     adapter: mockAdapter as any,
     cachePrefix: "proj_123:production:rel_456",
     environment: "production",
@@ -179,7 +180,10 @@ describe("RenderContext", () => {
       });
 
       const cacheKey = createCacheKey(ctx, "page:blog/post");
-      assertEquals(cacheKey, "proj_123:production:rel_456:page:blog/post");
+      assertEquals(
+        cacheKey,
+        "proj_123:production:rel_456:modules-rsc-module:page:blog/post",
+      );
     });
 
     it("creates different keys for different projects", () => {
@@ -204,8 +208,8 @@ describe("RenderContext", () => {
       const keyA = createCacheKey(ctxA, "page:index");
       const keyB = createCacheKey(ctxB, "page:index");
 
-      assertEquals(keyA, "proj_A:production:v1:page:index");
-      assertEquals(keyB, "proj_B:production:v1:page:index");
+      assertEquals(keyA, "proj_A:production:v1:modules-rsc-module:page:index");
+      assertEquals(keyB, "proj_B:production:v1:modules-rsc-module:page:index");
       assertEquals(keyA !== keyB, true);
     });
 

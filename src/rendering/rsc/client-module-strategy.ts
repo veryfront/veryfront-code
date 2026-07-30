@@ -10,12 +10,14 @@ import {
 } from "#veryfront/utils/import-map.ts";
 import { FS_PATH_PREFIX, HYDRATION_DATA_ID, RSC_PATH_PREFIX } from "./constants.ts";
 import { rscLogger } from "../client/browser-logger.ts";
+import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 
-export type ClientModuleStrategy = "fs" | "rsc-module";
+export type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 
 export interface ClientModuleStrategyOptions {
   isLocalProject?: boolean;
-  environment?: "preview" | "production";
+  /** Whether the active server registry exposes development module routes. */
+  allowDevelopmentModuleServing?: boolean;
 }
 
 export interface ClientRuntimeHydrationData {
@@ -204,15 +206,13 @@ function parseClientRuntimeHydrationData(
 export function determineClientModuleStrategy(
   options: ClientModuleStrategyOptions,
 ): ClientModuleStrategy {
-  // Only emit the `fs` strategy when the server is backed by a real on-disk
-  // project (server-trusted `isLocalProject` signal). The `/_veryfront/fs/`
-  // handler that serves those modules was narrowed to local projects only
-  // under VULN-SRV-1/2: honoring a client-reachable `environment === "preview"`
-  // here would advertise a dev-only endpoint that returns 404 in preview pods
-  // and — more importantly — mixes the preview-mode signal (environment) with
-  // the local-filesystem signal (isLocalProject). Preview pods serve the same
-  // compiled client modules as production, via the RSC module endpoint.
-  return options.isLocalProject ? "fs" : "rsc-module";
+  // Filesystem module URLs are valid only when both independent authorities
+  // agree: the request selected a local project and the active registry
+  // actually exposes development module routes. Missing authority fails closed.
+  return options.allowDevelopmentModuleServing === true &&
+      options.isLocalProject === true
+    ? "fs"
+    : "rsc-module";
 }
 
 export function readHydrationData(
@@ -239,9 +239,7 @@ export function resolveClientModuleStrategy(
   hydrationData: ClientRuntimeHydrationData | null,
 ): ClientModuleStrategy {
   if (hydrationData?.clientModuleStrategy === "fs") return "fs";
-  if (hydrationData?.clientModuleStrategy === "rsc-module") return "rsc-module";
-
-  return hydrationData?.dev === true ? "fs" : "rsc-module";
+  return "rsc-module";
 }
 
 export function appendClientModuleVersion(url: string, version?: string): string {

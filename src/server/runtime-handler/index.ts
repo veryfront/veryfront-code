@@ -637,6 +637,7 @@ export function createVeryfrontHandler(
             headers,
             requestContext: reqCtx,
             isProxyMode,
+            allowDevelopmentModuleServing: profile === "development",
             proxyTopologyTrusted,
             sourcePlan,
             securityConfig: securityLoader.getSecurityConfig(),

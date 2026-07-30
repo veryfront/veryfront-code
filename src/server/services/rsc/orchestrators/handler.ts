@@ -13,10 +13,12 @@ import {
   type ImportMapIdentity,
   preloadImportMap,
 } from "#veryfront/modules/import-map/index.ts";
+import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 
 export interface RSCServerHandlerOptions {
   config?: VeryfrontConfig;
   isLocalProject?: boolean;
+  clientModuleStrategy?: ClientModuleStrategy;
   mode?: "development" | "production";
   adapter?: RuntimeAdapter;
   projectId?: string;
@@ -62,12 +64,13 @@ export class RSCDevServerHandler {
     const adapter = options.adapter;
     const appDir = options.config?.directories?.app ?? "app";
     const isLocalProject = options.isLocalProject === true;
+    const clientModuleStrategy = options.clientModuleStrategy === "fs" ? "fs" : "rsc-module";
     const mode = options.mode ?? "production";
     const contentSourceId = options.contentSourceId ?? options.releaseId ??
       (isLocalProject ? "local-main" : mode === "development" ? "preview-main" : "production");
     this.manifestHandler = new ManifestHandler(projectDir, {
       appDir,
-      isLocalProject,
+      clientModuleStrategy,
       fs: adapter?.fs,
       contentSourceId,
     });
@@ -100,14 +103,14 @@ export class RSCDevServerHandler {
     );
     this.streamHandler = new StreamHandler(this.renderHandler);
     this.appDir = appDir;
-    this.isLocalProject = isLocalProject;
+    this.clientModuleStrategy = clientModuleStrategy;
     this.mode = mode;
     this.fs = adapter?.fs;
     this.config = options.config;
   }
 
   private readonly appDir: string;
-  private readonly isLocalProject: boolean;
+  private readonly clientModuleStrategy: ClientModuleStrategy;
   private readonly mode: "development" | "production";
   private readonly fs?: RuntimeAdapter["fs"];
   private readonly config?: VeryfrontConfig;
@@ -139,7 +142,7 @@ export class RSCDevServerHandler {
       this.pageHandler = new PageHandler(
         this.mode === "development",
         await this.getReactVersion(),
-        this.isLocalProject ? "fs" : "rsc-module",
+        this.clientModuleStrategy,
       );
     }
     return this.pageHandler.handle(pathname, searchParams, nonce);
@@ -178,7 +181,7 @@ export class RSCDevServerHandler {
       clientManifest,
       projectDir: this.projectDir,
       mode: this.mode,
-      clientModuleStrategy: this.isLocalProject ? "fs" : "rsc-module",
+      clientModuleStrategy: this.clientModuleStrategy,
       reactVersion,
     });
   }

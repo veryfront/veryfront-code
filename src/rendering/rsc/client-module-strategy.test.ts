@@ -12,23 +12,27 @@ import {
 import { fromBase64Url } from "#veryfront/utils/path-utils.ts";
 
 describe("rendering/rsc/client-module-strategy", () => {
-  it("uses the fs strategy only for local projects", () => {
-    // Only the server-trusted `isLocalProject` signal unlocks the dev-only
-    // `/_veryfront/fs/` handler. Preview mode (which can be reached via
-    // trusted proxy headers) no longer implies dev-file availability — the
-    // fs handler was narrowed to local projects under VULN-SRV-1/2.
-    assertEquals(determineClientModuleStrategy({ isLocalProject: true }), "fs");
+  it("uses the fs strategy only when locality and route authority agree", () => {
     assertEquals(
-      determineClientModuleStrategy({ isLocalProject: true, environment: "production" }),
+      determineClientModuleStrategy({
+        isLocalProject: true,
+        allowDevelopmentModuleServing: true,
+      }),
       "fs",
     );
   });
 
-  it("uses the rsc module strategy for remote environments", () => {
-    assertEquals(determineClientModuleStrategy({ environment: "production" }), "rsc-module");
-    assertEquals(determineClientModuleStrategy({ environment: "preview" }), "rsc-module");
+  it("fails closed when either route authority or locality is absent", () => {
+    assertEquals(determineClientModuleStrategy({ isLocalProject: true }), "rsc-module");
     assertEquals(
-      determineClientModuleStrategy({ isLocalProject: false, environment: "preview" }),
+      determineClientModuleStrategy({ allowDevelopmentModuleServing: true }),
+      "rsc-module",
+    );
+    assertEquals(
+      determineClientModuleStrategy({
+        isLocalProject: false,
+        allowDevelopmentModuleServing: true,
+      }),
       "rsc-module",
     );
   });
@@ -36,6 +40,7 @@ describe("rendering/rsc/client-module-strategy", () => {
   it("resolves strategy from hydration data without probing endpoints", () => {
     assertEquals(resolveClientModuleStrategy({ clientModuleStrategy: "fs" }), "fs");
     assertEquals(resolveClientModuleStrategy({ clientModuleStrategy: "rsc-module" }), "rsc-module");
+    assertEquals(resolveClientModuleStrategy({ dev: true }), "rsc-module");
   });
 
   it("builds explicit client module urls for each strategy", () => {

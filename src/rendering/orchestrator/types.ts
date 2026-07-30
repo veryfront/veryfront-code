@@ -3,6 +3,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { RenderResult } from "#veryfront/types";
 import type { BuildVersion } from "#veryfront/utils/version.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 
 export type { RenderResult };
 
@@ -11,6 +12,8 @@ export interface RendererOptions {
   mode: "development" | "production";
   /** Whether browser-facing local filesystem module URLs are trusted. */
   isLocalProject?: boolean;
+  /** Exact browser module transport exposed by the surrounding server. */
+  clientModuleStrategy?: ClientModuleStrategy;
   port?: number;
   adapter?: RuntimeAdapter;
   moduleServerUrl?: string;

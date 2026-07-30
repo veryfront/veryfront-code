@@ -101,19 +101,25 @@ The adjacent modules retain these boundaries:
 
 The facade's renderer constructor accepts these options:
 
-| Option            | Meaning                                                          |
-| ----------------- | ---------------------------------------------------------------- |
-| `projectDir`      | Required project source root                                     |
-| `mode`            | Required `development` or `production` runtime mode              |
-| `adapter`         | Optional runtime adapter; runtime detection is used when omitted |
-| `config`          | Optional already-loaded `VeryfrontConfig`                        |
-| `projectId`       | Authoritative cache and module isolation identity                |
-| `projectSlug`     | Human-readable logging and HTTP fallback identity                |
-| `contentSourceId` | Branch, snapshot, or release identity                            |
-| `isLocalProject`  | Whether browser-facing local filesystem module URLs are trusted  |
-| `port`            | Dashboard/module-service port used by generated runtime URLs     |
-| `moduleServerUrl` | Explicit development module-service base URL                     |
-| `directories`     | Compatibility override merged onto `config.directories`          |
+| Option                 | Meaning                                                                  |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `projectDir`           | Required project source root                                             |
+| `mode`                 | Required `development` or `production` runtime mode                      |
+| `adapter`              | Optional runtime adapter; runtime detection is used when omitted         |
+| `config`               | Optional already-loaded `VeryfrontConfig`                                |
+| `projectId`            | Authoritative cache and module isolation identity                        |
+| `projectSlug`          | Human-readable logging and HTTP fallback identity                        |
+| `contentSourceId`      | Branch, snapshot, or release identity                                    |
+| `isLocalProject`       | Whether the renderer's source is an authoritative local project          |
+| `clientModuleStrategy` | Browser module transport: `fs` or `rsc-module`; defaults to `rsc-module` |
+| `port`                 | Dashboard/module-service port used by generated runtime URLs             |
+| `moduleServerUrl`      | Explicit development module-service base URL                             |
+| `directories`          | Compatibility override merged onto `config.directories`                  |
+
+`clientModuleStrategy: "fs"` is the explicit authority for browser-facing
+filesystem module URLs. Locality alone does not enable development module
+routes; server composition supplies `fs` only when its active registry exposes
+those routes.
 
 An internal consumer owns the complete lifecycle:
 

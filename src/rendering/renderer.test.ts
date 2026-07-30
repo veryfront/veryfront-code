@@ -172,6 +172,7 @@ function makeRenderContext(): RenderContext {
     projectDir: "/project",
     config: {} as RenderContext["config"],
     mode: "production",
+    clientModuleStrategy: "rsc-module",
     adapter: makeRenderAdapter(),
     cachePrefix: buildRenderCachePrefix("proj-1", "production", "rel-1"),
     environment: "production",
@@ -189,7 +190,7 @@ async function buildRendererStorageKey(
   const theme = options?.colorScheme ? `:theme-${options.colorScheme}` : "";
   return buildRenderCacheKey(
     options?.cachePrefix ?? ctx.cachePrefix,
-    `page:${baseKey}:config-${configDigest}${theme}`,
+    `modules-${ctx.clientModuleStrategy}:page:${baseKey}:config-${configDigest}${theme}`,
   );
 }
 

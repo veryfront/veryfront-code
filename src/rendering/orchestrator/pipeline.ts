@@ -84,7 +84,7 @@ import {
   type ClientPageIslandPlan,
   planClientPageIsland,
 } from "#veryfront/rendering/rsc/page-island.ts";
-import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
+import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 import { toMDXFrontmatter } from "../frontmatter.ts";
 import {
   createWorkerExecutionScopeId,
@@ -143,6 +143,8 @@ export interface RenderPipelineConfig {
   projectDir: string;
   /** Whether browser module URLs may use the local filesystem endpoint. */
   isLocalProject?: boolean;
+  /** Exact browser module transport exposed by the surrounding server. */
+  clientModuleStrategy?: ClientModuleStrategy;
   /** Stable project identity used to isolate transformed module caches. */
   projectId?: string;
   /** Release or preview source used to isolate transformed module caches. */
@@ -319,7 +321,6 @@ export class RenderPipeline {
   private planClientPageIsland(
     pageInfo: EntityInfo,
     nestedLayouts: LayoutItem[],
-    options?: RenderOptions,
   ): Promise<ClientPageIslandPlan | null> {
     const layouts = nestedLayouts
       .map((layout) => ({
@@ -335,10 +336,7 @@ export class RenderPipeline {
       appDir: this.config.directories?.app ?? this.config.config?.directories?.app ?? "app",
       layouts,
       fs: this.config.adapter.fs,
-      strategy: determineClientModuleStrategy({
-        isLocalProject: this.config.isLocalProject,
-        environment: options?.environment,
-      }),
+      strategy: this.config.clientModuleStrategy === "fs" ? "fs" : "rsc-module",
     });
   }
 
@@ -1047,7 +1045,6 @@ export class RenderPipeline {
               const pageIslandPlan = await this.planClientPageIsland(
                 pageInfo,
                 layoutResult.nestedLayouts,
-                mergedOptions,
               );
               const clientPageIsland = pageIslandPlan
                 ? {
@@ -1306,7 +1303,6 @@ export class RenderPipeline {
     const pageIslandPlan = await this.planClientPageIsland(
       pageInfo,
       layoutResult.nestedLayouts,
-      publicOptions,
     );
     const clientLayoutPaths = new Set(
       pageIslandPlan?.clientLayouts.map((layout) => layout.path) ?? [],

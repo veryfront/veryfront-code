@@ -405,6 +405,7 @@ export class HTMLGenerator {
       params: context.options?.params,
       environment: context.options?.environment,
       isLocalProject: this.config.isLocalProject === true,
+      clientModuleStrategy: this.config.clientModuleStrategy === "fs" ? "fs" : "rsc-module",
       nonce: context.options?.nonce,
       importMapJson,
       projectStylesheetHref,
@@ -824,6 +825,7 @@ export class HTMLGenerator {
       headings: context.pageBundle.headings,
       projectClasses,
       isLocalProject: this.config.isLocalProject === true,
+      clientModuleStrategy: this.config.clientModuleStrategy === "fs" ? "fs" : "rsc-module",
       noHmr: context.options?.noHmr,
       forceProductionScripts: context.options?.forceProductionScripts,
       ...(context.options?.releaseAssetManifest !== undefined

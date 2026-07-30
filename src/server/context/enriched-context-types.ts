@@ -1,6 +1,7 @@
 import type { VeryfrontConfig } from "#veryfront/config/schemas/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { ParsedDomain } from "#veryfront/server/utils/domain-parser.ts";
+import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 
 export type Environment = "preview" | "production";
 export type RenderMode = "development" | "production";
@@ -22,6 +23,7 @@ export interface EnrichedContext {
   environment: Environment;
   branch: string | null;
   isLocalProject: boolean;
+  clientModuleStrategy: ClientModuleStrategy;
   mode: RenderMode;
 
   /** Content source identifier for cache isolation (e.g., "release-abc123", "preview-main", "local-main") */
@@ -50,6 +52,8 @@ export interface BuildEnrichedContextOptions {
   environment: Environment;
   branch: string | null;
   isLocalProject: boolean;
+  /** Exact browser module transport selected at the request boundary. */
+  clientModuleStrategy?: ClientModuleStrategy;
   /** Content source identifier for cache isolation - computed by proxy */
   contentSourceId: string;
   parsedDomain: ParsedDomain;

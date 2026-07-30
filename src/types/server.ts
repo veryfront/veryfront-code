@@ -1,4 +1,5 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { ClientModuleStrategy } from "./rsc.ts";
 import type { VeryfrontConfig } from "../config/schemas/index.ts";
 import type { RequestContext } from "../server/context/request-context.ts";
 import type { EnrichedContext } from "../server/context/enriched-context-types.ts";
@@ -89,6 +90,8 @@ export interface HandlerContext {
   requestContext?: RequestContext;
   /** Whether the request targets a local development project. */
   isLocalProject?: boolean;
+  /** Exact browser module transport authorized by the active server registry. */
+  clientModuleStrategy?: ClientModuleStrategy;
   /**
    * Whether runtime trust resolution permits project modules to execute in the
    * server process. This is distinct from `isLocalProject`: a standalone

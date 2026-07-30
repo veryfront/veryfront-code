@@ -365,12 +365,13 @@ async function generateHTMLShellPartsImpl(
     meta.ssrHash,
   );
 
-  const skipDevHMR = isPreviewMode || options.noHmr;
+  const clientModuleStrategy = options.clientModuleStrategy === "fs" ? "fs" : "rsc-module";
+  const skipDevHMR = clientModuleStrategy !== "fs" || isPreviewMode || options.noHmr;
   // Error logger endpoint only enabled in local dev (returns 404 in preview/prod)
   const skipErrorLogger = isPreviewMode;
-  // Enable dev scripts for local dev OR preview mode (for HMR support in Studio),
-  // unless a caller explicitly forces production client scripts for fair benchmarking.
-  const useDevScripts = !options.forceProductionScripts && (isLocalProject || isPreviewMode);
+  // Development module serving is the sole authority for dev scripts. Compilation
+  // mode and preview status remain separate rendering concerns.
+  const useDevScripts = !options.forceProductionScripts && clientModuleStrategy === "fs";
   const explicitReleaseManifest =
     (options as HTMLGenerationOptions & { releaseAssetManifest?: ReleaseAssetManifest | null })
       .releaseAssetManifest;
@@ -575,7 +576,8 @@ async function generateHTMLShellPartsImpl(
     })
     : "";
 
-  const previewHMRScript = isPreviewMode && !options.forceProductionScripts
+  const previewHMRScript = isPreviewMode && clientModuleStrategy === "fs" &&
+      !options.forceProductionScripts
     ? `<script src="/_veryfront/preview-hmr.js"${nonceAttr}></script>`
     : "";
 

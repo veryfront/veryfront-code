@@ -96,7 +96,7 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
       });
     });
 
-    it("renders production HTML with explicit fs hydration strategy for local projects", async () => {
+    it("keeps local production HTML on the RSC module transport", async () => {
       await withTestContext("rsc-client-page-render", async (context) => {
         await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
@@ -124,9 +124,9 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
           ].join("\n"),
         );
 
-        // Start the server with the project registered as local so the RSC
-        // `fs` client-module strategy and the `/_veryfront/fs/` module loader
-        // are active. Post-VULN-SRV-1/2 these gate strictly on `isLocalProject`.
+        // Local registration supplies project discovery only. The production
+        // registry does not authorize raw filesystem modules or development
+        // scripts, so browser modules must use the RSC endpoint.
         const { startProductionServer } = await import(
           "../../../../src/server/production-server.ts"
         );
@@ -150,13 +150,15 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
 
         assertStringIncludes(html, "Client Page");
         assertEquals(html.includes("/_veryfront/fs/"), false);
+        assertEquals(html.includes("/_veryfront/hmr"), false);
+        assertEquals(html.includes("/_ws"), false);
 
         const hydrationData = extractHydrationData(html);
-        assertEquals(hydrationData.clientModuleStrategy, "fs");
+        assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
         assertEquals(hydrationData.pagePath, "app/page.tsx");
 
         const moduleUrl = buildClientModuleUrl({
-          strategy: "fs",
+          strategy: "rsc-module",
           rel: String(hydrationData.pagePath),
         });
         assertExists(moduleUrl);

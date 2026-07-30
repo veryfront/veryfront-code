@@ -4,6 +4,7 @@ import type { CollectedHead } from "#veryfront/react/head-collector.ts";
 import type { EntityInfo, LayoutItem, MdxBundle, PageBundle } from "#veryfront/types";
 import type { RenderOptions } from "./types.ts";
 import type { LayoutRequestIdentity } from "./layout.ts";
+import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 
 export interface HTMLGeneratorConfig {
   projectDir: string;
@@ -12,6 +13,8 @@ export interface HTMLGeneratorConfig {
   mode: "development" | "production";
   /** Whether project filesystem URLs are trusted for browser access. */
   isLocalProject?: boolean;
+  /** Exact browser module transport authorized for generated HTML. */
+  clientModuleStrategy?: ClientModuleStrategy;
 }
 
 export interface HTMLGenerationContext {

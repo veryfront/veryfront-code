@@ -267,6 +267,7 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
     environment,
     branch,
     isLocalProject: isLocal,
+    clientModuleStrategy: ctx.clientModuleStrategy === "fs" ? "fs" : "rsc-module",
     contentSourceId,
     parsedDomain: ctx.parsedDomain ?? {
       slug: null,

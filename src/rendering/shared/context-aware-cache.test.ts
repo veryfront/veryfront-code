@@ -56,6 +56,7 @@ function makeMockCtx(overrides: Partial<RenderContext> = {}): RenderContext {
     environment: "production",
     contentSourceId: "release-1",
     ...overrides,
+    clientModuleStrategy: overrides.clientModuleStrategy === "fs" ? "fs" : "rsc-module",
   };
 }
 

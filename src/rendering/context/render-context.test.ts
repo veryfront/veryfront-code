@@ -17,6 +17,7 @@ function makeMockRenderContext(
     projectDir: "/project",
     config: {} as RenderContext["config"],
     mode: "production",
+    clientModuleStrategy: "rsc-module",
     adapter: {} as RenderContext["adapter"],
     cachePrefix: "proj-123:production:release-abc",
     environment: "production",
@@ -39,6 +40,7 @@ function makeEnrichedContext(overrides: Record<string, unknown> = {}): Record<
     environment: "production",
     contentSourceId: "release-x",
     mode: "production",
+    clientModuleStrategy: "rsc-module",
     ...overrides,
   };
 }
@@ -72,6 +74,12 @@ describe("rendering/context/render-context", () => {
       const key1 = createCacheKey(ctx1, "page:/index");
       const key2 = createCacheKey(ctx2, "page:/index");
       assertEquals(key1 !== key2, true);
+    });
+
+    it("isolates cache entries by exact client module strategy", () => {
+      const rsc = makeMockRenderContext({ clientModuleStrategy: "rsc-module" });
+      const fs = makeMockRenderContext({ clientModuleStrategy: "fs" });
+      assertEquals(createCacheKey(rsc, "page:/") !== createCacheKey(fs, "page:/"), true);
     });
   });
 

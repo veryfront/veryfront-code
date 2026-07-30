@@ -108,6 +108,8 @@ export interface ResolveProjectRuntimeContextInput {
   headers: ProjectRequestHeaders;
   requestContext: ProjectRequestContext;
   isProxyMode: boolean;
+  /** Whether this registry profile exposes development-only module routes. */
+  allowDevelopmentModuleServing: boolean;
   proxyTopologyTrusted: boolean;
   sourcePlan: ProjectRuntimeSourcePlan;
   securityConfig: SecurityConfig | null;
@@ -485,6 +487,7 @@ export async function resolveProjectRuntimeContext(
     requestContext: effectiveRequestContext,
     routeRegistry: input.routeRegistry,
     isLocalProject: adapterRes.isLocalProject,
+    allowDevelopmentModuleServing: input.allowDevelopmentModuleServing,
     allowHostProjectCodeExecution: adapterRes.isLocalProject ||
       (!input.isProxyMode && !isVirtualFilesystem(adapterRes.adapter.fs)),
     moduleServerUrl: input.moduleServerUrl,

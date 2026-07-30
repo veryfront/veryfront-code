@@ -152,6 +152,7 @@ function makeRuntimeContextInput(
     headers,
     requestContext,
     isProxyMode: false,
+    allowDevelopmentModuleServing: false,
     proxyTopologyTrusted: false,
     securityConfig: { allowedOrigins: ["*"] } as any,
     cspUserHeader: "default-src 'self'",
@@ -726,6 +727,7 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(ctx.environmentId, "env-remote");
     assertEquals(ctx.moduleServerUrl, "https://modules.example.test");
     assertEquals(ctx.requestContext?.mode, "preview");
+    assertEquals(ctx.clientModuleStrategy, "rsc-module");
     assertEquals(ctx.allowHostProjectCodeExecution, true);
     assertEquals(result.environment.resolvedEnvironment, "preview");
   });
@@ -765,6 +767,7 @@ describe("resolveProjectRuntimeContext", () => {
         parsedDomain: defaultParsedDomain,
       },
       isProxyMode: true,
+      allowDevelopmentModuleServing: true,
       proxyTopologyTrusted: true,
       skipEnrichedContext: true,
       envVarCache: {
@@ -785,6 +788,7 @@ describe("resolveProjectRuntimeContext", () => {
     assertStrictEquals(ctx.adapter, adapter);
     assertEquals(ctx.config, undefined);
     assertEquals(ctx.proxyToken, undefined);
+    assertEquals(ctx.clientModuleStrategy, "fs");
     assertEquals(ctx.allowHostProjectCodeExecution, true);
     assertEquals(ctx.enriched, undefined);
     assertEquals(result.rawEnvVars, {});

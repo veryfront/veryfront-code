@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ManifestHandler } from "./manifest-handler.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
@@ -32,7 +32,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["Card", { path: "/app/components/Card.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project");
+      const handler = new ManifestHandler("/project", { clientModuleStrategy: "fs" });
       const response = await handler.handle(manifest as any);
 
       assertEquals(response.headers.get("content-type"), "application/json");
@@ -42,10 +42,32 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
     });
 
     it("should return empty components for empty manifest", async () => {
-      const handler = new ManifestHandler("/project");
+      const handler = new ManifestHandler("/project", { clientModuleStrategy: "fs" });
       const response = await handler.handle(new Map());
       const body = await response.json();
       assertEquals(body.components, {});
+    });
+
+    it("fails closed to RSC module transport when the strategy is omitted", async () => {
+      const handler = new ManifestHandler("/project");
+
+      await assertRejects(
+        () =>
+          handler.handle(
+            new Map([
+              [
+                "LegacyClient",
+                {
+                  id: "LegacyClient",
+                  path: "/_veryfront/fs/legacy.js",
+                  exports: ["default"],
+                },
+              ],
+            ]),
+          ),
+        Error,
+        "missing its project-relative module path",
+      );
     });
 
     it("builds manifests through the request filesystem adapter", async () => {
@@ -79,7 +101,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
       };
       const handler = new ManifestHandler("/project", {
         appDir: "frontend",
-        isLocalProject: false,
+        clientModuleStrategy: "rsc-module",
         fs: fs as any,
         contentSourceId: "release-a",
       });
@@ -108,11 +130,11 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
       ]);
       const localHandler = new ManifestHandler("/project", {
         appDir: "frontend",
-        isLocalProject: true,
+        clientModuleStrategy: "fs",
       });
       const remoteHandler = new ManifestHandler("/project", {
         appDir: "frontend",
-        isLocalProject: false,
+        clientModuleStrategy: "rsc-module",
       });
 
       const local = await (await localHandler.handle(manifest)).json();
@@ -152,7 +174,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
 
       const changedSourceHandler = new ManifestHandler("/project", {
         appDir: "frontend",
-        isLocalProject: false,
+        clientModuleStrategy: "rsc-module",
       });
       const changedSource = await (await changedSourceHandler.handle(
         new Map([
@@ -168,7 +190,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["A", { path: "/a.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project");
+      const handler = new ManifestHandler("/project", { clientModuleStrategy: "fs" });
       const response1 = await handler.handle(manifest as any);
       const body1 = await response1.json();
 
@@ -195,12 +217,14 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
           },
         ],
       ]);
-      const handler = new ManifestHandler("/project");
+      const handler = new ManifestHandler("/project", { clientModuleStrategy: "fs" });
 
       const first = await (await handler.handle(manifest)).json();
       exports.push("Widget");
       const second = await (await handler.handle(manifest)).json();
-      const rebuilt = await (await new ManifestHandler("/project").handle(manifest)).json();
+      const rebuilt = await (await new ManifestHandler("/project", {
+        clientModuleStrategy: "fs",
+      }).handle(manifest)).json();
 
       assertEquals(first.modules[0].exports, ["default"]);
       assertEquals(second.modules[0].exports, ["default"]);
@@ -217,7 +241,10 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["X", { path: "/x.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project", { cacheRepo });
+      const handler = new ManifestHandler("/project", {
+        cacheRepo,
+        clientModuleStrategy: "fs",
+      });
       await handler.handle(manifest as any);
 
       assertEquals(cacheRepo.store.size, 1);
@@ -229,7 +256,10 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["Y", { path: "/y.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project", { cacheRepo });
+      const handler = new ManifestHandler("/project", {
+        cacheRepo,
+        clientModuleStrategy: "fs",
+      });
       await handler.handle(manifest as any);
 
       // Second call should use cache
@@ -245,10 +275,32 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
       await new ManifestHandler("/project", {
         cacheRepo,
         contentSourceId: "release-a",
+        clientModuleStrategy: "fs",
       }).handle(manifest as any);
       await new ManifestHandler("/project", {
         cacheRepo,
         contentSourceId: "release-b",
+        clientModuleStrategy: "fs",
+      }).handle(manifest as any);
+
+      assertEquals(cacheRepo.store.size, 2);
+    });
+
+    it("isolates external manifest cache entries by client module strategy", async () => {
+      const cacheRepo = createMockCacheRepo();
+      const manifest = new Map([
+        ["Y", { path: "/_veryfront/fs/y.js", rel: "app/y.tsx", exports: [] }],
+      ]);
+
+      await new ManifestHandler("/project", {
+        cacheRepo,
+        contentSourceId: "source-a",
+        clientModuleStrategy: "fs",
+      }).handle(manifest as any);
+      await new ManifestHandler("/project", {
+        cacheRepo,
+        contentSourceId: "source-a",
+        clientModuleStrategy: "rsc-module",
       }).handle(manifest as any);
 
       assertEquals(cacheRepo.store.size, 2);
@@ -261,7 +313,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["Z", { path: "/z.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project");
+      const handler = new ManifestHandler("/project", { clientModuleStrategy: "fs" });
       await handler.handle(manifest as any);
       handler.clearCache();
 
@@ -314,7 +366,10 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
             mtime: null,
           }),
       };
-      const handler = new ManifestHandler("/project", { fs: fs as any });
+      const handler = new ManifestHandler("/project", {
+        fs: fs as any,
+        clientModuleStrategy: "fs",
+      });
 
       const preInvalidation = handler.handle(null);
       await firstReadStarted;

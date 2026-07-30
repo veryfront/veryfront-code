@@ -31,6 +31,7 @@ export type {
 export { HandlerPriority } from "./server.ts";
 export type {
   ClientComponentMeta,
+  ClientModuleStrategy,
   ComponentAnalysis,
   ComponentType,
   RSCChildrenPayload,

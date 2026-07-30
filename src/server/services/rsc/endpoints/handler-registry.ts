@@ -99,10 +99,12 @@ export function getRSCHandler(
   const baseKey = projectId ?? projectDir;
   const appDir = options.config?.directories?.app ?? "app";
   const mode = options.mode ?? "production";
+  const clientModuleStrategy = options.clientModuleStrategy === "fs" ? "fs" : "rsc-module";
   const reactVersion = getConfiguredRSCReactVersion(options.config) ?? null;
   const cacheKey = jsonStringify([
     baseKey,
     options.isLocalProject === true,
+    clientModuleStrategy,
     mode,
     appDir,
     reactVersion,

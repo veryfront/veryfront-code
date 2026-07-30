@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RSCRenderer } from "./rsc-renderer.ts";
 import * as React from "react";
@@ -109,6 +109,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
           ],
         ]),
         projectDir: "/tmp/test-project",
+        clientModuleStrategy: "fs",
       });
 
       const payload = await renderer.renderToPayload(ClientComponent, { label: "Save" });
@@ -137,6 +138,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
           ["ClientComponent", metadata],
         ]),
         projectDir: "/tmp/test-project",
+        clientModuleStrategy: "fs",
       });
 
       metadata.path = "/_veryfront/fs/mutated.js";
@@ -197,6 +199,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
           ],
         ]),
         projectDir: "/tmp/test-project",
+        clientModuleStrategy: "fs",
       });
 
       const payload = await renderer.renderToPayload(Page);
@@ -255,37 +258,34 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
       );
     });
 
-    it("preserves legacy production manifest paths when rel is absent", async () => {
+    it("rejects production module metadata without a project-relative path", () => {
       function LegacyClient() {
         return React.createElement("button", null, "legacy client");
       }
       (LegacyClient as typeof LegacyClient & { __rsc_client?: boolean }).__rsc_client = true;
 
-      const renderer = new RSCRenderer({
-        clientManifest: new Map([
-          [
-            "LegacyClient",
-            {
-              id: "LegacyClient",
-              path: "/_veryfront/fs/legacy-client.js",
-              exports: ["default"],
-            },
-          ],
-        ]),
-        projectDir: "/tmp/test-project",
-        mode: "production",
-      });
-
-      const payload = await renderer.renderToPayload(LegacyClient);
-
-      assertStringIncludes(
-        payload.html,
-        'data-client-ref="/_veryfront/fs/legacy-client.js#default"',
+      assertThrows(
+        () =>
+          new RSCRenderer({
+            clientManifest: new Map([
+              [
+                "LegacyClient",
+                {
+                  id: "LegacyClient",
+                  path: "/_veryfront/fs/legacy-client.js",
+                  exports: ["default"],
+                },
+              ],
+            ]),
+            projectDir: "/tmp/test-project",
+            mode: "production",
+          }),
+        Error,
+        "missing its project-relative module path",
       );
-      assertEquals(payload.clientRefs.LegacyClient, "/_veryfront/fs/legacy-client.js");
     });
 
-    it("keeps local production client references on the filesystem module endpoint", async () => {
+    it("honors an explicit filesystem module strategy independent of compilation mode", async () => {
       function ClientComponent() {
         return React.createElement("button", null, "client");
       }
@@ -371,6 +371,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
           ],
         ]),
         projectDir: "/tmp/test-project",
+        clientModuleStrategy: "fs",
       });
 
       const payload = await renderer.renderToPayload(ServerParent);
@@ -434,6 +435,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
           ],
         ]),
         projectDir: "/tmp/test-project",
+        clientModuleStrategy: "fs",
       });
 
       const payload = await renderer.renderToPayload(NamedWidget);
@@ -463,6 +465,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
           ],
         ]),
         projectDir: "/tmp/test-project",
+        clientModuleStrategy: "fs",
       });
 
       const payload = await renderer.renderToPayload(Widget);
@@ -547,6 +550,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
           ],
         ]),
         projectDir: "/tmp/test-project",
+        clientModuleStrategy: "fs",
       });
 
       const firstRender = renderer.renderToPayload(DelayedFirst);

@@ -15,6 +15,7 @@ import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { startProductionServer } from "../../../src/server/production-server.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { installTestCSSOptimizationEngine } from "../../_helpers/css-optimization-engine.ts";
 
 const ROOT_LAYOUT_SOURCE =
   `export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -546,6 +547,7 @@ async function withProxyBrowserPage(
   const previousProxyTrust = Deno.env.get(proxyTrustEnv);
 
   let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
+  let restoreCSSOptimizationEngine: (() => void) | undefined;
 
   try {
     await ensureTrustedProxyKeyMaterial();
@@ -562,6 +564,7 @@ async function withProxyBrowserPage(
       projectEnvFetch: createProxyProjectEnvFetch(fixture),
     });
     await server.ready;
+    restoreCSSOptimizationEngine = installTestCSSOptimizationEngine();
     await registerTailwindExtension();
     await waitForReady(port);
 
@@ -596,16 +599,20 @@ async function withProxyBrowserPage(
     );
   } finally {
     controller.abort();
-    await server?.stop();
-    if (previousDispatchPublicKey === undefined) {
-      Deno.env.delete(DISPATCH_PUBLIC_KEY_ENV);
-    } else {
-      Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, previousDispatchPublicKey);
-    }
-    if (previousProxyTrust === undefined) {
-      Deno.env.delete(proxyTrustEnv);
-    } else {
-      Deno.env.set(proxyTrustEnv, previousProxyTrust);
+    try {
+      await server?.stop();
+    } finally {
+      restoreCSSOptimizationEngine?.();
+      if (previousDispatchPublicKey === undefined) {
+        Deno.env.delete(DISPATCH_PUBLIC_KEY_ENV);
+      } else {
+        Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, previousDispatchPublicKey);
+      }
+      if (previousProxyTrust === undefined) {
+        Deno.env.delete(proxyTrustEnv);
+      } else {
+        Deno.env.set(proxyTrustEnv, previousProxyTrust);
+      }
     }
   }
 }
@@ -718,12 +725,12 @@ async function assertPreviewChatStyling(
   page: import("npm:playwright").Page,
 ): Promise<void> {
   await page.waitForSelector("#preview-chat-page [data-vf-chat]");
-  await page.locator('link#vf-tailwind-css[href*="/_vf_styles/styles.css"]').waitFor({
+  await page.locator('link#vf-project-css[href*="/_vf_styles/styles.css"]').waitFor({
     state: "attached",
   });
   await page.waitForSelector('svg path[d^="M17.3041"]');
   await page.waitForFunction(() => {
-    const stylesheet = document.querySelector("link#vf-tailwind-css") as HTMLLinkElement | null;
+    const stylesheet = document.querySelector("link#vf-project-css") as HTMLLinkElement | null;
     const avatarPath = document.querySelector('svg path[d^="M17.3041"]');
     const avatarSvg = avatarPath?.closest("svg");
     const avatarBox = avatarSvg?.getBoundingClientRect();
@@ -739,7 +746,7 @@ async function assertPreviewChatStyling(
   });
 
   const previewState = await page.evaluate(() => {
-    const stylesheet = document.querySelector("link#vf-tailwind-css") as HTMLLinkElement | null;
+    const stylesheet = document.querySelector("link#vf-project-css") as HTMLLinkElement | null;
     const avatarPath = document.querySelector('svg path[d^="M17.3041"]');
     const avatarSvg = avatarPath?.closest("svg");
     const avatarBox = avatarSvg?.getBoundingClientRect();
@@ -778,12 +785,9 @@ describe(
             LOCAL_RSC_CONFIG_SOURCE,
           );
 
-          // Explicitly register the test project as local so the `fs`
-          // client-module strategy and the `/_veryfront/fs/` module loader
-          // are unlocked. Post-VULN-SRV-1/2 these strictly gate on
-          // `isLocalProject`, and the test context writes its sources
-          // outside of the `standardProjectDirs` (`data/projects/`,
-          // `projects/`) discovery roots.
+          // Register the disk-backed source as local for project discovery.
+          // The production registry still excludes development module routes,
+          // so hydration must use the production RSC module transport.
           const port = await context.allocatePort();
           const controller = new AbortController();
           const server = await startProductionServer({
@@ -797,28 +801,45 @@ describe(
           });
           context.trackResource(server);
           await server.ready;
-          await registerTailwindExtension();
-          await waitForReady(port);
-
-          const browserContext = await browser.newContext();
-          const page = await browserContext.newPage();
-          const diagnostics = captureBrowserDiagnostics(page);
+          const restoreCSSOptimizationEngine = installTestCSSOptimizationEngine();
 
           try {
-            const response = await page.goto(`http://127.0.0.1:${port}/`);
-            assertEquals(response?.status(), 200);
+            await registerTailwindExtension();
+            await waitForReady(port);
 
-            await assertCounterHydration(page, diagnostics, {
-              expectedStrategy: "fs",
-              expectedModulePath: "/_veryfront/fs/",
-            });
+            const browserContext = await browser.newContext();
+            const page = await browserContext.newPage();
+            const diagnostics = captureBrowserDiagnostics(page);
 
-            const hydrationErrors = findHydrationOrCspFailures(
-              getBrowserDiagnosticMessages(diagnostics),
-            );
-            assertEquals(hydrationErrors.length, 0);
+            try {
+              const response = await page.goto(`http://127.0.0.1:${port}/`);
+              assertEquals(response?.status(), 200);
+
+              await assertCounterHydration(page, diagnostics, {
+                expectedStrategy: "rsc-module",
+                expectedModulePath: "/_veryfront/rsc/module",
+              });
+
+              const developmentResources = await page.evaluate(() =>
+                performance.getEntriesByType("resource")
+                  .map((entry) => entry.name)
+                  .filter((name) =>
+                    name.includes("/_veryfront/fs/") ||
+                    name.includes("/_veryfront/hmr") ||
+                    name.includes("/_ws")
+                  )
+              );
+              assertEquals(developmentResources, []);
+
+              const hydrationErrors = findHydrationOrCspFailures(
+                getBrowserDiagnosticMessages(diagnostics),
+              );
+              assertEquals(hydrationErrors.length, 0);
+            } finally {
+              await browserContext.close();
+            }
           } finally {
-            await browserContext.close();
+            restoreCSSOptimizationEngine();
           }
         });
       } finally {

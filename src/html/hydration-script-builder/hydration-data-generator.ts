@@ -1,6 +1,5 @@
 import type { ComponentProps } from "#veryfront/types";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
-import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
@@ -9,10 +8,6 @@ import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
 
 type HydrationPageType = NonNullable<HydrationDataStructure["pageType"]>;
-type HydrationEnvironment = NonNullable<
-  Parameters<typeof determineClientModuleStrategy>[0]["environment"]
->;
-
 function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
   if (!absolutePath) return "";
 
@@ -106,10 +101,7 @@ export function generateHydrationData(
     // to `string`. Narrow back to the real literal unions rather than `any`.
     pageType: (options.pageType as HydrationPageType | undefined) ||
       inferPageType(options.pagePath),
-    clientModuleStrategy: determineClientModuleStrategy({
-      isLocalProject: options.isLocalProject,
-      environment: options.environment as HydrationEnvironment | undefined,
-    }),
+    clientModuleStrategy: options.clientModuleStrategy === "fs" ? "fs" : "rsc-module",
     releaseId: options.releaseId,
     releaseAssetModules: buildReleaseAssetModules(
       options.releaseAssetManifest,

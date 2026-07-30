@@ -59,6 +59,7 @@ describe(
         try {
           const packageHandler = new RSCDevServerHandler(projectDir, {
             isLocalProject: true,
+            clientModuleStrategy: "rsc-module",
             mode: "production",
           });
           const response = await packageHandler.handlePage("/", new URLSearchParams());
@@ -103,6 +104,7 @@ describe(
           const customHandler = new RSCDevServerHandler(projectDir, {
             config: { directories: { app: "frontend" } },
             isLocalProject: true,
+            clientModuleStrategy: "fs",
           });
           const manifestResponse = await customHandler.handleManifest();
           const manifest = await manifestResponse.json();
@@ -132,6 +134,7 @@ describe(
         try {
           const previewHandler = new RSCDevServerHandler(projectDir, {
             isLocalProject: false,
+            clientModuleStrategy: "rsc-module",
             mode: "development",
           });
           await previewHandler.handleRender("/", new URLSearchParams());

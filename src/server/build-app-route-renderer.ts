@@ -18,7 +18,6 @@ import {
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
-import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 import {
   CLIENT_PAGE_ISLAND_ID,
   hasUseClientDirective,
@@ -157,10 +156,7 @@ export async function renderAppRouteToHTML(args: {
     reactVersion,
   });
 
-  const hydrationStrategy = determineClientModuleStrategy({
-    isLocalProject: false,
-    environment: "production",
-  });
+  const hydrationStrategy = "rsc-module" as const;
   const layoutDescriptors = layouts.map((path) => ({ kind: "tsx" as const, path }));
   const clientPageIsland = await planClientPageIsland({
     pageSource,
@@ -246,6 +242,7 @@ export async function renderAppRouteToHTML(args: {
         pageType: "tsx",
         releaseAssetManifest,
         isLocalProject: false,
+        clientModuleStrategy: hydrationStrategy,
         forceProductionScripts: true,
         nestedLayouts: clientPageIsland?.clientLayouts ?? layoutDescriptors,
         isolatedClientPage: Boolean(clientPageIsland),

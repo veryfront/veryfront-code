@@ -1,5 +1,6 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 
 export interface ActionBody {
   id: string;
@@ -27,6 +28,7 @@ export interface RSCEndpointParams {
   adapter: RuntimeAdapter;
   config?: VeryfrontConfig;
   isLocalProject?: boolean;
+  clientModuleStrategy?: ClientModuleStrategy;
   mode?: "development" | "production";
   nonce?: string;
 }

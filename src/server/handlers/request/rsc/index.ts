@@ -76,6 +76,7 @@ export class RSCHandler extends BaseHandler {
             adapter: ctx.adapter,
             config: ctx.config,
             isLocalProject,
+            clientModuleStrategy: ctx.clientModuleStrategy === "fs" ? "fs" : "rsc-module",
             mode: isRSCProductionMode(ctx) ? "production" : "development",
             nonce,
           });

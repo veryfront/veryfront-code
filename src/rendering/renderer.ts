@@ -713,7 +713,9 @@ export class Renderer {
     colorScheme?: "light" | "dark",
     generation = 0,
   ): string {
-    return `${ctx.cachePrefix}:${slug}:${colorScheme ?? "default"}:generation-${generation}`;
+    return `${ctx.cachePrefix}:modules-${ctx.clientModuleStrategy}:${slug}:${
+      colorScheme ?? "default"
+    }:generation-${generation}`;
   }
 
   /**
@@ -861,7 +863,7 @@ export class Renderer {
     ctx: RenderContext,
     cachePolicy: RenderCachePolicy,
   ): string {
-    return `${ctx.cachePrefix}:canonical:${cachePolicy.configDigest}`;
+    return `${ctx.cachePrefix}:modules-${ctx.clientModuleStrategy}:canonical:${cachePolicy.configDigest}`;
   }
 
   private rememberProductionPrewarm(key: string, promise: Promise<void>): void {
@@ -935,7 +937,8 @@ export class Renderer {
   ): void {
     if (!this.shouldScheduleProductionStaleRefresh(ctx, options, cachePolicy)) return;
 
-    const refreshKey = `${ctx.cachePrefix}:refresh:${cachePolicy.cacheKey}`;
+    const refreshKey =
+      `${ctx.cachePrefix}:modules-${ctx.clientModuleStrategy}:refresh:${cachePolicy.cacheKey}`;
     if (this.productionPrewarmContexts.has(refreshKey)) return;
 
     const refreshOptions = this.buildStaleRefreshOptions(ctx, options);
@@ -1568,6 +1571,7 @@ export class Renderer {
       config: ctx.config,
       mode: ctx.mode,
       isLocalProject: ctx.isLocalProject === true,
+      clientModuleStrategy: ctx.clientModuleStrategy,
     });
 
     const ssrOrchestrator = new SSROrchestrator({
@@ -1612,6 +1616,7 @@ export class Renderer {
         mode: ctx.mode,
         projectDir: ctx.projectDir,
         isLocalProject: ctx.isLocalProject === true,
+        clientModuleStrategy: ctx.clientModuleStrategy,
         projectId: ctx.projectId,
         contentSourceId: ctx.contentSourceId,
         config: ctx.config,
@@ -1689,6 +1694,7 @@ export class Renderer {
       ctx.projectDir,
       ctx.port ?? null,
       ctx.moduleServerUrl ?? null,
+      ctx.clientModuleStrategy,
       ctx.config.resolve?.importMap ?? null,
     ]);
   }

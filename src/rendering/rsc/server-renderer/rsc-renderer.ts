@@ -18,8 +18,7 @@ export class RSCRenderer {
 
   constructor(options: RSCRendererOptions) {
     this.mode = options.mode ?? "development";
-    this.clientModuleStrategy = options.clientModuleStrategy ??
-      (this.mode === "development" ? "fs" : "rsc-module");
+    this.clientModuleStrategy = options.clientModuleStrategy === "fs" ? "fs" : "rsc-module";
     this.reactVersion = options.reactVersion;
     this.clientManifest = this.resolveClientManifest(options.clientManifest);
   }
@@ -78,11 +77,7 @@ export class RSCRenderer {
 
       const rel = meta.rel;
       if (!rel) {
-        resolved.set(id, {
-          ...meta,
-          path: appendClientModuleVersion(meta.path, meta.contentHash),
-        });
-        continue;
+        throw new Error(`Client component ${id} is missing its project-relative module path`);
       }
 
       const moduleUrl = buildClientModuleUrl({

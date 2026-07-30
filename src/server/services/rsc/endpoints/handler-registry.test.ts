@@ -264,8 +264,14 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       __injectCacheForTests(cache);
 
       getRSCHandler("/dir", "proj-123");
-      assertEquals(cache.entries.has('["proj-123",false,"production","app",null]'), true);
-      assertEquals(cache.entries.has('["/dir",false,"production","app",null]'), false);
+      assertEquals(
+        cache.entries.has('["proj-123",false,"rsc-module","production","app",null]'),
+        true,
+      );
+      assertEquals(
+        cache.entries.has('["/dir",false,"rsc-module","production","app",null]'),
+        false,
+      );
     });
 
     it("should use projectDir as cache key when projectId is undefined", () => {
@@ -274,7 +280,7 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
 
       getRSCHandler("/project/dir");
       assertEquals(
-        cache.entries.has('["/project/dir",false,"production","app",null]'),
+        cache.entries.has('["/project/dir",false,"rsc-module","production","app",null]'),
         true,
       );
     });
@@ -289,25 +295,29 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       assertEquals(cache.size, 2);
     });
 
-    it("separates cached handlers by trusted local mode and configured app directory", () => {
+    it("separates cached handlers by module strategy, mode, and configured app directory", () => {
       const cache = createStubCache();
       __injectCacheForTests(cache);
 
       const remote = getRSCHandler("/dir", "project", {
         config: { directories: { app: "app" } },
         isLocalProject: false,
+        clientModuleStrategy: "rsc-module",
       });
       const local = getRSCHandler("/dir", "project", {
         config: { directories: { app: "app" } },
         isLocalProject: true,
+        clientModuleStrategy: "fs",
       });
       const customApp = getRSCHandler("/dir", "project", {
         config: { directories: { app: "frontend" } },
         isLocalProject: false,
+        clientModuleStrategy: "rsc-module",
       });
       const remotePreview = getRSCHandler("/dir", "project", {
         config: { directories: { app: "app" } },
         isLocalProject: false,
+        clientModuleStrategy: "rsc-module",
         mode: "development",
       });
 
@@ -315,6 +325,25 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       assertEquals(remote !== customApp, true);
       assertEquals(remote !== remotePreview, true);
       assertEquals(cache.size, 4);
+    });
+
+    it("separates locality-dependent content identities even with the same strategy", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const hosted = getRSCHandler("/dir", "project", {
+        isLocalProject: false,
+        clientModuleStrategy: "rsc-module",
+        mode: "development",
+      });
+      const localProductionProfile = getRSCHandler("/dir", "project", {
+        isLocalProject: true,
+        clientModuleStrategy: "rsc-module",
+        mode: "development",
+      });
+
+      assertEquals(hosted !== localProductionProfile, true);
+      assertEquals(cache.size, 2);
     });
 
     it("separates cached handlers by configured React version", () => {

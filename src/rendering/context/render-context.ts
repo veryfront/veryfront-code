@@ -10,6 +10,7 @@ import {
   parseRenderCacheKey,
 } from "#veryfront/cache/keys.ts";
 import { getReadyManifestForRender } from "#veryfront/release-assets/manifest-cache.ts";
+import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 
 export type RenderEnvironment = "preview" | "production";
 
@@ -21,6 +22,8 @@ export interface RenderContext {
   mode: "development" | "production";
   /** Whether browser-facing local filesystem module URLs are trusted. */
   isLocalProject?: boolean;
+  /** Exact browser module transport authorized for this request. */
+  clientModuleStrategy: ClientModuleStrategy;
   adapter: RuntimeAdapter;
   cachePrefix: string;
   environment: RenderEnvironment;
@@ -59,6 +62,7 @@ export function createRenderContext(
   const projectId = ctx.projectId ?? ctx.projectSlug!;
   const projectSlug = ctx.projectSlug ?? ctx.projectId!;
   const isLocal = !!ctx.isLocalProject;
+  const clientModuleStrategy = ctx.clientModuleStrategy === "fs" ? "fs" : "rsc-module";
 
   const contentSourceId = computeContentSourceId(
     isLocal,
@@ -83,6 +87,7 @@ export function createRenderContext(
     config: ctx.config,
     mode: isLocal ? "development" : "production",
     isLocalProject: isLocal,
+    clientModuleStrategy,
     adapter: ctx.adapter,
     cachePrefix,
     environment,
@@ -137,6 +142,7 @@ export function createRenderContextFromEnriched(
     config: enriched.config,
     mode: enriched.mode,
     isLocalProject: enriched.isLocalProject,
+    clientModuleStrategy: enriched.clientModuleStrategy,
     adapter: enriched.adapter,
     cachePrefix: enriched.cachePrefix,
     environment: enriched.environment,
@@ -151,7 +157,10 @@ export function createRenderContextFromEnriched(
 }
 
 export function createCacheKey(ctx: RenderContext, contentKey: string): string {
-  return buildRenderCacheKey(ctx.cachePrefix, contentKey);
+  return buildRenderCacheKey(
+    ctx.cachePrefix,
+    `modules-${ctx.clientModuleStrategy}:${contentKey}`,
+  );
 }
 
 export const parseCacheKey = parseRenderCacheKey;

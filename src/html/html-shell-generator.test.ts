@@ -728,7 +728,7 @@ describe("html-generation/html-shell-generator", () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",
         createMeta(),
-        createOptions({ isLocalProject: true }),
+        createOptions({ isLocalProject: true, clientModuleStrategy: "fs" }),
       );
 
       assertStringIncludes(result, "Client-side error logger");

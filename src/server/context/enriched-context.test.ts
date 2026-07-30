@@ -65,6 +65,7 @@ function makeEnriched(
     cachePrefix: "proj_1:production:unknown:v1",
     createdAt: Date.now(),
     ...overrides,
+    clientModuleStrategy: overrides.clientModuleStrategy === "fs" ? "fs" : "rsc-module",
   };
 }
 
@@ -94,6 +95,7 @@ describe("enriched-context", () => {
       assertEquals(ctx.environment, "production");
       assertEquals(ctx.branch, null);
       assertEquals(ctx.isLocalProject, false);
+      assertEquals(ctx.clientModuleStrategy, "rsc-module");
       assertEquals(ctx.contentSourceId, "release-abc123");
       assertEquals(ctx.adapter, stubAdapter);
       assertEquals(ctx.config, stubConfig);

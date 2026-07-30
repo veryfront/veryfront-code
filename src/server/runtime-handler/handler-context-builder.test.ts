@@ -30,6 +30,7 @@ function makeOpts(overrides: Partial<HandlerContextOptions> = {}): HandlerContex
     },
     routeRegistry: {} as any,
     isLocalProject: false,
+    allowDevelopmentModuleServing: false,
     allowHostProjectCodeExecution: false,
     moduleServerUrl: "https://modules.example.com",
     environmentId: "env-789",
@@ -58,6 +59,7 @@ describe("buildHandlerContext", () => {
     assertEquals(ctx.resolvedEnvironment, "production");
     assertEquals(ctx.routeRegistry, opts.routeRegistry);
     assertEquals(ctx.isLocalProject, false);
+    assertEquals(ctx.clientModuleStrategy, "rsc-module");
     assertEquals(ctx.allowHostProjectCodeExecution, false);
     assertEquals(ctx.environmentId, "env-789");
     assertEquals(ctx.enriched !== undefined, true);
@@ -68,6 +70,25 @@ describe("buildHandlerContext", () => {
     const ctx = buildHandlerContext(opts);
 
     assertEquals(ctx.proxyToken, undefined);
+  });
+
+  it("authorizes filesystem modules only for local projects under a development registry", () => {
+    const matrix = [
+      { isLocalProject: true, allowDevelopmentModuleServing: true, expected: "fs" },
+      { isLocalProject: true, allowDevelopmentModuleServing: false, expected: "rsc-module" },
+      { isLocalProject: false, allowDevelopmentModuleServing: true, expected: "rsc-module" },
+      { isLocalProject: false, allowDevelopmentModuleServing: false, expected: "rsc-module" },
+    ] as const;
+
+    for (const row of matrix) {
+      const ctx = buildHandlerContext(makeOpts({
+        isLocalProject: row.isLocalProject,
+        allowDevelopmentModuleServing: row.allowDevelopmentModuleServing,
+        resolvedEnvironment: "preview",
+      }));
+      assertEquals(ctx.clientModuleStrategy, row.expected);
+      assertEquals(ctx.enriched?.clientModuleStrategy, row.expected);
+    }
   });
 
   it("builds enriched context when both config and projectSlug present", () => {
@@ -171,6 +192,7 @@ describe("buildMinimalContext", () => {
     assertEquals(ctx.projectSlug, undefined);
     assertEquals(ctx.routeRegistry, undefined);
     assertEquals(ctx.isLocalProject, undefined);
+    assertEquals(ctx.clientModuleStrategy, undefined);
     assertEquals(ctx.allowHostProjectCodeExecution, undefined);
   });
 });

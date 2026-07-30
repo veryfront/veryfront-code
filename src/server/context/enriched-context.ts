@@ -37,6 +37,7 @@ export function buildEnrichedContext(options: BuildEnrichedContextOptions): Enri
     environment: options.environment,
     branch: options.branch,
     isLocalProject: options.isLocalProject,
+    clientModuleStrategy: options.clientModuleStrategy === "fs" ? "fs" : "rsc-module",
     mode: options.isLocalProject ? "development" : "production",
 
     contentSourceId: options.contentSourceId,

@@ -25,6 +25,8 @@ import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation
 import { defaultDiscoveryCache } from "./local-project-discovery.ts";
 import { runWithProjectEnv } from "../project-env/storage.ts";
 import { requestTracker } from "./request-tracker.ts";
+import { installTestCSSOptimizationEngine } from "../../../tests/_helpers/css-optimization-engine.ts";
+import { installTestCSSProcessor } from "../../../tests/_helpers/css-processor.ts";
 
 const encoder = new TextEncoder();
 
@@ -962,6 +964,8 @@ describe("server/runtime-handler/index", () => {
 
   it("keeps an adapter-consumed hosted source authoritative for WebSocket requests", async () => {
     const contexts: ProxyRunWithContextOptions[] = [];
+    const restoreCSSProcessor = installTestCSSProcessor();
+    const restoreCSSOptimizationEngine = installTestCSSOptimizationEngine();
     const adapter = createProxySecurityAdapter(
       "export default { security: { cors: false } };",
       undefined,
@@ -1000,6 +1004,8 @@ describe("server/runtime-handler/index", () => {
         true,
       );
     } finally {
+      restoreCSSOptimizationEngine();
+      restoreCSSProcessor();
       if (previousTrustSetting === undefined) {
         Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
       } else {

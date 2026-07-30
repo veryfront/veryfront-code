@@ -234,7 +234,7 @@ describe("html/html-injection", () => {
         baseTemplate,
         "<p>content</p>",
         minMeta,
-        { mode: "development", slug: "test" },
+        { mode: "development", slug: "test", clientModuleStrategy: "fs" },
       );
 
       assertEquals(html.includes("hmr.js"), true);
@@ -296,6 +296,7 @@ describe("html/html-injection", () => {
           slug: "test",
           pagePath: "/app/page.tsx",
           isClientPage: true,
+          clientModuleStrategy: "rsc-module",
         },
       );
 
@@ -361,6 +362,7 @@ describe("html/html-injection", () => {
           slug: "docs/guides/intro",
           pagePath: "/app/page.tsx",
           isClientPage: true,
+          clientModuleStrategy: "rsc-module",
           params: { slug: ["guides", "intro"] },
         },
       );
@@ -460,6 +462,7 @@ describe("html/html-injection", () => {
           slug: "test",
           pagePath: "/app/page.tsx",
           isClientPage: true,
+          clientModuleStrategy: "fs",
         },
       );
 
@@ -520,6 +523,7 @@ describe("html/html-injection", () => {
           mode: "development",
           slug: "test",
           nonce: "nonce-123",
+          clientModuleStrategy: "fs",
         },
       );
 

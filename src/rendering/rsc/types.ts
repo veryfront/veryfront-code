@@ -1,5 +1,6 @@
 export type {
   ClientComponentMeta,
+  ClientModuleStrategy,
   ComponentAnalysis,
   ComponentType,
   RSCChildrenPayload,

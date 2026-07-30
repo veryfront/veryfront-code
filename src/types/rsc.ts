@@ -1,3 +1,6 @@
+/** Browser transport used to load React client modules. */
+export type ClientModuleStrategy = "fs" | "rsc-module";
+
 /** Serializable node in a React Server Components render tree. */
 export interface RSCNode {
   /** Node role in the server-rendered tree. */
@@ -64,7 +67,7 @@ export interface RSCRendererOptions {
   /** Optimization mode used for the render. */
   mode?: "development" | "production";
   /** Strategy used to resolve browser client modules. */
-  clientModuleStrategy?: "fs" | "rsc-module";
+  clientModuleStrategy?: ClientModuleStrategy;
   /** React version used to select the matching server renderer module. */
   reactVersion?: string;
 }

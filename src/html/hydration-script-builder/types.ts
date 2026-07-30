@@ -1,4 +1,4 @@
-import type { ClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
+import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 import type { BuildVersion } from "#veryfront/utils/version.ts";
 
 export interface HydrationLayout {

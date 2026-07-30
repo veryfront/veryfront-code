@@ -313,15 +313,24 @@ describe("hydration-data-generator", () => {
       assertEquals(parsed.pageType, "tsx");
     });
 
-    it("should choose fs client modules for local projects", () => {
+    it("should preserve an explicitly authorized fs client module strategy", () => {
       const options: HTMLGenerationOptions = {
         ...baseOptions,
         isLocalProject: true,
+        clientModuleStrategy: "fs",
       };
       const parsed = parseHydrationData("page", {}, {}, options) as {
         clientModuleStrategy?: unknown;
       };
       assertEquals(parsed.clientModuleStrategy, "fs");
+    });
+
+    it("should fail closed for local projects without an explicit strategy", () => {
+      const parsed = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        isLocalProject: true,
+      }) as { clientModuleStrategy?: unknown };
+      assertEquals(parsed.clientModuleStrategy, "rsc-module");
     });
 
     it("should choose rsc module client loading for remote preview pages", () => {

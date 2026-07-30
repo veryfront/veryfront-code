@@ -1,6 +1,6 @@
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
 import { buildTrustedHtmlValidatorScript } from "#veryfront/security/client/html-sanitizer.ts";
-import type { ClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
+import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 import { HYDRATION_DATA_ID } from "#veryfront/rendering/rsc/constants.ts";
 
 /**

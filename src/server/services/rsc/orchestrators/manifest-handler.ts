@@ -18,6 +18,7 @@ import {
 } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 import { snapshotClientComponentMeta } from "#veryfront/rendering/rsc/client-manifest-snapshot.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 
 /** TTL in seconds for external cache repository */
 const MANIFEST_CACHE_TTL_SECONDS = Math.floor(RSC_MANIFEST_CACHE_TTL_MS / 1000);
@@ -29,7 +30,7 @@ export class ManifestHandler {
   private cacheMutation: Promise<void> = Promise.resolve();
   private readonly cacheRepo?: CacheRepository<string>;
   private readonly appDir: string;
-  private readonly isLocalProject: boolean;
+  private readonly clientModuleStrategy: ClientModuleStrategy;
   private readonly cacheKey: string;
   private readonly fs?: FileSystemAdapter;
 
@@ -38,18 +39,18 @@ export class ManifestHandler {
     options?: {
       cacheRepo?: CacheRepository<string>;
       appDir?: string;
-      isLocalProject?: boolean;
+      clientModuleStrategy?: ClientModuleStrategy;
       fs?: FileSystemAdapter;
       contentSourceId?: string;
     },
   ) {
     this.cacheRepo = options?.cacheRepo;
     this.appDir = options?.appDir ?? "app";
-    this.isLocalProject = options?.isLocalProject ?? true;
+    this.clientModuleStrategy = options?.clientModuleStrategy === "fs" ? "fs" : "rsc-module";
     this.fs = options?.fs;
     this.cacheKey = [
       "rsc-manifest",
-      this.isLocalProject ? "local" : "remote",
+      this.clientModuleStrategy,
       this.appDir,
       options?.contentSourceId ?? "default",
     ].join(":");
@@ -144,11 +145,11 @@ export class ManifestHandler {
     for (const [id, sourceMeta] of [...manifest].sort(([a], [b]) => a.localeCompare(b))) {
       const meta = snapshotClientComponentMeta(sourceMeta);
       const rel = meta.rel;
-      if (!this.isLocalProject && !rel) {
+      if (this.clientModuleStrategy === "rsc-module" && !rel) {
         throw new Error(`Client component ${id} is missing its project-relative module path`);
       }
 
-      const moduleUrl = this.isLocalProject
+      const moduleUrl = this.clientModuleStrategy === "fs"
         ? appendClientModuleVersion(meta.path, meta.contentHash)
         : buildClientModuleUrl({
           strategy: "rsc-module",
@@ -175,7 +176,7 @@ export class ManifestHandler {
       });
       graphIds.client.push({
         id,
-        path: this.isLocalProject ? (meta.sourcePath ?? meta.path) : graphRel,
+        path: this.clientModuleStrategy === "fs" ? (meta.sourcePath ?? meta.path) : graphRel,
         rel: graphRel,
       });
     }

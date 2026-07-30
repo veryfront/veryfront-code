@@ -18,6 +18,7 @@ import type { HandlerContext } from "../handlers/types.ts";
 import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { buildEnrichedContext } from "../context/enriched-context.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
+import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 
 export interface HandlerContextOptions {
   /** Project directory */
@@ -52,6 +53,8 @@ export interface HandlerContextOptions {
   routeRegistry: RouteRegistry;
   /** Whether this is a local project */
   isLocalProject: boolean;
+  /** Whether the active registry exposes development module routes. */
+  allowDevelopmentModuleServing: boolean;
   /** Whether project modules may execute in the server process */
   allowHostProjectCodeExecution: boolean;
   /** Module server URL */
@@ -66,6 +69,10 @@ export interface HandlerContextOptions {
  * Build the HandlerContext for route handlers.
  */
 export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext {
+  const clientModuleStrategy = determineClientModuleStrategy({
+    isLocalProject: opts.isLocalProject,
+    allowDevelopmentModuleServing: opts.allowDevelopmentModuleServing,
+  });
   const contentSourceId = opts.skipEnrichedContext ? undefined : computeContentSourceId(
     opts.isLocalProject,
     opts.resolvedEnvironment,
@@ -84,6 +91,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
       environment: opts.resolvedEnvironment,
       branch: opts.requestContext.branch,
       isLocalProject: opts.isLocalProject,
+      clientModuleStrategy,
       contentSourceId,
       parsedDomain: opts.parsedDomain,
       adapter: opts.adapter,
@@ -113,6 +121,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     requestContext: { ...opts.requestContext, mode: opts.resolvedEnvironment },
     routeRegistry: opts.routeRegistry,
     isLocalProject: opts.isLocalProject,
+    clientModuleStrategy,
     allowHostProjectCodeExecution: opts.allowHostProjectCodeExecution,
     environmentId: opts.environmentId,
     enriched: enrichedContext,

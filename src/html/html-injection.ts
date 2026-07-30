@@ -1,7 +1,7 @@
 import type { HTMLMetadata } from "#veryfront/transforms/mdx/types.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors/error-registry/general.ts";
 import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
-import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
+import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 import {
   generateLinkTags,
   generateMetaTags,
@@ -123,6 +123,8 @@ export interface InjectHTMLContentOptions {
   environment?: "preview" | "production";
   /** Whether the request is being served from a local project */
   isLocalProject?: boolean;
+  /** Exact browser module transport authorized by the serving runtime. */
+  clientModuleStrategy?: ClientModuleStrategy;
   /**
    * @deprecated Retained for source compatibility. The Studio bridge no
    * longer opens a direct Yjs connection.
@@ -263,10 +265,7 @@ export function injectHTMLContent(
       params: options.params ?? {},
       props: {},
       layouts: [],
-      clientModuleStrategy: determineClientModuleStrategy({
-        isLocalProject: options.isLocalProject ?? options.mode === "development",
-        environment: options.environment,
-      }),
+      clientModuleStrategy: options.clientModuleStrategy === "fs" ? "fs" : "rsc-module",
       releaseId: releaseManifest?.releaseId,
       releaseAssetModules: buildReleaseAssetModules(releaseManifest, {
         route: routeForConfiguredPage(pagePath, options.directories),
@@ -281,7 +280,7 @@ export function injectHTMLContent(
     html = replaceLiteral(html, /<\/body>/i, `${hydrationScript}</body>`);
   }
 
-  if (options.mode === "development") {
+  if (options.clientModuleStrategy === "fs") {
     const hasDevScriptsPlaceholder = /{{\s*devScripts\s*}}/i.test(html);
 
     if (hasDevScriptsPlaceholder) {

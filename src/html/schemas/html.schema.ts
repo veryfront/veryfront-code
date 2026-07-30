@@ -102,6 +102,7 @@ export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
       .optional(),
     projectClasses: v.custom<Set<string>>((val) => val instanceof Set).optional(),
     isLocalProject: v.boolean().optional(),
+    clientModuleStrategy: getClientModuleStrategySchema().optional(),
     noHmr: v.boolean().optional(),
     forceProductionScripts: v.boolean().optional(),
   })

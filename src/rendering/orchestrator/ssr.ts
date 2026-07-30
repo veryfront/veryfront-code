@@ -13,6 +13,7 @@ import { normalizeRoutePathname } from "./path-helpers.ts";
 import { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RendererOptions, RenderOptions, RenderResult } from "./types.ts";
 import type { StaticPathsResult } from "#veryfront/data";
+import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 
 // Re-export types for backward compatibility
 export type { PageDataResponse, RendererOptions, RenderOptions, RenderResult } from "./types.ts";
@@ -65,6 +66,7 @@ export class VeryfrontRenderer {
   private projectDir: string;
   private mode: "development" | "production";
   private isLocalProject: boolean;
+  private clientModuleStrategy: ClientModuleStrategy;
   private preloadedConfig?: VeryfrontConfig;
   private readonly configuredProjectId?: string;
   private readonly configuredProjectSlug?: string;
@@ -81,6 +83,7 @@ export class VeryfrontRenderer {
     this.projectDir = options.projectDir;
     this.mode = options.mode;
     this.isLocalProject = options.isLocalProject === true;
+    this.clientModuleStrategy = options.clientModuleStrategy === "fs" ? "fs" : "rsc-module";
     this.adapter = options.adapter;
     this.port = options.port ?? DEFAULT_DASHBOARD_PORT;
     this.moduleServerUrl = options.moduleServerUrl;
@@ -230,6 +233,7 @@ export class VeryfrontRenderer {
       config,
       mode,
       isLocalProject: this.isLocalProject,
+      clientModuleStrategy: this.clientModuleStrategy,
     });
 
     this.ssrOrchestrator = new SSROrchestrator({
@@ -251,6 +255,7 @@ export class VeryfrontRenderer {
       mode,
       projectDir,
       isLocalProject: this.isLocalProject,
+      clientModuleStrategy: this.clientModuleStrategy,
       projectId: this.projectId,
       contentSourceId: this.contentSourceId,
       config,

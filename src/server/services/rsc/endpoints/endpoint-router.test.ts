@@ -1471,13 +1471,14 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       assertEquals(result instanceof Response, true);
     });
 
-    it("keeps runtime mode independent from local filesystem trust", async () => {
+    it("uses the exact module strategy independently from runtime mode and locality", async () => {
       const remotePreview = await handleRSCEndpoint(
         makeParams({
           pathname: "/_veryfront/rsc/page",
           projectId: "remote-preview-project",
           config: rscEnabledConfig,
           isLocalProject: false,
+          clientModuleStrategy: "rsc-module",
           mode: "development",
         }),
       );
@@ -1487,15 +1488,32 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
           projectId: "local-production-project",
           config: rscEnabledConfig,
           isLocalProject: true,
+          clientModuleStrategy: "rsc-module",
           mode: "production",
         }),
       );
+      const localDevelopment = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/page",
+          projectId: "local-development-project",
+          config: rscEnabledConfig,
+          isLocalProject: true,
+          clientModuleStrategy: "fs",
+          mode: "development",
+        }),
+      );
 
-      assertStringIncludes(await remotePreview!.text(), "window.__VERYFRONT_DEV__ = true");
+      const remotePreviewHtml = await remotePreview!.text();
+      const localProductionHtml = await localProduction!.text();
+      const localDevelopmentHtml = await localDevelopment!.text();
+      assertStringIncludes(remotePreviewHtml, "window.__VERYFRONT_DEV__ = true");
+      assertStringIncludes(remotePreviewHtml, '"clientModuleStrategy":"rsc-module"');
       assertStringIncludes(
-        await localProduction!.text(),
+        localProductionHtml,
         "window.__VERYFRONT_DEV__ = false",
       );
+      assertStringIncludes(localProductionHtml, '"clientModuleStrategy":"rsc-module"');
+      assertStringIncludes(localDevelopmentHtml, '"clientModuleStrategy":"fs"');
     });
   });
 
