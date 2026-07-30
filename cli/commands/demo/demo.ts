@@ -6,7 +6,6 @@
 
 import { chdir, cwd, promptSync, writeStdout } from "veryfront/platform";
 import { getStdinReader, setRawMode } from "veryfront/platform";
-import { join } from "veryfront/platform/path";
 import {
   AnimatedDotMatrix,
   bold,
@@ -38,7 +37,7 @@ import {
   DEFAULT_LOGIN_TIMEOUT_MS,
   resolveCliApiUrl,
 } from "#cli/shared/constants";
-import { initCommand } from "../init/index.ts";
+import { createProject as createSharedProject } from "../../shared/project-creation.ts";
 import { writeProjectLink } from "../../shared/project-link.ts";
 import { randomSuffix } from "#cli/shared/slug";
 import { deployCommand } from "../deploy/index.ts";
@@ -353,16 +352,21 @@ async function executeStepAction(
     }
 
     case "create": {
-      await initCommand({
+      const creation = await createSharedProject({
         name: projectName,
+        parentDir: cwd(),
         template: "ai-agent",
-        quiet: true,
-        skipInstall: true,
-        skipEnvPrompt: true,
-        force: true,
+        runtime: "node",
+        features: [],
+        integrations: [],
+        environmentValues: {},
+        conflictPolicy: "overwrite",
+        installDependencies: false,
+        initializeGit: false,
+        includePackageMetadata: false,
       });
 
-      const projectDir = join(cwd(), projectName);
+      const projectDir = creation.projectDir;
       const slug = `${projectName}-${randomSuffix()}`;
       actualProjectSlug = slug;
 
