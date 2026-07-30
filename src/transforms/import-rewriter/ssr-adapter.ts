@@ -107,12 +107,7 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
   // In Node.js, we need to convert them to esm.sh URLs (handled in rewriteBareImports)
   if (specifier.startsWith("npm:")) return isDeno;
 
-  if (
-    /^(?:https?|file|node):/i.test(specifier) ||
-    specifier.startsWith("//")
-  ) {
-    return true;
-  }
+  if (/^(?:https?|file|node):/i.test(specifier)) return true;
 
   if (specifier.startsWith("@/")) return true;
   if (specifier.startsWith("veryfront/")) return true;
