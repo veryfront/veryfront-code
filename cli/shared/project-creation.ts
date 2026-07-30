@@ -1,4 +1,5 @@
 import { createError, toError } from "veryfront/errors";
+import { cliLogger as logger } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { ensureDir } from "#std/fs.ts";
@@ -190,6 +191,8 @@ function validateOrThrow<T extends string>(
   const validation = validate(values);
   if (validation.valid) return;
 
+  for (const error of validation.errors) logger.error(error);
+
   throw createConfigError(`Invalid ${kind} specified`);
 }
 
@@ -246,11 +249,21 @@ async function assembleFeatureFiles(
   if (!features.length) return { files, tips };
 
   const { ordered, errors } = await resolveFeatures(features);
-  if (errors.length) throw createConfigError("Failed to resolve features");
+  if (errors.length) {
+    for (const error of errors) logger.error(error);
+    throw createConfigError("Failed to resolve features");
+  }
+
+  logger.debug(`Resolved feature order: ${ordered.join(" -> ")}`);
 
   for (const featureName of ordered) {
     const feature = await loadFeature(featureName);
-    if (!feature) continue;
+    if (!feature) {
+      logger.warn(`Feature ${featureName} not found, skipping`);
+      continue;
+    }
+
+    logger.debug(`Loading feature: ${featureName} (${feature.files.length} files)`);
 
     files = mergeFiles(files, feature.files);
     if (feature.config.envVars) allEnvVars.push(...feature.config.envVars);
@@ -271,6 +284,8 @@ async function assembleIntegrationFiles(
 
   if (!integrations.length) return { files, loadedIntegrations, tips };
 
+  logger.debug(`Loading integrations: ${integrations.join(", ")}`);
+
   files = mergeFiles(files, getIntegrationBaseFiles());
   files = mergeFiles(files, await loadIntegrationBaseFilesFromDirectory());
 
@@ -280,8 +295,13 @@ async function assembleIntegrationFiles(
   const {
     integrations: resolvedIntegrations,
     files: integrationFiles,
+    errors: integrationErrors,
   } = await loadIntegrations(integrations);
   loadedIntegrations = resolvedIntegrations;
+
+  if (integrationErrors.length) {
+    for (const error of integrationErrors) logger.warn(error);
+  }
 
   files = mergeFiles(files, integrationFiles);
 
@@ -295,6 +315,10 @@ async function assembleIntegrationFiles(
       content: generateIntegrationsStatusRoute(loadedIntegrations),
     },
   ]);
+
+  logger.debug(
+    `Loaded ${loadedIntegrations.length} integrations with ${integrationFiles.length} files`,
+  );
 
   tips.push(`Integrations loaded: ${integrations.join(", ")}`);
   tips.push("Visit /setup for guided OAuth app setup");
@@ -320,6 +344,7 @@ async function writeScaffoldFiles(
 
     await fs.writeTextFile(filePath, file.content);
     createdPaths.push(file.path);
+    logger.debug(`Created file: ${file.path}`);
   }
 
   return createdPaths;
@@ -347,7 +372,9 @@ async function writeEnvFiles(
   );
 
   await fs.writeTextFile(join(projectDir, ".env"), envResult.envContent);
+  logger.debug("Created file: .env");
   await fs.writeTextFile(join(projectDir, ".env.example"), envResult.envExampleContent);
+  logger.debug("Created file: .env.example");
   return [".env", ".env.example"];
 }
 
@@ -362,6 +389,7 @@ async function writeGitignore(projectDir: string): Promise<void> {
   }
 
   await fs.writeTextFile(gitignorePath, generateGitignoreContent(existingGitignore));
+  logger.debug("Updated file: .gitignore");
 }
 
 function packageManagerPreference(runtime: InitRuntime): PackageManager {
