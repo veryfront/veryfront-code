@@ -5,6 +5,7 @@ import {
   type NodeServer,
 } from "#veryfront/platform/adapters/runtime/node/http-server.ts";
 import { ServerStartupCleanupError } from "./startup-cleanup-error.ts";
+import type { NodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
 
 /** Public API contract for veryfront service server fetch. */
 export type VeryfrontServiceServerFetch = (request: Request) => Response | Promise<Response>;
@@ -52,6 +53,8 @@ export type StartNodeVeryfrontServerOptions = {
   logger?: VeryfrontServiceServerLogger;
   signals?: readonly NodeJS.Signals[];
   hardShutdownTimeoutMs?: number;
+  /** Explicit Node WebSocket implementation; upgrades fail closed when omitted. */
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
 };
 
 /** Options accepted by start veryfront server. */
@@ -62,6 +65,8 @@ export type StartVeryfrontServerOptions = {
   logger?: VeryfrontServiceServerLogger;
   signals?: readonly NodeJS.Signals[];
   hardShutdownTimeoutMs?: number;
+  /** Used only when the selected runtime is Node.js. */
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
 };
 
 /** Public API contract for veryfront service server runtime kind. */
@@ -890,6 +895,7 @@ export async function startNodeVeryfrontServer(
       port: options.port,
       hostname: bindAddress,
       signal: startupController.signal,
+      nodeWebSocketServerProvider: options.nodeWebSocketServerProvider,
       onListen: (address) => {
         listeningPort = address.port;
         listeningUrl = `http://${bindAddress}:${listeningPort}`;

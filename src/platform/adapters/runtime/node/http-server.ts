@@ -7,6 +7,12 @@ import {
 import type { NodeHttpServer, WSWebSocket, WSWebSocketServer } from "./types.ts";
 import { DEFAULT_PORT } from "../../../compat/constants.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors/error-registry/general.ts";
+import {
+  captureNodeWebSocketServer,
+  NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE,
+  type NodeWebSocketServerOptions,
+  snapshotNodeWebSocketServerProvider,
+} from "#veryfront/extensions/websocket";
 
 const pendingWebSocketUpgrades = new Map<
   string,
@@ -378,14 +384,6 @@ function appendApplicationUpgradeHeaders(
   for (const cookie of setCookies) wireHeaders.push(`set-cookie: ${cookie}`);
 }
 
-export interface NodeWebSocketServerOptions {
-  readonly noServer: true;
-  readonly handleProtocols: (
-    protocols: ReadonlySet<string>,
-    request: object,
-  ) => string | false;
-}
-
 /**
  * Request-scoped handshake metadata shared with `ws`.
  *
@@ -569,6 +567,9 @@ async function createNodeServerInternal(
     onRuntimeError,
     signal,
   } = options;
+  const nodeWebSocketServerProvider = options.nodeWebSocketServerProvider === undefined
+    ? undefined
+    : snapshotNodeWebSocketServerProvider(options.nodeWebSocketServerProvider);
   if (onRuntimeError !== undefined && typeof onRuntimeError !== "function") {
     throw new TypeError("Node server runtime error callback must be a function");
   }
@@ -584,6 +585,8 @@ async function createNodeServerInternal(
       : new DOMException("Node server startup was aborted", "AbortError");
   }
   let wsServer: WSWebSocketServer | null = null;
+  const ownedWebSocketServers = new Set<WSWebSocketServer>();
+  const webSocketServerRetirements = new Map<WSWebSocketServer, Promise<void>>();
   let upgradesDisposed = false;
   const rawUpgradeSockets = new Set<import("node:stream").Duplex>();
   const activeRequestIds = new Set<string>();
@@ -593,6 +596,65 @@ async function createNodeServerInternal(
   let transportErrorListener: ((error: Error) => void) | undefined;
   let startupListeningListener: (() => void) | undefined;
   let retainTransportErrorListener = false;
+
+  const retireWebSocketServer = (ownedServer: WSWebSocketServer): Promise<void> => {
+    if (!ownedWebSocketServers.has(ownedServer)) return Promise.resolve();
+    const existing = webSocketServerRetirements.get(ownedServer);
+    if (existing) return existing;
+
+    const attempt = Promise.resolve().then(async () => {
+      const failures: unknown[] = [];
+      try {
+        for (const client of ownedServer.clients ?? []) {
+          try {
+            if (client.terminate) client.terminate();
+            else client.close();
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+      } catch (error) {
+        failures.push(error);
+      }
+
+      let closed = false;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          try {
+            ownedServer.close((error) => error ? reject(error) : resolve());
+          } catch (error) {
+            reject(error);
+          }
+        });
+        closed = true;
+      } catch (error) {
+        failures.push(error);
+      }
+
+      if (closed) {
+        ownedWebSocketServers.delete(ownedServer);
+        if (wsServer === ownedServer) wsServer = null;
+      }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) {
+        throw new AggregateError(failures, "Node WebSocket server retirement failed");
+      }
+    });
+    webSocketServerRetirements.set(ownedServer, attempt);
+    void attempt.then(
+      () => {
+        if (webSocketServerRetirements.get(ownedServer) === attempt) {
+          webSocketServerRetirements.delete(ownedServer);
+        }
+      },
+      () => {
+        if (webSocketServerRetirements.get(ownedServer) === attempt) {
+          webSocketServerRetirements.delete(ownedServer);
+        }
+      },
+    );
+    return attempt;
+  };
 
   const server = createServer(createNodeRequestListener(handler, hostname));
 
@@ -672,17 +734,33 @@ async function createNodeServerInternal(
           return;
         }
 
-        const { WebSocketServer } = await import("ws");
         if (upgradesDisposed || transportSettled || requestAbort.signal.aborted) {
           failUpgrade(new Error("Node server stopped before WebSocket upgrade completed"));
           return;
         }
+        if (nodeWebSocketServerProvider === undefined) {
+          failUpgrade(new Error(NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE));
+          return;
+        }
         if (!wsServer) {
-          const WebSocketServerConstructor = WebSocketServer as unknown as new (
-            options: NodeWebSocketServerOptions,
-          ) => WSWebSocketServer;
-          wsServer = new WebSocketServerConstructor(handshakeController.serverOptions);
-          handshakeController.attach(wsServer);
+          const candidate = captureNodeWebSocketServer(
+            nodeWebSocketServerProvider.createServer(
+              handshakeController.serverOptions,
+            ),
+          );
+          ownedWebSocketServers.add(candidate);
+          try {
+            handshakeController.attach(candidate);
+          } catch (error) {
+            void retireWebSocketServer(candidate).catch((cleanupError) => {
+              logContainedNodeRuntimeError(
+                "Node WebSocket initialization cleanup failed",
+                cleanupError,
+              );
+            });
+            throw error;
+          }
+          wsServer = candidate;
         }
 
         handshakeController.authorize(request, response);
@@ -733,20 +811,16 @@ async function createNodeServerInternal(
     }
     activeRequestIds.clear();
 
-    const ownedServer = wsServer;
-    if (!ownedServer) return;
-    for (const client of ownedServer.clients ?? []) {
-      if (client.terminate) client.terminate();
-      else client.close();
+    const failures: unknown[] = [];
+    await Promise.all(
+      [...ownedWebSocketServers].map((ownedServer) =>
+        retireWebSocketServer(ownedServer).catch((error) => failures.push(error))
+      ),
+    );
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, "Node WebSocket server cleanup failed");
     }
-    await new Promise<void>((resolve, reject) => {
-      try {
-        ownedServer.close((error) => error ? reject(error) : resolve());
-      } catch (error) {
-        reject(error);
-      }
-    });
-    if (wsServer === ownedServer) wsServer = null;
   };
 
   const detachTransportErrorListener = (): void => {

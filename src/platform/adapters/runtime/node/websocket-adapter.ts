@@ -49,7 +49,7 @@ export function resolveNodeWebSocketUpgradeHeaders(
     platform: "node",
     runtimeName: "Node",
     unsupportedIdleTimeoutDetail:
-      "Node ws does not support a per-connection transport idle timeout; use application-level heartbeats",
+      "The Node WebSocket provider contract does not support a per-connection transport idle timeout; use application-level heartbeats",
   });
 
   const connectionTokens = request.headers.get("connection")

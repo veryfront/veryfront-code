@@ -5,6 +5,7 @@ import {
   assertNotEquals,
   assertRejects,
   assertStrictEquals,
+  assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createServer, request as nodeRequest, Server as NativeHttpServer } from "node:http";
@@ -14,6 +15,8 @@ import { createWebSocketUpgradeResponse } from "../../base.ts";
 import { createNodeServer, createNodeServerWithStartupOwner, NodeServer } from "./http-server.ts";
 import type { NodeHttpServer } from "./types.ts";
 import { NodeServerAdapter } from "./websocket-adapter.ts";
+import { WsNodeWebSocketServerProvider } from "../../../../../extensions/ext-node-websocket-ws/src/index.ts";
+import { NODE_WEBSOCKET_SERVER_PROVIDER_PACKAGE } from "#veryfront/extensions/websocket";
 
 function createHttpServer(
   close: NodeHttpServer["close"],
@@ -726,6 +729,153 @@ describe("NodeServer lifecycle", () => {
     }
   });
 
+  it("fails an authorized upgrade closed when no Node WebSocket provider is configured", async () => {
+    const adapter = new NodeServerAdapter();
+    const applicationFailure = createDeferred<Error>();
+    const applicationClose = createDeferred<void>();
+    const server = await createNodeServer((request) => {
+      const upgrade = adapter.upgradeWebSocket(request);
+      upgrade.socket.addEventListener("error", (event) => {
+        const error = (event as ErrorEvent).error;
+        applicationFailure.resolve(
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }, { once: true });
+      upgrade.socket.addEventListener("close", () => applicationClose.resolve(), {
+        once: true,
+      });
+      return upgrade.response;
+    }, {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+    const socket = createConnection({ host: "127.0.0.1", port: server.addr.port });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("connect", resolve);
+        socket.once("error", reject);
+      });
+      const transportClosed = new Promise<void>((resolve) => {
+        socket.once("close", () => resolve());
+      });
+      socket.write(
+        "GET /_ws HTTP/1.1\r\n" +
+          "Host: 127.0.0.1\r\n" +
+          "Connection: Upgrade\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Sec-WebSocket-Version: 13\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+      );
+
+      const error = await withTimeout(
+        applicationFailure.promise,
+        1_000,
+        "Missing-provider failure did not reach the application socket",
+      );
+      assertStringIncludes(error.message, NODE_WEBSOCKET_SERVER_PROVIDER_PACKAGE);
+      await withTimeout(
+        applicationClose.promise,
+        1_000,
+        "Missing-provider application socket remained open",
+      );
+      if (isNode) {
+        await withTimeout(
+          transportClosed,
+          1_000,
+          "Missing-provider transport socket remained open",
+        );
+      }
+    } finally {
+      socket.destroy();
+      await server.stop();
+    }
+  });
+
+  it("retires an attach-failing provider server without reusing it", async () => {
+    const adapter = new NodeServerAdapter();
+    const outcomes = [createDeferred<Error>(), createDeferred<Error>()];
+    const retirements = [createDeferred<void>(), createDeferred<void>()];
+    let handlerCalls = 0;
+    let createCalls = 0;
+    let closeCalls = 0;
+    let handleUpgradeCalls = 0;
+    const provider = {
+      createServer() {
+        const generation = createCalls++;
+        const candidate = {
+          clients: new Set<never>(),
+          on() {
+            throw new Error(`attach failed for generation ${generation}`);
+          },
+          close(callback?: (error?: Error) => void) {
+            closeCalls++;
+            callback?.();
+            retirements[generation]?.resolve();
+          },
+          handleUpgrade() {
+            handleUpgradeCalls++;
+          },
+          emit() {},
+        };
+        return candidate;
+      },
+    };
+    const server = await createNodeServer((request) => {
+      const call = handlerCalls++;
+      const upgrade = adapter.upgradeWebSocket(request);
+      upgrade.socket.addEventListener("error", (event) => {
+        const error = (event as ErrorEvent).error;
+        outcomes[call]?.resolve(
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }, { once: true });
+      return upgrade.response;
+    }, {
+      hostname: "127.0.0.1",
+      port: 0,
+      nodeWebSocketServerProvider: provider,
+    });
+
+    try {
+      for (let generation = 0; generation < outcomes.length; generation++) {
+        const socket = createConnection({ host: "127.0.0.1", port: server.addr.port });
+        try {
+          await new Promise<void>((resolve, reject) => {
+            socket.once("connect", resolve);
+            socket.once("error", reject);
+          });
+          socket.write(
+            "GET /_ws HTTP/1.1\r\n" +
+              "Host: 127.0.0.1\r\n" +
+              "Connection: Upgrade\r\n" +
+              "Upgrade: websocket\r\n" +
+              "Sec-WebSocket-Version: 13\r\n" +
+              "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+          );
+
+          const error = await withTimeout(
+            outcomes[generation]!.promise,
+            1_000,
+            "Attach failure did not reach the application socket",
+          );
+          assertStringIncludes(error.message, `attach failed for generation ${generation}`);
+          await withTimeout(
+            retirements[generation]!.promise,
+            1_000,
+            "Attach-failing server was not retired",
+          );
+        } finally {
+          socket.destroy();
+        }
+      }
+
+      assertEquals([handlerCalls, createCalls, closeCalls, handleUpgradeCalls], [2, 2, 2, 0]);
+    } finally {
+      await server.stop();
+    }
+  });
+
   it("owns and terminates authorized WebSocket clients during stop", async () => {
     if (!isNode) return;
     const adapter = new NodeServerAdapter();
@@ -734,6 +884,7 @@ describe("NodeServer lifecycle", () => {
     }, {
       hostname: "127.0.0.1",
       port: 0,
+      nodeWebSocketServerProvider: WsNodeWebSocketServerProvider,
     });
     const { WebSocket } = await import("ws");
     const client = new WebSocket(`ws://127.0.0.1:${server.addr.port}/_ws`);
@@ -767,6 +918,7 @@ describe("NodeServer lifecycle", () => {
     }, {
       hostname: "127.0.0.1",
       port: 0,
+      nodeWebSocketServerProvider: WsNodeWebSocketServerProvider,
     });
     const { WebSocket } = await import("ws");
     const client = new WebSocket(
@@ -800,6 +952,7 @@ describe("NodeServer lifecycle", () => {
     }, {
       hostname: "127.0.0.1",
       port: 0,
+      nodeWebSocketServerProvider: WsNodeWebSocketServerProvider,
     });
     const socket = createConnection({ host: "127.0.0.1", port: server.addr.port });
 

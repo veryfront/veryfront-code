@@ -28,6 +28,7 @@ export interface OwnedWebSocketServer {
 export class NodeUpgradeLifecycle {
   private readonly listeners = new Map<NodeUpgradeEventSource, (...args: unknown[]) => void>();
   private readonly socketServers = new Set<OwnedWebSocketServer>();
+  private readonly serverRetirements = new Map<OwnedWebSocketServer, Promise<void>>();
   private readonly upgradeSockets = new Set<OwnedUpgradeSocket>();
   private disposePromise: Promise<void> | undefined;
   private disposed = false;
@@ -49,6 +50,30 @@ export class NodeUpgradeLifecycle {
   track(server: OwnedWebSocketServer): void {
     if (this.disposed) throw new Error("Node upgrade lifecycle is already disposed");
     this.socketServers.add(server);
+  }
+
+  /** Close one owned server now, sharing cleanup with concurrent disposal. */
+  retire(server: OwnedWebSocketServer): Promise<void> {
+    if (!this.socketServers.has(server)) return Promise.resolve();
+    const existing = this.serverRetirements.get(server);
+    if (existing) return existing;
+
+    // Publish the attempt before extension-owned callbacks can re-enter.
+    const attempt = Promise.resolve().then(() => this.retireServer(server));
+    this.serverRetirements.set(server, attempt);
+    void attempt.then(
+      () => {
+        if (this.serverRetirements.get(server) === attempt) {
+          this.serverRetirements.delete(server);
+        }
+      },
+      () => {
+        if (this.serverRetirements.get(server) === attempt) {
+          this.serverRetirements.delete(server);
+        }
+      },
+    );
+    return attempt;
   }
 
   /** Retain an accepted raw upgrade socket until handshake completion. */
@@ -102,34 +127,11 @@ export class NodeUpgradeLifecycle {
     }
 
     await Promise.all(
-      [...this.socketServers].map(async (server) => {
-        const serverFailures: unknown[] = [];
-        try {
-          for (const client of server.clients ?? []) {
-            try {
-              if (client.terminate) client.terminate();
-              else client.close?.();
-            } catch (error) {
-              serverFailures.push(error);
-            }
-          }
-          await new Promise<void>((resolve, reject) => {
-            try {
-              server.close((error) => error ? reject(error) : resolve());
-            } catch (error) {
-              reject(error);
-            }
-          });
-        } catch (error) {
-          serverFailures.push(error);
-        }
-
-        if (serverFailures.length === 0) {
-          this.socketServers.delete(server);
-        } else {
-          failures.push(...serverFailures);
-        }
-      }),
+      [...this.socketServers].map((server) =>
+        this.retire(server).catch((error) => {
+          failures.push(error);
+        })
+      ),
     );
 
     if (failures.length > 0) {
@@ -141,5 +143,40 @@ export class NodeUpgradeLifecycle {
         `Node WebSocket upgrade cleanup failed${details ? `: ${details}` : ""}`,
       );
     }
+  }
+
+  private async retireServer(server: OwnedWebSocketServer): Promise<void> {
+    const failures: unknown[] = [];
+    try {
+      for (const client of server.clients ?? []) {
+        try {
+          if (client.terminate) client.terminate();
+          else client.close?.();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        try {
+          server.close((error) => error ? reject(error) : resolve());
+        } catch (error) {
+          reject(error);
+        }
+      });
+    } catch (error) {
+      failures.push(error);
+    }
+
+    if (failures.length > 0) {
+      throw failures.length === 1
+        ? failures[0]
+        : new AggregateError(failures, "Node WebSocket server retirement failed");
+    }
+    this.socketServers.delete(server);
   }
 }

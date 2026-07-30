@@ -1,20 +1,8 @@
-export interface WSWebSocket extends EventTarget {
-  on(event: "open", listener: () => void): this;
-  on(event: "message", listener: (data: WSMessageData, isBinary: boolean) => void): this;
-  on(
-    event: "close",
-    listener: (code?: number, reason?: ArrayBufferView | string) => void,
-  ): this;
-  on(event: "error", listener: (error: Error) => void): this;
-  send(data: string | ArrayBuffer): void;
-  close(code?: number, reason?: string): void;
-  terminate?(): void;
-}
-
-export type WSMessageData =
-  | ArrayBuffer
-  | ArrayBufferView
-  | readonly ArrayBufferView[];
+export type {
+  NodeWebSocketConnection as WSWebSocket,
+  NodeWebSocketMessageData as WSMessageData,
+  NodeWebSocketServer as WSWebSocketServer,
+} from "#veryfront/extensions/websocket";
 
 export interface NodeIncomingMessage {
   url?: string;
@@ -36,20 +24,4 @@ export interface NodeHttpServer {
   off?(event: "close", listener: () => void): this;
   close(callback: (error?: Error) => void): void;
   closeAllConnections?(): void;
-}
-
-export interface WSWebSocketServer {
-  readonly clients?: Iterable<WSWebSocket>;
-  on(
-    event: "headers",
-    listener: (headers: string[], request: unknown) => void,
-  ): this;
-  close(callback?: (error?: Error) => void): void;
-  handleUpgrade(
-    request: unknown,
-    socket: unknown,
-    head: unknown,
-    callback: (ws: WSWebSocket) => void,
-  ): void;
-  emit(event: string, ws: WSWebSocket, request: unknown): void;
 }

@@ -1,6 +1,8 @@
 /***********************
  * Runtime identifier for platform-specific code paths
  ***********************/
+import type { NodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
+
 export type RuntimeId = "deno" | "node" | "bun" | "cloudflare" | "memory";
 
 /**
@@ -209,6 +211,12 @@ export interface ServeOptions {
    * rejection and are not awaited by the listener or shutdown.
    */
   onRuntimeError?: (error: Error) => void | Promise<void>;
+  /**
+   * Node.js only. Explicitly selected implementation for completing approved
+   * WebSocket upgrades. When absent, HTTP serving remains available and every
+   * Node WebSocket upgrade fails closed.
+   */
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
 }
 
 export interface Server {

@@ -97,6 +97,53 @@ describe("NodeUpgradeLifecycle", () => {
     assertEquals(closeCalls, 2);
   });
 
+  it("retires a failed initialization once and shares that work with disposal", async () => {
+    const lifecycle = new NodeUpgradeLifecycle();
+    const closeStarted = Promise.withResolvers<void>();
+    const finishClose = Promise.withResolvers<void>();
+    let closeCalls = 0;
+    const server: OwnedWebSocketServer = {
+      close(callback) {
+        closeCalls++;
+        closeStarted.resolve();
+        void finishClose.promise.then(() => callback());
+      },
+    };
+    lifecycle.track(server);
+
+    const retirement = lifecycle.retire(server);
+    assertStrictEquals(lifecycle.retire(server), retirement);
+    await closeStarted.promise;
+    const disposal = lifecycle.dispose();
+    finishClose.resolve();
+    await Promise.all([retirement, disposal]);
+
+    assertEquals(closeCalls, 1);
+    await lifecycle.dispose();
+    assertEquals(closeCalls, 1);
+  });
+
+  it("retains a failed immediate retirement for disposal retry", async () => {
+    const lifecycle = new NodeUpgradeLifecycle();
+    let closeCalls = 0;
+    const server: OwnedWebSocketServer = {
+      close(callback) {
+        closeCalls++;
+        callback(closeCalls === 1 ? new Error("initial retirement failed") : undefined);
+      },
+    };
+    lifecycle.track(server);
+
+    await assertRejects(
+      () => lifecycle.retire(server),
+      Error,
+      "initial retirement failed",
+    );
+    await lifecycle.dispose();
+
+    assertEquals(closeCalls, 2);
+  });
+
   it("destroys raw sockets whose handler handshake is still in flight", async () => {
     const lifecycle = new NodeUpgradeLifecycle();
     let destroyCalls = 0;
