@@ -157,6 +157,8 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
     const pendingTasks = new Set<Promise<void>>();
     const eventQueue: FileChangeEvent[] = [];
     let resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
+    let watcherFailure: Error | undefined;
+    let closeWatcherGeneration: () => void = () => {};
     let resolveClosed!: () => void;
     const closedSignal = new Promise<void>((resolve) => {
       resolveClosed = resolve;
@@ -186,11 +188,17 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
           setResolver,
           watchers,
           trackTask,
-          onError: (error, watchPath) =>
-            this.logger.error(`File watcher error for ${watchPath}`, { error }),
+          onError: (error, watchPath) => {
+            this.logger.error(`File watcher error for ${watchPath}`, { error });
+            watcherFailure ??= error;
+            closeWatcherGeneration();
+          },
         })
       ),
-    ).then(() => undefined);
+    ).then(() => undefined).catch((error) => {
+      closeWatcherGeneration();
+      throw error;
+    });
 
     const iterator = createWatcherIterator(
       eventQueue,
@@ -221,6 +229,7 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
       resolver = null;
       resolveClosed();
     };
+    closeWatcherGeneration = cleanup;
 
     if (signal?.aborted) cleanup();
     else signal?.addEventListener("abort", cleanup, { once: true });
@@ -232,7 +241,10 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
           await Promise.allSettled([...pendingTasks]);
         }
       })
-      .then(closeNativeWatchers);
+      .then(closeNativeWatchers)
+      .then(() => {
+        if (watcherFailure) throw watcherFailure;
+      });
     return watcher;
   }
 }

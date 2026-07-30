@@ -1,7 +1,7 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import { handleErrorWithFallback } from "#veryfront/errors";
 import { join, relative, sep } from "#veryfront/compat/path/index.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import type { FileWatcher, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
 import type { RouteDiscovery } from "./route-discovery.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
@@ -9,7 +9,6 @@ import { invalidateModulePaths } from "#veryfront/transforms/mdx/esm-module-load
 import type { ReloadProjectInfo } from "../reload-notifier.ts";
 
 const hmrLog = logger.component("hmr");
-const fileWatchSetupLog = logger.component("file-watch-setup");
 
 const METRICS_LOG_INTERVAL = 10;
 
@@ -132,8 +131,12 @@ export function isConfiguredPrimitivePath(
 }
 
 export class FileWatchSetup {
-  private fileWatcher?: { close(): void };
+  private fileWatcher?: FileWatcher;
   private watcherController?: AbortController;
+  private watcherTask?: Promise<void>;
+  private watcherDone?: Promise<void>;
+  private watcherFailureReported = false;
+  private watcherFailure?: unknown;
   private optimizedWatcher?: OptimizedFileWatcher;
   private batchCount = 0;
   private primitiveDirs: string[];
@@ -149,37 +152,70 @@ export class FileWatchSetup {
     private rediscoverPrimitives?: () => Promise<void>,
     primitiveDirNames?: string[],
     private reloadProject?: ReloadProjectInfo,
+    private onWatcherFailure?: (error: unknown) => void,
   ) {
     this.primitiveDirs = Array.from(new Set(primitiveDirNames ?? DEFAULT_PRIMITIVE_DIRS));
   }
 
   async setup(): Promise<void> {
+    const watchPaths = await this.getWatchPaths();
+    if (watchPaths.length === 0) {
+      throw new Error("No directories are available for file watching");
+    }
+
+    logger.debug(
+      `[HMR] Initializing optimized file watcher with ${this.debounceMs}ms debounce`,
+    );
+
+    this.optimizedWatcher = new OptimizedFileWatcher(
+      this.debounceMs,
+      (changes) => this.handleBatchedFileChanges(changes),
+    );
+
+    this.watcherController = new AbortController();
+    let watcher: FileWatcher | undefined;
     try {
-      const watchPaths = await this.getWatchPaths();
-      if (watchPaths.length === 0) {
-        hmrLog.warn("No directories found to watch");
-        return;
-      }
-
-      logger.debug(
-        `[HMR] Initializing optimized file watcher with ${this.debounceMs}ms debounce`,
-      );
-
-      this.optimizedWatcher = new OptimizedFileWatcher(
-        this.debounceMs,
-        (changes) => this.handleBatchedFileChanges(changes),
-      );
-
-      this.watcherController = new AbortController();
-      const watcher = this.adapter.fs.watch(watchPaths, {
+      watcher = this.adapter.fs.watch(watchPaths, {
         recursive: true,
         signal: this.watcherController.signal,
       });
 
       this.fileWatcher = watcher;
-      this.processFileWatcher(watcher, this.watcherController.signal);
+      if (watcher.ready) await watcher.ready;
+
+      const hasCompletionSignal = watcher.done !== undefined;
+      this.watcherTask = this.processFileWatcher(
+        watcher,
+        this.watcherController.signal,
+        hasCompletionSignal,
+      );
+      void this.watcherTask.catch((error) => this.reportWatcherFailure(error));
+
+      if (watcher.done) {
+        this.watcherDone = watcher.done;
+        void watcher.done.then(
+          () => {
+            if (!this.watcherController?.signal.aborted) {
+              this.reportWatcherFailure(new Error("File watcher stopped unexpectedly"));
+            }
+          },
+          (error) => this.reportWatcherFailure(error),
+        );
+      }
     } catch (error) {
-      hmrLog.warn("Failed to setup file watcher", error);
+      this.watcherController.abort();
+      this.optimizedWatcher.cleanup();
+      try {
+        watcher?.close();
+      } catch {
+        // Preserve the acquisition failure. Cleanup is best effort before the
+        // watcher generation has been published to the server lifecycle.
+      }
+      await watcher?.done?.catch(() => undefined);
+      this.fileWatcher = undefined;
+      this.watcherController = undefined;
+      this.optimizedWatcher = undefined;
+      throw error;
     }
   }
 
@@ -198,12 +234,11 @@ export class FileWatchSetup {
     const watchPaths: string[] = [];
     for (const path of potentialPaths) {
       try {
-        if (!(await this.adapter.fs.exists(path))) continue;
-
         const stat = await this.adapter.fs.stat(path);
         if (stat.isDirectory) watchPaths.push(path);
       } catch (error) {
-        hmrLog.debug(`Directory not found, skipping: ${path}`, error);
+        if (isNotFoundError(error)) continue;
+        throw error;
       }
     }
 
@@ -213,38 +248,54 @@ export class FileWatchSetup {
   private async processFileWatcher(
     watcher: AsyncIterable<{ kind: string; paths: string[] }>,
     signal: AbortSignal,
+    hasCompletionSignal: boolean,
   ): Promise<void> {
-    try {
-      for await (const { paths } of watcher) {
-        if (signal.aborted) break;
+    for await (const { paths } of watcher) {
+      if (signal.aborted) break;
 
-        try {
-          // Filter out paths that shouldn't trigger HMR (cache, node_modules, runtime data, etc.)
-          const relevantPaths = paths.filter((p) =>
-            !shouldIgnorePath(p) && !this.isRuntimeDataPath(p) &&
-            !isIgnoredOutputDir(this.projectDir, p)
-          );
-          if (relevantPaths.length === 0) continue;
+      try {
+        // Filter out paths that shouldn't trigger HMR (cache, node_modules, runtime data, etc.)
+        const relevantPaths = paths.filter((p) =>
+          !shouldIgnorePath(p) && !this.isRuntimeDataPath(p) &&
+          !isIgnoredOutputDir(this.projectDir, p)
+        );
+        if (relevantPaths.length === 0) continue;
 
-          if (this.optimizedWatcher) {
-            this.optimizedWatcher.handleChange(relevantPaths);
-            continue;
-          }
-
-          await this.handleImmediateFileChange(relevantPaths);
-        } catch (error) {
-          hmrLog.error("Failed to handle file change", error);
+        if (this.optimizedWatcher) {
+          this.optimizedWatcher.handleChange(relevantPaths);
+          continue;
         }
+
+        await this.handleImmediateFileChange(relevantPaths);
+      } catch (error) {
+        hmrLog.error("Failed to handle file change", error);
       }
-    } catch (error) {
-      if (!signal.aborted) {
-        hmrLog.error("File watcher task failed unexpectedly", error);
-      }
+    }
+
+    if (!signal.aborted && !hasCompletionSignal) {
+      throw new Error("File watcher stopped unexpectedly");
+    }
+  }
+
+  private reportWatcherFailure(error: unknown): void {
+    if (this.watcherController?.signal.aborted || this.watcherFailureReported) return;
+    this.watcherFailureReported = true;
+    this.watcherFailure = error;
+
+    if (!this.onWatcherFailure) {
+      hmrLog.error("File watcher failed", error);
+      return;
+    }
+
+    try {
+      this.onWatcherFailure(error);
+    } catch (callbackError) {
+      hmrLog.error("File watcher failure callback failed", callbackError);
     }
   }
 
   private async refreshAndReload(paths: string[], logMessage: string): Promise<void> {
-    await handleErrorWithFallback(() => this.routeDiscovery.discoverRoutes(), undefined, logger);
+    await this.routeDiscovery.discoverRoutes();
     this.invalidateHandler();
 
     // Invalidate on-disk ESM cache for changed files immediately,
@@ -347,16 +398,39 @@ export class FileWatchSetup {
     return this.optimizedWatcher?.getMetrics() ?? null;
   }
 
-  cleanup(): void {
+  async cleanup(): Promise<void> {
     this.watcherController?.abort();
     this.optimizedWatcher?.cleanup();
 
-    if (!this.fileWatcher) return;
+    const watcher = this.fileWatcher;
+    if (!watcher) return;
 
     try {
-      this.fileWatcher.close();
+      watcher.close();
     } catch (error) {
-      fileWatchSetupLog.debug("Error closing file watcher (non-critical)", error);
+      throw new Error("Failed to close file watcher", { cause: error });
     }
+
+    const completionResults = await Promise.allSettled([
+      ...(this.watcherTask ? [this.watcherTask] : []),
+      ...(this.watcherDone ? [this.watcherDone] : []),
+    ]);
+
+    const cleanupFailures = completionResults
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason)
+      .filter((error) => !this.watcherFailureReported || error !== this.watcherFailure);
+
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(cleanupFailures, "File watcher cleanup did not complete cleanly");
+    }
+
+    this.fileWatcher = undefined;
+    this.watcherController = undefined;
+    this.watcherTask = undefined;
+    this.watcherDone = undefined;
+    this.optimizedWatcher = undefined;
+    this.watcherFailureReported = false;
+    this.watcherFailure = undefined;
   }
 }

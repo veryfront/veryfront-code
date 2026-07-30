@@ -106,6 +106,15 @@ While a production server is starting, health readiness remains false. Startup,
 handler-readiness, or listener failures return readiness to false and run owned
 cleanup before the failure is reported.
 
+When HMR is enabled, development startup also waits for the configured watch
+roots and the runtime watcher's `ready` barrier. Missing watch roots, filesystem
+inspection failures, and watcher acquisition failures reject startup instead of
+starting without functional HMR. If an acquired watcher later terminates, the
+development server stops that generation rather than continuing to serve stale
+routes and modules. Route rediscovery builds an isolated candidate and publishes
+it only after every directory read succeeds, so a transient discovery failure
+retains the previous route generation and does not trigger a browser reload.
+
 ## External Node HTTP servers
 
 `toNodeHandler()` converts the Web `Request`/`Response` handler into a Node HTTP

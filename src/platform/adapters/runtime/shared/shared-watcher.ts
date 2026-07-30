@@ -42,8 +42,7 @@ export async function setupNodeFsWatcher(
     try {
       rootInfo = await fsPromises.lstat(rootPath);
     } catch (error) {
-      options.onError(toError(error), rootPath);
-      return;
+      throw toError(error);
     }
     if (isClosed()) return;
 
@@ -175,6 +174,6 @@ export async function setupNodeFsWatcher(
       emit(eventType === "change" ? "modify" : "any", rootPath, filename);
     });
   } catch (error) {
-    options.onError(toError(error), rootPath);
+    throw toError(error);
   }
 }

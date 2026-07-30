@@ -116,7 +116,8 @@ Primary source areas:
 - Bun exposes filesystem watching through its Node-compatible `node:fs` API.
   Shared Node/Bun watchers own native handles, close on iterator return or
   abort, expose `ready` as the installation barrier, and expose `done` as the
-  teardown barrier.
+  teardown barrier. `ready` rejects if any requested root cannot be acquired.
+  Native runtime failure closes the watcher generation and rejects `done`.
 - Deno uses `Deno.watchFs` rather than polling snapshots. Native event paths are
   mapped back to the caller-visible watch roots, concurrent iterator reads fail
   explicitly, and `ready`/`done` provide installation and teardown barriers.

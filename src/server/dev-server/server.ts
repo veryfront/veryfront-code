@@ -533,9 +533,22 @@ export class DevServer {
       () => this.rediscoverPrimitives(),
       primitiveDirNames,
       reloadProject,
+      (error) => this.handleFileWatcherFailure(error),
     );
 
     await this.fileWatchSetup.setup();
+  }
+
+  private handleFileWatcherFailure(error: unknown): void {
+    if (this.stopRequested) return;
+    hmrLog.error("File watcher failed; stopping the development server", error);
+
+    // A running server with a dead watcher advertises HMR while serving stale
+    // routes and modules. Stop the generation fail closed and let the caller's
+    // normal supervisor or CLI lifecycle perform an explicit restart.
+    void this.stop().catch((stopError) => {
+      hmrLog.error("Failed to stop the development server after watcher failure", stopError);
+    });
   }
 
   getFileWatcherMetrics(): ReturnType<FileWatchSetup["getMetrics"]> | null {
@@ -618,12 +631,12 @@ export class DevServer {
     }
 
     if (this.fileWatchSetup) {
-      await cleanup("File watcher", () => {
+      await cleanup("File watcher", async () => {
         const metrics = this.fileWatchSetup?.getMetrics();
         if (metrics) {
           hmrLog.debug("Final performance metrics", metrics);
         }
-        this.fileWatchSetup?.cleanup();
+        await this.fileWatchSetup?.cleanup();
       }, () => this.fileWatchSetup = undefined);
     }
 

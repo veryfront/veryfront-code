@@ -113,4 +113,21 @@ describe("NodeCompatibleFileSystemAdapter", () => {
       await Deno.remove(root, { recursive: true });
     }
   });
+
+  it("rejects watcher readiness when the requested root cannot be acquired", async () => {
+    const root = await Deno.makeTempDir({ prefix: "veryfront-node-watch-missing-" });
+    const missingRoot = `${root}/missing`;
+    const watcher = new NodeCompatibleFileSystemAdapter().watch(missingRoot, {
+      recursive: true,
+    });
+
+    try {
+      assertExists(watcher.ready);
+      await assertRejects(() => watcher.ready!, Error);
+    } finally {
+      watcher.close();
+      await watcher.done?.catch(() => undefined);
+      await Deno.remove(root, { recursive: true });
+    }
+  });
 });

@@ -336,14 +336,16 @@ export interface FileWatcher extends AsyncIterable<FileChangeEvent> {
   close(): void;
   /**
    * Resolves once the underlying watcher has been installed and can observe
-   * subsequent filesystem changes.
+   * subsequent filesystem changes. Rejects when any requested watch root
+   * cannot be acquired; callers must not advertise watching before it resolves.
    */
   ready?: Promise<void>;
   /**
    * Resolves once the watcher's internal loop has fully stopped, including
    * any in-flight filesystem operations. close() only signals shutdown;
    * await this to guarantee no pending async ops remain (e.g. before test
-   * sanitizer checks or process exit).
+   * sanitizer checks or process exit). Rejects when the native watcher fails
+   * or teardown cannot complete cleanly.
    */
   done?: Promise<void>;
 }
