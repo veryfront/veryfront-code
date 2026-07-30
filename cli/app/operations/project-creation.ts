@@ -6,13 +6,14 @@
  */
 
 import { cwd } from "veryfront/platform";
+import { join } from "veryfront/platform/path";
 import type { AppState } from "../state.ts";
 import { addLog, setProjects, updateRemote } from "../state.ts";
 import { readToken } from "../../auth/token-store.ts";
 import { fetchRemoteProjects } from "../../sync/index.ts";
 import { getLocalProjectsFromState, normalizeSlug } from "../utils.ts";
 import { reserveProjectSlug } from "../../shared/reserve-slug.ts";
-import { initCommand } from "../../commands/init/init-command.ts";
+import { createProject as createSharedProject } from "../../shared/project-creation.ts";
 import type { InitTemplate } from "../../commands/init/types.ts";
 
 export interface ProjectCreationContext {
@@ -41,18 +42,23 @@ export async function createProject(
 
     const normalizedSlug = normalizeSlug(projectName);
     const { slug } = await reserveProjectSlug(normalizedSlug, token);
-    const projectPath = `${cwd()}/projects/${slug}`;
 
-    await initCommand({
-      name: `projects/${slug}`,
+    const creation = await createSharedProject({
+      name: slug,
+      parentDir: join(cwd(), "projects"),
       template,
-      skipInstall: true,
-      skipEnvPrompt: true,
-      quiet: true,
+      runtime: "node",
+      features: [],
+      integrations: [],
+      environmentValues: {},
+      conflictPolicy: "fail",
+      installDependencies: false,
+      initializeGit: false,
+      includePackageMetadata: false,
     });
 
     const currentProjects = getLocalProjectsFromState(state);
-    currentProjects.push({ slug, path: projectPath });
+    currentProjects.push({ slug, path: creation.projectDir });
     state = setProjects(currentProjects)(state);
 
     const result = await fetchRemoteProjects();
