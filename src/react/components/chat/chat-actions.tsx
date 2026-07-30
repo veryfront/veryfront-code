@@ -236,7 +236,9 @@ export interface ChatActionItem {
   label: string;
   /** Native title/tooltip. */
   title?: string;
+  /** Disable the row (non-interactive, dimmed). */
   disabled?: boolean;
+  /** Called when the row is chosen (also closes the menu). */
   onSelect: () => void;
 }
 
@@ -301,11 +303,25 @@ export interface ChatActionsContextValue {
   settings?: ChatActionsSettings;
 }
 
-const [ChatActionsContext, useChatActions] = createStrictContext<ChatActionsContextValue>(
+const [ChatActionsContext, useChatActionsContext] = createStrictContext<ChatActionsContextValue>(
   "useChatActions",
   "a ChatActions",
 );
-export { useChatActions };
+
+/**
+ * Read the current `ChatActions`'s preset config from a `ChatActions.*`
+ * sub-part. Throws when called outside a `ChatActions` / `ChatActions.Root`.
+ *
+ * @example
+ * ```tsx
+ * function AttachRow() {
+ *   const { onAttachFiles, attachFilesLabel } = useChatActions();
+ *   return onAttachFiles ? <ChatActions.Item onSelect={onAttachFiles}>{attachFilesLabel}</ChatActions.Item> : null;
+ * }
+ * // <ChatActions.Root onAttachFiles={pick}><ChatActions.Content><AttachRow /></ChatActions.Content></ChatActions.Root>
+ * ```
+ */
+export const useChatActions = useChatActionsContext;
 
 /**
  * `ChatActions.Root` — the `DropdownMenu` wrapper + context provider. No
@@ -391,6 +407,7 @@ ChatActionsTrigger.displayName = "ChatActions.Trigger";
 
 /** Props for `ChatActions.Content` — the dropdown surface. */
 export interface ChatActionsContentProps {
+  /** Menu rows — `ChatActions.Item`s or your own. */
   children?: React.ReactNode;
   /** Horizontal alignment relative to the trigger. @default "start" */
   align?: "start" | "end";
@@ -415,6 +432,7 @@ ChatActionsContent.displayName = "ChatActions.Content";
 
 /** Props for `ChatActions.Item` — a single selectable menu row. */
 export interface ChatActionsItemProps {
+  /** Row label / contents (rendered after the `icon`). */
   children?: React.ReactNode;
   /** Leading icon. */
   icon?: React.ReactNode;
@@ -422,6 +440,7 @@ export interface ChatActionsItemProps {
   onSelect?: () => void;
   /** Native title/tooltip. */
   title?: string;
+  /** Disable the row (non-interactive, dimmed). */
   disabled?: boolean;
   className?: string;
   ref?: React.Ref<HTMLButtonElement>;

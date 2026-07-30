@@ -88,9 +88,7 @@ export interface ModelSelectorProps {
   /**
    * Render each model yourself instead of using `ModelSelector.Item`.
    */
-  renderItem?: (
-    options: { item: ModelOption; index: number },
-  ) => React.ReactNode;
+  renderItem?: (options: { item: ModelOption; index: number }) => React.ReactNode;
   /**
    * Compose your own menu from `ModelSelector.Trigger` / `Content` / `List` /
    * `Item`. When omitted, the default data-driven preset is rendered.
@@ -154,11 +152,28 @@ export interface ModelSelectorContextValue {
   disabled?: boolean;
 }
 
-const [ModelSelectorContext, useModelSelector] = createStrictContext<ModelSelectorContextValue>(
+const [ModelSelectorContext, useModelSelectorContext] = createStrictContext<
+  ModelSelectorContextValue
+>(
   "useModelSelector",
   "a ModelSelector",
 );
-export { useModelSelector };
+
+/**
+ * Read the current `ModelSelector`'s selection + open state from a
+ * `ModelSelector.*` sub-part. Throws when called outside a `ModelSelector` /
+ * `ModelSelector.Root`.
+ *
+ * @example
+ * ```tsx
+ * function CurrentModel() {
+ *   const { selectedModel, onSelect } = useModelSelector();
+ *   return <button onClick={() => onSelect("openai/gpt-4o")}>{selectedModel?.label}</button>;
+ * }
+ * // <ModelSelector.Root models={models} onChange={setModel}><CurrentModel /></ModelSelector.Root>
+ * ```
+ */
+export const useModelSelector = useModelSelectorContext;
 
 /** Props for `ModelSelector.Trigger` — the pill/icon combobox button. */
 export interface ModelSelectorTriggerProps {

@@ -16,21 +16,41 @@ import { Shimmer } from "./animations.tsx";
 
 /** Per-card state shared with `Reasoning.*` sub-parts. */
 export interface ReasoningContextValue {
+  /** The reasoning markdown text to render in the body. */
   text: string;
+  /** Whether tokens are still streaming; drives the shimmer label + auto-open. */
   isStreaming: boolean;
+  /** Whether the disclosure is currently expanded. */
   isOpen: boolean;
+  /** Toggle the disclosure open/closed (opts out of stream-driven auto-collapse). */
   toggle: () => void;
 }
 
-const [ReasoningContext, useReasoning] = createStrictContext<ReasoningContextValue>(
+const [ReasoningContext, useReasoningContext] = createStrictContext<ReasoningContextValue>(
   "useReasoning",
   "a Reasoning",
 );
-export { useReasoning };
+
+/**
+ * Read the disclosure state provided by `Reasoning.Root` (text + open state).
+ * Use it to build a custom disclosure part; throws outside a `Reasoning`.
+ *
+ * @example
+ * ```tsx
+ * function MyTrigger() {
+ *   const { isOpen, toggle } = useReasoning();
+ *   return <button onClick={toggle}>{isOpen ? "Hide" : "Show"} reasoning</button>;
+ * }
+ * // <Reasoning.Root text={text}><MyTrigger /><Reasoning.Content /></Reasoning.Root>
+ * ```
+ */
+export const useReasoning = useReasoningContext;
 
 /** Props accepted by `Reasoning` / `Reasoning.Root`. */
 export interface ReasoningProps {
+  /** The reasoning markdown text rendered in the disclosure body. */
   text: string;
+  /** Whether tokens are still streaming; shimmers the label and auto-opens the card. */
   isStreaming?: boolean;
   className?: string;
   /** Overrides the chevron glyph. Rotation-on-open styling is applied to the

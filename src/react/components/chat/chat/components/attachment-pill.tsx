@@ -15,7 +15,9 @@ export type AttachmentState =
 
 /** Public API contract for attachment info. */
 export interface AttachmentInfo {
+  /** Stable unique id for the attachment; used to key it and to identify it in `onRemove` / `onRetry`. */
   id: string;
+  /** File name (including extension); shown as the pill title and used to derive the file type. */
   name: string;
   /** Legacy two-value status; prefer `state` for the full lifecycle. */
   status?: "uploading" | "ready";
@@ -23,8 +25,11 @@ export interface AttachmentInfo {
   state?: AttachmentState;
   /** Upload progress (0–100), shown in the `uploading` label. */
   progress?: number;
+  /** MIME type (e.g. `image/png`); used to detect images and derive the type label. */
   type?: string;
+  /** File size in bytes; rendered as a compact `B` / `KB` / `MB` label. */
   size?: number;
+  /** Local object-URL for an image preview shown before the upload resolves. */
   preview?: string;
   /** Resolved URL once the file has finished uploading. */
   url?: string;
@@ -32,7 +37,9 @@ export interface AttachmentInfo {
 
 /** Props accepted by attachment pill. */
 export interface AttachmentPillProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** The attachment to render; drives the icon, label, and lifecycle treatment. */
   attachment: AttachmentInfo;
+  /** Remove handler — surfaces the remove (✕) control, called with the attachment id. */
   onRemove?: (id: string) => void;
   /** Retry handler — surfaces a retry button in the `error` state. */
   onRetry?: (id: string) => void;
@@ -141,8 +148,11 @@ function AlertGlyph(): React.ReactElement {
 
 /** Derived per-pill view state shared with `AttachmentPill.*` sub-parts. */
 export interface AttachmentPillContextValue {
+  /** The attachment being rendered by this pill. */
   attachment: AttachmentInfo;
+  /** Remove handler passed to `Root`, invoked with the attachment id. */
   onRemove?: (id: string) => void;
+  /** Retry handler passed to `Root`, invoked with the attachment id in the `error` state. */
   onRetry?: (id: string) => void;
   /** File extension (from the name, falling back to the media type). */
   ext: string;
@@ -168,11 +178,27 @@ export interface AttachmentPillContextValue {
   boxClass: string;
 }
 
-const [AttachmentPillContext, useAttachmentPill] = createStrictContext<AttachmentPillContextValue>(
+const [AttachmentPillContext, useAttachmentPillContext] = createStrictContext<
+  AttachmentPillContextValue
+>(
   "useAttachmentPill",
   "a AttachmentPill",
 );
-export { useAttachmentPill };
+
+/**
+ * Read the derived per-pill state provided by `AttachmentPill.Root`. Use it to
+ * build a custom pill part; throws if called outside an `AttachmentPill`.
+ *
+ * @example
+ * ```tsx
+ * function MyLabel() {
+ *   const { attachment, label } = useAttachmentPill();
+ *   return <span>{attachment.name} — {label}</span>;
+ * }
+ * // <AttachmentPill.Root attachment={file}><MyLabel /></AttachmentPill.Root>
+ * ```
+ */
+export const useAttachmentPill = useAttachmentPillContext;
 
 /**
  * `AttachmentPill.Root` — context provider + the chip wrapper. No children

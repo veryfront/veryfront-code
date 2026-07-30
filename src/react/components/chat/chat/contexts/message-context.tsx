@@ -36,17 +36,30 @@ export interface MessageContextValue {
   feedback?: FeedbackValue | null;
 }
 
-const [MessageContext, useMessageContext] = createStrictContext<MessageContextValue>(
+const [MessageContext, useMessageContextStrict] = createStrictContext<MessageContextValue>(
   "useMessageContext",
   "a Message component",
 );
+
+/**
+ * Read the enclosing message's state (the message, role, streaming flag, parts,
+ * branch navigation, copy/edit/regenerate/feedback actions). Provided by
+ * `<Message.Root>`; throws when used outside a `<Message>`.
+ *
+ * @example
+ * ```tsx
+ * function Regenerate() {
+ *   const { onRegenerate } = useMessageContext();
+ *   return onRegenerate ? <button onClick={onRegenerate}>Retry</button> : null;
+ * }
+ * ```
+ */
+export const useMessageContext = useMessageContextStrict;
 
 /** React hook for message context optional. */
 export function useMessageContextOptional(): MessageContextValue | null {
   return React.useContext(MessageContext);
 }
-
-export { useMessageContext };
 
 /** Result of {@link useMessageBranches} — the message's regeneration variants. */
 export interface UseMessageBranchesResult {

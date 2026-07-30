@@ -6,7 +6,9 @@ import { createStrictContext } from "../../../create-strict-context.ts";
 /** Props accepted by step indicator. */
 export interface StepIndicatorProps
   extends Omit<React.HTMLAttributes<HTMLDivElement>, "className"> {
+  /** Zero-based step number; the label renders it as `Step {stepIndex + 1}`. */
   stepIndex: number;
+  /** Whether this step has finished — swaps the pending glyph for a check. */
   isComplete: boolean;
   className?: string;
   /** @deprecated Pass `children` to `StepIndicator.Label` instead. Kept working for backward compatibility. */
@@ -28,17 +30,35 @@ export interface StepIndicatorProps
 
 /** Per-indicator state shared with `StepIndicator.*` sub-parts. */
 export interface StepIndicatorContextValue {
+  /** Zero-based step number; the label renders it as `Step {stepIndex + 1}`. */
   stepIndex: number;
+  /** Whether this step has finished — swaps the pending glyph for a check. */
   isComplete: boolean;
   /** Optional override for the complete/pending status glyph. */
   icon?: React.ReactNode;
 }
 
-const [StepIndicatorContext, useStepIndicator] = createStrictContext<StepIndicatorContextValue>(
+const [StepIndicatorContext, useStepIndicatorContext] = createStrictContext<
+  StepIndicatorContextValue
+>(
   "useStepIndicator",
   "a StepIndicator",
 );
-export { useStepIndicator };
+
+/**
+ * Read the current `StepIndicator`'s state from a `StepIndicator.*` sub-part.
+ * Throws when called outside a `StepIndicator` / `StepIndicator.Root`.
+ *
+ * @example
+ * ```tsx
+ * function StepBadge() {
+ *   const { stepIndex, isComplete } = useStepIndicator();
+ *   return <span>{isComplete ? "✓" : `Step ${stepIndex + 1}`}</span>;
+ * }
+ * // <StepIndicator.Root stepIndex={0} isComplete={false}><StepBadge /></StepIndicator.Root>
+ * ```
+ */
+export const useStepIndicator = useStepIndicatorContext;
 
 /**
  * `StepIndicator.Root` — context provider + the flex container. No children

@@ -399,41 +399,59 @@ ChatInputToolbar.displayName = "ChatInput.Toolbar";
 
 /** Props accepted by `ChatInput`. */
 export interface ChatInputProps {
+  /** Current text value of the composer input (controlled). */
   input: string;
-  onChange: (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
-  ) => void;
+  /** Fired as the user edits the input. */
+  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  /** Submit the current input (Enter or the Send button). */
   onSubmit?: (e?: React.FormEvent) => void;
+  /** Whether a turn is streaming — swaps Send for Stop and disables the field. */
   isLoading?: boolean;
+  /** Placeholder text for the input field. */
   placeholder?: string;
+  /** Theme overrides for the composer's input/button slots. */
   theme?: ChatTheme;
 
   // Stop / Voice
+  /** Stop the in-flight streaming turn (shown as the Stop button). */
   stop?: () => void;
+  /** Toggle voice input; when set, an empty field shows the mic button. */
   onVoice?: () => void;
+  /** Whether voice capture is active (drives the mic pressed state). */
   isListening?: boolean;
+  /** Live speech-to-text transcript shown in the field while listening. */
   transcript?: string;
 
   // Model
+  /** Model options for the composer's model selector. */
   models?: ModelOption[];
+  /** Currently selected model id. */
   model?: string;
+  /** Called when the user picks a different model. */
   onModelChange?: (model: string) => void;
 
-  // Leading toolbar slot — rendered in the footer toolbar after the `+` (Studio
-  // PromptForm's leading slot). Generic: hold an `<AgentPicker>`, a template
-  // button, anything. (Was `agentSelector` — renamed to a role-neutral slot.)
+  /**
+   * Leading toolbar slot — rendered in the footer toolbar after the `+` (Studio
+   * PromptForm's leading slot). Generic: hold an `<AgentPicker>`, a template
+   * button, anything. (Was `agentSelector` — renamed to a role-neutral slot.)
+   */
   toolbarStart?: React.ReactNode;
 
   // Attachments
+  /** Handle files chosen via the composer's `+` menu. */
   onAttach?: (files: FileList) => void;
+  /** Open a document picker (the "Select document" menu item). */
   onSelectAttachment?: () => void;
   /**
    * Files dropped onto the composer. Defaults to `onAttach` — pass this only to
    * treat a drop differently from the `+` menu upload.
    */
   onDrop?: (files: FileList) => void;
+  /** `accept` filter for the file input (e.g. `"image/*"`). */
   attachAccept?: string;
+  /** Pending attachments rendered as pills above the field. */
   attachments?: AttachmentInfo[];
+  /** Remove a pending attachment by id. */
   onRemoveAttachment?: (id: string) => void;
 
   // Customisation
@@ -441,6 +459,7 @@ export interface ChatInputProps {
   onAttachClick?: WrapClick;
 
   className?: string;
+  /** Composer-toolbar children (custom action sub-parts). */
   children?: React.ReactNode;
   /** React 19: ref is a regular prop. */
   ref?: React.Ref<HTMLDivElement>;

@@ -21,10 +21,15 @@ import { createStrictContext } from "../../../create-strict-context.ts";
 
 /** Public API contract for uploaded file. */
 export interface UploadedFile {
+  /** Stable unique id; keys the row and identifies the file in `onRemoveUpload`. */
   id: string;
+  /** File name (including extension); shown as the row title. */
   name: string;
+  /** File size in bytes; rendered as a compact size label. */
   size?: number;
+  /** MIME type (e.g. `application/pdf`); used to pick the icon / preview. */
   type?: string;
+  /** Resolved URL for the uploaded file; enables the "Open" overflow action. */
   url?: string;
 }
 
@@ -40,11 +45,15 @@ export interface UploadedFile {
 
 /** Per-panel state shared with `AttachmentsPanel.*` sub-parts. */
 export interface AttachmentsPanelContextValue {
+  /** The uploaded files rendered as rows in the panel. */
   uploads: UploadedFile[];
   /** `true` while the initial list is loading; shows the placeholder state. */
   loading?: boolean;
+  /** Remove handler, invoked with a file id from the row / overflow menu. */
   onRemoveUpload?: (id: string) => void;
+  /** Attach handler, invoked with the picked `FileList` from the upload controls. */
   onAttach?: (files: FileList) => void;
+  /** `accept` attribute forwarded to the hidden file input. */
   attachAccept?: string;
   /** Dismisses the panel; enables the close button when set. */
   onClose?: () => void;
@@ -52,24 +61,42 @@ export interface AttachmentsPanelContextValue {
   triggerAttach: () => void;
 }
 
-const [AttachmentsPanelContext, useAttachmentsPanel] = createStrictContext<
+const [AttachmentsPanelContext, useAttachmentsPanelContext] = createStrictContext<
   AttachmentsPanelContextValue
 >(
   "useAttachmentsPanel",
   "an AttachmentsPanel",
 );
-export { useAttachmentsPanel };
+
+/**
+ * Read the panel state provided by `AttachmentsPanel.Root` (uploads + handlers).
+ * Use it to build a custom panel part; throws outside an `AttachmentsPanel`.
+ *
+ * @example
+ * ```tsx
+ * function UploadCount() {
+ *   const { uploads } = useAttachmentsPanel();
+ *   return <span>{uploads.length} files</span>;
+ * }
+ * // <AttachmentsPanel.Root uploads={files}><UploadCount /></AttachmentsPanel.Root>
+ * ```
+ */
+export const useAttachmentsPanel = useAttachmentsPanelContext;
 
 /** Props accepted by `AttachmentsPanel` / `AttachmentsPanel.Root`. */
 export interface AttachmentsPanelProps {
+  /** Files to list in the panel. Defaults to an empty list (shows `Empty`). */
   uploads?: UploadedFile[];
   /**
    * `true` while the initial list is still loading. When set and there are no
    * uploads yet, the panel shows the `Loading` placeholder instead of `Empty`.
    */
   loading?: boolean;
+  /** Remove handler, invoked with a file id from a row / the overflow menu. */
   onRemoveUpload?: (id: string) => void;
+  /** Attach handler, invoked with the picked `FileList`; enables the upload controls. */
   onAttach?: (files: FileList) => void;
+  /** `accept` attribute forwarded to the hidden file input. */
   attachAccept?: string;
   /** Called to dismiss the panel; renders the header close button when set. */
   onClose?: () => void;
@@ -242,6 +269,7 @@ AttachmentsPanelList.displayName = "AttachmentsPanel.List";
 
 /** Props accepted by an individual `AttachmentsPanel.Item` (attachment card). */
 export interface AttachmentsPanelItemProps {
+  /** The uploaded file this row renders. */
   file: UploadedFile;
   className?: string;
   /**

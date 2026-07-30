@@ -207,21 +207,41 @@ function hasVisibleToolOutput(output: unknown): boolean {
 
 /** Per-tool state shared with `ToolCall.*` sub-parts. */
 export interface ToolCallContextValue {
+  /** The tool part being rendered (its name, state, input, output, error). */
   tool: ChatToolPart | ChatDynamicToolPart;
+  /** Whether the collapsible body is currently open. */
   isExpanded: boolean;
+  /** Toggle the expanded state; fires the `onToggle` prop with the next state. */
   toggle: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  /** Whether the tool produced a non-nullish `output`. */
   hasOutput: boolean;
+  /** Whether the tool carries `errorText`. */
   hasError: boolean;
 }
 
-const [ToolCallContext, useToolCall] = createStrictContext<ToolCallContextValue>(
+const [ToolCallContext, useToolCallContext] = createStrictContext<ToolCallContextValue>(
   "useToolCall",
   "a ToolCall",
 );
-export { useToolCall };
+
+/**
+ * Read the current `ToolCall`'s state from a `ToolCall.*` sub-part.
+ * Throws when called outside a `ToolCall` / `ToolCall.Root`.
+ *
+ * @example
+ * ```tsx
+ * function ExpandLabel() {
+ *   const { isExpanded, toggle } = useToolCall();
+ *   return <button onClick={toggle}>{isExpanded ? "Hide" : "Show"}</button>;
+ * }
+ * // <ToolCall.Root tool={part}><ExpandLabel /></ToolCall.Root>
+ * ```
+ */
+export const useToolCall = useToolCallContext;
 
 /** Props accepted by `ToolCall` / `ToolCall.Root`. */
 export interface ToolCallProps {
+  /** The tool part to render (invocation name, state, input, output, error). */
   tool: ChatToolPart | ChatDynamicToolPart;
   className?: string;
   /** Override the leading tool icon (card variant). */

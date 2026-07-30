@@ -142,6 +142,18 @@ function collectSource(dir: string, suffix: RegExp, exclude: RegExp): string {
   return out;
 }
 const CHAT_SRC = collectSource(new URL(".", import.meta.url).pathname, /\.tsx?$/, /\.test\.tsx?$/);
+// Some public `veryfront/chat` hooks (useChat, useAgent(s), useCompletion,
+// useStreaming, useVoiceInput, …) are re-exported from the agent module, so their
+// declarations live outside the chat tree. Scan that source too for the hook-doc
+// check (NOT for the chat variant gate, which stays scoped to CHAT_SRC).
+let AGENT_HOOK_SRC = "";
+try {
+  AGENT_HOOK_SRC = collectSource(
+    new URL("../../../agent/react/", import.meta.url).pathname,
+    /\.tsx?$/,
+    /\.test\.tsx?$/,
+  );
+} catch { /* agent react source missing → those hooks stay red */ }
 let CHAT_STORY_SRC = "";
 try {
   CHAT_STORY_SRC = collectSource(STORIES_DIR, /\.stories\.tsx$/, /(?!)/);
@@ -295,7 +307,7 @@ describe("veryfront/chat coverage — hooks", () => {
     });
     it(`${name}: is documented (JSDoc in source)`, () => {
       assert(
-        hasJsdocDecl(CHAT_SRC, name),
+        hasJsdocDecl(CHAT_SRC, name) || hasJsdocDecl(AGENT_HOOK_SRC, name),
         `${name} has no JSDoc doc-comment above its declaration — hook docs live on the ` +
           `hook (a /** … */ with an @example), not the root guide`,
       );

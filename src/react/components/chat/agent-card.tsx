@@ -113,11 +113,25 @@ export interface AgentCardContextValue {
   presentation: { color: StatusColor; label: string; pulse: boolean };
 }
 
-const [AgentCardContext, useAgentCard] = createStrictContext<AgentCardContextValue>(
+const [AgentCardContext, useAgentCardStrict] = createStrictContext<AgentCardContextValue>(
   "useAgentCard",
   "an AgentCard",
 );
-export { useAgentCard };
+
+/**
+ * Read the enclosing `<AgentCard>`'s state (name, avatar, messages, tool calls,
+ * status, thinking text, and the derived status presentation) so a custom
+ * `AgentCard.*` sub-part can render it. Throws when used outside an `AgentCard`.
+ *
+ * @example
+ * ```tsx
+ * function CustomHeader() {
+ *   const { name, presentation } = useAgentCard();
+ *   return <h3>{name} — {presentation.label}</h3>;
+ * }
+ * ```
+ */
+export const useAgentCard = useAgentCardStrict;
 
 /**
  * `AgentCard.Root` — context provider + the `Card` wrapper. No children renders

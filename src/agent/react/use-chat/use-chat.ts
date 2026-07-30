@@ -108,6 +108,18 @@ interface ResettableUseChatResult extends UseChatResult {
   reset: (messages?: ChatMessage[]) => void;
 }
 
+/**
+ * The core chat session hook: manages messages, streaming status, input, submit,
+ * regenerate, and branch navigation for a conversation. Powers `<Chat>` (L1) and
+ * is the L3 headless entry point for building a fully custom chat UI.
+ *
+ * @example
+ * ```tsx
+ * import { useChat } from "veryfront/chat";
+ *
+ * const { messages, input, setInput, submit, status } = useChat({ agent: "assistant" });
+ * ```
+ */
 export function useChat(options: UseChatOptions = {}): UseChatResult {
   const { reset, ...chat } = useChatState(options);
   void reset;

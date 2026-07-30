@@ -316,13 +316,27 @@ export interface ChatSidebarItemContextValue {
   setMenuOpen: (open: boolean) => void;
 }
 
-const [ChatSidebarItemContext, useChatSidebarItem] = createStrictContext<
+const [ChatSidebarItemContext, useChatSidebarItemStrict] = createStrictContext<
   ChatSidebarItemContextValue
 >(
   "ChatSidebar.Item.*",
   "<ChatSidebar.Item>",
 );
-export { useChatSidebarItem };
+
+/**
+ * Read the enclosing `<ChatSidebar.Item>`'s row state (the conversation summary,
+ * active flag, rename availability + `startRename`, `remove`, and the `…` menu
+ * open state) from a custom item sub-part. Throws outside a `<ChatSidebar.Item>`.
+ *
+ * @example
+ * ```tsx
+ * function DeleteButton() {
+ *   const { remove, conversation } = useChatSidebarItem();
+ *   return <button onClick={remove} aria-label={`Delete ${conversation.title}`}>×</button>;
+ * }
+ * ```
+ */
+export const useChatSidebarItem = useChatSidebarItemStrict;
 
 export interface ChatSidebarItemProps {
   conversation: ConversationSummary;

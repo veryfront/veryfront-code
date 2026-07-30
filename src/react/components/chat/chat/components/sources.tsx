@@ -4,9 +4,13 @@ import { createStrictContext } from "../../../create-strict-context.ts";
 
 /** Public API contract for source. */
 export interface Source {
+  /** Display title shown in the pill (truncated when long). */
   title: string;
+  /** Link to the source; consumers wire it up via `onSourceClick`. */
   url?: string;
+  /** Relevance score (0–1); colours the pill's trailing dot. */
   score?: number;
+  /** Short excerpt shown in the hover preview popover. */
   snippet?: string;
 }
 
@@ -21,20 +25,45 @@ export interface Source {
 
 /** Per-list state shared with `Sources.*` sub-parts. */
 export interface SourcesContextValue {
+  /** The sources rendered as pills in the row. */
   sources: Source[];
+  /** Click handler, invoked with the source and its index. */
   onSourceClick?: (source: Source, index: number) => void;
 }
 
-const [SourcesContext, useSources] = createStrictContext<SourcesContextValue>(
+const [SourcesContext, useSourcesContext] = createStrictContext<SourcesContextValue>(
   "useSources",
   "a Sources",
 );
-export { useSources };
+
+/**
+ * Read the state provided by `Sources.Root` (sources + click handler). Use it to
+ * build a custom row part; throws when called outside a `Sources`.
+ *
+ * @example
+ * ```tsx
+ * function SourceCount() {
+ *   const { sources } = useSources();
+ *   return <span>{sources.length} sources</span>;
+ * }
+ * // <Sources.Root sources={sources}><SourceCount /></Sources.Root>
+ * ```
+ */
+export const useSources = useSourcesContext;
 
 /**
  * Read the enclosing `Sources` state if present, or `null` outside one. Lets a
  * leaf like `Message.Source` opt into the row's `onSourceClick` without failing
  * when rendered standalone.
+ *
+ * @example
+ * ```tsx
+ * function OptionalSourceCount() {
+ *   const ctx = useSourcesOptional();
+ *   if (!ctx) return null; // rendered outside a <Sources>
+ *   return <span>{ctx.sources.length} sources</span>;
+ * }
+ * ```
  */
 export function useSourcesOptional(): SourcesContextValue | null {
   return React.useContext(SourcesContext);
@@ -42,8 +71,10 @@ export function useSourcesOptional(): SourcesContextValue | null {
 
 /** Props accepted by `Sources` / `Sources.Root`. */
 export interface SourcesProps {
+  /** The sources to render as pills. Renders nothing when empty. */
   sources: Source[];
   className?: string;
+  /** Click handler, invoked with the clicked source and its index. */
   onSourceClick?: (source: Source, index: number) => void;
   /** Render each source yourself instead of using `Sources.Pill`. */
   renderItem?: (options: { item: Source; index: number }) => React.ReactNode;
@@ -119,8 +150,11 @@ SourcesList.displayName = "Sources.List";
 
 /** Props accepted by an individual source pill. */
 export interface SourcePillProps {
+  /** The source this pill represents. */
   source: Source;
+  /** Zero-based position in the list; rendered as the pill's `index + 1` badge. */
   index: number;
+  /** Click handler for the pill; when omitted the pill is non-interactive. */
   onClick?: () => void;
   className?: string;
   /** React 19: ref is a regular prop, forwarded to the pill's root wrapper. */
