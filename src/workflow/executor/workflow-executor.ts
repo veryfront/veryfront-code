@@ -389,6 +389,7 @@ export class WorkflowExecutor {
       stepExecutor: this.stepExecutor,
       checkpointManager: this.checkpointManager,
       maxConcurrency: this.config.maxConcurrency,
+      cancellationGracePeriod: validatedCancellationGracePeriod,
       debug: this.config.debug,
       // waiting state is handled by executeAsync() after DAG execution returns with waiting: true
       onWaiting: () => {},

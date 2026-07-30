@@ -11,6 +11,7 @@ import {
 } from "./context-patch.ts";
 import { createMapChildNodes } from "./node-identity.ts";
 import { captureWorkflowMapItems } from "../workflow-definition-snapshot.ts";
+import { getExecutionFailure, retainExecutionFailure } from "../execution-failure.ts";
 
 interface ExecuteMapNodeStrategyInput {
   node: WorkflowNode;
@@ -83,9 +84,9 @@ export async function executeMapNodeStrategy(
 
   runtime.onNodeComplete?.(node.id, state);
 
-  return {
+  return retainExecutionFailure({
     state,
     contextPatch: createSetContextPatch(result.completed ? { [node.id]: outputs } : {}),
     waiting: result.waiting,
-  };
+  }, getExecutionFailure(result));
 }

@@ -4,6 +4,7 @@ import type { DAGInternalExecutionResult } from "./types.ts";
 export interface ChildGraphExecutionOptions {
   maxConcurrency?: number;
   identityPrefix?: string;
+  abortSignal?: AbortSignal;
 }
 
 export type ExecuteChildGraph = (
@@ -16,4 +17,5 @@ export interface NodeStrategyRuntime {
   executeChildGraph: ExecuteChildGraph;
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
   abortSignal?: AbortSignal;
+  cancellationGracePeriod?: number;
 }

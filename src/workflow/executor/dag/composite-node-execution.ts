@@ -6,8 +6,13 @@ import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "#veryfront/utils";
 import { createSetContextPatch } from "./context-patch.ts";
 import { calculateRetryDelay, isRetryableWorkflowError } from "../retry-policy.ts";
-
-const DEFAULT_CANCELLATION_GRACE_PERIOD_MS = 1_000;
+import {
+  getPrimaryAbortReason,
+  isAbortCleanupError,
+  isNonCooperativeOperationError,
+  runAbortableOperation,
+} from "../abortable-operation.ts";
+import { getExecutionFailure, retainExecutionFailure } from "../execution-failure.ts";
 
 interface CompositeNodeExecutionInput {
   node: WorkflowNode;
@@ -15,8 +20,6 @@ interface CompositeNodeExecutionInput {
   cancellationGracePeriod?: number;
   execute: (abortSignal: AbortSignal) => Promise<NodeExecutionResult>;
 }
-
-const nonCooperativeErrors = new WeakSet<Error>();
 
 export async function executeCompositeNodeWithPolicy(
   input: CompositeNodeExecutionInput,
@@ -36,25 +39,36 @@ export async function executeCompositeNodeWithPolicy(
     parentSignal?.throwIfAborted();
 
     try {
-      const result = await executeAttempt(
-        execute,
-        node.id,
-        timeout,
+      const result = await runAbortableOperation(execute, {
+        label: `Composite node "${node.id}"`,
         parentSignal,
-        input.cancellationGracePeriod,
-      );
+        cancellationGracePeriod: input.cancellationGracePeriod,
+        timeout: timeout === undefined ? undefined : {
+          milliseconds: timeout,
+          reason: TIMEOUT_ERROR.create({
+            detail: `Composite node "${node.id}" timed out after ${timeout}ms`,
+          }),
+        },
+      });
       const attemptedResult = withAttempt(result, attempt);
 
       if (attemptedResult.state.status !== "failed") return attemptedResult;
 
-      const error = new Error(
-        attemptedResult.state.error ?? `Composite node "${node.id}" failed`,
-      );
+      const error = getExecutionFailure(attemptedResult) ??
+        new Error(attemptedResult.state.error ?? `Composite node "${node.id}" failed`);
       if (attempt === maxAttempts || !isRetryableError(error, retry)) return attemptedResult;
 
       await sleep(calculateRetryDelay(attempt, retry), parentSignal);
     } catch (caught) {
-      parentSignal?.throwIfAborted();
+      if (parentSignal?.aborted) {
+        if (
+          isAbortCleanupError(caught) &&
+          Object.is(getPrimaryAbortReason(caught), parentSignal.reason)
+        ) {
+          throw caught;
+        }
+        parentSignal.throwIfAborted();
+      }
       const error = ensureError(caught);
 
       if (attempt < maxAttempts && isRetryableError(error, retry)) {
@@ -62,7 +76,7 @@ export async function executeCompositeNodeWithPolicy(
         continue;
       }
 
-      return {
+      return retainExecutionFailure({
         state: {
           nodeId: node.id,
           status: "failed",
@@ -73,97 +87,24 @@ export async function executeCompositeNodeWithPolicy(
         },
         contextPatch: createSetContextPatch(),
         waiting: false,
-      };
+      }, error);
     }
   }
 
   throw new Error(`Composite node "${node.id}" exhausted its retry attempts`);
 }
 
-async function executeAttempt(
-  execute: (abortSignal: AbortSignal) => Promise<NodeExecutionResult>,
-  nodeId: string,
-  timeout: number | undefined,
-  parentSignal: AbortSignal | undefined,
-  cancellationGracePeriod: number | undefined,
-): Promise<NodeExecutionResult> {
-  const attemptController = new AbortController();
-  const forwardAbort = () => attemptController.abort(parentSignal?.reason);
-  if (parentSignal?.aborted) forwardAbort();
-  else parentSignal?.addEventListener("abort", forwardAbort, { once: true });
-
-  const operation = Promise.resolve().then(() => execute(attemptController.signal));
-  const fencedOperation = operation.then((result) => {
-    attemptController.signal.throwIfAborted();
-    return result;
-  });
-
-  let rejectAbort: (() => void) | undefined;
-  const abortPromise = new Promise<never>((_, reject) => {
-    rejectAbort = () => reject(attemptController.signal.reason);
-    if (attemptController.signal.aborted) rejectAbort();
-    else attemptController.signal.addEventListener("abort", rejectAbort, { once: true });
-  });
-
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  if (timeout !== undefined) {
-    const timeoutError = TIMEOUT_ERROR.create({
-      detail: `Composite node "${nodeId}" timed out after ${timeout}ms`,
-    });
-    timeoutId = setTimeout(() => attemptController.abort(timeoutError), timeout);
-  }
-
-  try {
-    return await Promise.race([fencedOperation, abortPromise]);
-  } catch (caught) {
-    const error = ensureError(caught);
-    if (attemptController.signal.aborted) {
-      const settled = await waitForCancellationGrace(
-        fencedOperation,
-        cancellationGracePeriod,
-      );
-      if (!settled) nonCooperativeErrors.add(error);
-    }
-    throw error;
-  } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
-    if (rejectAbort) attemptController.signal.removeEventListener("abort", rejectAbort);
-    parentSignal?.removeEventListener("abort", forwardAbort);
-  }
-}
-
-async function waitForCancellationGrace(
-  operation: Promise<unknown>,
-  configuredGracePeriod: number | undefined,
-): Promise<boolean> {
-  const gracePeriod = Math.max(
-    0,
-    configuredGracePeriod ?? DEFAULT_CANCELLATION_GRACE_PERIOD_MS,
-  );
-  let graceTimeoutId: ReturnType<typeof setTimeout> | undefined;
-  const settled = operation.then(
-    () => true,
-    () => true,
-  );
-  const graceExpired = new Promise<false>((resolve) => {
-    graceTimeoutId = setTimeout(() => resolve(false), gracePeriod);
-  });
-
-  try {
-    return await Promise.race([settled, graceExpired]);
-  } finally {
-    if (graceTimeoutId !== undefined) clearTimeout(graceTimeoutId);
-  }
-}
-
 function withAttempt(result: NodeExecutionResult, attempt: number): NodeExecutionResult {
-  return {
+  return retainExecutionFailure({
     ...result,
     state: { ...result.state, attempt },
-  };
+  }, getExecutionFailure(result));
 }
 
 function isRetryableError(error: Error, config: RetryConfig | undefined): boolean {
-  if (nonCooperativeErrors.has(error)) return false;
-  return isRetryableWorkflowError(error, config);
+  if (isNonCooperativeOperationError(error)) return false;
+  const classifiedError = isAbortCleanupError(error)
+    ? ensureError(getPrimaryAbortReason(error))
+    : error;
+  return isRetryableWorkflowError(classifiedError, config);
 }

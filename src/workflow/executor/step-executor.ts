@@ -39,6 +39,13 @@ import {
 import type { BlobStorage } from "../blob/types.ts";
 import { cloneCapturedWorkflowStaticValue } from "./workflow-definition-snapshot.ts";
 import { requireWorkflowContentSource } from "../source-authority.ts";
+import {
+  getPrimaryAbortReason,
+  isAbortCleanupError,
+  isNonCooperativeOperationError,
+  runAbortableOperation,
+} from "./abortable-operation.ts";
+import { retainExecutionFailure } from "./execution-failure.ts";
 
 /**
  * AsyncLocalStorage for workflow tenant context.
@@ -118,9 +125,6 @@ const DEFAULT_RETRY: RetryConfig = {
 
 const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1_000;
 
-/** Time allowed for an aborted operation to finish its cooperative cleanup. */
-const DEFAULT_CANCELLATION_GRACE_PERIOD_MS = 1_000;
-
 export interface AgentRegistry {
   get(id: string): Agent | undefined;
   list?(): string[];
@@ -153,7 +157,6 @@ export interface StepResult {
 
 export class StepExecutor {
   private config: StepExecutorConfig;
-  private nonCooperativeErrors = new WeakSet<Error>();
 
   constructor(config: StepExecutorConfig = {}) {
     const {
@@ -245,7 +248,15 @@ export class StepExecutor {
           executionTime: Date.now() - startTime,
         };
       } catch (error) {
-        abortSignal?.throwIfAborted();
+        if (abortSignal?.aborted) {
+          if (
+            isAbortCleanupError(error) &&
+            Object.is(getPrimaryAbortReason(error), abortSignal.reason)
+          ) {
+            throw error;
+          }
+          abortSignal.throwIfAborted();
+        }
         lastError = ensureError(error);
 
         if (attempt < maxAttempts && this.isRetryableError(lastError, retryConfig)) {
@@ -255,27 +266,30 @@ export class StepExecutor {
 
         this.config.onStepError?.(node.id, lastError);
 
-        return {
+        return retainExecutionFailure({
           success: false,
           error: lastError.message,
           executionTime: Date.now() - startTime,
-        };
+        }, lastError);
       }
     }
 
-    return {
+    return retainExecutionFailure({
       success: false,
       error: lastError?.message ?? "Unknown error",
       executionTime: Date.now() - startTime,
-    };
+    }, lastError);
   }
 
   /** Shared transient classification (HTTP statuses + network error codes) via retry-policy. */
   private isRetryableError(error: Error, config: RetryConfig): boolean {
     // Starting another attempt while the timed-out operation is still active
     // would violate step isolation and allow concurrent external side effects.
-    if (this.nonCooperativeErrors.has(error)) return false;
-    return isRetryableWorkflowError(error, config);
+    if (isNonCooperativeOperationError(error)) return false;
+    const classifiedError = isAbortCleanupError(error)
+      ? ensureError(getPrimaryAbortReason(error))
+      : error;
+    return isRetryableWorkflowError(classifiedError, config);
   }
 
   private async resolveInput(
@@ -293,62 +307,17 @@ export class StepExecutor {
     nodeId: string,
     parentSignal?: AbortSignal,
   ): Promise<T> {
-    const attemptController = new AbortController();
-    const forwardAbort = () => attemptController.abort(parentSignal?.reason);
-    if (parentSignal?.aborted) forwardAbort();
-    else parentSignal?.addEventListener("abort", forwardAbort, { once: true });
-
-    const operation = Promise.resolve().then(() => fn(attemptController.signal));
-    const fencedOperation = operation.then((value) => {
-      attemptController.signal.throwIfAborted();
-      return value;
+    return await runAbortableOperation(fn, {
+      label: `Step "${nodeId}"`,
+      parentSignal,
+      cancellationGracePeriod: this.config.cancellationGracePeriod,
+      timeout: {
+        milliseconds: timeout,
+        reason: TIMEOUT_ERROR.create({
+          detail: `Step "${nodeId}" timed out after ${timeout}ms`,
+        }),
+      },
     });
-    const timeoutError = TIMEOUT_ERROR.create({
-      detail: `Step "${nodeId}" timed out after ${timeout}ms`,
-    });
-
-    let rejectAbort: (() => void) | undefined;
-    const abortPromise = new Promise<never>((_, reject) => {
-      rejectAbort = () => reject(attemptController.signal.reason);
-      if (attemptController.signal.aborted) rejectAbort();
-      else attemptController.signal.addEventListener("abort", rejectAbort, { once: true });
-    });
-    const timeoutId = setTimeout(() => attemptController.abort(timeoutError), timeout);
-
-    try {
-      return await Promise.race([fencedOperation, abortPromise]);
-    } catch (error) {
-      if (attemptController.signal.aborted) {
-        const settled = await this.waitForCancellationGrace(fencedOperation);
-        if (!settled && error instanceof Error) this.nonCooperativeErrors.add(error);
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeoutId);
-      if (rejectAbort) attemptController.signal.removeEventListener("abort", rejectAbort);
-      parentSignal?.removeEventListener("abort", forwardAbort);
-    }
-  }
-
-  private async waitForCancellationGrace(operation: Promise<unknown>): Promise<boolean> {
-    const gracePeriod = Math.max(
-      0,
-      this.config.cancellationGracePeriod ?? DEFAULT_CANCELLATION_GRACE_PERIOD_MS,
-    );
-    let graceTimeoutId: ReturnType<typeof setTimeout> | undefined;
-    const settled = operation.then(
-      () => true,
-      () => true,
-    );
-    const graceExpired = new Promise<false>((resolve) => {
-      graceTimeoutId = setTimeout(() => resolve(false), gracePeriod);
-    });
-
-    try {
-      return await Promise.race([settled, graceExpired]);
-    } finally {
-      if (graceTimeoutId !== undefined) clearTimeout(graceTimeoutId);
-    }
   }
 
   private async executeStep(

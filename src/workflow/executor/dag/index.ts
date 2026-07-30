@@ -23,7 +23,12 @@ import {
   captureWorkflowSourceIntegrationPolicy,
   runWithWorkflowSourceIntegrationPolicy,
 } from "../../source-integration-policy.ts";
-import { INVALID_ARGUMENT, NOT_SUPPORTED, ORCHESTRATION_ERROR } from "#veryfront/errors";
+import {
+  ensureError,
+  INVALID_ARGUMENT,
+  NOT_SUPPORTED,
+  ORCHESTRATION_ERROR,
+} from "#veryfront/errors";
 import type { CheckpointOwnership } from "../checkpoint-manager.ts";
 
 export type { DAGExecutionResult, DAGExecutorConfig, NodeExecutionResult } from "./types.ts";
@@ -59,6 +64,8 @@ import {
   mergeContextPatches,
   setOwnRecordValue,
 } from "./context-patch.ts";
+import { throwIfAbortedWithCleanup } from "../abortable-operation.ts";
+import { getExecutionFailure, retainExecutionFailure } from "../execution-failure.ts";
 
 const DEFAULT_MAX_CONCURRENCY = 10;
 export class DAGExecutor {
@@ -189,7 +196,11 @@ export class DAGExecutor {
       );
       // Wait for the full in-flight batch to settle before propagating abort so
       // the caller keeps its lock until cooperative cleanup has completed.
-      abortSignal?.throwIfAborted();
+      throwIfAbortedWithCleanup(
+        abortSignal,
+        results.flatMap((result) => result.status === "rejected" ? [result.reason] : []),
+        `Workflow DAG batch [${batch.join(", ")}]`,
+      );
 
       // Record the state of EVERY node in the batch before deciding the batch's
       // outcome. The whole batch already ran (Promise.allSettled), so returning
@@ -197,16 +208,22 @@ export class DAGExecutor {
       // actually succeeded, and those would re-execute on resume. We capture
       // the earliest waiting/failed node (preserving index-order precedence) and
       // return only after all states are recorded.
-      let outcome: { kind: "waiting" | "failed"; nodeId: string; error?: string } | undefined;
+      let outcome:
+        | {
+          kind: "waiting" | "failed";
+          nodeId: string;
+          error?: string;
+          failureCause?: Error;
+        }
+        | undefined;
 
       for (let i = 0; i < batch.length; i++) {
         const nodeId = batch[i]!;
         const result = results[i]!;
 
         if (result.status !== "fulfilled") {
-          const error = result.reason instanceof Error
-            ? result.reason.message
-            : String(result.reason);
+          const failureCause = ensureError(result.reason);
+          const error = failureCause.message;
 
           setOwnRecordValue(nodeStates, nodeId, {
             nodeId,
@@ -216,7 +233,7 @@ export class DAGExecutor {
             completedAt: new Date(),
           });
 
-          if (!outcome) outcome = { kind: "failed", nodeId, error };
+          if (!outcome) outcome = { kind: "failed", nodeId, error, failureCause };
           continue;
         }
 
@@ -259,6 +276,7 @@ export class DAGExecutor {
               kind: "failed",
               nodeId,
               error: nodeResult.state.error ?? "Unknown error",
+              failureCause: getExecutionFailure(nodeResult),
             };
           }
           continue;
@@ -283,14 +301,14 @@ export class DAGExecutor {
       }
 
       if (outcome?.kind === "failed") {
-        return {
+        return retainExecutionFailure({
           completed: false,
           waiting: false,
           context,
           nodeStates,
           contextPatch,
           error: `Node "${outcome.nodeId}" failed: ${outcome.error}`,
-        };
+        }, outcome.failureCause);
       }
 
       // Merge freshly-unblocked nodes with any overflow nodes still queued in
@@ -450,17 +468,18 @@ export class DAGExecutor {
               context,
               nodeStates,
               runtime: {
-                executeChildGraph: (nodes, run) =>
+                executeChildGraph: (nodes, run, options) =>
                   this.executeChildGraph(
                     nodes,
                     run,
-                    { identityPrefix: `${node.id}/` },
+                    { ...options, identityPrefix: `${node.id}/` },
                     checkpointRunId,
                     attemptSignal,
                     ownership,
                   ),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
+                cancellationGracePeriod: this.config.cancellationGracePeriod,
               },
             }),
         });
@@ -494,11 +513,11 @@ export class DAGExecutor {
 
     this.config.onNodeComplete?.(node.id, state);
 
-    return {
+    return retainExecutionFailure({
       state,
       contextPatch: createSetContextPatch(result.success ? { [node.id]: result.output } : {}),
       waiting: false,
-    };
+    }, getExecutionFailure(result));
   }
 
   private async executeParallelNode(
@@ -565,11 +584,11 @@ export class DAGExecutor {
 
     this.config.onNodeComplete?.(node.id, state);
 
-    return {
+    return retainExecutionFailure({
       state,
       contextPatch: result.contextPatch,
       waiting: result.waiting,
-    };
+    }, getExecutionFailure(result));
   }
 
   private async executeBranchNode(
@@ -643,11 +662,11 @@ export class DAGExecutor {
 
     this.config.onNodeComplete?.(node.id, state);
 
-    return {
+    return retainExecutionFailure({
       state,
       contextPatch: result.contextPatch,
       waiting: result.waiting,
-    };
+    }, getExecutionFailure(result));
   }
 
   private async executeWaitNode(
@@ -769,11 +788,11 @@ export class DAGExecutor {
 
     this.config.onNodeComplete?.(node.id, state);
 
-    return {
+    return retainExecutionFailure({
       state,
       contextPatch: createSetContextPatch(result.completed ? { [node.id]: finalOutput } : {}),
       waiting: result.waiting,
-    };
+    }, getExecutionFailure(result));
   }
 
   private async checkpoint(
@@ -813,12 +832,13 @@ export class DAGExecutor {
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
   ): Promise<DAGInternalExecutionResult> {
+    const childAbortSignal = options?.abortSignal ?? abortSignal;
     if (options?.maxConcurrency === undefined) {
       return await this.executeUnwrapped(
         nodes,
         run,
         undefined,
-        abortSignal,
+        childAbortSignal,
         ownership,
         options?.identityPrefix,
         checkpointRunId,
@@ -837,7 +857,7 @@ export class DAGExecutor {
       nodes,
       run,
       undefined,
-      abortSignal,
+      childAbortSignal,
       ownership,
       options.identityPrefix,
       checkpointRunId,

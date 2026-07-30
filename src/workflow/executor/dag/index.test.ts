@@ -19,6 +19,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { DAGExecutor } from "./index.ts";
 import type {
   Checkpoint,
@@ -1715,6 +1716,49 @@ describe("DAGExecutor", () => {
       }
     });
 
+    it("rejects raw invalid iterationTimeout before condition or child work", async () => {
+      const invalidValues: Array<string | number> = [
+        -1,
+        0,
+        0.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.MAX_SAFE_INTEGER,
+        "0ms",
+      ];
+
+      for (const [index, iterationTimeout] of invalidValues.entries()) {
+        let conditionCalls = 0;
+        let stepExecutions = 0;
+        const exec = new DAGExecutor({
+          stepExecutor: new MockStepExecutor(new Map(), () => {
+            stepExecutions++;
+            return { success: true, executionTime: 1 };
+          }),
+        });
+        const node: WorkflowNode = {
+          id: `raw-loop-iteration-timeout-${index}`,
+          config: {
+            type: "loop",
+            maxIterations: 1,
+            iterationTimeout,
+            while: () => {
+              conditionCalls++;
+              return true;
+            },
+            steps: [{ id: "child", config: { type: "step", tool: "test" } as any }],
+          },
+        };
+
+        const result = await exec.execute([node], createTestRun());
+
+        assertEquals(result.completed, false);
+        assertEquals(result.error?.includes("iterationTimeout"), true);
+        assertEquals(conditionCalls, 0);
+        assertEquals(stepExecutions, 0);
+      }
+    });
+
     it("preserves numeric zero as a valid raw loop delay", async () => {
       let stepExecutions = 0;
       const exec = new DAGExecutor({
@@ -1738,6 +1782,367 @@ describe("DAGExecutor", () => {
 
       assertEquals(result.completed, true);
       assertEquals(stepExecutions, 2);
+    });
+
+    it("fences dynamic step construction at the iteration deadline", async () => {
+      using time = new FakeTime();
+      let childExecutions = 0;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), () => {
+          childExecutions++;
+          return { success: true, executionTime: 1 };
+        }),
+      });
+      const node: WorkflowNode = {
+        id: "timed-builder-loop",
+        config: {
+          type: "loop",
+          maxIterations: 1,
+          iterationTimeout: 5,
+          while: () => true,
+          steps: (context: WorkflowContext) => {
+            context["timed-out-mutation"] = { leaked: true };
+            time.tick(5);
+            return [{ id: "late-child", config: { type: "step", tool: "test" } as any }];
+          },
+        },
+      };
+
+      const result = await exec.execute([node], createTestRun());
+
+      assertEquals(result.completed, false);
+      assertEquals(result.error?.includes("iteration 0 timed out after 5ms"), true);
+      assertEquals(childExecutions, 0);
+      assertEquals(result.context["timed-out-mutation"], undefined);
+    });
+
+    it("waits for cooperative iteration cleanup before retrying", async () => {
+      using time = new FakeTime();
+      let attempts = 0;
+      let active = 0;
+      let maxActive = 0;
+      const signals: AbortSignal[] = [];
+      const retryErrors: Error[] = [];
+      const cleanupFailure = new Error("child cleanup failed");
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (_node, _context, signal) => {
+          attempts++;
+          active++;
+          maxActive = Math.max(maxActive, active);
+          if (signal) signals.push(signal);
+
+          return new Promise<StepResult>((resolve, reject) => {
+            let settled = false;
+            const finish = (cleanupError?: Error) => {
+              if (settled) return;
+              settled = true;
+              active--;
+              if (cleanupError) {
+                reject(cleanupError);
+                return;
+              }
+              resolve({ success: true, output: attempts, executionTime: 1 });
+            };
+            if (attempts === 1) {
+              signal?.addEventListener("abort", () => finish(cleanupFailure), { once: true });
+            } else setTimeout(finish, 1);
+          });
+        }),
+        cancellationGracePeriod: 5,
+      });
+      const node: WorkflowNode = {
+        id: "cooperative-timeout-loop",
+        config: {
+          type: "loop",
+          maxIterations: 1,
+          iterationTimeout: 5,
+          retry: {
+            maxAttempts: 2,
+            backoff: "fixed",
+            initialDelay: 0,
+            maxDelay: 0,
+            retryIf: (error) => {
+              retryErrors.push(error);
+              return (error as Error & { status?: number }).status === 408;
+            },
+          },
+          while: () => true,
+          steps: [{ id: "child", config: { type: "step", tool: "test" } as any }],
+        },
+      };
+      const execution = exec.execute([node], createTestRun());
+
+      await time.tickAsync(5);
+      await time.tickAsync(0);
+      await time.tickAsync(1);
+      const result = await execution;
+
+      assertEquals(result.completed, true);
+      assertEquals(attempts, 2);
+      assertEquals(maxActive, 1);
+      assertEquals(active, 0);
+      assertEquals(signals.length, 2);
+      assertEquals(signals[0]?.aborted, true);
+      assertEquals(signals[1]?.aborted, false);
+      assertEquals(retryErrors.length, 1);
+      assertEquals(retryErrors[0]?.message.includes("iteration 0 timed out after 5ms"), true);
+      assertEquals(result.nodeStates["cooperative-timeout-loop"]?.attempt, 2);
+    });
+
+    it("does not retry a non-cooperative active iteration", async () => {
+      using time = new FakeTime();
+      const condition = Promise.withResolvers<boolean>();
+      let attempts = 0;
+      const exec = new DAGExecutor({
+        stepExecutor,
+        cancellationGracePeriod: 5,
+      });
+      const node: WorkflowNode = {
+        id: "non-cooperative-iteration-loop",
+        config: {
+          type: "loop",
+          maxIterations: 1,
+          iterationTimeout: 5,
+          retry: {
+            maxAttempts: 2,
+            backoff: "fixed",
+            initialDelay: 0,
+            maxDelay: 0,
+            retryIf: () => true,
+          },
+          while: () => {
+            attempts++;
+            return condition.promise;
+          },
+          steps: [],
+        },
+      };
+      const execution = exec.execute([node], createTestRun());
+      const outcome = Promise.race([
+        execution.then((result) => ({ kind: "result" as const, result })),
+        new Promise<{ kind: "watchdog" }>((resolve) =>
+          setTimeout(() => resolve({ kind: "watchdog" }), 30)
+        ),
+      ]);
+
+      try {
+        await time.tickAsync(5);
+        await time.tickAsync(5);
+        await time.tickAsync(20);
+        const settled = await outcome;
+
+        assertEquals(settled.kind, "result");
+        if (settled.kind !== "result") return;
+        assertEquals(settled.result.completed, false);
+        assertEquals(
+          settled.result.error?.includes("iteration 0 timed out after 5ms"),
+          true,
+        );
+        assertEquals(attempts, 1);
+        assertEquals(settled.result.nodeStates["non-cooperative-iteration-loop"]?.attempt, 1);
+      } finally {
+        condition.resolve(false);
+        await time.tickAsync(0);
+      }
+    });
+
+    it("propagates a shorter child grace non-cooperation marker to the loop retry fence", async () => {
+      using time = new FakeTime();
+      const firstToolOperation = Promise.withResolvers<unknown>();
+      let attempts = 0;
+      let active = 0;
+      let maxActive = 0;
+      const childStepExecutor = new StepExecutor({ cancellationGracePeriod: 1 });
+      const exec = new DAGExecutor({
+        stepExecutor: childStepExecutor,
+        cancellationGracePeriod: 5,
+      });
+      const node: WorkflowNode = {
+        id: "nested-non-cooperative-loop",
+        config: {
+          type: "loop",
+          maxIterations: 1,
+          iterationTimeout: 5,
+          retry: {
+            maxAttempts: 2,
+            backoff: "fixed",
+            initialDelay: 0,
+            maxDelay: 0,
+            retryIf: () => true,
+          },
+          while: () => true,
+          steps: [{
+            id: "child",
+            config: {
+              type: "step",
+              tool: {
+                id: "non-cooperative-tool",
+                description: "Ignores iteration cancellation",
+                execute: () => {
+                  attempts++;
+                  active++;
+                  maxActive = Math.max(maxActive, active);
+                  if (attempts > 1) {
+                    active--;
+                    return Promise.resolve("unexpected retry");
+                  }
+                  return firstToolOperation.promise.finally(() => active--);
+                },
+              } as any,
+            },
+          }],
+        },
+      };
+      const execution = exec.execute([node], createTestRun());
+      const outcome = Promise.race([
+        execution.then((result) => ({ kind: "result" as const, result })),
+        new Promise<{ kind: "watchdog" }>((resolve) =>
+          setTimeout(() => resolve({ kind: "watchdog" }), 30)
+        ),
+      ]);
+
+      try {
+        await time.tickAsync(5);
+        await time.tickAsync(1);
+        await time.tickAsync(24);
+        const settled = await outcome;
+
+        assertEquals(settled.kind, "result");
+        if (settled.kind !== "result") return;
+        assertEquals(settled.result.completed, false);
+        assertEquals(attempts, 1);
+        assertEquals(active, 1);
+        assertEquals(maxActive, 1);
+      } finally {
+        firstToolOperation.resolve("late result");
+        await time.tickAsync(0);
+      }
+      assertEquals(active, 0);
+    });
+
+    it("does not retry a loop over a child step whose own timeout remains active", async () => {
+      using time = new FakeTime();
+      const firstToolOperation = Promise.withResolvers<unknown>();
+      let attempts = 0;
+      let active = 0;
+      let maxActive = 0;
+      const childStepExecutor = new StepExecutor({ cancellationGracePeriod: 1 });
+      const exec = new DAGExecutor({
+        stepExecutor: childStepExecutor,
+        cancellationGracePeriod: 5,
+      });
+      const node: WorkflowNode = {
+        id: "child-timeout-loop",
+        config: {
+          type: "loop",
+          maxIterations: 1,
+          retry: {
+            maxAttempts: 2,
+            backoff: "fixed",
+            initialDelay: 0,
+            maxDelay: 0,
+            retryIf: () => true,
+          },
+          while: () => true,
+          steps: [{
+            id: "child",
+            config: {
+              type: "step",
+              timeout: 5,
+              tool: {
+                id: "self-timed-non-cooperative-tool",
+                description: "Survives its own step timeout",
+                execute: () => {
+                  attempts++;
+                  active++;
+                  maxActive = Math.max(maxActive, active);
+                  if (attempts > 1) {
+                    active--;
+                    return Promise.resolve("unexpected retry");
+                  }
+                  return firstToolOperation.promise.finally(() => active--);
+                },
+              } as any,
+            },
+          }],
+        },
+      };
+      const execution = exec.execute([node], createTestRun());
+      const outcome = Promise.race([
+        execution.then((result) => ({ kind: "result" as const, result })),
+        new Promise<{ kind: "watchdog" }>((resolve) =>
+          setTimeout(() => resolve({ kind: "watchdog" }), 30)
+        ),
+      ]);
+
+      try {
+        await time.tickAsync(5);
+        await time.tickAsync(1);
+        await time.tickAsync(24);
+        const settled = await outcome;
+
+        assertEquals(settled.kind, "result");
+        if (settled.kind !== "result") return;
+        assertEquals(settled.result.completed, false);
+        assertEquals(settled.result.error?.includes("timed out after 5ms"), true);
+        assertEquals(attempts, 1);
+        assertEquals(active, 1);
+        assertEquals(maxActive, 1);
+        assertEquals(Object.hasOwn(settled.result, "failureCause"), false);
+        assertEquals(
+          Object.hasOwn(settled.result.nodeStates["child-timeout-loop"]!, "failureCause"),
+          false,
+        );
+      } finally {
+        firstToolOperation.resolve("late result");
+        await time.tickAsync(0);
+      }
+      assertEquals(active, 0);
+    });
+
+    it("starts a fresh timeout window for every iteration and excludes delay and completion", async () => {
+      using time = new FakeTime();
+      let childExecutions = 0;
+      let completionCalls = 0;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), () =>
+          new Promise<StepResult>((resolve) => {
+            setTimeout(() => {
+              childExecutions++;
+              resolve({ success: true, output: childExecutions, executionTime: 4 });
+            }, 4);
+          })),
+      });
+      const node: WorkflowNode = {
+        id: "fresh-window-loop",
+        config: {
+          type: "loop",
+          maxIterations: 2,
+          iterationTimeout: 5,
+          delay: 10,
+          while: () => true,
+          steps: [{ id: "child", config: { type: "step", tool: "test" } as any }],
+          onMaxIterations: () =>
+            new Promise<Record<string, unknown>>((resolve) => {
+              setTimeout(() => {
+                completionCalls++;
+                resolve({ completedAfterDelay: true });
+              }, 10);
+            }),
+        },
+      };
+      const execution = exec.execute([node], createTestRun());
+
+      await time.tickAsync(4);
+      await time.tickAsync(10);
+      await time.tickAsync(4);
+      await time.tickAsync(10);
+      const result = await execution;
+
+      assertEquals(result.completed, true);
+      assertEquals(childExecutions, 2);
+      assertEquals(completionCalls, 1);
+      assertEquals(result.context["completedAfterDelay"], true);
     });
   });
 
@@ -1802,6 +2207,56 @@ describe("DAGExecutor", () => {
         `expected exactly 1 increment (no double-run on resume), got ${incrRuns}`,
       );
       assertEquals(second.completed, true);
+    });
+
+    it("starts a fresh active timeout window after a durable wait", async () => {
+      using time = new FakeTime();
+      let conditionCalls = 0;
+      const exec = new DAGExecutor({ stepExecutor });
+      const nodes: WorkflowNode[] = [{
+        id: "timed-resume-loop",
+        config: {
+          type: "loop",
+          maxIterations: 1,
+          iterationTimeout: 5,
+          while: () =>
+            new Promise<boolean>((resolve) => {
+              setTimeout(() => {
+                conditionCalls++;
+                resolve(true);
+              }, 4);
+            }),
+          steps: [{
+            id: "approval",
+            config: { type: "wait", waitType: "approval", message: "approve?" } as any,
+          }],
+        },
+      }];
+
+      const firstExecution = exec.execute(nodes, createTestRun());
+      await time.tickAsync(4);
+      const first = await firstExecution;
+      assertEquals(first.waiting, true);
+
+      // Suspended wall-clock time is not part of an active iteration window.
+      await time.tickAsync(100);
+      const resumeRun = createTestRun({
+        context: { ...first.context },
+        nodeStates: {
+          ...first.nodeStates,
+          "timed-resume-loop/approval": {
+            ...first.nodeStates["timed-resume-loop/approval"]!,
+            status: "completed",
+            completedAt: new Date(),
+          },
+        },
+      });
+      const secondExecution = exec.execute(nodes, resumeRun, "timed-resume-loop");
+      await time.tickAsync(4);
+      const second = await secondExecution;
+
+      assertEquals(second.completed, true);
+      assertEquals(conditionCalls, 2);
     });
   });
 

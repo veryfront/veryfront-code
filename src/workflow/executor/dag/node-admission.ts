@@ -65,6 +65,12 @@ export function validateRuntimeNodeOptions(node: WorkflowNode): void {
   if (config.delay !== undefined) {
     parseDurationWithLabel(config.delay, `Loop "${node.id}" delay`);
   }
+  if (config.iterationTimeout !== undefined) {
+    parsePositiveDurationWithLabel(
+      config.iterationTimeout,
+      `Loop "${node.id}" iterationTimeout`,
+    );
+  }
 }
 
 /** Return the first invalid policy in the complete statically available node tree. */

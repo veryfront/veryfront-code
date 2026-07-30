@@ -386,6 +386,12 @@ describe("StepExecutor timeout isolation", () => {
     assertEquals(receivedSignal?.aborted, true);
     assertEquals(completions, 0);
     assertEquals(attempts, 1);
+    assertEquals(Object.keys(result).sort(), ["error", "executionTime", "success"]);
+    assertEquals(Object.hasOwn(result, "failureCause"), false);
+    assertEquals(
+      Object.keys(JSON.parse(JSON.stringify(result))).sort(),
+      ["error", "executionTime", "success"],
+    );
   });
 
   it("does not overlap retries when a timed-out tool ignores cancellation", async () => {
