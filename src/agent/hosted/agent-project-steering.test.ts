@@ -74,6 +74,7 @@ Deno.test("createHostedAgentProjectSteering loads and caches markdown agent defi
       id: "writer",
       name: "Writer",
       description: "Writes copy",
+      toolLoading: "deferred",
       instructions: "Draft concise copy.",
     });
 

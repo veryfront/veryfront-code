@@ -3,9 +3,185 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
   getForwardedHostedModelId,
   getForwardedHostedRuntimeOverrides,
+  getServerResolvedProviderReplayCheckpoints,
+  getServerResolvedToolExposureCheckpoint,
+  getServerResolvedToolSearchAuthorization,
   resolveHostedRuntimeRequestConfig,
   resolveHostedRuntimeThinkingOverride,
 } from "./runtime-request-config.ts";
+
+Deno.test("server-resolved provider replay checkpoints require verified envelope provenance", () => {
+  const block = {
+    type: "provider-block" as const,
+    provider: "anthropic" as const,
+    block: {
+      type: "server_tool_use" as const,
+      id: "srvtoolu_1",
+      name: "tool_search",
+      input: { query: "deploy" },
+    },
+  };
+  const checkpoint = {
+    version: 1 as const,
+    messageId: "assistant-1",
+    provider: "anthropic" as const,
+    providerBlocks: [block],
+    providerBlockPositions: [0],
+    totalPartCount: 2,
+  };
+  assertEquals(
+    getServerResolvedProviderReplayCheckpoints({
+      serverResolvedProviderReplayCheckpoints: [checkpoint],
+    }, true),
+    [checkpoint],
+  );
+  assertEquals(
+    getServerResolvedProviderReplayCheckpoints({
+      serverResolvedProviderReplayCheckpoints: [{
+        ...checkpoint,
+        providerBlocks: [{ ...block, provider: "openai-responses" }],
+      }],
+    }, true),
+    [],
+  );
+  assertEquals(
+    getServerResolvedProviderReplayCheckpoints({
+      serverResolvedProviderReplayCheckpoints: [checkpoint],
+    }, false),
+    [],
+  );
+});
+
+Deno.test("server-resolved tool exposure checkpoint parses strictly and fails closed", () => {
+  const checkpoint = {
+    version: 1 as const,
+    authorizedCatalogFingerprint: "v1-catalog",
+    loadedToolNames: ["get_release"],
+  };
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: checkpoint,
+    }, true),
+    checkpoint,
+  );
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: {
+        ...checkpoint,
+        version: 2,
+      },
+    }, true),
+    undefined,
+  );
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: {
+        ...checkpoint,
+        loadedToolNames: ["get_release", "get_release"],
+      },
+    }, true),
+    undefined,
+  );
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: checkpoint,
+    }, false),
+    undefined,
+  );
+});
+
+Deno.test("server-resolved tool search authorization fails closed", () => {
+  assertEquals(getServerResolvedToolSearchAuthorization(undefined, false), {
+    canConfigureAgentTools: false,
+    attachableCatalog: [],
+  });
+  assertEquals(
+    getServerResolvedToolSearchAuthorization({
+      serverResolvedToolSearchAuthorization: {
+        canConfigureAgentTools: "true",
+        attachableCatalog: [{ name: "list_agents", description: "List agents" }],
+      },
+    }, true),
+    {
+      canConfigureAgentTools: false,
+      attachableCatalog: [],
+    },
+  );
+});
+
+Deno.test("server-resolved tool search authorization accepts compact trusted metadata", () => {
+  assertEquals(
+    getServerResolvedToolSearchAuthorization({
+      serverResolvedToolSearchAuthorization: {
+        canConfigureAgentTools: true,
+        attachableCatalog: [{
+          name: "list_agents",
+          description: "List configured agents",
+          attachVia: "tool_ids",
+        }],
+      },
+    }, true),
+    {
+      canConfigureAgentTools: true,
+      attachableCatalog: [{
+        name: "list_agents",
+        description: "List configured agents",
+        attachVia: "tool_ids",
+      }],
+    },
+  );
+  assertEquals(
+    getServerResolvedToolSearchAuthorization({
+      serverResolvedToolSearchAuthorization: {
+        canConfigureAgentTools: true,
+        attachableCatalog: [{
+          name: "list_agents",
+          description: "List configured agents",
+          attachVia: "tool_ids",
+        }],
+      },
+    }, false),
+    {
+      canConfigureAgentTools: false,
+      attachableCatalog: [],
+    },
+  );
+});
+
+Deno.test("ordinary hosted request resolution ignores forwarded tool search authorization", () => {
+  const result = resolveHostedRuntimeRequestConfig({
+    agentConfig: {
+      model: "anthropic/claude-opus-4-6",
+    },
+    request: {
+      forwardedProps: {
+        serverResolvedToolSearchAuthorization: {
+          canConfigureAgentTools: true,
+          attachableCatalog: [{
+            name: "list_agents",
+            description: "List configured agents",
+            attachVia: "tool_ids",
+          }],
+        },
+        serverResolvedToolExposureCheckpoint: {
+          version: 1,
+          authorizedCatalogFingerprint: "client-spoof",
+          loadedToolNames: ["delete_project"],
+        },
+      },
+    },
+    resolveModelId: (model) => model,
+  });
+
+  assertEquals(
+    (result as unknown as Record<string, unknown>).serverResolvedToolSearchAuthorization,
+    undefined,
+  );
+  assertEquals(
+    (result as unknown as Record<string, unknown>).serverResolvedToolExposureCheckpoint,
+    undefined,
+  );
+});
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 
 function createAgentConfig(

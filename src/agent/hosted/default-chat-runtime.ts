@@ -44,7 +44,7 @@ import type {
   RuntimeAgentThinkingConfig,
 } from "../runtime/agent-definition.ts";
 import type { AgentConfig } from "../types.ts";
-import type { RuntimeRemoteToolConfig } from "../runtime/mcp-server-tool-sources.ts";
+import type { RuntimeToolFilterConfig } from "../runtime/runtime-tool-config.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
@@ -124,6 +124,8 @@ export type DefaultHostedChatRuntimeProjectSwitchInput = {
 /** Options accepted by create default hosted chat runtime. */
 export type CreateDefaultHostedChatRuntimeOptions = {
   options: DefaultHostedChatRuntimeCreationOptions;
+  /** Host-owned kill switch; never populated from hosted request payloads. */
+  operationalToolLoadingOverride?: AgentConfig["toolLoading"];
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   config: DefaultHostedChatRuntimeConfig;
   buildLocalTools: (
@@ -202,6 +204,9 @@ async function buildToolAssembly(
     createRemoteToolSource: input.createRemoteToolSource,
     traceLocalTools: input.traceLocalTools,
     preloadLatestConversationUserText: input.preloadLatestConversationUserText,
+    toolLoading: input.operationalToolLoadingOverride ??
+      input.options.liveProjectSteering?.agent.toolLoading ??
+      "deferred",
     sourceIntegrationPolicy: input.sourceIntegrationPolicy,
     prepareRemoteToolInput: ({ toolName, toolInput }) =>
       applyDefaultResearchArtifactPath(toolName, toolInput, input.taskContext),
@@ -236,6 +241,7 @@ function createRuntimeAgentConfig(input: {
   toolAssembly: HostedChatRuntimeToolAssemblyResult;
   modelId: string;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  operationalToolLoadingOverride?: AgentConfig["toolLoading"];
   refreshSystem?: CreateDefaultHostedChatRuntimeOptions["refreshSystem"];
 }): AgentConfig {
   const liveProjectSteering = input.options.liveProjectSteering;
@@ -256,15 +262,20 @@ function createRuntimeAgentConfig(input: {
     ]),
   );
 
-  const runtimeConfig: AgentConfig & RuntimeRemoteToolConfig = {
+  const runtimeConfig: RuntimeToolFilterConfig = {
     id: "veryfront-hosted-runtime",
     model: input.modelId,
     system: input.toolAssembly.systemInstructions,
     tools: runtimeTools,
+    toolLoading: input.options.liveProjectSteering?.agent.toolLoading ?? "deferred",
     providerTools: input.toolAssembly.providerToolNames,
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
     __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,
+    __vfToolSearchAuthorization: input.options.serverResolvedToolSearchAuthorization,
+    __vfToolExposureCheckpoint: input.options.serverResolvedToolExposureCheckpoint,
+    __vfPersistToolExposureCheckpoint: input.options.persistToolExposureCheckpoint,
+    __vfOperationalToolLoadingOverride: input.operationalToolLoadingOverride,
     temperature: input.options.temperature,
     maxSteps: input.options.maxSteps ?? 50,
     resolveModelTransport: ({ resolvedModel }) => {
@@ -369,6 +380,7 @@ export async function createDefaultHostedChatRuntime(
           taskContext,
           toolAssembly,
           modelId,
+          operationalToolLoadingOverride: input.operationalToolLoadingOverride,
           sourceIntegrationPolicy: input.sourceIntegrationPolicy,
           refreshSystem: input.refreshSystem,
         });
@@ -389,6 +401,7 @@ export async function createDefaultHostedChatRuntime(
             conversationId: taskContext.conversationId,
             authToken: taskContext.authToken,
             maxOutputTokens: input.options.maxOutputTokens,
+            persistProviderReplayBlocks: input.options.persistProviderReplayBlocks,
             runStream: (operation) =>
               runWithDefaultHostedRequestContext({
                 taskContext,

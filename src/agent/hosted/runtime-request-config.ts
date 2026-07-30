@@ -9,6 +9,11 @@ import {
   type RuntimeClientProfile,
 } from "../runtime/client-profile.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
+import type { ToolExposureCheckpoint, ToolSearchAuthorization } from "../runtime/tool-exposure.ts";
+import {
+  parseProviderReplayCheckpoints,
+  type ProviderReplayCheckpoints,
+} from "../runtime/provider-replay.ts";
 
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
@@ -54,6 +59,84 @@ export type ResolvedHostedRuntimeRequestConfig = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+const CLOSED_TOOL_SEARCH_AUTHORIZATION: ToolSearchAuthorization = {
+  canConfigureAgentTools: false,
+  attachableCatalog: [],
+};
+
+/**
+ * Read the authorization service result forwarded by the authenticated host.
+ *
+ * A cryptographically verified exact-run envelope is required even if a caller
+ * accidentally preserves the reserved forwarded property.
+ */
+export function getServerResolvedToolSearchAuthorization(
+  forwardedProps: Record<string, unknown> | undefined,
+  serverEnvelopeVerified: boolean,
+): ToolSearchAuthorization {
+  if (!serverEnvelopeVerified) return CLOSED_TOOL_SEARCH_AUTHORIZATION;
+  const value = forwardedProps?.serverResolvedToolSearchAuthorization;
+  if (!isRecord(value) || typeof value.canConfigureAgentTools !== "boolean") {
+    return CLOSED_TOOL_SEARCH_AUTHORIZATION;
+  }
+  if (!Array.isArray(value.attachableCatalog)) {
+    return CLOSED_TOOL_SEARCH_AUTHORIZATION;
+  }
+
+  const attachableCatalog = value.attachableCatalog.filter(
+    (entry): entry is ToolSearchAuthorization["attachableCatalog"][number] =>
+      isRecord(entry) &&
+      typeof entry.name === "string" &&
+      entry.name.length > 0 &&
+      typeof entry.description === "string" &&
+      entry.attachVia === "tool_ids",
+  );
+  if (attachableCatalog.length !== value.attachableCatalog.length) {
+    return CLOSED_TOOL_SEARCH_AUTHORIZATION;
+  }
+
+  return {
+    canConfigureAgentTools: value.canConfigureAgentTools,
+    attachableCatalog,
+  };
+}
+
+/** Read the latest checkpoint overwritten by the authenticated server caller. */
+export function getServerResolvedToolExposureCheckpoint(
+  forwardedProps: Record<string, unknown> | undefined,
+  serverEnvelopeVerified: boolean,
+): ToolExposureCheckpoint | undefined {
+  if (!serverEnvelopeVerified) return undefined;
+  const value = forwardedProps?.serverResolvedToolExposureCheckpoint;
+  if (
+    !isRecord(value) ||
+    value.version !== 1 ||
+    typeof value.authorizedCatalogFingerprint !== "string" ||
+    value.authorizedCatalogFingerprint.length === 0 ||
+    !Array.isArray(value.loadedToolNames) ||
+    !value.loadedToolNames.every((name) => typeof name === "string" && name.length > 0) ||
+    new Set(value.loadedToolNames).size !== value.loadedToolNames.length
+  ) {
+    return undefined;
+  }
+  return {
+    version: 1,
+    authorizedCatalogFingerprint: value.authorizedCatalogFingerprint,
+    loadedToolNames: [...value.loadedToolNames],
+  };
+}
+
+/** Read provider replay history only from a verified server envelope. */
+export function getServerResolvedProviderReplayCheckpoints(
+  forwardedProps: Record<string, unknown> | undefined,
+  serverEnvelopeVerified: boolean,
+): ProviderReplayCheckpoints {
+  if (!serverEnvelopeVerified) return [];
+  return parseProviderReplayCheckpoints(
+    forwardedProps?.serverResolvedProviderReplayCheckpoints,
+  ) ?? [];
 }
 
 /** Return forwarded hosted model ID. */

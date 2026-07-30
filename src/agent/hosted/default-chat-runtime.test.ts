@@ -118,7 +118,7 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
     values: { topic: "Support FAQ assistant" },
     inputRequestId: "input-request-1",
   });
-  assertEquals(capturedContext.availableToolNames, ["sleep"]);
+  assertEquals(capturedContext.availableToolNames, ["tool_search"]);
 });
 
 Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integration discovery", async () => {
@@ -234,11 +234,12 @@ Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the gl
   }
 });
 
-Deno.test("createDefaultHostedChatRuntime resolves configured owner tool selectors", async () => {
+Deno.test("createDefaultHostedChatRuntime applies the host operational loading override", async () => {
   let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
 
   await createDefaultHostedChatRuntime({
     sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    operationalToolLoadingOverride: "eager",
     options: {
       projectId: "project-1",
       authToken: "token-1",
@@ -301,7 +302,7 @@ Deno.test("createDefaultHostedChatRuntime awaits per-run tool setup and exposes 
   });
 
   assertExists(capturedContext);
-  assertEquals(capturedContext.availableToolNames, ["bash"]);
+  assertEquals(capturedContext.availableToolNames, ["tool_search"]);
   await runtime.cleanup();
   assertEquals(cleanupCalls, 1);
 });

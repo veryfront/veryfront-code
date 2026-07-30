@@ -41,6 +41,8 @@ import {
   isIntegrationToolAllowedBySourcePolicy,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
+import type { ToolLoading } from "../types.ts";
+import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
@@ -69,6 +71,7 @@ export type HostedChatRuntimeToolAssemblyResult = {
   remoteToolNames: string[];
   providerToolNames: string[];
   availableToolNames: string[];
+  modelVisibleToolNames?: string[];
   compatibleRemoteToolNames: string[];
   systemInstructions: string;
 };
@@ -108,6 +111,7 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   toolDiscoveryContext?: RuntimeToolDiscoveryContext;
   /** Exact project-source restriction applied before tool inventory is exposed. */
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  toolLoading?: ToolLoading;
 };
 
 function activeProjectId(taskContext: HostedChatRuntimeToolAssemblyContext): string | null {
@@ -337,10 +341,18 @@ export async function prepareHostedChatRuntimeToolAssembly<
   const compatibleRemoteToolNames = remoteToolNames.filter((toolName) =>
     compatibleToolNames.has(toolName)
   );
+  const modelVisibleToolNames = input.toolLoading === "deferred"
+    ? [
+      ...availableToolNames.filter((toolName) =>
+        toolName === "form_input" || toolName === "load_skill"
+      ),
+      TOOL_SEARCH_TOOL_NAME,
+    ].sort()
+    : availableToolNames;
 
-  input.taskContext.availableToolNames = availableToolNames;
+  input.taskContext.availableToolNames = modelVisibleToolNames;
   const systemInstructions = flattenSystemInstructions(
-    withRuntimeToolInventory(input.instructions, availableToolNames),
+    withRuntimeToolInventory(input.instructions, modelVisibleToolNames),
   );
 
   if (input.preloadLatestConversationUserText !== false) {
@@ -364,6 +376,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     remoteToolNames,
     providerToolNames,
     availableToolNames,
+    modelVisibleToolNames,
     compatibleRemoteToolNames,
     systemInstructions,
   };

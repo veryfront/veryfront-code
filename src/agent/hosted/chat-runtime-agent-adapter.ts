@@ -9,6 +9,8 @@ import { createToolExecutionDataEventBridgeStream } from "../streaming/tool-exec
 import type { Agent } from "../types.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { markTrustedProviderBlockInput } from "../runtime/input-utils.ts";
+import type { ProviderReplayBlockPersister } from "../runtime/input-utils.ts";
 
 /** Public API contract for hosted chat runtime agent adapter runner. */
 export type HostedChatRuntimeAgentAdapterRunner = <TResult>(
@@ -30,6 +32,8 @@ export type HostedChatRuntimeAgentAdapterInput = {
   conversationId?: string;
   authToken?: string;
   maxOutputTokens?: number;
+  /** @internal Persists provider-native replay state outside public UI chunks. */
+  persistProviderReplayBlocks?: ProviderReplayBlockPersister;
   runStream?: HostedChatRuntimeAgentAdapterRunner;
   warnOrphanedToolInput?: (
     message: string,
@@ -59,14 +63,17 @@ export function createHostedChatRuntimeAgentAdapter(
               ...(input.maxOutputTokens !== undefined
                 ? { maxOutputTokens: input.maxOutputTokens }
                 : {}),
-              context: {
-                ...(input.runId ? { runId: input.runId } : {}),
-                ...(input.agentId ? { agentId: input.agentId } : {}),
-                ...(input.conversationId ? { conversationId: input.conversationId } : {}),
-                ...(input.authToken ? { authToken: input.authToken } : {}),
-                abortSignal: streamInput.abortSignal,
-                publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
-              },
+              context: markTrustedProviderBlockInput(
+                {
+                  ...(input.runId ? { runId: input.runId } : {}),
+                  ...(input.agentId ? { agentId: input.agentId } : {}),
+                  ...(input.conversationId ? { conversationId: input.conversationId } : {}),
+                  ...(input.authToken ? { authToken: input.authToken } : {}),
+                  abortSignal: streamInput.abortSignal,
+                  publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
+                },
+                input.persistProviderReplayBlocks,
+              ),
             });
             return response.toDataStreamResponse();
           },

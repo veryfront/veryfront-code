@@ -40,6 +40,13 @@ export type HostedServiceAuthenticatedRequest = {
   userId: string;
 };
 
+/** Claims that bind an internal run-event append token to one durable run. */
+export type HostedServiceRunEventAppendTokenInput = {
+  token: string;
+  projectId: string;
+  runId: string;
+};
+
 /** Error shape for hosted service jwt. */
 export type HostedServiceJwtError = {
   statusCode: number;
@@ -112,6 +119,9 @@ export type HostedServiceAuth = {
   ) => Promise<HostedServiceAuthenticatedRequest | Response>;
   getTokenFromRequest: typeof getHostedServiceTokenFromRequest;
   verifyJwt: (token: string) => Promise<HostedServiceJwtResult>;
+  verifyRunEventAppendToken: (
+    input: HostedServiceRunEventAppendTokenInput,
+  ) => Promise<boolean>;
   verifyProjectAccess: (
     projectId: string,
     token: string,
@@ -382,6 +392,48 @@ export function createHostedServiceAuth(
     };
   }
 
+  async function verifyRunEventAppendToken(
+    input: HostedServiceRunEventAppendTokenInput,
+  ): Promise<boolean> {
+    return await trace("auth.verifyRunEventAppendToken", async () => {
+      const config = options.getConfig();
+      if (!config.OAUTH_PUBLIC_KEY) {
+        return false;
+      }
+
+      try {
+        const authProvider = await getAuthProvider(options);
+        if (!authProvider) {
+          return false;
+        }
+
+        const payload = await authProvider.verifyWithPublicKey(
+          input.token,
+          config.OAUTH_PUBLIC_KEY,
+          { algorithms: ["RS256"] },
+        ) as TokenPayload;
+        const scope = Array.isArray(payload.scope)
+          ? payload.scope.filter((value): value is string => typeof value === "string")
+          : [];
+
+        return payload.actorType === "service_account" &&
+          payload.tokenUse === "project_scoped_service_account" &&
+          typeof payload.serviceAccountId === "string" &&
+          payload.userId === payload.serviceAccountId &&
+          payload.projectId === input.projectId &&
+          payload.runId === input.runId &&
+          scope.length === 2 &&
+          scope.includes("projects:read") &&
+          scope.includes("runs:write");
+      } catch (error) {
+        options.logger?.debug?.("Run-event append token verification failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      }
+    });
+  }
+
   async function verifyProjectAccess(
     projectId: string,
     token: string,
@@ -466,6 +518,7 @@ export function createHostedServiceAuth(
     authenticateRequest,
     getTokenFromRequest: getHostedServiceTokenFromRequest,
     verifyJwt,
+    verifyRunEventAppendToken,
     verifyProjectAccess,
   };
 }

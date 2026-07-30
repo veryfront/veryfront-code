@@ -10,6 +10,7 @@ import {
   prepareHostedChatRuntimeCreationOptions,
   prepareHostedChatRuntimeMessages,
 } from "./chat-preparation.ts";
+import { getProviderReplayMessageParts } from "../runtime/provider-replay.ts";
 
 const userMessage: ChatUiMessage = {
   id: "user-message-1",
@@ -173,6 +174,8 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     branchId?: string | null;
   }> = [];
   const parentEvents: unknown[] = [];
+  const checkpointPersistenceOperations: string[] = [];
+  let checkpointFlushComplete = true;
 
   const result = await prepareHostedChatRuntimeCreationOptions({
     request: createParsedHostedChatRequest({
@@ -211,6 +214,54 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
         parentEvents.push(...events);
         return Promise.resolve();
       },
+      privateDurableRunMirror: {
+        handleChunk: () => Promise.resolve(),
+        appendEvents: (events) => {
+          checkpointPersistenceOperations.push(
+            `append:${events.map((event) => event.type).join(",")}`,
+          );
+          return Promise.resolve();
+        },
+        flush: () => {
+          checkpointPersistenceOperations.push("flush");
+          return Promise.resolve({
+            latestEventId: 2,
+            latestExternalEventSequence: 2,
+            pendingEventCount: checkpointFlushComplete ? 0 : 1,
+            consecutiveFailures: 0,
+            disabled: false,
+            hasFlushTimer: false,
+            hasRetryTimer: false,
+            inFlight: false,
+          });
+        },
+        getSnapshot: () => ({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+        }),
+        dispose: () => {
+          checkpointPersistenceOperations.push("dispose");
+        },
+      },
+    },
+    serverResolvedToolSearchAuthorization: {
+      canConfigureAgentTools: true,
+      attachableCatalog: [{
+        name: "list_agents",
+        description: "List agents",
+        attachVia: "tool_ids",
+      }],
+    },
+    serverResolvedToolExposureCheckpoint: {
+      version: 1,
+      authorizedCatalogFingerprint: "v1-catalog",
+      loadedToolNames: ["get_release"],
     },
     resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
     resolveModelThinking: (modelId) => modelId ? { enabled: true, budgetTokens: 1234 } : undefined,
@@ -273,7 +324,21 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
       source: "omitted",
     },
     publishParentRunEvents: result.creationOptions.publishParentRunEvents,
+    persistToolExposureCheckpoint: result.creationOptions.persistToolExposureCheckpoint,
     clientProfile: null,
+    serverResolvedToolSearchAuthorization: {
+      canConfigureAgentTools: true,
+      attachableCatalog: [{
+        name: "list_agents",
+        description: "List agents",
+        attachVia: "tool_ids",
+      }],
+    },
+    serverResolvedToolExposureCheckpoint: {
+      version: 1,
+      authorizedCatalogFingerprint: "v1-catalog",
+      loadedToolNames: ["get_release"],
+    },
     liveProjectSteering: {
       agent: {
         id: "agent-1",
@@ -294,6 +359,33 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
 
   await result.creationOptions.publishParentRunEvents?.([{ type: "state_delta" }]);
   assertEquals(parentEvents, [{ type: "state_delta" }]);
+
+  await result.creationOptions.persistToolExposureCheckpoint?.({
+    version: 1,
+    authorizedCatalogFingerprint: "v1-catalog",
+    loadedToolNames: ["get_release"],
+  });
+  assertEquals(checkpointPersistenceOperations, [
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "flush",
+  ]);
+
+  checkpointFlushComplete = false;
+  await assertRejects(
+    () =>
+      result.creationOptions.persistToolExposureCheckpoint?.({
+        version: 1,
+        authorizedCatalogFingerprint: "v1-catalog",
+        loadedToolNames: ["get_release"],
+      }) ?? Promise.resolve(),
+    Error,
+    "not durably persisted",
+  );
+  assertEquals(checkpointPersistenceOperations.slice(-3), [
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "flush",
+    "dispose",
+  ]);
 });
 
 Deno.test("prepareHostedChatRuntimeCreationOptions uses configured agent tools by default", async () => {
@@ -319,6 +411,224 @@ Deno.test("prepareHostedChatRuntimeCreationOptions uses configured agent tools b
   ]);
   assertEquals(result.creationOptions.allowedProviderTools, ["web_search"]);
   assertEquals(result.creationOptions.includeRuntimeEssentialToolsWhenEmpty, true);
+});
+
+Deno.test("private checkpoints fail closed without a trusted run-event append token", async () => {
+  let publicMirrorAppends = 0;
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: {
+      id: "agent-1",
+      model: "openai/gpt-5.4-nano",
+      tools: ["get_release"],
+    },
+    projectId: "project-1",
+    authToken: "user-api-token",
+    rootRunContext: {
+      durableRootRun: {
+        runId: "run-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+      durableRunMirror: {
+        handleChunk: () => Promise.resolve(),
+        appendEvents: () => {
+          publicMirrorAppends++;
+          return Promise.resolve();
+        },
+        flush: () =>
+          Promise.resolve({
+            latestEventId: 1,
+            latestExternalEventSequence: 1,
+            pendingEventCount: 0,
+            consecutiveFailures: 0,
+            disabled: false,
+            hasFlushTimer: false,
+            hasRetryTimer: false,
+            inFlight: false,
+          }),
+        getSnapshot: () => ({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+        }),
+        dispose: () => {},
+      },
+      privateDurableRunMirror: null,
+    },
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+  });
+
+  await assertRejects(
+    () =>
+      result.creationOptions.persistToolExposureCheckpoint?.({
+        version: 1,
+        authorizedCatalogFingerprint: "v1-catalog",
+        loadedToolNames: ["get_release"],
+      }) ?? Promise.resolve(),
+    Error,
+    "trusted run-event append token",
+  );
+  await assertRejects(
+    () =>
+      result.creationOptions.persistProviderReplayBlocks?.({
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "openai-responses",
+          block: { type: "tool_search_call", call_id: "call-1" },
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      }) ?? Promise.resolve(),
+    Error,
+    "trusted run-event append token",
+  );
+  assertEquals(publicMirrorAppends, 0);
+});
+
+Deno.test("provider replay checkpoint persists a cumulative exact-message snapshot", async () => {
+  const appendedEvents: unknown[][] = [];
+  const restored = {
+    type: "provider-block" as const,
+    provider: "anthropic" as const,
+    block: {
+      type: "server_tool_use" as const,
+      id: "srvtoolu-restored",
+      name: "tool_search",
+      input: { query: "existing" },
+    },
+  };
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: {
+      id: "agent-1",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    projectId: "project-1",
+    authToken: "user-api-token",
+    rootRunContext: {
+      durableRootRun: {
+        runId: "run-1",
+        conversationId: "conversation-1",
+        messageId: "assistant-1",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+      privateDurableRunMirror: {
+        handleChunk: () => Promise.resolve(),
+        appendEvents: (events) => {
+          appendedEvents.push(events);
+          return Promise.resolve();
+        },
+        flush: () =>
+          Promise.resolve({
+            latestEventId: 2,
+            latestExternalEventSequence: 2,
+            pendingEventCount: 0,
+            consecutiveFailures: 0,
+            disabled: false,
+            hasFlushTimer: false,
+            hasRetryTimer: false,
+            inFlight: false,
+          }),
+        getSnapshot: () => ({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+        }),
+        dispose: () => {},
+      },
+    },
+    serverResolvedProviderReplayCheckpoints: [
+      {
+        version: 1,
+        messageId: "prior-assistant",
+        provider: "anthropic",
+        providerBlocks: [{
+          ...restored,
+          block: { ...restored.block, id: "srvtoolu-prior" },
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      },
+      {
+        version: 1,
+        messageId: "assistant-1",
+        provider: "anthropic",
+        providerBlocks: [restored],
+        providerBlockPositions: [0],
+        totalPartCount: 2,
+      },
+    ],
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+  });
+  const first = {
+    type: "provider-block" as const,
+    provider: "anthropic" as const,
+    block: {
+      type: "server_tool_use" as const,
+      id: "srvtoolu-1",
+      name: "tool_search",
+      input: { query: "deploy" },
+    },
+  };
+  const second = {
+    type: "provider-block" as const,
+    provider: "anthropic" as const,
+    block: {
+      type: "tool_search_tool_result" as const,
+      tool_use_id: "srvtoolu-1",
+      content: [{ type: "tool_reference", tool_name: "deploy_release" }],
+    },
+  };
+
+  await result.creationOptions.persistProviderReplayBlocks?.({
+    providerBlocks: [first],
+    providerBlockPositions: [0],
+    totalPartCount: 1,
+  });
+  await result.creationOptions.persistProviderReplayBlocks?.({
+    providerBlocks: [second],
+    providerBlockPositions: [0],
+    totalPartCount: 1,
+  });
+
+  assertEquals(appendedEvents, [
+    [{
+      type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
+      version: 1,
+      messageId: "assistant-1",
+      provider: "anthropic",
+      providerBlocks: [restored, first],
+      providerBlockPositions: [0, 2],
+      totalPartCount: 3,
+    }],
+    [{
+      type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
+      version: 1,
+      messageId: "assistant-1",
+      provider: "anthropic",
+      providerBlocks: [restored, first, second],
+      providerBlockPositions: [0, 2, 3],
+      totalPartCount: 4,
+    }],
+  ]);
 });
 
 Deno.test("prepareHostedChatExecution prepares root run, runtime, and final messages", async () => {
@@ -387,6 +697,230 @@ Deno.test("prepareHostedChatExecution prepares root run, runtime, and final mess
       content: "agent-1:Project instructions",
     },
   ]);
+});
+
+Deno.test("prepareHostedChatExecution restores trusted matching-provider replay after restart", async () => {
+  const rawBlock = {
+    type: "provider-block" as const,
+    provider: "anthropic" as const,
+    block: {
+      type: "server_tool_use" as const,
+      id: "srvtoolu_1",
+      name: "tool_search",
+      input: { query: "deploy" },
+      provider_extension: { preserve: "exactly" },
+    },
+  };
+  const priorAssistant: ChatUiMessage = {
+    id: "assistant-message-0",
+    role: "assistant",
+    parts: [{ type: "text", text: "Earlier" }],
+  };
+  const priorRawBlock = {
+    ...rawBlock,
+    block: { ...rawBlock.block, id: "srvtoolu_0", input: { query: "earlier" } },
+  };
+  const result = await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      messages: [
+        priorAssistant,
+        { ...userMessage, id: "user-message-1" },
+        assistantMessage,
+        { ...userMessage, id: "user-message-2" },
+      ],
+      model: "anthropic/claude-sonnet-4-6",
+      durableRootRun: {
+        runId: "run-1",
+        messageId: "current-assistant-message",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+    }),
+    agentConfig: {
+      id: "agent-1",
+      model: "anthropic/claude-sonnet-4-6",
+    },
+    serverResolvedProviderReplayCheckpoints: [
+      {
+        version: 1,
+        messageId: "assistant-message-0",
+        provider: "anthropic",
+        providerBlocks: [priorRawBlock],
+        providerBlockPositions: [0],
+        totalPartCount: 2,
+      },
+      {
+        version: 1,
+        messageId: "assistant-message-1",
+        provider: "anthropic",
+        providerBlocks: [rawBlock],
+        providerBlockPositions: [1],
+        totalPartCount: 2,
+      },
+    ],
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+    createRuntime: (options) =>
+      Promise.resolve({
+        runtimeKind: "framework",
+        modelId: options.model!,
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      }),
+  });
+
+  assertEquals(result.finalMessages[0]?.parts, [{ type: "text", text: "Earlier" }]);
+  assertEquals(getProviderReplayMessageParts(result.finalMessages[0]!), [
+    priorRawBlock,
+    { type: "text", text: "Earlier" },
+  ]);
+  assertEquals(result.finalMessages[2]?.parts, [{ type: "text", text: "Hi" }]);
+  assertEquals(getProviderReplayMessageParts(result.finalMessages[2]!), [
+    { type: "text", text: "Hi" },
+    rawBlock,
+  ]);
+});
+
+Deno.test("prepareHostedChatExecution restores trusted OpenAI Responses replay after restart", async () => {
+  const rawBlocks = [
+    {
+      type: "provider-block" as const,
+      provider: "openai-responses" as const,
+      block: {
+        type: "tool_search_call" as const,
+        id: "search-item-1",
+        call_id: "search-call-1",
+        status: "completed",
+        queries: ["deploy"],
+      },
+    },
+    {
+      type: "provider-block" as const,
+      provider: "openai-responses" as const,
+      block: {
+        type: "tool_search_output" as const,
+        id: "search-output-1",
+        call_id: "search-call-1",
+        status: "completed",
+        results: [{ tool_name: "deploy_release" }],
+        provider_extension: { preserve: "exactly" },
+      },
+    },
+  ];
+  const result = await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      messages: [
+        assistantMessage,
+        { ...userMessage, id: "user-message-2" },
+      ],
+      model: "openai/gpt-5.5",
+      durableRootRun: {
+        runId: "run-1",
+        messageId: "current-assistant-message",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+    }),
+    agentConfig: {
+      id: "agent-1",
+      model: "openai/gpt-5.5",
+    },
+    serverResolvedProviderReplayCheckpoints: [{
+      version: 1,
+      messageId: "assistant-message-1",
+      provider: "openai-responses",
+      providerBlocks: rawBlocks,
+      providerBlockPositions: [0, 2],
+      totalPartCount: 3,
+    }],
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+    createRuntime: (options) =>
+      Promise.resolve({
+        runtimeKind: "framework",
+        modelId: options.model!,
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      }),
+  });
+
+  assertEquals(result.finalMessages[0]?.parts, [{ type: "text", text: "Hi" }]);
+  assertEquals(getProviderReplayMessageParts(result.finalMessages[0]!), [
+    rawBlocks[0]!,
+    { type: "text", text: "Hi" },
+    rawBlocks[1]!,
+  ]);
+});
+
+Deno.test("prepareHostedChatExecution drops cross-provider replay state", async () => {
+  const result = await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      messages: [assistantMessage, { ...userMessage, id: "user-message-2" }],
+      model: "openai/gpt-5",
+      durableRootRun: {
+        runId: "run-1",
+        messageId: "current-assistant-message",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+    }),
+    agentConfig: { id: "agent-1", model: "openai/gpt-5" },
+    serverResolvedProviderReplayCheckpoints: [{
+      version: 1,
+      messageId: "assistant-message-1",
+      provider: "anthropic",
+      providerBlocks: [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: {
+          type: "server_tool_use",
+          id: "srvtoolu_1",
+          name: "tool_search",
+          input: {},
+        },
+      }],
+      providerBlockPositions: [0],
+      totalPartCount: 2,
+    }],
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+    createRuntime: (options) =>
+      Promise.resolve({
+        runtimeKind: "framework",
+        modelId: options.model!,
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      }),
+  });
+
+  assertEquals(result.finalMessages[0]?.parts, [{ type: "text", text: "Hi" }]);
 });
 
 Deno.test("prepareHostedChatExecution strips configured provider history selected by a runtime override", async () => {
@@ -702,6 +1236,7 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
   try {
     const result = await prepareHostedChatExecution({
       request: createParsedHostedChatRequest({
+        runEventAppendToken: "run-event-service-token",
         conversationId: "11111111-1111-4111-a111-111111111111",
         projectId: "project-1",
         validatedContext: {
@@ -815,6 +1350,7 @@ Deno.test("prepareHostedChatExecution rejects compacted context when durable eve
       () =>
         prepareHostedChatExecution({
           request: createParsedHostedChatRequest({
+            runEventAppendToken: "run-event-service-token",
             conversationId: "11111111-1111-4111-a111-111111111111",
             projectId: "project-1",
             validatedContext: {

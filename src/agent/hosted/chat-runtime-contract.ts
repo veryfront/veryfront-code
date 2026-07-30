@@ -8,8 +8,10 @@ import type {
 import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
+import type { ToolExposureCheckpoint, ToolSearchAuthorization } from "../runtime/tool-exposure.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
+import type { ProviderReplayBlockPersister } from "../runtime/input-utils.ts";
 
 /** Public API contract for hosted chat runtime finish part. */
 export type HostedChatRuntimeFinishPart = {
@@ -147,4 +149,17 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   clientProfile?: RuntimeClientProfile | null;
   liveProjectSteering?: HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition>;
   submittedFormInputResult?: HostedSubmittedFormInputResult;
+  /**
+   * @internal Trusted authorization-service result. Ordinary client input must
+   * be stripped before the authenticated host sets this value.
+   */
+  serverResolvedToolSearchAuthorization?: ToolSearchAuthorization;
+  /** @internal Latest private checkpoint loaded from trusted run state. */
+  serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** @internal Persists private checkpoint state outside model messages. */
+  persistToolExposureCheckpoint?: (
+    checkpoint: ToolExposureCheckpoint,
+  ) => void | Promise<void>;
+  /** @internal Persists provider-native replay state outside public UI chunks. */
+  persistProviderReplayBlocks?: ProviderReplayBlockPersister;
 };

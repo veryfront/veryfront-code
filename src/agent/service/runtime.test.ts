@@ -125,6 +125,34 @@ describe("agent/agent-service-runtime", () => {
     assertEquals(typeof tools?.execute_skill_script, "object");
   });
 
+  it("preserves explicit Markdown tool loading on the service agent", () => {
+    const bundle = createAgentServiceRuntime({
+      serviceName: "test-eager-agent-service",
+      getConfig: () => ({
+        VERYFRONT_API_URL: "https://api.example.test",
+        NODE_ENV: "test",
+        PORT: 3180,
+        ALLOWED_ORIGINS: ["https://studio.example.test"],
+      }),
+      getAgentConfig: () => ({
+        id: "assistant",
+        name: "Assistant",
+        description: "",
+        instructions: "You are a test assistant.",
+        toolLoading: "eager",
+      }),
+      logger: createLogger(),
+      prepareExecution: async () => ({ ok: true }),
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {},
+    });
+
+    assertEquals(
+      bundle.runtime.contract.agents.assistant?.config.toolLoading,
+      "eager",
+    );
+  });
+
   it("starts the node agent service server from the assembled runtime", async () => {
     const service = await startNodeAgentService({
       serviceName: "node-test-agent-service",

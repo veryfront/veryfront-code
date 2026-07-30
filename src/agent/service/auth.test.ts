@@ -37,7 +37,7 @@ function encodeBase64UrlBytes(bytes: Uint8Array): string {
   return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
-function decodeBase64UrlBytes(input: string): Uint8Array {
+function decodeBase64UrlBytes(input: string): Uint8Array<ArrayBuffer> {
   const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
   const paddingLength = (4 - (normalized.length % 4)) % 4;
   const binary = atob(`${normalized}${"=".repeat(paddingLength)}`);
@@ -58,7 +58,7 @@ function spkiDerToPem(der: ArrayBuffer): string {
   return `-----BEGIN PUBLIC KEY-----\n${lines.join("\n")}\n-----END PUBLIC KEY-----`;
 }
 
-function pemToSpkiDer(publicKeyPem: string): Uint8Array {
+function pemToSpkiDer(publicKeyPem: string): Uint8Array<ArrayBuffer> {
   const base64 = publicKeyPem
     .replace("-----BEGIN PUBLIC KEY-----", "")
     .replace("-----END PUBLIC KEY-----", "")
@@ -225,6 +225,94 @@ describe("agent/agent-service-auth", () => {
     assertEquals(result.userId, "user-1");
     assertEquals(result.email, "user@example.test");
     assertEquals(result.token, fixture.token);
+  });
+
+  it("cryptographically binds run-event append tokens to one project and run", async () => {
+    const fixture = await createRs256JwtFixture({
+      userId: "service-account-1",
+      serviceAccountId: "service-account-1",
+      actorType: "service_account",
+      tokenUse: "project_scoped_service_account",
+      projectId: "project-1",
+      runId: "run-1",
+      scope: ["projects:read", "runs:write"],
+    });
+    const auth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+
+    assertEquals(
+      await auth.verifyRunEventAppendToken({
+        token: fixture.token,
+        projectId: "project-1",
+        runId: "run-1",
+      }),
+      true,
+    );
+    assertEquals(
+      await auth.verifyRunEventAppendToken({
+        token: fixture.token,
+        projectId: "project-1",
+        runId: "run-2",
+      }),
+      false,
+    );
+  });
+
+  it("rejects broader or user run-event append credentials", async () => {
+    const userFixture = await createRs256JwtFixture({
+      userId: "user-1",
+      projectId: "project-1",
+      runId: "run-1",
+      scope: ["projects:read", "runs:write"],
+    });
+    const broadFixture = await createRs256JwtFixture({
+      userId: "service-account-1",
+      serviceAccountId: "service-account-1",
+      actorType: "service_account",
+      tokenUse: "project_scoped_service_account",
+      projectId: "project-1",
+      runId: "run-1",
+      scope: ["projects:read", "runs:write", "files:read"],
+    });
+    const userAuth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: userFixture.publicKeyPem,
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+    const broadAuth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: broadFixture.publicKeyPem,
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+
+    assertEquals(
+      await userAuth.verifyRunEventAppendToken({
+        token: userFixture.token,
+        projectId: "project-1",
+        runId: "run-1",
+      }),
+      false,
+    );
+    assertEquals(
+      await broadAuth.verifyRunEventAppendToken({
+        token: broadFixture.token,
+        projectId: "project-1",
+        runId: "run-1",
+      }),
+      false,
+    );
   });
 
   it("uses the built-in AuthProvider for configured public key JWTs", async () => {

@@ -26,6 +26,9 @@ import {
 } from "./runtime-source-binding.ts";
 import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
 
+/** Internal control-plane credential for exact-run durable event appends. */
+export const RUN_EVENT_APPEND_TOKEN_HEADER = "X-Veryfront-Run-Event-Token";
+
 /** Public API contract for hosted chat request principal. */
 export type HostedChatRequestPrincipal = {
   userId: string;
@@ -49,6 +52,10 @@ export type ParsedHostedChatRequest = {
   agentId: string | undefined;
   userId: string;
   authToken: string;
+  /** Internal control-plane credential; never parsed from the public request body. */
+  runEventAppendToken?: string;
+  /** True only after a server envelope credential is verified and bound to this run. */
+  serverEnvelopeVerified?: true;
   messages: ChatUiMessage[];
   validatedContext: ChatRequestContext;
   projectId: string | null;
@@ -74,6 +81,11 @@ export type ParseHostedChatRequestOptions = {
     projectId: string;
     authToken: string;
   }) => Promise<HostedChatProjectAccessResult>;
+  verifyRunEventAppendToken?: (input: {
+    token: string;
+    projectId: string;
+    runId: string;
+  }) => Promise<boolean>;
 };
 
 /** Options accepted when parsing a signed control-plane runtime invocation. */
@@ -117,6 +129,52 @@ function createValidationErrorResponse(input: {
     },
     { status: 400 },
   );
+}
+
+async function withVerifiedRunEventAppendToken(
+  request: Request,
+  parsedRequest: ParsedHostedChatRequest,
+  verifyRunEventAppendToken: ParseHostedChatRequestOptions["verifyRunEventAppendToken"],
+): Promise<ParsedHostedChatRequest | Response> {
+  const token = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER)?.trim();
+  if (!token) {
+    return {
+      ...parsedRequest,
+      forwardedProps: stripUnverifiedServerResolvedForwardedProps(
+        parsedRequest.forwardedProps,
+      ),
+    };
+  }
+
+  const projectId = parsedRequest.projectId;
+  const runId = parsedRequest.durableRootRun?.runId;
+  if (
+    !projectId ||
+    !runId ||
+    !verifyRunEventAppendToken ||
+    !await verifyRunEventAppendToken({ token, projectId, runId })
+  ) {
+    return Response.json(
+      { errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN" },
+      { status: 403 },
+    );
+  }
+
+  return {
+    ...parsedRequest,
+    runEventAppendToken: token,
+    serverEnvelopeVerified: true,
+  };
+}
+
+function stripUnverifiedServerResolvedForwardedProps(
+  forwardedProps: ParsedHostedChatRequest["forwardedProps"],
+): ParsedHostedChatRequest["forwardedProps"] {
+  if (!forwardedProps) return undefined;
+  const sanitized = Object.fromEntries(
+    Object.entries(forwardedProps).filter(([key]) => !key.startsWith("serverResolved")),
+  );
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
 }
 
 function getValidationErrorMessage(error: unknown): string {
@@ -382,12 +440,21 @@ export async function parseHostedChatRequestFromRequest(
     });
   }
 
-  return await buildParsedHostedChatRequest({
+  const parsedRequest = await buildParsedHostedChatRequest({
     authToken: authenticatedRequest.authToken,
     userId: authenticatedRequest.userId,
     chatRequest: parsed.data,
     verifyProjectAccess: options.verifyProjectAccess,
   });
+  if (parsedRequest instanceof Response) {
+    return parsedRequest;
+  }
+
+  return await withVerifiedRunEventAppendToken(
+    request,
+    parsedRequest,
+    options.verifyRunEventAppendToken,
+  );
 }
 
 /** Request payload for parse runtime agent run invocation hosted chat request from. */
@@ -444,5 +511,9 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     );
   }
 
-  return parsedRequest;
+  return await withVerifiedRunEventAppendToken(
+    request,
+    parsedRequest,
+    options.verifyRunEventAppendToken,
+  );
 }
