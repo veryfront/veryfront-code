@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { API_CLIENT_ERROR } from "#veryfront/errors";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -8,6 +9,7 @@ import {
 import {
   MAX_STRUCTURED_TELEMETRY_CONTAINER_ENTRIES,
   MAX_TELEMETRY_ATTRIBUTE_COUNT,
+  MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH,
 } from "./limits.ts";
 import {
   sanitizeErrorForTelemetry,
@@ -15,6 +17,7 @@ import {
   sanitizeTelemetryAttributes,
   type TelemetryAttributeValue,
 } from "./telemetry-error.ts";
+import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 describe("observability/telemetry-error", () => {
   it("sanitizes hostile flattened attributes without throwing", () => {
@@ -71,12 +74,23 @@ describe("observability/telemetry-error", () => {
   });
 
   it("sanitizes values with hostile prototype inspection without throwing", () => {
+    let proxyTrapCalls = 0;
     const hostile = new Proxy({}, {
       getPrototypeOf() {
+        proxyTrapCalls++;
         throw new Error("prototype unavailable");
       },
       get() {
+        proxyTrapCalls++;
         throw new Error("property unavailable");
+      },
+      getOwnPropertyDescriptor() {
+        proxyTrapCalls++;
+        throw new Error("descriptor unavailable");
+      },
+      ownKeys() {
+        proxyTrapCalls++;
+        throw new Error("keys unavailable");
       },
     });
 
@@ -84,6 +98,380 @@ describe("observability/telemetry-error", () => {
 
     assertEquals(sanitized.name, "Unknown");
     assertEquals(sanitized.message, "Unknown error");
+    assertEquals(proxyTrapCalls, 0);
+  });
+
+  it("snapshots native errors without invoking project-owned accessors", () => {
+    let accessorCalls = 0;
+    const hostile = new Error("must stay private");
+    Reflect.deleteProperty(hostile, "stack");
+    for (const key of ["stack", "message", "name"] as const) {
+      Object.defineProperty(hostile, key, {
+        configurable: true,
+        get(): never {
+          accessorCalls += 1;
+          throw new Error(`${key} accessor must not run`);
+        },
+      });
+    }
+
+    const sanitized = sanitizeErrorForTelemetry(hostile);
+
+    assertEquals(sanitized.name, "Error");
+    assertEquals(sanitized.message, "Unknown error");
+    assertEquals(accessorCalls, 0);
+  });
+
+  it("ignores inherited descriptor values without invoking accessors", () => {
+    const hostile = new Error("must stay private");
+    let errorAccessorCalls = 0;
+    Object.defineProperty(hostile, "message", {
+      configurable: true,
+      get(): never {
+        errorAccessorCalls += 1;
+        throw new Error("error accessor must not run");
+      },
+    });
+
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+    let inheritedValueCalls = 0;
+    let sanitized: Error | undefined;
+    Object.defineProperty(Object.prototype, "value", {
+      configurable: true,
+      get(): never {
+        inheritedValueCalls += 1;
+        throw new Error("inherited descriptor value must not run");
+      },
+    });
+
+    try {
+      sanitized = sanitizeErrorForTelemetry(hostile);
+    } finally {
+      if (previous) {
+        Object.defineProperty(Object.prototype, "value", previous);
+      } else {
+        delete (Object.prototype as Record<string, unknown>).value;
+      }
+    }
+
+    assertEquals(sanitized?.name, "Error");
+    assertEquals(sanitized?.message, "Unknown error");
+    assertEquals(errorAccessorCalls, 0);
+    assertEquals(inheritedValueCalls, 0);
+  });
+
+  it("survives inherited property-descriptor poisoning without running the getter", () => {
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, "enumerable");
+    let getterCalls = 0;
+    let sanitized: Error | undefined;
+    let failure: unknown;
+    Object.defineProperty(Object.prototype, "enumerable", {
+      configurable: true,
+      get(): never {
+        getterCalls += 1;
+        throw new Error("inherited descriptor getter must not run");
+      },
+    });
+
+    try {
+      sanitized = sanitizeErrorForTelemetry(new Error("application failure"));
+    } catch (error) {
+      failure = error;
+    } finally {
+      if (previous) {
+        Object.defineProperty(Object.prototype, "enumerable", previous);
+      } else {
+        delete (Object.prototype as Record<string, unknown>).enumerable;
+      }
+    }
+
+    assertEquals(failure, undefined);
+    assertEquals(getterCalls, 0);
+    assertEquals(sanitized?.name, "Error");
+    assertEquals(sanitized?.message, "application failure");
+  });
+
+  it("uses captured string slicing while redacting and bounding error messages", () => {
+    const previous = Object.getOwnPropertyDescriptor(String.prototype, "slice");
+    let sliceCalls = 0;
+    let sanitized: Error | undefined;
+    let failure: unknown;
+    Object.defineProperty(String.prototype, "slice", {
+      configurable: true,
+      value: () => {
+        sliceCalls += 1;
+        throw new Error("poisoned String.prototype.slice");
+      },
+      writable: true,
+    });
+
+    try {
+      sanitized = sanitizeErrorForTelemetry(
+        new Error(
+          `https://user:password@example.test/${"x".repeat(MAX_STRING_DISPLAY_LENGTH + 1)}`,
+        ),
+      );
+    } catch (error) {
+      failure = error;
+    } finally {
+      if (previous) Object.defineProperty(String.prototype, "slice", previous);
+    }
+
+    assertEquals(failure, undefined);
+    assertEquals(sliceCalls, 0);
+    assertEquals(sanitized?.name, "Error");
+    assertEquals(sanitized?.message.length, MAX_STRING_DISPLAY_LENGTH);
+    assertEquals(sanitized?.message.includes("password"), false);
+  });
+
+  it("uses captured slicing while bounding flattened attribute keys", () => {
+    const previousStringSlice = Object.getOwnPropertyDescriptor(String.prototype, "slice");
+    const previousArraySlice = Object.getOwnPropertyDescriptor(Array.prototype, "slice");
+    const key = "k".repeat(MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH + 1);
+    let sliceCalls = 0;
+    let snapshot: Record<string, TelemetryAttributeValue> | undefined;
+    let failure: unknown;
+    const poisonedSlice = () => {
+      sliceCalls += 1;
+      throw new Error("poisoned slice must not run");
+    };
+    Object.defineProperty(String.prototype, "slice", {
+      configurable: true,
+      value: poisonedSlice,
+      writable: true,
+    });
+    Object.defineProperty(Array.prototype, "slice", {
+      configurable: true,
+      value: poisonedSlice,
+      writable: true,
+    });
+
+    try {
+      snapshot = sanitizeTelemetryAttributes({ [key]: "value" });
+    } catch (error) {
+      failure = error;
+    } finally {
+      if (previousStringSlice) {
+        Object.defineProperty(String.prototype, "slice", previousStringSlice);
+      }
+      if (previousArraySlice) {
+        Object.defineProperty(Array.prototype, "slice", previousArraySlice);
+      }
+    }
+
+    const retainedKeys = Object.keys(snapshot ?? {});
+    assertEquals(failure, undefined);
+    assertEquals(sliceCalls, 0);
+    assertEquals(retainedKeys.length, 1);
+    assertEquals(retainedKeys[0]?.length, MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH);
+    assertEquals(snapshot?.[retainedKeys[0] ?? ""], "value");
+  });
+
+  it("never materializes a stack through Error.prepareStackTrace", () => {
+    const ErrorWithStackFormatter = Error as ErrorConstructor & {
+      prepareStackTrace?: (error: Error, callSites: unknown[]) => unknown;
+    };
+    const previous = Object.getOwnPropertyDescriptor(ErrorWithStackFormatter, "prepareStackTrace");
+    let formatterCalls = 0;
+    let sanitized: Error | undefined;
+    Object.defineProperty(ErrorWithStackFormatter, "prepareStackTrace", {
+      configurable: true,
+      value: () => {
+        formatterCalls += 1;
+        throw new Error("prepareStackTrace must not run");
+      },
+      writable: true,
+    });
+
+    try {
+      sanitized = sanitizeErrorForTelemetry(new Error("application failure"));
+    } finally {
+      if (previous) {
+        Object.defineProperty(ErrorWithStackFormatter, "prepareStackTrace", previous);
+      } else {
+        delete ErrorWithStackFormatter.prepareStackTrace;
+      }
+    }
+
+    assertEquals(formatterCalls, 0);
+    assertEquals(sanitized?.message, "application failure");
+    assertEquals(sanitized?.stack, undefined);
+    assertEquals(sanitized instanceof Error, true);
+  });
+
+  it("does not trust Error.isError when probing stack descriptor behavior", async () => {
+    const ErrorWithStackFormatter = Error as ErrorConstructor & {
+      isError?: unknown;
+      prepareStackTrace?: (error: Error, callSites: unknown[]) => unknown;
+    };
+    const previousIsError = Object.getOwnPropertyDescriptor(ErrorWithStackFormatter, "isError");
+    const previousFormatter = Object.getOwnPropertyDescriptor(
+      ErrorWithStackFormatter,
+      "prepareStackTrace",
+    );
+    const previousValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+    let isErrorCalls = 0;
+    let formatterCalls = 0;
+    let inheritedValueCalls = 0;
+    const fakeIsError = () => {
+      isErrorCalls += 1;
+      return true;
+    };
+    const hostileFormatter = () => {
+      formatterCalls += 1;
+      throw new Error("prepareStackTrace must not run");
+    };
+    Object.defineProperty(ErrorWithStackFormatter, "isError", {
+      configurable: true,
+      value: fakeIsError,
+      writable: true,
+    });
+    Object.defineProperty(ErrorWithStackFormatter, "prepareStackTrace", {
+      configurable: true,
+      value: hostileFormatter,
+      writable: true,
+    });
+    Object.defineProperty(Object.prototype, "value", {
+      configurable: true,
+      get(): never {
+        inheritedValueCalls += 1;
+        throw new Error("inherited descriptor value must not run");
+      },
+    });
+
+    let sanitized: Error | undefined;
+    let restoredFormatter: unknown;
+    try {
+      const isolated = await import("./telemetry-error.ts?hostile-stack-capability-flags");
+      restoredFormatter = Object.getOwnPropertyDescriptor(
+        ErrorWithStackFormatter,
+        "prepareStackTrace",
+      )?.value;
+      sanitized = isolated.sanitizeErrorForTelemetry(new Error("application failure"));
+    } finally {
+      if (previousValue) {
+        Object.defineProperty(Object.prototype, "value", previousValue);
+      } else {
+        delete (Object.prototype as Record<string, unknown>).value;
+      }
+      if (previousFormatter) {
+        Object.defineProperty(ErrorWithStackFormatter, "prepareStackTrace", previousFormatter);
+      } else {
+        delete ErrorWithStackFormatter.prepareStackTrace;
+      }
+      if (previousIsError) {
+        Object.defineProperty(ErrorWithStackFormatter, "isError", previousIsError);
+      } else {
+        delete (ErrorWithStackFormatter as unknown as { isError?: unknown }).isError;
+      }
+    }
+
+    assertEquals(restoredFormatter, hostileFormatter);
+    assertEquals(isErrorCalls, 0);
+    assertEquals(formatterCalls, 0);
+    assertEquals(inheritedValueCalls, 0);
+    assertEquals(sanitized?.name, "Error");
+    assertEquals(sanitized?.message, "application failure");
+  });
+
+  it("groups safe built-in, DOM, custom, and framework errors", () => {
+    class CustomError extends Error {}
+    class HostileConstructorError extends Error {}
+    class NamedCustomError extends Error {
+      constructor(message: string) {
+        super(message);
+        this.name = "NamedCustomError";
+      }
+    }
+
+    let constructorReads = 0;
+    Object.defineProperty(HostileConstructorError.prototype, "constructor", {
+      configurable: true,
+      get(): never {
+        constructorReads += 1;
+        throw new Error("custom constructor getter must not run");
+      },
+    });
+
+    const aggregate = sanitizeErrorForTelemetry(
+      new AggregateError([new Error("nested secret")], "aggregate failure"),
+    );
+    const custom = sanitizeErrorForTelemetry(new CustomError("custom failure"));
+    const hostileConstructor = sanitizeErrorForTelemetry(
+      new HostileConstructorError("hostile constructor failure"),
+    );
+    const named = sanitizeErrorForTelemetry(new NamedCustomError("named failure"));
+    const dom = sanitizeErrorForTelemetry(new DOMException("request stopped", "AbortError"));
+    const framework = sanitizeErrorForTelemetry(
+      API_CLIENT_ERROR.create({ detail: "upstream unavailable" }),
+    );
+
+    assertEquals(aggregate.name, "AggregateError");
+    assertEquals(aggregate.message, "aggregate failure");
+    assertEquals(custom.name, "CustomError");
+    assertEquals(custom.message, "custom failure");
+    assertEquals(hostileConstructor.name, "Error");
+    assertEquals(hostileConstructor.message, "hostile constructor failure");
+    assertEquals(named.name, "NamedCustomError");
+    assertEquals(named.message, "named failure");
+    assertEquals(
+      dom.name,
+      isNativeErrorWithoutHooks(new DOMException()) ? "DOMException" : "Unknown",
+    );
+    assertEquals(
+      dom.message,
+      isNativeErrorWithoutHooks(new DOMException()) ? "" : "Unknown error",
+    );
+    assertEquals(framework.name, "VeryfrontError");
+    assertEquals(framework.message, "upstream unavailable");
+    assertEquals(constructorReads, 0);
+  });
+
+  it("preserves native errors when the standard Error.isError entry point is unavailable", async () => {
+    const previous = Object.getOwnPropertyDescriptor(Error, "isError");
+    let proxyTrapCalls = 0;
+    Object.defineProperty(Error, "isError", {
+      configurable: true,
+      value: undefined,
+      writable: true,
+    });
+
+    try {
+      const isolated = await import("./telemetry-error.ts?without-hook-free-error-brand-check");
+      const native = isolated.sanitizeErrorForTelemetry(new Error("must stay opaque"));
+      const proxy = isolated.sanitizeErrorForTelemetry(
+        new Proxy({}, {
+          get(): never {
+            proxyTrapCalls += 1;
+            throw new Error("get trap must not run");
+          },
+          getOwnPropertyDescriptor(): never {
+            proxyTrapCalls += 1;
+            throw new Error("descriptor trap must not run");
+          },
+          getPrototypeOf(): never {
+            proxyTrapCalls += 1;
+            throw new Error("prototype trap must not run");
+          },
+          ownKeys(): never {
+            proxyTrapCalls += 1;
+            throw new Error("keys trap must not run");
+          },
+        }),
+      );
+
+      assertEquals(native.name, "Error");
+      assertEquals(native.message, "must stay opaque");
+      assertEquals(proxy.name, "Unknown");
+      assertEquals(proxy.message, "Unknown error");
+      assertEquals(proxyTrapCalls, 0);
+    } finally {
+      if (previous) {
+        Object.defineProperty(Error, "isError", previous);
+      } else {
+        delete (Error as unknown as { isError?: unknown }).isError;
+      }
+    }
   });
 
   it("deeply detaches structured data and sanitizes every serialized string", () => {
@@ -128,6 +516,53 @@ describe("observability/telemetry-error", () => {
     assertExists(snapshot.scalarJson);
   });
 
+  it("redacts structured Error proxies without invoking traps", () => {
+    let trapCalls = 0;
+    const proxy = new Proxy(new Error("must stay private"), {
+      get(): never {
+        trapCalls += 1;
+        throw new Error("get trap must not run");
+      },
+      getOwnPropertyDescriptor(): never {
+        trapCalls += 1;
+        throw new Error("descriptor trap must not run");
+      },
+      getPrototypeOf(): never {
+        trapCalls += 1;
+        throw new Error("prototype trap must not run");
+      },
+      ownKeys(): never {
+        trapCalls += 1;
+        throw new Error("ownKeys trap must not run");
+      },
+    });
+
+    assertEquals(sanitizeStructuredTelemetryData(proxy) as unknown, "[REDACTED]");
+    assertEquals(trapCalls, 0);
+  });
+
+  it("snapshots structured native errors without invoking field accessors", () => {
+    const hostile = new Error("must stay private");
+    Reflect.deleteProperty(hostile, "stack");
+    let accessorCalls = 0;
+    for (const key of ["message", "name", "stack"] as const) {
+      Object.defineProperty(hostile, key, {
+        configurable: true,
+        get(): never {
+          accessorCalls += 1;
+          throw new Error(`${key} accessor must not run`);
+        },
+      });
+    }
+
+    assertEquals(sanitizeStructuredTelemetryData(hostile), {
+      message: "Unknown error",
+      name: "Error",
+      stack: undefined,
+    });
+    assertEquals(accessorCalls, 0);
+  });
+
   it("bounds flattened attribute count, keys, strings, and arrays", () => {
     const attributes: Record<string, TelemetryAttributeValue> = {
       first: "x".repeat(MAX_TRACE_ATTRIBUTE_VALUE_SIZE + 100),
@@ -166,13 +601,26 @@ describe("observability/telemetry-error", () => {
     );
   });
 
-  it("bounds error strings before handing them to a telemetry backend", () => {
+  it("bounds own string-valued error messages and stacks", () => {
     const source = new Error("x".repeat(MAX_STRING_DISPLAY_LENGTH + 100));
-    source.stack = "s".repeat(MAX_STRING_DISPLAY_LENGTH + 100);
+    Object.defineProperty(source, "stack", {
+      configurable: true,
+      value: "s".repeat(MAX_STRING_DISPLAY_LENGTH + 100),
+      writable: true,
+    });
 
     const snapshot = sanitizeErrorForTelemetry(source);
+    const stackDescriptor = Object.getOwnPropertyDescriptor(new Error(), "stack");
+    const canInspectStackWithoutFormatting = Boolean(
+      stackDescriptor &&
+        Object.prototype.hasOwnProperty.call(stackDescriptor, "get") &&
+        typeof stackDescriptor.get === "function",
+    );
 
     assertEquals(snapshot.message.length, MAX_STRING_DISPLAY_LENGTH);
-    assertEquals(snapshot.stack?.length, MAX_STRING_DISPLAY_LENGTH);
+    assertEquals(
+      snapshot.stack?.length,
+      canInspectStackWithoutFormatting ? MAX_STRING_DISPLAY_LENGTH : undefined,
+    );
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors/error-registry/general.ts";
 import { NETWORK_ERROR } from "#veryfront/errors/error-registry/server.ts";
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { ensureBrowserError } from "#veryfront/errors/browser-error.ts";
 
 /** Source-defined prompt suggestion shown by chat surfaces. */
 export type AgentMetadataPromptSuggestion =
@@ -232,9 +232,9 @@ export function useAgentMetadata(agentId: string | null | undefined): UseAgentMe
         const nextAgent = normalizeAgentMetadataResponse(await response.json());
         setAgent(nextAgent);
       } catch (caught) {
-        if (caught instanceof Error && caught.name === "AbortError") return;
+        if (abortController.signal.aborted) return;
         setAgent(null);
-        setError(ensureError(caught));
+        setError(ensureBrowserError(caught));
       } finally {
         if (!abortController.signal.aborted) {
           setIsLoading(false);

@@ -1,5 +1,9 @@
 import { sanitizeLogText } from "#veryfront/utils/logger/core.ts";
-import { REDACTED, sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
+import {
+  REDACTED,
+  redactPathFromText,
+  sanitizeUrlCredentials,
+} from "#veryfront/utils/logger/redact.ts";
 
 /** Maximum characters retained from one diagnostic field. */
 export const ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS = 2_048;
@@ -16,6 +20,13 @@ export const ERROR_DOCS_BASE_URL = "https://veryfront.com/docs/errors/";
 
 const TRUNCATION_MARKER = "...[truncated]";
 const UNKNOWN_ERROR_SLUG = "unknown-error";
+
+export interface DiagnosticPathRedaction {
+  /** Trusted literal path to remove from the diagnostic. */
+  readonly path: string;
+  /** Framework-owned text substituted for every matching path. */
+  readonly replacement: string;
+}
 
 function truncateDiagnosticText(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
@@ -58,13 +69,21 @@ function replaceLoneSurrogates(value: string): string {
 /**
  * Redact a complete diagnostic before truncating it.
  *
- * The order is security-sensitive: truncating first could split a credential
- * assignment before the redactor sees its complete value and expose a prefix.
+ * The order is security-sensitive: the optional trusted path and credentials
+ * are both removed before truncation. Truncating first could split either a
+ * path or credential assignment before its redactor sees the complete value
+ * and expose a private prefix.
  */
-export function sanitizeBoundedDiagnosticText(value: unknown): string {
+export function sanitizeBoundedDiagnosticText(
+  value: unknown,
+  pathRedaction?: DiagnosticPathRedaction,
+): string {
   if (typeof value !== "string") return REDACTED;
+  const pathRedacted = pathRedaction
+    ? redactPathFromText(value, pathRedaction.path, pathRedaction.replacement)
+    : value;
   return truncateDiagnosticText(
-    sanitizeUrlCredentials(value),
+    sanitizeUrlCredentials(pathRedacted),
     ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS,
   );
 }

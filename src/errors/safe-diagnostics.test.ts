@@ -3,6 +3,9 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { runInNewContext } from "node:vm";
 import {
+  canInspectErrorStackDescriptorWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
+import {
   buildErrorDocsUrl,
   detachThrowableForBoundary,
   ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS,
@@ -186,7 +189,11 @@ describe("safe-diagnostics", () => {
     assertEquals(snapshotThrowableDiagnostic(hostile), "Unknown error");
     assertEquals(snapshotThrowableDiagnostic(proxiedError), "Unknown error");
     assertEquals(snapshotThrowableDiagnostic(accessorError), "Unknown error");
-    assertEquals(snapshotThrowableDiagnostic(new DOMException("DOM failure")), "DOM failure");
+    const domException = new DOMException("DOM failure");
+    assertEquals(
+      snapshotThrowableDiagnostic(domException),
+      isNativeErrorWithoutHooks(domException) ? "" : "Unknown error",
+    );
     assertEquals(snapshotThrowableDiagnostic("primitive failure"), "primitive failure");
     assertEquals(snapshotThrowableDiagnostic(42), "42");
     assertEquals(snapshotThrowableDiagnostic(null), "null");
@@ -194,6 +201,46 @@ describe("safe-diagnostics", () => {
     assertEquals(coercionCalls, 0);
     assertEquals(proxyTrapCalls, 0);
     assertEquals(errorMessageReads, 0);
+  });
+
+  it("does not follow inherited descriptor values for accessor-backed Error fields", () => {
+    const accessorError = new Error("must stay private");
+    let messageReads = 0;
+    Object.defineProperty(accessorError, "message", {
+      configurable: true,
+      get(): never {
+        messageReads += 1;
+        throw new Error("message accessor must not run");
+      },
+    });
+
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+    let inheritedValueReads = 0;
+    let diagnostic: string | undefined;
+    let boundary: ReturnType<typeof snapshotErrorForBoundary> | undefined;
+    Object.defineProperty(Object.prototype, "value", {
+      configurable: true,
+      get(): never {
+        inheritedValueReads += 1;
+        throw new Error("inherited descriptor value must not run");
+      },
+    });
+
+    try {
+      diagnostic = snapshotThrowableDiagnostic(accessorError);
+      boundary = snapshotErrorForBoundary(accessorError);
+    } finally {
+      if (previous) {
+        Object.defineProperty(Object.prototype, "value", previous);
+      } else {
+        delete (Object.prototype as Record<string, unknown>).value;
+      }
+    }
+
+    assertEquals(diagnostic, "Unknown error");
+    assertEquals(boundary?.detail, "Unknown error");
+    assertEquals(messageReads, 0);
+    assertEquals(inheritedValueReads, 0);
   });
 
   it("bounds a safely snapshotted Error message", () => {
@@ -265,7 +312,7 @@ describe("safe-diagnostics", () => {
 
     assertEquals(
       snapshotErrorForBoundary(dataStackError).stack,
-      "Error: data failure",
+      canInspectErrorStackDescriptorWithoutHooks ? "Error: data failure" : undefined,
     );
 
     let stackReads = 0;
@@ -280,6 +327,17 @@ describe("safe-diagnostics", () => {
 
     assertEquals(snapshotErrorForBoundary(accessorError).stack, undefined);
     assertEquals(stackReads, 0);
+  });
+
+  it("preserves custom Error subclass names across detached boundaries", () => {
+    class CustomError extends Error {}
+
+    const detached = detachThrowableForBoundary(
+      new CustomError("custom failure"),
+    );
+
+    assertEquals(detached.name, "CustomError");
+    assertEquals(detached.message, "custom failure");
   });
 
   it("does not invoke error field accessors or Error.prepareStackTrace", () => {
@@ -316,10 +374,14 @@ describe("safe-diagnostics", () => {
 
     try {
       const snapshot = snapshotErrorForBoundary(accessorError);
+      const detached = detachThrowableForBoundary(accessorError);
 
       assertEquals(snapshot.stack, undefined);
       assertEquals(snapshot.message, "Unknown/unclassified error");
       assertEquals(snapshot.detail, "Unknown error");
+      assertEquals(detached.name, "Error");
+      assertEquals(detached.message, "Unknown error");
+      assertEquals(detached.stack, undefined);
       assertEquals(nameReads, 0);
       assertEquals(messageReads, 0);
       assertEquals(prepareStackTraceCalls, 0);
@@ -346,7 +408,8 @@ describe("safe-diagnostics", () => {
     );
 
     assert(isNativeErrorWithoutHooks(foreignError));
-    const expectedStack = descriptor && "value" in descriptor &&
+    const expectedStack = canInspectErrorStackDescriptorWithoutHooks && descriptor &&
+        Object.prototype.hasOwnProperty.call(descriptor, "value") &&
         typeof descriptor.value === "string"
       ? sanitizeStackDiagnosticText(descriptor.value)
       : undefined;

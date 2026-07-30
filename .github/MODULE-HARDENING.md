@@ -3107,6 +3107,53 @@ Platform, routing, sandbox, and the build-script surface changed or were
 extended by this checkpoint and remain listed for their own top-level
 revalidation.
 
+### Hostile-error and telemetry follow-up checkpoint
+
+This follow-up revalidates the previously closed `agent`, `errors`,
+`observability`, `platform`, and `utils` units after tightening the shared
+throwable boundary. It also hardens Skill diagnostics without claiming closure
+of the still-open `skill` unit.
+
+- **Symptom -> Source -> Consequence -> Remedy:** error and telemetry paths
+  classified or copied values through mutable globals, inherited descriptors,
+  accessors, Proxies, and ambient string helpers. Project code could therefore
+  execute while the framework was handling another failure, alter timeout
+  reasons, leak credentials or local paths, or suppress a retry timeout. The
+  boundary now captures required primordials, accepts only bounded own data,
+  treats hostile values as opaque, redacts before truncation, and constructs
+  timeout reasons through the captured native Error constructor.
+- **Symptom -> Source -> Consequence -> Remedy:** React-facing Agent hooks
+  imported server error normalization transitively, carrying `node:util/types`
+  toward browser bundles. A dedicated browser adapter now detaches standard
+  errors without importing Node compatibility code, while server-only native
+  brand checks remain in `platform/compat`.
+- **Symptom -> Source -> Consequence -> Remedy:** telemetry inspected error
+  names, messages, stacks, causes, and arbitrary attributes through ordinary
+  property access. Provider failures or tenant-owned objects could invoke
+  hooks, escape cardinality and byte bounds, or replace application outcomes.
+  Telemetry now snapshots bounded descriptor-safe diagnostics, isolates
+  provider failures, and preserves the original success or failure identity.
+- **Symptom -> Source -> Consequence -> Remedy:** Skill path redaction used a
+  regex-shaped replacement after diagnostic truncation. Metacharacters,
+  Windows separator and case semantics, or an early truncation could disclose
+  the trusted root. One literal linear-time matcher now canonicalizes path
+  identity and redacts the complete field before applying its output bound.
+
+The exact staged tree passes all 32 Errors suites with 530 nested steps, all 45
+Observability suites with 840 nested steps, and the affected Agent, Platform,
+Skill, and redaction portfolio with 18 suites and 120 nested steps. The browser
+bundle gate passes six tests and contains no Node builtin in the changed hook;
+Node 18's focused hostile-input portfolio, Node 24's 421-test Errors portfolio,
+and the 63-test Node redactor portfolio pass. Changed files pass format, lint,
+type, diff-hygiene, sanitizer-baseline, core-dependency,
+dependency-boundary, and module-boundary gates. The generated Errors reference
+points at the extracted browser-safe construction implementation.
+
+No unresolved critical or high-confidence production risk remains in this
+follow-up slice. The broader React public-barrel browser boundary remains
+assigned to the open `react` review, and the Skill script-execution policy
+remains assigned to the open `skill` review.
+
 ### Platform closure checkpoint
 
 The `platform` audit unit owns runtime detection and capabilities, adapter

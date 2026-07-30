@@ -4,8 +4,12 @@ import {
   VeryfrontError,
   type VeryfrontErrorSnapshot,
 } from "./types.ts";
+import {
+  canInspectErrorStackDescriptorWithoutHooks,
+  isNativeErrorWithoutHooks,
+  readNativeErrorNameWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 
-const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const createObject = Object.create;
 const defineProperty = Object.defineProperty;
@@ -20,7 +24,7 @@ const NativeArray = Array;
 const NativeError = Error;
 const NativeSet = Set;
 const NativeString = String;
-const captureStackTrace = Error.captureStackTrace;
+const ownKeys = Reflect.ownKeys;
 
 export interface BuildContext {
   file?: string;
@@ -102,9 +106,7 @@ export type VeryfrontErrorData =
   | { type: "not_supported"; message: string; feature?: string }
   | { type: "no_ai_available"; message: string };
 
-export function createError(error: VeryfrontErrorData): VeryfrontErrorData {
-  return error;
-}
+export { createError, toError } from "./legacy-error-construction.ts";
 
 /** Type guard factory for VeryfrontErrorData types */
 function isErrorType<T extends VeryfrontErrorData["type"]>(
@@ -122,26 +124,11 @@ export const isNetworkError = isErrorType("network");
 
 const SNAPSHOT_FAILED = Symbol("snapshot-failed");
 const INVALID_ERROR_DATA = Symbol("invalid-error-data");
+const ACCESSOR_ERROR_FIELD = Symbol("accessor-error-field");
 const MAX_SNAPSHOT_DEPTH = 16;
 const MAX_SNAPSHOT_ENTRIES = 10_000;
-const standardIsError = getOwnPropertyDescriptor(NativeError, "isError")?.value;
-
 function hasNativeErrorBrand(error: unknown): error is Error {
-  if (typeof standardIsError === "function") {
-    try {
-      return apply(standardIsError, NativeError, [error]) as boolean;
-    } catch {
-      return false;
-    }
-  }
-
-  // Compatibility path for engines predating Error.isError. Modern runtimes
-  // use the hook-free brand check above.
-  try {
-    return error instanceof NativeError;
-  } catch {
-    return false;
-  }
+  return isNativeErrorWithoutHooks(error);
 }
 
 interface SnapshotState {
@@ -184,7 +171,7 @@ function snapshotPlainValue(
       const lengthDescriptor = descriptors["length"];
       if (
         !lengthDescriptor ||
-        !("value" in lengthDescriptor) ||
+        !hasOwn(lengthDescriptor, "value") ||
         typeof lengthDescriptor.value !== "number" ||
         lengthDescriptor.value > state.remainingEntries
       ) {
@@ -193,12 +180,19 @@ function snapshotPlainValue(
       state.remainingEntries -= lengthDescriptor.value;
       const result = new NativeArray(lengthDescriptor.value);
       for (let index = 0; index < lengthDescriptor.value; index++) {
-        const descriptor = descriptors[String(index)];
-        if (!descriptor) continue;
-        if (!("value" in descriptor)) return SNAPSHOT_FAILED;
+        const key = String(index);
+        if (!hasOwn(descriptors, key)) return SNAPSHOT_FAILED;
+        const descriptor = descriptors[key];
+        if (!descriptor) return SNAPSHOT_FAILED;
+        if (!hasOwn(descriptor, "value")) return SNAPSHOT_FAILED;
         const child = snapshotPlainValue(descriptor.value, depth + 1, state);
         if (child === SNAPSHOT_FAILED) return SNAPSHOT_FAILED;
-        result[index] = child;
+        defineProperty(result, key, {
+          configurable: true,
+          enumerable: true,
+          value: child,
+          writable: true,
+        });
       }
       return result;
     }
@@ -213,7 +207,7 @@ function snapshotPlainValue(
 
     const result: Record<string, unknown> = {};
     for (const [key, descriptor] of entries) {
-      if (!("value" in descriptor)) return SNAPSHOT_FAILED;
+      if (!hasOwn(descriptor, "value")) return SNAPSHOT_FAILED;
       const child = snapshotPlainValue(descriptor.value, depth + 1, state);
       if (child === SNAPSHOT_FAILED) return SNAPSHOT_FAILED;
       defineProperty(result, key, {
@@ -609,43 +603,6 @@ function normalizeErrorData(
   }
 }
 
-/**
- * Convert a VeryfrontErrorData (plain object) to a throwable Error instance.
- *
- * Uses Error.captureStackTrace when available (V8 engines) to exclude toError()
- * from the stack trace, making the stack point to the actual call site.
- * An optional native error constructor preserves categories such as
- * `TypeError` while retaining the structured Veryfront error context.
- *
- * @see plans/architecture-audit/010.3-dual-veryfront-error-definitions.md
- */
-export function toError(veryfrontError: VeryfrontErrorData): Error;
-export function toError<T extends Error>(
-  veryfrontError: VeryfrontErrorData,
-  ErrorType: new (message?: string) => T,
-): T;
-export function toError(
-  veryfrontError: VeryfrontErrorData,
-  ErrorType: new (message?: string) => Error = NativeError,
-): Error {
-  const error = new ErrorType(veryfrontError.message);
-  error.name = `VeryfrontError[${veryfrontError.type}]`;
-
-  // Capture stack at call site, excluding toError from the trace
-  // This makes debugging easier by showing where createError+toError was called
-  if (captureStackTrace) {
-    apply(captureStackTrace, NativeError, [error, toError]);
-  }
-
-  defineProperty(error, "context", {
-    value: veryfrontError,
-    enumerable: false,
-    configurable: true,
-  });
-
-  return error;
-}
-
 /** @internal Decode one already-extracted legacy context value. */
 export function decodeVeryfrontErrorData(
   contextValue: unknown,
@@ -678,8 +635,7 @@ export function decodeVeryfrontErrorData(
 export function getErrorMessage(error: unknown): string {
   try {
     if (isErrorInstance(error)) {
-      const message = error.message;
-      return typeof message === "string" ? message : "Unknown error";
+      return snapshotKnownError(error)?.message ?? "Unknown error";
     }
     return NativeString(error);
   } catch {
@@ -706,24 +662,19 @@ export function snapshotError(error: unknown): ErrorSnapshot | null {
 
 export function snapshotKnownError(error: Error): ErrorSnapshot | null {
   try {
-    const descriptors = getOwnPropertyDescriptors(error);
     const ownDataValue = (key: string): unknown => {
-      const descriptor = descriptors[key];
-      return descriptor && "value" in descriptor ? descriptor.value : undefined;
+      const descriptor = getOwnPropertyDescriptor(error, key);
+      if (!descriptor) return undefined;
+      return hasOwn(descriptor, "value") ? descriptor.value : ACCESSOR_ERROR_FIELD;
     };
-    const ownName = ownDataValue("name");
     const ownMessage = ownDataValue("message");
-    const ownStack = ownDataValue("stack");
-    const prototype = getPrototypeOf(error);
-    const prototypeName = prototype !== null
-      ? getOwnPropertyDescriptor(prototype, "name")
+    const ownStackValue = canInspectErrorStackDescriptorWithoutHooks
+      ? ownDataValue("stack")
       : undefined;
-    const name = ownName === undefined &&
-        prototypeName &&
-        "value" in prototypeName &&
-        typeof prototypeName.value === "string"
-      ? prototypeName.value
-      : ownName ?? "Error";
+    if (ownMessage === ACCESSOR_ERROR_FIELD) return null;
+    const ownStack = ownStackValue === ACCESSOR_ERROR_FIELD ? undefined : ownStackValue;
+
+    const name = readNativeErrorNameWithoutHooks(error);
     const message = ownMessage === undefined ? "" : ownMessage;
     const stack = ownStack === undefined ? undefined : ownStack;
     if (
@@ -767,10 +718,10 @@ function detachVeryfrontError(snapshot: VeryfrontErrorSnapshot): VeryfrontError 
 
 function copyOwnDataProperties(source: Error, target: Error): void {
   try {
-    const descriptors = getOwnPropertyDescriptors(source);
-    for (const [key, descriptor] of objectEntries(descriptors)) {
+    for (const key of ownKeys(source)) {
       if (key === "name" || key === "message" || key === "stack") continue;
-      if (!("value" in descriptor)) continue;
+      const descriptor = getOwnPropertyDescriptor(source, key);
+      if (!descriptor || !hasOwn(descriptor, "value")) continue;
       defineProperty(target, key, {
         configurable: true,
         enumerable: descriptor.enumerable,

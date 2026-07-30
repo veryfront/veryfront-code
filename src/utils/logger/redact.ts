@@ -20,9 +20,132 @@
 /** Replacement value substituted for any sensitive field. */
 export const REDACTED = "[REDACTED]";
 
+const apply = Reflect.apply;
+const NativeUint32Array = Uint32Array;
+const regExpExec = RegExp.prototype.exec;
+const regExpReplace = RegExp.prototype[Symbol.replace];
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringSlice = String.prototype.slice;
+const stringToLowerCase = String.prototype.toLowerCase;
+const NON_ALPHANUMERIC_PATTERN = /[^a-z0-9]/g;
+
 /** Strip all non-alphanumeric characters and lowercase, used for key normalization. */
 function normalizeToAlphanumeric(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const lowercase = apply(stringToLowerCase, s, []) as string;
+  return apply(regExpReplace, NON_ALPHANUMERIC_PATTERN, [lowercase, ""]) as string;
+}
+
+const FORWARD_SLASH_CODE_UNIT = 47;
+const BACKSLASH_CODE_UNIT = 92;
+const COLON_CODE_UNIT = 58;
+const ASCII_UPPERCASE_A_CODE_UNIT = 65;
+const ASCII_UPPERCASE_Z_CODE_UNIT = 90;
+const ASCII_LOWERCASE_OFFSET = 32;
+
+function stringCodeUnitAt(value: string, index: number): number {
+  return apply(stringCharCodeAt, value, [index]) as number;
+}
+
+function sliceString(value: string, start: number, end?: number): string {
+  return end === undefined
+    ? apply(stringSlice, value, [start]) as string
+    : apply(stringSlice, value, [start, end]) as string;
+}
+
+function isPathSeparatorCodeUnit(codeUnit: number): boolean {
+  return codeUnit === FORWARD_SLASH_CODE_UNIT || codeUnit === BACKSLASH_CODE_UNIT;
+}
+
+function isAsciiLetterCodeUnit(codeUnit: number): boolean {
+  const lowercase = codeUnit >= ASCII_UPPERCASE_A_CODE_UNIT &&
+      codeUnit <= ASCII_UPPERCASE_Z_CODE_UNIT
+    ? codeUnit + ASCII_LOWERCASE_OFFSET
+    : codeUnit;
+  return lowercase >= 97 && lowercase <= 122;
+}
+
+function isWindowsPath(path: string): boolean {
+  if (path.length >= 2) {
+    const first = stringCodeUnitAt(path, 0);
+    const second = stringCodeUnitAt(path, 1);
+    if (isPathSeparatorCodeUnit(first) && isPathSeparatorCodeUnit(second)) return true;
+  }
+  return path.length >= 3 &&
+    isAsciiLetterCodeUnit(stringCodeUnitAt(path, 0)) &&
+    stringCodeUnitAt(path, 1) === COLON_CODE_UNIT &&
+    isPathSeparatorCodeUnit(stringCodeUnitAt(path, 2));
+}
+
+function normalizePathCodeUnit(codeUnit: number, foldAsciiCase: boolean): number {
+  if (isPathSeparatorCodeUnit(codeUnit)) return FORWARD_SLASH_CODE_UNIT;
+  return foldAsciiCase &&
+      codeUnit >= ASCII_UPPERCASE_A_CODE_UNIT &&
+      codeUnit <= ASCII_UPPERCASE_Z_CODE_UNIT
+    ? codeUnit + ASCII_LOWERCASE_OFFSET
+    : codeUnit;
+}
+
+/**
+ * Replace every non-overlapping occurrence of a trusted path in untrusted text.
+ *
+ * Comparison treats slash and backslash as equivalent. Windows drive and UNC
+ * paths additionally use ASCII-only case folding, matching Windows path
+ * identity without locale-sensitive conversion. The linear-time matcher keeps
+ * the path literal: regex syntax in either input cannot change what matches.
+ */
+export function redactPathFromText(
+  input: string,
+  path: string,
+  replacement: string,
+): string {
+  if (path.length === 0 || input.length < path.length) return input;
+
+  const foldAsciiCase = isWindowsPath(path);
+  const patternLength = path.length;
+  const pattern = new NativeUint32Array(patternLength);
+  const prefixTable = new NativeUint32Array(patternLength);
+  for (let index = 0; index < patternLength; index++) {
+    pattern[index] = normalizePathCodeUnit(
+      stringCodeUnitAt(path, index),
+      foldAsciiCase,
+    );
+  }
+
+  prefixTable[0] = 0;
+  for (let index = 1, prefixLength = 0; index < patternLength;) {
+    if (pattern[index] === pattern[prefixLength]) {
+      prefixTable[index] = ++prefixLength;
+      index++;
+    } else if (prefixLength > 0) {
+      prefixLength = prefixTable[prefixLength - 1]!;
+    } else {
+      prefixTable[index] = 0;
+      index++;
+    }
+  }
+
+  let result = "";
+  let copyStart = 0;
+  let matchLength = 0;
+  for (let index = 0; index < input.length; index++) {
+    const codeUnit = normalizePathCodeUnit(
+      stringCodeUnitAt(input, index),
+      foldAsciiCase,
+    );
+    while (matchLength > 0 && codeUnit !== pattern[matchLength]) {
+      matchLength = prefixTable[matchLength - 1]!;
+    }
+    if (codeUnit === pattern[matchLength]) matchLength++;
+    if (matchLength !== patternLength) continue;
+
+    const matchStart = index - patternLength + 1;
+    result += apply(stringSlice, input, [copyStart, matchStart]) as string;
+    result += replacement;
+    copyStart = index + 1;
+    matchLength = 0;
+  }
+
+  return copyStart === 0 ? input : result + (apply(stringSlice, input, [copyStart]) as string);
 }
 
 /**
@@ -209,7 +332,7 @@ function redactValue(
   if (typeof toJSON === "function") {
     seen.add(value);
     try {
-      const serialized = Reflect.apply(toJSON, value, []);
+      const serialized = apply(toJSON, value, []);
       if (mode === "serialization") {
         return redactValue(serialized, depth + 1, seen, mode, budget);
       }
@@ -526,7 +649,11 @@ function redactCredentialAssignments(
   let cursor = 0;
   let result = "";
 
-  for (let match = prefixPattern.exec(input); match; match = prefixPattern.exec(input)) {
+  for (
+    let match = apply(regExpExec, prefixPattern, [input]) as RegExpExecArray | null;
+    match;
+    match = apply(regExpExec, prefixPattern, [input]) as RegExpExecArray | null
+  ) {
     const key = match[keyGroup]!;
     if (!isSensitiveKey(key)) continue;
 
@@ -546,14 +673,14 @@ function redactCredentialAssignments(
       continue;
     }
     const redactedValue = redactAssignmentValue(input, valueStart);
-    result += input.slice(cursor, match.index);
+    result += sliceString(input, cursor, match.index);
     result += match[0];
     result += redactedValue.replacement;
     cursor = redactedValue.end;
     prefixPattern.lastIndex = redactedValue.end;
   }
 
-  return cursor === 0 ? input : result + input.slice(cursor);
+  return cursor === 0 ? input : result + sliceString(input, cursor);
 }
 
 function isStandaloneUrlAuthorityBeforeWhitespace(
@@ -564,7 +691,7 @@ function isStandaloneUrlAuthorityBeforeWhitespace(
   const whitespaceIndex = password.search(/[ \t]/);
   if (whitespaceIndex < 0) return false;
 
-  const authority = `${user}:${password.slice(0, whitespaceIndex)}`;
+  const authority = `${user}:${sliceString(password, 0, whitespaceIndex)}`;
   const candidate = scheme === "//" ? `https://${authority}` : `${scheme}${authority}`;
   try {
     const url = new URL(candidate);
@@ -607,17 +734,20 @@ export function sanitizeUrlCredentials(input: string): string {
   if (typeof input !== "string" || input.length === 0) return input;
 
   // 1) userinfo: scheme://user:pass@  → mask the password (and any bare creds).
-  let out = input.replace(URL_USERINFO_RE, (_match, scheme: string, userinfo: string) => {
-    const colon = userinfo.indexOf(":");
-    if (colon === -1) {
-      // `scheme://token@host` — the whole userinfo is credential-like.
-      return `${scheme}${REDACTED}@`;
-    }
-    const user = userinfo.slice(0, colon);
-    return `${scheme}${user}:${REDACTED}@`;
-  });
-  out = out.replace(
-    HORIZONTAL_WHITESPACE_URL_USERINFO_RE,
+  let out = apply(regExpReplace, URL_USERINFO_RE, [
+    input,
+    (_match: string, scheme: string, userinfo: string) => {
+      const colon = userinfo.indexOf(":");
+      if (colon === -1) {
+        // `scheme://token@host` — the whole userinfo is credential-like.
+        return `${scheme}${REDACTED}@`;
+      }
+      const user = sliceString(userinfo, 0, colon);
+      return `${scheme}${user}:${REDACTED}@`;
+    },
+  ]) as string;
+  out = apply(regExpReplace, HORIZONTAL_WHITESPACE_URL_USERINFO_RE, [
+    out,
     (
       match: string,
       scheme: string,
@@ -633,43 +763,47 @@ export function sanitizeUrlCredentials(input: string): string {
       }
       return `${scheme}${user}:${REDACTED}@`;
     },
-  );
+  ]) as string;
 
   // 2) sensitive query/fragment params: `key=value` → `key=[REDACTED]`.
   // Match `?key=`, `#key=`, `&key=`, and `;key=` separators and stop at the
   // next delimiter. OAuth implicit-flow tokens commonly appear after `#`.
-  out = out.replace(
-    /([?#&;])([-a-z0-9_.%\[\]]+)=([^&#;\s]*)/gi,
-    (match, sep: string, key: string, _val: string) => {
+  out = apply(regExpReplace, /([?#&;])([-a-z0-9_.%\[\]]+)=([^&#;\s]*)/gi, [
+    out,
+    (match: string, sep: string, key: string, _val: string) => {
       const decodedKey = decodeUrlParameterName(key);
       const sensitive = NORMALIZED_SENSITIVE_URL_PARAMS.has(normalizeToAlphanumeric(decodedKey)) ||
         isSensitiveKey(decodedKey);
       return sensitive ? `${sep}${key}=${REDACTED}` : match;
     },
-  );
+  ]) as string;
 
   // 3) Cookie header values.
   // Cookie headers can carry multiple independent credentials separated by
   // semicolons (and Set-Cookie attributes can contain commas). Mask the entire
   // header line before the generic assignment scanner can stop at the first
   // delimiter and expose later values.
-  out = out.replace(
-    /(^|[^a-z0-9_-])((?:set-cookie|cookie)\s*:\s*)[^\r\n]*/gi,
-    (_match, boundary: string, prefix: string) => `${boundary}${prefix}${REDACTED}`,
-  );
+  out = apply(regExpReplace, /(^|[^a-z0-9_-])((?:set-cookie|cookie)\s*:\s*)[^\r\n]*/gi, [
+    out,
+    (_match: string, boundary: string, prefix: string) => `${boundary}${prefix}${REDACTED}`,
+  ]) as string;
 
   // 4) Header-shaped authorization values and standalone auth schemes.
   // Authorization schemes are extensible (AWS SigV4, Digest, custom proxy
   // schemes, and others), so mask the complete line instead of trying to
   // enumerate schemes or parse their credential-bearing parameters.
-  out = out.replace(
-    /\b(authorization\s*[:=]\s*)[^\r\n]*/gi,
-    (_match, prefix: string) => `${prefix}${REDACTED}`,
-  );
-  out = out.replace(
+  out = apply(regExpReplace, /\b(authorization\s*[:=]\s*)[^\r\n]*/gi, [
+    out,
+    (_match: string, prefix: string) => `${prefix}${REDACTED}`,
+  ]) as string;
+  out = apply(
+    regExpReplace,
     /\b(bearer|basic)(\s+)(?:"[^"\r\n]*"|'[^'\r\n]*'|[a-z0-9._~+/=-]+)/gi,
-    (_match, scheme: string, whitespace: string) => `${scheme}${whitespace}${REDACTED}`,
-  );
+    [
+      out,
+      (_match: string, scheme: string, whitespace: string) => `${scheme}${whitespace}${REDACTED}`,
+    ],
+  ) as string;
 
   // 5) Credential assignments embedded in free-form messages/errors. Match
   // generic identifier-shaped keys and delegate classification to the same
@@ -740,7 +874,9 @@ export function sanitizeUrlForSpan(input: string): string {
   }
 
   const delimiterIndex = firstUrlDelimiterIndex(input);
-  const withoutQueryOrFragment = delimiterIndex === -1 ? input : input.slice(0, delimiterIndex);
+  const withoutQueryOrFragment = delimiterIndex === -1
+    ? input
+    : sliceString(input, 0, delimiterIndex);
   const protocolRelativeUrl = sanitizeProtocolRelativeUrlForSpan(withoutQueryOrFragment);
   if (protocolRelativeUrl) return protocolRelativeUrl;
 

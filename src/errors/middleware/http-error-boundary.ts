@@ -17,6 +17,7 @@ import { detachBoundaryError } from "./wrap-unknown.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
 const NativeResponse = Response;
 
 function isLocalProjectBestEffort(ctx: HandlerContext): boolean {
@@ -24,7 +25,7 @@ function isLocalProjectBestEffort(ctx: HandlerContext): boolean {
     if (isProxyWithoutHooks(ctx)) return false;
     const descriptor = getOwnPropertyDescriptor(ctx, "isLocalProject");
     return descriptor !== undefined &&
-      "value" in descriptor &&
+      hasOwn(descriptor, "value") &&
       descriptor.value === true;
   } catch {
     return false;

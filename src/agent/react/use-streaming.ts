@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, ensureBrowserError, toError } from "#veryfront/errors/browser-error.ts";
 
 /** Options accepted by use streaming. */
 export interface UseStreamingOptions {
@@ -95,9 +95,9 @@ export function useStreaming(options: UseStreamingOptions): UseStreamingResult {
 
         options.onComplete?.();
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+        if (abortController.signal.aborted) return;
 
-        const nextError = error instanceof Error ? error : new Error(String(error));
+        const nextError = ensureBrowserError(error);
         setError(nextError);
         options.onError?.(nextError);
       } finally {

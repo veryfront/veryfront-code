@@ -4,7 +4,13 @@ import {
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
 
+const apply = Reflect.apply;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return apply(objectHasOwnProperty, object, [key]) as boolean;
+}
 
 /**
  * Decode legacy Veryfront error data attached by `toError()`.
@@ -18,7 +24,7 @@ export function fromError(error: unknown): VeryfrontErrorData | null {
   try {
     if (!isNativeErrorWithoutHooks(error)) return null;
     const descriptor = getOwnPropertyDescriptor(error, "context");
-    if (!descriptor || !("value" in descriptor)) return null;
+    if (!descriptor || !hasOwn(descriptor, "value")) return null;
 
     return decodeVeryfrontErrorData(
       descriptor.value,

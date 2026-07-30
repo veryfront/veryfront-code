@@ -4,6 +4,7 @@ import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspect
 const RELATIVE_REQUEST_URL_BASE = "http://veryfront.invalid";
 const apply = Reflect.apply;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
 const NativeURL = URL;
 const trimString = String.prototype.trim;
 const requestUrlGetter = typeof Request === "function"
@@ -17,7 +18,7 @@ const urlPathnameGetter = getOwnPropertyDescriptor(
 function readRequestUrl(request: object): unknown {
   const ownDescriptor = getOwnPropertyDescriptor(request, "url");
   if (ownDescriptor) {
-    return "value" in ownDescriptor ? ownDescriptor.value : undefined;
+    return hasOwn(ownDescriptor, "value") ? ownDescriptor.value : undefined;
   }
   return requestUrlGetter ? apply(requestUrlGetter, request, []) : undefined;
 }
@@ -71,7 +72,7 @@ export function extractHandlerRequestPathname(
     if (isProxyWithoutHooks(context)) return undefined;
 
     const descriptor = getOwnPropertyDescriptor(context, "req");
-    if (!descriptor || !("value" in descriptor)) return undefined;
+    if (!descriptor || !hasOwn(descriptor, "value")) return undefined;
     return extractRequestPathname(descriptor.value);
   } catch {
     return undefined;

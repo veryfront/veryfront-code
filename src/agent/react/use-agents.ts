@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors/error-registry/general.ts";
 import { NETWORK_ERROR } from "#veryfront/errors/error-registry/server.ts";
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { ensureBrowserError } from "#veryfront/errors/browser-error.ts";
 import { type AgentMetadata, normalizeAgentMetadata } from "./use-agent-metadata.ts";
 
 /** Options accepted by {@link useAgents}. */
@@ -87,9 +87,9 @@ export function useAgents(options: UseAgentsOptions = {}): UseAgentsResult {
 
         setAgents(normalizeAgentsListResponse(await response.json()));
       } catch (caught) {
-        if (caught instanceof Error && caught.name === "AbortError") return;
+        if (abortController.signal.aborted) return;
         setAgents([]);
-        setError(ensureError(caught));
+        setError(ensureBrowserError(caught));
       } finally {
         if (!abortController.signal.aborted) {
           setIsLoading(false);

@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { defineError, VeryfrontError } from "./types.ts";
+import { defineError, snapshotVeryfrontError, VeryfrontError } from "./types.ts";
 import type { ErrorSlug } from "./error-registry.ts";
 import { ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS } from "./safe-diagnostics.ts";
 
@@ -61,6 +61,82 @@ describe("errors/types", () => {
   });
 
   describe("VeryfrontError", () => {
+    it("does not follow inherited descriptor values for accessor-backed fields", () => {
+      const err = new VeryfrontError("test error", {
+        slug: "build-failed",
+        category: "BUILD",
+        status: 500,
+        title: "Build failed",
+      });
+      let slugAccessorCalls = 0;
+      Object.defineProperty(err, "slug", {
+        configurable: true,
+        get(): never {
+          slugAccessorCalls += 1;
+          throw new Error("slug accessor must not run");
+        },
+      });
+
+      const previous = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      let inheritedValueCalls = 0;
+      let snapshot: ReturnType<typeof snapshotVeryfrontError>;
+      Object.defineProperty(Object.prototype, "value", {
+        configurable: true,
+        get(): never {
+          inheritedValueCalls += 1;
+          throw new Error("inherited descriptor value must not run");
+        },
+      });
+
+      try {
+        snapshot = snapshotVeryfrontError(err);
+      } finally {
+        if (previous) {
+          Object.defineProperty(Object.prototype, "value", previous);
+        } else {
+          delete (Object.prototype as Record<string, unknown>).value;
+        }
+      }
+
+      assertEquals(snapshot, null);
+      assertEquals(slugAccessorCalls, 0);
+      assertEquals(inheritedValueCalls, 0);
+    });
+
+    it("does not read inherited descriptor-map entries for missing fields", () => {
+      const err = new VeryfrontError("test error", {
+        slug: "build-failed",
+        category: "BUILD",
+        status: 500,
+        title: "Build failed",
+      });
+      Reflect.deleteProperty(err, "slug");
+
+      const previous = Object.getOwnPropertyDescriptor(Object.prototype, "slug");
+      let inheritedSlugCalls = 0;
+      let snapshot: ReturnType<typeof snapshotVeryfrontError>;
+      Object.defineProperty(Object.prototype, "slug", {
+        configurable: true,
+        get(): never {
+          inheritedSlugCalls += 1;
+          throw new Error("inherited descriptor-map entry must not run");
+        },
+      });
+
+      try {
+        snapshot = snapshotVeryfrontError(err);
+      } finally {
+        if (previous) {
+          Object.defineProperty(Object.prototype, "slug", previous);
+        } else {
+          delete (Object.prototype as Record<string, unknown>).slug;
+        }
+      }
+
+      assertEquals(snapshot, null);
+      assertEquals(inheritedSlugCalls, 0);
+    });
+
     it("should set message and slug with options object", () => {
       const err = new VeryfrontError("test error", {
         slug: "build-failed",

@@ -43,7 +43,7 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 | `attachErrorToSpan` | Attach error metadata to an OpenTelemetry span | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/tracing.ts#L39) |
 | `cliErrorBoundary` | CLI error boundary - wraps a handler function and catches errors | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/cli-error-boundary.ts#L121) |
 | `cliErrorBoundarySync` | Synchronous version of CLI error boundary | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/cli-error-boundary.ts#L147) |
-| `createError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L105) |
+| `createError` | Return one legacy serializable error-data value unchanged. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/legacy-error-construction.ts#L22) |
 | `createErrorHandler` | Express/Hono-style error handler middleware factory | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/http-error.ts#L126) |
 | `createErrorResponse` | Create an RFC 9457 compliant error Response | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/http-error.ts#L46) |
 | `createErrorResponseFromDefinition` | Create an RFC 9457 error Response from a registered error definition | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/http-error.ts#L55) |
@@ -51,38 +51,38 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 | `createErrorSolution` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/factory.ts#L11) |
 | `createProblemResponse` | Create an RFC 9457 error Response from raw parameters | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/http-error.ts#L70) |
 | `createSimpleError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/factory.ts#L29) |
-| `defineError` | Define an error in the registry | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L95) |
-| `ensureError` | Ensure a value is an Error while preserving the established identity contract for ordinary Error instances. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L837) |
+| `defineError` | Define an error in the registry | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L104) |
+| `ensureError` | Ensure a value is an Error while preserving the established identity contract for ordinary Error instances. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L788) |
 | `errorToResponse` | Convert any error to an RFC 9457 Response | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/http-error.ts#L106) |
-| `errorToRFC9457Response` | Convert any error to an RFC 9457 Response with environment-aware filtering | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L98) |
+| `errorToRFC9457Response` | Convert any error to an RFC 9457 Response with environment-aware filtering | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L99) |
 | `formatCLIError` | Format any error for CLI output | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/cli-error-boundary.ts#L101) |
 | `formatErrorLog` | Log format for errors (matches the plan's log format spec) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/http-error.ts#L142) |
 | `formatUserError` | Format error with plain text (existing behavior) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/user-friendly/error-formatter.ts#L85) |
-| `fromError` | Decode legacy Veryfront error data attached by `toError()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/legacy-error-codec.ts#L17) |
+| `fromError` | Decode legacy Veryfront error data attached by `toError()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/legacy-error-codec.ts#L23) |
 | `getAllSlugs` | Get all registered slugs | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry.ts#L72) |
 | `getErrorBySlug` | Get an error definition by slug | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry.ts#L58) |
-| `getErrorMessage` | Extract error message from any error type | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L678) |
+| `getErrorMessage` | Extract error message from any error type | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L635) |
 | `getErrorsByCategory` | Get all errors in a category | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry.ts#L65) |
 | `getErrorSolution` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/index.ts#L44) |
-| `handleErrorWithFallback` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-handlers.ts#L28) |
-| `handleErrorWithFallbackSync` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-handlers.ts#L41) |
-| `httpErrorBoundary` | Wrap a handler with error boundary that catches all errors and converts them to RFC 9457 Problem Details responses. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L55) |
+| `handleErrorWithFallback` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-handlers.ts#L41) |
+| `handleErrorWithFallbackSync` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-handlers.ts#L54) |
+| `httpErrorBoundary` | Wrap a handler with error boundary that catches all errors and converts them to RFC 9457 Problem Details responses. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L56) |
 | `identifyError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/user-friendly/error-identifier.ts#L26) |
 | `isVeryfrontError` | Check if an error is a VeryfrontError with slug-based identity | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/http-error.ts#L96) |
 | `logError` | Log a VeryfrontError with structured formatting | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/logging.ts#L77) |
 | `logErrorWithMessage` | Log an error with a custom message prefix | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/logging.ts#L136) |
-| `retryWithBackoff` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-handlers.ts#L136) |
+| `retryWithBackoff` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-handlers.ts#L149) |
 | `safeFileRead` | Safe file read with logging | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L150) |
 | `safeFileStat` | Safe file stat with logging | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L137) |
 | `safeReadDir` | Safe directory read with logging | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L163) |
 | `searchErrors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/index.ts#L48) |
-| `toError` | Convert a VeryfrontErrorData (plain object) to a throwable Error instance. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L622) |
-| `toError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L623) |
-| `toError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L627) |
+| `toError` | Convert legacy serializable error data into a throwable Error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/legacy-error-construction.ts#L27) |
+| `toError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/legacy-error-construction.ts#L28) |
+| `toError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/legacy-error-construction.ts#L32) |
 | `withErrorContext` | Execute async operation with error logging and fallback | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L109) |
 | `withErrorContextSync` | Execute sync operation with error logging and fallback | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L123) |
 | `wrapErrorHandler` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/user-friendly/error-wrapper.ts#L26) |
-| `wrapHandlerWithErrorBoundary` | Wrap a complete Handler object with error boundary | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L85) |
+| `wrapHandlerWithErrorBoundary` | Wrap a complete Handler object with error boundary | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L86) |
 | `wrapUnknownError` | Wrap any unknown error as a VeryfrontError with unknown-error slug | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/wrap-unknown.ts#L50) |
 | `wrapWithContext` | Wrap an error with additional context | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/wrap-unknown.ts#L100) |
 
@@ -90,30 +90,30 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `VeryfrontError` | Veryfront Error class with slug-based error identity | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L158) |
+| `VeryfrontError` | Veryfront Error class with slug-based error identity | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L167) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ConfigContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L62) |
+| `ConfigContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L66) |
 | `ErrorCatalog` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/types.ts#L14) |
-| `ErrorCategory` | Error categories for domain-based grouping and handling | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L11) |
+| `ErrorCategory` | Error categories for domain-based grouping and handling | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L20) |
 | `ErrorContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L16) |
-| `ErrorCreateOptions` | Options for creating an error instance | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L54) |
-| `ErrorDefinition` | Error definition for the registry | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L41) |
+| `ErrorCreateOptions` | Options for creating an error instance | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L63) |
+| `ErrorDefinition` | Error definition for the registry | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L50) |
 | `ErrorHandlingOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L25) |
 | `ErrorLogEntry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/logging.ts#L23) |
 | `ErrorSlug` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry.ts#L53) |
 | `ErrorSolution` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/types.ts#L3) |
 | `LogLevel` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L23) |
 | `PartialErrorCatalog` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/types.ts#L15) |
-| `RegisteredError` | Registered error with factory method | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L68) |
-| `RetryWithBackoffOptions` | Options for `retryWithBackoff`. Every `attempt` value passed to `fn` and the hooks below is 0-based (first try = 0), including `wrapFinalError`'s `lastAttempt`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-handlers.ts#L59) |
-| `RFC9457Response` | RFC 9457 Problem Details response shape | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L27) |
+| `RegisteredError` | Registered error with factory method | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L77) |
+| `RetryWithBackoffOptions` | Options for `retryWithBackoff`. Every `attempt` value passed to `fn` and the hooks below is 0-based (first try = 0), including `wrapFinalError`'s `lastAttempt`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-handlers.ts#L72) |
+| `RFC9457Response` | RFC 9457 Problem Details response shape | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L36) |
 | `UserFriendlyErrorSolution` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/user-friendly/error-catalog.ts#L3) |
-| `VeryfrontErrorData` | Discriminated union for serializable error data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L93) |
-| `VeryfrontErrorOptions` | Options for VeryfrontError constructor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L129) |
+| `VeryfrontErrorData` | Discriminated union for serializable error data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L97) |
+| `VeryfrontErrorOptions` | Options for VeryfrontError constructor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L138) |
 
 ### Constants
 

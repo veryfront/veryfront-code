@@ -126,7 +126,17 @@ the original error as provenance.
 Boundary adapters inspect genuine errors through runtime brand checks and own
 data properties. Proxy-wrapped errors and arbitrary thrown objects are opaque:
 they become `unknown-error` without executing proxy traps, accessors, or object
-conversion hooks.
+conversion hooks. Inherited DOMException `name` and `message` accessors are not
+read. Runtimes whose immutable brand check recognizes DOMException retain the
+conservative `DOMException` name with an empty inherited message; older Node
+releases treat it as opaque.
+
+Browser-only React adapters use the standard `Error.isError` brand when the
+browser provides it and detach safe own string fields before retaining an
+Error in React state. Accessor-backed fields are omitted. On older browsers
+without that hook-free brand, object and function throws—including genuine
+cross-boundary Errors—normalize to `Unknown error` instead of using
+proxy-observable prototype traversal.
 
 ## Logging and tracing
 

@@ -10,6 +10,8 @@ import { detachThrowableForBoundary } from "./safe-diagnostics.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 const numberIsInteger = Number.isInteger;
+const defineProperty = Object.defineProperty;
+const NativeError = Error;
 
 const logger = serverLogger.component("errors");
 
@@ -23,6 +25,17 @@ function safeLog(logFn: () => void): void {
       // expected: last-resort fallback; nothing left to do if logging itself fails
     }
   }
+}
+
+function createRetryTimeoutError(): Error {
+  const error = new NativeError("The operation was aborted");
+  defineProperty(error, "name", {
+    configurable: true,
+    enumerable: false,
+    value: "AbortError",
+    writable: true,
+  });
+  return error;
 }
 
 export async function handleErrorWithFallback<T>(
@@ -171,9 +184,10 @@ export async function retryWithBackoff<T>(
       controller?.signal,
       abortSignal,
     ]);
-    const timeoutId = controller === undefined
-      ? undefined
-      : setTimeout(() => controller.abort(), normalizedTimeoutMs);
+    const timeoutId = controller === undefined ? undefined : setTimeout(
+      () => controller.abort(createRetryTimeoutError()),
+      normalizedTimeoutMs,
+    );
 
     try {
       try {
@@ -215,7 +229,7 @@ export async function retryWithBackoff<T>(
     }
   }
 
-  const finalError = lastError ?? new Error("Retry failed without capturing an error");
+  const finalError = lastError ?? new NativeError("Retry failed without capturing an error");
   if (wrapFinalError) {
     throw wrapFinalError(finalError, Math.max(0, maxAttempts - 1));
   }

@@ -316,6 +316,36 @@ describe("error-handlers", () => {
       assertEquals(timeoutFlags, [true]);
     });
 
+    it("uses the captured Error constructor for timeout reasons", async () => {
+      const NativeError = Error;
+      let replacementConstructions = 0;
+      class ReplacementError extends NativeError {
+        constructor(message?: string) {
+          super(message);
+          replacementConstructions++;
+        }
+      }
+      globalThis.Error = ReplacementError as ErrorConstructor;
+
+      try {
+        const thrown = await assertRejects(() =>
+          retryWithBackoff(
+            (signal) =>
+              new Promise<never>((_, reject) => {
+                signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+              }),
+            { maxAttempts: 1, timeoutMs: 1 },
+          )
+        );
+
+        assertEquals(replacementConstructions, 0);
+        assertInstanceOf(thrown, NativeError);
+        assertEquals(thrown.name, "AbortError");
+      } finally {
+        globalThis.Error = NativeError;
+      }
+    });
+
     it("should report its timer abort when the attempt translates the abort error", async () => {
       const retryErrorNames: string[] = [];
       const timeoutFlags: boolean[] = [];

@@ -7,6 +7,7 @@ import {
 } from "./types.ts";
 import {
   buildErrorDocsUrl,
+  type DiagnosticPathRedaction,
   ERROR_OUTPUT_MAX_LENGTH_CHARS,
   sanitizeBoundedDiagnosticText,
   sanitizeBoundedErrorSlug,
@@ -15,8 +16,9 @@ import {
 } from "./diagnostic-policy.ts";
 import { type RedactedValue, redactForSerialization } from "#veryfront/utils/logger/redact.ts";
 import {
+  canInspectErrorStackDescriptorWithoutHooks,
   isNativeErrorWithoutHooks,
-  isProxyWithoutHooks,
+  readNativeErrorNameWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
 
 export {
@@ -49,11 +51,13 @@ const UNKNOWN_ERROR_SNAPSHOT: VeryfrontErrorSnapshot = freeze({
   suggestion: "Check logs for more details",
 });
 const apply = Reflect.apply;
-const defineProperties = Object.defineProperties;
+const createObject = Object.create;
+const defineProperty = Object.defineProperty;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const getPrototypeOf = Object.getPrototypeOf;
+const deleteProperty = Reflect.deleteProperty;
 const NativeError = Error;
 const NativeString = String;
+const objectHasOwnProperty = Object.prototype.hasOwnProperty;
 const ERROR_CATEGORIES: ReadonlySet<ErrorCategory> = new Set([
   "CONFIG",
   "BUILD",
@@ -68,12 +72,31 @@ const ERROR_CATEGORIES: ReadonlySet<ErrorCategory> = new Set([
   "GENERAL",
 ]);
 const MISSING_DATA_FIELD = Symbol("missing-data-field");
-const DOM_EXCEPTION_MESSAGE_GETTER = typeof DOMException === "function"
-  ? getOwnPropertyDescriptor(DOMException.prototype, "message")?.get
-  : undefined;
-const DOM_EXCEPTION_NAME_GETTER = typeof DOMException === "function"
-  ? getOwnPropertyDescriptor(DOMException.prototype, "name")?.get
-  : undefined;
+
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return apply(objectHasOwnProperty, object, [key]) as boolean;
+}
+
+function createDataDescriptor(value: unknown): PropertyDescriptor {
+  const descriptor = createObject(null) as PropertyDescriptor;
+  descriptor.configurable = true;
+  descriptor.enumerable = false;
+  descriptor.value = value;
+  descriptor.writable = true;
+  return descriptor;
+}
+
+function createErrorShapedRecord(
+  message: string,
+  name: string,
+  stack?: string,
+): Error {
+  const detached = createObject(NativeError.prototype) as Error;
+  defineProperty(detached, "message", createDataDescriptor(message));
+  defineProperty(detached, "name", createDataDescriptor(name));
+  defineProperty(detached, "stack", createDataDescriptor(stack));
+  return detached;
+}
 
 function isProblemDetailsResponseStatus(status: number): boolean {
   return numberIsInteger(status) &&
@@ -84,9 +107,12 @@ function isProblemDetailsResponseStatus(status: number): boolean {
     status !== 304;
 }
 
-/** Mask credentials embedded in arbitrary diagnostic text. */
-export function sanitizeDiagnosticText(value: unknown): string {
-  return sanitizeBoundedDiagnosticText(value);
+/** Mask an optional trusted path and credentials embedded in diagnostic text. */
+export function sanitizeDiagnosticText(
+  value: unknown,
+  pathRedaction?: DiagnosticPathRedaction,
+): string {
+  return sanitizeBoundedDiagnosticText(value, pathRedaction);
 }
 
 /**
@@ -111,7 +137,7 @@ function ownDataField(
   key: PropertyKey,
 ): unknown | typeof MISSING_DATA_FIELD {
   const descriptor = getOwnPropertyDescriptor(value, key);
-  return descriptor && "value" in descriptor ? descriptor.value : MISSING_DATA_FIELD;
+  return descriptor && hasOwn(descriptor, "value") ? descriptor.value : MISSING_DATA_FIELD;
 }
 
 function optionalOwnString(
@@ -124,34 +150,16 @@ function optionalOwnString(
 }
 
 function readOwnDataStack(error: Error): string | undefined {
+  if (!canInspectErrorStackDescriptorWithoutHooks) return undefined;
   const descriptor = getOwnPropertyDescriptor(error, "stack");
-  return descriptor && "value" in descriptor &&
+  return descriptor && hasOwn(descriptor, "value") &&
       typeof descriptor.value === "string"
     ? descriptor.value
     : undefined;
 }
 
 function readNativeErrorName(error: Error): string {
-  const ownName = ownDataField(error, "name");
-  if (typeof ownName === "string" && ownName) {
-    return sanitizeDiagnosticText(ownName);
-  }
-
-  const prototype = getPrototypeOf(error);
-  if (prototype === null || isProxyWithoutHooks(prototype)) return "Error";
-  const descriptor = getOwnPropertyDescriptor(prototype, "name");
-  if (descriptor && "value" in descriptor && typeof descriptor.value === "string") {
-    return sanitizeDiagnosticText(descriptor.value || "Error");
-  }
-  if (descriptor?.get === DOM_EXCEPTION_NAME_GETTER && DOM_EXCEPTION_NAME_GETTER) {
-    try {
-      const name = apply(DOM_EXCEPTION_NAME_GETTER, error, []);
-      return typeof name === "string" && name ? sanitizeDiagnosticText(name) : "Error";
-    } catch {
-      return "Error";
-    }
-  }
-  return "Error";
+  return sanitizeDiagnosticText(readNativeErrorNameWithoutHooks(error));
 }
 
 interface ThrowableBoundarySnapshot {
@@ -269,18 +277,18 @@ export function detachThrowableForBoundary(error: unknown): Error {
     })
     : new NativeError(snapshot.detail ?? snapshot.message);
 
-  defineProperties(detached, {
-    name: {
-      configurable: true,
-      value: boundary.registered ? "VeryfrontError" : boundary.name,
-      writable: true,
-    },
-    stack: {
-      configurable: true,
-      value: snapshot.stack,
-      writable: true,
-    },
-  });
+  const detachedName = boundary.registered ? "VeryfrontError" : boundary.name;
+  // Deleting V8's configurable lazy stack does not materialize it. Replacing
+  // it directly on older V8 releases can execute Error.prepareStackTrace.
+  if (!deleteProperty(detached, "stack")) {
+    return createErrorShapedRecord(
+      snapshot.detail ?? snapshot.message,
+      detachedName,
+      snapshot.stack,
+    );
+  }
+  defineProperty(detached, "name", createDataDescriptor(detachedName));
+  defineProperty(detached, "stack", createDataDescriptor(snapshot.stack));
 
   return detached;
 }
@@ -300,19 +308,10 @@ export function snapshotThrowableDiagnostic(error: unknown): string {
       const message = getOwnPropertyDescriptor(error, "message");
       if (message) {
         return sanitizeDiagnosticText(
-          "value" in message && typeof message.value === "string" ? message.value : "Unknown error",
+          hasOwn(message, "value") && typeof message.value === "string"
+            ? message.value
+            : "Unknown error",
         );
-      }
-
-      if (DOM_EXCEPTION_MESSAGE_GETTER) {
-        try {
-          const domMessage = apply(DOM_EXCEPTION_MESSAGE_GETTER, error, []);
-          if (typeof domMessage === "string") {
-            return sanitizeDiagnosticText(domMessage);
-          }
-        } catch {
-          // Ordinary Error objects do not carry DOMException internal slots.
-        }
       }
 
       return sanitizeDiagnosticText("");

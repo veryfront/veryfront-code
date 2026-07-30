@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_SPAN_NAME_LENGTH } from "#veryfront/utils/constants/index.ts";
 import {
@@ -195,6 +200,47 @@ describe("observability/tracing/otlp-setup", () => {
       Error,
       "application failed",
     );
+  });
+
+  it("withSpan preserves exact accessor-backed errors during descriptor-value poisoning", async () => {
+    const { withSpan } = await import("./otlp-setup.ts");
+    const applicationError = new Error("application failure");
+    let applicationAccessorCalls = 0;
+    Object.defineProperty(applicationError, "message", {
+      configurable: true,
+      get(): never {
+        applicationAccessorCalls += 1;
+        throw new Error("application error accessor must not run");
+      },
+    });
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+    let descriptorValueCalls = 0;
+    let caught: unknown;
+    Object.defineProperty(Object.prototype, "value", {
+      configurable: true,
+      get(): never {
+        descriptorValueCalls += 1;
+        throw new Error("inherited descriptor value must not run");
+      },
+    });
+
+    try {
+      await withSpan("descriptor-poisoning", async () => {
+        throw applicationError;
+      });
+    } catch (error) {
+      caught = error;
+    } finally {
+      if (previous) {
+        Object.defineProperty(Object.prototype, "value", previous);
+      } else {
+        delete (Object.prototype as Record<string, unknown>).value;
+      }
+    }
+
+    assertStrictEquals(caught, applicationError);
+    assertEquals(applicationAccessorCalls, 0);
+    assertEquals(descriptorValueCalls, 0);
   });
 
   it("withSpan invokes its callback once with an inert span when tracer setup fails", async () => {

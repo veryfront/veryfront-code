@@ -11,12 +11,14 @@ import {
   isFileError,
   isNetworkError,
   isRenderError,
+  snapshotError,
   snapshotErrorAsError,
   toError,
   type VeryfrontErrorData,
 } from "./veryfront-error.ts";
 import { fromError } from "./legacy-error-codec.ts";
 import { VeryfrontError } from "./types.ts";
+import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 function errorWithContext(context: unknown): Error {
   return Object.defineProperty(new Error("encoded Veryfront error"), "context", {
@@ -299,14 +301,73 @@ describe("veryfront-error", () => {
       }
     });
 
+    it("should not follow inherited numeric descriptors for sparse arrays", () => {
+      const error = errorWithContext({
+        type: "build",
+        message: "Build failed",
+        context: { failed: new Array<string>(1) },
+      });
+      const previous = Object.getOwnPropertyDescriptor(Object.prototype, "0");
+      let inheritedIndexReads = 0;
+      Object.defineProperty(Object.prototype, "0", {
+        configurable: true,
+        get() {
+          inheritedIndexReads += 1;
+          return {
+            configurable: true,
+            enumerable: true,
+            value: "injected",
+            writable: true,
+          };
+        },
+      });
+
+      let decoded: VeryfrontErrorData | null | undefined;
+      try {
+        decoded = fromError(error);
+      } finally {
+        if (previous) {
+          Object.defineProperty(Object.prototype, "0", previous);
+        } else {
+          Reflect.deleteProperty(Object.prototype, "0");
+        }
+      }
+
+      assertEquals(decoded, null);
+      assertEquals(inheritedIndexReads, 0);
+    });
+
     it("should fail closed when context access throws", () => {
+      let contextReads = 0;
       const error = Object.defineProperty(new Error("unreadable context"), "context", {
         get(): never {
+          contextReads += 1;
           throw new Error("unreadable");
         },
       });
 
-      assertEquals(fromError(error), null);
+      const previous = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      let inheritedValueReads = 0;
+      Object.defineProperty(Object.prototype, "value", {
+        configurable: true,
+        get(): never {
+          inheritedValueReads += 1;
+          throw new Error("inherited descriptor value must not run");
+        },
+      });
+
+      try {
+        assertEquals(fromError(error), null);
+      } finally {
+        if (previous) {
+          Object.defineProperty(Object.prototype, "value", previous);
+        } else {
+          delete (Object.prototype as Record<string, unknown>).value;
+        }
+      }
+
+      assertEquals(contextReads, 0);
+      assertEquals(inheritedValueReads, 0);
     });
 
     it("should reject proxied roots without invoking traps", () => {
@@ -489,6 +550,42 @@ describe("veryfront-error", () => {
 
       assertEquals(getErrorMessage(hostile), "Unknown error");
     });
+
+    it("should not invoke accessor-backed messages or inherited descriptor values", () => {
+      const hostile = new Error("must stay private");
+      let messageReads = 0;
+      Object.defineProperty(hostile, "message", {
+        configurable: true,
+        get(): never {
+          messageReads += 1;
+          throw new Error("message accessor must not run");
+        },
+      });
+      const previous = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      let inheritedValueReads = 0;
+      let message: string | undefined;
+      Object.defineProperty(Object.prototype, "value", {
+        configurable: true,
+        get(): never {
+          inheritedValueReads += 1;
+          throw new Error("inherited descriptor value must not run");
+        },
+      });
+
+      try {
+        message = getErrorMessage(hostile);
+      } finally {
+        if (previous) {
+          Object.defineProperty(Object.prototype, "value", previous);
+        } else {
+          delete (Object.prototype as Record<string, unknown>).value;
+        }
+      }
+
+      assertEquals(message, "Unknown error");
+      assertEquals(messageReads, 0);
+      assertEquals(inheritedValueReads, 0);
+    });
   });
 
   describe("ensureError", () => {
@@ -583,6 +680,58 @@ describe("veryfront-error", () => {
       assertEquals(result.name, "Error");
       assertEquals(result.message, "Unknown error");
       assertEquals(nameReads, 0);
+    });
+
+    it("should not inspect a proxied Error prototype", () => {
+      let descriptorReads = 0;
+      const prototype = new Proxy({}, {
+        getOwnPropertyDescriptor(): never {
+          descriptorReads += 1;
+          throw new Error("prototype descriptor trap must not run");
+        },
+      });
+      const source = new Error("application failure");
+      Object.setPrototypeOf(source, prototype);
+
+      const snapshot = snapshotError(source);
+      const message = getErrorMessage(source);
+      const ensured = ensureError(source);
+      const result = snapshotErrorAsError(source);
+
+      assertEquals(snapshot?.name, "Error");
+      assertEquals(snapshot?.message, "application failure");
+      assertEquals(message, "application failure");
+      assert(ensured === source, "Expected a safely inspected Error to retain identity");
+      assertEquals(result.name, "Error");
+      assertEquals(result.message, "application failure");
+      assertEquals(descriptorReads, 0);
+    });
+
+    it("should fail closed for inherited DOMException diagnostics", () => {
+      const source = new DOMException("request stopped", "AbortError");
+
+      if (!isNativeErrorWithoutHooks(source)) {
+        assertEquals(snapshotError(source), null);
+        return;
+      }
+
+      assertEquals(snapshotError(source), {
+        name: "DOMException",
+        message: "",
+        stack: undefined,
+      });
+      assertEquals(getErrorMessage(source), "");
+      const detached = snapshotErrorAsError(source);
+      assertEquals(detached.name, "DOMException");
+      assertEquals(detached.message, "");
+    });
+
+    it("should preserve custom Error subclass names", () => {
+      class CustomError extends Error {}
+      const source = new CustomError("custom failure");
+
+      assertEquals(snapshotError(source)?.name, "CustomError");
+      assertEquals(snapshotErrorAsError(source).name, "CustomError");
     });
 
     it("should preserve safe own error metadata on the detached snapshot", () => {

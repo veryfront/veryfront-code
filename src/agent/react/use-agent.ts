@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import type { AgentStatus, Message as AgentMessage, ToolCall } from "#veryfront/agent/types.ts";
-import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, ensureBrowserError, toError } from "#veryfront/errors/browser-error.ts";
 
 /** Options accepted by use agent. */
 export interface UseAgentOptions {
@@ -102,9 +102,9 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
           if (tc.result) options.onToolResult?.(tc, tc.result);
         }
       } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") return;
+        if (abortController.signal.aborted) return;
 
-        const nextError = ensureError(err);
+        const nextError = ensureBrowserError(err);
         setError(nextError);
         setStatus("error");
         options.onError?.(nextError);

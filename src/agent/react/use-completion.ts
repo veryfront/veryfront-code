@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, ensureBrowserError, toError } from "#veryfront/errors/browser-error.ts";
 
 /** Options accepted by use completion. */
 export interface UseCompletionOptions {
@@ -105,9 +105,9 @@ export function useCompletion(options: UseCompletionOptions): UseCompletionResul
 
         options.onFinish?.(accumulatedText);
       } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") return;
+        if (abortController.signal.aborted) return;
 
-        const nextError = err instanceof Error ? err : new Error(String(err));
+        const nextError = ensureBrowserError(err);
         setError(nextError);
         options.onError?.(nextError);
       } finally {

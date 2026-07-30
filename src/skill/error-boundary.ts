@@ -18,17 +18,17 @@ const apply = Reflect.apply;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getPrototypeOf = Object.getPrototypeOf;
 const defineProperty = Object.defineProperty;
-const replaceAll = String.prototype.replaceAll;
 const numberIsSafeInteger = Number.isSafeInteger;
+const objectHasOwnProperty = Object.prototype.hasOwnProperty;
 const NativeError = Error;
 const NativeTypeError = TypeError;
 const NativeRangeError = RangeError;
 const NativeDOMException = typeof DOMException === "function" ? DOMException : undefined;
 const DOM_EXCEPTION_MESSAGE_GETTER = NativeDOMException
-  ? getOwnPropertyDescriptor(NativeDOMException.prototype, "message")?.get
+  ? readOwnDescriptorGetter(NativeDOMException.prototype, "message")
   : undefined;
 const DOM_EXCEPTION_NAME_GETTER = NativeDOMException
-  ? getOwnPropertyDescriptor(NativeDOMException.prototype, "name")?.get
+  ? readOwnDescriptorGetter(NativeDOMException.prototype, "name")
   : undefined;
 const NativeDOMExceptionPrototype = NativeDOMException?.prototype;
 const NativeTypeErrorPrototype = NativeTypeError.prototype;
@@ -41,18 +41,23 @@ interface CapturedDomException {
   readonly name: string;
 }
 
-function redactSkillRoot(text: string, skillRoot: string): string {
-  if (skillRoot.length === 0) return text;
-  const slashRoot = apply(replaceAll, skillRoot, ["\\", "/"]) as string;
-  const backslashRoot = apply(replaceAll, skillRoot, ["/", "\\"]) as string;
-  let redacted = apply(replaceAll, text, [skillRoot, "<skill-root>"]) as string;
-  redacted = apply(replaceAll, redacted, [slashRoot, "<skill-root>"]) as string;
-  return apply(replaceAll, redacted, [backslashRoot, "<skill-root>"]) as string;
+function hasOwn(object: object, property: PropertyKey): boolean {
+  return apply(objectHasOwnProperty, object, [property]) as boolean;
+}
+
+function readOwnDescriptorGetter(
+  value: object,
+  property: PropertyKey,
+): ((this: unknown) => unknown) | undefined {
+  const descriptor = getOwnPropertyDescriptor(value, property);
+  if (!descriptor || !hasOwn(descriptor, "get")) return undefined;
+  const getter = descriptor.get;
+  return typeof getter === "function" ? getter : undefined;
 }
 
 function ownString(value: object, property: PropertyKey): string | undefined {
   const descriptor = getOwnPropertyDescriptor(value, property);
-  return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+  return descriptor && hasOwn(descriptor, "value") && typeof descriptor.value === "string"
     ? descriptor.value
     : undefined;
 }
@@ -137,7 +142,7 @@ function captureErrorIdentity(
       if (prototype === NativeRangeErrorPrototype) kind = "RangeError";
       if (prototype === SkillOperationTimeoutErrorPrototype) {
         const timeoutDescriptor = getOwnPropertyDescriptor(error, "timeoutMs");
-        const timeoutMs = timeoutDescriptor && "value" in timeoutDescriptor &&
+        const timeoutMs = timeoutDescriptor && hasOwn(timeoutDescriptor, "value") &&
             numberIsSafeInteger(timeoutDescriptor.value) && timeoutDescriptor.value > 0
           ? timeoutDescriptor.value as number
           : undefined;
@@ -205,20 +210,22 @@ export function sanitizeSkillBoundaryFailure(
 ): Error {
   const domException = captureDomException(error);
   const rawMessage = captureRawMessage(error, domException);
-  // Redact before the shared diagnostic policy truncates. Otherwise a root
-  // that crosses the truncation boundary can survive as a private prefix.
+  const pathRedaction = {
+    path: skillRoot,
+    replacement: "<skill-root>",
+  } as const;
   const message = rawMessage
-    ? sanitizeDiagnosticText(redactSkillRoot(rawMessage, skillRoot))
+    ? sanitizeDiagnosticText(rawMessage, pathRedaction)
     : DEFAULT_SKILL_FAILURE_MESSAGE;
   const domExceptionName = domException
-    ? sanitizeDiagnosticText(redactSkillRoot(domException.name, skillRoot))
+    ? sanitizeDiagnosticText(domException.name, pathRedaction)
     : undefined;
   const identity = captureErrorIdentity(error, domException);
   return createDetachedError(
     message,
     {
       ...identity,
-      name: sanitizeDiagnosticText(redactSkillRoot(identity.name, skillRoot)),
+      name: sanitizeDiagnosticText(identity.name, pathRedaction),
     },
     domExceptionName,
   );

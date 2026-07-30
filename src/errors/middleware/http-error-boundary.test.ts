@@ -5,7 +5,11 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
-import { httpErrorBoundary, wrapHandlerWithErrorBoundary } from "./http-error-boundary.ts";
+import {
+  errorToRFC9457Response,
+  httpErrorBoundary,
+  wrapHandlerWithErrorBoundary,
+} from "./http-error-boundary.ts";
 import { VeryfrontError } from "../types.ts";
 import { PROBLEM_JSON_CONTENT_TYPE } from "../http-error.ts";
 import { CONFIG_NOT_FOUND } from "../error-registry.ts";
@@ -13,6 +17,7 @@ import type { Handler, HandlerContext } from "#veryfront/types";
 import { HandlerPriority } from "#veryfront/types";
 import { metricsManager } from "#veryfront/observability/metrics/index.ts";
 import { trace } from "#veryfront/observability/tracing/api-shim.ts";
+import { canInspectErrorStackDescriptorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 /**
  * Create a mock HandlerContext for testing
@@ -178,8 +183,12 @@ describe("http-error-boundary", () => {
 
       assertExists(result.response);
       const body = await result.response.json();
-      assertExists(body.stack);
-      assertEquals(typeof body.stack, "string");
+      assertEquals(
+        body.stack,
+        canInspectErrorStackDescriptorWithoutHooks
+          ? "VeryfrontError: Dev error\n    at trusted-boundary-test"
+          : undefined,
+      );
     });
 
     it("should omit stack trace in production mode", async () => {
@@ -359,6 +368,61 @@ describe("http-error-boundary", () => {
       assertEquals(body.detail, undefined);
       assertEquals(body.stack, undefined);
       assertEquals(environmentReads, 0);
+    });
+
+    it("should not follow inherited descriptor values for the environment field", async () => {
+      let environmentReads = 0;
+      const context = Object.defineProperty(
+        createMockContext(true),
+        "isLocalProject",
+        {
+          configurable: true,
+          get(): never {
+            environmentReads += 1;
+            throw new Error("environment accessor must not run");
+          },
+        },
+      );
+      const previousValue = Object.getOwnPropertyDescriptor(
+        Object.prototype,
+        "value",
+      );
+      let inheritedValueReads = 0;
+      Object.defineProperty(Object.prototype, "value", {
+        configurable: true,
+        get(): never {
+          inheritedValueReads += 1;
+          throw new Error("inherited descriptor value must not run");
+        },
+      });
+
+      let response: Response | undefined;
+      try {
+        response = errorToRFC9457Response(
+          new VeryfrontError("Internal error", {
+            slug: "internal-error",
+            category: "GENERAL",
+            status: 500,
+            title: "Internal Server Error",
+            detail: "private detail",
+          }),
+          context,
+          createMockRequest(),
+        );
+      } finally {
+        if (previousValue) {
+          Object.defineProperty(Object.prototype, "value", previousValue);
+        } else {
+          Reflect.deleteProperty(Object.prototype, "value");
+        }
+      }
+
+      assertExists(response);
+      const body = await response.json();
+      assertEquals(body.detail, undefined);
+      assertEquals(body.stack, undefined);
+      assertEquals(environmentReads, 0);
+      assertEquals(inheritedValueReads, 0);
     });
 
     it("should preserve existing instance if set", async () => {

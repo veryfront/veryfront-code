@@ -1,9 +1,18 @@
 import { buildErrorDocsUrl, sanitizeBoundedDiagnosticText } from "./diagnostic-policy.ts";
+import {
+  canInspectErrorStackDescriptorWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 
+const apply = Reflect.apply;
 const freeze = Object.freeze;
-const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const numberIsFinite = Number.isFinite;
+const objectHasOwnProperty = Object.prototype.hasOwnProperty;
 const VERYFRONT_ERROR_INSTANCES = new WeakSet<object>();
+
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return apply(objectHasOwnProperty, object, [key]) as boolean;
+}
 
 /**
  * Error categories for domain-based grouping and handling
@@ -259,10 +268,10 @@ export function snapshotKnownVeryfrontError(
 ): VeryfrontErrorSnapshot | null {
   try {
     if (!isVeryfrontErrorInstance(error)) return null;
-    const descriptors = getOwnPropertyDescriptors(error);
     const dataValue = (key: string): unknown => {
-      const descriptor = descriptors[key];
-      return descriptor && "value" in descriptor ? descriptor.value : undefined;
+      if (key === "stack" && !canInspectErrorStackDescriptorWithoutHooks) return undefined;
+      const descriptor = getOwnPropertyDescriptor(error, key);
+      return descriptor && hasOwn(descriptor, "value") ? descriptor.value : undefined;
     };
     const slug = dataValue("slug");
     const category = dataValue("category");

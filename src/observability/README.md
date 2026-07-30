@@ -313,6 +313,18 @@ telemetry provider:
 Oversized or hostile structured containers fail closed to `[REDACTED]`;
 ordinary accepted values are detached from caller mutation.
 
+Exception telemetry never evaluates error-field accessors or a configured
+`Error.prepareStackTrace` hook. Safe own string-valued data fields preserve a
+bounded message, already-available stack, and built-in, aggregate, custom, or
+framework error name. A captured platform compatibility check identifies
+native errors without consulting mutable global constructors. DOMException
+prototype accessors are never invoked: runtimes whose immutable brand check
+recognizes DOMException report the conservative name `DOMException` and omit
+its inherited message; older Node releases treat it as opaque. Older V8
+releases also omit stacks because requesting even their property descriptor
+materializes the lazy stack. Proxies and accessor-backed fields fail closed;
+telemetry handling never changes the value thrown back to application code.
+
 Redaction is defense in depth, not permission to attach secrets. Free-form
 values that are not recognizable URLs may still contain sensitive data. Keep
 attribute keys bounded and values low-cardinality. Prefer route templates,

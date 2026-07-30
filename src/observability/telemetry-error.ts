@@ -17,6 +17,132 @@ import {
   MAX_TELEMETRY_ATTRIBUTE_COUNT,
   MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH,
 } from "./limits.ts";
+import {
+  canInspectErrorStackDescriptorWithoutHooks,
+  isNativeErrorWithoutHooks,
+  isProxyWithoutHooks,
+  readNativeErrorNameWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
+
+const apply = Reflect.apply;
+const createObject = Object.create;
+const defineProperty = Object.defineProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectKeys = Object.keys;
+const deleteProperty = Reflect.deleteProperty;
+const mathMax = Math.max;
+const NativeDate = Date;
+const NativeError = Error;
+const NativeString = String;
+const NativeURL = URL;
+const dateGetTime = Date.prototype.getTime;
+const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const stringSlice = String.prototype.slice;
+const ERROR_PROTOTYPE = NativeError.prototype;
+const URL_HREF_GETTER = readOwnDescriptorGetter(NativeURL.prototype, "href");
+
+const INVALID_ERROR_FIELD = Symbol("invalid-error-field");
+
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return apply(objectHasOwnProperty, object, [key]) as boolean;
+}
+
+function readOwnDescriptorGetter(
+  object: object,
+  key: PropertyKey,
+): ((this: unknown) => unknown) | undefined {
+  try {
+    const descriptor = getOwnPropertyDescriptor(object, key);
+    if (!descriptor || !hasOwn(descriptor, "get")) return undefined;
+    const getter = descriptor.get;
+    return typeof getter === "function" ? getter : undefined;
+  } catch (_) {
+    return undefined;
+  }
+}
+
+function readOwnErrorString(
+  error: Error,
+  key: PropertyKey,
+): string | undefined | typeof INVALID_ERROR_FIELD {
+  try {
+    const descriptor = getOwnPropertyDescriptor(error, key);
+    if (!descriptor) return undefined;
+    if (!hasOwn(descriptor, "value")) return INVALID_ERROR_FIELD;
+    const value = descriptor.value;
+    return typeof value === "string" ? value : INVALID_ERROR_FIELD;
+  } catch (_) {
+    return INVALID_ERROR_FIELD;
+  }
+}
+
+function readNativeErrorMessage(error: Error): string {
+  const ownMessage = readOwnErrorString(error, "message");
+  if (typeof ownMessage === "string") return ownMessage;
+  if (ownMessage === INVALID_ERROR_FIELD) return "Unknown error";
+  return "";
+}
+
+function readNativeErrorStack(error: Error): string | undefined {
+  // Some engines materialize lazy stacks while producing their descriptor.
+  // The module-init behavior probe disables source stack inspection there.
+  if (!canInspectErrorStackDescriptorWithoutHooks) return undefined;
+  const ownStack = readOwnErrorString(error, "stack");
+  return typeof ownStack === "string" ? ownStack : undefined;
+}
+
+function primitiveErrorMessage(error: unknown): string {
+  if (
+    (typeof error === "object" && error !== null) ||
+    typeof error === "function"
+  ) {
+    return "Unknown error";
+  }
+  try {
+    return NativeString(error);
+  } catch (_) {
+    return "Unknown error";
+  }
+}
+
+function createDataDescriptor(value: unknown): PropertyDescriptor {
+  const descriptor = createObject(null) as PropertyDescriptor;
+  descriptor.configurable = true;
+  descriptor.enumerable = false;
+  descriptor.value = value;
+  descriptor.writable = true;
+  return descriptor;
+}
+
+function createErrorShapedRecord(
+  message: string,
+  name: string,
+  stack?: string,
+): Error {
+  const sanitized = createObject(ERROR_PROTOTYPE) as Error;
+  defineProperty(sanitized, "message", createDataDescriptor(message));
+  defineProperty(sanitized, "name", createDataDescriptor(name));
+  defineProperty(sanitized, "stack", createDataDescriptor(stack));
+  return sanitized;
+}
+
+function createDetachedTelemetryError(
+  message: string,
+  name: string,
+  stack?: string,
+): Error {
+  const sanitized = new NativeError();
+  // Deleting V8's configurable lazy stack does not materialize it. Redefining
+  // the property directly does on older V8 releases and can therefore execute
+  // Error.prepareStackTrace.
+  if (!deleteProperty(sanitized, "stack")) {
+    return createErrorShapedRecord(message, name, stack);
+  }
+  defineProperty(sanitized, "message", createDataDescriptor(message));
+  defineProperty(sanitized, "name", createDataDescriptor(name));
+  defineProperty(sanitized, "stack", createDataDescriptor(stack));
+  return sanitized;
+}
 
 export type TelemetryAttributeValue =
   | string
@@ -37,7 +163,8 @@ function isNumericSemanticTokenCount(key: string, value: TelemetryAttributeValue
 export function sanitizeTelemetryText(value: string, maxLength: number): string {
   const sanitized = sanitizeUrlCredentials(value);
   if (sanitized.length <= maxLength) return sanitized;
-  return `${sanitized.slice(0, Math.max(0, maxLength - 1))}…`;
+  const end = apply(mathMax, Math, [0, maxLength - 1]) as number;
+  return `${apply(stringSlice, sanitized, [0, end]) as string}…`;
 }
 
 /** Redact a single flattened telemetry attribute. */
@@ -79,17 +206,22 @@ export function sanitizeTelemetryAttributes<
 
   let keys: string[];
   try {
-    keys = Object.keys(attributes);
+    keys = objectKeys(attributes);
   } catch (_) {
     return {} as T;
   }
 
   const sanitized: Record<string, TelemetryAttributeValue> = {};
   const retainedKeys = new Set<string>();
-  for (const key of keys.slice(0, MAX_TELEMETRY_ATTRIBUTE_COUNT)) {
+  const keyCount = keys.length < MAX_TELEMETRY_ATTRIBUTE_COUNT
+    ? keys.length
+    : MAX_TELEMETRY_ATTRIBUTE_COUNT;
+  for (let index = 0; index < keyCount; index++) {
+    const key = keys[index];
+    if (key === undefined) continue;
     const boundedKey = key.length <= MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH
       ? key
-      : key.slice(0, MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH);
+      : apply(stringSlice, key, [0, MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH]) as string;
     if (!boundedKey || retainedKeys.has(boundedKey)) continue;
 
     let value: TelemetryAttributeValue = REDACTED;
@@ -101,7 +233,7 @@ export function sanitizeTelemetryAttributes<
       }
     }
     if (value === undefined) continue;
-    Object.defineProperty(sanitized, boundedKey, {
+    defineProperty(sanitized, boundedKey, {
       configurable: true,
       enumerable: true,
       value,
@@ -117,22 +249,42 @@ interface StructuredTelemetryBudget {
   remainingNodes: number;
 }
 
-function cloneDate(value: Date): Date | typeof REDACTED {
+function cloneNativeDate(value: object): Date | undefined {
   try {
-    return new Date(value.getTime());
+    const timestamp = apply(dateGetTime, value, []) as number;
+    return new NativeDate(timestamp);
+  } catch (_) {
+    return undefined;
+  }
+}
+
+const NOT_NATIVE_URL = Symbol("not-native-url");
+
+function cloneNativeUrl(value: object): URL | string | typeof NOT_NATIVE_URL {
+  if (!URL_HREF_GETTER) return NOT_NATIVE_URL;
+  let href: unknown;
+  try {
+    href = apply(URL_HREF_GETTER, value, []);
+  } catch (_) {
+    return NOT_NATIVE_URL;
+  }
+  if (typeof href !== "string") return REDACTED;
+  try {
+    const sanitizedHref = sanitizeUrlCredentials(href);
+    if (sanitizedHref.length > MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH) return REDACTED;
+    return new NativeURL(sanitizedHref);
   } catch (_) {
     return REDACTED;
   }
 }
 
-function cloneUrl(value: URL): URL | string {
-  try {
-    const href = sanitizeUrlCredentials(value.href);
-    if (href.length > MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH) return REDACTED;
-    return new URL(href);
-  } catch (_) {
-    return REDACTED;
-  }
+function snapshotStructuredError(value: Error): Record<string, unknown> {
+  const snapshot = sanitizeErrorForTelemetry(value);
+  return {
+    message: snapshot.message,
+    name: snapshot.name,
+    stack: snapshot.stack,
+  };
 }
 
 function sanitizeStructuredValue(
@@ -158,28 +310,16 @@ function sanitizeStructuredValue(
   }
   if (typeof value === "symbol" || typeof value === "function") return REDACTED;
   if (depth >= MAX_STRUCTURED_TELEMETRY_DEPTH || seen.has(value)) return REDACTED;
+  if (isProxyWithoutHooks(value)) return REDACTED;
 
-  if (value instanceof Date) return cloneDate(value);
-  if (value instanceof URL) return cloneUrl(value);
+  if (isNativeErrorWithoutHooks(value)) return snapshotStructuredError(value);
+  const clonedDate = cloneNativeDate(value);
+  if (clonedDate) return clonedDate;
+  const clonedUrl = cloneNativeUrl(value);
+  if (clonedUrl !== NOT_NATIVE_URL) return clonedUrl;
 
   seen.add(value);
   try {
-    if (value instanceof Error) {
-      let name = "Error";
-      let message = REDACTED;
-      let stack: string | undefined;
-      try {
-        name = sanitizeTelemetryText(value.name, LOG_PREVIEW_MAX_LENGTH_CHARS);
-        message = sanitizeTelemetryText(value.message, MAX_STRING_DISPLAY_LENGTH);
-        stack = value.stack
-          ? sanitizeTelemetryText(value.stack, MAX_STRING_DISPLAY_LENGTH)
-          : undefined;
-      } catch (_) {
-        /* hostile Error accessors remain redacted */
-      }
-      return { name, message, stack };
-    }
-
     let toJSON: unknown;
     try {
       toJSON = (value as { toJSON?: unknown }).toJSON;
@@ -217,7 +357,7 @@ function sanitizeStructuredValue(
 
     let keys: string[];
     try {
-      keys = Object.keys(value);
+      keys = objectKeys(value);
     } catch (_) {
       return REDACTED;
     }
@@ -244,7 +384,7 @@ function sanitizeStructuredValue(
         }
       }
       if (budget.exhausted) return REDACTED;
-      Object.defineProperty(copy, boundedKey, {
+      defineProperty(copy, boundedKey, {
         configurable: true,
         enumerable: true,
         value: child,
@@ -281,47 +421,33 @@ export function sanitizeStructuredTelemetryData<T>(value: T): T {
 /**
  * Create an error safe to send to telemetry backends without mutating or
  * replacing the application error that will be returned to the caller.
+ *
+ * Native errors are classified through a hook-free runtime brand check. Older
+ * supported runtimes use the platform compatibility implementation instead of
+ * the unsafe `instanceof` fallback that executes Proxy traps.
  */
 export function sanitizeErrorForTelemetry(error: unknown): Error {
-  let isError = false;
   try {
-    isError = error instanceof Error;
-  } catch (_) {
-    /* hostile prototype inspection is treated as an unknown error */
-  }
-
-  let message = "Unknown error";
-  try {
-    message = sanitizeTelemetryText(
-      isError ? (error as Error).message : String(error),
+    const isError = isNativeErrorWithoutHooks(error);
+    const source = isError ? error : undefined;
+    const message = sanitizeTelemetryText(
+      source ? readNativeErrorMessage(source) : primitiveErrorMessage(error),
       MAX_STRING_DISPLAY_LENGTH,
     );
-  } catch (_) {
-    /* expected: hostile error accessors are replaced */
-  }
+    const name = source
+      ? sanitizeTelemetryText(
+        readNativeErrorNameWithoutHooks(source),
+        LOG_PREVIEW_MAX_LENGTH_CHARS,
+      )
+      : "Unknown";
+    const sourceStack = source ? readNativeErrorStack(source) : undefined;
+    const stack = sourceStack === undefined
+      ? undefined
+      : sanitizeTelemetryText(sourceStack, MAX_STRING_DISPLAY_LENGTH);
 
-  const sanitized = new Error(message);
-  if (!isError) {
-    sanitized.name = "Unknown";
-    return sanitized;
-  }
-
-  try {
-    const source = error as Error;
-    sanitized.name = sanitizeTelemetryText(
-      source.constructor.name || source.name || "Error",
-      LOG_PREVIEW_MAX_LENGTH_CHARS,
-    );
+    return createDetachedTelemetryError(message, name, stack);
   } catch (_) {
-    sanitized.name = "Error";
+    // Telemetry is best effort and must never replace the application outcome.
+    return createErrorShapedRecord("Unknown error", "Unknown");
   }
-  try {
-    const stack = (error as Error).stack;
-    if (stack) {
-      sanitized.stack = sanitizeTelemetryText(stack, MAX_STRING_DISPLAY_LENGTH);
-    }
-  } catch (_) {
-    /* expected: hostile stack accessors are omitted */
-  }
-  return sanitized;
 }

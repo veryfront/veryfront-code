@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, ensureBrowserError, toError } from "#veryfront/errors/browser-error.ts";
 
 import { handleAgUiStreamingResponse } from "#veryfront/agent/react/use-chat/streaming/index.ts";
 import type {
@@ -217,12 +217,11 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
       setStreamingMessageId(null);
       setError(null);
 
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
       let didError = false;
       try {
         const allMessages = [...base, userMessage];
-
-        const abortController = new AbortController();
-        abortControllerRef.current = abortController;
 
         const response = await fetch(api, {
           method: "POST",
@@ -413,10 +412,10 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
             : undefined,
         });
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
+        if (abortController.signal.aborted) return;
         if (!isLatestRequest(requestIdRef.current, requestId)) return;
 
-        const nextError = ensureError(error);
+        const nextError = ensureBrowserError(error);
         didError = true;
         setError(nextError);
         options.onError?.(nextError);
