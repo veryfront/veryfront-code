@@ -1,6 +1,5 @@
-import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { createPipelineCache } from "./pipeline-cache.ts";
 
 interface FakePipeline {
@@ -32,6 +31,55 @@ describe("provider/local/pipeline-cache", () => {
 
     await cache.clear();
     assertEquals(disposed, ["b", "a", "c"]);
+  });
+
+  it("surfaces pipeline disposal failures to lifecycle owners", async () => {
+    const expected = new Error("native dispose failed");
+    let disposeAttempts = 0;
+    const cache = createPipelineCache<FakePipeline, string>(
+      async (id) => ({ id }),
+      {
+        dispose: () => {
+          disposeAttempts += 1;
+          if (disposeAttempts === 1) throw expected;
+        },
+      },
+    );
+
+    await cache.preload("a", "a");
+    const error = await assertRejects(() => cache.clear());
+    assertStrictEquals(error, expected);
+    await cache.clear();
+    assertEquals(disposeAttempts, 2);
+  });
+
+  it("retries failed eviction cleanup before admitting a replacement", async () => {
+    const disposed: string[] = [];
+    let disposeAttempts = 0;
+    const cache = createPipelineCache<FakePipeline, string>(
+      async (id) => ({ id }),
+      {
+        maxEntries: 1,
+        dispose: (pipeline) => {
+          disposeAttempts += 1;
+          if (disposeAttempts === 1) throw new Error("transient dispose failure");
+          disposed.push(pipeline.id);
+        },
+      },
+    );
+
+    await cache.preload("a", "a");
+    await assertRejects(
+      () => cache.preload("b", "b"),
+      Error,
+      "transient dispose failure",
+    );
+    assertEquals(cache.has("b"), false);
+
+    await cache.preload("c", "c");
+    assertEquals(disposed, ["a"]);
+    assertEquals(cache.has("c"), true);
+    await cache.clear();
   });
 
   it("defers disposal until the final active lease is released", async () => {
@@ -105,11 +153,16 @@ describe("provider/local/pipeline-cache", () => {
     await cache.clear();
   });
 
-  it("releases a lease that finishes loading after its caller aborts", async () => {
+  it("aborts a sole active load and disposes an ignored late completion", async () => {
     const gate = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    const lateDisposal = Promise.withResolvers<void>();
     const disposed: string[] = [];
+    let loadSignal: AbortSignal | undefined;
     const cache = createPipelineCache<FakePipeline, string>(
-      async (id) => {
+      async (id, abortSignal) => {
+        loadSignal = abortSignal;
+        started.resolve();
         await gate.promise;
         return { id };
       },
@@ -117,19 +170,99 @@ describe("provider/local/pipeline-cache", () => {
         maxEntries: 1,
         dispose: (pipeline) => {
           disposed.push(pipeline.id);
+          lateDisposal.resolve();
         },
       },
     );
     const abortController = new AbortController();
     const pending = cache.acquire("a", "a", abortController.signal);
+    await started.promise;
 
-    abortController.abort(new DOMException("cancelled", "AbortError"));
+    const reason = new DOMException("cancelled", "AbortError");
+    abortController.abort(reason);
     await assertRejects(() => pending, DOMException, "cancelled");
+    assertStrictEquals(loadSignal?.reason, reason);
 
     gate.resolve();
-    await cache.preload("a", "a");
-    await cache.preload("b", "b");
+    await lateDisposal.promise;
     assertEquals(disposed, ["a"]);
+    await cache.clear();
+  });
+
+  it("enforces the cold-load deadline and disposes a signal-ignoring result", async () => {
+    const started = Promise.withResolvers<void>();
+    const allowCompletion = Promise.withResolvers<void>();
+    const lateDisposal = Promise.withResolvers<void>();
+    let loadSignal: AbortSignal | undefined;
+    const cache = createPipelineCache<FakePipeline, string>(
+      async (id, abortSignal) => {
+        loadSignal = abortSignal;
+        started.resolve();
+        await allowCompletion.promise;
+        return { id };
+      },
+      {
+        loadTimeoutMs: 10,
+        dispose: () => lateDisposal.resolve(),
+      },
+    );
+
+    const loading = cache.preload("slow", "slow");
+    await started.promise;
+    const error = await assertRejects(() => loading);
+    assertEquals(error instanceof Error, true);
+    assertEquals((error as Error).name, "TimeoutError");
+    assertEquals(loadSignal?.aborted, true);
+    assertStrictEquals(loadSignal?.reason, error);
+    assertEquals(cache.has("slow"), false);
+
+    allowCompletion.resolve();
+    await lateDisposal.promise;
+    await cache.clear();
+  });
+
+  it("keeps timed-out signal-ignoring loads inside the concurrency bound", async () => {
+    const releaseA = Promise.withResolvers<void>();
+    const releaseB = Promise.withResolvers<void>();
+    let activeVendorLoads = 0;
+    let peakVendorLoads = 0;
+    const loaded: string[] = [];
+    const cache = createPipelineCache<FakePipeline, string>(
+      async (id) => {
+        loaded.push(id);
+        activeVendorLoads += 1;
+        peakVendorLoads = Math.max(peakVendorLoads, activeVendorLoads);
+        try {
+          if (id === "a") await releaseA.promise;
+          if (id === "b") await releaseB.promise;
+          return { id };
+        } finally {
+          activeVendorLoads -= 1;
+        }
+      },
+      {
+        maxEntries: 2,
+        loadTimeoutMs: 10,
+      },
+    );
+
+    const firstA = cache.preload("a", "a");
+    const firstB = cache.preload("b", "b");
+    await assertRejects(() => firstA, Error, "deadline");
+    await assertRejects(() => firstB, Error, "deadline");
+
+    const pendingC = cache.preload("c", "c");
+    const pendingD = cache.preload("d", "d");
+    const overflow = await assertRejects(() => cache.preload("e", "e"));
+    assertEquals(overflow instanceof Error && overflow.name, "CapacityError");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assertEquals(loaded, ["a", "b"]);
+    assertEquals(peakVendorLoads, 2);
+
+    releaseA.resolve();
+    releaseB.resolve();
+    await Promise.all([pendingC, pendingD]);
+    assertEquals(peakVendorLoads, 2);
     await cache.clear();
   });
 
@@ -178,16 +311,19 @@ describe("provider/local/pipeline-cache", () => {
     await cache.clear();
   });
 
-  it("holds loads started during clear until the clear boundary completes", async () => {
+  it("holds new loads until an aborting clear boundary completes", async () => {
     const loadA = Promise.withResolvers<void>();
     const loadB = Promise.withResolvers<void>();
     let bStarted = false;
+    let clearCompleted = false;
+    let bStartedBeforeClearCompleted = false;
     const cache = createPipelineCache<FakePipeline, string>(
       async (id) => {
         if (id === "a") {
           await loadA.promise;
         } else {
           bStarted = true;
+          bStartedBeforeClearCompleted = !clearCompleted;
           await loadB.promise;
         }
         return { id };
@@ -196,15 +332,21 @@ describe("provider/local/pipeline-cache", () => {
     );
 
     const firstA = cache.preload("a", "a");
-    const clearing = cache.clear();
+    const firstAResult = firstA.catch((error) => error);
+    const clearing = cache.clear().then(() => {
+      clearCompleted = true;
+    });
     const nextB = cache.preload("b", "b");
 
-    loadA.resolve();
-    await firstA;
+    const firstAError = await firstAResult;
+    assertEquals(firstAError instanceof DOMException, true);
+    assertEquals(firstAError.name, "AbortError");
     await clearing;
     assertEquals(cache.has("a"), false);
-    assertEquals(bStarted, false);
+    assertEquals(bStartedBeforeClearCompleted, false);
 
+    loadA.resolve();
+    while (!bStarted) await Promise.resolve();
     loadB.resolve();
     await nextB;
     assertEquals(cache.has("b"), true);
@@ -234,16 +376,75 @@ describe("provider/local/pipeline-cache", () => {
       { maxEntries: 2 },
     );
 
-    const pending = ["a", "b", "c", "d", "e"].map((id) => cache.preload(id, id));
+    const pending = ["a", "b", "c", "d"].map((id) => cache.preload(id, id));
     await initialLoadsStarted.promise;
     await Promise.resolve();
     assertEquals(totalLoads, 2);
 
     releaseLoads.resolve();
     await Promise.all(pending);
-    assertEquals(totalLoads, 5);
+    assertEquals(totalLoads, 4);
     assertEquals(peakActiveLoads, 2);
 
+    await cache.clear();
+  });
+
+  it("bounds pending distinct loads while preserving same-key deduplication", async () => {
+    const releaseLoads = Promise.withResolvers<void>();
+    const firstStarted = Promise.withResolvers<void>();
+    const loaded: string[] = [];
+    const cache = createPipelineCache<FakePipeline, string>(
+      async (id) => {
+        loaded.push(id);
+        if (id === "a") firstStarted.resolve();
+        await releaseLoads.promise;
+        return { id };
+      },
+      { maxEntries: 1 },
+    );
+
+    const firstA = cache.preload("a", "a");
+    await firstStarted.promise;
+    const firstB = cache.preload("b", "b");
+    const duplicateB = cache.preload("b", "b");
+    const overflow = await assertRejects(() => cache.preload("c", "c"));
+    assertEquals(overflow instanceof Error, true);
+    assertEquals((overflow as Error).name, "CapacityError");
+    assertEquals(loaded, ["a"]);
+
+    releaseLoads.resolve();
+    await Promise.all([firstA, firstB, duplicateB]);
+    assertEquals(loaded, ["a", "b"]);
+    await cache.clear();
+  });
+
+  it("reclaims a pending slot after repeated O(1) cancellations", async () => {
+    const loaded: string[] = [];
+    const cache = createPipelineCache<FakePipeline, string>(
+      async (id) => {
+        loaded.push(id);
+        return { id };
+      },
+      { maxEntries: 1 },
+    );
+
+    const leaseA = await cache.acquire("a", "a");
+    for (let index = 0; index < 128; index++) {
+      const abortController = new AbortController();
+      const pending = cache.acquire(
+        `canceled-${index}`,
+        `canceled-${index}`,
+        abortController.signal,
+      );
+      abortController.abort(new DOMException("cancelled", "AbortError"));
+      await assertRejects(() => pending, DOMException, "cancelled");
+    }
+
+    const finalLeasePromise = cache.acquire("final", "final");
+    await leaseA.release();
+    const finalLease = await finalLeasePromise;
+    assertEquals(loaded, ["a", "final"]);
+    await finalLease.release();
     await cache.clear();
   });
 
@@ -335,55 +536,56 @@ describe("provider/local/pipeline-cache", () => {
     assertEquals(bStarted, false);
   });
 
-  it("clear drains a queued load admitted after its first snapshot", async () => {
+  it("clear aborts active and queued loads without waiting for an ignored vendor promise", async () => {
     const loadA = Promise.withResolvers<void>();
-    const loadB = Promise.withResolvers<void>();
-    const bStarted = Promise.withResolvers<void>();
-    const bDisposeStarted = Promise.withResolvers<void>();
-    const allowBDispose = Promise.withResolvers<void>();
-    let cleared = false;
+    const aStarted = Promise.withResolvers<void>();
+    const lateADisposed = Promise.withResolvers<void>();
+    let bStarted = false;
 
     const cache = createPipelineCache<FakePipeline, string>(
       async (id) => {
         if (id === "a") {
+          aStarted.resolve();
           await loadA.promise;
         } else {
-          bStarted.resolve();
-          await loadB.promise;
+          bStarted = true;
         }
         return { id };
       },
       {
         maxEntries: 1,
-        dispose: async (pipeline) => {
-          if (pipeline.id === "b") {
-            bDisposeStarted.resolve();
-            await allowBDispose.promise;
-          }
+        dispose: (pipeline) => {
+          if (pipeline.id === "a") lateADisposed.resolve();
         },
       },
     );
 
     const firstA = cache.preload("a", "a");
-    const abortController = new AbortController();
-    const pendingB = cache.acquire("b", "b", abortController.signal);
-    const clearing = cache.clear().then(() => {
-      cleared = true;
-    });
+    const firstAResult = firstA.catch((error) => error);
+    await aStarted.promise;
+    const pendingB = cache.preload("b", "b");
+    const pendingBResult = pendingB.catch((error) => error);
+    const clearing = cache.clear();
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let outcome: string;
+    try {
+      outcome = await Promise.race([
+        clearing.then(() => "cleared"),
+        new Promise<string>((resolve) => {
+          timeoutId = setTimeout(() => resolve("timed out"), 100);
+        }),
+      ]);
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
+    assertEquals(outcome, "cleared");
+    assertEquals((await firstAResult).name, "AbortError");
+    assertEquals((await pendingBResult).name, "AbortError");
+    assertEquals(bStarted, false);
 
     loadA.resolve();
-    await firstA;
-    await bStarted.promise;
-    abortController.abort(new DOMException("cancelled", "AbortError"));
-    await assertRejects(() => pendingB, DOMException, "cancelled");
-    loadB.resolve();
-    await bDisposeStarted.promise;
-    await Promise.resolve();
-    assertEquals(cleared, false);
-
-    allowBDispose.resolve();
-    await clearing;
-    assertEquals(cleared, true);
+    await lateADisposed.promise;
   });
 
   it("evicts an idle entry before waiting on an older active entry", async () => {

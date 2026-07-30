@@ -10,12 +10,27 @@ export function getModelRuntimeProvider(model: ModelRuntime): string | undefined
   return typeof provider === "string" ? provider : undefined;
 }
 
-export function hasLocalModelRuntimeMarker(model: ModelRuntime): boolean {
-  return model._isVfLocalModel === true;
+export function isLocalModelRuntime(model: ModelRuntime): boolean {
+  return model.executionMode === "server-local";
 }
 
-export function isLocalModelRuntime(model: ModelRuntime): boolean {
-  return hasLocalModelRuntimeMarker(model) ||
-    getModelRuntimeProvider(model) === "local" ||
-    (getModelRuntimeId(model)?.startsWith("local/") ?? false);
+/**
+ * Return whether a runtime supports tool calling.
+ *
+ * Existing runtimes predate capability metadata, so omission preserves their
+ * historical behavior. An explicit `false` is authoritative regardless of
+ * where inference executes.
+ */
+export function supportsModelRuntimeToolCalling(model: ModelRuntime): boolean {
+  const capabilities = model.runtimeCapabilities;
+  if (capabilities === undefined) return true;
+  if (typeof capabilities !== "object" || capabilities === null) {
+    throw new TypeError("Model runtime capabilities must be an object");
+  }
+  const toolCalling = capabilities.toolCalling;
+  if (toolCalling === undefined) return true;
+  if (typeof toolCalling !== "boolean") {
+    throw new TypeError("Model runtime toolCalling capability must be a boolean");
+  }
+  return toolCalling;
 }

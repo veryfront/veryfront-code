@@ -23,7 +23,8 @@ Omit `model` in most agents to use `openai/gpt-5.4-nano`.
     `VERYFRONT_PROJECT_SLUG`),
   - An API key for a direct provider (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
     or `GOOGLE_API_KEY`), or
-  - A local inference target if you want to run without external providers.
+  - The explicitly composed `@veryfront/ext-llm-transformers` extension if you
+    want to run without an external inference service.
 
 ## Runtime conventions (recommended)
 
@@ -51,8 +52,8 @@ whether the response used cloud or server-local inference.
 
 For `model: "auto"`, runtime conventions are:
 
-- local development without cloud bootstrap uses explicit provider env vars or
-  an explicit `local/*` model
+- local development without cloud bootstrap uses explicit provider env vars;
+  `local/*` additionally requires the Transformers extension
 - Veryfront Cloud is selected automatically when `VERYFRONT_API_TOKEN` and
   project context such as `VERYFRONT_PROJECT_SLUG` are available
 - `VERYFRONT_DEFAULT_MODEL`, `VERYFRONT_DEFAULT_EMBEDDING_MODEL`, and
@@ -87,14 +88,31 @@ export default agent({
 Local inference is explicit. Use a `local/*` model when you want the server to
 run a curated ONNX model through `@huggingface/transformers`.
 
+Install `@veryfront/ext-llm-transformers` alongside `veryfront`, then enable it
+in `veryfront.config.ts`:
+
+```ts
+import { defineConfig } from "veryfront";
+import extTransformers from "@veryfront/ext-llm-transformers";
+
+export default defineConfig({
+  extensions: [extTransformers()],
+});
+```
+
 ```ts
 agent({ model: "local/qwen3.5-0.8b" });
 // Also available: "local/gemma4-e2b-it", "local/gemma4-e4b-it"
 ```
 
-The model is downloaded and cached on first use. If the local runtime cannot
-load ONNX, the chat handler returns a `503` setup error. The browser never
-starts a local model automatically.
+The model is downloaded and cached on first use. If the inference dependency
+cannot load, the chat handler returns a `503` setup error. Model-download and
+initialization failures preserve their original diagnostics. The browser and
+core framework never start a local model automatically.
+
+The bundled local aliases produce text only. They declare that tool calling and
+structured output are unsupported, so configured agent tools are not sent to
+these runtimes and JSON response-format requests fail before a model is loaded.
 
 Local AI uses CPU by default. To request WebGPU for local inference, use:
 
@@ -108,13 +126,13 @@ of retrying on CPU.
 To smoke-test WebGPU local inference in this package, use:
 
 ```bash
-VERYFRONT_LOCAL_AI_DEVICE=webgpu deno run -A src/provider/local/_smoke-test.ts
+VERYFRONT_LOCAL_AI_DEVICE=webgpu deno run -A extensions/ext-llm-transformers/src/_smoke-test.ts
 ```
 
 To smoke-test Gemma4 local inference, use:
 
 ```bash
-VERYFRONT_LOCAL_AI_MODEL=gemma4-e2b-it deno run -A src/provider/local/_smoke-test.ts
+VERYFRONT_LOCAL_AI_MODEL=gemma4-e2b-it deno run -A extensions/ext-llm-transformers/src/_smoke-test.ts
 ```
 
 To enable Gemma4 thinking in the local prompt template, use:
@@ -127,7 +145,8 @@ Thinking is disabled by default. To smoke-test Gemma4 E4B with thinking enabled,
 use:
 
 ```bash
-VERYFRONT_LOCAL_AI_MODEL=gemma4-e4b-it VERYFRONT_LOCAL_AI_THINKING=1 deno run -A src/provider/local/_smoke-test.ts
+VERYFRONT_LOCAL_AI_MODEL=gemma4-e4b-it VERYFRONT_LOCAL_AI_THINKING=1 \
+  deno run -A extensions/ext-llm-transformers/src/_smoke-test.ts
 ```
 
 To disable server-side local AI, use:
@@ -237,6 +256,13 @@ agent({ model: "ollama/llama3.2" });
 The factory receives the model ID and must return a framework-compatible model
 runtime with the generation surface the framework expects, including
 `doGenerate()` and `doStream()`.
+
+Set `executionMode` only to describe where inference runs. Declare behavioral
+support independently with `runtimeCapabilities`; for example, use
+`{ toolCalling: false, structuredOutput: false }` when those request features
+must not be sent to the provider. If the runtime needs readiness work before a
+response starts, implement `prepare(abortSignal)` and honor cancellation while
+loading resources.
 
 Custom runtimes sit on a validation boundary. Generation hooks receive
 `ModelRuntimeCallOptions`, including an immutable prompt view and the caller's

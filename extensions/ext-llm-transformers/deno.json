@@ -1,0 +1,51 @@
+{
+  "name": "@veryfront/ext-llm-transformers",
+  "version": "0.1.0",
+  "exports": "./src/index.ts",
+  "veryfront": {
+    "extension": true,
+    "activation": "explicit",
+    "contracts": {
+      "provides": [
+        "ModelProvider:local",
+        "EmbeddingProvider:local"
+      ]
+    },
+    "capabilities": [
+      {
+        "type": "env:read",
+        "keys": [
+          "VERYFRONT_DISABLE_LOCAL_AI",
+          "VERYFRONT_LOCAL_AI_DEVICE",
+          "VERYFRONT_LOCAL_AI_MODEL_LOAD_TIMEOUT_MS",
+          "VERYFRONT_LOCAL_AI_THINKING",
+          "HF_TOKEN",
+          "HF_ACCESS_TOKEN",
+          "TESTING_REMOTELY",
+          "npm_package_config_libvips"
+        ]
+      },
+      { "type": "fs:read", "paths": [".cache/models"] },
+      { "type": "fs:write", "paths": [".cache/models"] },
+      { "type": "native:ffi" },
+      {
+        "type": "net:outbound",
+        "hosts": ["huggingface.co", "*.huggingface.co", "*.hf.co"]
+      }
+    ]
+  },
+  "imports": {
+    "@huggingface/transformers": "npm:@huggingface/transformers@4.2.0",
+    "@std/assert": "jsr:@std/assert@1.0.19",
+    "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
+    "veryfront/embedding": "../../src/embedding/index.ts",
+    "veryfront/errors": "../../src/errors/index.ts",
+    "veryfront/extensions": "../../src/extensions/index.ts",
+    "veryfront/provider": "../../src/provider/index.ts",
+    "veryfront/provider/types": "../../src/provider/types.ts",
+    "veryfront/utils": "../../src/utils/index.ts"
+  },
+  "tasks": {
+    "test": "deno test --no-check --allow-all src/"
+  }
+}

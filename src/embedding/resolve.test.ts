@@ -6,6 +6,7 @@ import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import {
   clearEmbeddingProviders,
+  hasEmbeddingProvider,
   registerEmbeddingProvider,
   resolveEmbeddingModel,
 } from "./resolve.ts";
@@ -117,6 +118,36 @@ describe("embedding provider resolution", () => {
       "project",
     );
     runWithCacheKeyContext(project, clearEmbeddingProviders);
+  });
+
+  it("fails actionably when an explicit provider has not been composed", () => {
+    assertEquals(hasEmbeddingProvider("local"), false);
+    assertThrows(
+      () => resolveEmbeddingModel("local/example"),
+      Error,
+      "Register it during application composition with registerEmbeddingProvider()",
+    );
+  });
+
+  it("disposes only the exact embedding registration generation it owns", () => {
+    const disposeFirst = registerEmbeddingProvider(
+      "owned",
+      (id) => testRuntime("first", id),
+    );
+    const disposeSecond = registerEmbeddingProvider(
+      "owned",
+      (id) => testRuntime("second", id),
+    );
+
+    disposeFirst();
+    assertEquals(resolveEmbeddingModel("owned/model").provider, "second");
+    disposeSecond();
+    disposeSecond();
+    assertThrows(
+      () => resolveEmbeddingModel("owned/model"),
+      Error,
+      "not registered",
+    );
   });
 
   it("rejects malformed custom provider registrations", () => {

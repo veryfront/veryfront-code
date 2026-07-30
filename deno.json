@@ -44,6 +44,7 @@
     "./extensions/ext-llm-anthropic",
     "./extensions/ext-llm-google",
     "./extensions/ext-llm-openai",
+    "./extensions/ext-llm-transformers",
     "./extensions/ext-auth-jwt",
     "./extensions/ext-bundler-esbuild",
     "./extensions/ext-cache-redis",

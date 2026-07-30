@@ -33,8 +33,7 @@ describe("compat/index.ts exports", () => {
   });
 
   it("should export opaque import functions", async () => {
-    const { importTransformers, importClaudeAgentSDK } = await import("./index.ts");
-    assertExists(importTransformers);
+    const { importClaudeAgentSDK } = await import("./index.ts");
     assertExists(importClaudeAgentSDK);
   });
 });

@@ -35,7 +35,7 @@ describe("agent/runtime-step", () => {
       config: { model: "auto", system: "Base" } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [],
-      isLocalModel: true,
+      supportsToolCalling: false,
       messages: [],
       mode: "generate",
       remoteToolSources: undefined,
@@ -75,7 +75,7 @@ describe("agent/runtime-step", () => {
         assertEquals(options?.remoteToolContext?.allowedSkillIds, ["selected"]);
         return [];
       },
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "generate",
       remoteToolSources: undefined,
@@ -115,7 +115,7 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: ["remote_allowed"],
       config,
       forwardedRemoteToolDefinitions: [toolDefinition("forwarded_remote")],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages,
       mode: "generate",
       remoteToolSources: [remoteSource],
@@ -180,7 +180,7 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: undefined,
       config: { model: "auto", system: "Base", tools: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -212,7 +212,7 @@ describe("agent/runtime-step", () => {
         assertEquals(options?.includeSkillTools, false);
         return [toolDefinition("ordinary_tool")];
       },
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -240,7 +240,7 @@ describe("agent/runtime-step", () => {
       config: { model: "auto", system: "system", tools: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: undefined,
@@ -262,7 +262,7 @@ describe("agent/runtime-step", () => {
     assertEquals(prepared.toolContext.__vfSourceIntegrationPolicy, sourceIntegrationPolicy);
   });
 
-  it("skips tool loading for local models", async () => {
+  it("skips tool loading when the runtime declares no tool support", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillPolicy: undefined,
@@ -270,7 +270,7 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: undefined,
       config: { model: "local/test", system: "Local", tools: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: true,
+      supportsToolCalling: false,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -279,7 +279,7 @@ describe("agent/runtime-step", () => {
       systemPrompt: "Local",
       toolContextBase: undefined,
       getAvailableTools: async () => {
-        throw new Error("local model should not load tools");
+        throw new Error("unsupported tools should not be loaded");
       },
       resolveRuntimeState: async () => ({ systemPrompt: "Local", context: undefined }),
     });
@@ -308,7 +308,7 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: undefined,
       config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages,
       mode: "stream",
       remoteToolSources: [],
@@ -341,7 +341,7 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: undefined,
       config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -382,7 +382,7 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: undefined,
       config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [{
         id: "submitted-form",
         role: "tool",
@@ -456,7 +456,7 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: undefined,
       config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages,
       mode: "stream",
       remoteToolSources: [],
@@ -492,7 +492,7 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: undefined,
       config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -527,7 +527,7 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: undefined,
       config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],

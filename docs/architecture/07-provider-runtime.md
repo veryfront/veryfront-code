@@ -19,13 +19,13 @@ Primary source areas:
 - [`src/provider/`](../../src/provider/)
 - [`src/runtime/`](../../src/runtime/)
 - [`src/provider/runtime-loader/`](../../src/provider/runtime-loader/)
-- [`src/provider/local/`](../../src/provider/local/)
+- [`extensions/ext-llm-transformers/`](../../extensions/ext-llm-transformers/)
 - [`src/provider/veryfront-cloud/`](../../src/provider/veryfront-cloud/)
 - [`src/agent/runtime/model-resolution.ts`](../../src/agent/runtime/model-resolution.ts)
 - [`src/embedding/`](../../src/embedding/)
 - [`src/embedding/veryfront-cloud/`](../../src/embedding/veryfront-cloud/)
 - [`src/embedding/model-resolution.ts`](../../src/embedding/model-resolution.ts)
-- [`src/provider/local/local-embedding-engine.ts`](../../src/provider/local/local-embedding-engine.ts)
+- [`extensions/ext-llm-transformers/src/local-embedding-engine.ts`](../../extensions/ext-llm-transformers/src/local-embedding-engine.ts)
 
 ## Runtime flow
 
@@ -34,8 +34,9 @@ Primary source areas:
    capabilities.
 3. Runtime loader helpers build request init, endpoint URLs, SSE parsers, usage
    records, embedding responses, and tool input status.
-4. Provider adapters send requests to local engines or Veryfront Cloud provider
-   endpoints.
+4. Provider adapters send requests to Veryfront Cloud endpoints or explicitly
+   composed extension runtimes. Third-party implementations do not live in
+   core.
 5. `src/runtime` validates direct results and stream events, enforces terminal
    lifecycle, tool and usage contracts, and propagates cancellation.
 6. The agent runtime consumes the resulting provider-neutral runtime events.
@@ -55,7 +56,15 @@ Primary source areas:
   [agent runtime](./05-agent-runtime.md).
 - The model runtime bridge owns provider-neutral generation, stream validation,
   tool correlation, usage normalization, and cancellation.
+- `executionMode` describes placement only. Behavioral support such as tool
+  calling and structured output is declared independently through runtime
+  capability metadata.
+- A runtime readiness hook receives the request abort signal. Native model
+  loading must stop or release its lease when the request or owning extension
+  generation is canceled.
 - The provider runtime owns provider request and response translation.
+- Third-party provider SDKs, model catalogs, and native runtime lifecycle belong
+  to extension packages behind the provider-neutral runtime contracts.
 - Agent prompt assembly and retrieval orchestration belong in
   [agent runtime](./05-agent-runtime.md), not in embedding helpers.
 - File upload UI belongs in guide or component docs, not this architecture

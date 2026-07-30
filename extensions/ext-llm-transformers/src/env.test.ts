@@ -1,20 +1,26 @@
-import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { fromError } from "#veryfront/errors/legacy-error-codec.ts";
+import { assertEquals } from "@std/assert";
+import { afterEach, describe, it } from "@std/testing/bdd";
+import { fromError } from "veryfront/errors";
 import {
   getLocalAIDevice,
+  getLocalAIModelLoadTimeoutMs,
   getLocalAIThinkingEnabled,
   isLocalAIDisabled,
   throwIfLocalAIDisabled,
 } from "./env.ts";
+import {
+  DEFAULT_LOCAL_AI_MODEL_LOAD_TIMEOUT_MS,
+  MAX_LOCAL_AI_MODEL_LOAD_TIMEOUT_MS,
+} from "./model-load-policy.ts";
 
 const DISABLE_LOCAL_AI_ENV = "VERYFRONT_DISABLE_LOCAL_AI";
 const LOCAL_AI_DEVICE_ENV = "VERYFRONT_LOCAL_AI_DEVICE";
 const LOCAL_AI_THINKING_ENV = "VERYFRONT_LOCAL_AI_THINKING";
+const LOCAL_AI_MODEL_LOAD_TIMEOUT_ENV = "VERYFRONT_LOCAL_AI_MODEL_LOAD_TIMEOUT_MS";
 const originalEnv = Deno.env.get(DISABLE_LOCAL_AI_ENV);
 const originalDeviceEnv = Deno.env.get(LOCAL_AI_DEVICE_ENV);
 const originalThinkingEnv = Deno.env.get(LOCAL_AI_THINKING_ENV);
+const originalLoadTimeoutEnv = Deno.env.get(LOCAL_AI_MODEL_LOAD_TIMEOUT_ENV);
 
 function restoreEnv(): void {
   if (originalEnv === undefined) {
@@ -33,6 +39,12 @@ function restoreEnv(): void {
     Deno.env.delete(LOCAL_AI_THINKING_ENV);
   } else {
     Deno.env.set(LOCAL_AI_THINKING_ENV, originalThinkingEnv);
+  }
+
+  if (originalLoadTimeoutEnv === undefined) {
+    Deno.env.delete(LOCAL_AI_MODEL_LOAD_TIMEOUT_ENV);
+  } else {
+    Deno.env.set(LOCAL_AI_MODEL_LOAD_TIMEOUT_ENV, originalLoadTimeoutEnv);
   }
 }
 
@@ -135,5 +147,43 @@ describe("provider/local/env", () => {
       (error as Error).message,
       'Invalid VERYFRONT_LOCAL_AI_THINKING value "maybe". Supported values are "1", "true", "yes", "on", "0", "false", "no", and "off".',
     );
+  });
+
+  it("uses a two-hour default model load deadline", () => {
+    Deno.env.delete(LOCAL_AI_MODEL_LOAD_TIMEOUT_ENV);
+    assertEquals(
+      getLocalAIModelLoadTimeoutMs(),
+      DEFAULT_LOCAL_AI_MODEL_LOAD_TIMEOUT_MS,
+    );
+  });
+
+  it("accepts an explicit model load deadline in milliseconds", () => {
+    Deno.env.set(LOCAL_AI_MODEL_LOAD_TIMEOUT_ENV, "90000");
+    assertEquals(getLocalAIModelLoadTimeoutMs(), 90_000);
+  });
+
+  it("rejects malformed and excessive model load deadlines", () => {
+    for (const value of ["0", "-1", "1.5", " 1000", "unbounded"]) {
+      Deno.env.set(LOCAL_AI_MODEL_LOAD_TIMEOUT_ENV, value);
+      let error: unknown;
+      try {
+        getLocalAIModelLoadTimeoutMs();
+      } catch (caught) {
+        error = caught;
+      }
+      assertEquals(fromError(error)?.type, "config");
+    }
+
+    Deno.env.set(
+      LOCAL_AI_MODEL_LOAD_TIMEOUT_ENV,
+      String(MAX_LOCAL_AI_MODEL_LOAD_TIMEOUT_MS + 1),
+    );
+    let excessiveError: unknown;
+    try {
+      getLocalAIModelLoadTimeoutMs();
+    } catch (caught) {
+      excessiveError = caught;
+    }
+    assertEquals(fromError(excessiveError)?.type, "config");
   });
 });

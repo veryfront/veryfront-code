@@ -5,13 +5,14 @@
  * local embedding generation. Uses the `feature-extraction` pipeline
  * with mean pooling and normalization.
  *
- * @module provider/local
+ * @module extensions/ext-llm-transformers
  */
 
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger } from "veryfront/utils";
 import { type ModelInfo, resolveLocalEmbeddingModel } from "./model-catalog.ts";
 import { getLocalInferenceDevice, getTransformers } from "./local-engine.ts";
 import { createPipelineCache } from "./pipeline-cache.ts";
+import { getLocalAIModelLoadTimeoutMs, throwIfLocalAIDisabled } from "./env.ts";
 
 const logger = serverLogger.component("local-embedding");
 
@@ -88,8 +89,10 @@ type EmbeddingModelLoadInfo = ModelInfo & {
  * loads of the same model share a single promise.
  */
 const embeddingPipelines = createPipelineCache<Pipeline, EmbeddingModelLoadInfo>(
-  async (modelInfo) => {
+  async (modelInfo, abortSignal) => {
+    throwIfAborted(abortSignal);
     const transformers = await getTransformers();
+    throwIfAborted(abortSignal);
 
     logger.info(
       `Loading local embedding model: ${modelInfo.hfId} (${modelInfo.dtype}, ${modelInfo.device}, ~${modelInfo.sizeMB}MB)...`,
@@ -108,6 +111,7 @@ const embeddingPipelines = createPipelineCache<Pipeline, EmbeddingModelLoadInfo>
     return pipe;
   },
   {
+    loadTimeoutMs: getLocalAIModelLoadTimeoutMs,
     dispose: async (pipeline) => {
       await pipeline.dispose();
     },
@@ -147,6 +151,7 @@ export async function embedTexts(
   texts: string[],
   abortSignal?: AbortSignal,
 ): Promise<number[][]> {
+  throwIfLocalAIDisabled();
   throwIfAborted(abortSignal);
   if (texts.length === 0) return [];
 
@@ -182,4 +187,9 @@ export async function embedTexts(
   } finally {
     await lease.release();
   }
+}
+
+/** Retire all embedding pipelines and release their native resources. */
+export async function disposeLocalEmbeddingRuntimes(): Promise<void> {
+  await embeddingPipelines.clear();
 }

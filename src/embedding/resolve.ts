@@ -1,19 +1,34 @@
 import { createError, toError } from "#veryfront/errors";
 import { getGoogleGenAIEnvConfig, getOpenAIEnvConfig } from "#veryfront/config/env.ts";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
-import { createLocalEmbeddingModel } from "#veryfront/provider/local/embedding-runtime-adapter.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 import { createVeryfrontCloudEmbeddingModel } from "./veryfront-cloud/provider.ts";
 
-type EmbeddingProviderFactory = (modelId: string) => EmbeddingRuntime;
+export type EmbeddingProviderFactory = (modelId: string) => EmbeddingRuntime;
+export type EmbeddingProviderRegistrationDisposer = () => void;
 
 const providers = new ProjectScopedRegistryManager<EmbeddingProviderFactory>(
   "embedding-provider",
 );
 const bootstrapProviders = new Map<string, EmbeddingProviderFactory>();
 let autoInitialized = false;
+
+function normalizeEmbeddingProviderName(name: string): string {
+  if (typeof name !== "string") {
+    throw new TypeError(
+      "Embedding provider name must be a non-empty string without slashes",
+    );
+  }
+  const normalizedName = name.trim();
+  if (!normalizedName || normalizedName.includes("/")) {
+    throw new TypeError(
+      "Embedding provider name must be a non-empty string without slashes",
+    );
+  }
+  return normalizedName;
+}
 
 /**
  * Register an embedding provider factory.
@@ -30,26 +45,25 @@ let autoInitialized = false;
 export function registerEmbeddingProvider(
   name: string,
   factory: EmbeddingProviderFactory,
-): void {
-  if (typeof name !== "string") {
-    throw new TypeError(
-      "Embedding provider name must be a non-empty string without slashes",
-    );
-  }
-  const normalizedName = name.trim();
-  if (!normalizedName || normalizedName.includes("/")) {
-    throw new TypeError(
-      "Embedding provider name must be a non-empty string without slashes",
-    );
-  }
+): EmbeddingProviderRegistrationDisposer {
+  const normalizedName = normalizeEmbeddingProviderName(name);
   if (typeof factory !== "function") {
     throw new TypeError("Embedding provider factory must be a function");
   }
-  if (tryGetRegistryScopeId() === null) {
-    bootstrapProviders.set(normalizedName, factory);
-  } else {
-    providers.register(normalizedName, factory);
+  const ownedFactory: EmbeddingProviderFactory = (modelId) => factory(modelId);
+  if (tryGetRegistryScopeId() !== null) {
+    return providers.registerOwned(normalizedName, ownedFactory);
   }
+
+  bootstrapProviders.set(normalizedName, ownedFactory);
+  let disposed = false;
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    if (bootstrapProviders.get(normalizedName) === ownedFactory) {
+      bootstrapProviders.delete(normalizedName);
+    }
+  };
 }
 
 function autoInitializeFromEnv(): void {
@@ -109,8 +123,6 @@ function autoInitializeFromEnv(): void {
     );
   });
 
-  providers.registerShared("local", createLocalEmbeddingModel);
-
   providers.registerShared("veryfront-cloud", createVeryfrontCloudEmbeddingModel);
 }
 
@@ -163,12 +175,23 @@ export function resolveEmbeddingModel(modelString: string): EmbeddingRuntime {
     throw toError(
       createError({
         type: "config",
-        message: `Embedding provider "${providerName}" not registered. Available: ${available}`,
+        message:
+          `Embedding provider "${providerName}" not registered. Register it during application ` +
+          `composition with registerEmbeddingProvider() before resolving embeddings. Available: ${available}`,
       }),
     );
   }
 
   return factory(modelId);
+}
+
+/** Whether an embedding provider is available in the current scope. */
+export function hasEmbeddingProvider(name: string): boolean {
+  const normalizedName = normalizeEmbeddingProviderName(name);
+  autoInitializeFromEnv();
+  return providers.getOwn(normalizedName) !== undefined ||
+    bootstrapProviders.has(normalizedName) ||
+    providers.has(normalizedName);
 }
 
 /**

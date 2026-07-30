@@ -57,7 +57,10 @@ import { MiddlewareChain } from "../middleware/chain.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
-import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
+import {
+  isLocalModelRuntime,
+  supportsModelRuntimeToolCalling,
+} from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
 import {
   captureStreamedToolCallInput,
@@ -629,12 +632,10 @@ function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-function warnLocalToolSkipping(agentId: string, modelId: string): void {
+function warnUnsupportedToolSkipping(agentId: string, modelId: string): void {
   logger.warn(
-    `Agent "${agentId}" has tools configured but is using local model "${modelId}". ` +
-      "Local models don't support tool calling. Tools will be skipped. " +
-      "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG, or configure " +
-      "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for full tool support.",
+    `Agent "${agentId}" has tools configured, but model runtime "${modelId}" ` +
+      "declares that it does not support tool calling. Tools will be skipped.",
   );
 }
 
@@ -854,13 +855,6 @@ export class AgentRuntime {
     const forwardAbort = () => {
       streamAbortController.abort(abortSignal?.reason);
     };
-    if (abortSignal) {
-      if (abortSignal.aborted) {
-        streamAbortController.abort(abortSignal.reason);
-      } else {
-        abortSignal.addEventListener("abort", forwardAbort, { once: true });
-      }
-    }
     const streamAbortSignal = streamAbortController.signal;
     const streamCacheCtx = tryGetCacheKeyContext();
     const toolContext = {
@@ -871,20 +865,26 @@ export class AgentRuntime {
     };
     const textPartId = generateId("text");
 
-    // Resolve model BEFORE creating the ReadableStream. If this throws
-    // (e.g., no_ai_available), the error propagates to the caller who can
-    // return a proper error response (503) instead of a 200 with an error event.
-    const languageModel = transport.languageModel;
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        streamAbortController.abort(abortSignal.reason);
+      } else {
+        abortSignal.addEventListener("abort", forwardAbort, { once: true });
+      }
+    }
 
-    // Determine inference mode from the resolved model object, not the string.
-    const isLocal = isLocalModelRuntime(languageModel);
-
-    // Eagerly verify the model runtime is available. For local models this
-    // checks that @huggingface/transformers can be imported. Must happen
-    // BEFORE creating the ReadableStream so no_ai_available errors propagate
-    // to the route handler, which returns a 503 instead of swallowing it as an
-    // in-band SSE error in a 200 response.
-    await ensureModelReady(languageModel);
+    let languageModel: ModelRuntime;
+    let isLocal: boolean;
+    try {
+      // Resolve and prepare the model BEFORE creating the ReadableStream. Any
+      // failure propagates to the caller before response headers are committed.
+      languageModel = transport.languageModel;
+      isLocal = isLocalModelRuntime(languageModel);
+      await ensureModelReady(languageModel, streamAbortSignal);
+    } catch (error) {
+      abortSignal?.removeEventListener("abort", forwardAbort);
+      throw error;
+    }
 
     const agentContext: AgentContext = {
       agentId: this.id,
@@ -979,6 +979,7 @@ export class AgentRuntime {
         // an unhandled rejection, then abort. Guard the abort itself so a
         // synchronous signal-abort rejection can never escape here (#2334).
         inFlight?.catch(() => {});
+        abortSignal?.removeEventListener("abort", forwardAbort);
         try {
           streamAbortController.abort(reason);
         } catch {
@@ -1016,10 +1017,9 @@ export class AgentRuntime {
       const currentMessages = [...messages];
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-      // Local models can't reliably do function calling, so skip tools gracefully.
-      const isLocal = isLocalModelRuntime(languageModel);
-      if (isLocal && this.config.tools) {
-        warnLocalToolSkipping(this.id, effectiveModel);
+      const supportsToolCalling = supportsModelRuntimeToolCalling(languageModel);
+      if (!supportsToolCalling && this.config.tools) {
+        warnUnsupportedToolSkipping(this.id, effectiveModel);
       }
 
       // Request-scoped skill policy (not class-level mutable state)
@@ -1083,7 +1083,7 @@ export class AgentRuntime {
           config: runtimeStepConfig,
           forwardedRemoteToolDefinitions,
           getAvailableTools,
-          isLocalModel: isLocal,
+          supportsToolCalling,
           messages: currentMessages,
           mode: "generate",
           remoteToolSources,
@@ -1688,10 +1688,9 @@ export class AgentRuntime {
     const currentMessages = [...messages];
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-    // Local models can't reliably do function calling, so skip tools gracefully.
-    const isLocalStreaming = isLocalModelRuntime(languageModel);
-    if (isLocalStreaming && this.config.tools) {
-      warnLocalToolSkipping(this.id, effectiveModel);
+    const supportsToolCalling = supportsModelRuntimeToolCalling(languageModel);
+    if (!supportsToolCalling && this.config.tools) {
+      warnUnsupportedToolSkipping(this.id, effectiveModel);
     }
 
     // Request-scoped skill policy (not class-level mutable state)
@@ -1733,7 +1732,7 @@ export class AgentRuntime {
         config: this.config,
         forwardedRemoteToolDefinitions,
         getAvailableTools,
-        isLocalModel: isLocalStreaming,
+        supportsToolCalling,
         messages: currentMessages,
         mode: "stream",
         remoteToolSources,

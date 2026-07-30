@@ -192,13 +192,30 @@ export interface ModelRuntimeCallOptions {
   responseFormat?: RuntimeResponseFormat;
 }
 
+/** Explicit behavioral support advertised by a model runtime. */
+export interface ModelRuntimeCapabilities {
+  /** Whether the runtime accepts and can emit tool calls. Defaults to true for legacy runtimes. */
+  readonly toolCalling?: boolean;
+  /** Whether the runtime accepts JSON or JSON-schema response formats. */
+  readonly structuredOutput?: boolean;
+}
+
 /** Public API contract for model runtime. */
 export interface ModelRuntime<
   CallOptions = unknown,
   ContentPart = unknown,
 > extends RuntimeMetadata {
-  readonly _isVfLocalModel?: boolean;
+  /** Where inference executes. Omitted runtimes are treated as remote. */
+  readonly executionMode?: "remote" | "server-local";
+  /** Provider behavior, kept separate from execution placement. */
+  readonly runtimeCapabilities?: ModelRuntimeCapabilities;
   readonly _generateViaStream?: boolean;
+  /**
+   * Complete any provider-specific readiness work before response headers are
+   * committed. Implementations must be idempotent and may cache successful
+   * preparation.
+   */
+  prepare?(abortSignal?: AbortSignal): PromiseLike<void>;
   doGenerate(options: CallOptions): PromiseLike<ModelRuntimeGenerateResult<ContentPart>>;
   doStream(options: CallOptions): PromiseLike<ModelRuntimeStreamResult>;
 }

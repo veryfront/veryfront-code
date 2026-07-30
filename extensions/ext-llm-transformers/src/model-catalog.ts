@@ -4,10 +4,10 @@
  * Maps friendly model IDs to HuggingFace model repository IDs.
  * Used by the local inference engine to resolve model names.
  *
- * @module provider/local
+ * @module extensions/ext-llm-transformers
  */
 
-import { createError, toError } from "#veryfront/errors";
+import { createError, toError } from "veryfront/errors";
 
 export interface ModelInfo {
   /** HuggingFace model repository ID */
@@ -104,13 +104,68 @@ const EMBEDDING_MODEL_CATALOG: Record<string, ModelInfo> = {
 /** Default embedding model used when no specific model ID is provided */
 export const DEFAULT_LOCAL_EMBEDDING_MODEL = "all-MiniLM-L6-v2";
 
+const MAX_REPOSITORY_ID_LENGTH = 96;
+const REPOSITORY_ID_PART_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+
+function isExplicitRepositoryId(modelId: string): boolean {
+  if (
+    modelId.length === 0 ||
+    modelId.length > MAX_REPOSITORY_ID_LENGTH ||
+    modelId !== modelId.trim() ||
+    modelId.includes("..") ||
+    modelId.includes("--") ||
+    modelId.endsWith(".git") ||
+    modelId.endsWith(".ipynb")
+  ) {
+    return false;
+  }
+  const parts = modelId.split("/");
+  return parts.length === 2 && parts.every((part) => REPOSITORY_ID_PART_PATTERN.test(part));
+}
+
+function copyModelInfo(model: ModelInfo): ModelInfo {
+  return {
+    ...model,
+    dtype: typeof model.dtype === "string" ? model.dtype : { ...model.dtype },
+  };
+}
+
+function modelIdForError(value: unknown): string {
+  if (typeof value !== "string") return `<${typeof value}>`;
+  const bounded = value.length <= 128 ? value : `${value.slice(0, 128)}…`;
+  return JSON.stringify(bounded);
+}
+
 /**
- * Resolve a friendly embedding model ID to its HuggingFace model info.
- * Falls back to treating the ID as a raw HuggingFace repository ID.
+ * Resolve a curated embedding alias or an explicit `owner/model` repository
+ * identifier. Unknown bare aliases are rejected so typos cannot silently
+ * become remote model lookups.
  */
 export function resolveLocalEmbeddingModel(modelId: string): ModelInfo {
-  const catalogEntry = EMBEDDING_MODEL_CATALOG[modelId];
-  if (catalogEntry) return catalogEntry;
+  if (typeof modelId !== "string") {
+    throw toError(createError({
+      type: "config",
+      message: `Unsupported local embedding model ${modelIdForError(modelId)}. ` +
+        "Use a curated alias or an explicit owner/model repository identifier.",
+    }));
+  }
+  const catalogEntry = Object.hasOwn(EMBEDDING_MODEL_CATALOG, modelId)
+    ? EMBEDDING_MODEL_CATALOG[modelId]
+    : undefined;
+  if (catalogEntry) return copyModelInfo(catalogEntry);
+
+  if (!isExplicitRepositoryId(modelId)) {
+    throw toError(createError({
+      type: "config",
+      message: `Unsupported local embedding model ${
+        modelIdForError(modelId)
+      }. Use a curated alias (${
+        getLocalEmbeddingModelIds().join(
+          ", ",
+        )
+      }) or an explicit "owner/model" repository identifier.`,
+    }));
+  }
 
   return {
     hfId: modelId,
@@ -120,16 +175,23 @@ export function resolveLocalEmbeddingModel(modelId: string): ModelInfo {
   };
 }
 
+/** Get the curated local embedding model aliases. */
+export function getLocalEmbeddingModelIds(): string[] {
+  return Object.keys(EMBEDDING_MODEL_CATALOG);
+}
+
 /**
  * Resolve a supported local model ID to its HuggingFace model info.
  */
 export function resolveLocalModel(modelId: string): ModelInfo {
-  const catalogEntry = MODEL_CATALOG[modelId];
-  if (catalogEntry) return catalogEntry;
+  const catalogEntry = typeof modelId === "string" && Object.hasOwn(MODEL_CATALOG, modelId)
+    ? MODEL_CATALOG[modelId]
+    : undefined;
+  if (catalogEntry) return copyModelInfo(catalogEntry);
 
   throw toError(createError({
     type: "config",
-    message: `Unsupported local model "${modelId}". Supported local models: ${
+    message: `Unsupported local model ${modelIdForError(modelId)}. Supported local models: ${
       getLocalModelIds().join(", ")
     }.`,
   }));

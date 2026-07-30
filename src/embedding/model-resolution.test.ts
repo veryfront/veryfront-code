@@ -1,11 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import {
   AUTO_EMBEDDING_MODEL,
   normalizeEmbeddingModelConfig,
-  resolveCloudEmbeddingFallback,
   resolveConfiguredEmbeddingModel,
 } from "./model-resolution.ts";
 
@@ -65,10 +64,11 @@ describe("embedding/model-resolution", () => {
   });
 
   describe("resolveConfiguredEmbeddingModel", () => {
-    it("uses the local default embedding model without cloud bootstrap", () => {
-      assertEquals(
-        resolveConfiguredEmbeddingModel(),
-        "local/all-MiniLM-L6-v2",
+    it("requires explicit composition without cloud bootstrap", () => {
+      assertThrows(
+        () => resolveConfiguredEmbeddingModel(),
+        Error,
+        "Configure an explicit",
       );
     });
 
@@ -101,7 +101,7 @@ describe("embedding/model-resolution", () => {
       );
     });
 
-    it("prefers veryfront cloud over cloud API key fallback", () => {
+    it("prefers veryfront cloud over unrelated direct credentials", () => {
       setEnv("VERYFRONT_API_TOKEN", "vf_test");
       setEnv("VERYFRONT_PROJECT_SLUG", "test-project");
       setEnv("OPENAI_API_KEY", "sk-test");
@@ -113,40 +113,14 @@ describe("embedding/model-resolution", () => {
       );
     });
 
-    // NOTE: The compiled-binary cloud fallback (isDenoCompiled branch) cannot
-    // be tested in deno test because isDenoCompiled is false at test time.
-    // It is verified by the compiled binary integration tests.
-    // The fallback logic itself (OPENAI_API_KEY → openai/..., GOOGLE_API_KEY
-    // → google/...) is exercised indirectly through the tests below that
-    // confirm the local model is returned when no keys are set — proving the
-    // fallback path returns undefined and doesn't interfere.
-
-    it("returns local model when no API keys or cloud bootstrap are set", () => {
-      assertEquals(
-        resolveConfiguredEmbeddingModel(),
-        "local/all-MiniLM-L6-v2",
-        "should use local model as final fallback",
-      );
-    });
-  });
-
-  describe("resolveCloudEmbeddingFallback", () => {
-    it("uses the current Google embedding model when only Google credentials exist", () => {
-      setEnv("GOOGLE_API_KEY", "google-test-key");
-
-      assertEquals(
-        resolveCloudEmbeddingFallback(),
-        "google/gemini-embedding-2",
-      );
-    });
-
-    it("prefers OpenAI when both supported provider credentials exist", () => {
+    it("does not probe direct provider credentials for an implicit model", () => {
       setEnv("OPENAI_API_KEY", "openai-test-key");
       setEnv("GOOGLE_GENERATIVE_AI_API_KEY", "google-test-key");
 
-      assertEquals(
-        resolveCloudEmbeddingFallback(),
-        "openai/text-embedding-3-small",
+      assertThrows(
+        () => resolveConfiguredEmbeddingModel(),
+        Error,
+        "register that embedding provider during application composition",
       );
     });
   });

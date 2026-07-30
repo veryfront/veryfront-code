@@ -87,7 +87,7 @@ export {
 export { dynamicImport } from "./dynamic-import.ts";
 
 // Compat: dynamic imports for optional deps (opaque) and platform-split deps (kreuzberg)
-export { importClaudeAgentSDK, importKreuzberg, importTransformers } from "./opaque-deps.ts";
+export { importClaudeAgentSDK, importKreuzberg } from "./opaque-deps.ts";
 
 // Compat: path
 export {

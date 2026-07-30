@@ -176,10 +176,6 @@ export function resolveRuntimeModel(model?: string): string {
     return normalizeVeryfrontCloudRuntimeModel(configuredModel);
   }
 
-  if (configuredModel.startsWith("local/")) {
-    return configuredModel;
-  }
-
   const slashIndex = configuredModel.indexOf("/");
   if (slashIndex === -1) {
     return configuredModel;

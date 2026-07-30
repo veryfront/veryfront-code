@@ -5,12 +5,13 @@
  * framework's current embedding runtime interface. This allows `embed()` and
  * `embedMany()` to work with local models seamlessly.
  *
- * @module provider/local
+ * @module extensions/ext-llm-transformers
  */
 
 import { embedTexts, LOCAL_EMBEDDING_BATCH_SIZE } from "./local-embedding-engine.ts";
-import { DEFAULT_LOCAL_EMBEDDING_MODEL } from "./model-catalog.ts";
-import type { EmbeddingRuntime } from "../types.ts";
+import { DEFAULT_LOCAL_EMBEDDING_MODEL, resolveLocalEmbeddingModel } from "./model-catalog.ts";
+import type { EmbeddingRuntime } from "veryfront/provider/types";
+import { linkAbortSignals, type LocalRuntimeLifecycle } from "./runtime-lifecycle.ts";
 
 /**
  * Create a local embedding runtime for the given model ID.
@@ -19,8 +20,12 @@ import type { EmbeddingRuntime } from "../types.ts";
  * compatible with all framework embedding functions and the Veryfront
  * embedding/RAG primitives.
  */
-export function createLocalEmbeddingModel(modelId?: string): EmbeddingRuntime {
-  const resolvedId = modelId || DEFAULT_LOCAL_EMBEDDING_MODEL;
+export function createLocalEmbeddingModel(
+  modelId?: string,
+  lifecycle?: LocalRuntimeLifecycle,
+): EmbeddingRuntime {
+  const resolvedId = modelId ?? DEFAULT_LOCAL_EMBEDDING_MODEL;
+  resolveLocalEmbeddingModel(resolvedId);
 
   return {
     specificationVersion: "v2",
@@ -30,8 +35,15 @@ export function createLocalEmbeddingModel(modelId?: string): EmbeddingRuntime {
     supportsParallelCalls: false,
 
     async doEmbed({ values, abortSignal }: { values: string[]; abortSignal?: AbortSignal }) {
-      const embeddings = await embedTexts(resolvedId, values, abortSignal);
-      return { embeddings, rawResponse: undefined, warnings: [] };
+      lifecycle?.assertActive();
+      const linkedAbort = linkAbortSignals(abortSignal, lifecycle?.signal);
+      try {
+        const embeddings = await embedTexts(resolvedId, values, linkedAbort.signal);
+        lifecycle?.assertActive();
+        return { embeddings, rawResponse: undefined, warnings: [] };
+      } finally {
+        linkedAbort.cleanup();
+      }
     },
   };
 }

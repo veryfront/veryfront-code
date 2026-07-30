@@ -1,10 +1,9 @@
 /**
  * Smoke test: explicit local model.
- * Run: deno run --allow-all src/provider/local/_smoke-test.ts
+ * Run: deno run --allow-all extensions/ext-llm-transformers/src/_smoke-test.ts
  */
 
-import { resolveModel } from "../model-registry.ts";
-import { getModelRuntimeId, getModelRuntimeProvider } from "../runtime-inspection.ts";
+import { createLocalModel } from "./model-runtime-adapter.ts";
 import { generate } from "./local-engine.ts";
 
 // Suppress provider adapter warnings for cleaner output.
@@ -18,19 +17,20 @@ const localModelId = Deno.env.get("VERYFRONT_LOCAL_AI_MODEL") || "qwen3.5-0.8b";
 const modelName = `local/${localModelId}`;
 
 console.log(`1. Resolving "${modelName}"...`);
-const model = resolveModel(modelName);
-console.log(`   -> Got model: ${getModelRuntimeId(model) ?? getModelRuntimeProvider(model)}`);
+const model = createLocalModel(localModelId);
+console.log(`   -> Got model: ${model.modelId ?? model.provider}`);
 console.log(`   -> Device: ${Deno.env.get("VERYFRONT_LOCAL_AI_DEVICE") || "cpu"}`);
 console.log(
   `   -> Thinking: ${Deno.env.get("VERYFRONT_LOCAL_AI_THINKING") === "1" ? "enabled" : "disabled"}`,
 );
 
 console.log("\n2. Generating response via the local engine...");
-const output = await generate(localModelId, [
+const result = await generate(localModelId, [
   { role: "user", content: "What is 2+2? Answer in one word." },
 ], { maxNewTokens: 30, temperature: 0 });
-if (output.trim().length === 0) {
+if (result.text.trim().length === 0) {
   throw new Error("Local model generated empty output.");
 }
-console.log(`   -> ${output}`);
+console.log(`   -> ${result.text}`);
+console.log(`   -> Finish reason: ${result.finishReason}`);
 console.log("\n3. Done! Local model inference works.");

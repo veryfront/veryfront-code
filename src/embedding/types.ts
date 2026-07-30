@@ -3,9 +3,9 @@ export interface EmbeddingConfig {
   /**
    * Optional model string in "provider/model" format.
    *
-   * When omitted or set to `"auto"`, Veryfront chooses the runtime default:
-   * a local embedding model by default, automatically switching to the
-   * Veryfront Cloud embedding default when cloud bootstrap is present.
+   * When omitted or set to `"auto"`, Veryfront uses the configured Veryfront
+   * Cloud embedding default. Self-hosted applications must select and register
+   * an explicit provider instead of relying on runtime probing.
    */
   model?: string;
   documentPrefix?: string; // prepended when embedding documents, e.g. "search_document: "

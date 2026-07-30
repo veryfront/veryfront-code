@@ -23,9 +23,11 @@ export { createUploadHandler } from "./upload-handler.ts";
 export { loadUpload } from "./upload-loader.ts";
 export {
   clearEmbeddingProviders,
+  hasEmbeddingProvider,
   registerEmbeddingProvider,
   resolveEmbeddingModel,
 } from "./resolve.ts";
+export type { EmbeddingProviderFactory, EmbeddingProviderRegistrationDisposer } from "./resolve.ts";
 export type {
   ChunkOptions,
   Embedding,

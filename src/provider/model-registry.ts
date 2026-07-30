@@ -23,14 +23,12 @@ import {
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
-import { createLocalModel } from "./local/model-runtime-adapter.ts";
-import { verifyLocalRuntime } from "./local/local-engine.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
-import { getModelRuntimeId, hasLocalModelRuntimeMarker } from "./runtime-inspection.ts";
 import type { ModelRuntime } from "./types.ts";
 
 /** Public API contract for model provider factory. */
 export type ModelProviderFactory = (modelId: string) => ModelRuntime;
+export type ModelProviderRegistrationDisposer = () => void;
 
 const manager = new ProjectScopedRegistryManager<ModelProviderFactory>(
   "model-provider",
@@ -111,17 +109,26 @@ function getOpenAIEnvProviderName(baseURL: string | undefined): "openai" | "open
 export function registerModelProvider(
   name: string,
   factory: ModelProviderFactory,
-): void {
+): ModelProviderRegistrationDisposer {
   const normalizedName = normalizeProviderName(name);
   if (typeof factory !== "function") {
     throw new TypeError("Model provider factory must be a function");
   }
 
-  if (tryGetRegistryScopeId() === null) {
-    bootstrapProviders.set(normalizedName, factory);
-  } else {
-    manager.register(normalizedName, factory);
+  const ownedFactory: ModelProviderFactory = (modelId) => factory(modelId);
+  if (tryGetRegistryScopeId() !== null) {
+    return manager.registerOwned(normalizedName, ownedFactory);
   }
+
+  bootstrapProviders.set(normalizedName, ownedFactory);
+  let disposed = false;
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    if (bootstrapProviders.get(normalizedName) === ownedFactory) {
+      bootstrapProviders.delete(normalizedName);
+    }
+  };
 }
 
 /**
@@ -251,14 +258,6 @@ function autoInitializeFromEnv(): void {
     }));
   });
 
-  // Register the local provider (always available, no API key needed).
-  // createLocalModel is a lightweight synchronous constructor — the actual
-  // @huggingface/transformers import and model loading happen lazily on
-  // the first doGenerate/doStream call, so this doesn't add startup overhead.
-  manager.registerShared("local", (id) => {
-    return createLocalModel(id);
-  });
-
   manager.registerShared("veryfront-cloud", (id) => {
     return createVeryfrontCloudModel(id);
   });
@@ -317,7 +316,9 @@ export function resolveModel(modelString: string): ModelRuntime {
     throw toError(
       createError({
         type: "agent",
-        message: `Model provider "${providerName}" not registered. Available: ${available}`,
+        message:
+          `Model provider "${providerName}" not registered. Register it during application ` +
+          `composition with registerModelProvider() before resolving models. Available: ${available}`,
       }),
     );
   }
@@ -353,23 +354,20 @@ export function getRegisteredModelProviders(): string[] {
 /**
  * Eagerly verify that the resolved model's runtime is available.
  *
- * For real local-engine models (created by `createLocalModel()`) this
- * eagerly loads the ONNX pipeline to surface `no_ai_available` errors
- * **before** the HTTP response stream is created. Must happen before the
- * ReadableStream so the chat handler can return a proper 503 rather than a
- * 200 with an in-band SSE error.
- *
- * Uses the `_isVfLocalModel` marker set by `createLocalModel()` to
- * distinguish real local-engine models from mock/custom providers that
- * happen to use `provider: "local"`.
+ * Provider runtimes can expose an idempotent `prepare()` hook to perform work
+ * that must fail before an HTTP response stream is created. Runtimes without a
+ * preparation phase require no action.
  */
 export async function ensureModelReady(
   model: ModelRuntime,
+  abortSignal?: AbortSignal,
 ): Promise<void> {
-  if (!hasLocalModelRuntimeMarker(model)) return;
-  // modelId is "local/<id>" — strip the prefix to get the catalog id.
-  const catalogId = getModelRuntimeId(model)?.replace(/^local\//, "");
-  await verifyLocalRuntime(catalogId);
+  const prepare = model.prepare;
+  if (prepare === undefined) return;
+  if (typeof prepare !== "function") {
+    throw new TypeError("Model runtime prepare must be a function");
+  }
+  await prepare.call(model, abortSignal);
 }
 
 /**

@@ -1,11 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import type { ModelRuntime } from "./types.ts";
 import {
   clearModelProviders,
+  ensureModelReady,
   getRegisteredModelProviders,
   hasModelProvider,
   registerModelProvider,
@@ -142,7 +143,7 @@ describe("provider/model-registry", () => {
     );
     assertEquals(
       runWithCacheKeyContext(PROJECT_A, () => hasModelProvider("local")),
-      true,
+      false,
     );
   });
 
@@ -155,7 +156,7 @@ describe("provider/model-registry", () => {
 
     assertEquals(providers.includes("bootstrap-list"), true);
     assertEquals(providers.includes("project-list"), true);
-    assertEquals(providers.includes("local"), true);
+    assertEquals(providers.includes("local"), false);
     assertEquals(new Set(providers).size, providers.length);
   });
 
@@ -237,6 +238,76 @@ describe("provider/model-registry", () => {
     const runtime = resolveModel("custom/family/model");
     assertEquals(receivedModelId, "family/model");
     assertEquals(runtime.modelId, "family/model");
+  });
+
+  it("fails actionably when an explicit provider has not been composed", () => {
+    assertThrows(
+      () => resolveModel("local/example"),
+      Error,
+      "Register it during application composition with registerModelProvider()",
+    );
+  });
+
+  it("disposes only the exact registration generation it owns", () => {
+    const disposeFirst = registerModelProvider(
+      "owned",
+      (id) => testRuntime("first", id),
+    );
+    const disposeSecond = registerModelProvider(
+      "owned",
+      (id) => testRuntime("second", id),
+    );
+
+    disposeFirst();
+    assertEquals(resolveModel("owned/model").provider, "second");
+    disposeSecond();
+    disposeSecond();
+    assertThrows(() => resolveModel("owned/model"), Error, "not registered");
+  });
+
+  it("disposes a scoped registration outside its original request context", () => {
+    let dispose = () => {};
+    runWithCacheKeyContext(PROJECT_A, () => {
+      dispose = registerModelProvider(
+        "scoped-owned",
+        (id) => testRuntime("project-a", id),
+      );
+    });
+
+    dispose();
+    assertThrows(
+      () =>
+        runWithCacheKeyContext(
+          PROJECT_A,
+          () => resolveModel("scoped-owned/model"),
+        ),
+      Error,
+      "not registered",
+    );
+  });
+
+  it("runs a provider-neutral preparation hook before use", async () => {
+    const expected = new Error("runtime unavailable");
+    let prepareThis: unknown;
+    let prepareSignal: AbortSignal | undefined;
+    const abortController = new AbortController();
+    const runtime: ModelRuntime = {
+      ...testRuntime("prepared", "model"),
+      prepare(abortSignal) {
+        prepareThis = this;
+        prepareSignal = abortSignal;
+        return Promise.reject(expected);
+      },
+    };
+
+    const error = await ensureModelReady(runtime, abortController.signal).then(
+      () => undefined,
+      (caught) => caught,
+    );
+    assertStrictEquals(error, expected);
+    assertStrictEquals(prepareThis, runtime);
+    assertStrictEquals(prepareSignal, abortController.signal);
+    await ensureModelReady(testRuntime("plain", "model"));
   });
 
   it("routes env-backed OpenAI reasoning models with tools through Responses", async () => {
