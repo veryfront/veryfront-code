@@ -1029,7 +1029,7 @@ export function createDeployProject(options: {
       });
 
       if (request.mode === "dry-run") {
-        if (!bootstrapPush) {
+        if (!bootstrapPush && request.source.kind === "ensure-pushed") {
           await resolvePushedSource({
             projectDir: request.projectDir,
             controlPlane: config.apiUrl,

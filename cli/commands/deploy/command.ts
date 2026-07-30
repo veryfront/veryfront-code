@@ -54,6 +54,13 @@ import {
   type DeploymentRoutingConvergence,
   type DeployRelease,
 } from "../../shared/deployment/control-plane.ts";
+import {
+  createDeployProject,
+  type DeployEvent,
+  type DeployPlan,
+  type DeployProjectOutcome,
+  type DeployStepName,
+} from "../../shared/deployment/deploy-project.ts";
 import type { DeployResult } from "../../shared/deployment/result.ts";
 import { parseProjectDomain } from "veryfront/server";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
@@ -1104,258 +1111,171 @@ export async function waitForReleaseAssetManifest(
  * Create a release and deploy to an environment
  */
 export async function deployCommand(options: DeployOptions): Promise<DeployResult | null> {
-  const {
-    projectDir = cwd(),
-    branch: requestedBranch,
-    env,
-    releaseName,
-    dryRun,
-    quiet,
-    skipSourcePush,
-    assetManifestPollIntervalMs,
-    assetManifestTimeoutMs,
-    environmentPollIntervalMs,
-    environmentTimeoutMs,
-  } = options;
-
   if (isJsonMode() && !options.suppressJsonOutput) {
     return deployCommandJson(options);
   }
 
+  return deployCommandHuman(options);
+}
+
+function createDeployRunner(options: DeployOptions) {
+  return createDeployProject({
+    polling: {
+      assetManifestPollIntervalMs: options.assetManifestPollIntervalMs,
+      assetManifestTimeoutMs: options.assetManifestTimeoutMs,
+      environmentPollIntervalMs: options.environmentPollIntervalMs,
+      environmentTimeoutMs: options.environmentTimeoutMs,
+    },
+  });
+}
+
+function toDeployRequest(options: DeployOptions) {
+  return {
+    projectDir: options.projectDir ?? cwd(),
+    branch: options.branch,
+    environment: options.env,
+    releaseName: options.releaseName,
+    mode: options.dryRun ? "dry-run" as const : "apply" as const,
+    source: options.skipSourcePush
+      ? { kind: "already-pushed" as const }
+      : { kind: "ensure-pushed" as const },
+  };
+}
+
+function formatDryRunActions(plan: DeployPlan): string {
+  return plan.plannedActions.includes("push-source")
+    ? `push source to "${plan.branch}", create release, and deploy to "${plan.environment}"`
+    : `create release and deploy to "${plan.environment}"`;
+}
+
+function logDryRunPlan(plan: DeployPlan, quiet: boolean): void {
+  if (quiet) return;
+  const suffix = plan.projectId ? "" : ` for project ${plan.projectSlug}`;
+  logInfo(`Would ${formatDryRunActions(plan)}${suffix}`);
+}
+
+function commandStepName(stepName: DeployStepName): string {
+  return stepName === "create-deployment" ? "deploy" : stepName;
+}
+
+function progressForEvent(
+  event: Extract<DeployEvent, { kind: "step" }>,
+  env: string,
+  verbose: boolean,
+): string | null {
+  if (event.phase !== "started") return null;
+  switch (event.step) {
+    case "resolve-config":
+      return verbose ? "Resolving configuration..." : "Linking project...";
+    case "push-source":
+      return verbose ? "Pushing source..." : "Uploading source...";
+    case "resolve-target":
+    case "verify-source":
+    case "create-release":
+    case "verify-release-source":
+    case "wait-release-assets":
+      return verbose ? progressDetailForBuildStep(event.step, env) : "Building release...";
+    case "create-deployment":
+      return `Deploying to ${env}...`;
+    case "verify-deployment":
+      return verbose ? `Verifying ${env} deployment...` : `Deploying to ${env}...`;
+    case "wait-environment-url":
+      return verbose ? `Waiting for ${env} URL...` : `Verifying ${env} URL...`;
+  }
+}
+
+function progressDetailForBuildStep(stepName: DeployStepName, env: string): string {
+  switch (stepName) {
+    case "resolve-target":
+      return `Looking up environment "${env}"...`;
+    case "verify-source":
+      return "Verifying pushed source...";
+    case "create-release":
+      return "Creating release...";
+    case "verify-release-source":
+      return "Verifying release source...";
+    case "wait-release-assets":
+      return "Waiting for release assets...";
+    default:
+      return "Building release...";
+  }
+}
+
+async function deployCommandHuman(options: DeployOptions): Promise<DeployResult | null> {
+  const { env, dryRun, quiet = false } = options;
   const startedAt = Date.now();
   const verbose = isVerbose();
   let progressText = verbose ? "Resolving configuration..." : "Linking project...";
   const spinner = quiet ? createNoopSpinner() : createSpinner(progressText);
-  const updateProgress = (summary: string, detail = summary): void => {
-    const next = verbose ? detail : summary;
+  const updateProgress = (next: string | null): void => {
+    if (!next) return;
     if (next === progressText) return;
     progressText = next;
     spinner.update(next);
   };
-  const runWithProgress = async <T>(operation: () => T | Promise<T>): Promise<T> => {
-    try {
-      return await operation();
-    } catch (error) {
-      spinner.stop();
-      throw error;
-    }
-  };
-
-  const environmentConfig = await runWithProgress(getEnvironmentConfig);
-  const receipt = await runWithProgress(() => readPushReceipt(projectDir));
-  const branch = requestedBranch ?? "main";
-  const setup = await runWithProgress(() =>
-    ensureProjectLinkedForDeploy(projectDir, environmentConfig, receipt, dryRun, quiet)
-  );
-  let { config, client, project } = setup;
-  const bootstrapPush = needsBootstrapPush(receipt, skipSourcePush);
-
-  if (dryRun && !project) {
+  let warning: string | null = null;
+  let outcome: DeployProjectOutcome;
+  try {
+    outcome = await createDeployRunner(options).execute(toDeployRequest(options), {
+      onEvent(event) {
+        if (event.kind === "warning") {
+          warning = event.message;
+          return;
+        }
+        updateProgress(progressForEvent(event, env, verbose));
+      },
+    });
+  } catch (error) {
     spinner.stop();
-    if (!quiet) {
-      const actions = bootstrapPush
-        ? `push source to "${branch}", create release, and deploy to "${env}"`
-        : `create release and deploy to "${env}"`;
-      logInfo(`Would ${actions} for project ${setup.plannedProjectSlug}`);
-    }
+    throw error;
+  }
+  spinner.stop();
+
+  if (outcome.kind === "dry-run") {
+    logDryRunPlan(outcome.plan, quiet);
     return null;
   }
 
-  if (bootstrapPush) {
-    updateProgress("Uploading source...", `Pushing source to "${branch}"...`);
-    await runWithProgress(() =>
-      pushCommand({
-        projectDir,
-        branch,
-        force: true,
-        dryRun,
-        quiet: true,
-      })
-    );
-    updateProgress("Uploading source...", "Resolving configuration...");
-    config = await runWithProgress(() => resolveConfigWithAuth(projectDir, environmentConfig));
-    client = createApiClient(config);
-  }
-
-  if (!project) {
-    updateProgress("Building release...", "Resolving project...");
-    project = await runWithProgress(() => getProject(client, projectApiReference(config)));
-  }
-
-  updateProgress("Building release...", `Looking up environment "${env}"...`);
-
-  const environment = await runWithProgress(() => getEnvironmentByName(client, project.id, env));
-  if (!environment) {
-    spinner.stop();
-    throw new Error(`Environment "${env}" not found`);
-  }
-
-  try {
-    assertProjectOwnership("Environment", environment, project.id);
-  } catch (error) {
-    spinner.stop();
-    throw error;
-  }
-
-  if (dryRun) {
-    if (!bootstrapPush && !skipSourcePush) {
-      await runWithProgress(() =>
-        resolvePushedSource({
-          projectDir,
-          controlPlane: config.apiUrl,
-          projectId: project.id,
-          projectSlug: project.slug,
-          branch,
-        })
-      );
-    }
-    spinner.stop();
-    if (!quiet) {
-      const actions = bootstrapPush
-        ? `push source to "${branch}", create release, and deploy to "${env}"`
-        : `create release and deploy to "${env}"`;
-      logInfo(`Would ${actions}`);
-    }
-    return null;
-  }
-
-  updateProgress("Building release...", "Verifying pushed source...");
-  let source: { commitSha: string | null; sourceDigest: string };
-  try {
-    source = await resolvePushedSource({
-      projectDir,
-      controlPlane: config.apiUrl,
-      projectId: project.id,
-      projectSlug: project.slug,
-      branch,
-    });
-  } catch (error) {
-    spinner.stop();
-    throw error;
-  }
-
-  updateProgress("Building release...", `Creating release from "${branch}"...`);
-
-  let release: Release;
-  let deployment: Deployment;
-  let verification: DeploymentVerification;
-  let environmentUrl: string;
-  try {
-    release = await createRelease(client, project.id, { name: releaseName, branch });
-    if (!release.version) {
-      throw RELEASE_MISSING_VERSION.create({ detail: `Release ${release.id} has no version` });
-    }
-
-    updateProgress("Building release...", `Verifying ${release.version} source...`);
-    const verifiedRelease = await verifyReleaseSource(client, project.id, {
-      projectId: project.id,
-      releaseId: release.id,
-      releaseName: release.name,
-      commitSha: source.commitSha,
-      sourceDigest: source.sourceDigest,
-    });
-
-    updateProgress("Building release...", `Waiting for release assets for ${release.version}...`);
-    const expectedPageRoutes = await collectProjectPageRoutes(projectDir);
-    await waitForReleaseAssetManifest(client, project.slug, release.id, {
-      expectedRoutes: expectedPageRoutes,
-      pollIntervalMs: assetManifestPollIntervalMs,
-      timeoutMs: assetManifestTimeoutMs,
-    });
-
-    updateProgress(`Deploying to ${env}...`, `Deploying ${release.version} to ${env}...`);
-    deployment = await createDeployment(client, project.id, release.id, environment.id);
-
-    updateProgress(`Deploying to ${env}...`, `Verifying ${env} deployment...`);
-    verification = await verifyDeployment(client, project.id, {
-      projectId: project.id,
-      projectSlug: project.slug,
-      environmentId: environment.id,
-      environmentName: env,
-      releaseId: release.id,
-      releaseName: release.name,
-      deploymentId: deployment.id,
-      commitSha: source.commitSha,
-      sourceDigest: source.sourceDigest,
-    }, { verifiedRelease });
-
-    const readinessRoute = expectedPageRoutes.find((route) => !route.includes("[")) ?? null;
-    environmentUrl = buildReadyEnvironmentUrl(
-      buildEnvironmentUrl(verification.projectSlug, environment),
-      readinessRoute,
-    );
-    updateProgress(`Verifying ${env} URL...`, `Waiting for ${env} URL...`);
-    await waitForEnvironmentReady(
-      {
-        projectSlug: verification.projectSlug,
-        environmentName: environment.name,
-        url: environmentUrl,
-        route: readinessRoute,
-        protected: environment.protected,
-        apiToken: config.apiToken,
-      },
-      {
-        pollIntervalMs: environmentPollIntervalMs,
-        timeoutMs: environmentTimeoutMs,
-      },
-    );
-    spinner.stop();
-  } catch (error) {
-    spinner.stop();
-    throw error;
-  }
-
-  const result = createDeployResult({
-    verification,
-    release,
-    environment,
-    deployment,
-    environmentUrl,
-    config,
-    branch,
-  });
+  const result = outcome.result;
 
   if (quiet) return result;
 
   logSuccess(
-    `Deployed ${verification.projectSlug} to ${env} in ${formatDuration(Date.now() - startedAt)}`,
+    `Deployed ${result.projectSlug} to ${env} in ${formatDuration(Date.now() - startedAt)}`,
   );
   console.log();
-  console.log(`  ${brand(environmentUrl)}`);
+  console.log(`  ${brand(result.url)}`);
   console.log(
     `  ${
       dim(
-        `${
-          environment.protected ? "Protected" : "Public"
-        } · Release ${verification.releaseVersion}`,
+        `${result.protected ? "Protected" : "Public"} · Release ${result.release.version}`,
       )
     }`,
   );
   console.log();
 
   if (verbose) {
-    logInfo(`  Project: ${verification.projectSlug} (${verification.projectId})`);
-    logInfo(`  Environment: ${env} (${verification.environmentId})`);
+    logInfo(`  Project: ${result.projectSlug} (${result.projectId})`);
+    logInfo(`  Environment: ${env} (${result.environmentId})`);
     logInfo(
-      `  Release: ${release.name} (${verification.releaseVersion}, ${verification.releaseId})`,
+      `  Release: ${result.release.name} (${result.release.version}, ${result.release.id})`,
     );
-    logInfo(`  Deployment: ${verification.deploymentId}`);
-    if (deployment.routing_convergence?.status === "converged") {
+    logInfo(`  Deployment: ${result.deploymentId}`);
+    if (result.routingConvergence?.status === "converged") {
       logInfo(
-        `  Data plane: ${deployment.routing_convergence.acknowledged}/${deployment.routing_convergence.recipients} proxy replicas converged`,
+        `  Data plane: ${result.routingConvergence.acknowledged}/${result.routingConvergence.recipients} proxy replicas converged`,
       );
     }
     logInfo(
-      verification.commitSha
-        ? `  Commit: ${verification.commitSha}`
+      result.commitSha
+        ? `  Commit: ${result.commitSha}`
         : "  Commit: unavailable (source digest verified)",
     );
-    logInfo(`  Source digest: ${verification.sourceDigest}`);
-    logInfo(`  Control plane: ${normalizeControlPlane(config.apiUrl)}`);
+    logInfo(`  Source digest: ${result.sourceDigest}`);
+    logInfo(`  Control plane: ${result.controlPlane}`);
   }
 
-  const routingConvergenceWarning = getDeploymentRoutingConvergenceWarning(deployment);
-  if (routingConvergenceWarning) logWarning(routingConvergenceWarning);
+  if (warning) logWarning(warning);
 
   if (verbose) {
     const { getPostDeployTips } = await import("../../help/tips.ts");
@@ -1366,226 +1286,35 @@ export async function deployCommand(options: DeployOptions): Promise<DeployResul
 }
 
 async function deployCommandJson(options: DeployOptions): Promise<DeployResult | null> {
-  const {
-    projectDir = cwd(),
-    branch: requestedBranch,
-    env,
-    releaseName,
-    dryRun,
-    skipSourcePush,
-    assetManifestPollIntervalMs,
-    assetManifestTimeoutMs,
-    environmentPollIntervalMs,
-    environmentTimeoutMs,
-  } = options;
-
   try {
-    streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
-    const environmentConfig = getEnvironmentConfig();
-    const receipt = await readPushReceipt(projectDir);
-    const branch = requestedBranch ?? "main";
-    const setup = await ensureProjectLinkedForDeploy(
-      projectDir,
-      environmentConfig,
-      receipt,
-      dryRun,
-      true,
-    );
-    let { config, client, project } = setup;
-    const bootstrapPush = needsBootstrapPush(receipt, skipSourcePush);
-    streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });
-
-    if (dryRun && !project) {
-      streamJsonLine({
-        type: "result",
-        success: true,
-        data: {
-          dryRun: true,
-          branch,
-          projectId: null,
-          projectSlug: setup.plannedProjectSlug,
-          environment: env,
-          environmentId: null,
-          controlPlane: normalizeControlPlane(config.apiUrl),
-          plannedActions: [
-            "create-project",
-            ...(bootstrapPush ? ["push-source"] : []),
-            "create-release",
-            "deploy",
-          ],
-        },
-      });
-      return null;
-    }
-
-    if (bootstrapPush) {
-      streamJsonLine({ type: "step", name: "push-source", status: "started" });
-      await pushCommand({
-        projectDir,
-        branch,
-        force: true,
-        dryRun,
-        quiet: true,
-      });
-      config = await resolveConfigWithAuth(projectDir, environmentConfig);
-      client = createApiClient(config);
-      streamJsonLine({ type: "step", name: "push-source", status: "completed" });
-    }
-
-    streamJsonLine({ type: "step", name: "resolve-target", status: "started" });
-    if (!project) project = await getProject(client, projectApiReference(config));
-    const environment = await getEnvironmentByName(client, project.id, env);
-    if (!environment) {
-      const vfErr = ENVIRONMENT_NOT_FOUND.create({
-        detail: `Environment "${env}" not found`,
-      });
-      streamJsonLine(
-        createStreamErrorResult({
-          code: "RUNTIME_ERROR",
-          slug: vfErr.slug,
-          message: vfErr.detail ?? vfErr.message,
-        }),
-      );
-      exitProcess(1);
-      return null;
-    }
-    assertProjectOwnership("Environment", environment, project.id);
-    streamJsonLine({ type: "step", name: "resolve-target", status: "completed" });
-
-    if (dryRun) {
-      if (!bootstrapPush && !skipSourcePush) {
-        await resolvePushedSource({
-          projectDir,
-          controlPlane: config.apiUrl,
-          projectId: project.id,
-          projectSlug: project.slug,
-          branch,
+    const outcome = await createDeployRunner(options).execute(toDeployRequest(options), {
+      onEvent(event) {
+        if (event.kind === "warning") {
+          streamJsonLine({
+            type: "warning",
+            code: event.code,
+            message: event.message,
+          });
+          return;
+        }
+        streamJsonLine({
+          type: "step",
+          name: commandStepName(event.step),
+          status: event.phase,
         });
-      }
+      },
+    });
+
+    if (outcome.kind === "dry-run") {
       streamJsonLine({
         type: "result",
         success: true,
-        data: {
-          dryRun: true,
-          branch,
-          projectId: project.id,
-          projectSlug: project.slug,
-          environment: env,
-          environmentId: environment.id,
-          controlPlane: normalizeControlPlane(config.apiUrl),
-          plannedActions: [
-            ...(bootstrapPush ? ["push-source"] : []),
-            "create-release",
-            "deploy",
-          ],
-        },
+        data: { dryRun: true, ...outcome.plan },
       });
       return null;
     }
 
-    streamJsonLine({ type: "step", name: "verify-source", status: "started" });
-    const source = await resolvePushedSource({
-      projectDir,
-      controlPlane: config.apiUrl,
-      projectId: project.id,
-      projectSlug: project.slug,
-      branch,
-    });
-    streamJsonLine({ type: "step", name: "verify-source", status: "completed" });
-
-    streamJsonLine({ type: "step", name: "create-release", status: "started" });
-    const release = await createRelease(client, project.id, {
-      name: releaseName,
-      branch,
-    });
-    if (!release.version) {
-      throw RELEASE_MISSING_VERSION.create({ detail: `Release ${release.id} has no version` });
-    }
-    streamJsonLine({ type: "step", name: "create-release", status: "completed" });
-
-    streamJsonLine({ type: "step", name: "verify-release-source", status: "started" });
-    const verifiedRelease = await verifyReleaseSource(client, project.id, {
-      projectId: project.id,
-      releaseId: release.id,
-      releaseName: release.name,
-      commitSha: source.commitSha,
-      sourceDigest: source.sourceDigest,
-    });
-    streamJsonLine({ type: "step", name: "verify-release-source", status: "completed" });
-
-    streamJsonLine({ type: "step", name: "wait-release-assets", status: "started" });
-    const expectedPageRoutes = await collectProjectPageRoutes(projectDir);
-    await waitForReleaseAssetManifest(client, project.slug, release.id, {
-      expectedRoutes: expectedPageRoutes,
-      pollIntervalMs: assetManifestPollIntervalMs,
-      timeoutMs: assetManifestTimeoutMs,
-    });
-    streamJsonLine({ type: "step", name: "wait-release-assets", status: "completed" });
-
-    streamJsonLine({ type: "step", name: "deploy", status: "started" });
-    const deployment = await createDeployment(
-      client,
-      project.id,
-      release.id,
-      environment.id,
-    );
-    streamJsonLine({ type: "step", name: "deploy", status: "completed" });
-
-    streamJsonLine({ type: "step", name: "verify-deployment", status: "started" });
-    const verification = await verifyDeployment(client, project.id, {
-      projectId: project.id,
-      projectSlug: project.slug,
-      environmentId: environment.id,
-      environmentName: env,
-      releaseId: release.id,
-      releaseName: release.name,
-      deploymentId: deployment.id,
-      commitSha: source.commitSha,
-      sourceDigest: source.sourceDigest,
-    }, { verifiedRelease });
-    streamJsonLine({ type: "step", name: "verify-deployment", status: "completed" });
-
-    const readinessRoute = expectedPageRoutes.find((route) => !route.includes("[")) ?? null;
-    const environmentUrl = buildReadyEnvironmentUrl(
-      buildEnvironmentUrl(verification.projectSlug, environment),
-      readinessRoute,
-    );
-    streamJsonLine({ type: "step", name: "wait-environment-url", status: "started" });
-    await waitForEnvironmentReady(
-      {
-        projectSlug: verification.projectSlug,
-        environmentName: environment.name,
-        url: environmentUrl,
-        route: readinessRoute,
-        protected: environment.protected,
-        apiToken: config.apiToken,
-      },
-      {
-        pollIntervalMs: environmentPollIntervalMs,
-        timeoutMs: environmentTimeoutMs,
-      },
-    );
-    streamJsonLine({ type: "step", name: "wait-environment-url", status: "completed" });
-
-    const routingConvergenceWarning = getDeploymentRoutingConvergenceWarning(deployment);
-    if (routingConvergenceWarning) {
-      streamJsonLine({
-        type: "warning",
-        code: "routing-convergence-unconfirmed",
-        message: routingConvergenceWarning,
-      });
-    }
-
-    const result = createDeployResult({
-      verification,
-      release,
-      environment,
-      deployment,
-      environmentUrl,
-      config,
-      branch,
-    });
-
+    const result = outcome.result;
     streamJsonLine({
       type: "result",
       success: true,
