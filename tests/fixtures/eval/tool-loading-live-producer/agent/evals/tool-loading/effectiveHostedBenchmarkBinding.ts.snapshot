@@ -29,6 +29,7 @@ type BenchmarkEnvironment = {
   VERYFRONT_TOKEN?: string
   VERYFRONT_API_TOKEN?: string
   AG_UI_EVAL_PROJECT_ID?: string
+  VERYFRONT_PROJECT_SLUG?: string
 }
 
 type DisabledInvokeResult = {
@@ -45,6 +46,7 @@ export type EffectiveHostedBenchmarkBinding = {
   executionContext: {
     agentId: string
     projectId: string
+    projectSlug?: string
     authToken: string
   }
   tools: ToolSet
@@ -177,7 +179,7 @@ export async function createEffectiveHostedBenchmarkBinding(input: {
       typeof canonicalAgent.config.system === 'function'
         ? await canonicalAgent.config.system()
         : canonicalAgent.config.system
-    const assembly = await prepareToolAssembly({
+    const assemblyInput: PrepareHostedChatRuntimeToolAssemblyInput & { toolLoading: 'eager' } = {
       taskContext,
       instructions: system,
       localTools,
@@ -190,7 +192,8 @@ export async function createEffectiveHostedBenchmarkBinding(input: {
       preloadLatestConversationUserText: false,
       sourceIntegrationPolicy: input.runtime.sourceIntegrationPolicy,
       toolLoading: 'eager',
-    })
+    }
+    const assembly = await prepareToolAssembly(assemblyInput)
     const providerToolNames = new Set(assembly.providerToolNames)
     const remoteToolNames = new Set(assembly.compatibleRemoteToolNames)
     const tools = Object.fromEntries(
@@ -203,14 +206,16 @@ export async function createEffectiveHostedBenchmarkBinding(input: {
         assembly.remoteToolSources.map(async (source) =>
           (
             await source.listTools({ projectId: taskContext.projectId ?? undefined, authToken: userToken })
-          ).map((definition) => ({
-            name: definition.name,
-            source: 'remote' as const,
-            description: definition.description,
-            inputSchema: definition.parameters,
-            ...(definition.title ? { title: definition.title } : {}),
-            ...(definition.annotations ? { annotations: definition.annotations } : {}),
-          }))
+          ).map(
+            (definition): AuthorizedToolDefinition => ({
+              name: definition.name,
+              source: 'remote',
+              description: definition.description,
+              inputSchema: definition.parameters,
+              ...(definition.title ? { title: definition.title } : {}),
+              ...(definition.annotations ? { annotations: definition.annotations } : {}),
+            })
+          )
         )
       )
     )
@@ -218,13 +223,13 @@ export async function createEffectiveHostedBenchmarkBinding(input: {
       .filter((definition) => remoteToolNames.has(definition.name))
     const localDefinitions = Object.entries(assembly.runtimeTools)
       .filter(([toolName]) => assembly.availableToolNames.includes(toolName))
-      .map(([toolName, definition]) => {
+      .map(([toolName, definition]): AuthorizedToolDefinition => {
         if (!definition.inputSchemaJson) {
           throw new Error(`Effective hosted benchmark tool ${toolName} has no canonical JSON input schema`)
         }
         return {
           name: toolName,
-          source: 'local' as const,
+          source: 'local',
           description: definition.description,
           inputSchema: definition.inputSchemaJson,
           ...(definition.mcp?.title ? { title: definition.mcp.title } : {}),
@@ -233,12 +238,14 @@ export async function createEffectiveHostedBenchmarkBinding(input: {
       })
     const providerDefinitions = assembly.providerToolNames
       .filter((toolName) => assembly.availableToolNames.includes(toolName))
-      .map((toolName) => ({
-        name: toolName,
-        source: 'provider-native' as const,
-        description: `Provider-native tool ${toolName}`,
-        inputSchema: { type: 'provider-native' },
-      }))
+      .map(
+        (toolName): AuthorizedToolDefinition => ({
+          name: toolName,
+          source: 'provider-native',
+          description: `Provider-native tool ${toolName}`,
+          inputSchema: { type: 'provider-native' },
+        })
+      )
     const authorizedToolDefinitions = [...localDefinitions, ...remoteDefinitions, ...providerDefinitions].sort(
       (left, right) => left.name.localeCompare(right.name)
     )
@@ -270,6 +277,9 @@ export async function createEffectiveHostedBenchmarkBinding(input: {
       executionContext: {
         agentId: canonicalAgent.id,
         projectId,
+        ...(environment.VERYFRONT_PROJECT_SLUG?.trim()
+          ? { projectSlug: environment.VERYFRONT_PROJECT_SLUG.trim() }
+          : {}),
         authToken: userToken,
       },
       tools,

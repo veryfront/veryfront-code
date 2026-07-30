@@ -6,17 +6,18 @@ import { dirname, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import {
-  type AgentToolLoadingBenchmarkObservation,
-  runAgentToolLoadingBenchmark,
-  runWithAgentToolLoadingBenchmarkRequestContext,
-} from 'veryfront/_internal/agent-tool-loading-benchmark'
-import {
+  type AgentMcpServerConfig,
   agent,
   discoverProjectAgentRuntime,
   type ProjectAgentRuntimeDiscovery,
   runWithProjectAgentRuntime,
 } from 'veryfront/agent'
 import toolLoadingEval from '../veryfront-agent-tool-loading.eval'
+import {
+  type AgentToolLoadingBenchmarkObservation,
+  runAgentToolLoadingBenchmark,
+  runWithAgentToolLoadingBenchmarkRequestContext,
+} from './agentToolLoadingBenchmarkAdapter'
 import {
   type DeterministicRuntimeGateResult,
   runDeterministicToolLoadingRuntimeGate,
@@ -406,34 +407,59 @@ type BenchmarkMainDependencies<TSnapshot> = {
   ) => Promise<LiveCanaryRecord>
   runDeterministicGate?: () => Promise<DeterministicRuntimeGateResult>
   cleanupSnapshot?: (snapshot: TSnapshot) => Promise<void>
+  projectIdentities?: (snapshot: TSnapshot) => string[]
   mkdir: (path: string, options: { recursive: true }) => Promise<unknown>
   writeFile: (path: string, contents: string) => Promise<unknown>
   writeOutput: (output: string) => void
 }
 
-export function sanitizeBenchmarkErrorMessage(message: string): string {
-  const redacted = message
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
-    .replace(
-      /(\b(?:api[_-]?token|auth[_-]?token|access[_-]?token|refresh[_-]?token|token)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&]+)/gi,
-      '$1[REDACTED]'
-    )
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED_JWT]')
-    .replace(/\s+/g, ' ')
-    .trim()
+export function sanitizeBenchmarkErrorMessage(message: string, projectIdentities: readonly string[] = []): string {
+  const redacted = redactSensitiveString(message, projectIdentities).replace(/\s+/g, ' ').trim()
 
   return (redacted || 'Unknown error').slice(0, 1_000)
 }
 
-export function benchmarkErrorFields(error: unknown): Pick<BenchmarkRecord, 'errorCode' | 'errorMessage'> {
+function redactSensitiveString(value: string, projectIdentities: readonly string[]): string {
+  const identityRedacted = [...projectIdentities]
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length)
+    .reduce(
+      (current, identity) =>
+        current
+          .replaceAll(identity, '[REDACTED_PROJECT_ID]')
+          .replaceAll(encodeURIComponent(identity), '[REDACTED_PROJECT_ID]'),
+      value
+    )
+  return identityRedacted
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(
+      /(\b(?:api[_-]?(?:key|token)|auth[_-]?token|access[_-]?token|refresh[_-]?token|token)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&]+)/gi,
+      '$1[REDACTED]'
+    )
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED_JWT]')
+}
+
+export function benchmarkErrorFields(
+  error: unknown,
+  projectIdentities: readonly string[] = []
+): Pick<BenchmarkRecord, 'errorCode' | 'errorMessage'> {
   return {
     errorCode: error instanceof Error ? error.name : 'UnknownError',
-    errorMessage: sanitizeBenchmarkErrorMessage(error instanceof Error ? error.message : String(error)),
+    errorMessage: sanitizeBenchmarkErrorMessage(
+      error instanceof Error ? error.message : String(error),
+      projectIdentities
+    ),
   }
 }
 
-function canonicalJsonValue(value: unknown, label: string, ancestors = new WeakSet<object>()): unknown {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+function canonicalJsonValue(
+  value: unknown,
+  label: string,
+  sanitizeString: (value: string) => string = (entry) => entry,
+  ancestors = new WeakSet<object>()
+): unknown {
+  if (typeof value === 'string') return sanitizeString(value)
+  if (value === null || typeof value === 'boolean') return value
   if (typeof value === 'number') {
     return Number.isFinite(value) ? value : null
   }
@@ -445,7 +471,7 @@ function canonicalJsonValue(value: unknown, label: string, ancestors = new WeakS
         const entryType = typeof entry
         return entry === undefined || entryType === 'function' || entryType === 'symbol'
           ? null
-          : canonicalJsonValue(entry, `${label}[${index}]`, ancestors)
+          : canonicalJsonValue(entry, `${label}[${index}]`, sanitizeString, ancestors)
       })
     } finally {
       ancestors.delete(value)
@@ -462,7 +488,7 @@ function canonicalJsonValue(value: unknown, label: string, ancestors = new WeakS
             return entry !== undefined && entryType !== 'function' && entryType !== 'symbol'
           })
           .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, entry]) => [key, canonicalJsonValue(entry, `${label}.${key}`, ancestors)])
+          .map(([key, entry]) => [key, canonicalJsonValue(entry, `${label}.${key}`, sanitizeString, ancestors)])
       )
     } finally {
       ancestors.delete(value)
@@ -478,28 +504,27 @@ export function fingerprintAuthorizedToolDefinitions(definitions: AuthorizedTool
   return `sha256:${createHash('sha256').update(JSON.stringify(canonicalDefinitions)).digest('hex')}`
 }
 
-export function sanitizeLiveCanaryToolResult(toolName: string, result: unknown): unknown {
-  if (toolName !== 'list_projects') return canonicalJsonValue(result, `${toolName}.result`)
+export function sanitizePersistedBenchmarkValue(value: unknown, projectIdentities: readonly string[]): unknown {
+  return canonicalJsonValue(value, 'benchmarkReport', (entry) => redactSensitiveString(entry, projectIdentities))
+}
 
-  const record =
-    typeof result === 'object' && result !== null && !Array.isArray(result)
-      ? (result as Record<string, unknown>)
-      : undefined
-  const structuredContent =
-    typeof record?.structuredContent === 'object' &&
-    record.structuredContent !== null &&
-    !Array.isArray(record.structuredContent)
-      ? (record.structuredContent as Record<string, unknown>)
-      : undefined
+export function sanitizeLiveCanaryToolResult(
+  toolName: string,
+  result: unknown,
+  projectIdentities: readonly string[] = []
+): unknown {
+  if (toolName !== 'list_projects') {
+    return canonicalJsonValue(result, `${toolName}.result`, (value) => redactSensitiveString(value, projectIdentities))
+  }
+
+  const record = optionalRecord(result)
+  const structuredContent = optionalRecord(record?.structuredContent)
   const projects = [record?.projects, record?.data, structuredContent?.projects, structuredContent?.data].find(
     Array.isArray
   )
   const pageInfoValue =
     record?.pageInfo ?? record?.page_info ?? structuredContent?.pageInfo ?? structuredContent?.page_info
-  const pageInfo =
-    typeof pageInfoValue === 'object' && pageInfoValue !== null && !Array.isArray(pageInfoValue)
-      ? (pageInfoValue as Record<string, unknown>)
-      : undefined
+  const pageInfo = optionalRecord(pageInfoValue)
   const hasNextPage =
     typeof pageInfo?.hasNextPage === 'boolean'
       ? pageInfo.hasNextPage
@@ -512,6 +537,76 @@ export function sanitizeLiveCanaryToolResult(toolName: string, result: unknown):
     ...(projects ? { projectCount: projects.length } : {}),
     hasPageInfo: pageInfo !== undefined,
     ...(hasNextPage !== undefined ? { hasNextPage } : {}),
+  }
+}
+
+function optionalRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value))
+    : undefined
+}
+
+export function createReadOnlyCanaryToolSurface(
+  binding: Pick<EffectiveHostedBenchmarkBinding, 'effectiveToolNames' | 'mcpServers'>
+): {
+  tools: { list_projects: true }
+  mcpServers: AgentMcpServerConfig[]
+} {
+  if (!binding.effectiveToolNames.includes('list_projects')) {
+    throw new Error('Authorized read-only canary tool list_projects is absent from the effective hosted binding')
+  }
+  const mcpServers = binding.mcpServers
+    .filter((server) => server.toolPolicy?.allow?.includes('list_projects'))
+    .map(
+      (server): AgentMcpServerConfig => ({
+        ...server,
+        toolPolicy: {
+          allow: ['list_projects'],
+          approval: 'never',
+        },
+      })
+    )
+  if (mcpServers.length === 0) {
+    throw new Error('Authorized read-only canary tool list_projects has no isolated remote tool source')
+  }
+  return {
+    tools: { list_projects: true },
+    mcpServers,
+  }
+}
+
+export function isExactReadOnlyCanarySequence(
+  calls: ReadonlyArray<{ name: string; status: 'pending' | 'executing' | 'completed' | 'error' }>
+): boolean {
+  return (
+    calls.length === 2 &&
+    calls[0]?.name === 'tool_search' &&
+    calls[0].status === 'completed' &&
+    calls[1]?.name === 'list_projects' &&
+    calls[1].status === 'completed'
+  )
+}
+
+export function sanitizeLiveCanaryToolCall(
+  call: {
+    name: string
+    status: 'pending' | 'executing' | 'completed' | 'error'
+    args: Record<string, unknown>
+    result?: unknown
+    error?: string
+  },
+  projectIdentities: readonly string[]
+): LiveCanaryRecord['observedToolCalls'][number] {
+  const sanitizedError = call.error ? sanitizeBenchmarkErrorMessage(call.error, projectIdentities) : undefined
+  return {
+    name: call.name,
+    status: call.status,
+    input: call.args,
+    result:
+      call.result !== undefined
+        ? sanitizeLiveCanaryToolResult(call.name, call.result, projectIdentities)
+        : (sanitizedError ?? null),
+    ...(sanitizedError ? { error: sanitizedError } : {}),
   }
 }
 
@@ -537,6 +632,13 @@ function requestShapeFields(
     requestShapeCaptureStatus: 'complete',
     loadingPath: observation.loadingPath,
   }
+}
+
+function benchmarkProjectIdentities(binding: EffectiveHostedBenchmarkBinding): string[] {
+  return [
+    binding.executionContext.projectId,
+    ...(binding.executionContext.projectSlug ? [binding.executionContext.projectSlug] : []),
+  ]
 }
 
 async function runRecord(
@@ -655,7 +757,7 @@ async function runRecord(
       toolCalls: 0,
       durationMs: Math.round(performance.now() - startedAt),
       completed: false,
-      ...benchmarkErrorFields(error),
+      ...benchmarkErrorFields(error, benchmarkProjectIdentities(snapshot.binding)),
     }
   }
 }
@@ -673,14 +775,13 @@ async function runAuthorizedReadOnlyCanary(
   try {
     const canonicalAgent = snapshot.runtime.agents.get('veryfront')
     if (!canonicalAgent) throw new Error('Canonical agent was not discovered')
-    if (!snapshot.binding.effectiveToolNames.includes('list_projects')) {
-      throw new Error('Authorized read-only canary tool list_projects is absent from the effective hosted binding')
-    }
+    const canarySurface = createReadOnlyCanaryToolSurface(snapshot.binding)
     const canaryAgent = agent({
       ...canonicalAgent.config,
       system: snapshot.binding.system,
-      tools: snapshot.binding.tools,
-      mcpServers: snapshot.binding.mcpServers,
+      tools: canarySurface.tools,
+      providerTools: [],
+      mcpServers: canarySurface.mcpServers,
     })
     const abortController = new AbortController()
     let providerTimeoutHandle: ReturnType<typeof setTimeout> | undefined
@@ -707,22 +808,11 @@ async function runAuthorizedReadOnlyCanary(
     const response = await Promise.race([providerCall, providerTimeout]).finally(() => {
       if (providerTimeoutHandle) clearTimeout(providerTimeoutHandle)
     })
-    const observedToolCalls = response.toolCalls.map((call) => ({
-      name: call.name,
-      status: call.status,
-      input: call.args,
-      result: sanitizeLiveCanaryToolResult(call.name, call.result ?? call.error ?? null),
-      ...(call.error ? { error: call.error } : {}),
-    }))
-    const successfulReadCalls = observedToolCalls.filter(
-      (call) => call.name === 'list_projects' && call.status === 'completed'
+    const observedToolCalls = response.toolCalls.map((call) =>
+      sanitizeLiveCanaryToolCall(call, benchmarkProjectIdentities(snapshot.binding))
     )
     const status =
-      response.status === 'completed' &&
-      successfulReadCalls.length === 1 &&
-      observedToolCalls.every((call) => call.status === 'completed')
-        ? 'passed'
-        : 'failed'
+      response.status === 'completed' && isExactReadOnlyCanarySequence(observedToolCalls) ? 'passed' : 'failed'
     return {
       id: 'authorized-read-only-canary',
       prompt,
@@ -745,7 +835,7 @@ async function runAuthorizedReadOnlyCanary(
       frameworkPackage,
       observedToolCalls: [],
       status: 'failed',
-      ...benchmarkErrorFields(error),
+      ...benchmarkErrorFields(error, benchmarkProjectIdentities(snapshot.binding)),
     }
   }
 }
@@ -1016,6 +1106,7 @@ async function runBenchmarkMain<TSnapshot>(dependencies: BenchmarkMainDependenci
     throw new Error('Canonical tool-loading eval must contain exact hi and Hello live prompts')
   }
   let liveCanary: LiveCanaryRecord | undefined
+  let projectIdentities: string[] = []
   if (deterministicGate.status === 'passed') {
     let discoveredSnapshot: TSnapshot | undefined
     let liveRecords: BenchmarkRecord[]
@@ -1028,6 +1119,7 @@ async function runBenchmarkMain<TSnapshot>(dependencies: BenchmarkMainDependenci
         execute: (snapshot, attempt) => dependencies.execute(snapshot, attempt.prompt, attempt.mode, producer),
       })
       if (discoveredSnapshot === undefined) throw new Error('Benchmark discovery did not produce a runtime snapshot')
+      projectIdentities = dependencies.projectIdentities?.(discoveredSnapshot) ?? []
       liveCanary = await dependencies.executeCanary(discoveredSnapshot, producer, frameworkPackage)
       if (
         JSON.stringify(liveCanary.producer) !== JSON.stringify(producer) ||
@@ -1073,10 +1165,14 @@ async function runBenchmarkMain<TSnapshot>(dependencies: BenchmarkMainDependenci
     reportMarkdownPath,
     comparisons,
   }
+  const persistedReport = sanitizePersistedBenchmarkValue(report, projectIdentities)
   for (const path of [reportJsonPath, reportMarkdownPath, statusPath]) {
     await dependencies.mkdir(dirname(resolve(dependencies.projectDir, path)), { recursive: true })
   }
-  await dependencies.writeFile(resolve(dependencies.projectDir, reportJsonPath), `${JSON.stringify(report, null, 2)}\n`)
+  await dependencies.writeFile(
+    resolve(dependencies.projectDir, reportJsonPath),
+    `${JSON.stringify(persistedReport, null, 2)}\n`
+  )
   await dependencies.writeFile(
     resolve(dependencies.projectDir, reportMarkdownPath),
     markdown(comparisons, deterministicGate, liveCanary, status, producer, frameworkPackage)
@@ -1116,6 +1212,7 @@ async function runDefaultBenchmark(environment: DirectBenchmarkEnvironment): Pro
     executeCanary: (snapshot, producer, frameworkPackage) =>
       runAuthorizedReadOnlyCanary(snapshot, producer, frameworkPackage),
     cleanupSnapshot: (snapshot) => snapshot.binding.cleanup(),
+    projectIdentities: (snapshot) => benchmarkProjectIdentities(snapshot.binding),
     mkdir,
     writeFile,
     writeOutput: (output) => process.stdout.write(output),

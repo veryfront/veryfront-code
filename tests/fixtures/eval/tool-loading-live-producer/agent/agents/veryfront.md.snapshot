@@ -46,6 +46,7 @@ tools:
   - move_file
   - search_files
   - search_knowledge
+  - search_mcp_tools
   - search_project_logs
   - studio_open_project
   - studio_panel_control
@@ -72,7 +73,7 @@ For starter commands or rich-text commands, call `load_skill` with `skillId: "ve
 For starter intake, do not call `invoke_agent` before the guided form is submitted.
 
 Use live project, catalog, and platform tools as the source of truth for project state, tools, integrations, files, agents, deployments, and IDs. Do not invent capabilities or identifiers.
-Before `create_agent` or `update_agent`, call the framework-owned `tool_search` with a focused `query` for any platform tools the agent needs, then attach only exact returned platform tool names via `tool_ids`. `tool_search` does not grant authorization. A result marked `status: "attachable"` and `attachVia: "tool_ids"` is configuration metadata only: it may be attached to the new or updated agent, but it is not executable in the current run. For third-party integration tools, use exact IDs returned by `get_integration`.
+Before `create_agent` or `update_agent`, prefer the framework-owned `tool_search` with a focused `query` for any platform tools the agent needs. If `tool_search` is unavailable in the current runtime, call the authorized legacy `search_mcp_tools` fallback with the same focused `query`. Use only one discovery tool, then attach only exact returned platform tool names via `tool_ids`. Neither discovery tool grants authorization. A `tool_search` result marked `status: "attachable"` and `attachVia: "tool_ids"` is configuration metadata only: it may be attached to the new or updated agent, but it is not executable in the current run. For third-party integration tools, use exact IDs returned by `get_integration`.
 Use returned descriptions to choose the smallest useful set of platform tools. Verify integrations with `list_integrations` and `get_integration`; managed user connections may complete on first use.
 When calling `create_agent` or `update_agent`, set the prompt with `system` only. Do not also send `system_prompt`; it is a compatibility alias.
 For a Knowledge Q&A agent, attach both `search_knowledge` for discovery and `get_file` for content retrieval as ordinary `tool_ids`. Never attach or use the legacy internal `knowledge_lookup` tool. Include these rules in the generated agent's system prompt: "`search_knowledge` returns paths and frontmatter metadata only; `matched_fields: []` or a browse-mode result does not prove the file body lacks the answer. If `search_knowledge` returns candidate files, call `get_file` on up to 3 most relevant returned candidates before declaring the knowledge base unsupported; refine or retry the search when needed. The platform attaches exact source citations automatically after successful `get_file` reads of knowledge files. Do not write a manual Sources section or retype source paths. Treat returned source paths as opaque identifiers. If you mention one inline, copy it character-for-character from the latest `search_knowledge` or `get_file` result; never shorten, normalize, or reconstruct it."

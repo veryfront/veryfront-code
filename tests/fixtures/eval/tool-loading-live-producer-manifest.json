@@ -2,7 +2,7 @@
   "kind": "veryfront-agent-tool-loading-live-producer-manifest",
   "report": {
     "path": "veryfront-agent/.veryfront/evals/tool-loading/live/report.json",
-    "sha256": "0e081ae8d9fd2fb9805e423cf70d3b20223e6a71dfe132ccb83cc07b6cc911ed"
+    "sha256": "a166982d93b0afddb7bf806224d739cdadf7801cecb224929dd02918d8dbf64a"
   },
   "execution": {
     "workingDirectory": "veryfront-agent",
@@ -36,10 +36,11 @@
       "VERYFRONT_API_URL",
       "VERYFRONT_STUDIO_MCP_URL",
       "VERYFRONT_TOKEN",
-      "VERYFRONT_API_TOKEN"
+      "VERYFRONT_API_TOKEN",
+      "AG_UI_EVAL_PROJECT_ID",
+      "VERYFRONT_PROJECT_SLUG"
     ],
     "optionalEnvironmentNames": [
-      "AG_UI_EVAL_PROJECT_ID",
       "VERYFRONT_TOOL_LOADING_TIMEOUT_MS",
       "GIT_COMMIT_SHA",
       "RELEASE_VERSION"
@@ -47,16 +48,22 @@
     "environmentValuesPersisted": false
   },
   "agentProducer": {
-    "repositoryRevision": "760672883619d4b631fe6c087ac65976a0438a96",
-    "repositoryTree": "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
+    "repositoryRevision": "0ca7665792fb067892811736b059f3fe6809a8a7",
+    "repositoryTree": "b248592e3b1fe2275292df4a9e141307acfa129c",
     "workingTreeState": "clean",
     "snapshotRoot": "tests/fixtures/eval/tool-loading-live-producer/agent",
     "files": [
       {
         "sourcePath": "agents/veryfront.md",
         "artifactPath": "agents/veryfront.md.snapshot",
-        "sourceSha256": "164fdaf7ce0ca6d9efc59ddaf694d74a246e839ef1da6cfc91dbbdd47da25e6f",
-        "sha256": "164fdaf7ce0ca6d9efc59ddaf694d74a246e839ef1da6cfc91dbbdd47da25e6f"
+        "sourceSha256": "cddfb4820b0840fc319f3341763aec0a5c3ec0022490deb3113bf6e8db37e1fd",
+        "sha256": "cddfb4820b0840fc319f3341763aec0a5c3ec0022490deb3113bf6e8db37e1fd"
+      },
+      {
+        "sourcePath": "evals/tool-loading/agentToolLoadingBenchmarkAdapter.ts",
+        "artifactPath": "evals/tool-loading/agentToolLoadingBenchmarkAdapter.ts.snapshot",
+        "sourceSha256": "dc3c19746fd5147a02ac3cb222cb4c38dce6e51e55fee80ae62eeb0b5b4a96bc",
+        "sha256": "dc3c19746fd5147a02ac3cb222cb4c38dce6e51e55fee80ae62eeb0b5b4a96bc"
       },
       {
         "sourcePath": "evals/tool-loading/benchmarkStudioMcpServer.ts",
@@ -73,14 +80,14 @@
       {
         "sourcePath": "evals/tool-loading/effectiveHostedBenchmarkBinding.ts",
         "artifactPath": "evals/tool-loading/effectiveHostedBenchmarkBinding.ts.snapshot",
-        "sourceSha256": "cdf6dff43907d3845ee194e4a178f7305f5c5438093abaccd24b53f269e5245c",
-        "sha256": "cdf6dff43907d3845ee194e4a178f7305f5c5438093abaccd24b53f269e5245c"
+        "sourceSha256": "83147639eee5ac73e7185a3c7d19642fa6faf7cfcafc975f110db1b9d872d3cc",
+        "sha256": "83147639eee5ac73e7185a3c7d19642fa6faf7cfcafc975f110db1b9d872d3cc"
       },
       {
         "sourcePath": "evals/tool-loading/runToolLoadingBenchmark.ts",
         "artifactPath": "evals/tool-loading/runToolLoadingBenchmark.ts.snapshot",
-        "sourceSha256": "2aac79137b15d8b80f994dbc9ff8319c87e66e16c18fde931117bbbcc95708a8",
-        "sha256": "2aac79137b15d8b80f994dbc9ff8319c87e66e16c18fde931117bbbcc95708a8"
+        "sourceSha256": "9fe85497b6d2f874e5ab46f2b067028b5c74bf435b8116d6df7287b872a93ae7",
+        "sha256": "9fe85497b6d2f874e5ab46f2b067028b5c74bf435b8116d6df7287b872a93ae7"
       },
       {
         "sourcePath": "evals/tool-loading/taskSuccessCases.ts",
@@ -115,13 +122,13 @@
     ]
   },
   "frameworkProducer": {
-    "repositoryRevision": "a2641bfa9a1df3b832efa6cfe3e7175e0b14e2d4",
-    "repositoryTree": "f56735838f2f541c4f4aed1cd79acb7bd339c419",
+    "repositoryRevision": "f66f3bd2162772a5df6abf5aa0fd66b0edd18ac9",
+    "repositoryTree": "72a5b639c23ff9f586d44979065ceb9743ec3c98",
     "workingTreeState": "clean",
     "packageVersion": "0.1.1177",
     "installedPackageTarget": "veryfront-code/npm",
-    "packageIntegrity": "sha512-CcS6oiFbZ9CmHWUvR9k1WEUOl7AYi+oRjapVotnQ/xY9Y4vP21A8SqizMooQS1+Bk2mGj0RYD6ZtqiZ3oQc/uA==",
-    "tarballSha256": "1cac6e2e513607e931401cfd2e785d43ea041e4af8d37ab42ab68170a24172a3",
+    "packageIntegrity": "sha512-EKk8vgAOaqY+LjuGdh2DlY6L50pa9t3b7HS8v2eFeNZXT8Pc51sdKbExsPG6pFjuTWBHjZ58czoGv7xzhLNpMg==",
+    "tarballSha256": "0c83e11b8418d581395eb4ed6202e51244f64eafded56069b5ac993a89d714f1",
     "snapshotRoot": "tests/fixtures/eval/tool-loading-live-producer/framework",
     "files": [
       {

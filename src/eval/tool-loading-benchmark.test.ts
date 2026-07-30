@@ -36,6 +36,9 @@ interface LiveReleaseGateArtifact {
   sourceTree: string;
   catalogSourceRevision: string;
   catalogSourceTree: string;
+  liveCalls: number;
+  comparisonLiveCalls: number;
+  canaryLiveCalls: number;
   deterministicGate: {
     status: "passed" | "failed";
     passRate: number;
@@ -62,10 +65,12 @@ interface LiveReleaseGateArtifact {
     eager: EvalToolLoadingBenchmarkRecord & {
       sourceTree: string;
       catalogSourceTree: string;
+      loadingPath: "eager" | "framework-fallback" | "provider-native";
     };
     deferred: EvalToolLoadingBenchmarkRecord & {
       sourceTree: string;
       catalogSourceTree: string;
+      loadingPath: "eager" | "framework-fallback" | "provider-native";
     };
   }>;
 }
@@ -240,27 +245,30 @@ describe("eval/tool-loading-benchmark", () => {
     assertEquals(artifact.sourceArtifact, {
       repository: "veryfront-agent",
       path: ".veryfront/evals/tool-loading/live/report.json",
-      sha256: "0e081ae8d9fd2fb9805e423cf70d3b20223e6a71dfe132ccb83cc07b6cc911ed",
+      sha256: "a166982d93b0afddb7bf806224d739cdadf7801cecb224929dd02918d8dbf64a",
     });
     assertEquals(artifact.producer, {
-      revision: "760672883619d4b631fe6c087ac65976a0438a96",
-      tree: "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
+      revision: "0ca7665792fb067892811736b059f3fe6809a8a7",
+      tree: "b248592e3b1fe2275292df4a9e141307acfa129c",
       clean: true,
     });
     assertEquals(artifact.frameworkPackage, {
       version: "0.1.1177",
       integrity:
-        "sha512-CcS6oiFbZ9CmHWUvR9k1WEUOl7AYi+oRjapVotnQ/xY9Y4vP21A8SqizMooQS1+Bk2mGj0RYD6ZtqiZ3oQc/uA==",
+        "sha512-EKk8vgAOaqY+LjuGdh2DlY6L50pa9t3b7HS8v2eFeNZXT8Pc51sdKbExsPG6pFjuTWBHjZ58czoGv7xzhLNpMg==",
       source: "local-npm-pack",
-      tarballSha256: "1cac6e2e513607e931401cfd2e785d43ea041e4af8d37ab42ab68170a24172a3",
-      frameworkRevision: "a2641bfa9a1df3b832efa6cfe3e7175e0b14e2d4",
-      frameworkTree: "f56735838f2f541c4f4aed1cd79acb7bd339c419",
+      tarballSha256: "0c83e11b8418d581395eb4ed6202e51244f64eafded56069b5ac993a89d714f1",
+      frameworkRevision: "f66f3bd2162772a5df6abf5aa0fd66b0edd18ac9",
+      frameworkTree: "72a5b639c23ff9f586d44979065ceb9743ec3c98",
       frameworkSourceClean: true,
     });
     assertEquals(artifact.sourceRevision, artifact.producer.revision);
     assertEquals(artifact.sourceTree, artifact.producer.tree);
     assertEquals(artifact.catalogSourceRevision, artifact.producer.revision);
     assertEquals(artifact.catalogSourceTree, artifact.producer.tree);
+    assertEquals(artifact.liveCalls, 5);
+    assertEquals(artifact.comparisonLiveCalls, 4);
+    assertEquals(artifact.canaryLiveCalls, 1);
     const producerManifestUrl = new URL(
       "../../tests/fixtures/eval/tool-loading-live-producer-manifest.json",
       import.meta.url,
@@ -294,9 +302,10 @@ describe("eval/tool-loading-benchmark", () => {
       "VERYFRONT_STUDIO_MCP_URL",
       "VERYFRONT_TOKEN",
       "VERYFRONT_API_TOKEN",
+      "AG_UI_EVAL_PROJECT_ID",
+      "VERYFRONT_PROJECT_SLUG",
     ]);
     assertEquals(producer.execution.optionalEnvironmentNames, [
-      "AG_UI_EVAL_PROJECT_ID",
       "VERYFRONT_TOOL_LOADING_TIMEOUT_MS",
       "GIT_COMMIT_SHA",
       "RELEASE_VERSION",
@@ -330,6 +339,14 @@ describe("eval/tool-loading-benchmark", () => {
       sourceSha256: "31172176081c01a15107cb5aa4eae9632b29f0951b4f46c57055e9f4fb4bf559",
       sha256: "31172176081c01a15107cb5aa4eae9632b29f0951b4f46c57055e9f4fb4bf559",
     });
+    assertEquals(
+      producer.agentProducer.files.some((file) =>
+        file.sourcePath === "evals/tool-loading/agentToolLoadingBenchmarkAdapter.ts" &&
+        file.artifactPath ===
+          "evals/tool-loading/agentToolLoadingBenchmarkAdapter.ts.snapshot"
+      ),
+      true,
+    );
     for (const snapshot of [producer.agentProducer, producer.frameworkProducer]) {
       for (const file of snapshot.files) {
         assertEquals(
@@ -375,6 +392,12 @@ describe("eval/tool-loading-benchmark", () => {
       );
       assertEquals(measured.eager.catalogSourceTree, producer.agentProducer.repositoryTree);
       assertEquals(measured.deferred.catalogSourceTree, producer.agentProducer.repositoryTree);
+      assertEquals(measured.eager.usage.effectiveInputTokens, 24_549);
+      assertEquals(measured.deferred.usage.effectiveInputTokens, 6_365);
+      assertEquals(measured.effectiveInputReduction, 0.7407226363599332);
+      assertEquals(measured.eager.authorizedSearchableSchemaCount, 48);
+      assertEquals(measured.deferred.authorizedSearchableSchemaCount, 48);
+      assertEquals(measured.deferred.loadingPath, "framework-fallback");
       const comparison = compareToolLoadingBenchmark(measured.eager, measured.deferred);
 
       assertEquals(comparison.status, measured.status);
