@@ -1,0 +1,386 @@
+{
+  "name": "veryfront",
+  "version": "0.1.1177",
+  "description": "The simplest way to build AI-powered apps",
+  "keywords": [
+    "react",
+    "framework",
+    "ai",
+    "agents",
+    "mcp",
+    "llm",
+    "ssr",
+    "rsc",
+    "typescript"
+  ],
+  "author": "Veryfront",
+  "homepage": "https://veryfront.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/veryfront/veryfront-code.git"
+  },
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/veryfront/veryfront-code/issues"
+  },
+  "module": "./esm/src/index.js",
+  "exports": {
+    ".": {
+      "import": "./esm/src/index.js",
+      "types": "./esm/src/index.d.ts"
+    },
+    "./index.client": {
+      "import": "./esm/src/index.client.js",
+      "types": "./esm/src/index.client.d.ts"
+    },
+    "./head": {
+      "import": "./esm/src/react/components/Head.js",
+      "types": "./esm/src/react/components/Head.d.ts"
+    },
+    "./router": {
+      "import": "./esm/src/react/router/index.js",
+      "types": "./esm/src/react/router/index.d.ts"
+    },
+    "./context": {
+      "import": "./esm/src/react/context/index.js",
+      "types": "./esm/src/react/context/index.d.ts"
+    },
+    "./fonts": {
+      "import": "./esm/src/react/fonts/index.js",
+      "types": "./esm/src/react/fonts/index.d.ts"
+    },
+    "./ui": {
+      "import": "./esm/src/react/components/ui/index.js",
+      "types": "./esm/src/react/components/ui/index.d.ts"
+    },
+    "./ui/icons": {
+      "import": "./esm/src/react/components/ui/icons/index.js",
+      "types": "./esm/src/react/components/ui/icons/index.d.ts"
+    },
+    "./chat": {
+      "import": "./esm/src/chat/index.js",
+      "types": "./esm/src/chat/index.d.ts"
+    },
+    "./chat/ag-ui": {
+      "import": "./esm/src/chat/ag-ui.js",
+      "types": "./esm/src/chat/ag-ui.d.ts"
+    },
+    "./chat/protocol": {
+      "import": "./esm/src/chat/protocol.js",
+      "types": "./esm/src/chat/protocol.d.ts"
+    },
+    "./chat/types": {
+      "import": "./esm/src/chat/types.js",
+      "types": "./esm/src/chat/types.d.ts"
+    },
+    "./chat/uploads": {
+      "import": "./esm/src/chat/upload-handler.js",
+      "types": "./esm/src/chat/upload-handler.d.ts"
+    },
+    "./markdown": {
+      "import": "./esm/src/markdown/index.js",
+      "types": "./esm/src/markdown/index.d.ts"
+    },
+    "./mdx": {
+      "import": "./esm/src/mdx/index.js",
+      "types": "./esm/src/mdx/index.d.ts"
+    },
+    "./agent": {
+      "import": "./esm/src/agent/index.js",
+      "types": "./esm/src/agent/index.d.ts"
+    },
+    "./agent/identity": {
+      "import": "./esm/src/agent/identity-contracts.js",
+      "types": "./esm/src/agent/identity-contracts.d.ts"
+    },
+    "./eval": {
+      "import": "./esm/src/eval/index.js",
+      "types": "./esm/src/eval/index.d.ts"
+    },
+    "./metrics": {
+      "import": "./esm/src/metrics/index.js",
+      "types": "./esm/src/metrics/index.d.ts"
+    },
+    "./eval/agent-service": {
+      "import": "./esm/src/eval/agent-service.js",
+      "types": "./esm/src/eval/agent-service.d.ts"
+    },
+    "./channels/control-plane": {
+      "import": "./esm/src/channels/control-plane.js",
+      "types": "./esm/src/channels/control-plane.d.ts"
+    },
+    "./channels/invoke": {
+      "import": "./esm/src/channels/invoke.js",
+      "types": "./esm/src/channels/invoke.d.ts"
+    },
+    "./tool": {
+      "import": "./esm/src/tool/index.js",
+      "types": "./esm/src/tool/index.d.ts"
+    },
+    "./workflow": {
+      "import": "./esm/src/workflow/index.js",
+      "types": "./esm/src/workflow/index.d.ts"
+    },
+    "./workflow/worker": {
+      "import": "./esm/src/workflow/worker/index.js",
+      "types": "./esm/src/workflow/worker/index.d.ts"
+    },
+    "./workflow/claude-code": {
+      "import": "./esm/src/workflow/claude-code/index.js",
+      "types": "./esm/src/workflow/claude-code/index.d.ts"
+    },
+    "./workflow/claude-code/react": {
+      "import": "./esm/src/workflow/claude-code/react/index.js",
+      "types": "./esm/src/workflow/claude-code/react/index.d.ts"
+    },
+    "./workflow/discovery": {
+      "import": "./esm/src/workflow/discovery/index.js",
+      "types": "./esm/src/workflow/discovery/index.d.ts"
+    },
+    "./schemas": {
+      "import": "./esm/src/schemas/index.js",
+      "types": "./esm/src/schemas/index.d.ts"
+    },
+    "./prompt": {
+      "import": "./esm/src/prompt/index.js",
+      "types": "./esm/src/prompt/index.d.ts"
+    },
+    "./resource": {
+      "import": "./esm/src/resource/index.js",
+      "types": "./esm/src/resource/index.d.ts"
+    },
+    "./runs": {
+      "import": "./esm/src/runs/index.js",
+      "types": "./esm/src/runs/index.d.ts"
+    },
+    "./skill": {
+      "import": "./esm/src/skill/index.js",
+      "types": "./esm/src/skill/index.d.ts"
+    },
+    "./trigger": {
+      "import": "./esm/src/trigger/index.js",
+      "types": "./esm/src/trigger/index.d.ts"
+    },
+    "./task": {
+      "import": "./esm/src/task/index.js",
+      "types": "./esm/src/task/index.d.ts"
+    },
+    "./schedule": {
+      "import": "./esm/src/schedule/index.js",
+      "types": "./esm/src/schedule/index.d.ts"
+    },
+    "./webhook": {
+      "import": "./esm/src/webhook/index.js",
+      "types": "./esm/src/webhook/index.d.ts"
+    },
+    "./mcp": {
+      "import": "./esm/src/mcp/index.js",
+      "types": "./esm/src/mcp/index.d.ts"
+    },
+    "./middleware": {
+      "import": "./esm/src/middleware/index.js",
+      "types": "./esm/src/middleware/index.d.ts"
+    },
+    "./observability": {
+      "import": "./esm/src/observability/index.js",
+      "types": "./esm/src/observability/index.d.ts"
+    },
+    "./observability/sentry": {
+      "import": "./esm/src/observability/sentry.js",
+      "types": "./esm/src/observability/sentry.d.ts"
+    },
+    "./observability/otlp-setup": {
+      "import": "./esm/src/observability/tracing/otlp-setup.js",
+      "types": "./esm/src/observability/tracing/otlp-setup.d.ts"
+    },
+    "./utils": {
+      "import": "./esm/src/utils/index.js",
+      "types": "./esm/src/utils/index.d.ts"
+    },
+    "./utils/logger": {
+      "import": "./esm/src/utils/logger/index.js",
+      "types": "./esm/src/utils/logger/index.d.ts"
+    },
+    "./release-assets": {
+      "import": "./esm/src/release-assets/index.js",
+      "types": "./esm/src/release-assets/index.d.ts"
+    },
+    "./oauth": {
+      "import": "./esm/src/oauth/index.js",
+      "types": "./esm/src/oauth/index.d.ts"
+    },
+    "./provider": {
+      "import": "./esm/src/provider/index.js",
+      "types": "./esm/src/provider/index.d.ts"
+    },
+    "./provider/shared": {
+      "import": "./esm/src/provider/shared/index.js",
+      "types": "./esm/src/provider/shared/index.d.ts"
+    },
+    "./provider/types": {
+      "import": "./esm/src/provider/types.js",
+      "types": "./esm/src/provider/types.d.ts"
+    },
+    "./fs": {
+      "import": "./esm/src/fs/index.js",
+      "types": "./esm/src/fs/index.d.ts"
+    },
+    "./integrations": {
+      "import": "./esm/src/integrations/index.js",
+      "types": "./esm/src/integrations/index.d.ts"
+    },
+    "./sandbox": {
+      "import": "./esm/src/sandbox/index.js",
+      "types": "./esm/src/sandbox/index.d.ts"
+    },
+    "./embedding": {
+      "import": "./esm/src/embedding/index.js",
+      "types": "./esm/src/embedding/index.d.ts"
+    },
+    "./knowledge": {
+      "import": "./esm/src/knowledge/index.js",
+      "types": "./esm/src/knowledge/index.d.ts"
+    },
+    "./extensions": {
+      "import": "./esm/src/extensions/index.js",
+      "types": "./esm/src/extensions/index.d.ts"
+    },
+    "./extensions/llm": {
+      "import": "./esm/src/extensions/llm/index.js",
+      "types": "./esm/src/extensions/llm/index.d.ts"
+    },
+    "./extensions/auth": {
+      "import": "./esm/src/extensions/auth/index.js",
+      "types": "./esm/src/extensions/auth/index.d.ts"
+    },
+    "./extensions/bundler": {
+      "import": "./esm/src/extensions/bundler/index.js",
+      "types": "./esm/src/extensions/bundler/index.d.ts"
+    },
+    "./extensions/cache": {
+      "import": "./esm/src/extensions/cache/index.js",
+      "types": "./esm/src/extensions/cache/index.d.ts"
+    },
+    "./extensions/content": {
+      "import": "./esm/src/extensions/content/index.js",
+      "types": "./esm/src/extensions/content/index.d.ts"
+    },
+    "./extensions/contracts": {
+      "import": "./esm/src/extensions/contracts.js",
+      "types": "./esm/src/extensions/contracts.d.ts"
+    },
+    "./extensions/compat": {
+      "import": "./esm/src/extensions/compat/index.js",
+      "types": "./esm/src/extensions/compat/index.d.ts"
+    },
+    "./extensions/first-party-import": {
+      "import": "./esm/src/extensions/first-party-import.js",
+      "types": "./esm/src/extensions/first-party-import.d.ts"
+    },
+    "./extensions/css": {
+      "import": "./esm/src/extensions/css/index.js",
+      "types": "./esm/src/extensions/css/index.d.ts"
+    },
+    "./extensions/database": {
+      "import": "./esm/src/extensions/database/index.js",
+      "types": "./esm/src/extensions/database/index.d.ts"
+    },
+    "./extensions/eval": {
+      "import": "./esm/src/extensions/eval/index.js",
+      "types": "./esm/src/extensions/eval/index.d.ts"
+    },
+    "./extensions/parser": {
+      "import": "./esm/src/extensions/parser/index.js",
+      "types": "./esm/src/extensions/parser/index.d.ts"
+    },
+    "./extensions/sandbox": {
+      "import": "./esm/src/extensions/sandbox/index.js",
+      "types": "./esm/src/extensions/sandbox/index.d.ts"
+    },
+    "./extensions/schema": {
+      "import": "./esm/src/extensions/schema/index.js",
+      "types": "./esm/src/extensions/schema/index.d.ts"
+    },
+    "./extensions/observability": {
+      "import": "./esm/src/extensions/observability/index.js",
+      "types": "./esm/src/extensions/observability/index.d.ts"
+    },
+    "./testing": {
+      "import": "./esm/src/testing/index.js",
+      "types": "./esm/src/testing/index.d.ts"
+    },
+    "./testing/assert": {
+      "import": "./esm/src/testing/assert.js",
+      "types": "./esm/src/testing/assert.d.ts"
+    },
+    "./testing/bdd": {
+      "import": "./esm/src/testing/bdd.js",
+      "types": "./esm/src/testing/bdd.d.ts"
+    },
+    "./cli": {
+      "import": "./esm/cli/main.js",
+      "types": "./esm/cli/main.d.ts"
+    },
+    "./chat/message-prep": {
+      "import": "./esm/src/chat/message-prep.js",
+      "types": "./esm/src/chat/message-prep.d.ts"
+    },
+    "./server": {
+      "import": "./esm/src/server/index.js",
+      "types": "./esm/src/server/index.d.ts"
+    },
+    "./tsconfig.json": "./tsconfig.json"
+  },
+  "scripts": {},
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "zod": "4.3.6",
+    "@deno/shim-deno": "0.18.0",
+    "@deno/shim-crypto": "0.3.1",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "ws": "8.21.0",
+    "@veryfront/ext-bundler-esbuild": "0.1.1177",
+    "@veryfront/ext-content-mdx": "0.1.1177",
+    "@veryfront/ext-css-tailwind": "0.1.1177",
+    "@veryfront/ext-parser-babel": "0.1.1177"
+  },
+  "devDependencies": {
+    "@types/node": "20.9.0"
+  },
+  "_generatedBy": "dnt@dev",
+  "peerDependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "redis": "5.11.0"
+  },
+  "peerDependenciesMeta": {
+    "@huggingface/transformers": {
+      "optional": true
+    },
+    "redis": {
+      "optional": true
+    }
+  },
+  "overrides": {
+    "protobufjs": "8.6.5"
+  },
+  "type": "module",
+  "types": "./esm/src/index.d.ts",
+  "bin": {
+    "veryfront": "bin/veryfront.js"
+  },
+  "files": [
+    "esm",
+    "script",
+    "bin",
+    "assets",
+    "tsconfig.json",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ]
+}

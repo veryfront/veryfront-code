@@ -8,7 +8,7 @@
   },
   "producerManifest": {
     "path": "tests/fixtures/eval/tool-loading-live-producer-manifest.json",
-    "sha256": "dd39e02e3635dc0b7934aef2fb553824a18f5eb6a2e62fcfd9ff681dda64af7a"
+    "sha256": "e61c4da4ebdfbf67099effbdd5303aa87957e9f66307b18bde9e462e712896e4"
   },
   "model": "anthropic/claude-opus-4-6",
   "executionModel": "veryfront-cloud/anthropic/claude-opus-4-6",

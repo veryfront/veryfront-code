@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import {
   createRuntimeAgentSystemMessages,
   parseRuntimeAgentMarkdownDefinition,
@@ -40,7 +41,7 @@ Follow the support runbook.
   });
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition defaults tool loading to deferred", () => {
+it("parseRuntimeAgentMarkdownDefinition defaults tool loading to deferred", () => {
   const result = parseRuntimeAgentMarkdownDefinition({
     id: "support-agent",
     content: "Help the user.",
@@ -49,7 +50,7 @@ Deno.test("parseRuntimeAgentMarkdownDefinition defaults tool loading to deferred
   assertEquals(result.toolLoading, "deferred");
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition parses explicit tool loading modes", () => {
+it("parseRuntimeAgentMarkdownDefinition parses explicit tool loading modes", () => {
   for (const toolLoading of ["deferred", "eager"] as const) {
     const result = parseRuntimeAgentMarkdownDefinition({
       id: `${toolLoading}-agent`,
@@ -64,7 +65,7 @@ Help the user.
   }
 });
 
-Deno.test("parseRuntimeAgentMarkdownDefinition rejects invalid tool loading modes", () => {
+it("parseRuntimeAgentMarkdownDefinition rejects invalid tool loading modes", () => {
   for (const toolLoading of ["auto", "defered", "unknown"]) {
     assertThrows(
       () =>

@@ -112,8 +112,10 @@
     "files": [
       {
         "sourcePath": "npm/package.json",
-        "artifactPath": "npm/package.json.snapshot",
-        "sha256": "a05aae93857bde1932bd0a152f479bd801e17371929c8d72e1573ca011f1971d"
+        "artifactPath": "npm-package.json.snapshot",
+        "sourceSha256": "a05aae93857bde1932bd0a152f479bd801e17371929c8d72e1573ca011f1971d",
+        "artifactNormalization": "appended-final-newline",
+        "sha256": "3f223b3e582422c246fc3cec9fce5f3d890856042e5933ec7325d9ff133a90cc"
       }
     ]
   }

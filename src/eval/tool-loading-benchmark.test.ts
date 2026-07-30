@@ -32,6 +32,14 @@ interface LiveReleaseGateArtifact {
   }>;
 }
 
+interface LiveProducerSnapshotFile {
+  sourcePath: string;
+  artifactPath: string;
+  sourceSha256?: string;
+  artifactNormalization?: string;
+  sha256: string;
+}
+
 interface LiveProducerManifest {
   report: {
     path: string;
@@ -56,7 +64,7 @@ interface LiveProducerManifest {
     reportedBaseRevision: string;
     workingTreeState: string;
     snapshotRoot: string;
-    files: Array<{ sourcePath: string; artifactPath: string; sha256: string }>;
+    files: LiveProducerSnapshotFile[];
   };
   frameworkProducer: {
     repositoryRevision: string;
@@ -64,7 +72,7 @@ interface LiveProducerManifest {
     installedPackageTarget: string;
     builtPackageTreeSha256: string;
     snapshotRoot: string;
-    files: Array<{ sourcePath: string; artifactPath: string; sha256: string }>;
+    files: LiveProducerSnapshotFile[];
   };
 }
 
@@ -248,6 +256,13 @@ describe("eval/tool-loading-benchmark", () => {
       producer.frameworkProducer.builtPackageTreeSha256,
       "ad6f567ca3a7577275585a69b25da238dacca9004e3f1649851c6ab06930ab72",
     );
+    assertEquals(producer.frameworkProducer.files[0], {
+      sourcePath: "npm/package.json",
+      artifactPath: "npm-package.json.snapshot",
+      sourceSha256: "a05aae93857bde1932bd0a152f479bd801e17371929c8d72e1573ca011f1971d",
+      artifactNormalization: "appended-final-newline",
+      sha256: "3f223b3e582422c246fc3cec9fce5f3d890856042e5933ec7325d9ff133a90cc",
+    });
     for (const snapshot of [producer.agentProducer, producer.frameworkProducer]) {
       for (const file of snapshot.files) {
         assertEquals(
@@ -256,7 +271,7 @@ describe("eval/tool-loading-benchmark", () => {
           ),
           file.sha256,
         );
-        assertEquals(file.artifactPath, `${file.sourcePath}.snapshot`);
+        assertEquals(file.artifactPath.endsWith(".snapshot"), true);
       }
     }
     assertEquals(artifact.deterministicGate, {
