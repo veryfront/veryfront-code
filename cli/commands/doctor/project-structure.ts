@@ -1,4 +1,4 @@
-import { exists } from "#std/fs.ts";
+import { createFileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { getConfig } from "veryfront/config";
 import type { DiagnosticResult } from "./types.ts";
@@ -6,10 +6,11 @@ import type { DiagnosticResult } from "./types.ts";
 export async function checkProjectStructure(projectDir: string): Promise<DiagnosticResult[]> {
   const requiredFiles = ["pages", "pages/index.mdx"];
   const results: DiagnosticResult[] = [];
+  const fs = createFileSystem();
 
   for (const file of requiredFiles) {
     const filePath = join(projectDir, file);
-    const found = await exists(filePath);
+    const found = await fs.exists(filePath);
 
     results.push({
       name: `Project Structure (${file})`,
