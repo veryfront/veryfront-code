@@ -107,6 +107,7 @@ const expectedRuntimeExports = [
   "Separator",
   "Shimmer",
   "Skeleton",
+  "Slider",
   "Slot",
   "Status",
   "Switch",

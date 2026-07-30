@@ -201,6 +201,7 @@ export {
 export { AspectRatio, type AspectRatioProps } from "./aspect-ratio.tsx";
 export { NumberField, type NumberFieldProps } from "./number-field.tsx";
 export { Separator, type SeparatorProps } from "./separator.tsx";
+export { Slider, type SliderProps } from "./slider.tsx";
 export { Toggle, type ToggleProps } from "./toggle.tsx";
 export {
   ToggleGroup,
