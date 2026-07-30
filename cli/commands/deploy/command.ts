@@ -38,7 +38,6 @@ import { pushCommand } from "../push/index.ts";
 import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import {
   computeSourceDigest,
-  getProjectTarget,
   normalizeControlPlane,
   type ProjectTarget,
   PUSH_RECEIPT_RELATIVE_PATH,
@@ -48,6 +47,13 @@ import {
   validatePushReceipt,
 } from "../../shared/deployment-provenance.ts";
 import { type ReleaseAssetManifestResponse, routeForPage } from "veryfront/release-assets";
+import {
+  createHttpDeployControlPlane,
+  type DeployDeployment,
+  type DeployEnvironment,
+  type DeploymentRoutingConvergence,
+  type DeployRelease,
+} from "../../shared/deployment/control-plane.ts";
 import { parseProjectDomain } from "veryfront/server";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
 
@@ -139,19 +145,7 @@ interface Release {
 /**
  * Deployment from the API
  */
-interface DeploymentResponse {
-  id: string;
-  release_id?: string;
-  environment_id?: string;
-  release?: string | { id: string };
-  environment?: string | { id: string };
-  routing_convergence?: DeploymentRoutingConvergence;
-}
-
-export type DeploymentRoutingConvergence =
-  | { status: "converged"; acknowledged: number; recipients: number }
-  | { status: "pending" }
-  | { status: "skipped" };
+export type { DeploymentRoutingConvergence };
 
 export interface Deployment {
   id: string;
@@ -312,60 +306,6 @@ function boundedReleaseSourceVerificationOptions(
   return { attempts, delayMs };
 }
 
-/**
- * List environments response from API
- */
-interface ListEnvironmentsResponse {
-  data: Environment[];
-  page_info?: {
-    next?: string;
-  };
-}
-
-interface ReleaseFileVersion {
-  path: string;
-  content?: unknown;
-  data?: unknown;
-}
-
-interface ListReleaseVersionsResponse {
-  data: ReleaseFileVersion[];
-  page_info?: {
-    next?: string;
-  };
-}
-
-function referenceId(value: string | { id: string } | undefined): string | undefined {
-  return typeof value === "string" ? value : value?.id;
-}
-
-function normalizeEnvironment(environment: Environment): Environment {
-  const projectId = environment.project_id ?? environment.projectId ??
-    referenceId(environment.project);
-  return projectId ? { ...environment, project_id: projectId } : environment;
-}
-
-function normalizeRelease(release: Release): Release {
-  const projectId = release.project_id ?? release.projectId ?? referenceId(release.project);
-  return projectId ? { ...release, project_id: projectId } : release;
-}
-
-function normalizeDeployment(deployment: DeploymentResponse): Deployment {
-  const releaseId = deployment.release_id ?? referenceId(deployment.release);
-  const environmentId = deployment.environment_id ?? referenceId(deployment.environment);
-  if (!releaseId || !environmentId) {
-    throw DEPLOYMENT_ERROR.create({
-      detail: `Deployment ${deployment.id} response is missing release or environment IDs`,
-    });
-  }
-  return {
-    id: deployment.id,
-    release_id: releaseId,
-    environment_id: environmentId,
-    routing_convergence: deployment.routing_convergence,
-  };
-}
-
 export function getDeploymentRoutingConvergenceWarning(
   deployment: Deployment,
 ): string | null {
@@ -395,37 +335,44 @@ export function assertProjectOwnership(
   }
 }
 
-function getReleaseFileContent(file: ReleaseFileVersion): string {
-  const content = typeof file.content === "string" ? file.content : undefined;
-  let legacyBody: string | undefined;
+function controlPlaneConfig(projectSlug: string): ResolvedConfig {
+  return {
+    apiUrl: "https://control.invalid/api",
+    apiToken: "",
+    projectSlug,
+  };
+}
 
-  if (typeof file.data === "string") {
-    let envelope: unknown;
-    try {
-      envelope = JSON.parse(file.data);
-    } catch {
-      throw new Error(`Release file ${file.path} has invalid version data`);
-    }
-    if (typeof envelope !== "object" || envelope === null || Array.isArray(envelope)) {
-      throw new Error(`Release file ${file.path} has invalid version data`);
-    }
+function toEnvironment(environment: DeployEnvironment): Environment {
+  return {
+    id: environment.id,
+    name: environment.name,
+    protected: environment.protected,
+    ...(environment.projectId ? { project_id: environment.projectId } : {}),
+    ...(environment.deployment !== undefined ? { deployment: environment.deployment } : {}),
+    ...(environment.domains ? { domains: environment.domains } : {}),
+  };
+}
 
-    const record = envelope as Record<string, unknown>;
-    if (typeof record.body !== "string") {
-      throw new Error(`Release file ${file.path} version data has no body`);
-    }
-    if (typeof record.path === "string" && record.path !== file.path) {
-      throw new Error(`Release file ${file.path} version data references ${record.path}`);
-    }
-    legacyBody = record.body;
-  }
+function toRelease(release: DeployRelease): Release {
+  return {
+    id: release.id,
+    name: release.name,
+    version: release.version,
+    ...(release.projectId ? { project_id: release.projectId } : {}),
+    export_status: "",
+    build_status: "",
+    deploy_status: "",
+  };
+}
 
-  if (content !== undefined && legacyBody !== undefined && content !== legacyBody) {
-    throw new Error(`Release file ${file.path} has conflicting content fields`);
-  }
-  const value = content ?? legacyBody;
-  if (value === undefined) throw new Error(`Release file ${file.path} has no content`);
-  return value;
+function toDeployment(deployment: DeployDeployment): Deployment {
+  return {
+    id: deployment.id,
+    release_id: deployment.releaseId,
+    environment_id: deployment.environmentId,
+    routing_convergence: deployment.routingConvergence,
+  };
 }
 
 /**
@@ -436,28 +383,14 @@ export async function getEnvironmentByName(
   projectSlug: string,
   name: string,
 ): Promise<Environment | null> {
-  let cursor: string | undefined;
-
-  do {
-    const params: Record<string, string> = { limit: "100" };
-    if (cursor) params.cursor = cursor;
-
-    const response = await client.get<ListEnvironmentsResponse>(
-      `/projects/${projectSlug}/environments`,
-      params,
-    );
-
-    const found = response.data.find((e) => e.name === name);
-    if (found) return normalizeEnvironment(found);
-
-    cursor = response.page_info?.next;
-  } while (cursor);
-
-  return null;
+  const environment = await createHttpDeployControlPlane(controlPlaneConfig(projectSlug), client)
+    .getEnvironment(projectSlug, name);
+  return environment ? toEnvironment(environment) : null;
 }
 
 export function getProject(client: ApiClient, projectReference: string) {
-  return getProjectTarget(client, projectReference);
+  return createHttpDeployControlPlane(controlPlaneConfig(projectReference), client)
+    .getProject(projectReference);
 }
 
 export async function getRelease(
@@ -465,10 +398,10 @@ export async function getRelease(
   projectReference: string,
   releaseId: string,
 ): Promise<Release> {
-  const release = await client.get<Release>(
-    `/projects/${projectReference}/releases/${releaseId}`,
+  return toRelease(
+    await createHttpDeployControlPlane(controlPlaneConfig(projectReference), client)
+      .getRelease(projectReference, releaseId),
   );
-  return normalizeRelease(release);
 }
 
 export async function getDeployment(
@@ -476,10 +409,10 @@ export async function getDeployment(
   projectReference: string,
   deploymentId: string,
 ): Promise<Deployment> {
-  const deployment = await client.get<DeploymentResponse>(
-    `/projects/${projectReference}/deployments/${deploymentId}`,
+  return toDeployment(
+    await createHttpDeployControlPlane(controlPlaneConfig(projectReference), client)
+      .getDeployment(projectReference, deploymentId),
   );
-  return normalizeDeployment(deployment);
 }
 
 export async function getReleaseSourceDigest(
@@ -487,24 +420,14 @@ export async function getReleaseSourceDigest(
   projectReference: string,
   releaseId: string,
 ): Promise<string> {
-  const files: ReleaseFileVersion[] = [];
-  let cursor: string | undefined;
-
-  do {
-    const params: Record<string, string> = { limit: "100" };
-    if (cursor) params.cursor = cursor;
-    const response = await client.get<ListReleaseVersionsResponse>(
-      `/projects/${projectReference}/releases/${releaseId}/versions`,
-      params,
-    );
-    files.push(...response.data);
-    cursor = response.page_info?.next;
-  } while (cursor);
-
-  return computeSourceDigest(files.map((file) => ({
-    path: file.path,
-    content: getReleaseFileContent(file),
-  })));
+  const files = [];
+  for await (
+    const file of createHttpDeployControlPlane(controlPlaneConfig(projectReference), client)
+      .listReleaseFiles(projectReference, releaseId)
+  ) {
+    files.push(file);
+  }
+  return computeSourceDigest(files);
 }
 
 /**
@@ -515,11 +438,13 @@ export async function createRelease(
   projectSlug: string,
   options?: { name?: string; branch?: string },
 ): Promise<Release> {
-  const body: Record<string, string> = {};
-  if (options?.name) body.name = options.name;
-  if (options?.branch) body.branch_reference = options.branch;
-
-  return normalizeRelease(await client.post<Release>(`/projects/${projectSlug}/releases`, body));
+  return toRelease(
+    await createHttpDeployControlPlane(controlPlaneConfig(projectSlug), client)
+      .createRelease(projectSlug, {
+        ...(options?.name ? { name: options.name } : {}),
+        branch: options?.branch ?? "",
+      }),
+  );
 }
 
 /**
@@ -531,14 +456,10 @@ export async function createDeployment(
   releaseId: string,
   environmentId: string,
 ): Promise<Deployment> {
-  const deployment = await client.post<DeploymentResponse>(
-    `/projects/${projectSlug}/deployments`,
-    {
-      release_id: releaseId,
-      environment_id: environmentId,
-    },
+  return toDeployment(
+    await createHttpDeployControlPlane(controlPlaneConfig(projectSlug), client)
+      .createDeployment(projectSlug, { releaseId, environmentId }),
   );
-  return normalizeDeployment(deployment);
 }
 
 function wait(ms: number): Promise<void> {
@@ -1163,12 +1084,11 @@ export async function waitForReleaseAssetManifest(
   const expectedRoutes = options.expectedRoutes ?? [];
   const deadline = Date.now() + timeoutMs;
   let lastState = "missing";
+  const controlPlane = createHttpDeployControlPlane(controlPlaneConfig(projectSlug), client);
 
   for (;;) {
-    try {
-      const result = await client.get<ReleaseAssetManifestResponse>(
-        `/projects/${projectSlug}/releases/${releaseId}/asset-manifest`,
-      );
+    const result = await controlPlane.getReleaseAssetManifest(projectSlug, releaseId);
+    if (result) {
       lastState = result.state;
 
       if (result.state === "ready") {
@@ -1178,8 +1098,6 @@ export async function waitForReleaseAssetManifest(
       if (result.state === "failed") {
         throw new Error(`Release asset build failed for release ${releaseId}`);
       }
-    } catch (error) {
-      if (getErrorStatus(error) !== 404) throw error;
     }
 
     const remainingMs = deadline - Date.now();

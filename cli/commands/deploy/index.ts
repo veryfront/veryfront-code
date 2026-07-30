@@ -31,4 +31,13 @@ export type {
   EnvironmentReadinessTarget,
   ReleaseSourceVerification,
 } from "./command.ts";
+export { createHttpDeployControlPlane } from "../../shared/deployment/control-plane.ts";
+export type {
+  DeployControlPlane,
+  DeployDeployment,
+  DeployEnvironment,
+  DeployProjectRecord,
+  DeployRelease,
+  DeployReleaseFile,
+} from "../../shared/deployment/control-plane.ts";
 export { handleDeployCommand } from "./handler.ts";
