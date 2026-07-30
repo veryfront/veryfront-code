@@ -30,19 +30,37 @@ Read top-to-bottom once, then work from **[Work breakdown](#work-breakdown--ever
 
 ## Repos & setup
 
-| Repo               | Path                                                                 | Remote                              | Role                                            |
-| ------------------ | -------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------- |
-| Framework          | `/Users/mattboon/Sites/veryfront-code`                               | `veryfront/veryfront-code`          | `veryfront/ui` + `veryfront/chat` live here     |
-| Reproducer harness | `/Users/mattboon/Sites/veryfront-examples/veryfront-router-testing`  | `mattboon/veryfront-router-testing` | example apps run against LOCAL framework source |
-| Reference app      | `/Users/mattboon/Sites/veryfront-examples/customer-operations-agent` | —                                   | a real consumer (uses `<Chat>` + shell)         |
+| Repo               | Path                                                                 | Remote                              | Role                                                                                                      |
+| ------------------ | -------------------------------------------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Framework          | `/Users/mattboon/Sites/veryfront-code`                               | `veryfront/veryfront-code`          | `veryfront/ui` + `veryfront/chat` live here                                                               |
+| Reproducer harness | `/Users/mattboon/Sites/veryfront-examples/veryfront-router-testing`  | `mattboon/veryfront-router-testing` | example apps run against LOCAL framework source                                                           |
+| Reference app      | `/Users/mattboon/Sites/veryfront-examples/customer-operations-agent` | —                                   | a real consumer (uses `<Chat>` + shell)                                                                   |
+| Issue tracker      | (GitHub only)                                                        | `veryfront/veryfront-issue-inbox`   | file/find issues here — **NOT** `veryfront-code`; use `gh issue … --repo veryfront/veryfront-issue-inbox` |
 
 **Open PRs (in progress):**
 
 - Framework: **veryfront/veryfront-code#3185**, branch `feat/ui-chat-to-spec`. **Currently RED — it conflicts with `main`** (see "Merge situation" below). Commit further framework work on this branch and push.
 - Harness: **mattboon/veryfront-router-testing#8**, branch `feat/chat-adoption-demos`.
+- Spec PRs: **veryfront/veryfront-code#3090** (ui adapters, merged) · **#2980** (chat API shape, open).
 
-**Running example apps against local framework source** (from
-`veryfront-router-testing/LOCALDEV.md`, "Method 1"):
+**Run the framework locally** (from `/Users/mattboon/Sites/veryfront-code`; runtime is **Deno**, tested 2.7.x + Node 22):
+
+```bash
+deno task dev          # run the veryfront dev server on this source
+deno task storybook    # the Storybook UI workbench (stories live in storybook/stories/{ui,chat})
+deno task test:unit    # unit tests (src + cli)
+deno check <files>     # typecheck   ·   deno fmt <files>   ·   deno lint <files>
+```
+
+Run a single test file with:
+
+```bash
+DENO_TESTING=1 VF_DISABLE_LRU_INTERVAL=1 NODE_ENV=production LOG_FORMAT=text \
+  deno test --no-check --allow-all --unstable-worker-options --unstable-net <files>
+```
+
+**Running the example apps** (`veryfront-router-testing`) **against local framework
+source** (from `veryfront-router-testing/LOCALDEV.md`, "Method 1"):
 
 ```bash
 cd <subproject>            # e.g. chat-blackbox
