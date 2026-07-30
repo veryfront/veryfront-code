@@ -545,6 +545,34 @@ describe("getEnvironmentByName", () => {
     const env = await getEnvironmentByName(mockClient, "my-project", "nonexistent");
     assertEquals(env, null);
   });
+
+  it("preserves environment ownership aliases from the API response", async () => {
+    const mockClient = createMockClient({
+      get: () =>
+        Promise.resolve({
+          data: [
+            {
+              id: "env-1",
+              name: "production",
+              protected: true,
+              project_id: "project-1",
+              projectId: "project-1-alias",
+              project: { id: "project-1-reference" },
+            },
+          ],
+        }),
+    });
+
+    const env = await getEnvironmentByName(mockClient, "my-project", "production");
+    assertEquals(env, {
+      id: "env-1",
+      name: "production",
+      protected: true,
+      project_id: "project-1",
+      projectId: "project-1-alias",
+      project: { id: "project-1-reference" },
+    });
+  });
 });
 
 describe("createRelease", () => {
@@ -610,6 +638,35 @@ describe("createRelease", () => {
 
     await createRelease(mockClient, "my-project", { name: "v2.0.0", branch: "develop" });
     assertEquals(capturedBody, { name: "v2.0.0", branch_reference: "develop" });
+  });
+
+  it("preserves API-supplied release status fields and ownership aliases", async () => {
+    const mockClient = createMockClient({
+      post: () =>
+        Promise.resolve({
+          id: "rel-123",
+          name: "v2.0.0",
+          version: "1.0.0",
+          project_id: "project-1",
+          projectId: "project-1-alias",
+          project: { id: "project-1-reference" },
+          export_status: "exported",
+          build_status: "built",
+          deploy_status: "ready",
+        }),
+    });
+
+    assertEquals(await createRelease(mockClient, "my-project", { name: "v2.0.0" }), {
+      id: "rel-123",
+      name: "v2.0.0",
+      version: "1.0.0",
+      project_id: "project-1",
+      projectId: "project-1-alias",
+      project: { id: "project-1-reference" },
+      export_status: "exported",
+      build_status: "built",
+      deploy_status: "ready",
+    });
   });
 });
 

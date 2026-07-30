@@ -99,6 +99,9 @@ interface WireRelease {
   project_id?: string;
   project?: string | { id: string };
   projectId?: string;
+  export_status?: string;
+  build_status?: string;
+  deploy_status?: string;
 }
 
 interface WireDeployment {
@@ -141,7 +144,7 @@ function normalizeProject(project: ProjectTarget): DeployProjectRecord {
 function normalizeEnvironment(environment: WireEnvironment): DeployEnvironment {
   const projectId = environment.project_id ?? environment.projectId ??
     referenceId(environment.project);
-  return {
+  const result = {
     id: environment.id,
     name: environment.name,
     protected: environment.protected,
@@ -149,16 +152,39 @@ function normalizeEnvironment(environment: WireEnvironment): DeployEnvironment {
     ...(environment.deployment !== undefined ? { deployment: environment.deployment } : {}),
     ...(environment.domains ? { domains: environment.domains } : {}),
   };
+  return withCompatibility(
+    result,
+    "legacyEnvironment",
+    projectId ? { ...environment, project_id: projectId } : environment,
+  );
 }
 
 function normalizeRelease(release: WireRelease): DeployRelease {
   const projectId = release.project_id ?? release.projectId ?? referenceId(release.project);
-  return {
+  const result = {
     id: release.id,
     name: release.name,
     version: release.version,
     ...(projectId ? { projectId } : {}),
   };
+  return withCompatibility(
+    result,
+    "legacyRelease",
+    projectId ? { ...release, project_id: projectId } : release,
+  );
+}
+
+function withCompatibility<T extends object, V>(
+  value: T,
+  name: string,
+  compatibility: V,
+): T {
+  Object.defineProperty(value, name, {
+    value: compatibility,
+    enumerable: false,
+    configurable: false,
+  });
+  return value;
 }
 
 function normalizeDeployment(deployment: WireDeployment): DeployDeployment {

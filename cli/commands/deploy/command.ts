@@ -344,6 +344,11 @@ function controlPlaneConfig(projectSlug: string): ResolvedConfig {
 }
 
 function toEnvironment(environment: DeployEnvironment): Environment {
+  const legacyEnvironment = (environment as DeployEnvironment & {
+    legacyEnvironment?: Environment;
+  }).legacyEnvironment;
+  if (legacyEnvironment) return legacyEnvironment;
+
   return {
     id: environment.id,
     name: environment.name,
@@ -355,15 +360,15 @@ function toEnvironment(environment: DeployEnvironment): Environment {
 }
 
 function toRelease(release: DeployRelease): Release {
+  const legacyRelease = (release as DeployRelease & { legacyRelease?: Release }).legacyRelease;
+  if (legacyRelease) return legacyRelease;
+
   return {
     id: release.id,
     name: release.name,
     version: release.version,
     ...(release.projectId ? { project_id: release.projectId } : {}),
-    export_status: "",
-    build_status: "",
-    deploy_status: "",
-  };
+  } as Release;
 }
 
 function toDeployment(deployment: DeployDeployment): Deployment {
