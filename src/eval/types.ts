@@ -144,6 +144,9 @@ export type EvalUsageCaptureStatus = "complete" | "partial" | "missing";
 /** Billing boundary for gateway-backed eval usage. */
 export type EvalUsageBillingMode = "direct" | "deferred";
 
+/** Provider family used for provider-aware usage calculations. */
+export type EvalUsageProvider = "anthropic" | "openai";
+
 /** Token and cost usage captured for one eval record. */
 export interface EvalUsage {
   inputTokens?: number;
@@ -154,6 +157,8 @@ export interface EvalUsage {
   cachedInputTokens?: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
+  cacheWriteInputTokens?: number;
+  effectiveInputTokens?: number;
   reasoningTokens?: number;
   costUsd?: number;
   providerInputCostUsd?: number;
@@ -540,6 +545,8 @@ export interface EvalUsageSummary {
   cachedInputTokens?: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
+  cacheWriteInputTokens?: number;
+  effectiveInputTokens?: number;
   reasoningTokens?: number;
   costUsd?: number;
   providerInputCostUsd?: number;
@@ -665,6 +672,53 @@ export interface EvalRunProvenance {
 export interface EvalReportMetadata {
   model?: string;
   provenance?: EvalRunProvenance;
+}
+
+/** Tool-loading mode compared by the progressive schema loading benchmark. */
+export type EvalToolLoadingMode = "eager" | "deferred";
+
+/** One controlled eager or deferred tool-loading benchmark observation. */
+export interface EvalToolLoadingBenchmarkRecord {
+  prompt: "hi" | "Hello";
+  mode: EvalToolLoadingMode;
+  provider: EvalUsageProvider;
+  model: string;
+  sourceRevision: string;
+  catalogFingerprint: string;
+  catalogSourceRevision: string;
+  authorizedSearchableSchemaCount: number;
+  visibleSchemaCount: number;
+  deferredSchemaCount: number;
+  /** Definitions exposed to the effective model context. */
+  providerRequestToolDefinitionCount: number;
+  /** Deferred metadata present on the provider HTTP wire but excluded from model context. */
+  providerWireDeferredMetadataCount: number;
+  steps: number;
+  toolCalls: number;
+  durationMs: number;
+  completed: boolean;
+  usage: EvalUsage;
+}
+
+/** Machine-checkable result for one tool-loading benchmark release assertion. */
+export interface EvalToolLoadingBenchmarkAssertion {
+  name: string;
+  status: "passed" | "failed" | "incomplete";
+  pass?: boolean;
+  actual?: number | string | boolean;
+  expected: string;
+}
+
+/** Eager/deferred comparison and release-gate result. */
+export interface EvalToolLoadingBenchmarkComparison {
+  kind: "eval-tool-loading-benchmark-comparison";
+  status: "passed" | "failed" | "incomplete";
+  eager: EvalToolLoadingBenchmarkRecord;
+  deferred: EvalToolLoadingBenchmarkRecord;
+  eagerEffectiveInputTokens?: number;
+  deferredEffectiveInputTokens?: number;
+  effectiveInputReduction?: number;
+  assertions: EvalToolLoadingBenchmarkAssertion[];
 }
 
 /** Stable dataset identity attached to new eval reports when examples are available. */

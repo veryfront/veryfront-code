@@ -58,6 +58,11 @@ export { compareEvalModelReports, createEvalModelComparisonMarkdown } from "./mo
 export { createEvalRunProvenance, resolveEvalRunProvenance } from "./provenance.ts";
 export { createEvalRunId } from "./run-id.ts";
 export { exportEvalReport, runEval } from "./runner.ts";
+export {
+  calculateEffectiveInputTokens,
+  compareToolLoadingBenchmark,
+  createToolLoadingBenchmarkMarkdown,
+} from "./tool-loading-benchmark.ts";
 export { deriveEvalId, discoverEvals, findEvalById } from "./discovery.ts";
 export {
   createEvalSourceDocument,
@@ -137,8 +142,13 @@ export type {
   EvalToolCallStatus,
   EvalToolInput,
   EvalToolInputMatchMode,
+  EvalToolLoadingBenchmarkAssertion,
+  EvalToolLoadingBenchmarkComparison,
+  EvalToolLoadingBenchmarkRecord,
+  EvalToolLoadingMode,
   EvalTrace,
   EvalUsage,
+  EvalUsageProvider,
   EvalUsageSummary,
   RunEvalOptions,
 } from "./types.ts";

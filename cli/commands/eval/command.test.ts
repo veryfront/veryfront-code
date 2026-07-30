@@ -578,6 +578,7 @@ describe("eval CLI command helpers", () => {
         totalTokens: 17,
         cachedInputTokens: 3,
         cacheCreationInputTokens: 2,
+        cacheWriteInputTokens: 7,
         cacheReadInputTokens: 1,
         reasoningTokens: 4,
         billableInputTokens: 10,
@@ -597,13 +598,41 @@ describe("eval CLI command helpers", () => {
       },
     } satisfies AgentResponse;
 
-    assertEquals(normalizeUsage(response), {
+    assertEquals(normalizeUsage(response, "anthropic"), {
       inputTokens: 12,
       outputTokens: 5,
       totalTokens: 17,
       cachedInputTokens: 3,
       cacheCreationInputTokens: 2,
+      cacheWriteInputTokens: 7,
       cacheReadInputTokens: 1,
+      effectiveInputTokens: 15,
+      reasoningTokens: 4,
+      billableInputTokens: 10,
+      billableOutputTokens: 5,
+      costUsd: 0.001,
+      providerInputCostUsd: 0.0004,
+      providerOutputCostUsd: 0.0006,
+      providerCostUsd: 0.001,
+      veryfrontInputChargeUsd: 0.001,
+      veryfrontOutputChargeUsd: 0.0015,
+      veryfrontChargeUsd: 0.0025,
+      veryfrontBilledUsd: 0.1,
+      costCredits: 0.025,
+      costSource: "gateway",
+      billingMode: "deferred",
+      usageCaptureStatus: "complete",
+    });
+
+    assertEquals(normalizeUsage(response, "openai"), {
+      inputTokens: 12,
+      outputTokens: 5,
+      totalTokens: 17,
+      cachedInputTokens: 3,
+      cacheCreationInputTokens: 2,
+      cacheWriteInputTokens: 7,
+      cacheReadInputTokens: 1,
+      effectiveInputTokens: 12,
       reasoningTokens: 4,
       billableInputTokens: 10,
       billableOutputTokens: 5,
@@ -706,6 +735,35 @@ describe("eval CLI command helpers", () => {
       input: { query: "docs" },
       output: { source: "real-agent" },
     }]);
+  });
+
+  it("passes the internal per-run tool loading override to agent generation", async () => {
+    let capturedGenerateInput: Parameters<Agent["generate"]>[0] | undefined;
+    const observer = () => {};
+    const agent = makeAgentStub(async (input) => {
+      capturedGenerateInput = input;
+      return completedAgentResponse();
+    });
+    const definition = evalAgent({
+      id: "eval:tool-loading-override",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "hi" }]),
+    });
+
+    await createAgentAdapter(
+      agent,
+      createEvalOptions({
+        internalToolLoadingOverride: "eager",
+        internalToolLoadingBenchmarkObserver: observer,
+      }),
+    )({
+      definition,
+      example: { id: "q1", input: "hi" },
+      repetition: 1,
+    });
+
+    assertEquals(capturedGenerateInput?.__vfToolLoadingOverride, "eager");
+    assertEquals(capturedGenerateInput?.__vfToolLoadingBenchmarkObserver, observer);
   });
 
   it("resolves mock tools once for each example repetition", async () => {

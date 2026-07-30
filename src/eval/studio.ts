@@ -110,6 +110,7 @@ export const getEvalRunUsageSummarySchema = defineSchema((v) =>
     billableOutputTokens: v.number().nonnegative().optional(),
     cachedInputTokens: v.number().nonnegative().optional(),
     cacheCreationInputTokens: v.number().nonnegative().optional(),
+    cacheWriteInputTokens: v.number().nonnegative().optional(),
     cacheReadInputTokens: v.number().nonnegative().optional(),
     reasoningTokens: v.number().nonnegative().optional(),
     costUsd: v.number().nonnegative().optional(),

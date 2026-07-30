@@ -3,7 +3,7 @@
  */
 
 import { dirname, isAbsolute, relative, resolve } from "@std/path";
-import type { Agent, AgentResponse } from "veryfront/agent";
+import type { Agent, AgentResponse, ToolLoading } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
 import {
   isErroredToolExecutionResult,
@@ -32,7 +32,12 @@ import {
   type EvalReportExportRedaction,
 } from "veryfront/extensions/eval";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "veryfront/extensions/llm";
-import { exportEvalReport, resolveEvalRunProvenance, runEval } from "veryfront/eval";
+import {
+  calculateEffectiveInputTokens,
+  exportEvalReport,
+  resolveEvalRunProvenance,
+  runEval,
+} from "veryfront/eval";
 import {
   getCurrentVeryfrontCloudContext,
   getVeryfrontCloudBootstrap,
@@ -58,6 +63,15 @@ import type { EvalArgs } from "./handler.ts";
 
 export interface EvalOptions extends EvalArgs {
   projectDir?: string;
+  /**
+   * @internal Test/benchmark-only per-run override. This is intentionally not
+   * part of the eval CLI argument schema or agent manifest contract.
+   */
+  internalToolLoadingOverride?: ToolLoading;
+  /** @internal Benchmark-only actual request-shape observation callback. */
+  internalToolLoadingBenchmarkObserver?: NonNullable<
+    Parameters<Agent["generate"]>[0]["__vfToolLoadingBenchmarkObserver"]
+  >;
 }
 
 interface EvalCommandDependencies {
@@ -585,64 +599,82 @@ function createEvalToolExecutionContext(
   };
 }
 
-export function normalizeUsage(response: AgentResponse) {
-  return response.usage
-    ? {
-      inputTokens: response.usage.promptTokens,
-      outputTokens: response.usage.completionTokens,
-      totalTokens: response.usage.totalTokens,
-      ...(response.usage.cachedInputTokens !== undefined
-        ? { cachedInputTokens: response.usage.cachedInputTokens }
-        : {}),
-      ...(response.usage.cacheCreationInputTokens !== undefined
-        ? { cacheCreationInputTokens: response.usage.cacheCreationInputTokens }
-        : {}),
-      ...(response.usage.cacheReadInputTokens !== undefined
-        ? { cacheReadInputTokens: response.usage.cacheReadInputTokens }
-        : {}),
-      ...(response.usage.reasoningTokens !== undefined
-        ? { reasoningTokens: response.usage.reasoningTokens }
-        : {}),
-      ...(response.usage.billableInputTokens !== undefined
-        ? { billableInputTokens: response.usage.billableInputTokens }
-        : {}),
-      ...(response.usage.billableOutputTokens !== undefined
-        ? { billableOutputTokens: response.usage.billableOutputTokens }
-        : {}),
-      ...(response.usage.costUsd !== undefined ? { costUsd: response.usage.costUsd } : {}),
-      ...(response.usage.providerInputCostUsd !== undefined
-        ? { providerInputCostUsd: response.usage.providerInputCostUsd }
-        : {}),
-      ...(response.usage.providerOutputCostUsd !== undefined
-        ? { providerOutputCostUsd: response.usage.providerOutputCostUsd }
-        : {}),
-      ...(response.usage.providerCostUsd !== undefined
-        ? { providerCostUsd: response.usage.providerCostUsd }
-        : {}),
-      ...(response.usage.veryfrontInputChargeUsd !== undefined
-        ? { veryfrontInputChargeUsd: response.usage.veryfrontInputChargeUsd }
-        : {}),
-      ...(response.usage.veryfrontOutputChargeUsd !== undefined
-        ? { veryfrontOutputChargeUsd: response.usage.veryfrontOutputChargeUsd }
-        : {}),
-      ...(response.usage.veryfrontChargeUsd !== undefined
-        ? { veryfrontChargeUsd: response.usage.veryfrontChargeUsd }
-        : {}),
-      ...(response.usage.veryfrontBilledUsd !== undefined
-        ? { veryfrontBilledUsd: response.usage.veryfrontBilledUsd }
-        : {}),
-      ...(response.usage.costCredits !== undefined
-        ? { costCredits: response.usage.costCredits }
-        : {}),
-      ...(response.usage.costSource !== undefined ? { costSource: response.usage.costSource } : {}),
-      ...(response.usage.billingMode !== undefined
-        ? { billingMode: response.usage.billingMode }
-        : {}),
-      ...(response.usage.usageCaptureStatus !== undefined
-        ? { usageCaptureStatus: response.usage.usageCaptureStatus }
-        : {}),
-    }
-    : {};
+function usageProviderFromModel(model: string | undefined): "anthropic" | "openai" | undefined {
+  const provider = model?.split("/", 1)[0]?.toLowerCase();
+  if (provider === "anthropic" || provider === "openai") return provider;
+  return undefined;
+}
+
+export function normalizeUsage(
+  response: AgentResponse,
+  provider?: "anthropic" | "openai",
+) {
+  if (!response.usage) return {};
+  const normalized = {
+    inputTokens: response.usage.promptTokens,
+    outputTokens: response.usage.completionTokens,
+    totalTokens: response.usage.totalTokens,
+    ...(response.usage.cachedInputTokens !== undefined
+      ? { cachedInputTokens: response.usage.cachedInputTokens }
+      : {}),
+    ...(response.usage.cacheCreationInputTokens !== undefined
+      ? { cacheCreationInputTokens: response.usage.cacheCreationInputTokens }
+      : {}),
+    ...(response.usage.cacheWriteInputTokens !== undefined
+      ? { cacheWriteInputTokens: response.usage.cacheWriteInputTokens }
+      : {}),
+    ...(response.usage.cacheReadInputTokens !== undefined
+      ? { cacheReadInputTokens: response.usage.cacheReadInputTokens }
+      : {}),
+    ...(response.usage.reasoningTokens !== undefined
+      ? { reasoningTokens: response.usage.reasoningTokens }
+      : {}),
+    ...(response.usage.billableInputTokens !== undefined
+      ? { billableInputTokens: response.usage.billableInputTokens }
+      : {}),
+    ...(response.usage.billableOutputTokens !== undefined
+      ? { billableOutputTokens: response.usage.billableOutputTokens }
+      : {}),
+    ...(response.usage.costUsd !== undefined ? { costUsd: response.usage.costUsd } : {}),
+    ...(response.usage.providerInputCostUsd !== undefined
+      ? { providerInputCostUsd: response.usage.providerInputCostUsd }
+      : {}),
+    ...(response.usage.providerOutputCostUsd !== undefined
+      ? { providerOutputCostUsd: response.usage.providerOutputCostUsd }
+      : {}),
+    ...(response.usage.providerCostUsd !== undefined
+      ? { providerCostUsd: response.usage.providerCostUsd }
+      : {}),
+    ...(response.usage.veryfrontInputChargeUsd !== undefined
+      ? { veryfrontInputChargeUsd: response.usage.veryfrontInputChargeUsd }
+      : {}),
+    ...(response.usage.veryfrontOutputChargeUsd !== undefined
+      ? { veryfrontOutputChargeUsd: response.usage.veryfrontOutputChargeUsd }
+      : {}),
+    ...(response.usage.veryfrontChargeUsd !== undefined
+      ? { veryfrontChargeUsd: response.usage.veryfrontChargeUsd }
+      : {}),
+    ...(response.usage.veryfrontBilledUsd !== undefined
+      ? { veryfrontBilledUsd: response.usage.veryfrontBilledUsd }
+      : {}),
+    ...(response.usage.costCredits !== undefined
+      ? { costCredits: response.usage.costCredits }
+      : {}),
+    ...(response.usage.costSource !== undefined ? { costSource: response.usage.costSource } : {}),
+    ...(response.usage.billingMode !== undefined
+      ? { billingMode: response.usage.billingMode }
+      : {}),
+    ...(response.usage.usageCaptureStatus !== undefined
+      ? { usageCaptureStatus: response.usage.usageCaptureStatus }
+      : {}),
+  };
+  const effectiveInputTokens = provider
+    ? calculateEffectiveInputTokens(provider, normalized)
+    : undefined;
+  return {
+    ...normalized,
+    ...(effectiveInputTokens !== undefined ? { effectiveInputTokens } : {}),
+  };
 }
 
 export function normalizeToolCalls(response: AgentResponse): EvalToolCall[] {
@@ -702,6 +734,12 @@ export function createAgentAdapter(agent: Agent, options: EvalOptions) {
       },
       ...(options.model ? { model: options.model } : {}),
       ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
+      ...(options.internalToolLoadingOverride
+        ? { __vfToolLoadingOverride: options.internalToolLoadingOverride }
+        : {}),
+      ...(options.internalToolLoadingBenchmarkObserver
+        ? { __vfToolLoadingBenchmarkObserver: options.internalToolLoadingBenchmarkObserver }
+        : {}),
       ...(definition.mockTools !== undefined
         ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
         : {}),
@@ -712,7 +750,7 @@ export function createAgentAdapter(agent: Agent, options: EvalOptions) {
         events: response.messages,
         toolCalls: normalizeToolCalls(response),
       },
-      usage: normalizeUsage(response),
+      usage: normalizeUsage(response, usageProviderFromModel(options.model)),
       durationMs: Date.now() - started,
       completed: response.status === "completed",
       ...(response.status === "error" ? { error: response.text } : {}),

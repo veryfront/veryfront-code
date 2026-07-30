@@ -287,6 +287,50 @@ describe("eval/metrics", () => {
     );
   });
 
+  it("gates provider-aware effective input tokens", async () => {
+    const anthropicRecord = createRecord({
+      usage: {
+        inputTokens: 8_000,
+        cacheCreationInputTokens: 1_000,
+        cacheReadInputTokens: 500,
+      },
+    });
+    const openAiRecord = createRecord({
+      usage: {
+        inputTokens: 8_000,
+        cachedInputTokens: 4_000,
+        cacheReadInputTokens: 4_000,
+        cacheWriteInputTokens: 1_000,
+      },
+    });
+
+    assertEquals(
+      await metrics.ops.effectiveInputTokens({ provider: "anthropic", max: 10_000 }).budget()
+        .evaluate(anthropicRecord),
+      {
+        name: "ops.effectiveInputTokens",
+        family: "ops",
+        severity: "budget",
+        score: 1,
+        pass: true,
+        evidence: { provider: "anthropic", effectiveInputTokens: 9_500, max: 10_000 },
+      },
+    );
+    assertEquals(
+      await metrics.ops.effectiveInputTokens({ provider: "openai", max: 8_000 }).budget().evaluate(
+        openAiRecord,
+      ),
+      {
+        name: "ops.effectiveInputTokens",
+        family: "ops",
+        severity: "budget",
+        score: 1,
+        pass: true,
+        evidence: { provider: "openai", effectiveInputTokens: 8_000, max: 8_000 },
+      },
+    );
+  });
+
   it("supports rubric-style judge metrics through an injected judge", async () => {
     const rubric = metrics.judge.rubric({
       rubric: "Answer must identify the correct city.",
