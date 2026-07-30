@@ -5,11 +5,13 @@ import type { OptimizedImageMetadata } from "../asset-pipeline/image-optimizer/t
 import {
   calculateAspectRatio,
   calculateRequiredAspectRatio,
+  findCSSFiles,
   generateSrcSet,
   getImageDimensions,
   getRequiredImageDimensions,
   getStandardPseudoSelectors,
   getVariantPath,
+  globFiles,
   isPseudoSelector,
 } from "./asset-utils.ts";
 
@@ -27,6 +29,33 @@ function createMetadata(
 }
 
 describe("build/utils/asset-utils", () => {
+  describe("asset discovery", () => {
+    it("returns lexical files without following symbolic links", async () => {
+      const root = await Deno.makeTempDir({ prefix: "vf-asset-utils-" });
+      const nested = `${root}/nested`;
+      const outside = await Deno.makeTempDir({ prefix: "vf-asset-utils-outside-" });
+      await Deno.mkdir(nested);
+      await Deno.writeTextFile(`${root}/z.css`, "z");
+      await Deno.writeTextFile(`${nested}/a.css`, "a");
+      await Deno.writeTextFile(`${outside}/linked.css`, "linked");
+      await Deno.symlink(`${outside}/linked.css`, `${root}/linked.css`, { type: "file" });
+
+      try {
+        assertEquals(await findCSSFiles(root), [
+          `${nested}/a.css`,
+          `${root}/z.css`,
+        ]);
+        assertEquals(await globFiles(`${root}/**/*.css`), [
+          `${nested}/a.css`,
+          `${root}/z.css`,
+        ]);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+        await Deno.remove(outside, { recursive: true });
+      }
+    });
+  });
+
   describe("isPseudoSelector", () => {
     it("should detect pseudo selectors", () => {
       assertEquals(isPseudoSelector(":hover"), true);

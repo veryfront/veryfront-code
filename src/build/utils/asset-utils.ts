@@ -4,7 +4,7 @@
  */
 
 import { basename, dirname, extname, join } from "#veryfront/compat/path/index.ts";
-import { walk } from "#std/fs.ts";
+import { walk } from "#veryfront/compat/std/fs.ts";
 import { logger } from "#veryfront/utils";
 import type {
   ImageVariant,
@@ -26,6 +26,7 @@ export async function findCSSFiles(dir: string): Promise<string[]> {
     for await (
       const entry of walk(dir, {
         includeDirs: false,
+        includeSymlinks: false,
         followSymlinks: false,
         exts: ["css"],
       })
@@ -38,7 +39,7 @@ export async function findCSSFiles(dir: string): Promise<string[]> {
     });
   }
 
-  return cssFiles;
+  return cssFiles.sort();
 }
 
 export async function globFiles(pattern: string): Promise<string[]> {
@@ -52,6 +53,7 @@ export async function globFiles(pattern: string): Promise<string[]> {
     for await (
       const entry of walk(baseDir, {
         includeDirs: false,
+        includeSymlinks: false,
         followSymlinks: false,
       })
     ) {
@@ -69,7 +71,7 @@ export async function globFiles(pattern: string): Promise<string[]> {
     });
   }
 
-  return files;
+  return files.sort();
 }
 
 export function isPseudoSelector(selector: string): boolean {

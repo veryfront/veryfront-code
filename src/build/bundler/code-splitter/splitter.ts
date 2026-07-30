@@ -1,6 +1,6 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
 import type { BuildContext, BundleResult } from "veryfront/extensions/bundler";
-import { ensureDir } from "#std/fs.ts";
+import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import type { ChunkInfo, SplitOptions, SplitResult } from "./types.ts";
 import { createEntryPoints } from "./entry-points.ts";
 import { createBuildContext } from "./build-context.ts";

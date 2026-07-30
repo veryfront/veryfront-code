@@ -61,7 +61,7 @@ describe("platform/compat/shims/std-fs", () => {
       await Deno.writeTextFile(`${tmpDir}/b.ts`, "content");
 
       const entries = [];
-      for await (const entry of walk(tmpDir)) {
+      for await (const entry of walk(tmpDir, { includeDirs: false })) {
         entries.push(entry);
       }
 
@@ -77,11 +77,11 @@ describe("platform/compat/shims/std-fs", () => {
       await Deno.writeTextFile(`${tmpDir}/sub/deep.ts`, "content");
 
       const entries = [];
-      for await (const entry of walk(tmpDir, { maxDepth: 0 })) {
+      for await (const entry of walk(tmpDir, { maxDepth: 1 })) {
         entries.push(entry);
       }
 
-      // maxDepth 0 should only yield entries at root level (sub dir + top.ts)
+      // maxDepth 1 yields the root and its immediate children.
       const fileNames = entries.filter((e) => e.isFile).map((e) => e.name);
       assertEquals(fileNames.includes("top.ts"), true);
       assertEquals(fileNames.includes("deep.ts"), false);
@@ -95,7 +95,7 @@ describe("platform/compat/shims/std-fs", () => {
       await Deno.writeTextFile(`${tmpDir}/file.txt`, "txt");
 
       const entries = [];
-      for await (const entry of walk(tmpDir, { exts: ["ts"] })) {
+      for await (const entry of walk(tmpDir, { exts: ["ts"], includeDirs: false })) {
         entries.push(entry);
       }
 
@@ -109,7 +109,7 @@ describe("platform/compat/shims/std-fs", () => {
       await Deno.writeTextFile(`${tmpDir}/file.ts`, "ts");
 
       const entries = [];
-      for await (const entry of walk(tmpDir, { exts: [".ts"] })) {
+      for await (const entry of walk(tmpDir, { exts: [".ts"], includeDirs: false })) {
         entries.push(entry);
       }
 
@@ -139,7 +139,7 @@ describe("platform/compat/shims/std-fs", () => {
       await Deno.writeTextFile(`${tmpDir}/visible.ts`, "visible");
 
       const names = [];
-      for await (const entry of walk(tmpDir, { skip: [/skip-/g] })) {
+      for await (const entry of walk(tmpDir, { includeDirs: false, skip: [/skip-/g] })) {
         names.push(entry.name);
       }
 
@@ -178,7 +178,7 @@ describe("platform/compat/shims/std-fs", () => {
     it("rejects invalid maxDepth values", async () => {
       await assertRejects(
         async () => {
-          for await (const _entry of walk(".", { maxDepth: -1 })) {
+          for await (const _entry of walk(".", { maxDepth: Number.NaN })) {
             // The iterator rejects before walking.
           }
         },
