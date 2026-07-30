@@ -68,3 +68,20 @@ describe("ssr-adapter — individual import form coverage", () => {
     assertEquals(result, `const m = import("../z.js?ssr=true&project=p&branch=b&v=v1");`);
   });
 });
+
+describe("ssr-adapter — bare import matcher edge cases", () => {
+  const opts = { projectSlug: "p", branch: "b", cacheBuster: "v1" };
+
+  it("rewrites a bare import with no whitespace after from (minified output)", () => {
+    const result = rewriteSSRImportsCompat(`import x from"lodash";`, opts);
+    assertEquals(
+      result,
+      `import x from "https://esm.sh/lodash?external=react&target=es2022";`,
+    );
+  });
+
+  it("keeps mixed-case protocol URLs external", () => {
+    const code = `import x from "HTTPS://example.com/mod.js";`;
+    assertEquals(rewriteSSRImportsCompat(code, opts), code);
+  });
+});
