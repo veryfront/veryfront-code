@@ -25,10 +25,7 @@
  */
 import * as React from "react";
 import { cx } from "../../../ui/cva.ts";
-import {
-  type ChatInputContextValue,
-  useChatInputContext,
-} from "../contexts/composer-context.tsx";
+import { type ChatInputContextValue, useChatInputContext } from "../contexts/composer-context.tsx";
 
 type AnyProps = Record<string, unknown>;
 
@@ -99,8 +96,7 @@ export function useChatInput(): UseChatInputResult {
   const ctx = useChatInputContext();
 
   const getFormProps = React.useCallback(
-    (overrides?: AnyProps): AnyProps =>
-      mergeProps({ onSubmit: ctx.onSubmit }, overrides),
+    (overrides?: AnyProps): AnyProps => mergeProps({ onSubmit: ctx.onSubmit }, overrides),
     [ctx.onSubmit],
   );
 

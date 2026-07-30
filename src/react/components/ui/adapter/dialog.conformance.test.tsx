@@ -11,13 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  Dialog,
-  DialogCancel,
-  DialogClose,
-  DialogContent,
-  DialogTrigger,
-} from "../dialog.tsx";
+import { Dialog, DialogCancel, DialogClose, DialogContent, DialogTrigger } from "../dialog.tsx";
 import { UIAdapterProvider } from "./context.tsx";
 import { builtinDialog } from "./builtin/dialog.tsx";
 
@@ -201,9 +195,7 @@ function BuiltinWrap({ children }: { children: React.ReactNode }): React.ReactEl
   return <>{children}</>;
 }
 function ProviderWrap({ children }: { children: React.ReactNode }): React.ReactElement {
-  return (
-    <UIAdapterProvider adapter={{ dialog: builtinDialog }}>{children}</UIAdapterProvider>
-  );
+  return <UIAdapterProvider adapter={{ dialog: builtinDialog }}>{children}</UIAdapterProvider>;
 }
 
 runDialogConformance("builtin", BuiltinWrap);

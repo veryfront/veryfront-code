@@ -15,7 +15,7 @@ standing `TODO(a11y)` list (focus trap, roving focus, typeahead, `aria-activedes
 scroll-lock). That TODO list **is** the substrate gap. Per issue #220, accessible
 interaction is a large, moving standard we should not hand-roll permanently — so the adapter
 conformance suite is written as **differential tests against a real engine oracle**, and a
-real engine is the direction of travel while the zero-dep builtin is a *fallback*, not a
+real engine is the direction of travel while the zero-dep builtin is a _fallback_, not a
 forever-default.
 
 ## Per-primitive adapter contract
@@ -42,7 +42,7 @@ module-scope `createAnchoredSurfaceParts()` call; resolve parts per-render via `
 Purely-visual sub-parts (`PopoverTitle`/`Header`/…) don't change.
 
 **Behaviour-preserving extraction, proven by characterization (Phase 0, #220 differential
-spirit):** there are **no** existing Tier-1 behaviour tests, so *first* write characterization
+spirit):** there are **no** existing Tier-1 behaviour tests, so _first_ write characterization
 tests against `popover.tsx` on `main` (open/dismiss / `role="dialog"` / portal-in-`[data-vf-ui]`
 / `align="end"` / controlled round-trip) using the `color-mode.test.tsx` jsdom harness, run
 green, **then** extract, **then** rerun unchanged — that's the proof. The frozen sorted
@@ -60,14 +60,14 @@ wrapper, so nothing can depend on it — this is the resolution the chat RFC's
 
 A primitive is "done" only when **every** column is checked.
 
-| Col | Meaning |
-|---|---|
-| **Spec** | Ticket written; API shape locked to the #3090 doc page |
-| **Built** | Worked-through: single-node, `asChild`, `{...props}`, `data-*`, hook-driven — matches doc |
-| **Story** | Storybook stories cover documented states (the `data-*` / open / positioning vocabulary drives the story matrix) |
-| **Test** | Adapter-conformance registration green (both builtin and Base UI) |
-| **Styled** | Default-render parity — identical DOM / classes as today (or badged `changed`) |
-| **Verified** | Green end-to-end in the validation loop / example repo |
+| Col          | Meaning                                                                                                          |
+| ------------ | ---------------------------------------------------------------------------------------------------------------- |
+| **Spec**     | Ticket written; API shape locked to the #3090 doc page                                                           |
+| **Built**    | Worked-through: single-node, `asChild`, `{...props}`, `data-*`, hook-driven — matches doc                        |
+| **Story**    | Storybook stories cover documented states (the `data-*` / open / positioning vocabulary drives the story matrix) |
+| **Test**     | Adapter-conformance registration green (both builtin and Base UI)                                                |
+| **Styled**   | Default-render parity — identical DOM / classes as today (or badged `changed`)                                   |
+| **Verified** | Green end-to-end in the validation loop / example repo                                                           |
 
 ## Two mandatory conformance tests (named, from the RFC)
 
@@ -87,7 +87,7 @@ Builtin's missing focus-trap / scroll-lock become **tracked xfails** — convert
 ## Default engine decision
 
 **DECIDED: Base UI is the default engine; builtin stays as the zero-dep fallback.** It is the
-Pareto pick — 2nd-fewest deps (single `@base-ui/react`) *and* 2nd-most components (~35, covers
+Pareto pick — 2nd-fewest deps (single `@base-ui/react`) _and_ 2nd-most components (~35, covers
 everything chat needs), best SSR / RSC / Deno fit (self-declares `"use client"`, no provider,
 React 17–19), real a11y that retires the builtin's `TODO(a11y)` gap, and shadcn's 2026 default
 (serves the "better shadcn" north star). Base UI is Phase 2's flagship adapter and the engine
@@ -111,7 +111,7 @@ specialists (the concrete "better shadcn" move; shadcn does exactly this):
   **default Drawer** adapter over the builtin `modal-surface` drawer.
 - **Toast → Base UI Toast OR Sonner** (Tier-2) — Base UI Toast (~v1.6) is contract-conforming
   (fully skinnable). Sonner is the ecosystem default but **owns its own rendering** — expose it
-  as a *render-owning* adapter themed via token vars, not a fully-skinned part. Pick per whether
+  as a _render-owning_ adapter themed via token vars, not a fully-skinned part. Pick per whether
   full skin control or ecosystem-familiarity wins.
 - Same door opens for `cmdk` (Command) and `react-day-picker` (Calendar) later
   (Tier-2/3) — none block the Tier-1 Popover tracer.

@@ -12,13 +12,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../select.tsx";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../select.tsx";
 import { UIAdapterProvider } from "./context.tsx";
 import { builtinSelect } from "./builtin/select.tsx";
 
@@ -192,9 +186,7 @@ function BuiltinWrap({ children }: { children: React.ReactNode }): React.ReactEl
   return <>{children}</>;
 }
 function ProviderWrap({ children }: { children: React.ReactNode }): React.ReactElement {
-  return (
-    <UIAdapterProvider adapter={{ select: builtinSelect }}>{children}</UIAdapterProvider>
-  );
+  return <UIAdapterProvider adapter={{ select: builtinSelect }}>{children}</UIAdapterProvider>;
 }
 
 runSelectConformance("builtin", BuiltinWrap);

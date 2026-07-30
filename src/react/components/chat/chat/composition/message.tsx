@@ -347,7 +347,11 @@ function MessageHeader(
   return (
     // `w-full` so the timestamp's `ml-auto` reaches the right edge — the Root
     // is `items-start`, which would otherwise shrink the header to its content.
-    <div {...props} ref={ref} className={cn("flex w-full items-center gap-2 pt-px pb-3", className)}>
+    <div
+      {...props}
+      ref={ref}
+      className={cn("flex w-full items-center gap-2 pt-px pb-3", className)}
+    >
       {children ?? (
         <>
           <AvatarImpl

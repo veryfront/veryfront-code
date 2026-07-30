@@ -69,8 +69,8 @@ type WrapClick = (event: React.MouseEvent<HTMLElement>, next: () => void) => voi
 // ---------------------------------------------------------------------------
 
 /** Props accepted by `<ChatInput.Field>`. */
-export interface ChatInputFieldProps
-  extends Omit<
+export interface ChatInputFieldProps extends
+  Omit<
     React.InputHTMLAttributes<HTMLInputElement | HTMLTextAreaElement>,
     "value" | "onChange" | "onSubmit"
   > {

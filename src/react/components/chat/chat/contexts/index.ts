@@ -19,9 +19,9 @@ export {
   type MessageContextValue,
   type MessagePartsData,
   useMessageBranches,
+  type UseMessageBranchesResult,
   useMessageContext,
   useMessageContextOptional,
-  type UseMessageBranchesResult,
   useMessageParts,
 } from "./message-context.tsx";
 

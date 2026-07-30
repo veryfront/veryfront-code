@@ -230,11 +230,7 @@ export {
   type UseStickToBottomOptions,
   type UseStickToBottomResult,
 } from "./hooks/use-stick-to-bottom.ts";
-export {
-  mergeProps,
-  useChatInput,
-  type UseChatInputResult,
-} from "./hooks/use-chat-input.ts";
+export { mergeProps, useChatInput, type UseChatInputResult } from "./hooks/use-chat-input.ts";
 
 export {
   extractSourcesFromParts,
@@ -296,10 +292,10 @@ export {
   useComposerContext,
   useComposerContextOptional,
   useMessageBranches,
+  type UseMessageBranchesResult,
   useMessageContext,
   useMessageContextOptional,
   useMessageParts,
-  type UseMessageBranchesResult,
 } from "./contexts/index.ts";
 
 // ChatProps: preset interface, re-exported here to preserve the public surface.

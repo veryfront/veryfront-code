@@ -15,7 +15,7 @@ documented API**, fill naming gaps, and run every piece through the gates.
 Re-expressing every part as **one `forwardRef` node + `{...props}`**, deleting the prop bags
 and hidden wrappers, is the **bulk of Phase 3** — a structural rewrite of the composition
 surface on top of behaviour / state (hooks, contexts) that mostly already exists. "Behavior
-matches" in the recon table means *logic is reusable*, **not** "already conforms": nearly every
+matches" in the recon table means _logic is reusable_, **not** "already conforms": nearly every
 non-`cut` row still owes the full one-node / `forwardRef` / no-bags rewrite plus its matrix
 gates.
 
@@ -79,14 +79,14 @@ drives the story matrix.
 
 A piece is "done" only when **every** column is checked.
 
-| Col | Meaning |
-|---|---|
-| **Spec** | Ticket written; API shape locked to the #2980 doc page |
-| **Built** | Worked-through: single-node, `asChild`, `{...props}`, `data-*`, hook-driven — matches doc |
-| **Story** | Storybook stories cover documented states (`n/a` for hooks) |
-| **Test** | Conformance-harness registration (components) or behaviour test (hooks) green |
-| **Styled** | Default-render parity — identical DOM / classes as today, or badged `changed` (`n/a` for hooks) |
-| **Verified** | Green end-to-end in the validation loop / example repo |
+| Col          | Meaning                                                                                         |
+| ------------ | ----------------------------------------------------------------------------------------------- |
+| **Spec**     | Ticket written; API shape locked to the #2980 doc page                                          |
+| **Built**    | Worked-through: single-node, `asChild`, `{...props}`, `data-*`, hook-driven — matches doc       |
+| **Story**    | Storybook stories cover documented states (`n/a` for hooks)                                     |
+| **Test**     | Conformance-harness registration (components) or behaviour test (hooks) green                   |
+| **Styled**   | Default-render parity — identical DOM / classes as today, or badged `changed` (`n/a` for hooks) |
+| **Verified** | Green end-to-end in the validation loop / example repo                                          |
 
 ## Reuse the existing rig (invent no harness)
 

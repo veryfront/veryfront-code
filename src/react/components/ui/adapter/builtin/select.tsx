@@ -80,7 +80,9 @@ function SelectContentPart({
   children,
   ref,
   ...props
-}: React.HTMLAttributes<HTMLDivElement> & { ref?: React.Ref<HTMLDivElement> }): React.ReactElement | null {
+}: React.HTMLAttributes<HTMLDivElement> & { ref?: React.Ref<HTMLDivElement> }):
+  | React.ReactElement
+  | null {
   const ctx = useSelect();
   return (
     <Floating

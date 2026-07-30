@@ -11,12 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "../tooltip.tsx";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../tooltip.tsx";
 import { UIAdapterProvider } from "./context.tsx";
 import { builtinTooltip } from "./builtin/tooltip.tsx";
 
@@ -184,9 +179,7 @@ function BuiltinWrap({ children }: { children: React.ReactNode }): React.ReactEl
   return <>{children}</>;
 }
 function ProviderWrap({ children }: { children: React.ReactNode }): React.ReactElement {
-  return (
-    <UIAdapterProvider adapter={{ tooltip: builtinTooltip }}>{children}</UIAdapterProvider>
-  );
+  return <UIAdapterProvider adapter={{ tooltip: builtinTooltip }}>{children}</UIAdapterProvider>;
 }
 
 runTooltipConformance("builtin", BuiltinWrap);
