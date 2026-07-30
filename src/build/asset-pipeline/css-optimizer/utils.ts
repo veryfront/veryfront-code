@@ -1,4 +1,3 @@
-import { globToRegExp } from "#std/path";
 import {
   basename,
   dirname,
@@ -8,6 +7,7 @@ import {
   relative,
   resolve,
 } from "#veryfront/compat/path/index.ts";
+import { compilePathGlob } from "#veryfront/build/utils/path-glob.ts";
 import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
@@ -51,8 +51,6 @@ interface GlobOptions extends DiscoveryOptions {
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
-const GLOB_MAGIC = /[*?{\[]/;
-
 function comparePaths(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -205,16 +203,11 @@ function compileProjectGlob(
     throw new TypeError(`Invalid CSS content pattern: ${JSON.stringify(pattern)}`);
   }
 
-  const segments = relativePattern.split("/");
-  const firstMagicSegment = segments.findIndex((segment) => GLOB_MAGIC.test(segment));
-  const staticSegments = firstMagicSegment === -1
-    ? segments.slice(0, -1)
-    : segments.slice(0, firstMagicSegment);
+  const expression = compilePathGlob(relativePattern);
+  const staticSegments = expression.staticPrefixSegments.length === expression.segmentCount
+    ? expression.staticPrefixSegments.slice(0, -1)
+    : expression.staticPrefixSegments;
   const rootDir = resolve(absoluteBase, ...staticSegments);
-  const expression = globToRegExp(relativePattern, {
-    extended: true,
-    globstar: true,
-  });
 
   return {
     rootDir,
@@ -245,10 +238,7 @@ export async function globFiles(
 export function matchPattern(path: string, pattern: string): boolean {
   requireSafePath(path, "CSS glob candidate");
   requireSafePath(pattern, "CSS glob pattern");
-  return globToRegExp(portablePath(pattern), {
-    extended: true,
-    globstar: true,
-  }).test(portablePath(path));
+  return compilePathGlob(portablePath(pattern)).test(portablePath(path));
 }
 
 export function isSafeCSSRelativePath(value: unknown): value is string {

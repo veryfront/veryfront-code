@@ -25,6 +25,25 @@ describe("build/asset-pipeline/tailwind-processor/source-collector", () => {
     ]);
   });
 
+  it("applies globstar and extension alternatives without crossing segment wildcards", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/app/page.tsx", '<div className="page" />');
+    adapter.fs.files.set("/project/app/nested/layout.ts", 'const value = "layout";');
+    adapter.fs.files.set("/project/app/nested/deep/page.jsx", '<div className="jsx" />');
+    adapter.fs.files.set("/project/pages/index.tsx", '<div className="pages" />');
+
+    const files = await collectTailwindSourceFiles({
+      projectDir: "/project",
+      patterns: ["app/**/*.{ts,tsx}"],
+      adapter,
+    });
+
+    assertEquals(files.map((file) => file.path), [
+      "/project/app/nested/layout.ts",
+      "/project/app/page.tsx",
+    ]);
+  });
+
   it("does not scan explicit build output directories", async () => {
     const adapter = createMockAdapter();
     adapter.fs.files.set("/project/app/page.tsx", '<div className="flex" />');
@@ -87,6 +106,19 @@ describe("build/asset-pipeline/tailwind-processor/source-collector", () => {
         }),
       TypeError,
       "cannot exceed 256 entries",
+    );
+  });
+
+  it("rejects malformed content globs before scanning", async () => {
+    await assertRejects(
+      () =>
+        collectTailwindSourceFiles({
+          projectDir: "/project",
+          patterns: ["app/**/*.{ts,tsx"],
+          adapter: createMockAdapter(),
+        }),
+      TypeError,
+      "Invalid path glob",
     );
   });
 });

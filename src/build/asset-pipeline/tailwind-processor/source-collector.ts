@@ -1,4 +1,4 @@
-import { globToRegExp } from "#std/path";
+import { compilePathGlob, type PathGlobMatcher } from "#veryfront/build/utils/path-glob.ts";
 import { isAbsolute, join, relative, resolve } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSecureFs } from "#veryfront/security";
@@ -23,7 +23,7 @@ const EXCLUDED_DIRECTORIES = new Set([
 ]);
 
 interface CompiledContentPattern {
-  regex: RegExp;
+  matcher: PathGlobMatcher;
 }
 
 function compareDirectoryEntries(
@@ -81,10 +81,7 @@ function compileContentPatterns(
     }
 
     return {
-      regex: globToRegExp(projectRelativePattern, {
-        extended: true,
-        globstar: true,
-      }),
+      matcher: compilePathGlob(projectRelativePattern),
     };
   });
 }
@@ -184,7 +181,7 @@ export async function collectTailwindSourceFiles(options: {
       }
 
       const relativePath = portablePath(relative(projectDir, fullPath));
-      if (!patterns.some((pattern) => pattern.regex.test(relativePath))) {
+      if (!patterns.some((pattern) => pattern.matcher.test(relativePath))) {
         continue;
       }
 

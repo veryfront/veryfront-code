@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "#veryfront/compat/path";
+import { join, resolve } from "#veryfront/compat/path";
 import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import {
@@ -67,6 +67,24 @@ describe("CSS Optimizer Utils", () => {
       assert(matchPattern("test.tsx", "*.{ts,tsx}"));
       assert(matchPattern("test.ts", "*.{ts,tsx}"));
       assert(!matchPattern("test.js", "*.{ts,tsx}"));
+    });
+
+    it("keeps wildcards inside segments unless globstar spans directories", () => {
+      assert(matchPattern("src/page.tsx", "src/*.tsx"));
+      assert(!matchPattern("src/nested/page.tsx", "src/*.tsx"));
+      assert(matchPattern("src/nested/page.tsx", "src/**/*.tsx"));
+      assert(matchPattern("src/page.tsx", "src/**/*.tsx"));
+    });
+
+    it("normalizes separators and supports literal glob characters", () => {
+      assert(matchPattern("src\\nested\\page.tsx", "src\\**\\*.tsx"));
+      assert(matchPattern("file?.tsx", "file[?].tsx"));
+      assert(!matchPattern("file1.tsx", "file[?].tsx"));
+    });
+
+    it("rejects invalid glob syntax", () => {
+      assertThrows(() => matchPattern("page.tsx", "*.{ts,tsx"), TypeError, "Invalid path glob");
+      assertThrows(() => matchPattern("page.tsx", "file[abc"), TypeError, "Invalid path glob");
     });
   });
 
@@ -201,6 +219,27 @@ describe("CSS Optimizer Utils", () => {
       assert(files.some((f) => f.includes("test.ts")));
 
       await cleanupTestDir();
+    });
+
+    it("uses the static prefix before an extended group as the scan root", async () => {
+      await cleanupTestDir();
+      try {
+        await ensureDir(join(TEST_DIR, "app"));
+        await ensureDir(join(TEST_DIR, "pages"));
+        await ensureDir(join(TEST_DIR, "components"));
+        await writeTextFile(join(TEST_DIR, "app", "page.tsx"), "content");
+        await writeTextFile(join(TEST_DIR, "pages", "page.tsx"), "content");
+        await writeTextFile(join(TEST_DIR, "components", "page.tsx"), "content");
+
+        const files = await globFiles(`${TEST_DIR}/@(app|pages)/**/*.tsx`);
+
+        assertEquals(files.map((file) => file.replaceAll("\\", "/")).sort(), [
+          resolve(TEST_DIR, "app", "page.tsx").replaceAll("\\", "/"),
+          resolve(TEST_DIR, "pages", "page.tsx").replaceAll("\\", "/"),
+        ]);
+      } finally {
+        await cleanupTestDir();
+      }
     });
 
     it("rejects patterns outside the project boundary", async () => {
