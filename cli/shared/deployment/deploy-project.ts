@@ -6,8 +6,10 @@ import { parseProjectDomain } from "veryfront/server";
 import { type ReleaseAssetManifestResponse, routeForPage } from "veryfront/release-assets";
 import {
   DEPLOYMENT_ERROR,
+  ENVIRONMENT_NOT_FOUND,
   RELEASE_MISSING_VERSION,
   SOURCE_DIGEST_MISMATCH,
+  VeryfrontError,
 } from "veryfront/errors";
 import {
   computeSourceDigest,
@@ -33,9 +35,10 @@ import {
   type DeployControlPlane,
   type DeployDeployment,
   type DeployEnvironment,
+  type DeploymentRoutingConvergence,
   type DeployRelease,
 } from "./control-plane.ts";
-import type { DeploymentRoutingConvergence, DeployResult } from "../../commands/deploy/command.ts";
+import type { DeployResult } from "./result.ts";
 
 export interface DeployProjectRequest {
   projectDir: string;
@@ -260,6 +263,7 @@ async function ensureProjectLinkedForDeploy(
         plannedProjectSlug: project.slug,
       };
     } catch (error) {
+      if (error instanceof VeryfrontError) throw error;
       if (getErrorStatus(error) !== 404) {
         throw new Error(
           `Could not check project "${projectReference}": ${
@@ -1015,7 +1019,11 @@ export function createDeployProject(options: {
           project.id,
           request.environment,
         );
-        if (!resolvedEnvironment) throw new Error(`Environment "${request.environment}" not found`);
+        if (!resolvedEnvironment) {
+          throw ENVIRONMENT_NOT_FOUND.create({
+            detail: `Environment "${request.environment}" not found`,
+          });
+        }
         assertProjectOwnership("Environment", resolvedEnvironment, project.id);
         return resolvedEnvironment;
       });

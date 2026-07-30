@@ -54,6 +54,7 @@ import {
   type DeploymentRoutingConvergence,
   type DeployRelease,
 } from "../../shared/deployment/control-plane.ts";
+import type { DeployResult } from "../../shared/deployment/result.ts";
 import { parseProjectDomain } from "veryfront/server";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
 
@@ -166,25 +167,7 @@ export interface DeploymentVerification {
   sourceDigest: string;
 }
 
-export interface DeployResult {
-  projectId: string;
-  projectSlug: string;
-  release: {
-    id: string;
-    name: string;
-    version: string;
-  };
-  environment: string;
-  environmentId: string;
-  deploymentId: string;
-  url: string;
-  protected: boolean;
-  routingConvergence: DeploymentRoutingConvergence | null;
-  commitSha: string | null;
-  sourceDigest: string;
-  controlPlane: string;
-  branch: string;
-}
+export type { DeployResult };
 
 function createDeployResult({
   verification,
