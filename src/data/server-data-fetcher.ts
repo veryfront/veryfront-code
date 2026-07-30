@@ -7,7 +7,7 @@ import {
 } from "./helpers.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
-import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
+import { TimeoutError } from "#veryfront/utils/timeout.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import { getWorkerPool, isDataIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";

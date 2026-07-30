@@ -61,8 +61,8 @@ import {
   type ProgressTimeoutControl,
   withProgressTimeoutThrow,
   withTimeout,
-  withTimeoutThrow,
 } from "../utils/stream-utils.ts";
+import { withTimeoutThrow } from "#veryfront/utils/timeout.ts";
 import { extractCandidates, generateCSS } from "#veryfront/html/styles-builder/index.ts";
 import {
   acquireCSSGenerationSession,

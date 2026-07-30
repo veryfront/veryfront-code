@@ -10,7 +10,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { DataFetcher } from "./data-fetcher.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
-import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
+import { TimeoutError } from "#veryfront/utils/timeout.ts";
 import { DataExecutionAdmission } from "./execution-admission.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { CircuitBreakerOpen } from "#veryfront/utils/circuit-breaker.ts";

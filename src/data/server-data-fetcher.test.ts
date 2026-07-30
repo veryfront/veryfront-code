@@ -19,7 +19,7 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { join } from "node:path";
 import { FakeTime } from "#std/testing/time";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
-import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
+import { TimeoutError } from "#veryfront/utils/timeout.ts";
 import { CircuitBreakerOpen } from "#veryfront/utils/circuit-breaker.ts";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";

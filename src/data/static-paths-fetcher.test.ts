@@ -11,7 +11,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { StaticPathsFetcher, type StaticPathsFetcherOptions } from "./static-paths-fetcher.ts";
 import type { PageWithData, StaticPathsResult } from "./types.ts";
-import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
+import { TimeoutError } from "#veryfront/utils/timeout.ts";
 import { FakeTime } from "#std/testing/time";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";

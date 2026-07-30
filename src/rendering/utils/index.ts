@@ -18,8 +18,6 @@ export {
   type ProgressTimeoutOptions,
   StreamTimeoutError,
   streamToString,
-  TimeoutError,
   withProgressTimeoutThrow,
   withTimeout,
-  withTimeoutThrow,
 } from "./stream-utils.ts";

@@ -2,7 +2,7 @@ import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getRendererForProject, type RendererAdapter } from "../../../shared/renderer-factory.ts";
-import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
+import { TimeoutError, withTimeoutThrow } from "#veryfront/utils/timeout.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { markRequestProfilePhase } from "#veryfront/observability";
 import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";

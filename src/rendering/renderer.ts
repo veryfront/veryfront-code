@@ -76,7 +76,7 @@ import { RenderPipeline } from "./orchestrator/pipeline.ts";
 import { createLayoutComponentCache } from "./layouts/utils/component-loader.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import type { HandlerContext } from "#veryfront/types";
-import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.ts";
+import { TimeoutError, withTimeoutThrow } from "#veryfront/utils/timeout.ts";
 import { Singleflight, waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {

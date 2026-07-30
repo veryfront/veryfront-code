@@ -1,21 +1,6 @@
 import { SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
-
-export class TimeoutError extends Error {
-  readonly timeoutKind?: "idle" | "hard";
-  readonly lastProgress?: string;
-
-  constructor(
-    label: string,
-    timeoutMs: number,
-    details?: { kind?: "idle" | "hard"; lastProgress?: string },
-  ) {
-    super(`${label} timed out after ${timeoutMs}ms`);
-    this.name = "TimeoutError";
-    this.timeoutKind = details?.kind;
-    this.lastProgress = details?.lastProgress;
-  }
-}
+import { TimeoutError } from "#veryfront/utils/timeout.ts";
 
 export interface ProgressTimeoutControl {
   /** Aborted when a local deadline or the caller-owned signal is reached. */
@@ -31,15 +16,6 @@ export interface ProgressTimeoutOptions {
   hardTimeoutMs?: number;
   /** Optional deadline owned by the operation's caller. */
   signal?: AbortSignal;
-}
-
-export interface TimeoutOptions {
-  /** Optional caller-owned abort signal that should reject the waiter immediately. */
-  signal?: AbortSignal;
-  /** Called when the caller-owned signal aborts; failures do not replace the abort reason. */
-  onAbort?: (reason: unknown) => void;
-  /** Called when the local timeout fires; failures do not replace the timeout error. */
-  onTimeout?: (error: TimeoutError) => void;
 }
 
 export async function withTimeout<T>(
@@ -63,68 +39,6 @@ export async function withTimeout<T>(
     return await Promise.race([promise, timeoutPromise]);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
-  }
-}
-
-export async function withTimeoutThrow<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  label: string,
-  options?: TimeoutOptions,
-): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  let removeAbortListener: (() => void) | undefined;
-
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      logger.error("TIMEOUT_HARD operation timed out (throwing)", { label, timeoutMs });
-      const error = new TimeoutError(label, timeoutMs);
-      try {
-        options?.onTimeout?.(error);
-      } catch (callbackError) {
-        logger.error("TIMEOUT_HARD onTimeout callback failed", {
-          label,
-          error: callbackError instanceof Error ? callbackError.message : String(callbackError),
-        });
-      } finally {
-        reject(error);
-      }
-    }, timeoutMs);
-  });
-
-  const abortSignal = options?.signal;
-  const abortPromise = abortSignal
-    ? new Promise<never>((_, reject) => {
-      const abort = (): void => {
-        const reason = abortSignal.reason ??
-          new DOMException("The operation was aborted", "AbortError");
-        try {
-          options?.onAbort?.(reason);
-        } catch (callbackError) {
-          logger.error("TIMEOUT_HARD onAbort callback failed", {
-            label,
-            error: callbackError instanceof Error ? callbackError.message : String(callbackError),
-          });
-        } finally {
-          reject(reason);
-        }
-      };
-      if (abortSignal.aborted) {
-        abort();
-        return;
-      }
-      abortSignal.addEventListener("abort", abort, { once: true });
-      removeAbortListener = () => abortSignal.removeEventListener("abort", abort);
-    })
-    : undefined;
-
-  try {
-    return await Promise.race(
-      abortPromise ? [promise, timeoutPromise, abortPromise] : [promise, timeoutPromise],
-    );
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-    removeAbortListener?.();
   }
 }
 

@@ -2,7 +2,7 @@ import type { PageWithData, StaticPathsResult } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { type Span, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
+import { TimeoutError, withTimeoutThrow } from "#veryfront/utils/timeout.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";

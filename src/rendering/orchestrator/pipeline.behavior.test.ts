@@ -43,7 +43,7 @@ import { __resetPoolForTests, getWorkerPool } from "#veryfront/security/sandbox/
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { DataFetcher } from "#veryfront/data/index.ts";
 import { WorkerExecutionScopeOwner } from "../worker-execution-scope.ts";
-import { TimeoutError } from "../utils/stream-utils.ts";
+import { TimeoutError } from "#veryfront/utils/timeout.ts";
 import {
   createTestCSSOptimizationEngine,
   withTestCSSOptimizationEngine,

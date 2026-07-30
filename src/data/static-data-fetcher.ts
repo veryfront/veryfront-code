@@ -15,7 +15,7 @@ import {
 import type { CacheEntry, DataContext, DataResult, PageWithData } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
-import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
+import { TimeoutError, withTimeoutThrow } from "#veryfront/utils/timeout.ts";
 import { getSemaphore, type Semaphore } from "#veryfront/utils/semaphore.ts";
 import {
   MAX_CONCURRENT_REVALIDATIONS,

@@ -3,18 +3,14 @@ import "#veryfront/schemas/_test-setup.ts";
  * P1-5: Pipeline Timeout Enforcement Tests
  *
  * Spec: specs/rendering/ssr-orchestration.spec.md
- * Verifies: withTimeout (soft) and withTimeoutThrow (hard) behavior
- * at the three pipeline timeout stages.
+ * Verifies rendering-specific soft and progress-aware timeout behavior, plus
+ * hard-deadline integration at the three pipeline timeout stages.
  */
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { FakeTime } from "#std/testing/time";
-import {
-  TimeoutError,
-  withProgressTimeoutThrow,
-  withTimeout,
-  withTimeoutThrow,
-} from "./stream-utils.ts";
+import { TimeoutError, withTimeoutThrow } from "#veryfront/utils/timeout.ts";
+import { withProgressTimeoutThrow, withTimeout } from "./stream-utils.ts";
 
 function delay<T>(ms: number, value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
@@ -25,121 +21,6 @@ function hang<T>(): Promise<T> {
 }
 
 describe("Timeout Enforcement", () => {
-  describe("withTimeoutThrow (hard timeout)", () => {
-    it("resolves normally when operation completes before timeout", async () => {
-      const result = await withTimeoutThrow(delay(10, "success"), 500, "fast operation");
-      assertEquals(result, "success");
-    });
-
-    it("throws TimeoutError when operation exceeds timeout", async () => {
-      await assertRejects(
-        () => withTimeoutThrow(hang(), 50, "slow operation"),
-        TimeoutError,
-        "slow operation timed out after 50ms",
-      );
-    });
-
-    it("includes label and duration in TimeoutError message", async () => {
-      await assertRejects(
-        () => withTimeoutThrow(hang(), 50, "Module loading for blog/post"),
-        TimeoutError,
-        "Module loading for blog/post timed out after 50ms",
-      );
-    });
-
-    it("returns result of winning promise in race", async () => {
-      const result = await withTimeoutThrow(delay(10, 42), 1000, "fast wins");
-      assertEquals(result, 42);
-    });
-
-    it("propagates errors from the wrapped promise", async () => {
-      const failing = Promise.reject(new Error("operation failed"));
-
-      await assertRejects(
-        () => withTimeoutThrow(failing, 1000, "failing op"),
-        Error,
-        "operation failed",
-      );
-    });
-
-    it("rejects when the caller-owned signal aborts before the timeout", async () => {
-      const controller = new AbortController();
-      let observedReason: unknown;
-      const result = withTimeoutThrow(hang(), 1000, "caller abort", {
-        signal: controller.signal,
-        onAbort: (reason) => {
-          observedReason = reason;
-        },
-      });
-      const reason = new Error("client disconnected");
-
-      controller.abort(reason);
-
-      const error = await assertRejects(
-        () => result,
-        Error,
-        "client disconnected",
-      );
-      assertEquals(error, reason);
-      assertEquals(observedReason, reason);
-    });
-
-    it("preserves the caller abort reason when onAbort throws", async () => {
-      const controller = new AbortController();
-      const reason = new Error("client disconnected");
-      const result = withTimeoutThrow(hang(), 1000, "caller abort", {
-        signal: controller.signal,
-        onAbort: () => {
-          throw new Error("abort callback failed");
-        },
-      });
-
-      controller.abort(reason);
-
-      const error = await assertRejects(
-        () => result,
-        Error,
-        "client disconnected",
-      );
-
-      assertEquals(error, reason);
-    });
-
-    it("invokes onTimeout exactly when the local timeout fires", async () => {
-      let observedError: TimeoutError | undefined;
-
-      const error = await assertRejects(
-        () =>
-          withTimeoutThrow(hang(), 50, "owned timeout", {
-            onTimeout: (timeoutError) => {
-              observedError = timeoutError;
-            },
-          }),
-        TimeoutError,
-        "owned timeout timed out after 50ms",
-      );
-
-      assertEquals(observedError, error);
-    });
-
-    it("still rejects with TimeoutError when onTimeout throws", async () => {
-      using time = new FakeTime();
-      const result = withTimeoutThrow(hang(), 50, "owned timeout", {
-        onTimeout: () => {
-          throw new Error("timeout callback failed");
-        },
-      });
-      const rejected = assertRejects(
-        () => result,
-        TimeoutError,
-        "owned timeout timed out after 50ms",
-      );
-
-      await time.tickAsync(50);
-      await rejected;
-    });
-  });
-
   describe("withProgressTimeoutThrow (bounded idle timeout)", () => {
     it("allows total work beyond the idle deadline while progress continues", async () => {
       using time = new FakeTime();
@@ -360,46 +241,6 @@ describe("Timeout Enforcement", () => {
 
       const result = await withTimeout(hang(), cssSsrTimeout, "CSS generation");
       assertEquals(result, undefined);
-    });
-  });
-
-  describe("timeout cleanup", () => {
-    it("clears timeout when promise resolves before deadline", async () => {
-      const results: string[] = [];
-
-      for (let i = 0; i < 10; i++) {
-        results.push(
-          await withTimeoutThrow(delay(5, `result-${i}`), 1000, `iteration-${i}`),
-        );
-      }
-
-      assertEquals(results.length, 10);
-      assertEquals(results[0], "result-0");
-      assertEquals(results[9], "result-9");
-    });
-  });
-
-  describe("parallel timeout enforcement", () => {
-    it("independent timeouts for parallel operations", async () => {
-      const results = await Promise.all([
-        withTimeoutThrow(delay(10, "job-1"), 500, "data job 1"),
-        withTimeoutThrow(delay(20, "job-2"), 500, "data job 2"),
-        withTimeoutThrow(delay(30, "job-3"), 500, "data job 3"),
-      ]);
-
-      assertEquals(results, ["job-1", "job-2", "job-3"]);
-    });
-
-    it("one timeout does not affect other parallel operations", async () => {
-      const results = await Promise.allSettled([
-        withTimeoutThrow(delay(10, "fast"), 500, "fast job"),
-        withTimeoutThrow(hang(), 50, "slow job"),
-        withTimeoutThrow(delay(10, "also-fast"), 500, "also-fast job"),
-      ]);
-
-      assertEquals(results[0]?.status, "fulfilled");
-      assertEquals(results[1]?.status, "rejected");
-      assertEquals(results[2]?.status, "fulfilled");
     });
   });
 });
