@@ -198,6 +198,16 @@ export {
   PopoverTitle,
   PopoverTrigger,
 } from "./popover.tsx";
+export {
+  Accordion,
+  AccordionContent,
+  type AccordionContentProps,
+  AccordionItem,
+  type AccordionItemProps,
+  type AccordionProps,
+  AccordionTrigger,
+  type AccordionTriggerProps,
+} from "./accordion.tsx";
 export { AspectRatio, type AspectRatioProps } from "./aspect-ratio.tsx";
 export { NumberField, type NumberFieldProps } from "./number-field.tsx";
 export { Separator, type SeparatorProps } from "./separator.tsx";

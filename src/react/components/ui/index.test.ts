@@ -9,6 +9,10 @@ import * as cvaModule from "./cva.ts";
 // reviewed change to the public API, not an accidental widening. Type-only
 // exports (e.g. `ButtonProps`) do not appear at runtime and are omitted.
 const expectedRuntimeExports = [
+  "Accordion",
+  "AccordionContent",
+  "AccordionItem",
+  "AccordionTrigger",
   "Alert",
   "AlertAction",
   "AlertContent",

@@ -110,7 +110,7 @@ export const UI_COMPONENTS: UiComponent[] = [
   { name: "Toggle", kind: "form", interactive: false, status: "shipped" },
   { name: "ToggleGroup", kind: "form", interactive: true, status: "shipped" },
   { name: "Slider", kind: "form", interactive: true, status: "shipped" },
-  { name: "Accordion", kind: "structure", interactive: true, status: "planned" },
+  { name: "Accordion", kind: "structure", interactive: true, status: "shipped" },
   {
     name: "Combobox",
     kind: "overlay",

@@ -54,6 +54,7 @@ import { Command, CommandItem, CommandList } from "./command.tsx";
 import { AppShell } from "./app-shell.tsx";
 import { ColorModeProvider, ColorModeToggle } from "./color-mode.tsx";
 import { Separator } from "./separator.tsx";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./accordion.tsx";
 import { AspectRatio } from "./aspect-ratio.tsx";
 import { NumberField } from "./number-field.tsx";
 import { Slider } from "./slider.tsx";
@@ -293,6 +294,21 @@ const SMOKE: SmokeCase[] = [
         <ToggleGroupItem value="a">A</ToggleGroupItem>
         <ToggleGroupItem value="b">B</ToggleGroupItem>
       </ToggleGroup>
+    ),
+  },
+  {
+    name: "Accordion",
+    render: () => (
+      <Accordion type="single" collapsible defaultValue="a">
+        <AccordionItem value="a">
+          <AccordionTrigger>Section A</AccordionTrigger>
+          <AccordionContent>Body A</AccordionContent>
+        </AccordionItem>
+        <AccordionItem value="b">
+          <AccordionTrigger>Section B</AccordionTrigger>
+          <AccordionContent>Body B</AccordionContent>
+        </AccordionItem>
+      </Accordion>
     ),
   },
   {
