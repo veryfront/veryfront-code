@@ -6,6 +6,19 @@
  * trigger; dismisses on outside-click, `Escape`, and item select. A11y work
  * tracked in anchored-surface.tsx.
  *
+ * @example
+ * ```tsx
+ * import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "veryfront/ui";
+ *
+ * <DropdownMenu>
+ *   <DropdownMenuTrigger asChild><Button>Actions</Button></DropdownMenuTrigger>
+ *   <DropdownMenuContent>
+ *     <DropdownMenuItem onSelect={rename}>Rename</DropdownMenuItem>
+ *     <DropdownMenuItem onSelect={remove}>Delete</DropdownMenuItem>
+ *   </DropdownMenuContent>
+ * </DropdownMenu>;
+ * ```
+ *
  * @module react/components/ui/dropdown-menu
  */
 import * as React from "react";

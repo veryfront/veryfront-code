@@ -8,6 +8,18 @@
  * behaviour is unchanged; an app may swap in a Base UI / React Aria tooltip
  * without touching this skin or any call-site.
  *
+ * @example
+ * ```tsx
+ * import { Button, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "veryfront/ui";
+ *
+ * <TooltipProvider>
+ *   <Tooltip>
+ *     <TooltipTrigger asChild><Button>Save</Button></TooltipTrigger>
+ *     <TooltipContent>Save changes (⌘S)</TooltipContent>
+ *   </Tooltip>
+ * </TooltipProvider>;
+ * ```
+ *
  * @module react/components/ui/tooltip
  */
 import * as React from "react";

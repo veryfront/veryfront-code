@@ -4,6 +4,16 @@
  * a11y — focus, keyboard, form participation). Plus `RadioField` (label +
  * description) and `RadioGroup`. Private to the chat module.
  *
+ * @example
+ * ```tsx
+ * import { RadioField, RadioGroup } from "veryfront/ui";
+ *
+ * <RadioGroup>
+ *   <RadioField name="plan" value="pro" label="Pro" />
+ *   <RadioField name="plan" value="team" label="Team" />
+ * </RadioGroup>;
+ * ```
+ *
  * @module react/components/ui/radio
  */
 import * as React from "react";

@@ -5,6 +5,13 @@
  * box styling. Self-contained, no radix. Accepts the native API plus an optional
  * radix-style `onCheckedChange`. Plus `CheckboxField` + `CheckboxGroup`.
  *
+ * @example
+ * ```tsx
+ * import { CheckboxField } from "veryfront/ui";
+ *
+ * <CheckboxField label="Subscribe" description="Weekly digest" onCheckedChange={setOptedIn} />;
+ * ```
+ *
  * @module react/components/ui/checkbox
  */
 import * as React from "react";

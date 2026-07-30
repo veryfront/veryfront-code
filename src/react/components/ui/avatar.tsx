@@ -5,6 +5,13 @@
  * Studio's `vf-avatar-initial` container-query sizing is simplified to a fixed
  * `text-xs` for v1. Private to the chat module.
  *
+ * @example
+ * ```tsx
+ * import { Avatar } from "veryfront/ui";
+ *
+ * <Avatar name="Ada Lovelace" avatarSrc={user.image} tone="muted" />;
+ * ```
+ *
  * @module react/components/ui/avatar
  */
 import * as React from "react";

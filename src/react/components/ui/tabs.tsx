@@ -14,6 +14,17 @@
  * - `default` — filled track (`--input-bg`), 34/38px, accent pill.
  * - `sm` — flat, outlined, 32px, for panel headers.
  *
+ * @example
+ * ```tsx
+ * import { Tabs, TabsItem } from "veryfront/ui";
+ *
+ * const [tab, setTab] = React.useState("overview");
+ * <Tabs value={tab} onValueChange={setTab}>
+ *   <TabsItem value="overview">Overview</TabsItem>
+ *   <TabsItem value="activity">Activity</TabsItem>
+ * </Tabs>;
+ * ```
+ *
  * @module react/components/ui/tabs
  */
 import * as React from "react";

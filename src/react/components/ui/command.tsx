@@ -9,6 +9,19 @@
  * (this does case-insensitive substring matching), `CommandDialog`. Private to
  * the chat module.
  *
+ * @example
+ * ```tsx
+ * import { Command, CommandInput, CommandItem, CommandList } from "veryfront/ui";
+ *
+ * <Command>
+ *   <CommandInput placeholder="Type a command…" />
+ *   <CommandList>
+ *     <CommandItem onSelect={openFile}>Open file</CommandItem>
+ *     <CommandItem onSelect={newDoc}>New document</CommandItem>
+ *   </CommandList>
+ * </Command>;
+ * ```
+ *
  * @module react/components/ui/command
  */
 import * as React from "react";

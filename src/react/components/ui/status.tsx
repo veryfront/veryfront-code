@@ -4,6 +4,13 @@
  * to veryfront's `[var(--token)]` vocabulary — the `--status-*` dot tokens all
  * exist in `theme.ts`. Private to the chat module.
  *
+ * @example
+ * ```tsx
+ * import { Status } from "veryfront/ui";
+ *
+ * <Status label="Online" color="green" pulse />;
+ * ```
+ *
  * @module react/components/ui/status
  */
 import * as React from "react";

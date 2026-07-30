@@ -6,6 +6,16 @@
  * from the bottom; dismisses on `Escape` and overlay click. A11y work tracked
  * in modal-surface.tsx.
  *
+ * @example
+ * ```tsx
+ * import { Button, Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "veryfront/ui";
+ *
+ * <Drawer>
+ *   <DrawerTrigger asChild><Button>Edit</Button></DrawerTrigger>
+ *   <DrawerContent><DrawerTitle>Edit profile</DrawerTitle></DrawerContent>
+ * </Drawer>;
+ * ```
+ *
  * @module react/components/ui/drawer
  */
 import * as React from "react";

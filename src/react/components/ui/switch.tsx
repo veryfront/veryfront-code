@@ -5,6 +5,13 @@
  * transitions. Self-contained, no radix. Accepts the native API plus an
  * optional radix-style `onCheckedChange`. Plus `SwitchField`.
  *
+ * @example
+ * ```tsx
+ * import { SwitchField } from "veryfront/ui";
+ *
+ * <SwitchField label="Wi-Fi" defaultChecked onCheckedChange={setEnabled} />;
+ * ```
+ *
  * @module react/components/ui/switch
  */
 import * as React from "react";

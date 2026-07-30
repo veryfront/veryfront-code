@@ -6,6 +6,16 @@
  * dismisses on outside-click and `Escape`. A11y work tracked in
  * anchored-surface.tsx.
  *
+ * @example
+ * ```tsx
+ * import { Button, Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "veryfront/ui";
+ *
+ * <Popover>
+ *   <PopoverTrigger asChild><Button>Filters</Button></PopoverTrigger>
+ *   <PopoverContent><PopoverTitle>Filters</PopoverTitle></PopoverContent>
+ * </Popover>;
+ * ```
+ *
  * @module react/components/ui/popover
  */
 import * as React from "react";

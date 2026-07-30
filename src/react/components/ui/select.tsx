@@ -9,6 +9,19 @@
  * label is tracked once its Content has rendered at least once (basic). Private
  * to the chat module.
  *
+ * @example
+ * ```tsx
+ * import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "veryfront/ui";
+ *
+ * <Select value={region} onValueChange={setRegion}>
+ *   <SelectTrigger><SelectValue placeholder="Pick a region" /></SelectTrigger>
+ *   <SelectContent>
+ *     <SelectItem value="us">US</SelectItem>
+ *     <SelectItem value="eu">EU</SelectItem>
+ *   </SelectContent>
+ * </Select>;
+ * ```
+ *
  * @module react/components/ui/select
  */
 import * as React from "react";

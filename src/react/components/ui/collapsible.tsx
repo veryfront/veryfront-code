@@ -7,6 +7,16 @@
  * (`--radix-collapsible-content-height`), `hidden` instead of unmount for
  * find-in-page. Private to the chat module.
  *
+ * @example
+ * ```tsx
+ * import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "veryfront/ui";
+ *
+ * <Collapsible>
+ *   <CollapsibleTrigger>Show details</CollapsibleTrigger>
+ *   <CollapsibleContent>Hidden until toggled.</CollapsibleContent>
+ * </Collapsible>;
+ * ```
+ *
  * @module react/components/ui/collapsible
  */
 import * as React from "react";

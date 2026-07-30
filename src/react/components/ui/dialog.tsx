@@ -5,6 +5,22 @@
  * remapped; `Heading` level 2 + `Text` inlined). Modal overlay + centered panel;
  * dismisses on `Escape` and overlay click. A11y work tracked in modal-surface.tsx.
  *
+ * @example
+ * ```tsx
+ * import { Button, Dialog, DialogAction, DialogCancel, DialogContent, DialogFooter, DialogTitle, DialogTrigger } from "veryfront/ui";
+ *
+ * <Dialog>
+ *   <DialogTrigger asChild><Button variant="destructive">Delete</Button></DialogTrigger>
+ *   <DialogContent>
+ *     <DialogTitle>Delete project?</DialogTitle>
+ *     <DialogFooter>
+ *       <DialogCancel>Cancel</DialogCancel>
+ *       <DialogAction onClick={remove}>Delete</DialogAction>
+ *     </DialogFooter>
+ *   </DialogContent>
+ * </Dialog>;
+ * ```
+ *
  * @module react/components/ui/dialog
  */
 import * as React from "react";

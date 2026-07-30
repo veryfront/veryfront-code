@@ -4,6 +4,16 @@
  * classes remapped to veryfront's `[var(--token)]` vocabulary. Private to the
  * chat module.
  *
+ * @example
+ * ```tsx
+ * import { Tag, TagGroup, TagLink } from "veryfront/ui";
+ *
+ * <TagGroup>
+ *   <Tag>TypeScript</Tag>
+ *   <TagLink href="https://veryfront.com">Docs</TagLink>
+ * </TagGroup>;
+ * ```
+ *
  * @module react/components/ui/tag
  */
 import * as React from "react";
