@@ -1,15 +1,22 @@
 # Loop goal — `veryfront/ui` + `veryfront/chat` to spec
 
 Paste the block below after `/loop` (no interval = self-paced). Each firing does
-one verified, committed slice, until the **coverage suite is fully green**.
+one verified, committed slice, until **both gates below are green**.
 **Full detail is in [`handoff.md`](./handoff.md)** — the goal below is deliberately
 explicit about scope; the handoff has the paths, lists, decisions, and gotchas.
 
-**The matrix and the goal are the tests.** `src/react/components/{ui,chat}/coverage.test.tsx`
-enumerate every component/hook/variant and assert exported · storied · documented ·
-tested · adapter-covered · composition-rules. Run them to see what's left (every red
-row = a todo); "done" = the whole suite is green. There is no separate tracker to
-hand-maintain.
+**Two sequential gates drive the whole loop:**
+
+1. **Framework gate (this repo, do FIRST).** `src/react/components/{ui,chat}/coverage.test.tsx`
+   enumerate every component/hook/variant and assert exported · storied · documented ·
+   tested · adapter-covered · composition-rules. Run them to see what's left (every red
+   row = a todo). No separate tracker to hand-maintain.
+2. **Reproduction gate (the `veryfront-router-testing` repo, do AFTER gate 1 is green).**
+   The library isn't "done" until it's proven in the three example apps + the adapter
+   interop testbed, all booting with **zero client + server errors**. Its gate is the
+   `check-chat-demos.sh` script in that repo — that is the router-testing equivalent
+   of the coverage suite. **The framework loop does NOT test this repo, so it must be
+   an explicit phase — don't stop at gate 1.**
 
 ---
 
@@ -32,13 +39,25 @@ Repo `/Users/mattboon/Sites/veryfront-code`, branch `feat/ui-chat-to-spec` (PR #
 
 ## Each loop iteration (see handoff → "Per-iteration protocol")
 
-1. **If PR #3185 is red / conflicts with `main`:** top priority — `git fetch origin main`, rebase/reconcile the adapter layer onto `main`'s #3176/#3056 primitives, get it green. Before anything else.
-2. Else run the coverage suite and pick **ONE** red row — the highest-leverage failing assertion (finish Base UI 5/5 first, then go area by area).
-3. Take it fully to done: **build to the composition rules** (one node · `forwardRef` · `{...props}` · `asChild` · `data-*` · no `xxxClassName`/`xxxProps` bags) with **`/react-component` + `/react-best-practices`** → **Storybook story** (one file per component, one Story per cva variant) → **docs via `/docs-writer`** → **tests** → **review with `/composition-patterns` + `/code-review` + `/security-audit`**, fixing findings.
-4. **Verify:** `deno check` + `deno fmt` + `deno lint` on changed files; tests green; both freeze tests pass.
-5. **Commit + push** to `feat/ui-chat-to-spec` (revert `deno.lock`/`*.generated.ts` churn; `--no-verify` only if the sole failure is the known `mcp/tools/deploy-tool` flake).
-6. **Re-run the coverage suite** — the row is now green. Repeat.
+**Stay-current first:** keep the branch reconciled with `main` — `git fetch origin main` and `git merge origin/main` if it moved; resolve any adapter-layer conflicts (keep both sides' behaviour) and confirm adapter conformance + freeze tests stay green.
+
+### PHASE 1 — framework (repeat until the coverage suite is fully green)
+
+1. Run the coverage suite and pick **ONE** red row — the highest-leverage failing assertion (finish Base UI 5/5 first, then go area by area).
+2. Take it fully to done: **build to the composition rules** (one node · `forwardRef` · `{...props}` · `asChild` · `data-*` · no `xxxClassName`/`xxxProps` bags) with **`/react-component` + `/react-best-practices`** → **Storybook story** (one file per component, one Story per cva variant) → **docs via `/docs-writer`** → **tests** → **review with `/composition-patterns` + `/code-review` + `/security-audit`**, fixing findings.
+3. **Verify:** `deno check` + `deno fmt` + `deno lint` on changed files; tests green; both freeze tests pass.
+4. **Commit + push** to `feat/ui-chat-to-spec` (revert `deno.lock`/`*.generated.ts` churn; `--no-verify` only if the sole failure is the known `mcp/tools/deploy-tool` flake).
+5. **Re-run the coverage suite** — the row is now green. Repeat until fully green.
+
+### PHASE 2 — reproductions (ONLY after Phase 1 is green; do NOT skip)
+
+Switch to `/Users/mattboon/Sites/veryfront-examples/veryfront-router-testing` (branch `feat/chat-adoption-demos`, PR #8), which runs against **local** framework source (see its `LOCALDEV.md`, "Method 1"). Take each of these to green, one committed slice at a time, gated by `check-chat-demos.sh` (boots every demo + asserts SSR render, **zero client + server errors**):
+
+1. **`chat-blackbox`** (L1, no config) · **`chat-custom-ui`** (L2) · **`chat-full-custom`** (L3, Base UI swap) — each boots and renders against this branch with zero errors.
+2. **`adapter-interop`** testbed (build it if missing) — swap engines via `UIAdapterProvider` and verify the same chat compound renders under builtin / Base UI / Radix / React Aria / Ariakit.
+3. Extend `check-chat-demos.sh` (and `sweep.sh` / `client-sweep.mjs` / `nav-sweep.mjs`) to cover every example; commit + push to the router-testing branch.
+4. **The `veryfront` CLI starter chat template** uses the new components and boots clean.
 
 **Non-negotiables:** backward compatibility is mandatory — never delete public API; add the new shape and mark old `@deprecated`. Builtin is the zero-config default; engines are opt-in via `UIAdapterProvider` only (no config alias). No Zag.js; shadcn is not an adapter. Keep `useMessageBranches`.
 
-**Stop when:** the coverage suite is fully green (every component/hook/variant exported · storied · documented · tested · adapter-covered · composition-rules), all 10 handoff goals meet their acceptance criteria, PR #3185 is green + reviewed, and the `veryfront-router-testing` examples pass with zero errors. On a genuine blocker or a decision only the user can make, stop and surface it rather than guessing.
+**Stop when BOTH gates are green:** (1) the framework coverage suite is fully green (every component/hook/variant exported · storied · documented · tested · adapter-covered · composition-rules), and (2) the `veryfront-router-testing` examples + adapter-interop testbed all pass `check-chat-demos.sh` with **zero client + server errors** — plus all 10 handoff goals meet their acceptance criteria and PR #3185 is green + reviewed. Reaching gate 1 is **not** done; Phase 2 must also be green. On a genuine blocker or a decision only the user can make, stop and surface it rather than guessing.
