@@ -13,7 +13,8 @@ example apps. Work **backward-compatibly** throughout.
 ## How to use this doc (agents)
 
 Read top-to-bottom once, then work from **[Work breakdown](#work-breakdown--everything-in-scope)**
-(what to build) and the **`_impl/matrix.md` trackers** (what's left). Each section:
+(what to build) and the **coverage suite** — `src/react/components/{ui,chat}/coverage.test.tsx`,
+which is the live "what's left" (every red row is a todo; goal = fully green). Each section:
 
 | Section                                                                | Use it for                                            |
 | ---------------------------------------------------------------------- | ----------------------------------------------------- |
@@ -96,9 +97,10 @@ The two RFCs are the source of truth for "to spec":
 - **Implementation tracking** (on `feat/ui-chat-to-spec`):
   `docs/plans/ui-chat-to-spec/ui-{spec,matrix}.md` and
   `docs/plans/ui-chat-to-spec/chat-{spec,matrix,tickets}.md` — the
-  distilled per-piece definition-of-done + a matrix of all 25 components + 33 hooks
-  with gate columns (Spec/Built/Story/Test/Styled/Verified). Update the matrix as
-  you go.
+  distilled per-piece definition-of-done + a reference matrix of all 25 components +
+  33 hooks with gate columns (Spec/Built/Story/Test/Styled/Verified). These are
+  human-readable orientation only — the **live** tracker + goal is the coverage
+  suite (`src/react/components/{ui,chat}/coverage.test.tsx`); no need to hand-tick.
 - **Full plan:** `/Users/mattboon/.claude/plans/snappy-wibbling-quokka.md` (the
   approved multi-phase plan this handoff summarises).
 
