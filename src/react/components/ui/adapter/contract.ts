@@ -17,6 +17,7 @@
  * @module react/components/ui/adapter/contract
  */
 import type * as React from "react";
+import type { ToastFn } from "../toast-parts.tsx";
 
 /**
  * Normalized disclosure state shared by every overlay primitive. Matches
@@ -217,6 +218,27 @@ export interface ComboboxParts {
   useCombobox: () => ComboboxState;
 }
 
+/** The imperative Toast API a skin part reads from inside a `ToastProvider`. */
+export interface ToastState {
+  /** Enqueue a structured toast, or a custom node via `toast.custom`. */
+  toast: ToastFn;
+  /** Remove a toast early by its id. */
+  dismiss: (id: string) => void;
+}
+
+/**
+ * Toast is imperative (a queue + hook), not a floating surface, so its adapter
+ * slot is `Provider` + `useToast` rather than role-tagged render slots. The
+ * builtin holds a queue and mounts a viewport; a Sonner adapter would mount
+ * `<Toaster/>` and map `useToast().toast` onto Sonner's `toast()`.
+ */
+export interface ToastParts {
+  /** Owns the toast queue and mounts its viewport. */
+  Provider: React.FC<{ children: React.ReactNode; duration?: number }>;
+  /** Read the imperative `{ toast, dismiss }` API. Throws outside a `ToastProvider`. */
+  useToast: () => ToastState;
+}
+
 /**
  * The adapter surface. New primitives slot in as keys — the merge machinery in
  * `context.tsx` is agnostic to which keys exist.
@@ -230,6 +252,7 @@ export interface UIAdapter {
   tooltip: TooltipParts;
   select: SelectParts;
   combobox: ComboboxParts;
+  toast: ToastParts;
 }
 
 /**
