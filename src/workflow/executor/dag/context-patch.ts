@@ -92,6 +92,16 @@ export function applyContextPatch(target: WorkflowContext, patch: ContextPatch):
   applyRecordPatch(target, patch);
 }
 
+/** Read only an own record entry, never an inherited prototype property. */
+export function getOwnRecordValue<T>(target: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(target, key) ? target[key] : undefined;
+}
+
+/** Define an own record entry without invoking the legacy __proto__ setter. */
+export function setOwnRecordValue<T>(target: Record<string, T>, key: string, value: T): void {
+  defineOwnValue(target, key, value);
+}
+
 function defineOwnValue<T>(target: Record<string, T>, key: string, value: T): void {
   Object.defineProperty(target, key, {
     value,

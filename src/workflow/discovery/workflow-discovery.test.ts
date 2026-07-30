@@ -1,10 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
-import { discoverWorkflows, findWorkflowById } from "./workflow-discovery.ts";
+import {
+  createWorkflowRegistry,
+  discoverWorkflows,
+  findWorkflowById,
+} from "./workflow-discovery.ts";
 
 function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
   const normalize = (path: string): string => path.replace(/^\/project\/?/, "").replace(/^\/+/, "");
@@ -187,6 +191,68 @@ describe(
 
       assertEquals(workflow?.id, "ping");
       assertEquals(workflow?.exportName, "pingWorkflow");
+    });
+
+    it("returns null only after a complete discovery with no matching workflow", async () => {
+      const workflow = await findWorkflowById("missing", {
+        projectDir: "/project",
+        adapter: createRuntimeAdapter({}),
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(workflow, null);
+    });
+
+    it("fails closed when any workflow module cannot be discovered", async () => {
+      const adapter = createRuntimeAdapter({
+        "/project/workflows/ping.ts": [
+          'import { workflow } from "veryfront/workflow";',
+          'export default workflow({ id: "ping", steps: [] });',
+        ].join("\n"),
+        "/project/workflows/broken.ts": "export default {",
+      });
+
+      await assertRejects(
+        () =>
+          findWorkflowById("ping", {
+            projectDir: "/project",
+            adapter,
+            config: { fs: { type: "veryfront-api" } } as never,
+          }),
+        Error,
+        "Workflow discovery was incomplete",
+      );
+    });
+
+    it("rejects ambiguous and duplicate workflow identities", async () => {
+      const adapter = createRuntimeAdapter({
+        "/project/workflows/one.ts": [
+          'import { workflow } from "veryfront/workflow";',
+          'export default workflow({ id: "duplicate", steps: [] });',
+        ].join("\n"),
+        "/project/workflows/two.ts": [
+          'import { workflow } from "veryfront/workflow";',
+          'export default workflow({ id: "duplicate", steps: [] });',
+        ].join("\n"),
+      });
+      const options = {
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+      };
+
+      await assertRejects(
+        () => findWorkflowById("duplicate", options),
+        Error,
+        "ambiguous",
+      );
+
+      const discovered = await discoverWorkflows(options);
+      assertThrows(
+        () => createWorkflowRegistry(discovered.workflows),
+        Error,
+        'Duplicate workflow ID "duplicate"',
+      );
     });
 
     it("does not discover legacy app/workflows files by default", async () => {

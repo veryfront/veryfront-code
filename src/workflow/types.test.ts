@@ -6,7 +6,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils";
-import { generateId, parseDuration, validateRetryConfig } from "./types.ts";
+import {
+  captureApprovalApprovers,
+  generateId,
+  parseDuration,
+  validateRetryConfig,
+} from "./types.ts";
 import { RunFilterSchema } from "./schemas/workflow.schema.ts";
 
 describe("parseDuration", () => {
@@ -108,6 +113,50 @@ describe("generateId", () => {
 
   it("should use default 'wf' prefix when no prefix provided", () => {
     assertEquals(generateId().startsWith("wf_"), true);
+  });
+});
+
+describe("captureApprovalApprovers", () => {
+  it("detaches and freezes a dense canonical identity list", () => {
+    const source = ["alice@example.com", "bob@example.com"];
+    const captured = captureApprovalApprovers(source);
+    source[0] = "mallory@example.com";
+
+    assertEquals(captured, ["alice@example.com", "bob@example.com"]);
+    assertEquals(Object.isFrozen(captured), true);
+  });
+
+  it("rejects hostile, sparse, and accessor arrays without invoking hooks", () => {
+    let hooks = 0;
+    const hostile = new Proxy(["alice@example.com"], {
+      get() {
+        hooks++;
+        throw new Error("must not run");
+      },
+      ownKeys() {
+        hooks++;
+        throw new Error("must not run");
+      },
+    });
+    const accessor = ["alice@example.com"];
+    Object.defineProperty(accessor, "0", {
+      enumerable: true,
+      get() {
+        hooks++;
+        return "alice@example.com";
+      },
+    });
+    const sparse = new Array<string>(1);
+
+    assertThrows(() => captureApprovalApprovers(hostile), Error);
+    assertThrows(() => captureApprovalApprovers(accessor), Error, "dense non-empty array");
+    assertThrows(() => captureApprovalApprovers(sparse), Error, "dense non-empty array");
+    assertEquals(hooks, 0);
+  });
+
+  it("rejects control characters and oversized identities", () => {
+    assertThrows(() => captureApprovalApprovers(["alice\u0000@example.com"]), Error);
+    assertThrows(() => captureApprovalApprovers(["x".repeat(1_025)]), Error);
   });
 });
 

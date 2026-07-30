@@ -1,8 +1,17 @@
 /** Provider-neutral workflow helpers shared with backend extensions. */
 
-export { assertWorkflowRunUpdate } from "#veryfront/workflow/backends/types.ts";
+export {
+  assertWorkflowLockId,
+  assertWorkflowRunUpdate,
+  assertWorkflowWorkerId,
+  captureApprovalDecisionTiming,
+  capturePendingApprovalMetadataUpdate,
+} from "#veryfront/workflow/backends/types.ts";
 export type {
+  ApprovalDecisionTiming,
+  ApprovalExpiryCondition,
   BackendConfig,
+  PendingApprovalMetadataUpdate,
   WorkflowBackend,
   WorkflowRunUpdate,
 } from "#veryfront/workflow/backends/types.ts";

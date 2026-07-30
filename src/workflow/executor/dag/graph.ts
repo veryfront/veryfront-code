@@ -1,5 +1,6 @@
 import type { NodeState, WorkflowNode } from "../../types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { getOwnRecordValue } from "./context-patch.ts";
 
 interface DAGGraph {
   adjList: Map<string, string[]>;
@@ -7,8 +8,23 @@ interface DAGGraph {
   nodeMap: Map<string, WorkflowNode>;
 }
 
-function hasAnyDependents(nodes: WorkflowNode[], nodeId: string): boolean {
-  return nodes.some((n) => n.dependsOn?.includes(nodeId));
+function hasPath(
+  adjList: ReadonlyMap<string, readonly string[]>,
+  start: string,
+  target: string,
+): boolean {
+  const pending = [start];
+  const visited = new Set<string>();
+
+  while (pending.length > 0) {
+    const nodeId = pending.pop()!;
+    if (nodeId === target) return true;
+    if (visited.has(nodeId)) continue;
+    visited.add(nodeId);
+    for (const dependent of adjList.get(nodeId) ?? []) pending.push(dependent);
+  }
+
+  return false;
 }
 
 export function buildGraph(nodes: WorkflowNode[]): DAGGraph {
@@ -58,13 +74,15 @@ export function buildGraph(nodes: WorkflowNode[]): DAGGraph {
     }
 
     const currentInDegree = inDegree.get(node.id) ?? 0;
-    if (currentInDegree !== 0 || hasAnyDependents(nodes, node.id)) {
-      prevNodeId = node.id;
-      continue;
+    // An omitted dependency list means declaration-order sequencing. Explicit
+    // dependencies may intentionally reverse that order, however, so only add
+    // the implicit edge when it cannot close a path back to the previous node.
+    // This preserves mixed graphs without silently parallelizing ordinary
+    // sequential nodes or manufacturing a cycle for a valid reversed edge.
+    if (!hasPath(adjList, node.id, prevNodeId)) {
+      adjList.get(prevNodeId)?.push(node.id);
+      inDegree.set(node.id, currentInDegree + 1);
     }
-
-    adjList.get(prevNodeId)?.push(node.id);
-    inDegree.set(node.id, currentInDegree + 1);
     prevNodeId = node.id;
   }
 
@@ -78,7 +96,7 @@ export function getReadyNodes(
   const ready: string[] = [];
 
   for (const [nodeId, degree] of inDegree) {
-    const state = nodeStates[nodeId];
+    const state = getOwnRecordValue(nodeStates, nodeId);
     if (degree === 0 && (!state || state.status === "pending" || state.status === "failed")) {
       ready.push(nodeId);
     }
@@ -91,30 +109,31 @@ export function hasCycle(
   nodes: WorkflowNode[],
   adjList: Map<string, string[]>,
 ): boolean {
-  const visited = new Set<string>();
-  const recursionStack = new Set<string>();
-
-  function dfs(nodeId: string): boolean {
-    visited.add(nodeId);
-    recursionStack.add(nodeId);
-
-    for (const neighbor of adjList.get(nodeId) ?? []) {
-      if (!visited.has(neighbor)) {
-        if (dfs(neighbor)) return true;
-        continue;
-      }
-      if (recursionStack.has(neighbor)) return true;
+  const inDegree = new Map<string, number>();
+  for (const node of nodes) inDegree.set(node.id, 0);
+  for (const dependents of adjList.values()) {
+    for (const dependent of dependents) {
+      inDegree.set(dependent, (inDegree.get(dependent) ?? 0) + 1);
     }
-
-    recursionStack.delete(nodeId);
-    return false;
   }
 
-  for (const node of nodes) {
-    if (!visited.has(node.id) && dfs(node.id)) return true;
+  const ready: string[] = [];
+  for (const [nodeId, degree] of inDegree) {
+    if (degree === 0) ready.push(nodeId);
   }
 
-  return false;
+  let visited = 0;
+  for (let index = 0; index < ready.length; index++) {
+    const nodeId = ready[index]!;
+    visited++;
+    for (const dependent of adjList.get(nodeId) ?? []) {
+      const degree = (inDegree.get(dependent) ?? 0) - 1;
+      inDegree.set(dependent, degree);
+      if (degree === 0) ready.push(dependent);
+    }
+  }
+
+  return visited !== nodes.length;
 }
 
 export function updateInDegreesForCompletedNodes(

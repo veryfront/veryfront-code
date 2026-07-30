@@ -61,9 +61,11 @@ import { contentPipeline } from "../workflows/content-pipeline";
 // before this module requests the provider-neutral backend.
 const backend = createDistributedWorkflowBackend({});
 
-// Shared client
+// The provider transfers this dedicated backend to its caller. The client owns
+// it, while the worker borrows it until worker.stop() completes.
 export const workflowClient = new WorkflowClient({ backend });
 workflowClient.register(contentPipeline);
+await workflowClient.initialize();
 
 // Application composition explicitly decides whether to start this process-local worker.
 const worker = new WorkflowWorker({
@@ -73,7 +75,17 @@ const worker = new WorkflowWorker({
   stalledThreshold: 30000, // 30s for dev (faster detection)
 });
 worker.start();
+
+export async function stopWorkflowRuntime(): Promise<void> {
+  await worker.stop();
+  await workflowClient.destroy();
+}
 ```
+
+Explicit initialization fails startup before the worker accepts work. Shutdown
+stops the borrowing worker before destroying the owning client and its dedicated
+backend. Extension teardown does not close provider-factory results that were
+transferred to callers.
 
 Now if your dev server crashes mid-workflow:
 
@@ -85,7 +97,7 @@ Now if your dev server crashes mid-workflow:
 
 ### Local Development
 
-**Default (Simple):** Workflows run inline, no persistence:
+**Default (Simple):** Workflows run inline with process-local, non-durable persistence:
 
 ```
 ┌───────────────────────────────────────┐
@@ -162,7 +174,15 @@ the distributed provider handles coordination:
 
 - Checkpoints stored in Redis
 - Heartbeats detect stalled workflows
-- Distributed locking prevents duplicate execution
+- Token-fenced lease locking and atomic lease-bound run transitions prevent stale owners from publishing state
+
+Set the heartbeat interval to no more than one third of the lock duration. This
+leaves two renewal windows before the lease expires; the executor rejects less
+conservative timing configurations.
+
+Lease locking does not make external side effects exactly once across process
+pauses or partitions. Treat tool effects as at least once and use idempotency
+keys or provider-side fencing for mutations.
 
 ### Veryfront Cloud (Multi-Tenant)
 
@@ -253,9 +273,10 @@ const backend = createDistributedWorkflowBackend({
   prefix: "wf:",
 });
 
-// Client
+// The client owns the dedicated provider result. The worker below borrows it.
 const client = new WorkflowClient({ backend });
 client.register(myWorkflow);
+await client.initialize();
 
 // Optional: Start worker (if not using CLI)
 const worker = new WorkflowWorker({
@@ -265,14 +286,64 @@ const worker = new WorkflowWorker({
   stalledThreshold: 60000,
 });
 worker.start();
+
+export async function stopWorkflowRuntime(): Promise<void> {
+  await worker.stop();
+  await client.destroy();
+}
 ```
+
+#### Workflow client readiness and backend ownership
+
+`WorkflowClient` separates client-local execution resources from persistence
+ownership.
+
+| Surface                               | Contract                                                                                                                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First persistence operation           | Lazily initializes the backend. Concurrent operations join the same readiness attempt.                                                                                    |
+| `initialize()`                        | Starts an explicit readiness attempt, including revalidation after an earlier success.                                                                                    |
+| Failed readiness                      | Is retained and replayed to ordinary persistence operations. A later explicit `initialize()` starts the retry; no operation silently falls back to another backend.       |
+| Registration and collaborator getters | `register()`, `registerAll()`, `getBackend()`, `getExecutor()`, and `getApprovalManager()` are synchronous and do not initialize persistence.                             |
+| `destroy()`                           | Closes admission, quiesces admitted client work, and tears down the executor and approval manager. Concurrent calls share an attempt; a failed attempt remains retryable. |
+
+`backendOwnership` has two exact values:
+
+| Value        | Backend lifetime                                                                                                                  |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `"owned"`    | Default. The client destroys its implicit or injected backend after client-local work is quiescent.                               |
+| `"borrowed"` | Requires an explicit backend. The client leaves that backend open; its external owner must destroy it after every borrower stops. |
+
+Distributed provider factories transfer each returned backend to their caller;
+extension teardown does not destroy those dedicated results. Use the default
+`"owned"` mode when one client receives the backend. Use `"borrowed"` only when
+another composition-root owner will stop every borrower and destroy the backend
+exactly once.
+
+#### Custom backend contract
 
 Custom backends used by `WorkflowWorker` must implement the queue, lock, and stalled-run methods in
 `WorkflowBackend`. They must also implement `updateRunIfStatusAndWorker`,
 `saveCheckpointIfStatusAndWorker`, and `savePendingApprovalIfStatusAndWorker`. Each of these methods
 must compare the run status and worker ID atomically with its write. `WorkflowWorker` rejects a
 backend that omits these owner-fencing operations because an older worker could otherwise overwrite
-a replacement worker's progress.
+a replacement worker's progress. Lock support is likewise one complete capability: `acquireLock`
+returns an opaque ownership token, and both `extendLock` and `releaseLock` require that token and
+atomically compare it with the live lease. Renewal and release return `true` only when they changed
+the matching lease and `false` for a missing, expired, or replacement lease.
+`updateRunIfStatusAndLock` atomically compares the live lease, expected status, and optional worker
+before changing run state; a transition away from `running` consumes that same lease in the
+transaction. A backend that omits any one of these four operations is not lock-capable; there is no
+token cache, unfenced update, or unconditional release compatibility path.
+
+##### Approval lookup migration
+
+Custom `WorkflowBackend` implementations must provide the required
+`getApproval(runId, approvalId)` method. It replaces the removed optional
+`getPendingApproval(runId, approvalId)` method; there is no compatibility
+fallback. The plural `getPendingApprovals(runId)` remains the actionable-list
+operation, while exact `getApproval` lookup returns the unique record in any
+decision state. A backend must fail closed when legacy storage contains more
+than one record with the requested ID.
 
 ### Redis run queries and retention maintenance
 
@@ -323,6 +394,12 @@ structured `workflow-run-conflict` error (HTTP status `409`) and leaves the orig
 indexes unchanged. Redis publishes the run hash, status/workflow/all-run indexes, retention metadata,
 and optional hash TTL in one Lua operation, so readers cannot observe a partially created run.
 
+Status-conditional run patches use the mandatory `updateRunIfStatus` backend compare-and-set. The
+status check and patch are one operation: `true` means the patch was applied and `false` means the
+current status did not match. There is no read-then-write compatibility path. Backends must also
+implement `listPendingApprovals`; expiration and operator queries do not silently skip unsupported
+storage.
+
 When `runTtl` is configured, checkpoints and approvals inherit the run's remaining retention horizon
 instead of starting a new TTL when they are written. Redis keeps an ordered deadline index plus the
 workflow and status metadata needed for targeted cleanup without scanning the keyspace. Run reads,
@@ -333,6 +410,29 @@ the ordered v2 indexes and never enumerate the entire run population with `SMEMB
 Both built-in backends reject unconditional checkpoint or approval writes when the owning run does
 not exist. Owner-fenced checkpoint writes may use a synthetic storage run ID, but their lifetime and
 permission remain tied to the existing canonical ownership run.
+
+Approval IDs are unique for the lifetime of a run. Both unconditional and owner-fenced approval
+appends reserve the ID atomically, require the run to still be `waiting`, and reject duplicates.
+`updateApproval` is a mandatory compare-and-set over the owning run status, approval status, and
+persisted expiry. Its required timing argument contains the host-captured `decidedAt` and either the
+`unexpired` or `expired` predicate. The backend compares the persisted expiry and writes that exact
+timestamp in the same transaction; equality with `expiresAt` is still on time. The method returns
+`true` only for the decision that changed a pending approval and `false` when any predicate lost a
+race. Notification failure metadata is the only non-decision approval patch; attempts to patch
+status or decision fields are rejected. If legacy storage already contains duplicate approval IDs,
+decision writes, metadata updates, and exact reads fail closed without choosing an arbitrary row.
+
+Pending-approval lists and hydrated run snapshots expose actionable approvals only while the run is
+`waiting`. Exact `getApproval` lookup intentionally returns historical decided or stranded
+records as well; approval reconciliation and operator audit depend on that distinction. Retrying the
+exact same durable decision re-runs run-state reconciliation without changing `decidedAt`; a retry
+whose outcome, approver, or comment differs is rejected. Approval timeouts must be positive portable
+timer durations. `ApprovalManager.destroy()` stops new approval mutations and waits for admitted
+creation and decision operations plus an in-flight expiry pass.
+
+Approval decision identities must come from an authenticated host boundary, never from an
+untrusted request field. An explicit `approvers` list is enforced by the workflow runtime. Omitting
+that list delegates the whole authorization decision to the host that calls the approval API.
 
 These atomic run-state scripts require one logical Redis keyspace. The built-in adapter supports a
 standalone Redis endpoint. Redis Sentinel and Redis Cluster are not currently supported: the built-in
@@ -396,29 +496,139 @@ await manager.start();
 | -------------------- | -------------------------------- | ----------------------- |
 | `ProcessRunExecutor` | Local development, trusted hosts | Process-level isolation |
 
-**Creating a Custom Executor:**
+#### Custom executor reference
+
+`RunExecutor`, `RunExecutionConfig`, and `RunExecutionInfo` are exported from
+`veryfront/workflow/worker`.
+
+##### Example adapter
 
 ```typescript
-import type { RunExecutionConfig, RunExecutionInfo, RunExecutor } from "veryfront/workflow";
+import type { RunExecutionConfig, RunExecutionInfo, RunExecutor } from "veryfront/workflow/worker";
 
-class DockerRunExecutor implements RunExecutor {
+interface ManagedExecutionRuntime {
+  spawn(input: {
+    executionId: string;
+    managerId: string;
+    runId: string;
+    entrypoint: string;
+    timeout: number;
+    debug: boolean;
+    env: Readonly<Record<string, string>>;
+  }): Promise<void>;
+  get(executionId: string): Promise<RunExecutionInfo | null>;
+  list(managerId: string): Promise<RunExecutionInfo[]>;
+  terminateAndRemove(executionId: string): Promise<void>;
+  shutdown(): Promise<void>;
+}
+
+class ManagedRunExecutor implements RunExecutor {
+  constructor(
+    private readonly runtime: ManagedExecutionRuntime,
+    private readonly entrypoint: string,
+  ) {
+    if (entrypoint.trim().length === 0) {
+      throw new TypeError("Managed workflow entrypoint must not be empty");
+    }
+  }
+
   async createRunExecution(config: RunExecutionConfig): Promise<string> {
-    // Spawn a Docker container
+    await this.runtime.spawn({
+      executionId: config.executionId,
+      managerId: config.managerId,
+      runId: config.run.id,
+      entrypoint: this.entrypoint,
+      timeout: config.timeout,
+      debug: config.debug ?? false,
+      env: {
+        ...config.env,
+        MODE: "run",
+        WORKFLOW_RUN_ID: config.run.id,
+        RUN_EXECUTION_ID: config.executionId,
+        WORKFLOW_LOCK_DURATION_MS: String(config.lockAcquisition.duration),
+        WORKFLOW_LOCK_ACQUISITION_TIMEOUT_MS: String(config.lockAcquisition.timeout),
+        WORKFLOW_LOCK_RETRY_INTERVAL_MS: String(config.lockAcquisition.retryInterval),
+      },
+    });
+    return config.executionId;
   }
 
-  async getRunExecutionStatus(executionId: string): Promise<RunExecutionInfo | null> {
-    // Check container status
+  getRunExecutionStatus(executionId: string): Promise<RunExecutionInfo | null> {
+    return this.runtime.get(executionId);
   }
 
-  async listRunExecutions(managerId: string): Promise<RunExecutionInfo[]> {
-    // List containers with manager label
+  listRunExecutions(managerId: string): Promise<RunExecutionInfo[]> {
+    return this.runtime.list(managerId);
   }
 
   async deleteRunExecution(executionId: string): Promise<void> {
-    // Remove container
+    await this.runtime.terminateAndRemove(executionId);
+  }
+
+  async destroy(): Promise<void> {
+    await this.runtime.shutdown();
   }
 }
 ```
+
+The injected runtime in the example owns the platform-specific process, container, or runtime-target
+operations. Its `spawn()` method returns when the execution is registered and addressable.
+
+##### Method contract
+
+| Method                               | Required behavior                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createRunExecution(config)`         | Registers the execution under `config.executionId` and returns exactly that ID as soon as status, list, and delete operations can address it. It does not wait for entrypoint readiness, child lock acquisition, or workflow completion. A rejected partial spawn leaves no live execution, or leaves it addressable by `config.executionId` for cleanup. |
+| `getRunExecutionStatus(executionId)` | Returns the current execution record, or `null` when the execution is not present.                                                                                                                                                                                                                                                                        |
+| `listRunExecutions(managerId)`       | Returns the active executions registered by the specified manager.                                                                                                                                                                                                                                                                                        |
+| `deleteRunExecution(executionId)`    | Is idempotent and resolves only after the execution can no longer perform workflow work.                                                                                                                                                                                                                                                                  |
+| `initialize()`                       | Optionally initializes the executor once before its first execution is created. If initialization rejects after allocating resources, the manager invokes `destroy()` and the executor becomes terminal.                                                                                                                                                  |
+| `destroy()`                          | Performs terminal teardown and resolves only after every owned execution can no longer perform workflow work. Repeated calls join the same teardown or remain safe and idempotent.                                                                                                                                                                        |
+
+##### Managed entrypoint environment
+
+`RunExecutionConfig.lockAcquisition` contains positive millisecond values for the isolated
+entrypoint's bounded lease acquisition.
+
+| Reserved variable                      | Value                                          |
+| -------------------------------------- | ---------------------------------------------- |
+| `MODE`                                 | `run`                                          |
+| `WORKFLOW_RUN_ID`                      | `config.run.id`                                |
+| `RUN_EXECUTION_ID`                     | `config.executionId`                           |
+| `WORKFLOW_LOCK_DURATION_MS`            | `String(config.lockAcquisition.duration)`      |
+| `WORKFLOW_LOCK_ACQUISITION_TIMEOUT_MS` | `String(config.lockAcquisition.timeout)`       |
+| `WORKFLOW_LOCK_RETRY_INTERVAL_MS`      | `String(config.lockAcquisition.retryInterval)` |
+
+The reserved variables are applied after host-, executor-, and run-supplied environment values and
+cannot be overridden by them. The execution invokes a standard managed workflow entrypoint with
+these variables.
+
+##### Managed entrypoint lifecycle
+
+`createWorkflowRunEntrypoint()` and
+`createDynamicWorkflowRunEntrypoint()` await backend readiness before returning
+a `WorkflowRunEntrypoint`. The factories own the backend and runtime resources
+they allocate.
+
+| Surface                       | Lifecycle contract                                                                                                                                      |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `entrypoint()`                | Starts the handle's only run. Concurrent or later invocations fail closed. The promise settles only after automatic cleanup of factory-owned resources. |
+| `entrypoint.destroy()`        | Abandons a ready handle, or joins an active invocation before cleanup. Completed cleanup is idempotent; failed cleanup may be retried.                  |
+| Execution and cleanup failure | Rejects with an `AggregateError` that preserves both failures instead of replacing the execution error.                                                 |
+| `runWorkflowRun()`            | Borrows a pre-initialized backend and executor. Their lifecycle remains with the caller.                                                                |
+| `runDynamicWorkflowRun()`     | Borrows a pre-initialized backend. Its per-run executor and approval manager are disposed after execution, while the backend remains with the caller.   |
+
+Calling `destroy()` is required when a factory-created handle is abandoned
+before invocation. Calling it after invocation is safe because invocation has
+already joined automatic cleanup.
+
+`WorkflowRunManager.stop()` is terminal because executor teardown is terminal. Construct a new
+manager and executor to start processing again.
+
+See [Workflow runtime](../../docs/architecture/08-workflow-runtime.md#manager-to-entrypoint-lease-handoff)
+for the lease handoff and
+[managed entrypoint ownership](../../docs/architecture/08-workflow-runtime.md#managed-entrypoint-ownership)
+for the lifecycle rationale.
 
 ## Multi-Tenant Support
 

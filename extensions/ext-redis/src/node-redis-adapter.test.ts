@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NodeRedisAdapter } from "./node-redis-adapter.ts";
 
@@ -247,6 +247,21 @@ describe("platform/adapters/redis/node", () => {
       const adapter = new NodeRedisAdapter(client as never);
       await adapter.quit();
       assertEquals(calls.some((c) => c.method === "close"), true);
+    });
+
+    it("retries listener detachment without closing the transport twice", async () => {
+      const { client, calls } = createMockClient();
+      let detachCalls = 0;
+      const adapter = new NodeRedisAdapter(client as never, () => {
+        detachCalls++;
+        if (detachCalls === 1) throw new Error("listener detach failed");
+      });
+
+      await assertRejects(() => adapter.quit(), Error, "listener detach failed");
+      await adapter.quit();
+
+      assertEquals(calls.filter((call) => call.method === "close").length, 1);
+      assertEquals(detachCalls, 2);
     });
 
     it("should call client.destroy on disconnect (v5 rename)", async () => {

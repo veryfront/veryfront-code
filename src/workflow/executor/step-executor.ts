@@ -37,6 +37,8 @@ import {
   validateRetryConfig,
 } from "../types.ts";
 import type { BlobStorage } from "../blob/types.ts";
+import { cloneCapturedWorkflowStaticValue } from "./workflow-definition-snapshot.ts";
+import { requireWorkflowContentSource } from "../source-authority.ts";
 
 /**
  * AsyncLocalStorage for workflow tenant context.
@@ -60,17 +62,18 @@ function cacheKeyContextFromWorkflowTenant(
   tenant: CapturedTenantContext,
 ): CacheKeyContext | null {
   const mode = tenant.productionMode ? "production" : "preview";
+  const contentSource = requireWorkflowContentSource(tenant);
 
   // Environment sources are mutable and have no immutable version segment.
   // A synthetic "latest" distributed-cache bucket can mix different source
   // snapshots, so these tenants use request context for registry isolation and
   // deliberately skip distributed caching.
-  if (mode === "production" && !tenant.releaseId) return null;
+  if (contentSource.type === "environment") return null;
 
   return {
     projectId: tenant.projectId || tenant.projectSlug,
     mode,
-    versionId: mode === "production" ? tenant.releaseId! : (tenant.branch || "main"),
+    versionId: contentSource.type === "release" ? contentSource.releaseId : contentSource.branch,
   };
 }
 
@@ -281,7 +284,7 @@ export class StepExecutor {
   ): Promise<unknown> {
     if (input === undefined) return context.input;
     if (typeof input === "function") return input(context);
-    return input;
+    return cloneCapturedWorkflowStaticValue(input, "Workflow step input");
   }
 
   private async executeWithTimeout<T>(

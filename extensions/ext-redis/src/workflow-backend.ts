@@ -16,7 +16,7 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "veryfront/extensions/distributed/workflow-support";
-import { agentLogger, safeJsonParse } from "veryfront/utils";
+import { agentLogger, MAX_TIMER_DELAY_MS, safeJsonParse } from "veryfront/utils";
 import {
   INVALID_ARGUMENT,
   RESOURCE_NOT_FOUND,
@@ -27,8 +27,14 @@ import {
 import { createClient } from "redis";
 import type { RedisAdapter } from "./redis-adapter.ts";
 import {
+  type ApprovalDecisionTiming,
+  assertWorkflowLockId,
   assertWorkflowRunUpdate,
+  assertWorkflowWorkerId,
+  captureApprovalDecisionTiming,
+  capturePendingApprovalMetadataUpdate,
   MAX_WORKFLOW_RUN_LIST_LIMIT,
+  type PendingApprovalMetadataUpdate,
   requeueRun,
   requireWorkflowSourceIntegrationPolicy,
   resolveRunDateBounds,
@@ -38,7 +44,7 @@ import {
 } from "veryfront/extensions/distributed/workflow-support";
 import { arrayToObject } from "./array-to-object.ts";
 import { NodeRedisAdapter } from "./node-redis-adapter.ts";
-import type { NodeRedisClient } from "./node-redis-types.ts";
+import type { NodeRedisClient, NodeRedisClientOptions } from "./node-redis-types.ts";
 
 export type { RedisAdapter } from "./redis-adapter.ts";
 export type { RedisBackendConfig, RedisRetentionDrainResult } from "./workflow-backend-types.ts";
@@ -62,6 +68,38 @@ const WORKFLOW_STATUSES: readonly WorkflowStatus[] = [
 ];
 const RETENTION_CLEANUP_BATCH_SIZE = 128;
 const MAX_INTERNAL_CURSOR_RESTARTS = 8;
+const DEFAULT_REDIS_CONNECT_TIMEOUT_MS = 5_000;
+
+type RedisBackendLifecycleState = "open" | "closing" | "closed";
+type RedisClientCloseMode = "quit" | "disconnect";
+
+interface RedisConnectionAttempt {
+  readonly generation: number;
+  readonly client: RedisAdapter;
+  readonly cancel: () => void;
+  promise: Promise<RedisAdapter>;
+}
+
+interface RedisInitializationAttempt {
+  readonly generation: number;
+  readonly cancel: () => void;
+  promise: Promise<void>;
+}
+
+interface RedisInitializationFailure {
+  readonly generation: number;
+  readonly error: unknown;
+}
+
+interface AttachedNodeRedisClient {
+  readonly adapter: NodeRedisAdapter;
+  readonly createCleanupAdapter: () => NodeRedisAdapter;
+  readonly observedError: () => boolean;
+}
+
+class RedisLifecycleCleanupError extends AggregateError {
+  override readonly name = "RedisLifecycleCleanupError";
+}
 
 interface RunSnapshot {
   run: WorkflowRun;
@@ -92,6 +130,54 @@ function assertValidRunTtl(runTtl: number | undefined, nowMs: number): void {
         "runTtl must be a non-negative safe integer whose absolute deadline is safely representable",
     });
   }
+}
+
+function requireConnectTimeoutMs(value: unknown): number {
+  if (
+    !Number.isSafeInteger(value) || (value as number) <= 0 ||
+    (value as number) > MAX_TIMER_DELAY_MS
+  ) {
+    throw new RangeError(
+      `Redis workflow connectTimeoutMs must be a positive integer no greater than ${MAX_TIMER_DELAY_MS}`,
+    );
+  }
+  return value as number;
+}
+
+function lifecycleError(state: RedisBackendLifecycleState): Error {
+  const error = new Error(`Redis workflow backend is ${state}`);
+  error.name = "InvalidStateError";
+  return error;
+}
+
+function supersededError(operation: "connection" | "initialization"): Error {
+  const error = new Error(`Redis workflow backend ${operation} was superseded by destroy()`);
+  error.name = "AbortError";
+  return error;
+}
+
+function isBusyGroupError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /^BUSYGROUP(?:\s|$)/.test(message);
+}
+
+function requireRedisScriptInteger(value: unknown, operation: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Invalid Redis ${operation} response`,
+    });
+  }
+  return value;
+}
+
+function requireRedisScriptBoolean(value: unknown, operation: string): boolean {
+  const code = requireRedisScriptInteger(value, operation);
+  if (code !== 0 && code !== 1) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Invalid Redis ${operation} response code`,
+    });
+  }
+  return code === 1;
 }
 
 /**
@@ -417,6 +503,26 @@ redis.call('rpush', KEYS[2], ARGV[1])
 if remaining > 0 then redis.call('pexpire', KEYS[2], remaining) end
 return 1`;
 
+/** Append one run-unique approval while preserving the run retention horizon. */
+const APPEND_UNIQUE_APPROVAL_SCRIPT = `-- append-unique-retained-workflow-approval
+if redis.call('exists', KEYS[1]) == 0 then return 0 end
+if redis.call('hget', KEYS[1], 'status') ~= 'waiting' then return 3 end
+local remaining = redis.call('pttl', KEYS[1])
+if remaining == -2 or remaining == 0 then return 0 end
+local incoming = cjson.decode(ARGV[1])
+if type(incoming.id) ~= 'string' then return -1 end
+local len = redis.call('llen', KEYS[2])
+for i = 0, len - 1 do
+  local raw = redis.call('lindex', KEYS[2], i)
+  if raw then
+    local stored = cjson.decode(raw)
+    if stored.id == incoming.id then return 2 end
+  end
+end
+redis.call('rpush', KEYS[2], ARGV[1])
+if remaining > 0 then redis.call('pexpire', KEYS[2], remaining) end
+return 1`;
+
 /**
  * Atomically claim a still-stalled running run. The caller supplies the exact
  * activity timestamp it validated as stale; any heartbeat or terminal update
@@ -464,6 +570,10 @@ local expectedWorkerId = ARGV[expectedCount + 6]
 if expectedWorkerId ~= '' and redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then
   return 0
 end
+local expectedLockId = ARGV[expectedCount + 7]
+if expectedLockId ~= '' and redis.call('get', KEYS[4]) ~= expectedLockId then
+  return 0
+end
 if nextStatus ~= '' and old ~= nextStatus then
   local workflowId = redis.call('hget', KEYS[1], 'workflowId')
   local createdAtMs = tonumber(redis.call('hget', KEYS[1], 'createdAtMs'))
@@ -475,11 +585,12 @@ if nextStatus ~= '' and old ~= nextStatus then
   redis.call('zadd', workflowStatusPrefix .. workflowId .. ':' .. nextStatus, createdAtMs, runId)
   redis.call('hset', KEYS[3], runId, nextStatus)
 end
-for i = expectedCount + 7, #ARGV, 2 do
+for i = expectedCount + 8, #ARGV, 2 do
   redis.call('hset', KEYS[1], ARGV[i], ARGV[i + 1])
 end
 if nextStatus ~= '' and nextStatus ~= 'running' then
   redis.call('del', KEYS[2])
+  if expectedLockId ~= '' then redis.call('del', KEYS[4]) end
 end
 return 1`;
 
@@ -503,6 +614,39 @@ redis.call('rpush', KEYS[2], ARGV[expectedCount + 3])
 if remaining > 0 then redis.call('pexpire', KEYS[2], remaining) end
 return 1`;
 
+/** Atomically verify run ownership and append one run-unique approval. */
+const APPEND_UNIQUE_APPROVAL_IF_STATUS_AND_WORKER_SCRIPT =
+  `-- conditional-owned-unique-approval-append
+local status = redis.call('hget', KEYS[1], 'status')
+if status ~= 'waiting' then return 0 end
+local expectedCount = tonumber(ARGV[1])
+local allowed = false
+for i = 2, expectedCount + 1 do
+  if status == ARGV[i] then
+    allowed = true
+    break
+  end
+end
+if not allowed then return 0 end
+local expectedWorkerId = ARGV[expectedCount + 2]
+if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end
+local remaining = redis.call('pttl', KEYS[1])
+if remaining == -2 or remaining == 0 then return 0 end
+local encoded = ARGV[expectedCount + 3]
+local incoming = cjson.decode(encoded)
+if type(incoming.id) ~= 'string' then return -1 end
+local len = redis.call('llen', KEYS[2])
+for i = 0, len - 1 do
+  local raw = redis.call('lindex', KEYS[2], i)
+  if raw then
+    local stored = cjson.decode(raw)
+    if stored.id == incoming.id then return 2 end
+  end
+end
+redis.call('rpush', KEYS[2], encoded)
+if remaining > 0 then redis.call('pexpire', KEYS[2], remaining) end
+return 1`;
+
 /**
  * Atomically patch metadata on the approval whose parsed `.id` matches, located
  * by scanning the list inside the script. This replaces the previous
@@ -511,28 +655,33 @@ return 1`;
  * the LSET would clobber the wrong element.
  *
  * KEYS[1] = approvals list key
+ * KEYS[2] = owning run hash key
  * ARGV[1] = approval id
- * ARGV[2] = patch, JSON-encoded (date fields already ISO strings via toJSON)
+ * ARGV[2] = notification error
  *
- * Returns 1 when the approval was found and patched, 0 when the id is absent.
+ * Returns 1 when the approval was found and patched, 2 when duplicate stored
+ * ids make the target ambiguous, and 0 when the id is absent.
  */
 const UPDATE_PENDING_APPROVAL_SCRIPT = `-- conditional-approval-patch
 local approvalId = ARGV[1]
-local patch = cjson.decode(ARGV[2])
 local len = redis.call('llen', KEYS[1])
+local matchIndex = -1
+local matched = nil
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
     local approval = cjson.decode(raw)
     if approval.id == approvalId then
-      for k, v in pairs(patch) do approval[k] = v end
-      approval.id = approvalId
-      redis.call('lset', KEYS[1], i, cjson.encode(approval))
-      return 1
+      if matchIndex ~= -1 then return 2 end
+      matchIndex = i
+      matched = approval
     end
   end
 end
-return 0`;
+if matchIndex == -1 then return 0 end
+matched.notificationError = ARGV[2]
+redis.call('lset', KEYS[1], matchIndex, cjson.encode(matched))
+return 1`;
 
 /**
  * Atomically apply an approval decision, located by scanning the list for the
@@ -545,40 +694,66 @@ return 0`;
  * ARGV[2] = new status ("approved" | "rejected")
  * ARGV[3] = decidedBy
  * ARGV[4] = decidedAt (ISO string, computed by the caller for determinism)
- * ARGV[5] = "1" when a comment is provided, "0" otherwise
- * ARGV[6] = comment (ignored unless ARGV[5] == "1")
+ * ARGV[5] = expiry condition ("unexpired" | "expired")
+ * ARGV[6] = "1" when a comment is provided, "0" otherwise
+ * ARGV[7] = comment (ignored unless ARGV[6] == "1")
  *
  * Returns 1 when applied, 2 when the approval was found but no longer pending
- * (a lost race), 0 when the id is absent.
+ * (a lost race), 3 when duplicate stored ids make the target ambiguous, and 0
+ * when the id is absent.
  */
 const UPDATE_APPROVAL_SCRIPT = `-- conditional-approval-decision
 local approvalId = ARGV[1]
+if redis.call('hget', KEYS[2], 'status') ~= 'waiting' then return 2 end
 local len = redis.call('llen', KEYS[1])
+local matchIndex = -1
+local matched = nil
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
     local approval = cjson.decode(raw)
     if approval.id == approvalId then
-      if approval.status ~= 'pending' then return 2 end
-      approval.status = ARGV[2]
-      approval.decidedBy = ARGV[3]
-      approval.decidedAt = ARGV[4]
-      if ARGV[5] == '1' then approval.comment = ARGV[6] else approval.comment = nil end
-      redis.call('lset', KEYS[1], i, cjson.encode(approval))
-      return 1
+      if matchIndex ~= -1 then return 3 end
+      matchIndex = i
+      matched = approval
     end
   end
 end
-return 0`;
+if matchIndex == -1 then return 0 end
+if matched.status ~= 'pending' then return 2 end
+local expiresAt = matched.expiresAt
+local hasExpiry = expiresAt ~= nil and expiresAt ~= cjson.null
+if hasExpiry and type(expiresAt) ~= 'string' then return 4 end
+local isExpired = hasExpiry and ARGV[4] > expiresAt
+if ARGV[5] == 'unexpired' then
+  if isExpired then return 2 end
+elseif ARGV[5] == 'expired' then
+  if not hasExpiry or not isExpired then return 2 end
+else
+  return 5
+end
+matched.status = ARGV[2]
+matched.decidedBy = ARGV[3]
+matched.decidedAt = ARGV[4]
+if ARGV[6] == '1' then matched.comment = ARGV[7] else matched.comment = nil end
+redis.call('lset', KEYS[1], matchIndex, cjson.encode(matched))
+return 1`;
 
 /** Implement redis backend. */
 export class RedisBackend implements WorkflowBackend {
   private client: RedisAdapter | null = null;
-  private connectionPromise: Promise<RedisAdapter> | null = null;
+  private connectionAttempt: RedisConnectionAttempt | null = null;
   private config: RedisBackendInternalConfig;
   private initialized = false;
-  /** Per-run lock tokens for ownership-checked release/extend (Redlock pattern). */
-  private lockValues = new Map<string, string>();
+  private lifecycleState: RedisBackendLifecycleState = "open";
+  private lifecycleGeneration = 0;
+  private initializationAttempt: RedisInitializationAttempt | null = null;
+  private initializationFailure: RedisInitializationFailure | null = null;
+  private invalidationCleanup: Promise<void> | null = null;
+  private destroyPromise: Promise<void> | null = null;
+  private readonly pendingCloseClients = new Map<RedisAdapter, RedisClientCloseMode>();
+  private readonly closePromises = new WeakMap<RedisAdapter, Promise<void>>();
+  private readonly closedClients = new WeakSet<RedisAdapter>();
   /**
    * Stream message IDs this consumer has read but not yet acknowledged, keyed
    * by runId. Populated in {@link dequeue} and consumed by {@link acknowledge}
@@ -590,12 +765,15 @@ export class RedisBackend implements WorkflowBackend {
   constructor(config: RedisBackendConfig = {}) {
     assertValidRunTtl(config.runTtl, Date.now());
     const resolvedConfig: RedisBackendInternalConfig = {
-      prefix: "vf:workflow:",
-      streamKey: "vf:workflow:stream",
-      groupName: "vf:workflow:workers",
-      consumerName: `worker-${crypto.randomUUID().slice(0, 8)}`,
-      debug: false,
       ...config,
+      prefix: config.prefix ?? "vf:workflow:",
+      streamKey: config.streamKey ?? "vf:workflow:stream",
+      groupName: config.groupName ?? "vf:workflow:workers",
+      consumerName: config.consumerName ?? `worker-${crypto.randomUUID().slice(0, 8)}`,
+      debug: config.debug ?? false,
+      connectTimeoutMs: requireConnectTimeoutMs(
+        config.connectTimeoutMs ?? DEFAULT_REDIS_CONNECT_TIMEOUT_MS,
+      ),
     };
     this.config = {
       ...resolvedConfig,
@@ -603,7 +781,10 @@ export class RedisBackend implements WorkflowBackend {
       groupName: appendStorageSchemaVersion(resolvedConfig.groupName),
     };
 
-    if (config.client) this.client = config.client;
+    if (config.client) {
+      this.client = config.client;
+      this.pendingCloseClients.set(config.client, "quit");
+    }
   }
 
   private storagePrefix(): string {
@@ -925,60 +1106,375 @@ export class RedisBackend implements WorkflowBackend {
     };
   }
 
+  /**
+   * Return a client only after this lifecycle generation is ready. A failed
+   * readiness generation is retained so ordinary operations fail closed; only
+   * an explicit initialize() call starts a retry.
+   */
   private ensureClient(): Promise<RedisAdapter> {
-    if (this.client) return Promise.resolve(this.client);
-
-    if (!this.connectionPromise) {
-      this.connectionPromise = this.createConnection().catch((error) => {
-        this.connectionPromise = null;
-        this.client = null;
-        throw error;
-      });
-    }
-
-    return this.connectionPromise;
-  }
-
-  private async createConnection(): Promise<RedisAdapter> {
-    if (this.config.debug) {
-      logger.debug(
-        `[RedisBackend] Connecting to ${this.config.hostname || "127.0.0.1"}:${
-          this.config.port || 6379
-        }`,
-      );
-    }
-
-    const client = createClient({
-      url: this.config.url,
-      socket: { host: this.config.hostname, port: this.config.port },
-    });
-    await client.connect();
-    this.client = new NodeRedisAdapter(client as unknown as NodeRedisClient);
-    return this.client;
-  }
-
-  async initialize(): Promise<void> {
-    if (this.initialized) return;
-
-    const client = await this.ensureClient();
-
     try {
-      await client.xgroupCreate(this.config.streamKey, this.config.groupName, "0", true);
-      if (this.config.debug) {
-        logger.debug(`Created consumer group: ${this.config.groupName}`);
-      }
-    } catch (e) {
-      // The node-redis client surfaces "group already exists" only as a
-      // BUSYGROUP-prefixed error message (no structured code is exposed through
-      // our adapter), so substring matching is the only signal available. Any
-      // other error is a genuine failure worth logging.
-      const msg = String(e instanceof Error ? e.message : e);
-      if (!msg.includes("BUSYGROUP")) {
-        logger.error("Error creating consumer group:", e);
-      }
+      this.assertOpen();
+    } catch (error) {
+      return Promise.reject(error);
     }
 
-    this.initialized = true;
+    if (this.initialized) return this.connectClient();
+
+    const failure = this.initializationFailure;
+    if (failure?.generation === this.lifecycleGeneration) {
+      return Promise.reject(failure.error);
+    }
+
+    const readiness = this.initializationAttempt?.promise ?? this.startInitialization();
+    return readiness.then(() => this.connectClient());
+  }
+
+  /** Connect without recursively requiring consumer-group readiness. */
+  private connectClient(): Promise<RedisAdapter> {
+    try {
+      this.assertOpen();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
+    if (this.client) return Promise.resolve(this.client);
+    if (this.connectionAttempt) return this.connectionAttempt.promise;
+    if (this.invalidationCleanup) {
+      return this.invalidationCleanup.then(() => this.connectClient());
+    }
+
+    return this.startConnection();
+  }
+
+  private assertOpen(): void {
+    if (this.lifecycleState !== "open") throw lifecycleError(this.lifecycleState);
+  }
+
+  protected createNodeRedisClient(options: NodeRedisClientOptions): NodeRedisClient {
+    return createClient(options) as unknown as NodeRedisClient;
+  }
+
+  private attachNodeRedisErrorListener(
+    client: NodeRedisClient,
+    generation: number,
+  ): AttachedNodeRedisClient {
+    let observedError = false;
+    let detached = false;
+    const onError = (error: unknown) => {
+      observedError = true;
+      // node-redis requires an error listener. Keep diagnostics bounded and do
+      // not risk logging a server URL or credential-bearing error message.
+      logger.error("Redis workflow client emitted an error", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+      this.invalidatePublishedClient(adapter, generation);
+    };
+    const detach = () => {
+      if (detached) return;
+      client.off("error", onError);
+      detached = true;
+    };
+    const adapter = new NodeRedisAdapter(client, detach);
+    client.on("error", onError);
+    return {
+      adapter,
+      createCleanupAdapter: () => new NodeRedisAdapter(client, detach),
+      observedError: () => observedError,
+    };
+  }
+
+  private invalidatePublishedClient(client: RedisAdapter, generation: number): void {
+    if (
+      this.lifecycleState !== "open" || generation !== this.lifecycleGeneration ||
+      this.client !== client
+    ) {
+      return;
+    }
+
+    this.lifecycleGeneration++;
+    const invalidationGeneration = this.lifecycleGeneration;
+    this.client = null;
+    this.initialized = false;
+    const unavailable = new Error("Redis workflow connection became unavailable");
+    unavailable.name = "RedisConnectionError";
+    this.initializationFailure = { generation: invalidationGeneration, error: unavailable };
+    this.pendingCloseClients.set(client, "disconnect");
+
+    const cleanup = this.closeTrackedClient(client);
+    this.invalidationCleanup = cleanup;
+    void cleanup.then(
+      () => {
+        if (this.invalidationCleanup === cleanup) this.invalidationCleanup = null;
+      },
+      (cleanupError) => {
+        if (this.invalidationCleanup !== cleanup) return;
+        this.invalidationCleanup = null;
+        if (
+          this.lifecycleState === "open" &&
+          invalidationGeneration === this.lifecycleGeneration && this.client === null
+        ) {
+          this.lifecycleState = "closing";
+          this.lifecycleGeneration++;
+          this.initializationFailure = {
+            generation: this.lifecycleGeneration,
+            error: new RedisLifecycleCleanupError(
+              [unavailable, cleanupError],
+              "Redis workflow connection invalidation cleanup failed",
+            ),
+          };
+        }
+      },
+    );
+  }
+
+  private startConnection(): Promise<RedisAdapter> {
+    const generation = this.lifecycleGeneration;
+    const cancellationError = supersededError("connection");
+    let cancelled = false;
+    let cancel!: () => void;
+    const cancellation = new Promise<never>((_, reject) => {
+      cancel = () => {
+        if (cancelled) return;
+        cancelled = true;
+        reject(cancellationError);
+      };
+    });
+
+    let rawClient: NodeRedisClient;
+    let attachment: AttachedNodeRedisClient;
+    try {
+      rawClient = this.createNodeRedisClient({
+        ...(this.config.url === undefined ? {} : { url: this.config.url }),
+        socket: {
+          ...(this.config.hostname === undefined ? {} : { host: this.config.hostname }),
+          ...(this.config.port === undefined ? {} : { port: this.config.port }),
+          connectTimeout: this.config.connectTimeoutMs,
+          reconnectStrategy: false,
+        },
+      });
+      attachment = this.attachNodeRedisErrorListener(rawClient, generation);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
+    const adapter = attachment.adapter;
+    const attempt: RedisConnectionAttempt = {
+      generation,
+      client: adapter,
+      cancel,
+      promise: undefined as unknown as Promise<RedisAdapter>,
+    };
+
+    const connectPromise = Promise.resolve().then(() => rawClient.connect());
+    let connectSettled = false;
+    void connectPromise.then(
+      () => {
+        connectSettled = true;
+      },
+      () => {
+        connectSettled = true;
+      },
+    );
+
+    const work = (async (): Promise<RedisAdapter> => {
+      try {
+        if (this.config.debug) {
+          logger.debug(
+            `[RedisBackend] Connecting to ${this.config.hostname ?? "127.0.0.1"}:${
+              this.config.port ?? 6379
+            }`,
+          );
+        }
+
+        await Promise.race([connectPromise, cancellation]);
+        if (attachment.observedError()) {
+          const error = new Error("Redis workflow connection emitted an error while opening");
+          error.name = "RedisConnectionError";
+          throw error;
+        }
+        if (
+          this.lifecycleState !== "open" ||
+          generation !== this.lifecycleGeneration ||
+          this.connectionAttempt !== attempt
+        ) {
+          throw cancellationError;
+        }
+
+        this.client = adapter;
+        this.pendingCloseClients.set(adapter, "quit");
+        return adapter;
+      } catch (connectionError) {
+        const cancelledBeforeConnectSettled = connectionError === cancellationError &&
+          !connectSettled;
+        let firstCleanupError: unknown;
+        try {
+          await adapter.disconnect();
+        } catch (cleanupError) {
+          firstCleanupError = cleanupError;
+        }
+
+        let lateConnectSucceeded = false;
+        if (cancelledBeforeConnectSettled) {
+          const lateConnect = await Promise.allSettled([connectPromise]);
+          lateConnectSucceeded = lateConnect[0]?.status === "fulfilled";
+        }
+
+        let finalCleanupError: unknown;
+        if (firstCleanupError !== undefined || lateConnectSucceeded) {
+          const cleanupAdapter = attachment.createCleanupAdapter();
+          try {
+            // A connect implementation may ignore the first destroy() and
+            // resolve later, reopening the transport. Use a fresh adapter
+            // close state so that late success is always followed by a second
+            // force-close while sharing the same idempotent listener detach.
+            await cleanupAdapter.disconnect();
+          } catch (cleanupError) {
+            finalCleanupError = cleanupError;
+            this.pendingCloseClients.set(cleanupAdapter, "disconnect");
+          }
+        }
+
+        if (finalCleanupError !== undefined) {
+          if (this.lifecycleState === "open" && generation === this.lifecycleGeneration) {
+            this.lifecycleState = "closing";
+            this.lifecycleGeneration++;
+            this.initialized = false;
+          }
+          throw new RedisLifecycleCleanupError(
+            [
+              connectionError,
+              ...(firstCleanupError === undefined ? [] : [firstCleanupError]),
+              finalCleanupError,
+            ],
+            "Redis workflow connection and provisional-client cleanup failed",
+          );
+        }
+        throw connectionError;
+      }
+    })();
+
+    attempt.promise = work;
+    this.connectionAttempt = attempt;
+    void attempt.promise.then(
+      () => {
+        if (this.connectionAttempt === attempt) this.connectionAttempt = null;
+      },
+      () => {
+        if (this.connectionAttempt === attempt) this.connectionAttempt = null;
+      },
+    );
+    return attempt.promise;
+  }
+
+  private startInitialization(): Promise<void> {
+    const generation = this.lifecycleGeneration;
+    const cancellationError = supersededError("initialization");
+    let cancelled = false;
+    let cancel!: () => void;
+    const cancellation = new Promise<never>((_, reject) => {
+      cancel = () => {
+        if (cancelled) return;
+        cancelled = true;
+        reject(cancellationError);
+      };
+    });
+    const attempt: RedisInitializationAttempt = {
+      generation,
+      cancel,
+      promise: undefined as unknown as Promise<void>,
+    };
+
+    const work = (async () => {
+      // Cancellation may win only before a command is issued. Once XGROUP is
+      // in flight, destroy() closes the transport and joins the actual command
+      // promise so no Redis work can outlive successful teardown.
+      const client = await Promise.race([this.connectClient(), cancellation]);
+      try {
+        await client.xgroupCreate(this.config.streamKey, this.config.groupName, "0", true);
+        if (this.config.debug) {
+          logger.debug(`Created consumer group: ${this.config.groupName}`);
+        }
+      } catch (error) {
+        // node-redis exposes the existing-group condition only through this
+        // documented message prefix. Substrings elsewhere are real failures.
+        if (!isBusyGroupError(error)) throw error;
+      }
+
+      if (
+        this.lifecycleState !== "open" ||
+        generation !== this.lifecycleGeneration ||
+        this.initializationAttempt !== attempt ||
+        this.client !== client
+      ) {
+        throw cancellationError;
+      }
+      this.initialized = true;
+    })();
+
+    attempt.promise = work;
+    this.initializationAttempt = attempt;
+    // Observe the retained promise internally: the synchronous provider may
+    // start initialization without awaiting it, but failures must never become
+    // unhandled or disappear from the next operation.
+    void attempt.promise.then(
+      () => {
+        if (this.initializationAttempt !== attempt) return;
+        this.initializationAttempt = null;
+        this.initializationFailure = null;
+      },
+      (error) => {
+        if (this.initializationAttempt !== attempt) return;
+        this.initializationAttempt = null;
+        if (this.lifecycleState === "open" && generation === this.lifecycleGeneration) {
+          this.initializationFailure = { generation, error };
+        }
+      },
+    );
+    return attempt.promise;
+  }
+
+  initialize(): Promise<void> {
+    try {
+      this.assertOpen();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
+    if (this.initialized) return Promise.resolve();
+    if (this.initializationAttempt) return this.initializationAttempt.promise;
+
+    // A direct initialize() call is the explicit retry boundary after a
+    // failed readiness generation. Ordinary operations replay the failure.
+    this.initializationFailure = null;
+    return this.startInitialization();
+  }
+
+  private closeTrackedClient(client: RedisAdapter): Promise<void> {
+    if (this.closedClients.has(client)) return Promise.resolve();
+    const existing = this.closePromises.get(client);
+    if (existing) return existing;
+
+    const mode = this.pendingCloseClients.get(client);
+    if (!mode) return Promise.resolve();
+    const pending = Promise.resolve().then(() =>
+      mode === "quit" ? client.quit() : client.disconnect()
+    );
+    this.closePromises.set(client, pending);
+    void pending.then(
+      () => {
+        if (this.closePromises.get(client) === pending) {
+          this.closePromises.delete(client);
+        }
+        this.pendingCloseClients.delete(client);
+        this.closedClients.add(client);
+      },
+      () => {
+        if (this.closePromises.get(client) === pending) {
+          this.closePromises.delete(client);
+        }
+      },
+    );
+    return pending;
   }
 
   async createRun(run: WorkflowRun): Promise<void> {
@@ -1030,9 +1526,9 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const snapshot = await this.readRunSnapshot(client, runId);
     if (!snapshot) return null;
-    snapshot.run.pendingApprovals = snapshot.approvals.filter(
-      (approval) => approval.status === "pending",
-    );
+    snapshot.run.pendingApprovals = snapshot.run.status === "waiting"
+      ? snapshot.approvals.filter((approval) => approval.status === "pending")
+      : [];
     return snapshot.run;
   }
 
@@ -1066,6 +1562,7 @@ export class RedisBackend implements WorkflowBackend {
     expectedWorkerId: string,
     patch: WorkflowRunUpdate,
   ): Promise<boolean> {
+    assertWorkflowWorkerId(expectedWorkerId);
     return await this.updateRunConditionally(
       runId,
       expectedStatuses,
@@ -1074,11 +1571,30 @@ export class RedisBackend implements WorkflowBackend {
     );
   }
 
+  async updateRunIfStatusAndLock(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    assertWorkflowLockId(lockId);
+    if (expectedWorkerId !== undefined) assertWorkflowWorkerId(expectedWorkerId);
+    return await this.updateRunConditionally(
+      runId,
+      expectedStatuses,
+      patch,
+      expectedWorkerId,
+      lockId,
+    );
+  }
+
   private async updateRunConditionally(
     runId: string,
     expectedStatuses: WorkflowStatus[],
     patch: WorkflowRunUpdate,
     expectedWorkerId?: string,
+    expectedLockId?: string,
   ): Promise<boolean> {
     assertWorkflowRunUpdate(patch);
     const client = await this.ensureClient();
@@ -1086,7 +1602,12 @@ export class RedisBackend implements WorkflowBackend {
     const fieldArgs = Object.entries(fields).flatMap(([field, value]) => [field, value]);
     const result = await client.eval(
       UPDATE_RUN_IF_STATUS_SCRIPT,
-      [this.runKey(runId), this.claimKey(runId), this.runStatusMetadataKey()],
+      [
+        this.runKey(runId),
+        this.claimKey(runId),
+        this.runStatusMetadataKey(),
+        this.lockKey(runId),
+      ],
       [
         String(expectedStatuses.length),
         ...expectedStatuses,
@@ -1095,15 +1616,21 @@ export class RedisBackend implements WorkflowBackend {
         this.workflowStatusIndexPrefix(),
         runId,
         expectedWorkerId ?? "",
+        expectedLockId ?? "",
         ...fieldArgs,
       ],
     );
-    if (Number(result) === -1) {
+    const code = requireRedisScriptInteger(result, "conditional run update");
+    if (code === -1) {
       throw SERVICE_OVERLOADED.create({
         detail: `Workflow run index metadata is incomplete for run: ${runId}`,
       });
     }
-    return Number(result) === 1;
+    if (code === 1) return true;
+    if (code === 0) return false;
+    throw INVALID_ARGUMENT.create({
+      detail: "Invalid Redis conditional run update response code",
+    });
   }
 
   async deleteRun(runId: string): Promise<void> {
@@ -1197,7 +1724,9 @@ export class RedisBackend implements WorkflowBackend {
   private snapshotToRun({ run, approvals }: RunSnapshot): WorkflowRun {
     return {
       ...run,
-      pendingApprovals: approvals.filter((approval) => approval.status === "pending"),
+      pendingApprovals: run.status === "waiting"
+        ? approvals.filter((approval) => approval.status === "pending")
+        : [],
     };
   }
 
@@ -1378,26 +1907,61 @@ export class RedisBackend implements WorkflowBackend {
   async savePendingApproval(runId: string, approval: PendingApproval): Promise<void> {
     if (this.config.debug) logger.debug(`[RedisBackend] Saving approval: ${approval.id}`);
 
-    await this.appendRunState(
-      runId,
-      this.approvalsKey(runId),
-      this.serializeApproval(approval),
+    const client = await this.ensureClient();
+    const result = requireRedisScriptInteger(
+      await client.eval(
+        APPEND_UNIQUE_APPROVAL_SCRIPT,
+        [this.runKey(runId), this.approvalsKey(runId)],
+        [this.serializeApproval(approval)],
+      ),
+      "approval append",
     );
+    if (result === 1) return;
+    if (result === 2) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Approval already exists for run "${runId}": ${approval.id}`,
+      });
+    }
+    if (result === 3) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Approval can be saved only while run is waiting",
+      });
+    }
+    if (result === 0) {
+      await this.cleanupMissingRun(client, runId);
+      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    }
+    throw INVALID_ARGUMENT.create({ detail: "Invalid Redis approval append response code" });
   }
 
-  savePendingApprovalIfStatusAndWorker(
+  async savePendingApprovalIfStatusAndWorker(
     runId: string,
     expectedStatuses: WorkflowStatus[],
     expectedWorkerId: string,
     approval: PendingApproval,
   ): Promise<boolean> {
-    return this.appendIfStatusAndWorker(
-      runId,
-      expectedStatuses,
-      expectedWorkerId,
-      this.approvalsKey(runId),
-      this.serializeApproval(approval),
+    const client = await this.ensureClient();
+    const result = requireRedisScriptInteger(
+      await client.eval(
+        APPEND_UNIQUE_APPROVAL_IF_STATUS_AND_WORKER_SCRIPT,
+        [this.runKey(runId), this.approvalsKey(runId)],
+        [
+          String(expectedStatuses.length),
+          ...expectedStatuses,
+          expectedWorkerId,
+          this.serializeApproval(approval),
+        ],
+      ),
+      "owned approval append",
     );
+    if (result === 1) return true;
+    if (result === 0) return false;
+    if (result === 2) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Approval already exists for run "${runId}": ${approval.id}`,
+      });
+    }
+    throw INVALID_ARGUMENT.create({ detail: "Invalid Redis owned approval append response code" });
   }
 
   private parseApproval(raw: string): PendingApproval {
@@ -1444,31 +2008,48 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const snapshot = await this.readRunSnapshot(client, runId);
     if (!snapshot) return [];
+    if (snapshot.run.status !== "waiting") return [];
     return snapshot.approvals.filter((approval) => approval.status === "pending");
   }
 
-  async getPendingApproval(runId: string, approvalId: string): Promise<PendingApproval | null> {
-    const approvals = await this.getPendingApprovals(runId);
-    return approvals.find((a) => a.id === approvalId) || null;
+  async getApproval(runId: string, approvalId: string): Promise<PendingApproval | null> {
+    const client = await this.ensureClient();
+    const snapshot = await this.readRunSnapshot(client, runId);
+    const matches = snapshot?.approvals.filter((approval) => approval.id === approvalId) ?? [];
+    if (matches.length > 1) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Duplicate approval id stored for run "${runId}": ${approvalId}`,
+      });
+    }
+    return matches[0] ?? null;
   }
 
   async updatePendingApproval(
     runId: string,
     approvalId: string,
-    patch: Partial<PendingApproval>,
+    patch: PendingApprovalMetadataUpdate,
   ): Promise<void> {
+    const metadata = capturePendingApprovalMetadataUpdate(patch);
     const client = await this.ensureClient();
-    // Locate-and-write in a single Lua step so a concurrent append/decision
-    // cannot shift the list between a positional read and write. JSON.stringify
-    // converts any Date fields on the patch to ISO strings via toJSON, matching
-    // serializeApproval.
+    // Locate and write in one Lua step, changing only notification metadata.
     const result = await client.eval(
       UPDATE_PENDING_APPROVAL_SCRIPT,
       [this.approvalsKey(runId)],
-      [approvalId, JSON.stringify(patch)],
+      [approvalId, metadata.notificationError],
     );
-    if (Number(result) !== 1) {
+    const code = requireRedisScriptInteger(result, "approval metadata update");
+    if (code === 2) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Duplicate approval id stored for run "${runId}": ${approvalId}`,
+      });
+    }
+    if (code === 0) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
+    }
+    if (code !== 1) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Invalid Redis approval metadata update response code",
+      });
     }
   }
 
@@ -1476,7 +2057,9 @@ export class RedisBackend implements WorkflowBackend {
     runId: string,
     approvalId: string,
     decision: ApprovalDecision,
+    timingInput: ApprovalDecisionTiming,
   ): Promise<boolean> {
+    const timing = captureApprovalDecisionTiming(timingInput);
     const client = await this.ensureClient();
     const hasComment = decision.comment !== undefined;
     // Atomic find-by-id + pending-precondition + LSET (see UPDATE_APPROVAL_SCRIPT).
@@ -1484,22 +2067,37 @@ export class RedisBackend implements WorkflowBackend {
     // not depend on the Redis server clock.
     const result = await client.eval(
       UPDATE_APPROVAL_SCRIPT,
-      [this.approvalsKey(runId)],
+      [this.approvalsKey(runId), this.runKey(runId)],
       [
         approvalId,
         decision.approved ? "approved" : "rejected",
         decision.approver,
-        new Date().toISOString(),
+        timing.decidedAt.toISOString(),
+        timing.expiryCondition,
         hasComment ? "1" : "0",
         hasComment ? decision.comment! : "",
       ],
     );
-    const code = Number(result);
+    const code = requireRedisScriptInteger(result, "approval decision");
     if (code === 0) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
-    // 1 = applied; 2 = found but already decided (lost race).
-    return code === 1;
+    if (code === 3) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Duplicate approval id stored for run "${runId}": ${approvalId}`,
+      });
+    }
+    if (code === 4) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Approval has an invalid persisted expiry: ${approvalId}`,
+      });
+    }
+    if (code === 5) {
+      throw INVALID_ARGUMENT.create({ detail: "Invalid Redis approval expiry condition" });
+    }
+    if (code === 1) return true;
+    if (code === 2) return false;
+    throw INVALID_ARGUMENT.create({ detail: "Invalid Redis approval decision response code" });
   }
 
   async listPendingApprovals(filter?: {
@@ -1510,6 +2108,7 @@ export class RedisBackend implements WorkflowBackend {
     const result: Array<{ runId: string; approval: PendingApproval }> = [];
     const snapshots = await this.scanRunSnapshots({ workflowId: filter?.workflowId });
     for (const snapshot of snapshots) {
+      if (snapshot.run.status !== "waiting") continue;
       const runId = snapshot.run.id;
       for (const approval of snapshot.approvals) {
         if (filter?.status === "pending" && approval.status !== "pending") continue;
@@ -1611,44 +2210,32 @@ export class RedisBackend implements WorkflowBackend {
     const lockValue = crypto.randomUUID();
 
     const result = await client.set(this.lockKey(runId), lockValue, { nx: true, px: duration });
-    if (result === "OK") {
-      // Remember our token so release/extend can verify ownership (Redlock).
-      this.lockValues.set(runId, lockValue);
-      return lockValue;
-    }
+    if (result === "OK") return lockValue;
     return null;
   }
 
-  async releaseLock(runId: string, lockId?: string): Promise<void> {
+  async releaseLock(runId: string, lockId: string): Promise<boolean> {
     const client = await this.ensureClient();
     const key = this.lockKey(runId);
-    const ourValue = lockId ?? this.lockValues.get(runId);
-
-    // Only release if we still own the lock (compare-and-delete). Without a
-    // known token we never owned it, so do nothing.
-    if (ourValue === undefined) return;
 
     // Atomic GET + DEL via Lua so a stale owner cannot delete a lock that was
     // reacquired by another worker between the check and the delete (TOCTOU).
-    await client.eval(RELEASE_LOCK_SCRIPT, [key], [ourValue]);
-    if (this.lockValues.get(runId) === ourValue) this.lockValues.delete(runId);
+    return requireRedisScriptBoolean(
+      await client.eval(RELEASE_LOCK_SCRIPT, [key], [lockId]),
+      "lock release",
+    );
   }
 
-  async extendLock(runId: string, duration: number, lockId?: string): Promise<boolean> {
+  async extendLock(runId: string, duration: number, lockId: string): Promise<boolean> {
     const client = await this.ensureClient();
     const key = this.lockKey(runId);
-    const ourValue = lockId ?? this.lockValues.get(runId);
-
-    // Only extend if we still own the lock (compare-and-pexpire).
-    if (ourValue === undefined) return false;
 
     // Atomic GET + PEXPIRE via Lua. PEXPIRE returns 1 when the key existed and
     // the TTL was set, 0 otherwise (e.g. our token no longer owns the lock).
-    const result = await client.eval(EXTEND_LOCK_SCRIPT, [key], [
-      ourValue,
-      String(duration),
-    ]);
-    return Number(result) === 1;
+    return requireRedisScriptBoolean(
+      await client.eval(EXTEND_LOCK_SCRIPT, [key], [lockId, String(duration)]),
+      "lock renewal",
+    );
   }
 
   async isLocked(runId: string): Promise<boolean> {
@@ -1707,20 +2294,79 @@ export class RedisBackend implements WorkflowBackend {
     }
   }
 
-  async destroy(): Promise<void> {
-    if (this.client) {
-      try {
-        if (typeof this.client.quit === "function") await this.client.quit();
-        else if (typeof this.client.disconnect === "function") await this.client.disconnect();
-      } catch {
-        // Ignore errors during cleanup — connection may already be closed
-      }
+  destroy(): Promise<void> {
+    if (this.destroyPromise) return this.destroyPromise;
+    if (this.lifecycleState === "closed") return Promise.resolve();
+
+    const initialization = this.initializationAttempt?.promise;
+    const connection = this.connectionAttempt?.promise;
+    const invalidationCleanup = this.invalidationCleanup ?? undefined;
+    if (this.lifecycleState === "open") {
+      this.lifecycleState = "closing";
+      this.lifecycleGeneration++;
+      this.initialized = false;
+      this.initializationFailure = null;
       this.client = null;
+      this.pendingMessageIds.clear();
     }
+    // Attempts can still be present when connection cleanup itself moved the
+    // backend to closing, so every destroy attempt snapshots and cancels them.
+    this.initializationAttempt?.cancel();
+    this.connectionAttempt?.cancel();
 
-    this.connectionPromise = null;
-    this.initialized = false;
+    const pending = this.performDestroy(initialization, connection, invalidationCleanup);
+    this.destroyPromise = pending;
+    void pending.then(
+      () => {
+        if (this.destroyPromise !== pending) return;
+        this.lifecycleState = "closed";
+        if (this.config.debug) logger.debug("[RedisBackend] Destroyed");
+      },
+      () => {
+        if (this.destroyPromise === pending) this.destroyPromise = null;
+      },
+    );
+    return pending;
+  }
 
-    if (this.config.debug) logger.debug("[RedisBackend] Destroyed");
+  private async performDestroy(
+    initialization?: Promise<void>,
+    connection?: Promise<RedisAdapter>,
+    invalidationCleanup?: Promise<void>,
+  ): Promise<void> {
+    const clients = [...this.pendingCloseClients.keys()];
+    const closeResults = await Promise.allSettled(
+      clients.map((client) => Promise.resolve().then(() => this.closeTrackedClient(client))),
+    );
+
+    // Cancellation rejects these lifecycle promises by design. Joining them
+    // prevents stale generations from outliving teardown; their operation
+    // errors are already retained/observed at their original call boundary.
+    const lifecycleResults = await Promise.allSettled([
+      ...(initialization ? [initialization] : []),
+      ...(connection ? [connection] : []),
+      ...(invalidationCleanup ? [invalidationCleanup] : []),
+    ]);
+
+    const failures: unknown[] = closeResults.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : []
+    );
+    for (const result of lifecycleResults) {
+      if (
+        result.status === "rejected" && result.reason instanceof RedisLifecycleCleanupError &&
+        !failures.includes(result.reason)
+      ) {
+        failures.push(result.reason);
+      }
+    }
+    if (this.pendingCloseClients.size > 0 && failures.length === 0) {
+      failures.push(new Error("Redis workflow backend still owns an unclosed client"));
+    }
+    if (failures.length > 0 || this.pendingCloseClients.size > 0) {
+      throw new AggregateError(
+        failures,
+        "Redis workflow backend teardown failed; destroy() may be retried",
+      );
+    }
   }
 }

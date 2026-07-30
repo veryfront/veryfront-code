@@ -18,7 +18,11 @@ export interface RedisRetentionDrainResult {
 }
 
 // Re-export platform types for convenience
-export type { NodeRedisClient, NodeRedisModule } from "./node-redis-types.ts";
+export type {
+  NodeRedisClient,
+  NodeRedisClientOptions,
+  NodeRedisModule,
+} from "./node-redis-types.ts";
 export type { RedisAdapter } from "./redis-adapter.ts";
 
 /**
@@ -52,8 +56,16 @@ export interface RedisBackendConfig extends BackendConfig {
   runTtl?: number;
   /** Enable debug logging */
   debug?: boolean;
-  /** Existing Redis client (optional) */
+  /**
+   * Existing dedicated Redis client. Supplying it transfers ownership to this
+   * backend; destroy() closes it and the caller must not reuse it elsewhere.
+   */
   client?: RedisAdapter;
+  /**
+   * Maximum time in milliseconds for the native node-redis connection
+   * attempt. Commands are not wrapped in synthetic Promise.race timeouts.
+   */
+  connectTimeoutMs?: number;
 }
 
 /**
@@ -63,7 +75,12 @@ export type RedisBackendInternalConfig =
   & Required<
     Pick<
       RedisBackendConfig,
-      "prefix" | "streamKey" | "groupName" | "consumerName" | "debug"
+      | "prefix"
+      | "streamKey"
+      | "groupName"
+      | "consumerName"
+      | "debug"
+      | "connectTimeoutMs"
     >
   >
   & RedisBackendConfig;

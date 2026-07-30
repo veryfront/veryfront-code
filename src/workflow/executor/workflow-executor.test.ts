@@ -3,16 +3,18 @@ import {
   assertEquals,
   assertExists,
   assertRejects,
+  assertStrictEquals,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
+import type { WorkflowRunUpdate } from "../backends/types.ts";
 import { branch, dependsOn, step, waitForApproval, workflow } from "../dsl/index.ts";
 import { ApprovalManager } from "../runtime/approval-manager.ts";
 import type { WorkflowDefinition, WorkflowRun } from "../types.ts";
-import { WorkflowExecutor } from "./workflow-executor.ts";
+import { reserveWorkflowStart, WorkflowExecutor } from "./workflow-executor.ts";
 import { FakeTime } from "#std/testing/time";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils";
 import {
@@ -68,18 +70,43 @@ class CompletionRaceBackend extends MemoryBackend {
   }
 }
 
+class CompletesBeforeCancellationBackend extends MemoryBackend {
+  completeBeforeCancellation = false;
+
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (this.completeBeforeCancellation && patch.status === "cancelled") {
+      this.completeBeforeCancellation = false;
+      await super.updateRun(runId, {
+        status: "completed",
+        completedAt: new Date(),
+      });
+    }
+    return await super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+}
+
 class LosingLockBackend extends MemoryBackend {
   readonly extensionAttempted = Promise.withResolvers<void>();
   releaseCalls = 0;
 
-  override extendLock(_runId: string, _duration: number): Promise<boolean> {
+  override extendLock(_runId: string, _duration: number, _lockId: string): Promise<boolean> {
     this.extensionAttempted.resolve();
     return Promise.resolve(false);
   }
 
-  override releaseLock(runId: string): Promise<void> {
+  override releaseLock(runId: string, lockId: string): Promise<boolean> {
     this.releaseCalls++;
-    return super.releaseLock(runId);
+    return super.releaseLock(runId, lockId);
   }
 }
 
@@ -87,14 +114,14 @@ class FailingLockHeartbeatBackend extends MemoryBackend {
   readonly extensionAttempted = Promise.withResolvers<void>();
   releaseCalls = 0;
 
-  override extendLock(_runId: string, _duration: number): Promise<boolean> {
+  override extendLock(_runId: string, _duration: number, _lockId: string): Promise<boolean> {
     this.extensionAttempted.resolve();
     return Promise.reject(new Error("lock backend unavailable"));
   }
 
-  override releaseLock(runId: string): Promise<void> {
+  override releaseLock(runId: string, lockId: string): Promise<boolean> {
     this.releaseCalls++;
-    return super.releaseLock(runId);
+    return super.releaseLock(runId, lockId);
   }
 }
 
@@ -111,11 +138,29 @@ class TokenCheckingLockBackend extends MemoryBackend {
   override extendLock(
     runId: string,
     duration: number,
-    lockId?: string,
+    lockId: string,
   ): Promise<boolean> {
     this.extensionCalls++;
     this.extendedToken = lockId;
     return super.extendLock(runId, duration, lockId);
+  }
+}
+
+class ReplaceableExecutionLockBackend extends MemoryBackend {
+  currentLockId: string | null = null;
+
+  override async acquireLock(runId: string, duration: number): Promise<string | null> {
+    this.currentLockId = await super.acquireLock(runId, duration);
+    return this.currentLockId;
+  }
+
+  async replaceExecutionLock(runId: string, duration: number): Promise<string> {
+    const previousLockId = this.currentLockId;
+    assertExists(previousLockId);
+    assertEquals(await super.releaseLock(runId, previousLockId), true);
+    const replacementLockId = await this.acquireLock(runId, duration);
+    assertExists(replacementLockId);
+    return replacementLockId;
   }
 }
 
@@ -139,9 +184,24 @@ class FailingOwnerHeartbeatBackend extends MemoryBackend {
 }
 
 class CancelOnLockHandoffBackend extends MemoryBackend {
-  override async releaseLock(runId: string, lockId?: string): Promise<void> {
-    await super.releaseLock(runId, lockId);
-    await super.updateRun(runId, { status: "cancelled", completedAt: new Date() });
+  override async updateRunIfStatusAndLock(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    const updated = await super.updateRunIfStatusAndLock(
+      runId,
+      expectedStatuses,
+      lockId,
+      patch,
+      expectedWorkerId,
+    );
+    if (updated && patch.status === "waiting") {
+      await super.updateRun(runId, { status: "cancelled", completedAt: new Date() });
+    }
+    return updated;
   }
 }
 
@@ -149,12 +209,62 @@ class DelayedCancellationBackend extends MemoryBackend {
   readonly cancellationStarted = Promise.withResolvers<void>();
   readonly persistCancellation = Promise.withResolvers<void>();
 
-  override async updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
     if (patch.status === "cancelled") {
       this.cancellationStarted.resolve();
       await this.persistCancellation.promise;
     }
-    await super.updateRun(runId, patch);
+    return await super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+}
+
+class RetryableShutdownBackend extends MemoryBackend {
+  rejectShutdownWrites = false;
+
+  override updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: WorkflowRunUpdate,
+  ): Promise<boolean> {
+    if (this.rejectShutdownWrites) {
+      return Promise.reject(new Error("shutdown run store unavailable"));
+    }
+    return super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+
+  override updateRunIfStatusAndLock(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    if (this.rejectShutdownWrites) {
+      return Promise.reject(new Error("shutdown run store unavailable"));
+    }
+    return super.updateRunIfStatusAndLock(
+      runId,
+      expectedStatuses,
+      lockId,
+      patch,
+      expectedWorkerId,
+    );
   }
 }
 
@@ -167,9 +277,26 @@ class CleanupTrackingBackend extends MemoryBackend {
     return super.updateRun(runId, patch);
   }
 
-  override releaseLock(runId: string): Promise<void> {
+  override updateRunIfStatusAndLock(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    if (Object.keys(patch).length === 1 && patch.heartbeatAt) this.heartbeatUpdates++;
+    return super.updateRunIfStatusAndLock(
+      runId,
+      expectedStatuses,
+      lockId,
+      patch,
+      expectedWorkerId,
+    );
+  }
+
+  override releaseLock(runId: string, lockId: string): Promise<boolean> {
     this.releaseCalls++;
-    return super.releaseLock(runId);
+    return super.releaseLock(runId, lockId);
   }
 }
 
@@ -240,6 +367,59 @@ describe("workflow/executor/workflow-executor", () => {
         "cancellationGracePeriod",
       );
     }
+  });
+
+  it("requires heartbeatInterval to leave a two-renewal lease safety margin", () => {
+    new WorkflowExecutor({
+      backend: new MemoryBackend(),
+      lockDuration: 30_000,
+      heartbeatInterval: 10_000,
+    });
+
+    for (const heartbeatInterval of [10_001, 29_999, 30_000, 30_001]) {
+      assertThrows(
+        () =>
+          new WorkflowExecutor({
+            backend: new MemoryBackend(),
+            lockDuration: 30_000,
+            heartbeatInterval,
+          }),
+        Error,
+        "heartbeatInterval must be no greater than one third of lockDuration",
+      );
+    }
+  });
+
+  it("fails closed on incomplete locking unless locking is explicitly disabled", () => {
+    const backend = new MemoryBackend();
+    Object.defineProperty(backend, "extendLock", { value: undefined });
+
+    assertThrows(
+      () => new WorkflowExecutor({ backend }),
+      Error,
+      "locking requires backend acquireLock, extendLock, releaseLock, and lock-fenced update",
+    );
+    new WorkflowExecutor({ backend, enableLocking: false });
+  });
+
+  it("rejects duplicate workflow registrations and snapshots static step arrays", () => {
+    const executor = new WorkflowExecutor({ backend: new MemoryBackend() });
+    const definition = workflow({
+      id: "captured-registration",
+      steps: [step("initial", { tool: createTool("initial", () => ({ ok: true })) })],
+    }).definition;
+    executor.register(definition);
+    const captured = executor.getWorkflow(definition.id);
+
+    (definition.steps as WorkflowDefinition["steps"] & unknown[]).push(
+      step("late", { tool: createTool("late", () => ({ ok: true })) }),
+    );
+    assertEquals(Array.isArray(captured?.steps) ? captured.steps.length : undefined, 1);
+    assertThrows(
+      () => executor.register(definition),
+      Error,
+      "Workflow already registered",
+    );
   });
 
   it("rejects raw zero and NaN workflow timeouts at registration", () => {
@@ -722,8 +902,12 @@ describe("workflow/executor/workflow-executor", () => {
   });
 
   it("fences a started execution after stalled ownership is replaced", async () => {
-    const backend = new MemoryBackend();
-    const executor = new WorkflowExecutor({ backend, heartbeatInterval: 60_000 });
+    const backend = new TokenCheckingLockBackend();
+    const executor = new WorkflowExecutor({
+      backend,
+      heartbeatInterval: 30_000,
+      lockDuration: 120_000,
+    });
     const started = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     executor.register(
@@ -746,7 +930,9 @@ describe("workflow/executor/workflow-executor", () => {
     const startedRun = await backend.getRun(handle.runId);
     assertEquals(startedRun?.workerId?.startsWith("run-execution:"), true);
 
-    await backend.releaseLock(handle.runId);
+    const activeLockToken = backend.acquiredToken;
+    assertExists(activeLockToken);
+    await backend.releaseLock(handle.runId, activeLockToken);
     await backend.updateRun(handle.runId, {
       heartbeatAt: new Date(Date.now() - 1_000),
     });
@@ -766,12 +952,17 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(reclaimedRun?.output, undefined);
     assertEquals(await backend.isLocked(handle.runId), true);
 
-    await backend.releaseLock(handle.runId, replacementLock ?? undefined);
+    assertExists(replacementLock);
+    await backend.releaseLock(handle.runId, replacementLock);
   });
 
   it("acquires and releases the backend lock around successful execution", async () => {
     const backend = new MemoryBackend();
-    const executor = new WorkflowExecutor({ backend, lockDuration: 5_000 });
+    const executor = new WorkflowExecutor({
+      backend,
+      lockDuration: 5_000,
+      heartbeatInterval: 1_000,
+    });
     executor.register(
       workflow({
         id: "locked-success",
@@ -868,9 +1059,81 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(completionOutput, completedRun.output);
   });
 
+  it("keeps terminal state authoritative when completion observers reject", async () => {
+    const backend = new MemoryBackend();
+    const observerCalls: string[] = [];
+    const executor = new WorkflowExecutor({
+      backend,
+      enableLocking: false,
+      onComplete: async () => {
+        observerCalls.push("executor");
+        throw new Error("executor observer failed");
+      },
+    });
+    executor.register(
+      workflow({
+        id: "completion-observer-failure",
+        steps: [step("finish", { tool: createTool("finish", () => ({ ok: true })) })],
+        onComplete: () => {
+          observerCalls.push("workflow");
+          throw new Error("workflow observer failed");
+        },
+      }).definition,
+    );
+    const run = createRun("completion-observer-failure");
+    await backend.createRun(run);
+
+    await executor.executeAsync(run.id);
+
+    assertEquals(observerCalls.sort(), ["executor", "workflow"]);
+    assertEquals((await backend.getRun(run.id))?.status, "completed");
+  });
+
+  it("preserves the primary execution failure when failure observers reject", async () => {
+    const backend = new MemoryBackend();
+    const observerCalls: string[] = [];
+    const executor = new WorkflowExecutor({
+      backend,
+      enableLocking: false,
+      onError: async () => {
+        observerCalls.push("executor");
+        throw new Error("executor failure observer failed");
+      },
+    });
+    executor.register(
+      workflow({
+        id: "failure-observer-failure",
+        steps: [
+          step("fail", {
+            tool: createTool("fail", () => {
+              throw new Error("primary execution failure");
+            }),
+          }),
+        ],
+        onError: () => {
+          observerCalls.push("workflow");
+          throw new Error("workflow failure observer failed");
+        },
+      }).definition,
+    );
+    const run = createRun("failure-observer-failure");
+    await backend.createRun(run);
+
+    await executor.executeAsync(run.id);
+
+    assertEquals(observerCalls.sort(), ["executor", "workflow"]);
+    const failedRun = await backend.getRun(run.id);
+    assertEquals(failedRun?.status, "failed");
+    assertEquals(failedRun?.error?.message, 'Node "fail" failed: primary execution failure');
+  });
+
   it("does not execute a run when another worker already holds the lock", async () => {
     const backend = new MemoryBackend();
-    const executor = new WorkflowExecutor({ backend, lockDuration: 5_000 });
+    const executor = new WorkflowExecutor({
+      backend,
+      lockDuration: 5_000,
+      heartbeatInterval: 1_000,
+    });
     executor.register(
       workflow({
         id: "locked-conflict",
@@ -883,7 +1146,8 @@ describe("workflow/executor/workflow-executor", () => {
     );
     const run = createRun("locked-conflict");
     await backend.createRun(run);
-    await backend.acquireLock(run.id, 5_000);
+    const heldLockToken = await backend.acquireLock(run.id, 5_000);
+    assertExists(heldLockToken);
 
     await assertRejects(
       () => executor.executeAsync(run.id),
@@ -895,12 +1159,16 @@ describe("workflow/executor/workflow-executor", () => {
     assertExists(updatedRun);
     assertEquals(updatedRun.status, "pending");
     assertEquals(updatedRun.output, undefined);
-    await backend.releaseLock(run.id);
+    await backend.releaseLock(run.id, heldLockToken);
   });
 
   it("marks failed runs and releases the lock when a step fails", async () => {
     const backend = new MemoryBackend();
-    const executor = new WorkflowExecutor({ backend, lockDuration: 5_000 });
+    const executor = new WorkflowExecutor({
+      backend,
+      lockDuration: 5_000,
+      heartbeatInterval: 1_000,
+    });
     executor.register(
       workflow({
         id: "locked-failure",
@@ -1272,6 +1540,44 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(cancelledRun.status, "cancelled");
   });
 
+  it("does not overwrite completion after cancellation reads a stale run", async () => {
+    const backend = new CompletesBeforeCancellationBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    executor.register(
+      workflow({
+        id: "completion-cancel-race",
+        steps: [
+          step("work", {
+            tool: createTool("work", async () => {
+              started.resolve();
+              await release.promise;
+              return { ok: true };
+            }),
+          }),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("completion-cancel-race", {});
+    await started.promise;
+    backend.completeBeforeCancellation = true;
+
+    try {
+      await assertRejects(
+        () => handle.cancel(),
+        Error,
+        "run has already completed",
+      );
+    } finally {
+      release.resolve();
+      await handle.settled();
+    }
+
+    assertEquals((await backend.getRun(handle.runId))?.status, "completed");
+  });
+
   it("does not schedule more nodes after a workflow timeout", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend });
@@ -1389,11 +1695,410 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(timedOutRun.status, "failed");
     assertEquals(timedOutRun.output, undefined);
     assertEquals(lateStepExecutions, 0);
-    assertEquals(backend.releaseCalls, 1);
+    assertEquals(backend.releaseCalls, 0);
     assertEquals(await backend.isLocked(run.id), false);
 
     const heartbeatUpdates = backend.heartbeatUpdates;
     await time.tickAsync(20_000);
     assertEquals(backend.heartbeatUpdates, heartbeatUpdates);
+  });
+
+  it("joins one-shot admissions and prevents released or forged close bypasses", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(
+      workflow({
+        id: "reserved-start-shutdown",
+        steps: [step("complete", { tool: createTool("reserved-start", () => "done") })],
+      }).definition,
+    );
+
+    const released = reserveWorkflowStart(
+      executor,
+      "reserved-start-shutdown",
+      {},
+      { runId: "released-admission-run" },
+    );
+    released.release();
+    released.release();
+    const firstReleasedConsume = released.consume();
+    assertStrictEquals(released.consume(), firstReleasedConsume);
+    await assertRejects(
+      () => firstReleasedConsume,
+      Error,
+      "workflow executor admission was released",
+    );
+    assertEquals(await backend.getRun("released-admission-run"), null);
+
+    const held = reserveWorkflowStart(
+      executor,
+      "reserved-start-shutdown",
+      {},
+      { runId: "consumed-admission-run" },
+    );
+    const heldForRelease = reserveWorkflowStart(
+      executor,
+      "reserved-start-shutdown",
+      {},
+      { runId: "late-released-admission-run" },
+    );
+    let destroySettled = false;
+    const destroyPromise = executor.destroy().finally(() => {
+      destroySettled = true;
+    });
+    await Promise.resolve();
+    assertEquals(destroySettled, false);
+    assertThrows(
+      () => executor.start("reserved-start-shutdown", {}),
+      Error,
+      "workflow executor is closing",
+    );
+    assertEquals("reserveStart" in executor, false);
+    assertThrows(
+      () =>
+        reserveWorkflowStart(
+          Object.create(WorkflowExecutor.prototype) as WorkflowExecutor,
+          "reserved-start-shutdown",
+          {},
+        ),
+      Error,
+      "admission owner is invalid",
+    );
+
+    heldForRelease.release();
+    heldForRelease.release();
+    await Promise.resolve();
+    assertEquals(destroySettled, false);
+    const firstConsume = held.consume();
+    assertStrictEquals(held.consume(), firstConsume);
+    const handle = await firstConsume;
+    await destroyPromise;
+    await handle.settled();
+
+    assertEquals((await backend.getRun(handle.runId))?.status, "cancelled");
+    assertEquals(await backend.getRun("late-released-admission-run"), null);
+  });
+
+  it("waits for an admitted handle status read before closing", async () => {
+    const backend = new CompletionRaceBackend();
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "handle-status-shutdown",
+        steps: [step("complete", { tool: createTool("status-tool", () => "done") })],
+      }).definition,
+    );
+    const handle = await executor.start("handle-status-shutdown", {});
+    await handle.settled();
+    backend.interceptNextGet = true;
+    const statusPromise = handle.status();
+    await backend.completionReadStarted.promise;
+    let destroySettled = false;
+    const destroyPromise = executor.destroy().finally(() => {
+      destroySettled = true;
+    });
+
+    try {
+      await Promise.resolve();
+      assertEquals(destroySettled, false);
+      backend.releaseCompletionRead.resolve();
+      assertEquals((await statusPromise).id, handle.runId);
+      await destroyPromise;
+      assertThrows(
+        () => handle.status(),
+        Error,
+        "workflow executor is closed",
+      );
+    } finally {
+      backend.releaseCompletionRead.resolve();
+      await Promise.allSettled([statusPromise, destroyPromise]);
+    }
+  });
+
+  it("actively aborts result polling when closing", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "result-waiter-shutdown",
+        steps: [waitForApproval("review")],
+      }).definition,
+    );
+    const handle = await executor.start("result-waiter-shutdown", {});
+    await handle.settled();
+    const resultPromise = handle.result();
+    const resultRejection = assertRejects(
+      () => resultPromise,
+      Error,
+      "Workflow executor is closing",
+    );
+
+    await Promise.all([executor.destroy(), resultRejection]);
+    assertThrows(
+      () => handle.result(),
+      Error,
+      "workflow executor is closed",
+    );
+  });
+
+  it("cancels and quiesces active execution before closing", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, cancellationGracePeriod: 20 });
+    const started = Promise.withResolvers<void>();
+    const blockingTool: Tool = {
+      id: "shutdown-blocker",
+      type: "function",
+      description: "Wait for executor shutdown",
+      inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+      execute: (_input, context) => {
+        started.resolve();
+        return new Promise((_resolve, reject) => {
+          context?.abortSignal?.addEventListener(
+            "abort",
+            () => reject(context.abortSignal?.reason),
+            { once: true },
+          );
+        });
+      },
+    };
+    executor.register(
+      workflow({
+        id: "executor-shutdown",
+        steps: [step("block", { tool: blockingTool })],
+      }).definition,
+    );
+
+    const handle = await executor.start("executor-shutdown", {});
+    await started.promise;
+    const firstDestroy = executor.destroy();
+    assertEquals(executor.destroy(), firstDestroy);
+    await firstDestroy;
+    await handle.settled();
+
+    assertEquals((await backend.getRun(handle.runId))?.status, "cancelled");
+    assertThrows(
+      () => executor.start("executor-shutdown", {}),
+      Error,
+      "workflow executor is closed",
+    );
+  });
+
+  it("quiesces a stale execution without cancelling its replacement worker", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({
+      backend,
+      cancellationGracePeriod: 20,
+      enableLocking: false,
+    });
+    const started = Promise.withResolvers<void>();
+    executor.register(
+      workflow({
+        id: "shutdown-worker-handoff",
+        steps: [
+          step("block", {
+            tool: createTool("shutdown-worker-handoff-blocker", (_input) => {
+              started.resolve();
+              return new Promise(() => {});
+            }),
+          }),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("shutdown-worker-handoff", {});
+    await started.promise;
+    const admittedRun = await backend.getRun(handle.runId);
+    assertExists(admittedRun?.workerId);
+    const replacementWorkerId = "run-execution:replacement-worker";
+    await backend.updateRun(handle.runId, { workerId: replacementWorkerId });
+
+    await executor.destroy();
+    await handle.settled();
+
+    const replacementRun = await backend.getRun(handle.runId);
+    assertEquals(replacementRun?.status, "running");
+    assertEquals(replacementRun?.workerId, replacementWorkerId);
+    assertEquals(admittedRun.workerId === replacementRun?.workerId, false);
+  });
+
+  it("quiesces a stale execution without cancelling its replacement lock owner", async () => {
+    const backend = new ReplaceableExecutionLockBackend();
+    const executor = new WorkflowExecutor({ backend, cancellationGracePeriod: 20 });
+    const started = Promise.withResolvers<void>();
+    executor.register(
+      workflow({
+        id: "shutdown-lock-handoff",
+        steps: [
+          step("block", {
+            tool: createTool("shutdown-lock-handoff-blocker", () => {
+              started.resolve();
+              return new Promise(() => {});
+            }),
+          }),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("shutdown-lock-handoff", {});
+    await started.promise;
+    const admittedRun = await backend.getRun(handle.runId);
+    assertExists(admittedRun?.workerId);
+    const replacementLockId = await backend.replaceExecutionLock(handle.runId, 30_000);
+
+    try {
+      await executor.destroy();
+      await handle.settled();
+
+      const replacementRun = await backend.getRun(handle.runId);
+      assertEquals(replacementRun?.status, "running");
+      assertEquals(replacementRun?.workerId, admittedRun.workerId);
+      assertEquals(await backend.extendLock(handle.runId, 30_000, replacementLockId), true);
+    } finally {
+      await backend.releaseLock(handle.runId, replacementLockId);
+      await Promise.allSettled([handle.settled(), executor.destroy()]);
+    }
+  });
+
+  it("aborts every overlapping execution admitted for the same run", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({
+      backend,
+      cancellationGracePeriod: 20,
+      enableLocking: false,
+    });
+    const firstStarted = Promise.withResolvers<void>();
+    const bothStarted = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const aborted = [false, false];
+    let executionCount = 0;
+    const blockingTool: Tool = {
+      id: "overlapping-shutdown-blocker",
+      type: "function",
+      description: "Wait for overlapping execution teardown",
+      inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+      execute: (_input, context) => {
+        const index = executionCount++;
+        if (index === 0) firstStarted.resolve();
+        if (executionCount === 2) bothStarted.resolve();
+        return new Promise<void>((resolve, reject) => {
+          const abort = () => {
+            aborted[index] = true;
+            reject(context?.abortSignal?.reason);
+          };
+          if (context?.abortSignal?.aborted) abort();
+          else context?.abortSignal?.addEventListener("abort", abort, { once: true });
+          release.promise.then(resolve, reject);
+        });
+      },
+    };
+    executor.register(
+      workflow({
+        id: "overlapping-executor-shutdown",
+        steps: [step("block", { tool: blockingTool })],
+      }).definition,
+    );
+
+    const handle = await executor.start("overlapping-executor-shutdown", {});
+    await firstStarted.promise;
+    const admittedRun = await backend.getRun(handle.runId);
+    assertExists(admittedRun?.workerId);
+    const overlappingExecution = executor.executeAsync(
+      handle.runId,
+      undefined,
+      admittedRun.workerId,
+    );
+    await bothStarted.promise;
+    const destroyPromise = executor.destroy();
+    let watchdogId: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const outcome = await Promise.race([
+        destroyPromise.then(() => "destroyed" as const),
+        new Promise<"timed-out">((resolve) => {
+          watchdogId = setTimeout(() => resolve("timed-out"), 200);
+        }),
+      ]);
+      assertEquals(outcome, "destroyed");
+      await Promise.allSettled([handle.settled(), overlappingExecution]);
+
+      assertEquals(aborted, [true, true]);
+      assertEquals((await backend.getRun(handle.runId))?.status, "cancelled");
+    } finally {
+      if (watchdogId !== undefined) clearTimeout(watchdogId);
+      release.resolve();
+      await Promise.allSettled([
+        handle.settled(),
+        overlappingExecution,
+        destroyPromise,
+      ]);
+    }
+  });
+
+  it("keeps failed shutdown state retryable until durable cancellation succeeds", async () => {
+    const backend = new RetryableShutdownBackend();
+    const executor = new WorkflowExecutor({
+      backend,
+      cancellationGracePeriod: 20,
+      enableLocking: false,
+    });
+    const started = Promise.withResolvers<void>();
+    const blockingTool: Tool = {
+      id: "retryable-shutdown-blocker",
+      type: "function",
+      description: "Wait for a retryable executor shutdown",
+      inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+      execute: (_input, context) => {
+        started.resolve();
+        return new Promise((_resolve, reject) => {
+          const abort = () => reject(context?.abortSignal?.reason);
+          if (context?.abortSignal?.aborted) abort();
+          else context?.abortSignal?.addEventListener("abort", abort, { once: true });
+        });
+      },
+    };
+    executor.register(
+      workflow({
+        id: "retryable-executor-shutdown",
+        steps: [step("block", { tool: blockingTool })],
+      }).definition,
+    );
+
+    const handle = await executor.start("retryable-executor-shutdown", {});
+    await started.promise;
+    backend.rejectShutdownWrites = true;
+    const firstDestroy = executor.destroy();
+
+    try {
+      assertEquals(executor.destroy(), firstDestroy);
+      await assertRejects(
+        () => firstDestroy,
+        AggregateError,
+        "Failed to destroy workflow executor cleanly",
+      );
+      await handle.settled();
+
+      assertEquals((await backend.getRun(handle.runId))?.status, "running");
+      assertThrows(
+        () => executor.start("retryable-executor-shutdown", {}),
+        Error,
+        "workflow executor is closing",
+      );
+
+      backend.rejectShutdownWrites = false;
+      const retryDestroy = executor.destroy();
+      assertEquals(retryDestroy === firstDestroy, false);
+      await retryDestroy;
+
+      assertEquals((await backend.getRun(handle.runId))?.status, "cancelled");
+      assertEquals(executor.destroy(), retryDestroy);
+      assertThrows(
+        () => executor.getStatus(handle.runId),
+        Error,
+        "workflow executor is closed",
+      );
+    } finally {
+      backend.rejectShutdownWrites = false;
+      await Promise.allSettled([handle.settled(), executor.destroy()]);
+    }
   });
 });

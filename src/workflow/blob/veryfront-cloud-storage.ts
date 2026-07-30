@@ -2,6 +2,7 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { agentLogger as logger } from "#veryfront/utils";
 import { API_ERROR, CONFIG_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   getVeryfrontCloudAuthToken,
   getVeryfrontCloudBootstrap,
@@ -9,10 +10,37 @@ import {
 } from "#veryfront/platform/cloud/resolver.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { assertSafeBlobId, isSafeBlobId } from "./blob-id.ts";
+import { parsePositiveDurationWithLabel } from "../types.ts";
+import {
+  captureBlobBytes,
+  captureBlobMetadata,
+  captureBlobMimeType,
+  captureExactBlobRecord,
+  captureStoreBlobOptions,
+  copyCapturedBlobMetadata,
+  hasBlobControlCharacters,
+} from "./contract.ts";
 
 const DEFAULT_PREFIX = ".veryfront/blobs/";
 const DATA_SUFFIX = ".blob";
 const META_SUFFIX = ".meta.json";
+const MAX_DATE_MILLISECONDS = 8_640_000_000_000_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_CLOUD_URL_CODE_UNITS = 2_048;
+const MAX_CLOUD_TOKEN_CODE_UNITS = 8_192;
+const MAX_CLOUD_PROJECT_SLUG_CODE_UNITS = 256;
+const MAX_CLOUD_PREFIX_CODE_UNITS = 1_024;
+const CLOUD_CONFIG_KEYS = new Set([
+  "apiBaseUrl",
+  "apiToken",
+  "projectSlug",
+  "prefix",
+  "defaultTtl",
+  "downloadTtl",
+  "requestTimeout",
+  "now",
+]);
+const dateGetTime = Date.prototype.getTime;
 
 const getUploadCreateResponseSchema = defineSchema((v) =>
   v.object({
@@ -46,12 +74,6 @@ const getUploadSignedUrlResponseSchema = defineSchema((v) =>
   })
 );
 
-const getUploadListResponseSchema = defineSchema((v) =>
-  v.object({
-    data: v.array(v.object({ path: v.string().optional() }).passthrough()).optional(),
-  })
-);
-
 const getBlobMetadataSchema = defineSchema((v) =>
   v.object({
     version: v.literal(1),
@@ -67,7 +89,6 @@ const getBlobMetadataSchema = defineSchema((v) =>
 const UploadCreateResponseSchema = lazySchema(getUploadCreateResponseSchema);
 const UploadMetadataResponseSchema = lazySchema(getUploadMetadataResponseSchema);
 const UploadSignedUrlResponseSchema = lazySchema(getUploadSignedUrlResponseSchema);
-const UploadListResponseSchema = lazySchema(getUploadListResponseSchema);
 const BlobMetadataSchema = lazySchema(getBlobMetadataSchema);
 
 type UploadMetadataResponse = InferSchema<ReturnType<typeof getUploadMetadataResponseSchema>>;
@@ -86,6 +107,8 @@ export interface VeryfrontCloudBlobStorageConfig {
   defaultTtl?: number;
   /** Requested TTL in seconds for signed download URLs. */
   downloadTtl?: number;
+  /** Positive request/upload/download timeout in milliseconds (default: 30000). */
+  requestTimeout?: number;
   /** Time source for tests. */
   now?: () => Date;
 }
@@ -97,12 +120,94 @@ interface ResolvedConfig {
   prefix: string;
   defaultTtl?: number;
   downloadTtl?: number;
+  requestTimeout: number;
   now: () => Date;
 }
 
+type CapturedCloudConfig = Readonly<VeryfrontCloudBlobStorageConfig>;
+
+function captureOptionalConfigString(
+  value: unknown,
+  label: string,
+  maxLength: number,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string" || value.length === 0 || value.length > maxLength ||
+    value.trim() !== value || hasBlobControlCharacters(value)
+  ) {
+    throw CONFIG_INVALID.create({
+      detail: `${label} must be a canonical non-empty string of at most ${maxLength} code units`,
+    });
+  }
+  return value;
+}
+
+function captureCloudConfig(value: unknown): CapturedCloudConfig {
+  const fields = captureExactBlobRecord(value, "Cloud blob storage config", CLOUD_CONFIG_KEYS);
+  const apiBaseUrl = captureOptionalConfigString(
+    fields.get("apiBaseUrl"),
+    "Cloud blob apiBaseUrl",
+    MAX_CLOUD_URL_CODE_UNITS,
+  );
+  const apiToken = captureOptionalConfigString(
+    fields.get("apiToken"),
+    "Cloud blob apiToken",
+    MAX_CLOUD_TOKEN_CODE_UNITS,
+  );
+  const projectSlug = captureOptionalConfigString(
+    fields.get("projectSlug"),
+    "Cloud blob projectSlug",
+    MAX_CLOUD_PROJECT_SLUG_CODE_UNITS,
+  );
+  const prefix = captureOptionalConfigString(
+    fields.get("prefix"),
+    "Cloud blob prefix",
+    MAX_CLOUD_PREFIX_CODE_UNITS,
+  );
+  const defaultTtl = validateTtl(fields.get("defaultTtl"), "Cloud blob defaultTtl");
+  const downloadTtl = validateTtl(fields.get("downloadTtl"), "Cloud blob downloadTtl");
+  const rawRequestTimeout = fields.get("requestTimeout");
+  let requestTimeout: number | undefined;
+  if (rawRequestTimeout !== undefined) {
+    if (typeof rawRequestTimeout !== "number") {
+      throw CONFIG_INVALID.create({ detail: "Cloud blob requestTimeout must be a number" });
+    }
+    requestTimeout = parsePositiveDurationWithLabel(
+      rawRequestTimeout,
+      "VeryfrontCloudBlobStorage requestTimeout",
+    );
+  }
+  const now = fields.get("now");
+  if (now !== undefined && (typeof now !== "function" || isProxyWithoutHooks(now))) {
+    throw CONFIG_INVALID.create({ detail: "Cloud blob now must be a non-Proxy function" });
+  }
+  return Object.freeze({
+    ...(apiBaseUrl === undefined ? {} : { apiBaseUrl }),
+    ...(apiToken === undefined ? {} : { apiToken }),
+    ...(projectSlug === undefined ? {} : { projectSlug }),
+    ...(prefix === undefined ? {} : { prefix }),
+    ...(defaultTtl === undefined ? {} : { defaultTtl }),
+    ...(downloadTtl === undefined ? {} : { downloadTtl }),
+    ...(requestTimeout === undefined ? {} : { requestTimeout }),
+    ...(now === undefined ? {} : { now: now as () => Date }),
+  });
+}
+
 function normalizePrefix(prefix: string | undefined): string {
-  const value = (prefix ?? DEFAULT_PREFIX).trim().replace(/^\/+/, "");
-  if (!value) return DEFAULT_PREFIX;
+  const value = prefix ?? DEFAULT_PREFIX;
+  const segments = value.endsWith("/") ? value.slice(0, -1).split("/") : value.split("/");
+  if (
+    value.length === 0 || value !== value.trim() || value.startsWith("/") ||
+    value.includes("\\") ||
+    segments.some((segment) =>
+      !segment || segment === "." || segment === ".." || !/^[A-Za-z0-9._-]+$/.test(segment)
+    )
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Cloud blob prefix must be a portable relative path",
+    });
+  }
   return value.endsWith("/") ? value : `${value}/`;
 }
 
@@ -110,25 +215,77 @@ function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
-function mapBlobMetadataToRef(blob: BlobMetadata): BlobRef {
+function validateTtl(value: unknown, label: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw INVALID_ARGUMENT.create({ detail: `${label} must be a non-negative safe integer` });
+  }
+  return value;
+}
+
+function resolveBlobTimes(
+  now: unknown,
+  ttl: number | undefined,
+): { createdAt: Date; expiresAt?: Date } {
+  let createdAtMs: unknown;
+  try {
+    createdAtMs = Reflect.apply(dateGetTime, now, []);
+  } catch (cause) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Cloud blob storage clock returned an invalid date",
+      cause,
+    });
+  }
+  if (typeof createdAtMs !== "number" || !Number.isFinite(createdAtMs)) {
+    throw INVALID_ARGUMENT.create({ detail: "Cloud blob storage clock returned an invalid date" });
+  }
+  const createdAt = new Date(createdAtMs);
+  if (!ttl) return { createdAt };
+
+  const expiresAtMs = createdAtMs + ttl * 1_000;
+  if (!Number.isSafeInteger(expiresAtMs) || expiresAtMs > MAX_DATE_MILLISECONDS) {
+    throw INVALID_ARGUMENT.create({ detail: "Blob TTL exceeds the supported date range" });
+  }
+  return { createdAt, expiresAt: new Date(expiresAtMs) };
+}
+
+function parseDate(value: string, label: string): Date {
+  if (value.length > 64) throw new TypeError(`${label} is too long`);
+  const date = new Date(value);
+  if (!Number.isFinite(Reflect.apply(dateGetTime, date, []))) {
+    throw new TypeError(`${label} is invalid`);
+  }
+  return date;
+}
+
+function mapBlobMetadataToRef(blob: BlobMetadata, expectedId: string): BlobRef {
+  if (
+    !isSafeBlobId(blob.id) || blob.id !== expectedId ||
+    !Number.isSafeInteger(blob.size) || blob.size < 0 || !blob.mimeType
+  ) {
+    throw new TypeError("Blob metadata has an invalid shape");
+  }
   return {
     __kind: "blob",
     id: blob.id,
     size: blob.size,
-    mimeType: blob.mimeType,
-    createdAt: new Date(blob.createdAt),
-    expiresAt: blob.expiresAt ? new Date(blob.expiresAt) : undefined,
-    metadata: blob.metadata,
+    mimeType: captureBlobMimeType(blob.mimeType),
+    createdAt: parseDate(blob.createdAt, "Blob creation date"),
+    expiresAt: blob.expiresAt ? parseDate(blob.expiresAt, "Blob expiry date") : undefined,
+    metadata: copyCapturedBlobMetadata(captureBlobMetadata(blob.metadata)),
   };
 }
 
 function mapUploadMetadataToRef(upload: UploadMetadataResponse, id: string): BlobRef {
+  if (!Number.isSafeInteger(upload.size) || upload.size < 0) {
+    throw new TypeError("Upload metadata has an invalid size");
+  }
   return {
     __kind: "blob",
     id,
     size: upload.size,
-    mimeType: upload.content_type ?? "application/octet-stream",
-    createdAt: new Date(upload.created_at),
+    mimeType: captureBlobMimeType(upload.content_type ?? "application/octet-stream"),
+    createdAt: parseDate(upload.created_at, "Upload creation date"),
   };
 }
 
@@ -141,64 +298,31 @@ async function attachSignedUrl(
     resolved: ResolvedConfig,
   ) => Promise<{ signedUrl: string; expiresAt: Date } | null>,
 ): Promise<BlobRef> {
-  try {
-    const download = await getDownloadUrl(path, resolved);
-    return download ? { ...ref, url: download.signedUrl } : ref;
-  } catch (error) {
-    logger.warn("Failed to resolve signed URL for cloud blob", {
-      id: ref.id,
-      path,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return ref;
-  }
-}
-
-async function normalizeUploadBody(
-  data: string | Uint8Array | Blob | ReadableStream,
-): Promise<{ body: BodyInit; size: number }> {
-  if (typeof data === "string") {
-    const bytes = new TextEncoder().encode(data);
-    return { body: bytes, size: bytes.byteLength };
-  }
-
-  if (data instanceof Uint8Array) {
-    const bytes = Uint8Array.from(data);
-    return { body: bytes, size: bytes.byteLength };
-  }
-
-  if (data instanceof Blob) {
-    return { body: data, size: data.size };
-  }
-
-  if (data instanceof ReadableStream) {
-    const bytes = new Uint8Array(await new Response(data).arrayBuffer());
-    return { body: bytes, size: bytes.byteLength };
-  }
-
-  throw INVALID_ARGUMENT.create({
-    detail: "Unsupported data type for VeryfrontCloudBlobStorage",
-  });
+  const download = await getDownloadUrl(path, resolved);
+  return download ? { ...ref, url: download.signedUrl } : ref;
 }
 
 export class VeryfrontCloudBlobStorage implements BlobStorage {
-  private config: VeryfrontCloudBlobStorageConfig;
+  private readonly config: CapturedCloudConfig;
 
   constructor(config: VeryfrontCloudBlobStorageConfig = {}) {
-    this.config = config;
+    this.config = captureCloudConfig(config);
   }
 
   async put(
     data: string | Uint8Array | Blob | ReadableStream,
-    options: StoreBlobOptions = {},
+    options?: StoreBlobOptions,
   ): Promise<BlobRef> {
+    const capturedOptions = captureStoreBlobOptions(options);
     const resolved = this.resolveConfig();
-    const id = options.id ?? crypto.randomUUID();
-    const mimeType = options.mimeType ?? "application/octet-stream";
-    const { body, size } = await normalizeUploadBody(data);
-    const createdAt = resolved.now();
-    const ttl = options.ttl ?? resolved.defaultTtl;
-    const expiresAt = ttl ? new Date(createdAt.getTime() + ttl * 1000) : undefined;
+    const id = capturedOptions.id ?? crypto.randomUUID();
+    assertSafeBlobId(id);
+    const mimeType = capturedOptions.mimeType ?? "application/octet-stream";
+    const metadata = copyCapturedBlobMetadata(capturedOptions.metadata);
+    const ttl = validateTtl(capturedOptions.ttl ?? resolved.defaultTtl, "Blob TTL");
+    const { createdAt, expiresAt } = resolveBlobTimes(resolved.now(), ttl);
+    const body = await captureBlobBytes(data);
+    const size = body.byteLength;
 
     const blobRef: BlobRef = {
       __kind: "blob",
@@ -207,7 +331,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       mimeType,
       createdAt,
       expiresAt,
-      metadata: options.metadata,
+      metadata,
     };
 
     const metadataPayload = BlobMetadataSchema.parse({
@@ -217,7 +341,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       mimeType,
       createdAt: createdAt.toISOString(),
       expiresAt: expiresAt?.toISOString(),
-      metadata: options.metadata,
+      metadata,
     });
 
     const dataPath = this.getDataPath(id, resolved.prefix);
@@ -238,7 +362,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       logger.warn("Failed to upload blob metadata sidecar, cleaning up primary upload", {
         id,
         dataPath,
-        error: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : typeof error,
       });
 
       try {
@@ -246,8 +370,10 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       } catch (cleanupError) {
         logger.warn("Failed to clean up primary upload after metadata failure", {
           id,
-          dataPath,
-          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          errorName: cleanupError instanceof Error ? cleanupError.name : typeof cleanupError,
+        });
+        throw API_ERROR.create({
+          detail: "Cloud blob metadata upload and primary cleanup both failed",
         });
       }
 
@@ -265,23 +391,28 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
   async getText(id: string): Promise<string | null> {
     const stream = await this.getStream(id);
     if (!stream) return null;
-    return new Response(stream).text();
+    return new TextDecoder().decode(await captureBlobBytes(stream));
   }
 
   async getBytes(id: string): Promise<Uint8Array | null> {
     const stream = await this.getStream(id);
     if (!stream) return null;
-    return new Uint8Array(await new Response(stream).arrayBuffer());
+    return await captureBlobBytes(stream);
   }
 
   async delete(id: string): Promise<void> {
     const resolved = this.resolveConfig();
-    await Promise.all([
+    const results = await Promise.allSettled([
       this.deleteUpload(this.getMetadataPath(id, resolved.prefix), resolved, {
         ignoreNotFound: true,
       }),
       this.deleteUpload(this.getDataPath(id, resolved.prefix), resolved, { ignoreNotFound: true }),
     ]);
+    const failureCount = results.filter((result) => result.status === "rejected").length;
+    if (failureCount > 0) {
+      logger.warn("Failed to delete cloud blob", { id, failureCount });
+      throw API_ERROR.create({ detail: "Failed to delete cloud blob" });
+    }
   }
 
   async exists(id: string): Promise<boolean> {
@@ -294,17 +425,21 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const metadataPath = this.getMetadataPath(id, resolved.prefix);
     const metadataJson = await this.downloadUploadText(metadataPath, resolved);
 
-    if (metadataJson) {
+    if (metadataJson !== null) {
+      let ref: BlobRef;
       try {
-        const ref = mapBlobMetadataToRef(BlobMetadataSchema.parse(JSON.parse(metadataJson)));
-        return await attachSignedUrl(ref, dataPath, resolved, this.getDownloadUrl.bind(this));
-      } catch (error) {
-        logger.warn("Failed to parse blob metadata sidecar, falling back to upload metadata", {
+        ref = mapBlobMetadataToRef(
+          BlobMetadataSchema.parse(JSON.parse(metadataJson)),
           id,
-          metadataPath,
-          error: error instanceof Error ? error.message : String(error),
+        );
+      } catch (error) {
+        logger.warn("Invalid cloud blob metadata sidecar", {
+          id,
+          errorName: error instanceof Error ? error.name : typeof error,
         });
+        throw API_ERROR.create({ detail: "Invalid cloud blob metadata sidecar" });
       }
+      return await attachSignedUrl(ref, dataPath, resolved, this.getDownloadUrl.bind(this));
     }
 
     const upload = await this.getUploadMetadata(dataPath, resolved);
@@ -314,69 +449,67 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     return await attachSignedUrl(ref, dataPath, resolved, this.getDownloadUrl.bind(this));
   }
 
-  /**
-   * Enumerate blobs under this store's prefix, newest first. The list endpoint
-   * (`GET /projects/{slug}/uploads`) carries only paths — the original filename
-   * lives in each blob's sidecar — so ids are recovered from the `.blob` data
-   * paths and enriched via {@link stat} (one extra request per blob). Suitable
-   * for an uploads panel; not a hot path.
-   *
-   * Note: a single page is fetched. If the project accumulates more uploads than
-   * one page, pagination will need wiring here.
-   */
-  async list(): Promise<BlobRef[]> {
-    const resolved = this.resolveConfig();
-    const raw = await this.requestJson(
-      "GET",
-      `/projects/${encodeURIComponent(resolved.projectSlug)}/uploads`,
-      resolved,
-      { headers: { Accept: "application/json" }, allowNotFound: true },
+  private resolveConfig(): ResolvedConfig {
+    const apiBaseUrl = captureOptionalConfigString(
+      this.config.apiBaseUrl ?? getVeryfrontCloudBootstrap().apiBaseUrl,
+      "Cloud blob apiBaseUrl",
+      MAX_CLOUD_URL_CODE_UNITS,
     );
-    if (!raw) return [];
+    const rawApiToken = this.config.apiToken ?? getVeryfrontCloudAuthToken();
+    const rawProjectSlug = this.config.projectSlug ?? getVeryfrontCloudProjectSlug();
 
-    const parsed = UploadListResponseSchema.parse(raw);
-    const ids: string[] = [];
-    for (const item of parsed.data ?? []) {
-      const path = item.path;
-      // Only the data objects under our prefix — skip `.meta.json` sidecars and
-      // anything another store namespaced elsewhere.
-      if (!path || !path.startsWith(resolved.prefix) || !path.endsWith(DATA_SUFFIX)) continue;
-      const id = path.slice(resolved.prefix.length, path.length - DATA_SUFFIX.length);
-      if (isSafeBlobId(id)) ids.push(id);
+    if (!apiBaseUrl) {
+      throw CONFIG_INVALID.create({ detail: "VeryfrontCloudBlobStorage apiBaseUrl is invalid" });
     }
 
-    const refs = await Promise.all(ids.map((id) => this.stat(id)));
-    return refs
-      .filter((ref): ref is BlobRef => ref !== null)
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-  }
+    let parsedApiUrl: URL;
+    try {
+      parsedApiUrl = new URL(apiBaseUrl);
+    } catch {
+      throw CONFIG_INVALID.create({ detail: "VeryfrontCloudBlobStorage apiBaseUrl is invalid" });
+    }
+    if (
+      !["http:", "https:"].includes(parsedApiUrl.protocol) || parsedApiUrl.username ||
+      parsedApiUrl.password || parsedApiUrl.search || parsedApiUrl.hash
+    ) {
+      throw CONFIG_INVALID.create({ detail: "VeryfrontCloudBlobStorage apiBaseUrl is invalid" });
+    }
 
-  private resolveConfig(): ResolvedConfig {
-    const apiBaseUrl = this.config.apiBaseUrl ?? getVeryfrontCloudBootstrap().apiBaseUrl;
-    const apiToken = this.config.apiToken ?? getVeryfrontCloudAuthToken();
-    const projectSlug = this.config.projectSlug ?? getVeryfrontCloudProjectSlug();
-
-    if (!apiToken) {
+    if (!rawApiToken?.trim()) {
       throw CONFIG_INVALID.create({
         detail:
           "VeryfrontCloudBlobStorage requires auth. Set VERYFRONT_API_TOKEN, provide request-scoped Veryfront credentials, or pass apiToken explicitly.",
       });
     }
 
-    if (!projectSlug) {
+    if (!rawProjectSlug?.trim()) {
       throw CONFIG_INVALID.create({
         detail:
           "VeryfrontCloudBlobStorage requires a project slug. Set VERYFRONT_PROJECT_SLUG, provide request-scoped project context, or pass projectSlug explicitly.",
       });
     }
+    const apiToken = captureOptionalConfigString(
+      rawApiToken,
+      "Cloud blob apiToken",
+      MAX_CLOUD_TOKEN_CODE_UNITS,
+    )!;
+    const projectSlug = captureOptionalConfigString(
+      rawProjectSlug,
+      "Cloud blob projectSlug",
+      MAX_CLOUD_PROJECT_SLUG_CODE_UNITS,
+    )!;
 
     return {
-      apiBaseUrl,
+      apiBaseUrl: parsedApiUrl.toString().replace(/\/$/, ""),
       apiToken,
       projectSlug,
       prefix: normalizePrefix(this.config.prefix),
-      defaultTtl: this.config.defaultTtl,
-      downloadTtl: this.config.downloadTtl,
+      defaultTtl: validateTtl(this.config.defaultTtl, "Cloud blob defaultTtl"),
+      downloadTtl: validateTtl(this.config.downloadTtl, "Cloud blob downloadTtl"),
+      requestTimeout: parsePositiveDurationWithLabel(
+        this.config.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS,
+        "VeryfrontCloudBlobStorage requestTimeout",
+      ),
       now: this.config.now ?? (() => new Date()),
     };
   }
@@ -421,6 +554,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       method: "PUT",
       headers,
       body,
+      signal: AbortSignal.timeout(resolved.requestTimeout),
     });
 
     if (!response.ok) {
@@ -486,9 +620,10 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     if (!raw) return null;
 
     const parsed = UploadSignedUrlResponseSchema.parse(raw);
+    const expiresAt = parseDate(parsed.expires_at, "Signed URL expiry date");
     return {
       signedUrl: parsed.signed_url,
-      expiresAt: new Date(parsed.expires_at),
+      expiresAt,
     };
   }
 
@@ -499,7 +634,9 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const download = await this.getDownloadUrl(path, resolved);
     if (!download) return null;
 
-    const response = await fetch(download.signedUrl);
+    const response = await fetch(download.signedUrl, {
+      signal: AbortSignal.timeout(resolved.requestTimeout),
+    });
     if (response.status === 404) return null;
 
     if (!response.ok) {
@@ -512,6 +649,9 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       });
     }
 
+    if (!response.body) {
+      throw API_ERROR.create({ detail: `Veryfront Cloud download returned no body for "${path}"` });
+    }
     return response.body;
   }
 
@@ -521,7 +661,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
   ): Promise<string | null> {
     const stream = await this.downloadUpload(path, resolved);
     if (!stream) return null;
-    return new Response(stream).text();
+    return new TextDecoder().decode(await captureBlobBytes(stream));
   }
 
   private async requestJson(
@@ -542,6 +682,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       method,
       headers,
       body: options.body,
+      signal: AbortSignal.timeout(resolved.requestTimeout),
     });
 
     if (options.allowNotFound && response.status === 404) {

@@ -69,6 +69,22 @@ function makeStepNode(retry: RetryConfig): WorkflowNode {
 }
 
 describe("workflow tenant registry scoping", () => {
+  it("rejects preview workflow tenants without branch authority", async () => {
+    await assertRejects(
+      () =>
+        runWithWorkflowTenant(
+          {
+            projectSlug: "missing-branch-project",
+            token: "<TOKEN>",
+            productionMode: false,
+          },
+          () => Promise.resolve(),
+        ),
+      Error,
+      "requires an explicit branch",
+    );
+  });
+
   it("restores a release-less production environment without a synthetic cache scope", async () => {
     const tenant: CapturedTenantContext = {
       projectSlug: "workflow-environment-project",

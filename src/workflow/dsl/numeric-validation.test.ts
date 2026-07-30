@@ -78,7 +78,6 @@ function timeoutFactories(): Array<[string, (timeout: number | string) => unknow
 
 function retryFactories(): Array<[string, (retry: RetryConfig) => unknown]> {
   return [
-    ["workflow", (retry) => workflow({ id: "retry-workflow", steps: [], retry })],
     ["step", (retry) => step("retry-step", { tool: "tool", retry })],
     ["parallel", (retry) => parallel("retry-parallel", [processor], { retry })],
     [

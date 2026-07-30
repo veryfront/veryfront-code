@@ -1,11 +1,16 @@
 import type { MapNodeConfig, NodeState, WorkflowContext, WorkflowNode } from "../../types.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { NodeExecutionResult } from "./types.ts";
 import { deriveNodeStatus } from "./utils.ts";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
-import { applyRecordPatch, createRecordPatch, createSetContextPatch } from "./context-patch.ts";
+import {
+  applyRecordPatch,
+  createRecordPatch,
+  createSetContextPatch,
+  getOwnRecordValue,
+} from "./context-patch.ts";
 import { createMapChildNodes } from "./node-identity.ts";
+import { captureWorkflowMapItems } from "../workflow-definition-snapshot.ts";
 
 interface ExecuteMapNodeStrategyInput {
   node: WorkflowNode;
@@ -23,12 +28,9 @@ export async function executeMapNodeStrategy(
   runtime.abortSignal?.throwIfAborted();
   const startTime = Date.now();
 
-  const items = typeof config.items === "function" ? await config.items(context) : config.items;
+  const rawItems = typeof config.items === "function" ? await config.items(context) : config.items;
   runtime.abortSignal?.throwIfAborted();
-
-  if (!Array.isArray(items)) {
-    throw INVALID_ARGUMENT.create({ detail: `Map node "${node.id}" items must be an array` });
-  }
+  const items = captureWorkflowMapItems(rawItems, `Map node "${node.id}" items`);
 
   if (items.length === 0) {
     const state: NodeState = {
@@ -67,7 +69,7 @@ export async function executeMapNodeStrategy(
 
   applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
-  const outputs = childNodes.map((child) => result.nodeStates[child.id]?.output);
+  const outputs = childNodes.map((child) => getOwnRecordValue(result.nodeStates, child.id)?.output);
 
   const state: NodeState = {
     nodeId: node.id,

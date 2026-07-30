@@ -1,11 +1,22 @@
 export interface NodeRedisModule {
-  createClient(
-    options: { url?: string; socket?: { host?: string; port?: number } },
-  ): NodeRedisClient;
+  createClient(options: NodeRedisClientOptions): NodeRedisClient;
+}
+
+/** The bounded standalone-client options used by the workflow backend. */
+export interface NodeRedisClientOptions {
+  url?: string;
+  socket?: {
+    host?: string;
+    port?: number;
+    connectTimeout?: number;
+    reconnectStrategy?: false;
+  };
 }
 
 export interface NodeRedisClient {
   connect(): Promise<unknown>;
+  on(event: "error", listener: (error: unknown) => void): unknown;
+  off(event: "error", listener: (error: unknown) => void): unknown;
   hSet(key: string, fields: Record<string, string>): Promise<number | string>;
   hGetAll(key: string): Promise<Record<string, string>>;
   hDel(key: string, fields: string[]): Promise<number>;

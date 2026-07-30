@@ -20,36 +20,59 @@
  * - 3: Workflow not found
  */
 
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
+import { createDistributedWorkflowBackend } from "../backends/distributed.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
+import {
+  captureWorkflowDefinitions as captureCanonicalWorkflowDefinitions,
+} from "../executor/workflow-definition-snapshot.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
+import { MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES } from "../limits.ts";
 import type { WorkflowDefinition } from "../types.ts";
 import {
   requireWorkflowSourceIntegrationPolicy,
   runWithWorkflowSourceIntegrationPolicy,
 } from "../source-integration-policy.ts";
 import {
+  acquireRunExecutionLock,
+  captureExactWorkflowEntrypointRecord,
+  captureWorkflowRunEntrypointOptions,
+  createIsolatedWorkflowRuntime,
+  createWorkflowRunEntrypointHandle,
+  destroyOwnedWorkflowRunEntrypointResources,
   failRunExecution,
   getFinalRunExitCode,
   getRunExecutionWorkerId,
-  getTenantFromEnv,
   hydrateRunContextEnv,
+  type IsolatedWorkflowRuntime,
+  releaseRunExecutionLock,
+  type RunExecutionLockLease,
   runWithTenantContext,
+  type WorkflowRunEntrypoint,
 } from "./shared.ts";
 
 const logger = baseLogger.component("workflow-run-entrypoint");
+const RUN_ENTRYPOINT_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "backend",
+  "executor",
+  "debug",
+]);
+const STATIC_ENTRYPOINT_OPTION_KEYS: ReadonlySet<string> = new Set(["workflows", "debug"]);
+const ENTRYPOINT_WORKFLOW_KEYS: ReadonlySet<string> = new Set(["definition", "id", "version"]);
 
 /**
  * Configuration for the workflow run entrypoint.
  */
 export interface WorkflowRunEntrypointConfig {
-  /** Backend for workflow persistence */
+  /** Pre-initialized borrowed backend for workflow persistence. */
   backend: WorkflowBackend;
 
-  /** Workflow executor */
+  /** Borrowed workflow executor whose lifecycle remains with the caller. */
   executor: WorkflowExecutor;
 
   /** Enable debug logging */
@@ -66,6 +89,44 @@ export const EXIT_CODES = {
   NOT_FOUND: 3,
 } as const;
 
+function captureWorkflowRunConfig(
+  value: unknown,
+): Readonly<
+  Required<Pick<WorkflowRunEntrypointConfig, "backend" | "executor">> & {
+    debug: boolean;
+  }
+> {
+  const fields = captureExactWorkflowEntrypointRecord(
+    value,
+    "Workflow run entrypoint config",
+    RUN_ENTRYPOINT_CONFIG_KEYS,
+    ["backend", "executor"],
+  );
+  const backend = fields.backend;
+  if (typeof backend !== "object" || backend === null || isProxyWithoutHooks(backend)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow run entrypoint backend must be a non-Proxy object",
+    });
+  }
+  const executor = fields.executor;
+  if (typeof executor !== "object" || executor === null || isProxyWithoutHooks(executor)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow run entrypoint executor must be a non-Proxy object",
+    });
+  }
+  const debug = fields.debug;
+  if (debug !== undefined && typeof debug !== "boolean") {
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow run entrypoint debug must be a boolean",
+    });
+  }
+  return Object.freeze({
+    backend: backend as WorkflowBackend,
+    executor: executor as WorkflowExecutor,
+    debug: debug ?? false,
+  });
+}
+
 /**
  * Run the workflow run entrypoint
  *
@@ -75,27 +136,29 @@ export const EXIT_CODES = {
  * @example
  * ```typescript
  * // workflow-runner.ts - Container entrypoint
- * import { createDistributedWorkflowBackend } from "veryfront/workflow";
- * import { WorkflowExecutor } from "veryfront/workflow";
+ * import { createDistributedWorkflowBackend, WorkflowClient } from "veryfront/workflow";
  * import { runWorkflowRun } from "veryfront/workflow/worker";
  * import { workflows } from "./workflows.ts";
  *
  * // Activate a DistributedRuntimeProvider extension before creating the backend.
  * const backend = createDistributedWorkflowBackend({});
- * const executor = new WorkflowExecutor({ backend });
- *
- * // Register all workflows
- * for (const wf of workflows) {
- *   executor.register(wf);
+ * const client = new WorkflowClient({
+ *   backend,
+ *   approval: { expirationCheckInterval: 0 },
+ * });
+ * let exitCode: number;
+ * try {
+ *   await client.initialize();
+ *   for (const wf of workflows) client.register(wf);
+ *   exitCode = await runWorkflowRun({ backend, executor: client.getExecutor() });
+ * } finally {
+ *   await client.destroy();
  * }
- *
- * // Run the workflow run
- * const exitCode = await runWorkflowRun({ backend, executor });
  * if (exitCode !== 0) throw new Error(`Workflow run failed: ${exitCode}`);
  * ```
  */
 export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promise<number> {
-  const { backend, executor, debug = false } = config;
+  const { backend, executor, debug } = captureWorkflowRunConfig(config);
 
   // Get workflow run ID from environment
   const runId = getEnv("WORKFLOW_RUN_ID");
@@ -103,10 +166,26 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
     logger.error("Missing WORKFLOW_RUN_ID environment variable");
     return EXIT_CODES.CONFIG_ERROR;
   }
-  const expectedWorkerId = getRunExecutionWorkerId();
+  let expectedWorkerId: string;
+  try {
+    expectedWorkerId = getRunExecutionWorkerId();
+  } catch (error) {
+    logger.error("Invalid managed workflow execution identity:", error);
+    return EXIT_CODES.CONFIG_ERROR;
+  }
 
   if (debug) {
     logger.info(`Starting execution for run: ${runId}`);
+  }
+
+  let lockLease: RunExecutionLockLease | undefined;
+  let startupLockId: string | undefined;
+  try {
+    lockLease = await acquireRunExecutionLock(backend, runId, expectedWorkerId);
+    startupLockId = lockLease?.lockId;
+  } catch (error) {
+    logger.error("Could not acquire isolated workflow execution lock:", error);
+    return EXIT_CODES.WORKFLOW_FAILED;
   }
 
   try {
@@ -117,10 +196,17 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
     }
 
     requireWorkflowSourceIntegrationPolicy(run);
-    run = await hydrateRunContextEnv(backend, runId, run, expectedWorkerId);
+    run = await hydrateRunContextEnv(
+      backend,
+      runId,
+      run,
+      expectedWorkerId,
+      startupLockId,
+    );
 
-    // Get tenant context (from env or from stored run)
-    const tenant = getTenantFromEnv() ?? run._tenant;
+    // Persisted run ownership is authoritative; child-process environment
+    // variables cannot replace it.
+    const tenant = run._tenant;
 
     if (debug) {
       logger.info(`Executing workflow: ${run.workflowId}`);
@@ -129,7 +215,8 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
 
     // Execute workflow and determine exit code based on final status
     const executeWorkflow = async (): Promise<number> => {
-      await executor.resume(runId, undefined, expectedWorkerId);
+      await lockLease?.stop();
+      await executor.resume(runId, undefined, expectedWorkerId, startupLockId);
 
       return getFinalRunExitCode(
         logger,
@@ -152,6 +239,7 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
           runId,
           error,
           expectedWorkerId,
+          startupLockId,
         );
       }
     };
@@ -161,7 +249,31 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
       () => tenant ? runWithTenantContext(tenant, safeExecute) : safeExecute(),
     );
   } catch (error) {
-    return await failRunExecution(backend, logger, EXIT_CODES, runId, error, expectedWorkerId);
+    try {
+      await lockLease?.stop();
+    } catch (heartbeatError) {
+      logger.error("Lost isolated workflow startup lock:", heartbeatError);
+    }
+    return await failRunExecution(
+      backend,
+      logger,
+      EXIT_CODES,
+      runId,
+      error,
+      expectedWorkerId,
+      startupLockId,
+    );
+  } finally {
+    try {
+      await lockLease?.stop();
+    } catch (error) {
+      logger.error("Could not stop isolated workflow startup heartbeat:", error);
+    }
+    try {
+      await releaseRunExecutionLock(backend, runId, startupLockId);
+    } catch (error) {
+      logger.error("Could not release isolated workflow execution lock:", error);
+    }
   }
 }
 
@@ -169,7 +281,9 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
  * Create a simple workflow run entrypoint script.
  *
  * This is a convenience function that creates the entire entrypoint with the
- * explicitly activated distributed backend and executor setup.
+ * explicitly activated distributed backend and executor setup. The returned
+ * one-shot handle owns those resources and closes them after invocation; call
+ * `destroy()` when abandoning a handle without invoking it.
  *
  * @example
  * ```typescript
@@ -177,7 +291,7 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
  * import { createWorkflowRunEntrypoint } from "veryfront/workflow/worker";
  * import { workflows } from "./workflows.ts";
  *
- * const run = createWorkflowRunEntrypoint({
+ * const run = await createWorkflowRunEntrypoint({
  *   workflows,
  * });
  *
@@ -186,42 +300,152 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
  * ```
  */
 export interface CreateWorkflowRunEntrypointOptions {
-  /** Workflows to register */
+  /** Non-empty workflow batch captured and validated before backend resolution. */
   workflows: Array<{ definition: WorkflowDefinition }>;
 
   /** Enable debug logging */
   debug?: boolean;
 }
 
+function captureEntrypointWorkflowDefinitions(
+  options: Readonly<Record<string, unknown>>,
+): WorkflowDefinition[] {
+  const workflows = options.workflows;
+  if (
+    ((typeof workflows === "object" && workflows !== null) ||
+      typeof workflows === "function") && isProxyWithoutHooks(workflows)
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow run entrypoint workflows must be a non-Proxy array",
+    });
+  }
+  if (!Array.isArray(workflows)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow run entrypoint workflows must be an array",
+    });
+  }
+
+  let keys: PropertyKey[];
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    keys = Reflect.ownKeys(workflows);
+    lengthDescriptor = Object.getOwnPropertyDescriptor(workflows, "length");
+  } catch (cause) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow run entrypoint workflows could not be inspected",
+      cause,
+    });
+  }
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (!Number.isSafeInteger(length) || length < 0) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow run entrypoint workflows have an invalid length",
+    });
+  }
+  if (length > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `Workflow run entrypoint workflows cannot contain more than ${MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES} entries`,
+    });
+  }
+  if (length === 0) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow run entrypoint workflows must contain at least one workflow",
+    });
+  }
+  if (keys.length !== length + 1) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow run entrypoint workflows must be dense and contain no custom properties",
+    });
+  }
+
+  const definitions: WorkflowDefinition[] = [];
+  for (let index = 0; index < length; index++) {
+    let workflowDescriptor: PropertyDescriptor | undefined;
+    try {
+      workflowDescriptor = Object.getOwnPropertyDescriptor(workflows, String(index));
+    } catch (cause) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Workflow run entrypoint workflow at index ${index} could not be inspected`,
+        cause,
+      });
+    }
+    if (
+      !workflowDescriptor || workflowDescriptor.enumerable !== true ||
+      !("value" in workflowDescriptor)
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Workflow run entrypoint workflow at index ${index} must be an enumerable own data property`,
+      });
+    }
+    const wrapper = captureExactWorkflowEntrypointRecord(
+      workflowDescriptor.value,
+      `Workflow run entrypoint workflow at index ${index}`,
+      ENTRYPOINT_WORKFLOW_KEYS,
+    );
+    if (!Object.hasOwn(wrapper, "definition")) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Workflow run entrypoint workflow at index ${index} must contain an own definition data property`,
+      });
+    }
+    definitions.push(wrapper.definition as WorkflowDefinition);
+  }
+  return captureCanonicalWorkflowDefinitions(definitions);
+}
+
 /** Create a workflow run entrypoint. */
 export async function createWorkflowRunEntrypoint(
   options: CreateWorkflowRunEntrypointOptions,
-): Promise<() => Promise<number>> {
-  const { createDistributedWorkflowBackend } = await import("../backends/distributed.ts");
-  const { WorkflowExecutor } = await import("../executor/workflow-executor.ts");
+): Promise<WorkflowRunEntrypoint> {
+  const captured = captureWorkflowRunEntrypointOptions(
+    options,
+    "Workflow run entrypoint",
+    STATIC_ENTRYPOINT_OPTION_KEYS,
+    ["workflows"],
+  );
+  const definitions = captureEntrypointWorkflowDefinitions(captured.options);
+  const debug = captured.debug;
 
   const backend = createDistributedWorkflowBackend({
-    debug: options.debug,
+    debug,
   });
 
-  const executor = new WorkflowExecutor({
-    backend,
-    debug: options.debug,
-    stepExecutor: {
-      agentRegistry,
-      toolRegistry,
-    },
-  });
-
-  // Register workflows
-  for (const wf of options.workflows) {
-    executor.register(wf.definition);
+  let runtime: IsolatedWorkflowRuntime | undefined;
+  try {
+    runtime = createIsolatedWorkflowRuntime(
+      backend,
+      debug,
+      {
+        agentRegistry,
+        toolRegistry,
+      },
+    );
+    runtime.executor.registerAll(definitions);
+    await backend.initialize?.();
+  } catch (initializationError) {
+    try {
+      await destroyOwnedWorkflowRunEntrypointResources(backend, runtime);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [initializationError, cleanupError],
+        "Workflow run entrypoint initialization and cleanup failed",
+      );
+    }
+    throw initializationError;
   }
 
-  return () =>
-    runWorkflowRun({
-      backend,
-      executor,
-      debug: options.debug,
-    });
+  const initializedRuntime = runtime;
+  return createWorkflowRunEntrypointHandle(
+    () =>
+      runWorkflowRun({
+        backend,
+        executor: initializedRuntime.executor,
+        debug,
+      }),
+    () => destroyOwnedWorkflowRunEntrypointResources(backend, initializedRuntime),
+  );
 }

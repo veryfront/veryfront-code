@@ -36,14 +36,12 @@ describe("workflow()", () => {
       description: "A test workflow",
       version: "1.0.0",
       timeout: "1h",
-      retry: { maxAttempts: 3 },
-      steps: [],
+      steps: [step("document-options", { tool: "test-tool" })],
     });
 
     assertEquals(wf.definition.description, "A test workflow");
     assertEquals(wf.definition.version, "1.0.0");
     assertEquals(wf.definition.timeout, "1h");
-    assertEquals(wf.definition.retry?.maxAttempts, 3);
   });
 
   it("should throw on missing id", () => {

@@ -29,6 +29,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
 import type { WorkflowDefinition } from "../types.ts";
+import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 
 const logger = baseLogger.component("workflow-discovery");
 
@@ -220,8 +221,23 @@ export async function findWorkflowById(
   workflowId: string,
   options: WorkflowDiscoveryOptions,
 ): Promise<DiscoveredWorkflow | null> {
-  const { workflows } = await discoverWorkflows(options);
-  return workflows.find((w) => w.id === workflowId) ?? null;
+  const { workflows, errors } = await discoverWorkflows(options);
+  if (errors.length > 0) {
+    const first = errors[0]!;
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Workflow discovery was incomplete (${errors.length} error${
+        errors.length === 1 ? "" : "s"
+      }); first failure in ${first.filePath}: ${first.error}`,
+    });
+  }
+
+  const matches = workflows.filter((workflow) => workflow.id === workflowId);
+  if (matches.length > 1) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Workflow ID "${workflowId}" is ambiguous across ${matches.length} exports`,
+    });
+  }
+  return matches[0] ?? null;
 }
 
 /**
@@ -232,6 +248,13 @@ export function createWorkflowRegistry(
 ): Map<string, DiscoveredWorkflow> {
   const registry = new Map<string, DiscoveredWorkflow>();
   for (const workflow of workflows) {
+    const existing = registry.get(workflow.id);
+    if (existing) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Duplicate workflow ID "${workflow.id}" in ${existing.filePath} ` +
+          `(${existing.exportName}) and ${workflow.filePath} (${workflow.exportName})`,
+      });
+    }
     registry.set(workflow.id, workflow);
   }
   return registry;

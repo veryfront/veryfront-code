@@ -81,12 +81,16 @@ function createMockCheckpointManager(): CheckpointManager & {
     createRun: () => Promise.resolve(),
     getRun: () => Promise.resolve(null),
     updateRun: () => Promise.resolve(),
+    updateRunIfStatus: () => Promise.resolve(true),
     listRuns: () => Promise.resolve([]),
     saveCheckpoint: () => Promise.resolve(),
     getLatestCheckpoint: () => Promise.resolve(null),
     savePendingApproval: () => Promise.resolve(),
     getPendingApprovals: () => Promise.resolve([]),
-    updateApproval: () => Promise.resolve(),
+    getApproval: () => Promise.resolve(null),
+    listPendingApprovals: () => Promise.resolve([]),
+    updatePendingApproval: () => Promise.resolve(),
+    updateApproval: () => Promise.resolve(true),
     destroy: () => Promise.resolve(),
   };
 
@@ -134,7 +138,7 @@ function createTestRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
 function createNestedCheckpointNodes(): WorkflowNode[] {
   const checkpointedStep = (): WorkflowNode => ({
     id: "checkpoint-child",
-    config: { type: "step", checkpoint: true },
+    config: { type: "step", tool: "test", checkpoint: true },
   });
 
   return [
@@ -246,7 +250,10 @@ describe("DAGExecutor", () => {
 
   describe("simple sequential execution", () => {
     it("should execute a single step node", async () => {
-      const nodes: WorkflowNode[] = [{ id: "step1", config: { type: "step" } as any }];
+      const nodes: WorkflowNode[] = [{
+        id: "step1",
+        config: { type: "step", tool: "test" } as any,
+      }];
 
       const result = await executor.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
@@ -265,9 +272,9 @@ describe("DAGExecutor", () => {
 
       const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
       const nodes: WorkflowNode[] = [
-        { id: "a", config: { type: "step" } as any },
-        { id: "b", config: { type: "step" } as any },
-        { id: "c", config: { type: "step" } as any },
+        { id: "a", config: { type: "step", tool: "test" } as any },
+        { id: "b", config: { type: "step", tool: "test" } as any },
+        { id: "c", config: { type: "step", tool: "test" } as any },
       ];
 
       const result = await exec.execute(nodes, createTestRun());
@@ -288,8 +295,8 @@ describe("DAGExecutor", () => {
         () =>
           exec.execute(
             [
-              { id: "duplicate", config: { type: "step" } as any },
-              { id: "duplicate", config: { type: "step" } as any },
+              { id: "duplicate", config: { type: "step", tool: "test" } as any },
+              { id: "duplicate", config: { type: "step", tool: "test" } as any },
             ],
             createTestRun(),
           ),
@@ -303,9 +310,9 @@ describe("DAGExecutor", () => {
   describe("parallel execution with explicit dependencies", () => {
     it("should execute independent nodes in parallel", async () => {
       const nodes: WorkflowNode[] = [
-        { id: "a", dependsOn: [], config: { type: "step" } as any },
-        { id: "b", dependsOn: [], config: { type: "step" } as any },
-        { id: "c", dependsOn: ["a", "b"], config: { type: "step" } as any },
+        { id: "a", dependsOn: [], config: { type: "step", tool: "test" } as any },
+        { id: "b", dependsOn: [], config: { type: "step", tool: "test" } as any },
+        { id: "c", dependsOn: ["a", "b"], config: { type: "step", tool: "test" } as any },
       ];
 
       const result = await executor.execute(nodes, createTestRun());
@@ -348,10 +355,10 @@ describe("DAGExecutor", () => {
               }
               return true;
             },
-            steps: [{ id: "writer", config: { type: "step" } as any }],
+            steps: [{ id: "writer", config: { type: "step", tool: "test" } as any }],
           } as any,
         },
-        { id: "reader", dependsOn: [], config: { type: "step" } as any },
+        { id: "reader", dependsOn: [], config: { type: "step", tool: "test" } as any },
       ];
 
       const result = await isolatedExecutor.execute(nodes, createTestRun());
@@ -400,10 +407,10 @@ describe("DAGExecutor", () => {
               }
               return true;
             },
-            steps: [{ id: "writer", config: { type: "step" } as any }],
+            steps: [{ id: "writer", config: { type: "step", tool: "test" } as any }],
           } as any,
         },
-        { id: "observer", dependsOn: [], config: { type: "step" } as any },
+        { id: "observer", dependsOn: [], config: { type: "step", tool: "test" } as any },
       ];
 
       const result = await exec.execute(nodes, createTestRun());
@@ -440,8 +447,8 @@ describe("DAGExecutor", () => {
       const run = createTestRun({ context: { input: {}, shared: { count: 0 } } });
       const result = await exec.execute(
         [
-          { id: "mutator", dependsOn: [], config: { type: "step" } as any },
-          { id: "observer", dependsOn: [], config: { type: "step" } as any },
+          { id: "mutator", dependsOn: [], config: { type: "step", tool: "test" } as any },
+          { id: "observer", dependsOn: [], config: { type: "step", tool: "test" } as any },
         ],
         run,
       );
@@ -476,9 +483,9 @@ describe("DAGExecutor", () => {
           {
             id: "rejecting-mutator",
             dependsOn: [],
-            config: { type: "step" } as any,
+            config: { type: "step", tool: "test" } as any,
           },
-          { id: "observer", dependsOn: [], config: { type: "step" } as any },
+          { id: "observer", dependsOn: [], config: { type: "step", tool: "test" } as any },
         ],
         createTestRun({ context: { input: {}, shared: { count: 0 } } }),
       );
@@ -505,8 +512,8 @@ describe("DAGExecutor", () => {
 
       const result = await exec.execute(
         [
-          { id: "first", dependsOn: [], config: { type: "step" } as any },
-          { id: "second", dependsOn: [], config: { type: "step" } as any },
+          { id: "first", dependsOn: [], config: { type: "step", tool: "test" } as any },
+          { id: "second", dependsOn: [], config: { type: "step", tool: "test" } as any },
         ],
         createTestRun({ context: { input: {}, shared: "initial" } }),
       );
@@ -526,18 +533,18 @@ describe("DAGExecutor", () => {
         const config of [
           {
             type: "parallel",
-            nodes: [{ id: "child", config: { type: "step" } as any }],
+            nodes: [{ id: "child", config: { type: "step", tool: "test" } as any }],
           },
           {
             type: "branch",
             condition: () => true,
-            then: [{ id: "child", config: { type: "step" } as any }],
+            then: [{ id: "child", config: { type: "step", tool: "test" } as any }],
           },
         ]
       ) {
         const result = await exec.execute(
           [
-            { id: "writer", dependsOn: [], config: { type: "step" } as any },
+            { id: "writer", dependsOn: [], config: { type: "step", tool: "test" } as any },
             { id: "compound", dependsOn: [], config: config as any },
           ],
           createTestRun({ context: { input: {}, shared: "stale" } }),
@@ -558,7 +565,7 @@ describe("DAGExecutor", () => {
       const exec = new DAGExecutor({ stepExecutor: deletingExecutor });
 
       const result = await exec.execute(
-        [{ id: "delete", config: { type: "step" } as any }],
+        [{ id: "delete", config: { type: "step", tool: "test" } as any }],
         createTestRun({ context: { input: {}, removed: "value" } }),
       );
 
@@ -579,7 +586,7 @@ describe("DAGExecutor", () => {
           config: {
             type: "branch",
             condition: () => true,
-            then: [{ id: "delete-child", config: { type: "step" } as any }],
+            then: [{ id: "delete-child", config: { type: "step", tool: "test" } as any }],
           } as any,
         }],
         createTestRun({ context: { input: {}, removed: "value" } }),
@@ -598,8 +605,8 @@ describe("DAGExecutor", () => {
       const exec = new DAGExecutor({ stepExecutor: failExecutor });
 
       const nodes: WorkflowNode[] = [
-        { id: "fail-node", config: { type: "step" } as any },
-        { id: "after", config: { type: "step" } as any },
+        { id: "fail-node", config: { type: "step", tool: "test" } as any },
+        { id: "after", config: { type: "step", tool: "test" } as any },
       ];
 
       const result = await exec.execute(nodes, createTestRun());
@@ -618,7 +625,7 @@ describe("DAGExecutor", () => {
       const nodes: WorkflowNode[] = [{
         id: "crasher",
         dependsOn: [],
-        config: { type: "step" } as any,
+        config: { type: "step", tool: "test" } as any,
       }];
 
       const result = await exec.execute(nodes, createTestRun());
@@ -636,7 +643,7 @@ describe("DAGExecutor", () => {
       const exec = new DAGExecutor({ stepExecutor: failedExecutor });
 
       const result = await exec.execute(
-        [{ id: "failed-mutator", config: { type: "step" } as any }],
+        [{ id: "failed-mutator", config: { type: "step", tool: "test" } as any }],
         createTestRun({ context: { input: {}, shared: { count: 0 }, removed: true } }),
       );
 
@@ -661,8 +668,12 @@ describe("DAGExecutor", () => {
           config: {
             type: "parallel",
             nodes: [
-              { id: "successful-child", dependsOn: [], config: { type: "step" } as any },
-              { id: "failed-child", dependsOn: [], config: { type: "step" } as any },
+              {
+                id: "successful-child",
+                dependsOn: [],
+                config: { type: "step", tool: "test" } as any,
+              },
+              { id: "failed-child", dependsOn: [], config: { type: "step", tool: "test" } as any },
             ],
           } as any,
         }],
@@ -684,7 +695,8 @@ describe("DAGExecutor", () => {
       });
 
       const error = await assertRejects(
-        () => executor.execute([{ id: "step", config: { type: "step" } as any }], run),
+        () =>
+          executor.execute([{ id: "step", config: { type: "step", tool: "test" } as any }], run),
         Error,
         "Workflow context must contain only structured-cloneable values",
       );
@@ -701,7 +713,11 @@ describe("DAGExecutor", () => {
       const exec = new DAGExecutor({ stepExecutor: invalidOutputExecutor });
 
       const error = await assertRejects(
-        () => exec.execute([{ id: "step", config: { type: "step" } as any }], createTestRun()),
+        () =>
+          exec.execute(
+            [{ id: "step", config: { type: "step", tool: "test" } as any }],
+            createTestRun(),
+          ),
         Error,
         "Workflow context changes must contain only structured-cloneable values",
       );
@@ -713,8 +729,8 @@ describe("DAGExecutor", () => {
   describe("cycle detection", () => {
     it("should detect and report cycles", async () => {
       const nodes: WorkflowNode[] = [
-        { id: "a", dependsOn: ["b"], config: { type: "step" } as any },
-        { id: "b", dependsOn: ["a"], config: { type: "step" } as any },
+        { id: "a", dependsOn: ["b"], config: { type: "step", tool: "test" } as any },
+        { id: "b", dependsOn: ["a"], config: { type: "step", tool: "test" } as any },
       ];
 
       const result = await executor.execute(nodes, createTestRun());
@@ -732,7 +748,7 @@ describe("DAGExecutor", () => {
           dependsOn: [],
           config: { type: "step", skip: () => true } as any,
         },
-        { id: "after", config: { type: "step" } as any },
+        { id: "after", config: { type: "step", tool: "test" } as any },
       ];
 
       const result = await executor.execute(nodes, createTestRun());
@@ -752,8 +768,8 @@ describe("DAGExecutor", () => {
 
       const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
       const nodes: WorkflowNode[] = [
-        { id: "done", dependsOn: [], config: { type: "step" } as any },
-        { id: "next", config: { type: "step" } as any },
+        { id: "done", dependsOn: [], config: { type: "step", tool: "test" } as any },
+        { id: "next", config: { type: "step", tool: "test" } as any },
       ];
 
       const run = createTestRun({
@@ -831,7 +847,7 @@ describe("DAGExecutor", () => {
       });
       const shared = (): WorkflowNode => ({
         id: "shared",
-        config: { type: "step" } as any,
+        config: { type: "step", tool: "test" } as any,
       });
       const nodes: WorkflowNode[] = [
         {
@@ -893,7 +909,7 @@ describe("DAGExecutor", () => {
             type: "loop",
             maxIterations: 1,
             while: () => true,
-            steps: () => [{ id: "child", config: { type: "step" } as any }],
+            steps: () => [{ id: "child", config: { type: "step", tool: "test" } as any }],
           },
         },
         {
@@ -902,7 +918,7 @@ describe("DAGExecutor", () => {
             type: "subWorkflow",
             workflow: {
               id: "dynamic-child-workflow",
-              steps: () => [{ id: "child", config: { type: "step" } as any }],
+              steps: () => [{ id: "child", config: { type: "step", tool: "test" } as any }],
             },
           },
         },
@@ -1030,8 +1046,8 @@ describe("DAGExecutor", () => {
           config: {
             type: "branch",
             condition: () => true,
-            then: [{ id: "then-step", config: { type: "step" } as any }],
-            else: [{ id: "else-step", config: { type: "step" } as any }],
+            then: [{ id: "then-step", config: { type: "step", tool: "test" } as any }],
+            else: [{ id: "else-step", config: { type: "step", tool: "test" } as any }],
           } as any,
         },
       ];
@@ -1081,7 +1097,7 @@ describe("DAGExecutor", () => {
             conditionStarted();
             return condition;
           },
-          then: [{ id: "must-not-run", config: { type: "step" } as any }],
+          then: [{ id: "must-not-run", config: { type: "step", tool: "test" } as any }],
         } as any,
       }];
 
@@ -1300,8 +1316,8 @@ describe("DAGExecutor", () => {
           config: {
             type: "parallel",
             nodes: [
-              { id: "p-a", dependsOn: [], config: { type: "step" } as any },
-              { id: "p-b", dependsOn: [], config: { type: "step" } as any },
+              { id: "p-a", dependsOn: [], config: { type: "step", tool: "test" } as any },
+              { id: "p-b", dependsOn: [], config: { type: "step", tool: "test" } as any },
             ],
           } as any,
         },
@@ -1332,7 +1348,7 @@ describe("DAGExecutor", () => {
           config: {
             type: "parallel",
             nodes: [
-              { id: "p-step", dependsOn: [], config: { type: "step" } as any },
+              { id: "p-step", dependsOn: [], config: { type: "step", tool: "test" } as any },
               {
                 id: "p-wait",
                 dependsOn: [],
@@ -1388,7 +1404,7 @@ describe("DAGExecutor", () => {
           config: {
             type: "map",
             items: ["a", "b", "c"],
-            processor: { id: "proc", config: { type: "step" } as any },
+            processor: { id: "proc", config: { type: "step", tool: "test" } as any },
           } as any,
         },
       ];
@@ -1414,7 +1430,7 @@ describe("DAGExecutor", () => {
           config: {
             type: "map",
             items,
-            processor: { id: "proc", config: { type: "step" } as any },
+            processor: { id: "proc", config: { type: "step", tool: "test" } as any },
           } as any,
         },
       ];
@@ -1436,7 +1452,7 @@ describe("DAGExecutor", () => {
           config: {
             type: "map",
             items: [],
-            processor: { id: "proc", config: { type: "step" } as any },
+            processor: { id: "proc", config: { type: "step", tool: "test" } as any },
           } as any,
         },
       ];
@@ -1454,7 +1470,7 @@ describe("DAGExecutor", () => {
           config: {
             type: "map",
             items: () => [1, 2],
-            processor: { id: "proc", config: { type: "step" } as any },
+            processor: { id: "proc", config: { type: "step", tool: "test" } as any },
           } as any,
         },
       ];
@@ -1472,7 +1488,7 @@ describe("DAGExecutor", () => {
             config: {
               type: "map",
               items: ["item"],
-              processor: { id: "proc", config: { type: "step" } as any },
+              processor: { id: "proc", config: { type: "step", tool: "test" } as any },
               concurrency,
             } as any,
           },
@@ -1515,7 +1531,7 @@ describe("DAGExecutor", () => {
               itemCalls++;
               return [];
             },
-            processor: { id: "processor", config: { type: "step" } as any },
+            processor: { id: "processor", config: { type: "step", tool: "test" } as any },
             concurrency,
           },
         };
@@ -1544,7 +1560,7 @@ describe("DAGExecutor", () => {
               iteration++;
               return iteration <= 3;
             },
-            steps: [{ id: "loop-step", config: { type: "step" } as any }],
+            steps: [{ id: "loop-step", config: { type: "step", tool: "test" } as any }],
           } as any,
         },
       ];
@@ -1566,7 +1582,7 @@ describe("DAGExecutor", () => {
             type: "loop",
             maxIterations: 2,
             while: () => true,
-            steps: [{ id: "ls", config: { type: "step" } as any }],
+            steps: [{ id: "ls", config: { type: "step", tool: "test" } as any }],
           } as any,
         },
       ];
@@ -1590,7 +1606,7 @@ describe("DAGExecutor", () => {
             type: "loop",
             maxIterations: 3,
             while: () => true,
-            steps: [{ id: "bad-step", config: { type: "step" } as any }],
+            steps: [{ id: "bad-step", config: { type: "step", tool: "test" } as any }],
           } as any,
         },
       ];
@@ -1636,7 +1652,7 @@ describe("DAGExecutor", () => {
               callbackCalls++;
               return false;
             },
-            steps: [{ id: "child", config: { type: "step" } as any }],
+            steps: [{ id: "child", config: { type: "step", tool: "test" } as any }],
             onComplete: () => {
               callbackCalls++;
               return {};
@@ -1686,7 +1702,7 @@ describe("DAGExecutor", () => {
               conditionCalls++;
               return true;
             },
-            steps: [{ id: "child", config: { type: "step" } as any }],
+            steps: [{ id: "child", config: { type: "step", tool: "test" } as any }],
           },
         };
 
@@ -1714,7 +1730,7 @@ describe("DAGExecutor", () => {
           maxIterations: 2,
           delay: 0,
           while: () => true,
-          steps: [{ id: "child", config: { type: "step" } as any }],
+          steps: [{ id: "child", config: { type: "step", tool: "test" } as any }],
         },
       };
 
@@ -1743,7 +1759,7 @@ describe("DAGExecutor", () => {
             maxIterations: 1,
             while: () => true,
             steps: [
-              { id: "l-incr", dependsOn: [], config: { type: "step" } as any },
+              { id: "l-incr", dependsOn: [], config: { type: "step", tool: "test" } as any },
               {
                 id: "l-wait",
                 dependsOn: ["l-incr"],
@@ -1799,7 +1815,7 @@ describe("DAGExecutor", () => {
             type: "subWorkflow",
             workflow: {
               id: "sub-wf",
-              steps: [{ id: "sub-step", config: { type: "step" } as any }],
+              steps: [{ id: "sub-step", config: { type: "step", tool: "test" } as any }],
             },
           } as any,
         },
@@ -1836,7 +1852,7 @@ describe("DAGExecutor", () => {
             type: "subWorkflow",
             workflow: {
               id: "sub-wf-out",
-              steps: [{ id: "inner", config: { type: "step" } as any }],
+              steps: [{ id: "inner", config: { type: "step", tool: "test" } as any }],
             },
             output: (_ctx: WorkflowContext) => ({ transformed: true }),
           } as any,
@@ -1873,7 +1889,7 @@ describe("DAGExecutor", () => {
         {
           id: "cp-node",
           dependsOn: [],
-          config: { type: "step", checkpoint: true } as any,
+          config: { type: "step", tool: "test", checkpoint: true } as any,
         },
       ];
 
@@ -1889,7 +1905,7 @@ describe("DAGExecutor", () => {
       const nodes: WorkflowNode[] = [{
         id: "no-cp",
         dependsOn: [],
-        config: { type: "step" } as any,
+        config: { type: "step", tool: "test" } as any,
       }];
 
       await exec.execute(nodes, createTestRun());
@@ -1926,7 +1942,7 @@ describe("DAGExecutor", () => {
           nodes: [
             {
               id: "first",
-              config: { type: "step", checkpoint: true },
+              config: { type: "step", tool: "test", checkpoint: true },
             },
             {
               id: "pause",
@@ -2011,7 +2027,7 @@ describe("DAGExecutor", () => {
       const nodes: WorkflowNode[] = [{
         id: "cb-node",
         dependsOn: [],
-        config: { type: "step" } as any,
+        config: { type: "step", tool: "test" } as any,
       }];
 
       await exec.execute(nodes, createTestRun());
@@ -2030,8 +2046,8 @@ describe("DAGExecutor", () => {
 
       const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
       const nodes: WorkflowNode[] = [
-        { id: "b", dependsOn: [], config: { type: "step" } as any },
-        { id: "a", dependsOn: ["b"], config: { type: "step" } as any },
+        { id: "b", dependsOn: [], config: { type: "step", tool: "test" } as any },
+        { id: "a", dependsOn: ["b"], config: { type: "step", tool: "test" } as any },
       ];
 
       await exec.execute(nodes, createTestRun(), "b");
@@ -2063,8 +2079,8 @@ describe("DAGExecutor", () => {
       const exec = new DAGExecutor({ stepExecutor, maxConcurrency: 1 });
 
       const nodes: WorkflowNode[] = [
-        { id: "a", dependsOn: [], config: { type: "step" } as any },
-        { id: "b", dependsOn: [], config: { type: "step" } as any },
+        { id: "a", dependsOn: [], config: { type: "step", tool: "test" } as any },
+        { id: "b", dependsOn: [], config: { type: "step", tool: "test" } as any },
       ];
 
       const result = await exec.execute(nodes, createTestRun());
@@ -2106,7 +2122,7 @@ describe("DAGExecutor", () => {
         config: {
           type: "parallel",
           timeout: 0,
-          nodes: [{ id: "child", config: { type: "step" } as any }],
+          nodes: [{ id: "child", config: { type: "step", tool: "test" } as any }],
         },
       };
 
@@ -2161,7 +2177,7 @@ describe("DAGExecutor", () => {
               const nodeId = `raw-${compositeType}-${invalidPolicy.name}-skip-${skipResult}`;
               const child = (): WorkflowNode => ({
                 id: `${nodeId}/child`,
-                config: { type: "step" } as any,
+                config: { type: "step", tool: "test" } as any,
               });
               const skip = () => {
                 calls.skip++;
@@ -2586,7 +2602,7 @@ describe("DAGExecutor", () => {
         config: {
           type: "branch",
           condition: () => true,
-          then: [{ id: "retrying-branch-child", config: { type: "step" } as any }],
+          then: [{ id: "retrying-branch-child", config: { type: "step", tool: "test" } as any }],
           retry: {
             maxAttempts: 2,
             backoff: "fixed",
@@ -2642,10 +2658,10 @@ describe("DAGExecutor", () => {
             return context["stable-retrying-branch/then/branch-stable-child"] === undefined;
           },
           then: [
-            { id: "branch-stable-child", config: { type: "step" } as any },
-            { id: "branch-retrying-child", config: { type: "step" } as any },
+            { id: "branch-stable-child", config: { type: "step", tool: "test" } as any },
+            { id: "branch-retrying-child", config: { type: "step", tool: "test" } as any },
           ],
-          else: [{ id: "branch-else-child", config: { type: "step" } as any }],
+          else: [{ id: "branch-else-child", config: { type: "step", tool: "test" } as any }],
           retry: {
             maxAttempts: 2,
             backoff: "fixed",
@@ -2693,8 +2709,8 @@ describe("DAGExecutor", () => {
         config: {
           type: "parallel",
           nodes: [
-            { id: "stable-child", dependsOn: [], config: { type: "step" } as any },
-            { id: "retrying-child", dependsOn: [], config: { type: "step" } as any },
+            { id: "stable-child", dependsOn: [], config: { type: "step", tool: "test" } as any },
+            { id: "retrying-child", dependsOn: [], config: { type: "step", tool: "test" } as any },
           ],
           retry: {
             maxAttempts: 2,
@@ -2745,7 +2761,7 @@ describe("DAGExecutor", () => {
           type: "parallel",
           timeout: 5,
           retry: retryAfterTimeout,
-          nodes: [{ id: "parallel-child", config: { type: "step" } as any }],
+          nodes: [{ id: "parallel-child", config: { type: "step", tool: "test" } as any }],
         } as any,
       }];
 
@@ -2773,7 +2789,7 @@ describe("DAGExecutor", () => {
             if (attempts === 1) await new Promise((resolve) => setTimeout(resolve, 15));
             return [];
           },
-          processor: { id: "map-child", config: { type: "step" } as any },
+          processor: { id: "map-child", config: { type: "step", tool: "test" } as any },
         } as any,
       }];
 
@@ -2831,6 +2847,48 @@ describe("DAGExecutor", () => {
       assertEquals(result.completed, true);
       assertEquals(attempts, 2);
       assertEquals(result.nodeStates["subworkflow-policy"]!.attempt, 2);
+    });
+
+    it("detaches static exotic subworkflow input for every retry attempt", async () => {
+      const observedCounts: number[] = [];
+      let childAttempts = 0;
+      const trackingExecutor = new MockStepExecutor(new Map(), () => {
+        childAttempts++;
+        return childAttempts === 1
+          ? { success: false, error: "retry child", executionTime: 1 }
+          : { success: true, output: "done", executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const admittedInput = new Map<string, number>([["count", 1]]);
+      const nodes: WorkflowNode[] = [{
+        id: "exotic-input-subworkflow",
+        config: {
+          type: "subWorkflow",
+          input: admittedInput,
+          workflow: {
+            id: "exotic-input-child",
+            steps: ({ input }: { input: unknown }) => {
+              const attemptInput = input as Map<string, number>;
+              observedCounts.push(attemptInput.get("count")!);
+              attemptInput.set("count", 2);
+              return [{ id: "child", config: { type: "step", tool: "test" } }];
+            },
+          },
+          retry: {
+            maxAttempts: 2,
+            backoff: "fixed",
+            initialDelay: 0,
+            maxDelay: 0,
+            retryIf: () => true,
+          },
+        } as any,
+      }];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(observedCounts, [1, 1]);
+      assertEquals(admittedInput.get("count"), 1);
     });
 
     it("does not retry a timed-out composite attempt that never settles", async () => {

@@ -56,6 +56,7 @@ export {
   runWorkflowRun,
   type WorkflowRunEntrypointConfig,
 } from "./run-entrypoint.ts";
+export type { WorkflowRunEntrypoint } from "./shared.ts";
 
 // Dynamic workflow run entrypoint (discovers workflows at runtime)
 // Use this when workflows are stored in Veryfront API

@@ -32,5 +32,37 @@ describe("workflow/blob/guards", () => {
         expect(isBlobRef(v)).toBe(false);
       }
     });
+
+    it("rejects Proxy and accessor-backed references without invoking hooks", () => {
+      let hooks = 0;
+      const proxy = new Proxy({}, {
+        get() {
+          hooks++;
+          throw new Error("must not run");
+        },
+        ownKeys() {
+          hooks++;
+          throw new Error("must not run");
+        },
+      });
+      expect(isBlobRef(proxy)).toBe(false);
+      expect(hooks).toBe(0);
+
+      const accessor = {
+        id: "b1",
+        size: 1,
+        mimeType: "text/plain",
+        createdAt: new Date(),
+      } as Record<string, unknown>;
+      Object.defineProperty(accessor, "__kind", {
+        enumerable: true,
+        get() {
+          hooks++;
+          return "blob";
+        },
+      });
+      expect(isBlobRef(accessor)).toBe(false);
+      expect(hooks).toBe(0);
+    });
   });
 });

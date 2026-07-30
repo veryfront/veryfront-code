@@ -296,6 +296,10 @@ export interface DistributedRuntimeProvider {
   readonly id: string;
   createCacheBackend(options: DistributedCacheBackendOptions): Promise<CacheBackend>;
   createRenderCacheStore(options: DistributedRenderCacheStoreOptions): RenderCacheStore;
+  /**
+   * Create a dedicated caller-owned workflow backend. The caller must destroy
+   * it before tearing down the activated provider extension.
+   */
   createWorkflowBackend(options: DistributedWorkflowBackendOptions): WorkflowBackend;
   getWorkflowWorkerEnvironment(): Record<string, string>;
   createRateLimitStore(options: DistributedRateLimitStoreOptions): RateLimitStore;

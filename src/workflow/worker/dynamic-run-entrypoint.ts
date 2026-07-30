@@ -16,7 +16,7 @@
  * - TENANT_PROJECT_ID: Tenant's project ID
  * - TENANT_PRODUCTION_MODE: Whether running in production mode
  * - TENANT_RELEASE_ID: Current release ID (optional)
- * - VERYFRONT_API_URL: Veryfront API URL (default: https://api.veryfront.com)
+ * - VERYFRONT_API_URL: Required Veryfront API URL
  *
  * Exit codes:
  * - 0: Workflow completed successfully
@@ -37,20 +37,30 @@ import {
   runWithProjectAgentRuntime,
 } from "#veryfront/agent/project/agent-runtime.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
+import { createDistributedWorkflowBackend } from "../backends/distributed.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import {
   requireWorkflowSourceIntegrationPolicy,
   runWithWorkflowSourceIntegrationPolicy,
 } from "../source-integration-policy.ts";
 import {
-  createIsolatedWorkflowExecutor,
+  acquireRunExecutionLock,
+  captureWorkflowRunEntrypointOptions,
+  createIsolatedWorkflowRuntime as defaultCreateIsolatedWorkflowRuntime,
+  createWorkflowRunEntrypointHandle,
+  destroyOwnedWorkflowRunEntrypointResources,
   failRunExecution,
   getFinalRunExitCode,
   getRunExecutionWorkerId,
-  getTenantFromEnv,
   hydrateRunContextEnv,
+  type IsolatedWorkflowRuntime,
+  releaseRunExecutionLock,
+  type RunExecutionLockLease,
   runWithTenantContext,
+  settleWorkflowEntrypointOperation,
+  type WorkflowRunEntrypoint,
 } from "./shared.ts";
+import { requireWorkflowApiBaseUrl, requireWorkflowContentSource } from "../source-authority.ts";
 
 const logger = baseLogger.component("dynamic-workflow-run-entrypoint");
 
@@ -69,7 +79,7 @@ export const DYNAMIC_EXIT_CODES = {
  * Configuration for the dynamic workflow run entrypoint.
  */
 export interface DynamicWorkflowRunEntrypointConfig {
-  /** Backend for workflow persistence */
+  /** Pre-initialized borrowed backend for workflow persistence. */
   backend: WorkflowBackend;
 
   /** Enable debug logging */
@@ -80,11 +90,13 @@ export interface DynamicWorkflowRunEntrypointConfig {
 export interface DynamicWorkflowRunDependencies {
   enhanceAdapterWithFS: typeof defaultEnhanceAdapterWithFS;
   discoverProjectAgentRuntime: typeof defaultDiscoverProjectAgentRuntime;
+  createIsolatedWorkflowRuntime: typeof defaultCreateIsolatedWorkflowRuntime;
 }
 
 const DEFAULT_DYNAMIC_WORKFLOW_RUN_DEPENDENCIES: DynamicWorkflowRunDependencies = {
   enhanceAdapterWithFS: defaultEnhanceAdapterWithFS,
   discoverProjectAgentRuntime: defaultDiscoverProjectAgentRuntime,
+  createIsolatedWorkflowRuntime: defaultCreateIsolatedWorkflowRuntime,
 };
 
 async function failDynamicWorkflowRun(
@@ -92,8 +104,14 @@ async function failDynamicWorkflowRun(
   runId: string,
   error: unknown,
   expectedWorkerId: string | undefined,
+  lockLease: RunExecutionLockLease | undefined,
   exitCode: number,
 ): Promise<number> {
+  try {
+    await lockLease?.stop();
+  } catch (heartbeatError) {
+    logger.error("Lost isolated workflow startup lock:", heartbeatError);
+  }
   await failRunExecution(
     backend,
     logger,
@@ -101,12 +119,16 @@ async function failDynamicWorkflowRun(
     runId,
     error,
     expectedWorkerId,
+    lockLease?.lockId,
   );
   return exitCode;
 }
 
 /**
  * Run a workflow run with dynamic discovery.
+ *
+ * The configured backend is borrowed. Its caller must initialize it before
+ * invocation and remains responsible for destroying it afterward.
  *
  * This function:
  * 1. Gets the run from the configured workflow backend
@@ -138,10 +160,27 @@ export async function runDynamicWorkflowRunWithDependencies(
     logger.error("Missing WORKFLOW_RUN_ID environment variable");
     return DYNAMIC_EXIT_CODES.CONFIG_ERROR;
   }
-  const expectedWorkerId = getRunExecutionWorkerId();
+  let expectedWorkerId: string;
+  try {
+    expectedWorkerId = getRunExecutionWorkerId();
+  } catch (error) {
+    logger.error("Invalid managed workflow execution identity:", error);
+    return DYNAMIC_EXIT_CODES.CONFIG_ERROR;
+  }
 
   if (debug) {
     logger.info(`Starting execution for run: ${runId}`);
+  }
+
+  let lockLease: RunExecutionLockLease | undefined;
+  let startupLockId: string | undefined;
+  let runtimeCleanupFailed = false;
+  try {
+    lockLease = await acquireRunExecutionLock(backend, runId, expectedWorkerId);
+    startupLockId = lockLease?.lockId;
+  } catch (error) {
+    logger.error("Could not acquire isolated workflow execution lock:", error);
+    return DYNAMIC_EXIT_CODES.WORKFLOW_FAILED;
   }
 
   try {
@@ -153,10 +192,17 @@ export async function runDynamicWorkflowRunWithDependencies(
     }
 
     const sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(storedRun);
-    const run = await hydrateRunContextEnv(backend, runId, storedRun, expectedWorkerId);
+    const run = await hydrateRunContextEnv(
+      backend,
+      runId,
+      storedRun,
+      expectedWorkerId,
+      startupLockId,
+    );
 
-    // Get tenant context (from env or from stored run)
-    const tenant = getTenantFromEnv() ?? run._tenant;
+    // The durable run is the sole tenant/source authority. Process environment
+    // variables are transport details and cannot replace persisted ownership.
+    const tenant = run._tenant;
 
     if (!tenant) {
       return await failDynamicWorkflowRun(
@@ -164,6 +210,7 @@ export async function runDynamicWorkflowRunWithDependencies(
         runId,
         new Error("No tenant context available"),
         expectedWorkerId,
+        lockLease,
         DYNAMIC_EXIT_CODES.CONFIG_ERROR,
       );
     }
@@ -173,18 +220,27 @@ export async function runDynamicWorkflowRunWithDependencies(
       logger.info(`Tenant: ${tenant.projectSlug}`);
     }
 
+    let apiUrl: string;
+    let contentSource: ReturnType<typeof requireWorkflowContentSource>;
+    try {
+      apiUrl = requireWorkflowApiBaseUrl(getEnv("VERYFRONT_API_URL"));
+      contentSource = requireWorkflowContentSource(tenant);
+    } catch (error) {
+      return await failDynamicWorkflowRun(
+        backend,
+        runId,
+        error,
+        expectedWorkerId,
+        lockLease,
+        DYNAMIC_EXIT_CODES.CONFIG_ERROR,
+      );
+    }
+
     // Execute with tenant context
     return await runWithTenantContext(
       tenant,
       async () => {
         // Set up FS adapter with Veryfront API backend
-        const apiUrl = getEnv("VERYFRONT_API_URL") || "https://api.veryfront.com";
-        const contentSource = tenant.productionMode && tenant.releaseId
-          ? { type: "release" as const, releaseId: tenant.releaseId }
-          : tenant.productionMode && tenant.environmentName
-          ? { type: "environment" as const, name: tenant.environmentName }
-          : { type: "branch" as const, branch: tenant.branch ?? "main" };
-
         const fsConfig = {
           fs: {
             type: "veryfront-api" as const,
@@ -208,6 +264,7 @@ export async function runDynamicWorkflowRunWithDependencies(
             runId,
             error,
             expectedWorkerId,
+            lockLease,
             DYNAMIC_EXIT_CODES.CONFIG_ERROR,
           );
         }
@@ -233,12 +290,25 @@ export async function runDynamicWorkflowRunWithDependencies(
             runId,
             error,
             expectedWorkerId,
+            lockLease,
             DYNAMIC_EXIT_CODES.DISCOVERY_FAILED,
           );
         }
 
-        if (discoveryResult.errors.length > 0 && debug) {
-          logger.warn("Some workflow files failed to load:", discoveryResult.errors);
+        if (discoveryResult.errors.length > 0) {
+          const firstError = discoveryResult.errors[0];
+          return await failDynamicWorkflowRun(
+            backend,
+            runId,
+            new Error(
+              `Project discovery was incomplete (${discoveryResult.errors.length} error${
+                discoveryResult.errors.length === 1 ? "" : "s"
+              })${firstError ? ` in ${firstError.file}: ${firstError.error.message}` : ""}`,
+            ),
+            expectedWorkerId,
+            lockLease,
+            DYNAMIC_EXIT_CODES.DISCOVERY_FAILED,
+          );
         }
 
         const workflows = [...discoveryResult.workflows.values()];
@@ -249,6 +319,7 @@ export async function runDynamicWorkflowRunWithDependencies(
             runId,
             new Error("No workflows discovered"),
             expectedWorkerId,
+            lockLease,
             DYNAMIC_EXIT_CODES.DISCOVERY_FAILED,
           );
         }
@@ -271,6 +342,7 @@ export async function runDynamicWorkflowRunWithDependencies(
             runId,
             new Error(`Workflow not found: "${run.workflowId}"`),
             expectedWorkerId,
+            lockLease,
             DYNAMIC_EXIT_CODES.NOT_FOUND,
           );
         }
@@ -283,7 +355,7 @@ export async function runDynamicWorkflowRunWithDependencies(
           storedRun,
           () =>
             runWithProjectAgentRuntime(discoveryResult, async () => {
-              const executor = createIsolatedWorkflowExecutor(
+              const runtime = dependencies.createIsolatedWorkflowRuntime(
                 backend,
                 debug,
                 {
@@ -292,32 +364,64 @@ export async function runDynamicWorkflowRunWithDependencies(
                 },
               );
 
-              executor.register(workflow.definition);
+              const execution = (async (): Promise<number> => {
+                runtime.executor.register(workflow.definition);
 
-              try {
-                await executor.resume(runId, undefined, expectedWorkerId);
-                return getFinalRunExitCode(
-                  logger,
-                  DYNAMIC_EXIT_CODES,
-                  runId,
-                  await backend.getRun(runId),
-                  debug,
-                );
-              } catch (error) {
-                return await failRunExecution(
-                  backend,
-                  logger,
-                  DYNAMIC_EXIT_CODES,
-                  runId,
-                  error,
-                  expectedWorkerId,
-                );
-              }
+                try {
+                  await lockLease?.stop();
+                  await runtime.executor.resume(
+                    runId,
+                    undefined,
+                    expectedWorkerId,
+                    startupLockId,
+                  );
+                  return getFinalRunExitCode(
+                    logger,
+                    DYNAMIC_EXIT_CODES,
+                    runId,
+                    await backend.getRun(runId),
+                    debug,
+                  );
+                } catch (error) {
+                  return await failRunExecution(
+                    backend,
+                    logger,
+                    DYNAMIC_EXIT_CODES,
+                    runId,
+                    error,
+                    expectedWorkerId,
+                    startupLockId,
+                  );
+                }
+              })();
+
+              return await settleWorkflowEntrypointOperation(
+                execution,
+                async () => {
+                  try {
+                    await runtime.destroy();
+                  } catch (error) {
+                    runtimeCleanupFailed = true;
+                    throw error;
+                  }
+                },
+                "Dynamic workflow run execution and runtime cleanup failed",
+              );
             }),
         );
       },
     );
   } catch (error) {
+    // Runtime cleanup is an ownership failure, not a workflow exit status. The
+    // caller must see it so a managed entrypoint can retry cleanup before it
+    // closes the backend borrowed by that runtime.
+    if (runtimeCleanupFailed) throw error;
+
+    try {
+      await lockLease?.stop();
+    } catch (heartbeatError) {
+      logger.error("Lost isolated workflow startup lock:", heartbeatError);
+    }
     return await failRunExecution(
       backend,
       logger,
@@ -325,7 +429,19 @@ export async function runDynamicWorkflowRunWithDependencies(
       runId,
       error,
       expectedWorkerId,
+      startupLockId,
     );
+  } finally {
+    try {
+      await lockLease?.stop();
+    } catch (error) {
+      logger.error("Could not stop isolated workflow startup heartbeat:", error);
+    }
+    try {
+      await releaseRunExecutionLock(backend, runId, startupLockId);
+    } catch (error) {
+      logger.error("Could not release isolated workflow execution lock:", error);
+    }
   }
 }
 
@@ -333,7 +449,10 @@ export async function runDynamicWorkflowRunWithDependencies(
  * Create a dynamic workflow run entrypoint.
  *
  * This is a convenience function that resolves the explicitly activated
- * distributed backend and returns a function to run the workflow run.
+ * distributed backend. The returned one-shot handle owns that backend and
+ * closes it after invocation; call `destroy()` when abandoning the handle.
+ * Runtime-cleanup failures reject so teardown can be retried safely before the
+ * backend is closed.
  *
  * @example
  * ```typescript
@@ -355,16 +474,68 @@ export interface CreateDynamicWorkflowRunEntrypointOptions {
 /** Create a dynamic workflow run entrypoint. */
 export async function createDynamicWorkflowRunEntrypoint(
   options: CreateDynamicWorkflowRunEntrypointOptions,
-): Promise<() => Promise<number>> {
-  const { createDistributedWorkflowBackend } = await import("../backends/distributed.ts");
+): Promise<WorkflowRunEntrypoint> {
+  return await createDynamicWorkflowRunEntrypointWithDependencies(
+    options,
+    DEFAULT_DYNAMIC_WORKFLOW_RUN_DEPENDENCIES,
+  );
+}
+
+/** @internal Create a managed dynamic entrypoint with explicit runtime dependencies. */
+export async function createDynamicWorkflowRunEntrypointWithDependencies(
+  options: CreateDynamicWorkflowRunEntrypointOptions,
+  dependencies: DynamicWorkflowRunDependencies,
+): Promise<WorkflowRunEntrypoint> {
+  const { debug } = captureWorkflowRunEntrypointOptions(
+    options,
+    "Dynamic workflow run entrypoint",
+  );
 
   const backend = createDistributedWorkflowBackend({
-    debug: options.debug,
+    debug,
   });
+  let retainedRuntime: IsolatedWorkflowRuntime | undefined;
 
-  return () =>
-    runDynamicWorkflowRun({
-      backend,
-      debug: options.debug,
-    });
+  const managedDependencies: DynamicWorkflowRunDependencies = {
+    ...dependencies,
+    createIsolatedWorkflowRuntime(backend, debug, stepExecutorConfig) {
+      const runtime = dependencies.createIsolatedWorkflowRuntime(
+        backend,
+        debug,
+        stepExecutorConfig,
+      );
+      const trackedRuntime: IsolatedWorkflowRuntime = Object.freeze({
+        executor: runtime.executor,
+        async destroy(): Promise<void> {
+          await runtime.destroy();
+          if (retainedRuntime === trackedRuntime) retainedRuntime = undefined;
+        },
+      });
+      retainedRuntime = trackedRuntime;
+      return trackedRuntime;
+    },
+  };
+
+  try {
+    await backend.initialize?.();
+  } catch (initializationError) {
+    try {
+      await backend.destroy();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [initializationError, cleanupError],
+        "Dynamic workflow run entrypoint initialization and cleanup failed",
+      );
+    }
+    throw initializationError;
+  }
+
+  return createWorkflowRunEntrypointHandle(
+    () =>
+      runDynamicWorkflowRunWithDependencies(
+        { backend, debug },
+        managedDependencies,
+      ),
+    () => destroyOwnedWorkflowRunEntrypointResources(backend, retainedRuntime),
+  );
 }

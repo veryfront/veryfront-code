@@ -31,6 +31,13 @@ export interface RunExecutionConfig {
 
   /** Enable debug logging */
   debug?: boolean;
+
+  /** Bounded lock acquisition policy for the isolated entrypoint. */
+  lockAcquisition: {
+    duration: number;
+    timeout: number;
+    retryInterval: number;
+  };
 }
 
 /**
@@ -90,8 +97,18 @@ export interface RunExecutionInfo {
  */
 export interface RunExecutor {
   /**
-   * Create and start an isolated execution for a workflow run.
-   * @returns Execution ID
+   * Spawn and register an isolated execution, preserving config.executionId.
+   * Resolve as soon as the execution is visible to status/list/delete calls;
+   * do not wait for its child lock acquisition, readiness, or completion. The
+   * manager still owns the claim lease until this promise resolves.
+   *
+   * The execution must invoke a standard managed workflow entrypoint with the
+   * run ID, execution ID, and lockAcquisition values from config. These values
+   * are reserved control-plane inputs and config.env must never override them.
+   * A rejection must leave no live execution, or leave it discoverable by the
+   * requested executionId so the manager's cleanup call can terminate it.
+   *
+   * @returns Exactly config.executionId
    */
   createRunExecution(config: RunExecutionConfig): Promise<string>;
 
@@ -106,20 +123,22 @@ export interface RunExecutor {
   listRunExecutions(managerId: string): Promise<RunExecutionInfo[]>;
 
   /**
-   * Delete/cleanup an execution.
-   * Called after completion or for manual cleanup.
+   * Terminate and remove an execution. This operation must be idempotent and
+   * must not resolve until the execution can no longer perform workflow work.
    */
   deleteRunExecution(executionId: string): Promise<void>;
 
   /**
-   * Initialize the executor (optional)
-   * Called once before first execution creation.
+   * Initialize the executor once before first execution creation. If this
+   * rejects after allocating resources, the manager invokes destroy() and the
+   * executor is terminal; a new manager/executor pair is required to retry.
    */
   initialize?(): Promise<void>;
 
   /**
-   * Cleanup and shutdown the executor (optional)
-   * Called when the manager is stopping
+   * Perform terminal teardown. This must not resolve until every execution
+   * owned by the executor can no longer perform workflow work. Repeated calls
+   * must either join the same teardown or remain safe and idempotent.
    */
   destroy?(): Promise<void>;
 }

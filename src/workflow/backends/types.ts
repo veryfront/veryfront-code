@@ -7,7 +7,21 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT, ORCHESTRATION_ERROR } from "#veryfront/errors";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import { MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS } from "../limits.ts";
+
+function isPlainDataRecord(value: unknown): value is Record<PropertyKey, unknown> {
+  if (
+    typeof value !== "object" || value === null || isProxyWithoutHooks(value) ||
+    Array.isArray(value)
+  ) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === null ||
+    (!isProxyWithoutHooks(prototype) && Object.getPrototypeOf(prototype) === null);
+}
 
 /** Run state that may change after the immutable run snapshot is created. */
 export type WorkflowRunUpdate = Partial<
@@ -53,6 +67,25 @@ export function assertWorkflowRunUpdate(patch: WorkflowRunUpdate): void {
   }
 }
 
+/** Reject missing or whitespace-only opaque workflow lock tokens. */
+export function assertWorkflowLockId(value: unknown): asserts value is string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw INVALID_ARGUMENT.create({ detail: "Workflow lock id must be a non-empty string" });
+  }
+}
+
+/** Reject missing or whitespace-padded durable workflow owner identities. */
+export function assertWorkflowWorkerId(value: unknown): asserts value is string {
+  if (
+    typeof value !== "string" || value.length === 0 ||
+    value.trim() !== value
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow worker id must be a canonical non-empty string",
+    });
+  }
+}
+
 /** Configuration used by backend. */
 export interface BackendConfig {
   url?: string;
@@ -68,6 +101,124 @@ export interface Lock {
   expiresAt: Date;
 }
 
+/** Metadata that may be attached without changing an approval decision. */
+export interface PendingApprovalMetadataUpdate {
+  readonly notificationError: string;
+}
+
+/** Expiry predicate evaluated in the same transaction as an approval decision. */
+export type ApprovalExpiryCondition = "unexpired" | "expired";
+
+/**
+ * Canonical time and expiry predicate for one approval decision attempt.
+ *
+ * `decidedAt` is captured once by the trusted workflow host. Backends must use
+ * that exact value both for the persisted decision timestamp and for the
+ * atomic comparison with the persisted approval expiry.
+ */
+export interface ApprovalDecisionTiming {
+  readonly decidedAt: Date;
+  readonly expiryCondition: ApprovalExpiryCondition;
+}
+
+/** Validate and detach caller-owned approval decision timing. */
+export function captureApprovalDecisionTiming(
+  value: ApprovalDecisionTiming,
+): Readonly<ApprovalDecisionTiming> {
+  if (!isPlainDataRecord(value)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Approval decision timing must contain decidedAt and expiryCondition",
+    });
+  }
+
+  let keys: PropertyKey[];
+  let decidedAtDescriptor: PropertyDescriptor | undefined;
+  let expiryDescriptor: PropertyDescriptor | undefined;
+  try {
+    keys = Reflect.ownKeys(value);
+    decidedAtDescriptor = Object.getOwnPropertyDescriptor(value, "decidedAt");
+    expiryDescriptor = Object.getOwnPropertyDescriptor(value, "expiryCondition");
+  } catch (cause) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Approval decision timing could not be inspected",
+      cause,
+    });
+  }
+
+  if (
+    keys.length !== 2 || !keys.includes("decidedAt") || !keys.includes("expiryCondition") ||
+    !decidedAtDescriptor || !("value" in decidedAtDescriptor) ||
+    !decidedAtDescriptor.enumerable ||
+    !expiryDescriptor || !("value" in expiryDescriptor) ||
+    !expiryDescriptor.enumerable ||
+    (expiryDescriptor.value !== "unexpired" && expiryDescriptor.value !== "expired")
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Approval decision timing must contain decidedAt and expiryCondition",
+    });
+  }
+
+  let decidedAtMs: number;
+  try {
+    if (isProxyWithoutHooks(decidedAtDescriptor.value)) throw new TypeError("Proxy Date");
+    decidedAtMs = Date.prototype.getTime.call(decidedAtDescriptor.value);
+  } catch (cause) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Approval decision decidedAt must be a valid Date",
+      cause,
+    });
+  }
+  if (!Number.isFinite(decidedAtMs)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Approval decision decidedAt must be a valid Date",
+    });
+  }
+
+  return Object.freeze({
+    decidedAt: new Date(decidedAtMs),
+    expiryCondition: expiryDescriptor.value,
+  });
+}
+
+/**
+ * Capture the only approval metadata update allowed outside the decision CAS.
+ * Accessors and inherited properties are rejected before user code can run.
+ */
+export function capturePendingApprovalMetadataUpdate(
+  patch: PendingApprovalMetadataUpdate,
+): Readonly<PendingApprovalMetadataUpdate> {
+  if (!isPlainDataRecord(patch)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Pending approval metadata update must contain only notificationError",
+    });
+  }
+
+  let keys: PropertyKey[];
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    keys = Reflect.ownKeys(patch);
+    descriptor = Object.getOwnPropertyDescriptor(patch, "notificationError");
+  } catch (cause) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Pending approval metadata update could not be inspected",
+      cause,
+    });
+  }
+
+  if (
+    keys.length !== 1 || keys[0] !== "notificationError" || !descriptor ||
+    !("value" in descriptor) || !descriptor.enumerable ||
+    typeof descriptor.value !== "string" ||
+    descriptor.value.length > MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Pending approval metadata update must contain only notificationError",
+    });
+  }
+
+  return Object.freeze({ notificationError: descriptor.value });
+}
+
 /** Public API contract for workflow backend. */
 export interface WorkflowBackend {
   /**
@@ -78,8 +229,8 @@ export interface WorkflowBackend {
   createRun(run: WorkflowRun): Promise<void>;
   getRun(runId: string): Promise<WorkflowRun | null>;
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void>;
-  /** Apply a run patch only when its current status matches one of the expected statuses. */
-  updateRunIfStatus?(
+  /** Atomically apply a run patch only when the current status is expected. */
+  updateRunIfStatus(
     runId: string,
     expectedStatuses: WorkflowStatus[],
     patch: WorkflowRunUpdate,
@@ -90,6 +241,19 @@ export interface WorkflowBackend {
     expectedStatuses: WorkflowStatus[],
     expectedWorkerId: string,
     patch: WorkflowRunUpdate,
+  ): Promise<boolean>;
+  /**
+   * Atomically apply a run patch only while the exact, unexpired execution
+   * lease is still owned. When the patch changes status away from `running`,
+   * the same atomic operation must consume that lease. An optional worker id
+   * adds the durable worker-owner comparison to the same transaction.
+   */
+  updateRunIfStatusAndLock?(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
   ): Promise<boolean>;
   deleteRun?(runId: string): Promise<void>;
   listRuns(filter: RunFilter): Promise<WorkflowRun[]>;
@@ -110,38 +274,55 @@ export interface WorkflowBackend {
   deleteCheckpoint?(runId: string, checkpointId: string): Promise<void>;
   deleteCheckpoints?(runId: string, checkpointIds: string[]): Promise<void>;
 
-  /** Append an approval to an existing run; reject when the run does not exist. */
+  /**
+   * Append an approval with a run-unique id only while the owning run is
+   * `waiting`; reject missing/non-waiting runs and duplicate ids atomically.
+   */
   savePendingApproval(runId: string, approval: PendingApproval): Promise<void>;
-  /** Append an approval only while the run status and worker owner match. */
+  /**
+   * Append a run-unique approval only while the run is `waiting` and the
+   * supplied status and worker-owner predicates match.
+   */
   savePendingApprovalIfStatusAndWorker?(
     runId: string,
     expectedStatuses: WorkflowStatus[],
     expectedWorkerId: string,
     approval: PendingApproval,
   ): Promise<boolean>;
-  /** Patch metadata on an existing pending approval. */
-  updatePendingApproval?(
+  /** Record notification metadata without changing approval decision state. */
+  updatePendingApproval(
     runId: string,
     approvalId: string,
-    patch: Partial<PendingApproval>,
+    patch: PendingApprovalMetadataUpdate,
   ): Promise<void>;
   getPendingApprovals(runId: string): Promise<PendingApproval[]>;
-  getPendingApproval?(
+  /** Return the approval record in any decision state, or null when absent. */
+  getApproval(
     runId: string,
     approvalId: string,
   ): Promise<PendingApproval | null>;
   /**
-   * Apply an approval decision atomically, but only while the approval is still
-   * pending. Atomic backends resolve `true` when the decision was written and
-   * `false` after losing a concurrent decision race. Legacy custom backends may
-   * continue to resolve without a value.
+   * Apply an approval decision atomically while the owning run is `waiting`,
+   * the approval is pending, and its persisted expiry satisfies `timing.expiryCondition` at
+   * `timing.decidedAt`. Resolve `true` only when the decision was written and
+   * `false` when any precondition fails. The run-status and pending checks,
+   * persisted expiry comparison, and decision write must be one compare-and-set operation. The
+   * backend must persist `timing.decidedAt` exactly; it must not read its own
+   * clock for this decision.
    */
   updateApproval(
     runId: string,
     approvalId: string,
     decision: ApprovalDecision,
-  ): Promise<boolean | void>;
-  listPendingApprovals?(filter?: {
+    timing: ApprovalDecisionTiming,
+  ): Promise<boolean>;
+  /**
+   * List approval records across runs for expiration and operator queries.
+   * `status: "expired"` selects every record whose persisted expiry has passed,
+   * including an already-decided system-expiry row that still needs run-state
+   * reconciliation.
+   */
+  listPendingApprovals(filter?: {
     workflowId?: string;
     approver?: string;
     status?: "pending" | "expired";
@@ -152,12 +333,16 @@ export interface WorkflowBackend {
   acknowledge?(runId: string): Promise<void>;
   nack?(runId: string): Promise<void>;
 
-  /** Acquire a lock, returning the owned lockId token on success or null on failure. */
+  /**
+   * Acquire a lease, returning its opaque ownership token or null when another
+   * owner holds the lease. Lock-capable backends must implement this together
+   * with token-fenced renewal and release.
+   */
   acquireLock?(runId: string, duration: number): Promise<string | null>;
-  /** Release a lock. When lockId is provided, only release if it matches the owned token. */
-  releaseLock?(runId: string, lockId?: string): Promise<void>;
-  /** Extend a lock only when lockId matches the owned token. */
-  extendLock?(runId: string, duration: number, lockId?: string): Promise<boolean>;
+  /** Release only the live lease owned by lockId; report whether it was deleted. */
+  releaseLock?(runId: string, lockId: string): Promise<boolean>;
+  /** Renew only the live lease owned by lockId; report whether it was extended. */
+  extendLock?(runId: string, duration: number, lockId: string): Promise<boolean>;
   isLocked?(runId: string): Promise<boolean>;
 
   /** Find runs that appear stalled (no heartbeat within threshold ms) */
@@ -181,36 +366,63 @@ export interface WorkflowBackend {
   destroy(): Promise<void>;
 }
 
-/** Apply a run update only while its status is one of the expected values. */
+/** Apply a run update through the backend's atomic status/ownership compare-and-set. */
 export async function updateRunIfStatus(
   backend: WorkflowBackend,
   runId: string,
   expectedStatuses: WorkflowStatus[],
   patch: WorkflowRunUpdate,
   expectedWorkerId?: string,
+  expectedLockId?: string,
 ): Promise<boolean> {
+  if (expectedWorkerId !== undefined) assertWorkflowWorkerId(expectedWorkerId);
+  if (expectedLockId !== undefined) {
+    assertWorkflowLockId(expectedLockId);
+    if (!backend.updateRunIfStatusAndLock) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Workflow backend cannot atomically fence run updates by lock ownership",
+      });
+    }
+    const updated = await backend.updateRunIfStatusAndLock(
+      runId,
+      expectedStatuses,
+      expectedLockId,
+      patch,
+      expectedWorkerId,
+    );
+    if (typeof updated !== "boolean") {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Workflow backend returned a non-boolean lock-fenced update result",
+      });
+    }
+    return updated;
+  }
+
   if (expectedWorkerId !== undefined) {
     // Worker ownership must be part of the same atomic comparison as status.
     // Older third-party backends cannot provide that guarantee, so fail closed.
     if (!backend.updateRunIfStatusAndWorker) return false;
-    return await backend.updateRunIfStatusAndWorker(
+    const updated = await backend.updateRunIfStatusAndWorker(
       runId,
       expectedStatuses,
       expectedWorkerId,
       patch,
     );
+    if (typeof updated !== "boolean") {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Workflow backend returned a non-boolean owner-fenced update result",
+      });
+    }
+    return updated;
   }
 
-  if (backend.updateRunIfStatus) {
-    return await backend.updateRunIfStatus(runId, expectedStatuses, patch);
+  const updated = await backend.updateRunIfStatus(runId, expectedStatuses, patch);
+  if (typeof updated !== "boolean") {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "Workflow backend returned a non-boolean status update result",
+    });
   }
-
-  // Compatibility fallback for third-party backends that predate conditional
-  // updates. Built-in backends implement the atomic method above.
-  const current = await backend.getRun(runId);
-  if (!current || !expectedStatuses.includes(current.status)) return false;
-  await backend.updateRun(runId, patch);
-  return true;
+  return updated;
 }
 
 type WithQueueSupport =
@@ -219,7 +431,12 @@ type WithQueueSupport =
 
 type WithLockSupport =
   & WorkflowBackend
-  & Required<Pick<WorkflowBackend, "acquireLock" | "releaseLock">>;
+  & Required<
+    Pick<
+      WorkflowBackend,
+      "acquireLock" | "extendLock" | "releaseLock" | "updateRunIfStatusAndLock"
+    >
+  >;
 
 type WithEventSupport =
   & WorkflowBackend
@@ -236,7 +453,9 @@ export function hasQueueSupport(backend: WorkflowBackend): backend is WithQueueS
 export function hasLockSupport(backend: WorkflowBackend): backend is WithLockSupport {
   return (
     typeof backend.acquireLock === "function" &&
-    typeof backend.releaseLock === "function"
+    typeof backend.extendLock === "function" &&
+    typeof backend.releaseLock === "function" &&
+    typeof backend.updateRunIfStatusAndLock === "function"
   );
 }
 
@@ -256,7 +475,9 @@ type WithWorkerSupport =
       | "dequeue"
       | "acknowledge"
       | "acquireLock"
+      | "extendLock"
       | "releaseLock"
+      | "updateRunIfStatusAndLock"
       | "findStalledRuns"
       | "claimStalledRun"
       | "updateRunIfStatusAndWorker"

@@ -1,4 +1,5 @@
 import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
+import { captureApprovalApprovers } from "../types.ts";
 import { validateDelay, validateExecutionPolicy, validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
@@ -24,7 +25,10 @@ export function waitForApproval(id: string, options: WaitForApprovalOptions = {}
       waitType: "approval",
       message: options.message ?? "Approval required",
       payload: options.payload,
-      approvers: options.approvers === undefined ? undefined : [...options.approvers],
+      approvers: captureApprovalApprovers(
+        options.approvers,
+        `Approval wait "${id}" approvers`,
+      ),
       timeout: policy.timeout,
       checkpoint: true,
       retry: policy.retry,

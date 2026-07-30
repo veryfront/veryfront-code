@@ -4,9 +4,14 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
-import { registerWorkflowBackendSnapshotContract } from "./conformance.test-utils.ts";
+import { registerWorkflowBackendPersistenceContract } from "./conformance.test-utils.ts";
+import { hasLockSupport, hasWorkerSupport, updateRunIfStatus } from "./types.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
+const UNEXPIRED_DECISION_TIMING = {
+  decidedAt: new Date("2026-01-01T00:00:00.000Z"),
+  expiryCondition: "unexpired",
+} as const;
 
 describe("MemoryBackend", () => {
   let backend: MemoryBackend;
@@ -43,7 +48,14 @@ describe("MemoryBackend", () => {
     backend = new MemoryBackend();
   });
 
-  registerWorkflowBackendSnapshotContract("Memory", () => backend);
+  registerWorkflowBackendPersistenceContract("Memory", () => backend, {
+    seedDuplicateApproval(runId, approval) {
+      const approvalStore = (
+        backend as unknown as { approvals: Map<string, PendingApproval[]> }
+      ).approvals;
+      approvalStore.get(runId)?.push(structuredClone(approval));
+    },
+  });
 
   describe("Run Management", () => {
     it("should create and retrieve a run", async () => {
@@ -143,7 +155,7 @@ describe("MemoryBackend", () => {
     });
 
     it("should update a run", async () => {
-      await backend.createRun(createTestRun("run-2"));
+      await backend.createRun(createTestRun("run-2", { status: "waiting" }));
 
       await backend.updateRun("run-2", { status: "running", startedAt: new Date() });
 
@@ -179,6 +191,60 @@ describe("MemoryBackend", () => {
         true,
       );
       assertEquals((await backend.getRun("run-owned"))?.status, "failed");
+    });
+
+    it("fails closed on non-boolean conditional update results", async () => {
+      const runId = "run-invalid-conditional-result";
+      await backend.createRun(createTestRun(runId, {
+        workerId: "worker",
+      }));
+      const invalidBackend = new Proxy(backend, {
+        get(target, property, receiver) {
+          if (
+            property === "updateRunIfStatus" ||
+            property === "updateRunIfStatusAndWorker" ||
+            property === "updateRunIfStatusAndLock"
+          ) {
+            return () => Promise.resolve(undefined as unknown as boolean);
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+
+      await assertRejects(
+        () => updateRunIfStatus(invalidBackend, runId, ["pending"], { status: "running" }),
+        Error,
+        "non-boolean status update result",
+      );
+      await assertRejects(
+        () =>
+          updateRunIfStatus(
+            invalidBackend,
+            runId,
+            ["pending"],
+            { status: "running" },
+            "worker",
+          ),
+        Error,
+        "non-boolean owner-fenced update result",
+      );
+      const lockToken = await backend.acquireLock(runId, 5_000);
+      if (!lockToken) throw new Error("Expected the lock fixture to acquire a token");
+      await assertRejects(
+        () =>
+          updateRunIfStatus(
+            invalidBackend,
+            runId,
+            ["pending"],
+            { status: "running" },
+            "worker",
+            lockToken,
+          ),
+        Error,
+        "non-boolean lock-fenced update result",
+      );
+      assertEquals((await backend.getRun(runId))?.status, "pending");
     });
 
     it("rejects attempts to mutate the source policy after run creation", async () => {
@@ -222,7 +288,7 @@ describe("MemoryBackend", () => {
 
   describe("Checkpointing", () => {
     it("should save and retrieve checkpoints", async () => {
-      await backend.createRun(createTestRun("run-1"));
+      await backend.createRun(createTestRun("run-1", { status: "waiting" }));
       await backend.saveCheckpoint("run-1", createCheckpoint("cp-1", "step-1", new Date()));
 
       const latest = await backend.getLatestCheckpoint("run-1");
@@ -302,7 +368,7 @@ describe("MemoryBackend", () => {
         requestedAt: new Date(),
       };
 
-      await backend.createRun(createTestRun("run-1"));
+      await backend.createRun(createTestRun("run-1", { status: "waiting" }));
       await backend.savePendingApproval("run-1", approval);
 
       const approvals = await backend.getPendingApprovals("run-1");
@@ -321,19 +387,58 @@ describe("MemoryBackend", () => {
         requestedAt: new Date(),
       };
 
-      await backend.createRun(createTestRun("run-2"));
+      await backend.createRun(createTestRun("run-2", { status: "waiting" }));
       await backend.savePendingApproval("run-2", approval);
 
       await backend.updateApproval("run-2", "approval-2", {
         approved: true,
         approver: "admin@example.com",
         comment: "Looks good!",
-      });
+      }, UNEXPIRED_DECISION_TIMING);
 
-      const updatedApproval = await backend.getPendingApproval("run-2", "approval-2");
+      const updatedApproval = await backend.getApproval("run-2", "approval-2");
       assertEquals(updatedApproval?.status, "approved");
       assertEquals(updatedApproval?.decidedBy, "admin@example.com");
       assertEquals(updatedApproval?.comment, "Looks good!");
+    });
+
+    it("fails closed when legacy state contains duplicate approval ids", async () => {
+      const runId = "run-duplicate-approval-state";
+      const approval: PendingApproval = {
+        id: "duplicate-approval-state",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.createRun(createTestRun(runId));
+      const unsafeState = backend as unknown as {
+        approvals: Map<string, PendingApproval[]>;
+      };
+      unsafeState.approvals.set(runId, [structuredClone(approval), structuredClone(approval)]);
+
+      await assertRejects(
+        () =>
+          backend.updateApproval(runId, approval.id, {
+            approved: true,
+            approver: "reviewer",
+          }, UNEXPIRED_DECISION_TIMING),
+        Error,
+        "Duplicate approval id stored",
+      );
+      await assertRejects(
+        () =>
+          backend.updatePendingApproval(runId, approval.id, {
+            notificationError: "delivery failed",
+          }),
+        Error,
+        "Duplicate approval id stored",
+      );
+      assertEquals(
+        unsafeState.approvals.get(runId)?.map((stored) => stored.status),
+        ["pending", "pending"],
+      );
     });
 
     it("rejects approvals for a missing run", async () => {
@@ -387,7 +492,7 @@ describe("MemoryBackend", () => {
         notificationError: "delivery failed",
       });
       assertEquals(
-        (await backend.getPendingApproval("run-owned-approval", approval.id))?.notificationError,
+        (await backend.getApproval("run-owned-approval", approval.id))?.notificationError,
         "delivery failed",
       );
     });
@@ -449,20 +554,37 @@ describe("MemoryBackend", () => {
   });
 
   describe("Locking", () => {
+    it("requires renewal as part of lock and worker capabilities", () => {
+      assertEquals(hasLockSupport(backend), true);
+      assertEquals(hasWorkerSupport(backend), true);
+      const incomplete = new Proxy(backend, {
+        get(target, property, receiver) {
+          if (property === "extendLock") return undefined;
+          return Reflect.get(target, property, receiver);
+        },
+      });
+
+      assertEquals(hasLockSupport(incomplete), false);
+      assertEquals(hasWorkerSupport(incomplete), false);
+    });
+
     it("should acquire and release locks", async () => {
-      assertExists(await backend.acquireLock("resource-1", 5000));
-      await backend.releaseLock("resource-1");
+      const token = await backend.acquireLock("resource-1", 5000);
+      assertExists(token);
+      assertEquals(await backend.releaseLock("resource-1", token), true);
     });
 
     it("should prevent concurrent locks on same resource", async () => {
-      assertExists(await backend.acquireLock("resource-2", 5000));
+      const token = await backend.acquireLock("resource-2", 5000);
+      assertExists(token);
       assertEquals(await backend.acquireLock("resource-2", 100), null);
-      await backend.releaseLock("resource-2");
+      assertEquals(await backend.releaseLock("resource-2", token), true);
     });
 
     it("should allow lock after release", async () => {
-      assertExists(await backend.acquireLock("resource-3", 5000));
-      await backend.releaseLock("resource-3");
+      const token = await backend.acquireLock("resource-3", 5000);
+      assertExists(token);
+      assertEquals(await backend.releaseLock("resource-3", token), true);
       assertExists(await backend.acquireLock("resource-3", 5000));
     });
 
@@ -475,9 +597,9 @@ describe("MemoryBackend", () => {
       assertEquals(await backend.extendLock("resource-4", 5000, staleToken), false);
       assertEquals(await backend.extendLock("resource-4", 5000, currentToken), true);
 
-      await backend.releaseLock("resource-4", staleToken);
+      assertEquals(await backend.releaseLock("resource-4", staleToken), false);
       assertEquals(await backend.isLocked("resource-4"), true);
-      await backend.releaseLock("resource-4", currentToken);
+      assertEquals(await backend.releaseLock("resource-4", currentToken), true);
       assertEquals(await backend.isLocked("resource-4"), false);
     });
   });

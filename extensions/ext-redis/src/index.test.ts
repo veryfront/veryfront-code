@@ -72,6 +72,29 @@ describe("ext-redis provider lifecycle", () => {
     );
   });
 
+  it("transfers provider-created workflow backend ownership to the caller", async () => {
+    const extension = factory({
+      url: "redis://127.0.0.1:1",
+      connectTimeoutMs: 1,
+    });
+    const provided = new Map<string, unknown>();
+    await extension.setup!(createContext(provided));
+    const provider = provided.get(DistributedRuntimeProviderName) as DistributedRuntimeProvider;
+    const backend = provider.createWorkflowBackend({ prefix: "ownership-test" });
+    const destroyBackend = backend.destroy.bind(backend);
+    let backendDestroyCalls = 0;
+    backend.destroy = async () => {
+      backendDestroyCalls++;
+      await destroyBackend();
+    };
+
+    await extension.teardown!();
+    assertEquals(backendDestroyCalls, 0);
+
+    await backend.destroy();
+    assertEquals(backendDestroyCalls, 1);
+  });
+
   it("singleflights teardown and retains failed cleanup for an explicit retry", async () => {
     const extension = factory({ url: "rediss://not-contacted.example" });
     const provided = new Map<string, unknown>();

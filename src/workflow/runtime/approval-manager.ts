@@ -6,10 +6,22 @@ import type {
   WorkflowContext,
   WorkflowRun,
 } from "../types.ts";
-import { generateId, parseDuration } from "../types.ts";
-import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
+import {
+  captureApprovalApprovers,
+  generateId,
+  isCanonicalApprovalIdentity,
+  parsePositiveDurationWithLabel,
+} from "../types.ts";
+import {
+  type ApprovalDecisionTiming,
+  updateRunIfStatus,
+  type WorkflowBackend,
+} from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import { reconcileWorkflowRunControl } from "./workflow-run-control.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import { MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS } from "../limits.ts";
 import {
   INVALID_ARGUMENT,
   ORCHESTRATION_ERROR,
@@ -22,6 +34,143 @@ const logger = baseLogger.component("approval-manager");
 /** Default interval for checking expired approvals */
 const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
 const MAX_DECISION_RECONCILIATION_ATTEMPTS = 8;
+const APPROVAL_DECISION_KEYS = new Set(["approved", "approver", "comment"]);
+const SYSTEM_EXPIRATION_DECISION: ApprovalDecision = Object.freeze({
+  approved: false,
+  approver: "system",
+  comment: "Approval expired",
+});
+
+function assertAtomicApprovalResult(
+  value: unknown,
+  approvalId: string,
+): asserts value is boolean {
+  if (typeof value !== "boolean") {
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Workflow backend violated the atomic approval contract for ${approvalId}: ` +
+        "updateApproval must resolve to a boolean",
+    });
+  }
+}
+
+function captureApprovalDecision(value: unknown): ApprovalDecision {
+  if (
+    typeof value !== "object" || value === null || isProxyWithoutHooks(value) ||
+    Array.isArray(value)
+  ) {
+    throw INVALID_ARGUMENT.create({ detail: "Approval decision must be a plain data object" });
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (
+    prototype !== null &&
+    (isProxyWithoutHooks(prototype) || Object.getPrototypeOf(prototype) !== null)
+  ) {
+    throw INVALID_ARGUMENT.create({ detail: "Approval decision must be a plain data object" });
+  }
+
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length < 2 || keys.length > 3 ||
+    keys.some((key) => typeof key !== "string" || !APPROVAL_DECISION_KEYS.has(key))
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Approval decision must contain only approved, approver, and optional comment",
+    });
+  }
+
+  const approvedDescriptor = Object.getOwnPropertyDescriptor(value, "approved");
+  const approverDescriptor = Object.getOwnPropertyDescriptor(value, "approver");
+  const commentDescriptor = Object.getOwnPropertyDescriptor(value, "comment");
+  if (
+    !approvedDescriptor || !("value" in approvedDescriptor) || !approvedDescriptor.enumerable ||
+    !approverDescriptor || !("value" in approverDescriptor) || !approverDescriptor.enumerable ||
+    (commentDescriptor !== undefined &&
+      (!("value" in commentDescriptor) || !commentDescriptor.enumerable))
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Approval decision fields must be enumerable data properties",
+    });
+  }
+
+  const approved = approvedDescriptor.value;
+  const approver = approverDescriptor.value;
+  const comment = commentDescriptor?.value;
+  if (typeof approved !== "boolean") {
+    throw INVALID_ARGUMENT.create({ detail: "Approval decision approved must be a boolean" });
+  }
+  if (
+    !isCanonicalApprovalIdentity(approver) ||
+    approver.length > MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `Approval decision approver must be a canonical non-empty string of at most ${MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS} code units`,
+    });
+  }
+  if (
+    comment !== undefined &&
+    (typeof comment !== "string" || comment.length > MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS)
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `Approval decision comment must be a string of at most ${MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS} code units`,
+    });
+  }
+  return Object.freeze({
+    approved,
+    approver,
+    ...(comment === undefined ? {} : { comment }),
+  });
+}
+
+function decisionsMatch(
+  approval: PendingApproval,
+  decision: ApprovalDecision,
+): boolean {
+  return approval.status === (decision.approved ? "approved" : "rejected") &&
+    approval.decidedBy === decision.approver &&
+    approval.comment === decision.comment;
+}
+
+function requireMatchingDurableDecisionTime(
+  approval: PendingApproval,
+  decision: ApprovalDecision,
+): Date {
+  if (!decisionsMatch(approval, decision)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Approval already processed with a different decision: ${approval.id}`,
+    });
+  }
+
+  const decidedAt = approval.decidedAt;
+  const decidedAtMs = decidedAt instanceof Date ? decidedAt.getTime() : Number.NaN;
+  if (!Number.isFinite(decidedAtMs)) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Durable approval decision is missing a valid decidedAt: ${approval.id}`,
+    });
+  }
+  return new Date(decidedAtMs);
+}
+
+function deepFreezeSnapshot<T>(value: T, seen = new WeakSet<object>()): T {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+    return value;
+  }
+  const object = value as object;
+  if (seen.has(object)) return value;
+  seen.add(object);
+  for (const key of Reflect.ownKeys(object)) {
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
+    if (descriptor && "value" in descriptor) {
+      deepFreezeSnapshot(descriptor.value, seen);
+    }
+  }
+  return Object.freeze(value);
+}
+
+function captureNotifierSnapshot<T>(value: T): T {
+  return deepFreezeSnapshot(structuredClone(value));
+}
 
 export type ApprovalNotifier = (
   approval: PendingApproval,
@@ -37,6 +186,8 @@ export interface ApprovalManagerConfig {
   notifier?: ApprovalNotifier;
   /** Check expired approvals interval (ms) */
   expirationCheckInterval?: number;
+  /** Start periodic expiration checks in the constructor (default: true). */
+  autoStartExpirationChecks?: boolean;
   /** Enable debug logging */
   debug?: boolean;
 }
@@ -66,42 +217,111 @@ export interface ApprovalRequest {
 export class ApprovalManager {
   private config: ApprovalManagerConfig;
   private expirationTimer?: ReturnType<typeof setInterval>;
+  private expirationCheckPromise?: Promise<void>;
+  private inFlightOperations = new Set<Promise<unknown>>();
   private destroyed = false;
 
   constructor(config: ApprovalManagerConfig) {
+    if (!config || typeof config !== "object" || Array.isArray(config)) {
+      throw INVALID_ARGUMENT.create({
+        detail: "ApprovalManager configuration must be an object",
+      });
+    }
+    if (
+      config.expirationCheckInterval !== undefined &&
+      (!Number.isSafeInteger(config.expirationCheckInterval) ||
+        config.expirationCheckInterval < 0 ||
+        config.expirationCheckInterval > MAX_TIMER_DELAY_MS)
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `ApprovalManager expirationCheckInterval must be an integer between 0 and ${MAX_TIMER_DELAY_MS}`,
+      });
+    }
+    if (
+      config.autoStartExpirationChecks !== undefined &&
+      typeof config.autoStartExpirationChecks !== "boolean"
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: "ApprovalManager autoStartExpirationChecks must be a boolean",
+      });
+    }
+    if (typeof config.backend?.listPendingApprovals !== "function") {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Workflow backend must implement listPendingApprovals",
+      });
+    }
+    if (typeof config.backend?.getApproval !== "function") {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Workflow backend must implement getApproval",
+      });
+    }
     this.config = {
       expirationCheckInterval: DEFAULT_EXPIRATION_CHECK_INTERVAL_MS,
+      autoStartExpirationChecks: true,
       debug: false,
       ...config,
     };
 
     const interval = this.config.expirationCheckInterval ?? 0;
-    if (interval > 0) {
-      this.startExpirationChecker();
+    if (this.config.autoStartExpirationChecks && interval > 0) {
+      this.startExpirationChecks();
     }
   }
 
-  /** Create a pending approval request */
-  async createApproval(
+  /** Create a pending approval request. */
+  createApproval(
     run: WorkflowRun,
     nodeId: string,
     waitConfig: WaitNodeConfig,
     context: WorkflowContext,
   ): Promise<ApprovalRequest> {
-    const payload = typeof waitConfig.payload === "function"
-      ? await waitConfig.payload(context)
-      : waitConfig.payload;
+    try {
+      this.assertAcceptingOperations("create an approval");
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return this.trackOperation(this.performCreateApproval(run, nodeId, waitConfig, context));
+  }
 
-    const expiresAt = waitConfig.timeout
-      ? new Date(Date.now() + parseDuration(waitConfig.timeout))
+  private async performCreateApproval(
+    run: WorkflowRun,
+    nodeId: string,
+    waitConfig: WaitNodeConfig,
+    context: WorkflowContext,
+  ): Promise<ApprovalRequest> {
+    // Neither the caller nor a notifier may retain a live reference that can
+    // redirect persistence after an asynchronous boundary.
+    const canonicalRun = captureNotifierSnapshot(run);
+    if (canonicalRun.status !== "waiting") {
+      throw INVALID_ARGUMENT.create({
+        detail: `Approval can be created only while run is waiting, got: ${canonicalRun.status}`,
+      });
+    }
+    const message = waitConfig.message || "Approval required";
+    const approvers = captureApprovalApprovers(
+      waitConfig.approvers,
+      "Approval request approvers",
+    );
+    const payloadSource = waitConfig.payload;
+    const expiresAt = waitConfig.timeout !== undefined
+      ? new Date(
+        Date.now() +
+          parsePositiveDurationWithLabel(waitConfig.timeout, "Approval timeout"),
+      )
       : undefined;
+
+    const resolvedPayload = typeof payloadSource === "function"
+      ? await payloadSource(context)
+      : payloadSource;
+    const payload = structuredClone(resolvedPayload);
 
     const approval: PendingApproval = {
       id: generateId("apr"),
       nodeId,
-      message: waitConfig.message || "Approval required",
+      message,
       payload,
-      approvers: waitConfig.approvers,
+      approvers,
       requestedAt: new Date(),
       expiresAt,
       status: "pending",
@@ -109,21 +329,21 @@ export class ApprovalManager {
 
     logger.debug("Creating approval", {
       approvalId: approval.id,
-      runId: run.id,
+      runId: canonicalRun.id,
     });
 
-    // Worker-owned approvals are reserved atomically before notification. This
-    // prevents a delayed onWaiting callback from notifying or appending after a
-    // replacement worker has claimed the run.
-    const ownerBound = run.workerId !== undefined;
+    // Approvals are reserved atomically before notification. This prevents a
+    // delayed callback from notifying after the run became terminal; worker-
+    // owned approvals additionally fence the exact durable owner.
+    const ownerBound = canonicalRun.workerId !== undefined;
     if (ownerBound) {
       const saveOwned = this.config.backend.savePendingApprovalIfStatusAndWorker;
       const saved = saveOwned
         ? await saveOwned.call(
           this.config.backend,
-          run.id,
+          canonicalRun.id,
           ["waiting"],
-          run.workerId!,
+          canonicalRun.workerId!,
           approval,
         )
         : false;
@@ -132,68 +352,104 @@ export class ApprovalManager {
           detail: "Workflow execution ownership changed before approval persistence",
         });
       }
+    } else {
+      // Reserve before notification here as well. A notifier must never send a
+      // link for an approval that a concurrent terminal transition prevents us
+      // from persisting afterward.
+      await this.config.backend.savePendingApproval(canonicalRun.id, approval);
     }
 
     try {
-      await this.config.notifier?.(approval, run);
+      await this.config.notifier?.(
+        captureNotifierSnapshot(approval),
+        canonicalRun,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       approval.notificationError = message;
       logger.error(
         "Failed to notify approvers; approval created but approvers were NOT informed",
-        { approvalId: approval.id, runId: run.id, error: message },
+        { approvalId: approval.id, runId: canonicalRun.id, error: message },
       );
     }
 
-    if (ownerBound) {
-      if (approval.notificationError) {
-        await this.config.backend.updatePendingApproval?.(
-          run.id,
-          approval.id,
-          { notificationError: approval.notificationError },
-        );
-      }
-    } else {
-      // Preserve direct/ownerless behavior: resolve notification first so its
-      // delivery error is included in the initial append.
-      await this.config.backend.savePendingApproval(run.id, approval);
+    if (approval.notificationError) {
+      await this.config.backend.updatePendingApproval(
+        canonicalRun.id,
+        approval.id,
+        { notificationError: approval.notificationError },
+      );
     }
 
     return {
       approvalId: approval.id,
-      runId: run.id,
+      runId: canonicalRun.id,
       nodeId,
       message: approval.message,
-      payload: approval.payload,
-      expiresAt: approval.expiresAt,
+      payload: structuredClone(approval.payload),
+      expiresAt: approval.expiresAt ? new Date(approval.expiresAt) : undefined,
       notificationError: approval.notificationError,
     };
   }
 
-  /** Get pending approval by ID */
-  async getApproval(
+  /** Get the exact approval record by ID, including historical decision state. */
+  getApproval(
     runId: string,
     approvalId: string,
   ): Promise<PendingApproval | null> {
-    if (this.config.backend.getPendingApproval) {
-      return this.config.backend.getPendingApproval(runId, approvalId);
-    }
-
-    const all = await this.config.backend.getPendingApprovals(runId);
-    return all.find((a) => a.id === approvalId) ?? null;
+    return this.admitOperation(
+      "read an approval",
+      () => this.getApprovalRaw(runId, approvalId),
+    );
   }
 
   /** Get all pending approvals for a run */
   getPendingApprovals(runId: string): Promise<PendingApproval[]> {
+    return this.admitOperation(
+      "read pending approvals",
+      () => this.getPendingApprovalsRaw(runId),
+    );
+  }
+
+  private getApprovalRaw(
+    runId: string,
+    approvalId: string,
+  ): Promise<PendingApproval | null> {
+    return this.config.backend.getApproval(runId, approvalId);
+  }
+
+  private getPendingApprovalsRaw(runId: string): Promise<PendingApproval[]> {
     return this.config.backend.getPendingApprovals(runId);
   }
 
-  /** Process an approval decision */
-  async processDecision(
+  /**
+   * Process an approval decision. The host must derive `decision.approver`
+   * from an authenticated principal; client-supplied identity is not proof of
+   * authorization when the approval has no explicit allowlist.
+   */
+  processDecision(
     runId: string,
     approvalId: string,
     decision: ApprovalDecision,
   ): Promise<void> {
+    try {
+      this.assertAcceptingOperations("process an approval decision");
+      decision = captureApprovalDecision(decision);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return this.trackOperation(this.performDecision(runId, approvalId, decision));
+  }
+
+  private async performDecision(
+    runId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+  ): Promise<void> {
+    // This is the canonical time at which the trusted host admitted the
+    // decision. Storage latency after this point must not turn an on-time
+    // decision into an expired one (or revive a decision received too late).
+    const decisionTime = new Date();
     logger.debug("Processing decision", {
       approvalId,
       approved: decision.approved,
@@ -204,31 +460,70 @@ export class ApprovalManager {
     // only an early-out for the common already-decided case. It is NOT the
     // authoritative gate, because a concurrent decision could slip in between
     // this read and the write below.
-    const approval = await this.getApproval(runId, approvalId);
+    const approval = await this.getApprovalRaw(runId, approvalId);
     if (!approval) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
 
-    if (approval.status !== "pending") {
-      throw INVALID_ARGUMENT.create({ detail: `Approval already processed: ${approval.status}` });
-    }
-
-    if (approval.expiresAt && new Date() > approval.expiresAt) {
-      throw INVALID_ARGUMENT.create({ detail: "Approval has expired" });
-    }
-
-    const approvers = approval.approvers;
-    if (approvers?.length && !approvers.includes(decision.approver)) {
+    const approvers = captureApprovalApprovers(
+      approval.approvers,
+      "Persisted approval approvers",
+    );
+    if (approvers && !approvers.includes(decision.approver)) {
       throw PERMISSION_DENIED.create({ detail: "Not authorized to approve this request" });
     }
 
-    // Authoritative gate: the backend applies the decision only while the
-    // approval is still pending and reports whether it won the race. If another
-    // decision resolved this approval first, `applied` is false and we must not
-    // proceed to touch the run.
-    const applied = await this.config.backend.updateApproval(runId, approvalId, decision);
-    if (applied === false) {
-      throw INVALID_ARGUMENT.create({ detail: `Approval already processed: ${approvalId}` });
+    let decidedAt: Date;
+    if (approval.status === "pending") {
+      if (approval.expiresAt && decisionTime > approval.expiresAt) {
+        throw INVALID_ARGUMENT.create({ detail: "Approval has expired" });
+      }
+
+      // Authoritative gate: pending state and the persisted expiry are both
+      // compared in the backend transaction that writes the decision.
+      const timing: ApprovalDecisionTiming = {
+        decidedAt: decisionTime,
+        expiryCondition: "unexpired",
+      };
+      const applied: unknown = await this.config.backend.updateApproval(
+        runId,
+        approvalId,
+        decision,
+        timing,
+      );
+      assertAtomicApprovalResult(applied, approvalId);
+      if (applied) {
+        decidedAt = decisionTime;
+      } else {
+        const durable = await this.getApprovalRaw(runId, approvalId);
+        if (!durable) {
+          throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
+        }
+        if (durable.status === "pending") {
+          const run = await this.config.backend.getRun(runId);
+          if (!run) {
+            throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+          }
+          if (run.status !== "waiting") {
+            throw INVALID_ARGUMENT.create({
+              detail: `Approval cannot be decided while run is ${run.status}`,
+            });
+          }
+          if (durable.expiresAt && decisionTime > durable.expiresAt) {
+            throw INVALID_ARGUMENT.create({ detail: "Approval has expired" });
+          }
+          throw ORCHESTRATION_ERROR.create({
+            detail:
+              `Workflow backend rejected approval "${approvalId}" although its atomic preconditions matched`,
+          });
+        }
+        decidedAt = requireMatchingDurableDecisionTime(durable, decision);
+      }
+    } else {
+      // A previous attempt may have durably committed the exact decision and
+      // then failed while reconciling the run. Identical retries continue from
+      // that durable fact; conflicting retries remain rejected.
+      decidedAt = requireMatchingDurableDecisionTime(approval, decision);
     }
 
     // The approval decision is already durable. Reconcile it onto whichever
@@ -244,7 +539,7 @@ export class ApprovalManager {
           approvalId,
           nodeId: approval.nodeId,
           decision,
-          decidedAt: new Date(),
+          decidedAt,
           maxAttempts: MAX_DECISION_RECONCILIATION_ATTEMPTS,
           resume: this.config.executor
             ? (id, expectedWorkerId) =>
@@ -289,33 +584,52 @@ export class ApprovalManager {
     workflowId?: string;
     approver?: string;
   }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
-    const list = this.config.backend.listPendingApprovals?.bind(
-      this.config.backend,
+    return this.admitOperation(
+      "list pending approvals",
+      () =>
+        this.listPendingApprovalsRaw({
+          ...filter,
+          status: "pending",
+        }),
     );
-    if (!list) {
-      logger.warn(
-        "[ApprovalManager] listPendingApprovals not supported by backend",
-      );
-      return Promise.resolve([]);
-    }
+  }
 
-    return list({ ...filter, status: "pending" });
+  private listPendingApprovalsRaw(filter: {
+    workflowId?: string;
+    approver?: string;
+    status?: "pending" | "expired";
+  }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
+    return this.config.backend.listPendingApprovals(filter);
   }
 
   /** Check and expire stale approvals */
-  async checkExpiredApprovals(): Promise<void> {
+  checkExpiredApprovals(): Promise<void> {
     if (this.destroyed) {
-      return;
+      return Promise.resolve();
     }
 
-    const list = this.config.backend.listPendingApprovals?.bind(
-      this.config.backend,
+    if (this.expirationCheckPromise) return this.expirationCheckPromise;
+
+    const check = this.performExpirationCheck();
+    this.expirationCheckPromise = check;
+    check.then(
+      () => {
+        if (this.expirationCheckPromise === check) this.expirationCheckPromise = undefined;
+      },
+      () => {
+        if (this.expirationCheckPromise === check) this.expirationCheckPromise = undefined;
+      },
     );
-    if (!list) {
-      return;
-    }
+    return check;
+  }
 
-    const pending = await list({ status: "pending" });
+  private async performExpirationCheck(): Promise<void> {
+    const pending = await this.listPendingApprovalsRaw({
+      // This query intentionally includes already-decided records whose
+      // persisted expiry passed. A prior expiration pass may have committed
+      // the approval decision and then failed to reconcile the run.
+      status: "expired",
+    });
     const now = new Date();
 
     for (const { runId, approval } of pending) {
@@ -323,27 +637,90 @@ export class ApprovalManager {
         continue;
       }
 
+      if (approval.status !== "pending" && !decisionsMatch(approval, SYSTEM_EXPIRATION_DECISION)) {
+        continue;
+      }
+
       logger.debug("Expiring approval", {
         approvalId: approval.id,
       });
 
-      const expired = await this.config.backend.updateApproval(runId, approval.id, {
-        approved: false,
-        approver: "system",
-        comment: "Approval expired",
-      });
-      // A concurrent decision may have resolved this approval between the list
-      // read and here; if so the atomic gate skipped it, so don't fail the run.
-      if (expired === false) {
-        continue;
+      let decidedAt: Date;
+      if (approval.status === "pending") {
+        const expired: unknown = await this.config.backend.updateApproval(
+          runId,
+          approval.id,
+          SYSTEM_EXPIRATION_DECISION,
+          { decidedAt: now, expiryCondition: "expired" },
+        );
+        assertAtomicApprovalResult(expired, approval.id);
+        if (expired) {
+          decidedAt = now;
+        } else {
+          // A concurrent decision may have resolved the approval between the
+          // list read and the CAS. Only the exact system-expiry decision is a
+          // recoverable partial commit; a human decision must remain untouched.
+          const durable = await this.getApprovalRaw(runId, approval.id);
+          if (!durable || durable.status === "pending") {
+            continue;
+          }
+          if (!decisionsMatch(durable, SYSTEM_EXPIRATION_DECISION)) {
+            continue;
+          }
+          decidedAt = requireMatchingDurableDecisionTime(
+            durable,
+            SYSTEM_EXPIRATION_DECISION,
+          );
+        }
+      } else {
+        decidedAt = requireMatchingDurableDecisionTime(
+          approval,
+          SYSTEM_EXPIRATION_DECISION,
+        );
       }
 
       await updateRunIfStatus(this.config.backend, runId, ["pending", "running", "waiting"], {
         status: "failed",
         error: { message: `Approval "${approval.id}" expired` },
-        completedAt: new Date(),
+        completedAt: decidedAt,
       });
     }
+  }
+
+  private assertAcceptingOperations(operation: string): void {
+    if (this.destroyed) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Approval manager is stopped and cannot ${operation}`,
+      });
+    }
+  }
+
+  private admitOperation<T>(operation: string, callback: () => Promise<T>): Promise<T> {
+    try {
+      this.assertAcceptingOperations(operation);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
+    // Register the operation before invoking extension-owned backend code. A
+    // synchronous re-entrant stop therefore cannot omit this read from drain.
+    const deferred = Promise.withResolvers<T>();
+    const tracked = this.trackOperation(deferred.promise);
+    try {
+      deferred.resolve(callback());
+    } catch (error) {
+      deferred.reject(error);
+    }
+    return tracked;
+  }
+
+  private trackOperation<T>(operation: Promise<T>): Promise<T> {
+    this.inFlightOperations.add(operation);
+    operation.then(
+      () => this.inFlightOperations.delete(operation),
+      () => this.inFlightOperations.delete(operation),
+    );
+    return operation;
   }
 
   private startExpirationChecker(): void {
@@ -352,6 +729,13 @@ export class ApprovalManager {
         logger.error("Expiration check failed", error);
       });
     }, this.config.expirationCheckInterval);
+  }
+
+  /** Start periodic expiration checks. Safe to call repeatedly. */
+  startExpirationChecks(): void {
+    this.assertAcceptingOperations("start expiration checks");
+    if (this.expirationTimer || (this.config.expirationCheckInterval ?? 0) === 0) return;
+    this.startExpirationChecker();
   }
 
   /** Stop the approval manager */
@@ -364,5 +748,16 @@ export class ApprovalManager {
 
     clearInterval(this.expirationTimer);
     this.expirationTimer = undefined;
+  }
+
+  /** Stop scheduled checks and wait for an in-flight expiration pass. */
+  async destroy(): Promise<void> {
+    this.stop();
+    const expirationCheck = this.expirationCheckPromise;
+    const operations = [...this.inFlightOperations];
+    await Promise.allSettled([
+      ...(expirationCheck ? [expirationCheck] : []),
+      ...operations,
+    ]);
   }
 }

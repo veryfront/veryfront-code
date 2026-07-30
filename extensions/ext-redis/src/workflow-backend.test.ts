@@ -13,11 +13,14 @@ import {
   assertEquals,
   assertExists,
   assertRejects,
+  assertStrictEquals,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { RedisBackend } from "./workflow-backend.ts";
 import type { RedisAdapter } from "./redis-adapter.ts";
+import type { NodeRedisClient, NodeRedisClientOptions } from "./node-redis-types.ts";
+import type { RedisBackendConfig } from "./workflow-backend-types.ts";
 import type {
   PendingApproval,
   WorkflowRun,
@@ -29,10 +32,135 @@ import type {
   RunExecutionInfo,
   RunExecutor,
 } from "../../../src/workflow/worker/executors/types.ts";
-import { registerWorkflowBackendSnapshotContract } from "../../../src/workflow/backends/conformance.test-utils.ts";
+import { registerWorkflowBackendPersistenceContract } from "../../../src/workflow/backends/conformance.test-utils.ts";
 import { compareRunIdsDescending } from "../../../src/workflow/backends/run-filter.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
+const UNEXPIRED_DECISION_TIMING = {
+  decidedAt: new Date("2026-01-01T00:00:00.000Z"),
+  expiryCondition: "unexpired",
+} as const;
+
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T | PromiseLike<T>) => void;
+  readonly reject: (reason?: unknown) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitFor(predicate: () => boolean, detail: string): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if (predicate()) return;
+    await Promise.resolve();
+  }
+  throw new Error(`Timed out waiting for ${detail}`);
+}
+
+interface ControlledNodeRedisClient {
+  readonly client: NodeRedisClient;
+  readonly connection: Deferred<void>;
+  readonly group: Deferred<string>;
+  readonly listeners: Set<(error: unknown) => void>;
+  readonly staleListeners: Array<(error: unknown) => void>;
+  connectCalls: number;
+  closeCalls: number;
+  destroyCalls: number;
+  groupCalls: number;
+  opened: boolean;
+  emitError(error: unknown): void;
+  emitStaleError(error: unknown): void;
+}
+
+function createControlledNodeRedisClient(): ControlledNodeRedisClient {
+  const connection = deferred<void>();
+  const group = deferred<string>();
+  const listeners = new Set<(error: unknown) => void>();
+  const staleListeners: Array<(error: unknown) => void> = [];
+  const control = {
+    connection,
+    group,
+    listeners,
+    staleListeners,
+    connectCalls: 0,
+    closeCalls: 0,
+    destroyCalls: 0,
+    groupCalls: 0,
+    opened: false,
+    emitError(error: unknown) {
+      for (const listener of [...listeners]) listener(error);
+    },
+    emitStaleError(error: unknown) {
+      for (const listener of staleListeners) listener(error);
+    },
+  } as ControlledNodeRedisClient;
+  const client = {
+    connect() {
+      control.connectCalls++;
+      return connection.promise.then(() => {
+        control.opened = true;
+      });
+    },
+    on(_event: "error", listener: (error: unknown) => void) {
+      listeners.add(listener);
+      staleListeners.push(listener);
+      return client;
+    },
+    off(_event: "error", listener: (error: unknown) => void) {
+      listeners.delete(listener);
+      return client;
+    },
+    xGroupCreate() {
+      control.groupCalls++;
+      return group.promise;
+    },
+    xReadGroup() {
+      return Promise.resolve(null);
+    },
+    set() {
+      return Promise.resolve("OK");
+    },
+    close() {
+      control.closeCalls++;
+      control.opened = false;
+      return Promise.resolve();
+    },
+    destroy() {
+      control.destroyCalls++;
+      control.opened = false;
+      return Promise.resolve();
+    },
+  } as unknown as NodeRedisClient;
+  Object.defineProperty(control, "client", { value: client, enumerable: true });
+  return control;
+}
+
+class ControlledConnectionRedisBackend extends RedisBackend {
+  readonly factoryOptions: NodeRedisClientOptions[] = [];
+  private nextClient = 0;
+
+  constructor(
+    private readonly controlledClients: ControlledNodeRedisClient[],
+    config: RedisBackendConfig = {},
+  ) {
+    super(config);
+  }
+
+  protected override createNodeRedisClient(options: NodeRedisClientOptions): NodeRedisClient {
+    this.factoryOptions.push(options);
+    const control = this.controlledClients[this.nextClient++];
+    if (!control) throw new Error("Unexpected Redis workflow client creation");
+    return control.client;
+  }
+}
 
 class MockRedisAdapter implements RedisAdapter {
   store = new Map<string, string>();
@@ -469,6 +597,20 @@ class MockRedisAdapter implements RedisAdapter {
       return 1;
     }
 
+    if (script.includes("append-unique-retained-workflow-approval")) {
+      if (!this.hashes.has(key)) return 0;
+      if (this.hashes.get(key)?.get("status") !== "waiting") return 3;
+      const storageKey = keys[1]!;
+      const incoming = JSON.parse(args[0]!);
+      const list = this.lists.get(storageKey) ?? [];
+      if (list.some((raw) => JSON.parse(raw).id === incoming.id)) return 2;
+      list.push(args[0]!);
+      this.lists.set(storageKey, list);
+      const remaining = this.expiries.get(key);
+      if (remaining !== undefined) this.expiries.set(storageKey, remaining);
+      return 1;
+    }
+
     if (script.includes("conditional-stalled-run-claim")) {
       const claimKey = keys[1]!;
       const observedActivity = args[0]!;
@@ -513,18 +655,48 @@ class MockRedisAdapter implements RedisAdapter {
       return Promise.resolve(1);
     }
 
+    if (script.includes("conditional-owned-unique-approval-append")) {
+      const expectedCount = Number(args[0]);
+      const expectedStatuses = args.slice(1, expectedCount + 1);
+      const expectedWorkerId = args[expectedCount + 1]!;
+      const storageKey = keys[1]!;
+      const value = args[expectedCount + 2]!;
+      const hash = this.hashes.get(key);
+      if (
+        !hash || hash.get("status") !== "waiting" ||
+        !expectedStatuses.includes(hash.get("status") ?? "") ||
+        hash.get("workerId") !== expectedWorkerId
+      ) {
+        return Promise.resolve(0);
+      }
+
+      const incoming = JSON.parse(value);
+      const list = this.lists.get(storageKey) ?? [];
+      if (list.some((raw) => JSON.parse(raw).id === incoming.id)) {
+        return Promise.resolve(2);
+      }
+      list.push(value);
+      this.lists.set(storageKey, list);
+      const remaining = this.expiries.get(key);
+      if (remaining !== undefined) this.expiries.set(storageKey, remaining);
+      return Promise.resolve(1);
+    }
+
     if (script.includes("conditional-approval-patch")) {
       const approvalId = args[0]!;
-      const patch = JSON.parse(args[1]!);
+      const notificationError = args[1]!;
       const list = this.lists.get(key);
       if (list) {
-        for (let i = 0; i < list.length; i++) {
-          const approval = JSON.parse(list[i]!);
-          if (approval.id === approvalId) {
-            list[i] = JSON.stringify({ ...approval, ...patch, id: approvalId });
-            return Promise.resolve(1);
-          }
-        }
+        const matches = list.flatMap((raw, index) =>
+          JSON.parse(raw).id === approvalId ? [index] : []
+        );
+        if (matches.length > 1) return Promise.resolve(2);
+        const index = matches[0];
+        if (index === undefined) return Promise.resolve(0);
+        const approval = JSON.parse(list[index]!);
+        approval.notificationError = notificationError;
+        list[index] = JSON.stringify(approval);
+        return Promise.resolve(1);
       }
       return Promise.resolve(0);
     }
@@ -534,23 +706,43 @@ class MockRedisAdapter implements RedisAdapter {
       const newStatus = args[1]!;
       const decidedBy = args[2]!;
       const decidedAt = args[3]!;
-      const hasComment = args[4] === "1";
-      const comment = args[5];
+      const expiryCondition = args[4]!;
+      const hasComment = args[5] === "1";
+      const comment = args[6];
+      if (this.hashes.get(keys[1]!)?.get("status") !== "waiting") {
+        return Promise.resolve(2);
+      }
       const list = this.lists.get(key);
       if (list) {
-        for (let i = 0; i < list.length; i++) {
-          const approval = JSON.parse(list[i]!);
-          if (approval.id === approvalId) {
-            if (approval.status !== "pending") return Promise.resolve(2);
-            approval.status = newStatus;
-            approval.decidedBy = decidedBy;
-            approval.decidedAt = decidedAt;
-            if (hasComment) approval.comment = comment;
-            else delete approval.comment;
-            list[i] = JSON.stringify(approval);
-            return Promise.resolve(1);
-          }
+        const matches = list.flatMap((raw, index) =>
+          JSON.parse(raw).id === approvalId ? [index] : []
+        );
+        if (matches.length > 1) return Promise.resolve(3);
+        const index = matches[0];
+        if (index === undefined) return Promise.resolve(0);
+        const approval = JSON.parse(list[index]!);
+        if (approval.status !== "pending") return Promise.resolve(2);
+        if (approval.expiresAt !== undefined && typeof approval.expiresAt !== "string") {
+          return Promise.resolve(4);
         }
+        const hasExpiry = typeof approval.expiresAt === "string";
+        const isExpired = hasExpiry && decidedAt > approval.expiresAt;
+        if (
+          (expiryCondition === "unexpired" && isExpired) ||
+          (expiryCondition === "expired" && (!hasExpiry || !isExpired))
+        ) {
+          return Promise.resolve(2);
+        }
+        if (expiryCondition !== "unexpired" && expiryCondition !== "expired") {
+          return Promise.resolve(5);
+        }
+        approval.status = newStatus;
+        approval.decidedBy = decidedBy;
+        approval.decidedAt = decidedAt;
+        if (hasComment) approval.comment = comment;
+        else delete approval.comment;
+        list[index] = JSON.stringify(approval);
+        return Promise.resolve(1);
       }
       return Promise.resolve(0);
     }
@@ -563,12 +755,16 @@ class MockRedisAdapter implements RedisAdapter {
       const workflowStatusPrefix = args[expectedCount + 3]!;
       const runId = args[expectedCount + 4]!;
       const expectedWorkerId = args[expectedCount + 5]!;
+      const expectedLockId = args[expectedCount + 6]!;
       const hash = this.hashes.get(key);
       const oldStatus = hash?.get("status");
       if (!hash || !oldStatus || !expectedStatuses.includes(oldStatus)) {
         return Promise.resolve(0);
       }
       if (expectedWorkerId && hash.get("workerId") !== expectedWorkerId) {
+        return Promise.resolve(0);
+      }
+      if (expectedLockId && this.store.get(keys[3]!) !== expectedLockId) {
         return Promise.resolve(0);
       }
 
@@ -592,12 +788,16 @@ class MockRedisAdapter implements RedisAdapter {
         statusMetadata.set(runId, nextStatus);
       }
 
-      for (let i = expectedCount + 6; i < args.length; i += 2) {
+      for (let i = expectedCount + 7; i < args.length; i += 2) {
         hash.set(args[i]!, args[i + 1]!);
       }
       if (nextStatus && nextStatus !== "running") {
         this.store.delete(keys[1]!);
         this.expiries.delete(keys[1]!);
+        if (expectedLockId) {
+          this.store.delete(keys[3]!);
+          this.expiries.delete(keys[3]!);
+        }
       }
       const hook = this.afterConditionalRunUpdate;
       this.afterConditionalRunUpdate = undefined;
@@ -796,12 +996,43 @@ describe("RedisBackend", () => {
     });
   });
 
-  registerWorkflowBackendSnapshotContract("Redis", () => backend);
+  registerWorkflowBackendPersistenceContract("Redis", () => backend, {
+    seedDuplicateApproval(runId, approval) {
+      const key = `test:schema-v2:approvals:${runId}`;
+      mockRedis.lists.get(key)?.push(JSON.stringify({
+        ...approval,
+        requestedAt: approval.requestedAt.toISOString(),
+        expiresAt: approval.expiresAt?.toISOString(),
+        decidedAt: approval.decidedAt?.toISOString(),
+      }));
+    },
+  });
 
   describe("constructor defaults", () => {
     it("should set default config values", () => {
       const b = new RedisBackend({ client: mockRedis as unknown as RedisAdapter });
       assertExists(b);
+    });
+
+    it("does not let explicit undefined option fields erase defaults", async () => {
+      const b = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: undefined,
+        streamKey: undefined,
+        groupName: undefined,
+        consumerName: undefined,
+        debug: undefined,
+      });
+
+      await b.enqueue({
+        runId: "defaulted-options-run",
+        workflowId: "defaulted-options-workflow",
+        input: {},
+        createdAt: new Date(),
+      });
+
+      assertEquals(mockRedis.streams.has("vf:workflow:stream:schema-v2"), true);
+      await b.destroy();
     });
 
     it("rejects run TTL values that Redis cannot publish atomically", () => {
@@ -842,6 +1073,175 @@ describe("RedisBackend", () => {
     });
   });
 
+  describe("connection lifecycle", () => {
+    it("validates and passes a bounded non-reconnecting native connection policy", async () => {
+      for (const connectTimeoutMs of [0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER]) {
+        assertThrows(
+          () => new RedisBackend({ connectTimeoutMs }),
+          RangeError,
+          "connectTimeoutMs",
+        );
+      }
+
+      const control = createControlledNodeRedisClient();
+      control.connection.resolve(undefined);
+      control.group.resolve("OK");
+      const boundedBackend = new ControlledConnectionRedisBackend([control], {
+        connectTimeoutMs: 1_250,
+      });
+
+      await boundedBackend.initialize();
+
+      assertEquals(boundedBackend.factoryOptions[0]?.socket?.connectTimeout, 1_250);
+      assertEquals(boundedBackend.factoryOptions[0]?.socket?.reconnectStrategy, false);
+      await boundedBackend.destroy();
+      assertEquals(control.closeCalls, 1);
+      assertEquals(control.listeners.size, 0);
+    });
+
+    it("singleflights initialization and joins an issued group command during destroy", async () => {
+      const control = createControlledNodeRedisClient();
+      control.connection.resolve(undefined);
+      const lifecycleBackend = new ControlledConnectionRedisBackend([control]);
+
+      const initialization = lifecycleBackend.initialize();
+      assertStrictEquals(lifecycleBackend.initialize(), initialization);
+      await waitFor(() => control.groupCalls === 1, "consumer-group initialization");
+
+      const destruction = lifecycleBackend.destroy();
+      assertStrictEquals(lifecycleBackend.destroy(), destruction);
+      let destroySettled = false;
+      void destruction.then(() => {
+        destroySettled = true;
+      });
+      await waitFor(() => control.closeCalls === 1, "established-client close");
+      assertEquals(destroySettled, false);
+
+      control.group.resolve("OK");
+      await assertRejects(() => initialization, Error, "superseded");
+      await destruction;
+      assertEquals(destroySettled, true);
+    });
+
+    it("force-closes a connection that reopens after provisional cancellation", async () => {
+      const control = createControlledNodeRedisClient();
+      const lifecycleBackend = new ControlledConnectionRedisBackend([control]);
+      const initialization = lifecycleBackend.initialize();
+      await waitFor(() => control.connectCalls === 1, "provisional connection");
+
+      const destruction = lifecycleBackend.destroy();
+      let destroySettled = false;
+      void destruction.then(() => {
+        destroySettled = true;
+      });
+      await waitFor(() => control.destroyCalls === 1, "first provisional disconnect");
+      assertEquals(destroySettled, false);
+      assertEquals(control.opened, false);
+
+      // This mock deliberately ignores the first disconnect and opens later.
+      // Teardown must join that connect and issue a second forced close.
+      control.connection.resolve(undefined);
+      await assertRejects(() => initialization, Error, "superseded");
+      await destruction;
+      assertEquals(control.destroyCalls, 2);
+      assertEquals(control.opened, false);
+      assertEquals(control.listeners.size, 0);
+      await assertRejects(() => lifecycleBackend.getRun("closed"), Error, "closed");
+      await assertRejects(() => lifecycleBackend.initialize(), Error, "closed");
+      assertStrictEquals(lifecycleBackend.destroy(), destruction);
+    });
+
+    it("retains initialization failures until an explicit retry and matches BUSYGROUP by prefix", async () => {
+      const strictRedis = new MockRedisAdapter();
+      const failure = new Error("ERR command failed after mentioning BUSYGROUP internally");
+      let groupCalls = 0;
+      strictRedis.xgroupCreate = () => {
+        groupCalls++;
+        if (groupCalls === 1) return Promise.reject(failure);
+        return Promise.reject(new Error("BUSYGROUP Consumer Group name already exists"));
+      };
+      const strictBackend = new RedisBackend({ client: strictRedis });
+
+      await assertRejects(() => strictBackend.initialize(), Error, failure.message);
+      const replayed = await strictBackend.createRun(createTestRun("blocked-readiness")).catch(
+        (error) => error,
+      );
+      assertStrictEquals(replayed, failure);
+      assertEquals(groupCalls, 1);
+
+      await strictBackend.initialize();
+      assertEquals(groupCalls, 2);
+      await strictBackend.createRun(createTestRun("after-explicit-retry"));
+      await strictBackend.destroy();
+    });
+
+    it("makes synchronous close failures observable and retries teardown without reopening", async () => {
+      const ownedClient = new MockRedisAdapter();
+      let quitCalls = 0;
+      ownedClient.quit = () => {
+        quitCalls++;
+        if (quitCalls === 1) throw new Error("synchronous close failure");
+        return Promise.resolve();
+      };
+      const lifecycleBackend = new RedisBackend({ client: ownedClient });
+
+      const firstDestroy = lifecycleBackend.destroy();
+      assertStrictEquals(lifecycleBackend.destroy(), firstDestroy);
+      await assertRejects(() => firstDestroy, AggregateError, "may be retried");
+      await assertRejects(
+        () => lifecycleBackend.getRun("closing"),
+        Error,
+        "closing",
+      );
+
+      const retryDestroy = lifecycleBackend.destroy();
+      assertStrictEquals(lifecycleBackend.destroy(), retryDestroy);
+      await retryDestroy;
+      assertEquals(quitCalls, 2);
+      await assertRejects(() => lifecycleBackend.getRun("closed"), Error, "closed");
+    });
+
+    it("invalidates a failed published client and ignores its stale listener after retry", async () => {
+      const first = createControlledNodeRedisClient();
+      const second = createControlledNodeRedisClient();
+      first.connection.resolve(undefined);
+      first.group.resolve("OK");
+      second.connection.resolve(undefined);
+      second.group.resolve("OK");
+      const lifecycleBackend = new ControlledConnectionRedisBackend([first, second]);
+      await lifecycleBackend.initialize();
+
+      first.emitError(new Error("credential-bearing raw detail must not escape"));
+      await waitFor(() => first.destroyCalls === 1, "failed-client invalidation");
+      assertEquals(first.listeners.size, 0);
+      assertEquals(await lifecycleBackend.healthCheck(), false);
+
+      await lifecycleBackend.initialize();
+      assertEquals(lifecycleBackend.factoryOptions.length, 2);
+      assertEquals(await lifecycleBackend.healthCheck(), true);
+
+      first.emitStaleError(new Error("stale old-client event"));
+      await Promise.resolve();
+      assertEquals(await lifecycleBackend.healthCheck(), true);
+      assertEquals(lifecycleBackend.factoryOptions.length, 2);
+
+      await lifecycleBackend.destroy();
+      assertEquals(second.closeCalls, 1);
+      assertEquals(second.listeners.size, 0);
+    });
+
+    it("initializes readiness before dequeue on a freshly constructed backend", async () => {
+      const control = createControlledNodeRedisClient();
+      control.connection.resolve(undefined);
+      control.group.resolve("OK");
+      const lifecycleBackend = new ControlledConnectionRedisBackend([control]);
+
+      assertEquals(await lifecycleBackend.dequeue(), null);
+      assertEquals(control.groupCalls, 1);
+      await lifecycleBackend.destroy();
+    });
+  });
+
   describe("createRun / getRun", () => {
     it("stores new runs in a schema-versioned custom-prefix namespace", async () => {
       await backend.createRun(createTestRun("run-versioned-namespace"));
@@ -865,7 +1265,10 @@ describe("RedisBackend", () => {
 
     it("never combines a deleted run incarnation with recreated approvals", async () => {
       const runId = "run-incarnation-snapshot";
-      await backend.createRun(createTestRun(runId, { workflowId: "old-workflow" }));
+      await backend.createRun(createTestRun(runId, {
+        workflowId: "old-workflow",
+        status: "waiting",
+      }));
       await backend.savePendingApproval(runId, {
         id: "old-approval",
         nodeId: "wait",
@@ -877,7 +1280,10 @@ describe("RedisBackend", () => {
 
       mockRedis.beforeRunSnapshotRead = async () => {
         await backend.deleteRun(runId);
-        await backend.createRun(createTestRun(runId, { workflowId: "new-workflow" }));
+        await backend.createRun(createTestRun(runId, {
+          workflowId: "new-workflow",
+          status: "waiting",
+        }));
         await backend.savePendingApproval(runId, {
           id: "new-approval",
           nodeId: "wait",
@@ -1421,6 +1827,35 @@ describe("RedisBackend", () => {
       );
     });
 
+    it("rejects invalid conditional run update script results", async () => {
+      const invalidResultAdapter = new Proxy(mockRedis, {
+        get(target, property, receiver) {
+          if (property === "eval") {
+            return (script: string, keys: string[], args: string[]) =>
+              script.includes("conditional-run-update")
+                ? Promise.resolve(null)
+                : target.eval(script, keys, args);
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as RedisAdapter;
+      const strictBackend = new RedisBackend({
+        prefix: "strict-run-update-result:",
+        client: invalidResultAdapter,
+      });
+      const runId = "run-invalid-conditional-result";
+      await strictBackend.createRun(createTestRun(runId));
+
+      await assertRejects(
+        () => strictBackend.updateRunIfStatus(runId, ["pending"], { status: "running" }),
+        Error,
+        "Invalid Redis conditional run update response",
+      );
+      assertEquals((await strictBackend.getRun(runId))?.status, "pending");
+      await strictBackend.destroy();
+    });
+
     it("should list all checkpoints", async () => {
       await backend.createRun(createTestRun("run-cp2"));
       await backend.saveCheckpoint("run-cp2", {
@@ -1492,7 +1927,7 @@ describe("RedisBackend", () => {
     }
 
     it("should save and retrieve pending approvals", async () => {
-      await backend.createRun(createTestRun("run-ap"));
+      await backend.createRun(createTestRun("run-ap", { status: "waiting" }));
       await backend.savePendingApproval("run-ap", makeApproval("ap-1"));
 
       const pending = await backend.getPendingApprovals("run-ap");
@@ -1502,17 +1937,17 @@ describe("RedisBackend", () => {
     });
 
     it("should get a specific pending approval", async () => {
-      await backend.createRun(createTestRun("run-ap2"));
+      await backend.createRun(createTestRun("run-ap2", { status: "waiting" }));
       await backend.savePendingApproval("run-ap2", makeApproval("ap-2"));
 
-      const found = await backend.getPendingApproval("run-ap2", "ap-2");
+      const found = await backend.getApproval("run-ap2", "ap-2");
       assertExists(found);
       assertEquals(found.id, "ap-2");
     });
 
     it("should return null for non-existent approval", async () => {
       await backend.createRun(createTestRun("run-ap3"));
-      assertEquals(await backend.getPendingApproval("run-ap3", "nope"), null);
+      assertEquals(await backend.getApproval("run-ap3", "nope"), null);
     });
 
     it("rejects approvals for a missing run", async () => {
@@ -1552,36 +1987,42 @@ describe("RedisBackend", () => {
         notificationError: "delivery failed",
       });
       assertEquals(
-        (await backend.getPendingApproval("run-ap-owned", approval.id))?.notificationError,
+        (await backend.getApproval("run-ap-owned", approval.id))?.notificationError,
         "delivery failed",
       );
     });
 
     it("should update approval decision", async () => {
-      await backend.createRun(createTestRun("run-ap4"));
+      await backend.createRun(createTestRun("run-ap4", { status: "waiting" }));
       await backend.savePendingApproval("run-ap4", makeApproval("ap-4"));
 
       await backend.updateApproval("run-ap4", "ap-4", {
         approved: true,
         approver: "admin",
         comment: "OK",
-      });
+      }, UNEXPIRED_DECISION_TIMING);
 
       const pending = await backend.getPendingApprovals("run-ap4");
       assertEquals(pending.length, 0);
     });
 
     it("should throw when updating non-existent approval", async () => {
-      await backend.createRun(createTestRun("run-ap5"));
+      await backend.createRun(createTestRun("run-ap5", { status: "waiting" }));
       await assertRejects(
-        () => backend.updateApproval("run-ap5", "no-such", { approved: false, approver: "admin" }),
+        () =>
+          backend.updateApproval(
+            "run-ap5",
+            "no-such",
+            { approved: false, approver: "admin" },
+            UNEXPIRED_DECISION_TIMING,
+          ),
         Error,
         "Approval not found",
       );
     });
 
     it("updateApproval returns true and records the decision when the approval is pending", async () => {
-      await backend.createRun(createTestRun("run-ap-true"));
+      await backend.createRun(createTestRun("run-ap-true", { status: "waiting" }));
       await backend.savePendingApproval("run-ap-true", makeApproval("ap-true"));
 
       // Applied path: the pending precondition holds, so the decision lands.
@@ -1590,7 +2031,7 @@ describe("RedisBackend", () => {
           approved: true,
           approver: "admin",
           comment: "looks good",
-        }),
+        }, UNEXPIRED_DECISION_TIMING),
         true,
       );
 
@@ -1603,7 +2044,7 @@ describe("RedisBackend", () => {
     });
 
     it("updateApproval returns false (no-op) once the approval is already decided", async () => {
-      await backend.createRun(createTestRun("run-ap-decided"));
+      await backend.createRun(createTestRun("run-ap-decided", { status: "waiting" }));
       await backend.savePendingApproval("run-ap-decided", makeApproval("ap-decided"));
 
       // First decision wins the race and applies.
@@ -1611,7 +2052,7 @@ describe("RedisBackend", () => {
         await backend.updateApproval("run-ap-decided", "ap-decided", {
           approved: true,
           approver: "first",
-        }),
+        }, UNEXPIRED_DECISION_TIMING),
         true,
       );
 
@@ -1622,7 +2063,7 @@ describe("RedisBackend", () => {
         await backend.updateApproval("run-ap-decided", "ap-decided", {
           approved: false,
           approver: "second",
-        }),
+        }, UNEXPIRED_DECISION_TIMING),
         false,
       );
 
@@ -1631,6 +2072,82 @@ describe("RedisBackend", () => {
       );
       assertEquals(stored.status, "approved");
       assertEquals(stored.decidedBy, "first");
+    });
+
+    it("fails closed when legacy storage contains duplicate approval ids", async () => {
+      const runId = "run-ap-duplicate-state";
+      const approval = makeApproval("ap-duplicate-state");
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+      const approvalsKey = `test:schema-v2:approvals:${runId}`;
+      mockRedis.lists.set(approvalsKey, [
+        JSON.stringify(approval),
+        JSON.stringify(approval),
+      ]);
+
+      await assertRejects(
+        () =>
+          backend.updateApproval(runId, approval.id, {
+            approved: true,
+            approver: "reviewer",
+          }, UNEXPIRED_DECISION_TIMING),
+        Error,
+        "Duplicate approval id stored",
+      );
+      await assertRejects(
+        () =>
+          backend.updatePendingApproval(runId, approval.id, {
+            notificationError: "delivery failed",
+          }),
+        Error,
+        "Duplicate approval id stored",
+      );
+      assertEquals(
+        mockRedis.lists.get(approvalsKey)?.map((raw) => JSON.parse(raw).status),
+        ["pending", "pending"],
+      );
+    });
+
+    it("rejects invalid approval script result codes", async () => {
+      const invalidResultAdapter = new Proxy(mockRedis, {
+        get(target, property, receiver) {
+          if (property === "eval") {
+            return (script: string, keys: string[], args: string[]) =>
+              script.includes("conditional-approval-")
+                ? Promise.resolve(99)
+                : target.eval(script, keys, args);
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as RedisAdapter;
+      const strictBackend = new RedisBackend({
+        prefix: "strict-approval-result:",
+        client: invalidResultAdapter,
+      });
+      const runId = "run-invalid-approval-result";
+      const approval = makeApproval("invalid-approval-result");
+      await strictBackend.createRun(createTestRun(runId, { status: "waiting" }));
+      await strictBackend.savePendingApproval(runId, approval);
+
+      await assertRejects(
+        () =>
+          strictBackend.updateApproval(runId, approval.id, {
+            approved: true,
+            approver: "reviewer",
+          }, UNEXPIRED_DECISION_TIMING),
+        Error,
+        "Invalid Redis approval decision response code",
+      );
+      await assertRejects(
+        () =>
+          strictBackend.updatePendingApproval(runId, approval.id, {
+            notificationError: "delivery failed",
+          }),
+        Error,
+        "Invalid Redis approval metadata update response code",
+      );
+      assertEquals((await strictBackend.getApproval(runId, approval.id))?.status, "pending");
+      await strictBackend.destroy();
     });
   });
 
@@ -1672,30 +2189,35 @@ describe("RedisBackend", () => {
 
   describe("locking", () => {
     it("should acquire and release a lock", async () => {
-      assertExists(await backend.acquireLock("run-lock", 5000));
+      const token = await backend.acquireLock("run-lock", 5000);
+      assertExists(token);
       assertEquals(await backend.isLocked("run-lock"), true);
 
-      await backend.releaseLock("run-lock");
+      assertEquals(await backend.releaseLock("run-lock", token), true);
       assertEquals(await backend.isLocked("run-lock"), false);
     });
 
     it("should fail to acquire lock when already held", async () => {
-      assertExists(await backend.acquireLock("run-lock2", 5000));
+      const token = await backend.acquireLock("run-lock2", 5000);
+      assertExists(token);
       assertEquals(await backend.acquireLock("run-lock2", 5000), null);
+      assertEquals(await backend.releaseLock("run-lock2", token), true);
     });
 
     it("should extend an existing lock", async () => {
-      await backend.acquireLock("run-lock3", 5000);
-      assertEquals(await backend.extendLock("run-lock3", 10000), true);
+      const token = await backend.acquireLock("run-lock3", 5000);
+      assertExists(token);
+      assertEquals(await backend.extendLock("run-lock3", 10000, token), true);
     });
 
     it("should fail to extend non-existent lock", async () => {
-      assertEquals(await backend.extendLock("no-such-lock", 10000), false);
+      assertEquals(await backend.extendLock("no-such-lock", 10000, "missing-token"), false);
     });
 
     it("releaseLock should not delete a lock owned by another worker", async () => {
       // Worker A acquires the lock.
-      assertExists(await backend.acquireLock("run-own", 5000));
+      const originalToken = await backend.acquireLock("run-own", 5000);
+      assertExists(originalToken);
       const lockKey = "test:schema-v2:lock:run-own";
 
       // Simulate lock expiry + worker B acquiring it: overwrite the stored
@@ -1703,7 +2225,7 @@ describe("RedisBackend", () => {
       mockRedis.store.set(lockKey, "worker-B-token");
 
       // Worker A tries to release -- it must NOT delete worker B's lock.
-      await backend.releaseLock("run-own");
+      assertEquals(await backend.releaseLock("run-own", originalToken), false);
 
       assertEquals(mockRedis.store.get(lockKey), "worker-B-token");
     });
@@ -1719,24 +2241,25 @@ describe("RedisBackend", () => {
       assertExists(currentToken);
 
       assertEquals(await backend.extendLock("run-reacquired", 5000, staleToken), false);
-      await backend.releaseLock("run-reacquired", staleToken);
+      assertEquals(await backend.releaseLock("run-reacquired", staleToken), false);
       assertEquals(mockRedis.store.get(lockKey), currentToken);
 
       assertEquals(await backend.extendLock("run-reacquired", 5000, currentToken), true);
-      await backend.releaseLock("run-reacquired", currentToken);
+      assertEquals(await backend.releaseLock("run-reacquired", currentToken), true);
       assertEquals(mockRedis.store.get(lockKey), undefined);
     });
 
     it("extendLock should not extend a lock owned by another worker", async () => {
       // Worker A acquires the lock.
-      assertExists(await backend.acquireLock("run-own2", 5000));
+      const originalToken = await backend.acquireLock("run-own2", 5000);
+      assertExists(originalToken);
       const lockKey = "test:schema-v2:lock:run-own2";
 
       // Simulate worker B taking over the lock.
       mockRedis.store.set(lockKey, "worker-B-token");
 
       // Worker A tries to extend -- it must NOT succeed.
-      assertEquals(await backend.extendLock("run-own2", 10000), false);
+      assertEquals(await backend.extendLock("run-own2", 10000, originalToken), false);
     });
 
     it("releaseLock runs an atomic compare-and-delete script (no GET+DEL race)", async () => {
@@ -1761,8 +2284,9 @@ describe("RedisBackend", () => {
         return realDel(...keys);
       };
 
-      assertExists(await backend.acquireLock("run-atomic", 5000));
-      await backend.releaseLock("run-atomic");
+      const token = await backend.acquireLock("run-atomic", 5000);
+      assertExists(token);
+      assertEquals(await backend.releaseLock("run-atomic", token), true);
 
       // One atomic eval, and no separate get/del round-trips for the release.
       assertEquals(evalCalls.length, 1);
@@ -1770,6 +2294,41 @@ describe("RedisBackend", () => {
       assertEquals(getCalls, 0);
       assertEquals(delCalls, 0);
       assertEquals(await backend.isLocked("run-atomic"), false);
+    });
+
+    it("rejects invalid lock script results instead of guessing ownership", async () => {
+      const invalidResultAdapter = new Proxy(mockRedis, {
+        get(target, property, receiver) {
+          if (property === "eval") {
+            return (script: string, keys: string[], args: string[]) => {
+              if (script.includes("pexpire")) return Promise.resolve(2);
+              if (script.includes("del")) return Promise.resolve(null);
+              return target.eval(script, keys, args);
+            };
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as RedisAdapter;
+      const strictBackend = new RedisBackend({
+        prefix: "strict-lock-result:",
+        client: invalidResultAdapter,
+      });
+      const token = await strictBackend.acquireLock("invalid-lock-result", 5_000);
+      assertExists(token);
+
+      await assertRejects(
+        () => strictBackend.extendLock("invalid-lock-result", 5_000, token),
+        Error,
+        "Invalid Redis lock renewal response code",
+      );
+      await assertRejects(
+        () => strictBackend.releaseLock("invalid-lock-result", token),
+        Error,
+        "Invalid Redis lock release response",
+      );
+      assertEquals(await strictBackend.isLocked("invalid-lock-result"), true);
+      await strictBackend.destroy();
     });
 
     it("compare-and-delete deletes only on a matching token", async () => {
@@ -2077,7 +2636,10 @@ describe("RedisBackend", () => {
         prefix: "ttl:",
         runTtl: 3600,
       });
-      const run = createTestRun("run-retained", { workflowId: "workflow-retained" });
+      const run = createTestRun("run-retained", {
+        workflowId: "workflow-retained",
+        status: "waiting",
+      });
 
       await ttlBackend.createRun(run);
       await ttlBackend.saveCheckpoint(run.id, {
@@ -2155,7 +2717,10 @@ describe("RedisBackend", () => {
         prefix: "ttl:",
         runTtl: 3600,
       });
-      const run = createTestRun("run-expired-owned", { workflowId: "workflow-expired-owned" });
+      const run = createTestRun("run-expired-owned", {
+        workflowId: "workflow-expired-owned",
+        status: "waiting",
+      });
       await ttlBackend.createRun(run);
       await ttlBackend.saveCheckpoint(run.id, {
         id: "checkpoint-expired",
@@ -2243,7 +2808,7 @@ describe("RedisBackend", () => {
 
   describe("listPendingApprovals", () => {
     it("should list approvals across runs", async () => {
-      await backend.createRun(createTestRun("run-lpa1"));
+      await backend.createRun(createTestRun("run-lpa1", { status: "waiting" }));
       await backend.savePendingApproval("run-lpa1", {
         id: "ap-x",
         nodeId: "n",
@@ -2260,7 +2825,10 @@ describe("RedisBackend", () => {
 
     it("never attributes recreated approvals to the deleted incarnation's workflow", async () => {
       const runId = "approval-list-incarnation";
-      await backend.createRun(createTestRun(runId, { workflowId: "old-workflow" }));
+      await backend.createRun(createTestRun(runId, {
+        workflowId: "old-workflow",
+        status: "waiting",
+      }));
       await backend.savePendingApproval(runId, {
         id: "old-approval",
         nodeId: "wait",
@@ -2271,7 +2839,10 @@ describe("RedisBackend", () => {
       });
       mockRedis.beforeRunSnapshotRead = async () => {
         await backend.deleteRun(runId);
-        await backend.createRun(createTestRun(runId, { workflowId: "new-workflow" }));
+        await backend.createRun(createTestRun(runId, {
+          workflowId: "new-workflow",
+          status: "waiting",
+        }));
         await backend.savePendingApproval(runId, {
           id: "new-approval",
           nodeId: "wait",
@@ -2289,7 +2860,7 @@ describe("RedisBackend", () => {
     });
 
     it("enumerates the run index without issuing a keyspace-wide KEYS command", async () => {
-      await backend.createRun(createTestRun("run-lpa-indexed"));
+      await backend.createRun(createTestRun("run-lpa-indexed", { status: "waiting" }));
       await backend.savePendingApproval("run-lpa-indexed", {
         id: "approval-indexed",
         nodeId: "node-indexed",

@@ -7,6 +7,10 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { MAX_WORKFLOW_RUN_LIST_LIMIT, MAX_WORKFLOW_RUN_LIST_OFFSET } from "../limits.ts";
+import { isCanonicalApprovalIdentity } from "../types.ts";
+
+const canonicalApprovalIdentity = (value: string): boolean => isCanonicalApprovalIdentity(value);
+const hasUniqueIdentities = (values: string[]): boolean => new Set(values).size === values.length;
 
 /**
  * Workflow status schema
@@ -152,7 +156,15 @@ export const getPendingApprovalSchema = defineSchema((v) =>
     nodeId: v.string(),
     message: v.string(),
     payload: v.unknown(),
-    approvers: v.array(v.string()).optional(),
+    approvers: v.array(
+      v.string().min(1).refine(
+        canonicalApprovalIdentity,
+        "Approval identities must not contain surrounding whitespace",
+      ),
+    ).min(1).refine(
+      hasUniqueIdentities,
+      "Approval identities must be unique",
+    ).optional(),
     requestedAt: v.date(),
     expiresAt: v.date().optional(),
     status: getApprovalStatusSchema(),
@@ -183,7 +195,10 @@ export const getWorkflowErrorSchema = defineSchema((v) =>
 export const getApprovalDecisionSchema = defineSchema((v) =>
   v.object({
     approved: v.boolean(),
-    approver: v.string(),
+    approver: v.string().min(1).refine(
+      canonicalApprovalIdentity,
+      "Approval identity must not contain surrounding whitespace",
+    ),
     comment: v.string().optional(),
   })
 );

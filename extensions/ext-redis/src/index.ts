@@ -137,8 +137,15 @@ const extRedis = ((options: RedisExtensionOptions = {}) => {
             consumerName: options.consumerName,
             runTtl: options.runTtlSeconds,
             debug: options.debug,
+            connectTimeoutMs: connectionPolicy.connectTimeoutMs,
           });
-          own({ close: () => backend.destroy() });
+          // The provider contract is synchronous. RedisBackend retains and
+          // observes this readiness generation so operations join it and
+          // replay any failure until an explicit initialize() retry.
+          // Factory results transfer to the caller; registering this backend
+          // as extension-owned would race clients and workers that correctly
+          // destroy their dedicated backend before extension teardown.
+          void backend.initialize();
           return backend;
         },
         getWorkflowWorkerEnvironment() {

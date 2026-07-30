@@ -94,8 +94,15 @@ export type {
 // =============================================================================
 // Backend
 // =============================================================================
-export type { BackendConfig, WorkflowBackend, WorkflowRunUpdate } from "./backends/types.ts";
-export { hasWorkerSupport } from "./backends/types.ts";
+export type {
+  ApprovalDecisionTiming,
+  ApprovalExpiryCondition,
+  BackendConfig,
+  PendingApprovalMetadataUpdate,
+  WorkflowBackend,
+  WorkflowRunUpdate,
+} from "./backends/types.ts";
+export { captureApprovalDecisionTiming, hasWorkerSupport } from "./backends/types.ts";
 
 export { MemoryBackend } from "./backends/memory.ts";
 export {
@@ -110,7 +117,7 @@ export {
 // Client API
 // =============================================================================
 export { createWorkflowClient, WorkflowClient } from "./api/index.ts";
-export type { WorkflowClientConfig } from "./api/index.ts";
+export type { WorkflowBackendOwnership, WorkflowClientConfig } from "./api/index.ts";
 
 // =============================================================================
 // React Hooks (re-exported for convenience)

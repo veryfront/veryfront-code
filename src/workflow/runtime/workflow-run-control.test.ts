@@ -2,6 +2,7 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { MemoryBackend } from "../backends/memory.ts";
+import type { WorkflowRunUpdate } from "../backends/types.ts";
 import type { ApprovalDecision, NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -104,14 +105,29 @@ class LosingLockBackend extends MemoryBackend {
   readonly extensionAttempted = Promise.withResolvers<void>();
   releaseCalls = 0;
 
-  override extendLock(): Promise<boolean> {
+  override extendLock(_runId: string, _duration: number, _lockId: string): Promise<boolean> {
     this.extensionAttempted.resolve();
     return Promise.resolve(false);
   }
 
-  override releaseLock(runId: string, lockId?: string): Promise<void> {
+  override releaseLock(runId: string, lockId: string): Promise<boolean> {
     this.releaseCalls++;
     return super.releaseLock(runId, lockId);
+  }
+}
+
+class GatedHeartbeatBackend extends MemoryBackend {
+  readonly extensionStarted = Promise.withResolvers<void>();
+  readonly continueExtension = Promise.withResolvers<void>();
+
+  override async extendLock(
+    runId: string,
+    duration: number,
+    lockId: string,
+  ): Promise<boolean> {
+    this.extensionStarted.resolve();
+    await this.continueExtension.promise;
+    return await super.extendLock(runId, duration, lockId);
   }
 }
 
@@ -129,13 +145,88 @@ class FailingOwnerHeartbeatBackend extends MemoryBackend {
   }
 }
 
-class WaitingReleaseBackend extends MemoryBackend {
-  releaseBeforeCallback = false;
+class WaitingTransitionBackend extends MemoryBackend {
+  transitionBeforeCallback = false;
   callbackStarted = false;
 
-  override async releaseLock(runId: string, lockId?: string): Promise<void> {
-    await super.releaseLock(runId, lockId);
-    if (!this.callbackStarted) this.releaseBeforeCallback = true;
+  override async updateRunIfStatusAndLock(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    const updated = await super.updateRunIfStatusAndLock(
+      runId,
+      expectedStatuses,
+      lockId,
+      patch,
+      expectedWorkerId,
+    );
+    if (patch.status === "waiting" && !this.callbackStarted) {
+      this.transitionBeforeCallback = true;
+    }
+    return updated;
+  }
+}
+
+class InvalidAcquisitionBackend extends MemoryBackend {
+  override acquireLock(): Promise<string | null> {
+    return Promise.resolve("   ");
+  }
+}
+
+class InvalidRenewalBackend extends MemoryBackend {
+  readonly extensionAttempted = Promise.withResolvers<void>();
+
+  override extendLock(_runId: string, _duration: number, _lockId: string): Promise<boolean> {
+    this.extensionAttempted.resolve();
+    return Promise.resolve("yes" as unknown as boolean);
+  }
+}
+
+class RefusingLockFencedTransitionBackend extends MemoryBackend {
+  override updateRunIfStatusAndLock(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    if (patch.status !== undefined && patch.status !== "running") {
+      return Promise.resolve(false);
+    }
+    return super.updateRunIfStatusAndLock(
+      runId,
+      expectedStatuses,
+      lockId,
+      patch,
+      expectedWorkerId,
+    );
+  }
+}
+
+class ReplacedBeforeTerminalTransitionBackend extends MemoryBackend {
+  replacementToken: string | null = null;
+
+  override async updateRunIfStatusAndLock(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    if (patch.status !== undefined && patch.status !== "running") {
+      await super.releaseLock(runId, lockId);
+      this.replacementToken = await super.acquireLock(runId, 30_000);
+    }
+    return await super.updateRunIfStatusAndLock(
+      runId,
+      expectedStatuses,
+      lockId,
+      patch,
+      expectedWorkerId,
+    );
   }
 }
 
@@ -150,7 +241,7 @@ class ClaimLockHeldBackend extends MemoryBackend {
 
 class ClaimStatusChangedAfterLockBackend extends MemoryBackend {
   readonly lockToken = "pending-token";
-  releaseCalls: Array<{ runId: string; lockId?: string }> = [];
+  releaseCalls: Array<{ runId: string; lockId: string }> = [];
 
   override async acquireLock(): Promise<string | null> {
     return this.lockToken;
@@ -165,7 +256,7 @@ class ClaimStatusChangedAfterLockBackend extends MemoryBackend {
     return run;
   }
 
-  override releaseLock(runId: string, lockId?: string): Promise<void> {
+  override releaseLock(runId: string, lockId: string): Promise<boolean> {
     this.releaseCalls.push({ runId, lockId });
     return super.releaseLock(runId, lockId);
   }
@@ -175,26 +266,36 @@ class ClaimDelayedRunningUpdateBackend extends MemoryBackend {
   readonly runningUpdateStarted = Promise.withResolvers<void>();
   readonly continueRunningUpdate = Promise.withResolvers<void>();
 
-  override async updateRunIfStatus(
+  override async updateRunIfStatusAndLock(
     runId: string,
     expectedStatuses: WorkflowRun["status"][],
-    patch: Partial<WorkflowRun>,
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
   ): Promise<boolean> {
     if (patch.status === "running" && patch.workerId) {
       this.runningUpdateStarted.resolve();
       await this.continueRunningUpdate.promise;
     }
-    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
+    return await super.updateRunIfStatusAndLock(
+      runId,
+      expectedStatuses,
+      lockId,
+      patch,
+      expectedWorkerId,
+    );
   }
 }
 
 class ClaimPendingClaimLostBackend extends MemoryBackend {
   replacementWorkerId = "run-execution:replacement";
 
-  override async updateRunIfStatus(
+  override async updateRunIfStatusAndLock(
     runId: string,
     expectedStatuses: WorkflowRun["status"][],
-    patch: Partial<WorkflowRun>,
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
   ): Promise<boolean> {
     if (patch.status === "running" && patch.workerId) {
       await super.updateRun(runId, {
@@ -203,30 +304,94 @@ class ClaimPendingClaimLostBackend extends MemoryBackend {
       });
       return Promise.resolve(false);
     }
-    return super.updateRunIfStatus(runId, expectedStatuses, patch);
+    return super.updateRunIfStatusAndLock(
+      runId,
+      expectedStatuses,
+      lockId,
+      patch,
+      expectedWorkerId,
+    );
   }
 }
 
 class ClaimReclaimedAfterFailureBackend extends MemoryBackend {
   replacementWorkerId = "run-execution:replacement";
+  replacementToken: string | null = null;
 
-  override async updateRunIfStatusAndWorker(
+  override async updateRunIfStatusAndLock(
     runId: string,
     expectedStatuses: WorkflowRun["status"][],
-    expectedWorkerId: string,
-    patch: Partial<WorkflowRun>,
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
   ): Promise<boolean> {
-    if (patch.status === "failed" && expectedWorkerId.startsWith("run-execution:")) {
+    if (patch.status === "failed" && expectedWorkerId?.startsWith("run-execution:")) {
+      await super.releaseLock(runId, lockId);
+      this.replacementToken = await super.acquireLock(runId, 30_000);
       await super.updateRun(runId, {
         status: "running",
         workerId: this.replacementWorkerId,
       });
     }
-    return await super.updateRunIfStatusAndWorker(
+    return await super.updateRunIfStatusAndLock(
       runId,
       expectedStatuses,
-      expectedWorkerId,
+      lockId,
       patch,
+      expectedWorkerId,
+    );
+  }
+}
+
+class ClaimFailureUpdateRejectsBackend extends MemoryBackend {
+  failureUpdateAttempts = 0;
+  failureUpdatesRemaining = 1;
+
+  override updateRunIfStatusAndLock(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    if (patch.status === "failed" && expectedWorkerId?.startsWith("run-execution:")) {
+      this.failureUpdateAttempts++;
+      if (this.failureUpdatesRemaining > 0) {
+        this.failureUpdatesRemaining--;
+        return Promise.reject(new Error("transient failed-claim CAS rejection"));
+      }
+    }
+    return super.updateRunIfStatusAndLock(
+      runId,
+      expectedStatuses,
+      lockId,
+      patch,
+      expectedWorkerId,
+    );
+  }
+}
+
+class IntendedChildAcquiresBeforeFinalClaimCheckBackend extends MemoryBackend {
+  childStarted = false;
+  childToken: string | null = null;
+
+  override async updateRunIfStatusAndLock(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    if (this.childStarted && patch.status === undefined && patch.heartbeatAt !== undefined) {
+      await super.releaseLock(runId, lockId);
+      this.childToken = await super.acquireLock(runId, 30_000);
+    }
+    return await super.updateRunIfStatusAndLock(
+      runId,
+      expectedStatuses,
+      lockId,
+      patch,
+      expectedWorkerId,
     );
   }
 }
@@ -332,10 +497,13 @@ async function claim(
     managerId: "manager-a",
     executionId: "execution-a",
     stalledThreshold: 60_000,
+    lockRetryInterval: 50,
     executionTimeout: 120_000,
     env: { MODE: "test" },
     debug: false,
-    createRunExecution: () => Promise.resolve("execution-a"),
+    isAdmissionOpen: () => true,
+    createRunExecution: (config) => Promise.resolve(config.executionId),
+    deleteRunExecution: () => Promise.resolve(),
     ...options,
   });
 }
@@ -428,8 +596,76 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     assertEquals(persisted?.output, undefined);
   });
 
-  it("releases the waiting lock before callback reconciliation", async () => {
-    const backend = new WaitingReleaseBackend();
+  it("rejects incomplete and malformed backend lock capabilities", async () => {
+    const incomplete = new MemoryBackend();
+    Object.defineProperty(incomplete, "extendLock", { value: undefined });
+    const incompleteRun = createRun("incomplete-lock-capability");
+    await incomplete.createRun(incompleteRun);
+    await assertRejects(
+      () => execute(incomplete, incompleteRun, () => completedResult(), { enableLocking: true }),
+      Error,
+      "locking requires backend acquireLock, extendLock, releaseLock, and lock-fenced update",
+    );
+    assertEquals((await incomplete.getRun(incompleteRun.id))?.status, "pending");
+
+    const malformed = new InvalidAcquisitionBackend();
+    const malformedRun = createRun("invalid-lock-token");
+    await malformed.createRun(malformedRun);
+    await assertRejects(
+      () => execute(malformed, malformedRun, () => completedResult(), { enableLocking: true }),
+      Error,
+      "invalid lock token",
+    );
+    assertEquals((await malformed.getRun(malformedRun.id))?.status, "pending");
+  });
+
+  it("fails closed when lock renewal returns a non-boolean result", async () => {
+    using time = new FakeTime();
+    const backend = new InvalidRenewalBackend();
+    const run = createRun("invalid-lock-renewal-result");
+    await backend.createRun(run);
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+
+    const execution = execute(
+      backend,
+      run,
+      async () => {
+        started.resolve();
+        await release.promise;
+        return completedResult();
+      },
+      { enableLocking: true, heartbeatInterval: 5 },
+    );
+    await started.promise;
+    await time.tickAsync(5);
+    await backend.extensionAttempted.promise;
+    release.resolve();
+
+    await assertRejects(() => execution, Error, "Could not renew lock");
+    assertEquals((await backend.getRun(run.id))?.status, "running");
+  });
+
+  it("does not notify waiting observers when the lock-fenced transition loses ownership", async () => {
+    const backend = new RefusingLockFencedTransitionBackend();
+    const run = createRun("waiting-release-refused");
+    await backend.createRun(run);
+    let callbackCalls = 0;
+
+    const outcome = await execute(backend, run, () => waitingResult(), {
+      enableLocking: true,
+      onWaiting: () => {
+        callbackCalls++;
+      },
+    });
+
+    assertEquals(outcome.status, "ownership-lost");
+    assertEquals(callbackCalls, 0);
+    assertEquals((await backend.getRun(run.id))?.status, "running");
+  });
+
+  it("atomically consumes the waiting lock before callback reconciliation", async () => {
+    const backend = new WaitingTransitionBackend();
     const run = {
       ...createRun("waiting-release-before-callback"),
       status: "running" as const,
@@ -451,9 +687,131 @@ describe("workflow/runtime/workflow-run-control execute", () => {
       },
     );
 
-    assertEquals(backend.releaseBeforeCallback, true);
+    assertEquals(backend.transitionBeforeCallback, true);
     assertEquals(lockedDuringCallback, false);
     assertEquals((await backend.getRun(run.id))?.status, "waiting");
+  });
+
+  it("settles an in-flight heartbeat before consuming the waiting lease", async () => {
+    using time = new FakeTime();
+    const backend = new GatedHeartbeatBackend();
+    const run = createRun("waiting-with-in-flight-heartbeat");
+    await backend.createRun(run);
+    const operationStarted = Promise.withResolvers<void>();
+    const finishOperation = Promise.withResolvers<void>();
+    let callbackCalls = 0;
+
+    const execution = execute(
+      backend,
+      run,
+      async () => {
+        operationStarted.resolve();
+        await finishOperation.promise;
+        return waitingResult();
+      },
+      {
+        enableLocking: true,
+        heartbeatInterval: 5,
+        onWaiting: () => {
+          callbackCalls++;
+        },
+      },
+    );
+
+    await operationStarted.promise;
+    await time.tickAsync(5);
+    await backend.extensionStarted.promise;
+    finishOperation.resolve();
+    backend.continueExtension.resolve();
+
+    const outcome = await execution;
+    assertEquals(outcome.status, "waiting");
+    assertEquals(callbackCalls, 1);
+    assertEquals((await backend.getRun(run.id))?.status, "waiting");
+    assertEquals(await backend.isLocked(run.id), false);
+  });
+
+  it("does not fail a waiting run while a replacement owns the handoff lease", async () => {
+    const backend = new MemoryBackend();
+    const run = createRun("replacement-owns-waiting-handoff");
+    await backend.createRun(run);
+    const callbackStarted = Promise.withResolvers<void>();
+    const rejectCallback = Promise.withResolvers<void>();
+    let failureObserverCalls = 0;
+
+    const execution = execute(backend, run, () => waitingResult(), {
+      enableLocking: true,
+      onWaiting: async () => {
+        callbackStarted.resolve();
+        await rejectCallback.promise;
+        throw new Error("approval persistence failed");
+      },
+      onError: () => {
+        failureObserverCalls++;
+      },
+    });
+
+    await callbackStarted.promise;
+    const replacementToken = await backend.acquireLock(run.id, 30_000);
+    if (!replacementToken) throw new Error("Replacement did not acquire the handoff lease");
+    rejectCallback.resolve();
+
+    const outcome = await execution;
+    assertEquals(outcome.status, "ownership-lost");
+    assertEquals(failureObserverCalls, 0);
+    assertEquals((await backend.getRun(run.id))?.status, "waiting");
+    assertEquals(await backend.isLocked(run.id), true);
+    assertEquals(await backend.releaseLock(run.id, replacementToken), true);
+  });
+
+  it("does not publish terminal or waiting state after a replacement acquires the lease", async () => {
+    const scenarios = ["completed", "failed", "waiting"] as const;
+
+    for (const scenario of scenarios) {
+      const backend = new ReplacedBeforeTerminalTransitionBackend();
+      const run = createRun(`replacement-before-${scenario}`);
+      await backend.createRun(run);
+      let observerCalls = 0;
+
+      await assertRejects(
+        () =>
+          execute(
+            backend,
+            run,
+            () => {
+              if (scenario === "completed") return completedResult();
+              if (scenario === "waiting") return waitingResult();
+              return {
+                error: "primary failure",
+                context: { input: {} },
+                nodeStates: {},
+              };
+            },
+            {
+              enableLocking: true,
+              onComplete: () => {
+                observerCalls++;
+              },
+              onError: () => {
+                observerCalls++;
+              },
+              onWaiting: () => {
+                observerCalls++;
+              },
+            },
+          ),
+        Error,
+        "Lost lock ownership before releasing",
+      );
+
+      assertEquals(observerCalls, 0);
+      assertEquals((await backend.getRun(run.id))?.status, "running");
+      assertEquals((await backend.getRun(run.id))?.output, undefined);
+      if (!backend.replacementToken) {
+        throw new Error("Replacement did not acquire the workflow lease");
+      }
+      assertEquals(await backend.releaseLock(run.id, backend.replacementToken), true);
+    }
   });
 
   it("keeps cancellation terminal over completion and failure", async () => {
@@ -594,6 +952,71 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     assertEquals(callbackRun?.status, "completed");
     assertEquals(callbackRun?.output, persisted.output);
   });
+
+  it("keeps completed outcome when the post-persistence observer rejects", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("completion-observer-rejects"), status: "running" as const };
+    await backend.createRun(run);
+
+    const outcome = await execute(backend, run, () => completedResult(), {
+      onComplete: () => {
+        throw new Error("completion observer failed");
+      },
+    });
+
+    assertEquals(outcome.status, "completed");
+    assertEquals((await backend.getRun(run.id))?.status, "completed");
+  });
+
+  it("preserves returned and thrown failures when failure observers reject", async () => {
+    const returnedBackend = new MemoryBackend();
+    const returnedRun = { ...createRun("returned-failure-observer"), status: "running" as const };
+    await returnedBackend.createRun(returnedRun);
+    const returned = await execute(
+      returnedBackend,
+      returnedRun,
+      () => ({
+        error: "returned primary failure",
+        context: { input: {} },
+        nodeStates: {},
+      }),
+      {
+        onError: () => {
+          throw new Error("returned observer failure");
+        },
+      },
+    );
+    assertEquals(returned.status, "failed");
+    assertEquals(
+      (await returnedBackend.getRun(returnedRun.id))?.error?.message,
+      "returned primary failure",
+    );
+
+    const thrownBackend = new MemoryBackend();
+    const thrownRun = { ...createRun("thrown-failure-observer"), status: "running" as const };
+    await thrownBackend.createRun(thrownRun);
+    await assertRejects(
+      () =>
+        execute(
+          thrownBackend,
+          thrownRun,
+          () => {
+            throw new Error("thrown primary failure");
+          },
+          {
+            onError: async () => {
+              throw new Error("thrown observer failure");
+            },
+          },
+        ),
+      Error,
+      "thrown primary failure",
+    );
+    assertEquals(
+      (await thrownBackend.getRun(thrownRun.id))?.error?.message,
+      "thrown primary failure",
+    );
+  });
 });
 
 describe("workflow/runtime/workflow-run-control claim", () => {
@@ -644,8 +1067,13 @@ describe("workflow/runtime/workflow-run-control claim", () => {
     const claiming = claim(backend, run, {
       createRunExecution: async (config) => {
         createCalled = true;
-        assertEquals((await backend.getRun(run.id))?.status, "running");
-        assertEquals((await backend.getRun(run.id))?.workerId, "run-execution:execution-a");
+        const persisted = await backend.getRun(run.id);
+        assertEquals(persisted?.status, "running");
+        assertEquals(persisted?.workerId, "run-execution:execution-a");
+        assertEquals(config.run.status, persisted?.status);
+        assertEquals(config.run.workerId, persisted?.workerId);
+        assertEquals(config.run.startedAt, persisted?.startedAt);
+        assertEquals(config.run.heartbeatAt, persisted?.heartbeatAt);
         return config.executionId;
       },
     });
@@ -658,6 +1086,31 @@ describe("workflow/runtime/workflow-run-control claim", () => {
     assertEquals(outcome.status, "created");
     assertEquals(outcome.execution?.executionId, "execution-a");
     assertEquals(createCalled, true);
+  });
+
+  it("requeues a claim when admission closes while the running CAS is in flight", async () => {
+    const backend = new ClaimDelayedRunningUpdateBackend();
+    const run = createRun("claim-admission-closes-during-cas");
+    await backend.createRun(run);
+    let admissionOpen = true;
+    let createCalls = 0;
+
+    const claiming = claim(backend, run, {
+      isAdmissionOpen: () => admissionOpen,
+      createRunExecution: (config) => {
+        createCalls++;
+        return Promise.resolve(config.executionId);
+      },
+    });
+    await backend.runningUpdateStarted.promise;
+    admissionOpen = false;
+    backend.continueRunningUpdate.resolve();
+
+    const outcome = await claiming;
+    assertEquals(outcome.status, "skipped-admission-closed");
+    assertEquals(createCalls, 0);
+    assertEquals((await backend.getRun(run.id))?.status, "pending");
+    assertEquals(await backend.isLocked(run.id), false);
   });
 
   it("skips pending runs when another owner wins the running claim", async () => {
@@ -683,11 +1136,80 @@ describe("workflow/runtime/workflow-run-control claim", () => {
       createRunExecution: () => Promise.reject(new Error("spawn failed")),
     });
 
-    assertEquals(outcome.status, "failed-after-claim");
+    assertEquals(outcome.status, "skipped-claim-lost");
     const persisted = await backend.getRun(run.id);
     assertEquals(persisted?.status, "running");
     assertEquals(persisted?.workerId, backend.replacementWorkerId);
     assertEquals(persisted?.error, undefined);
+    assertEquals(await backend.isLocked(run.id), true);
+    if (!backend.replacementToken) throw new Error("Replacement did not acquire claim lock");
+    assertEquals(await backend.releaseLock(run.id, backend.replacementToken), true);
+  });
+
+  it("retains teardown ownership when failed-claim compensation rejects after deletion", async () => {
+    const backend = new ClaimFailureUpdateRejectsBackend();
+    const run = createRun("claim-failure-update-rejects");
+    await backend.createRun(run);
+    const deletedExecutionIds: string[] = [];
+
+    const outcome = await claim(backend, run, {
+      createRunExecution: () => Promise.reject(new Error("primary spawn failure")),
+      deleteRunExecution: (executionId) => {
+        deletedExecutionIds.push(executionId);
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(outcome.status, "skipped-claim-lost");
+    assertEquals(outcome.teardownCandidate, {
+      executionId: "execution-a",
+      runId: run.id,
+    });
+    assertEquals(deletedExecutionIds, ["execution-a"]);
+    assertEquals(backend.failureUpdateAttempts, 1);
+    assertEquals(
+      outcome.error?.message,
+      'Could not compensate rejected run execution "execution-a"',
+    );
+    const cause = outcome.error?.cause;
+    assertEquals(cause instanceof AggregateError, true);
+    if (!(cause instanceof AggregateError)) throw new Error("Expected aggregated claim errors");
+    assertEquals(
+      cause.errors.map((error) => error instanceof Error ? error.message : String(error)),
+      ["primary spawn failure", "transient failed-claim CAS rejection"],
+    );
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "running");
+    assertEquals(persisted?.workerId, "run-execution:execution-a");
+    assertEquals(await backend.isLocked(run.id), false);
+  });
+
+  it("admits the intended child when it acquires a fresh lease before final verification", async () => {
+    const backend = new IntendedChildAcquiresBeforeFinalClaimCheckBackend();
+    const run = createRun("claim-child-acquires-before-final-check");
+    await backend.createRun(run);
+    let deleteCalls = 0;
+
+    const outcome = await claim(backend, run, {
+      createRunExecution: (config) => {
+        backend.childStarted = true;
+        return Promise.resolve(config.executionId);
+      },
+      deleteRunExecution: () => {
+        deleteCalls++;
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(outcome.status, "created");
+    assertEquals(deleteCalls, 0);
+    assertEquals(
+      (await backend.getRun(run.id))?.workerId,
+      "run-execution:execution-a",
+    );
+    if (!backend.childToken) throw new Error("Intended child did not acquire its lease");
+    assertEquals(await backend.releaseLock(run.id, backend.childToken), true);
   });
 
   it("recovers stalled runs through the manager owner before isolated owner assignment", async () => {

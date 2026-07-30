@@ -24,6 +24,7 @@ import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfr
 import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { INITIALIZATION_ERROR, INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { requireWorkflowApiBaseUrl, requireWorkflowContentSource } from "./source-authority.ts";
 
 /**
  * Validate that a project slug is safe and well-formed.
@@ -84,9 +85,11 @@ function getTenant() {
  */
 function getClient(): VeryfrontApiClient {
   const tenant = getTenant();
+  const apiBaseUrl = requireWorkflowApiBaseUrl(getHostEnv("VERYFRONT_API_URL"));
+  const contentSource = requireWorkflowContentSource(tenant);
 
   const client = new VeryfrontApiClient({
-    apiBaseUrl: getHostEnv("VERYFRONT_API_URL") || "https://api.veryfront.com",
+    apiBaseUrl,
     proxyMode: true,
     projectId: tenant.projectId,
     projectSlug: tenant.projectSlug,
@@ -95,12 +98,16 @@ function getClient(): VeryfrontApiClient {
   client.setRequestToken(tenant.token);
   client.setProjectSlug(tenant.projectSlug);
 
-  if (tenant.productionMode && tenant.releaseId) {
-    client.setContext({ type: "release", version: tenant.releaseId });
-  } else if (tenant.productionMode && tenant.environmentName) {
-    client.setContext({ type: "environment", name: tenant.environmentName });
-  } else {
-    client.setContext({ type: "branch", name: tenant.branch ?? "main" });
+  switch (contentSource.type) {
+    case "release":
+      client.setContext({ type: "release", version: contentSource.releaseId });
+      break;
+    case "environment":
+      client.setContext({ type: "environment", name: contentSource.name });
+      break;
+    case "branch":
+      client.setContext({ type: "branch", name: contentSource.branch });
+      break;
   }
 
   return client;

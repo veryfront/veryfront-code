@@ -6,7 +6,6 @@
 
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type {
-  RetryConfig,
   StepBuilderContext,
   Workflow,
   WorkflowContext,
@@ -26,7 +25,6 @@ export interface WorkflowOptions<TInput = unknown, TOutput = unknown> {
   version?: string;
   inputSchema?: Schema<TInput>;
   outputSchema?: Schema<TOutput>;
-  retry?: RetryConfig;
   timeout?: string | number;
   introspect?: boolean;
   steps:
@@ -55,7 +53,6 @@ export function workflow<TInput = unknown, TOutput = unknown>(
     version: options.version,
     inputSchema: options.inputSchema,
     outputSchema: options.outputSchema,
-    retry: policy.retry,
     timeout: policy.timeout,
     introspect: options.introspect,
     steps: options.steps,

@@ -44,13 +44,20 @@ import { executeCompositeNodeWithPolicy } from "./composite-node-execution.ts";
 import { canonicalizeWorkflowNodes } from "./node-identity.ts";
 import { findStaticNodeAdmissionFailure, validateRuntimeNodeOptions } from "./node-admission.ts";
 import {
+  captureWorkflowNodes,
+  captureWorkflowStaticValue,
+  cloneCapturedWorkflowStaticValue,
+} from "../workflow-definition-snapshot.ts";
+import {
   applyContextPatch,
   applyRecordPatch,
   cloneExecutionState,
   createContextPatch,
   createRecordPatch,
   createSetContextPatch,
+  getOwnRecordValue,
   mergeContextPatches,
+  setOwnRecordValue,
 } from "./context-patch.ts";
 
 const DEFAULT_MAX_CONCURRENCY = 10;
@@ -116,13 +123,13 @@ export class DAGExecutor {
     const admissionFailure = findStaticNodeAdmissionFailure(canonicalNodes);
     if (admissionFailure) {
       const { nodeId, error } = admissionFailure;
-      nodeStates[nodeId] = {
+      setOwnRecordValue(nodeStates, nodeId, {
         nodeId,
         status: "failed",
         error: error.message,
-        attempt: (nodeStates[nodeId]?.attempt ?? 0) + 1,
+        attempt: (getOwnRecordValue(nodeStates, nodeId)?.attempt ?? 0) + 1,
         completedAt: new Date(),
-      };
+      });
       return {
         completed: false,
         waiting: false,
@@ -201,13 +208,13 @@ export class DAGExecutor {
             ? result.reason.message
             : String(result.reason);
 
-          nodeStates[nodeId] = {
+          setOwnRecordValue(nodeStates, nodeId, {
             nodeId,
             status: "failed",
             error,
-            attempt: (nodeStates[nodeId]?.attempt ?? 0) + 1,
+            attempt: (getOwnRecordValue(nodeStates, nodeId)?.attempt ?? 0) + 1,
             completedAt: new Date(),
-          };
+          });
 
           if (!outcome) outcome = { kind: "failed", nodeId, error };
           continue;
@@ -234,7 +241,7 @@ export class DAGExecutor {
         applyContextPatch(context, isolatedContextPatch);
         contextPatch = mergeContextPatches(contextPatch, isolatedContextPatch);
 
-        nodeStates[nodeId] = nodeResult.state;
+        setOwnRecordValue(nodeStates, nodeId, nodeResult.state);
 
         if (nodeResult.waiting) {
           if (!outcome) outcome = { kind: "waiting", nodeId };
@@ -320,7 +327,7 @@ export class DAGExecutor {
     abortSignal?.throwIfAborted();
     const nodeId = node.id;
 
-    const existingState = nodeStates[nodeId];
+    const existingState = getOwnRecordValue(nodeStates, nodeId);
     if (existingState?.status === "completed") {
       return { state: existingState, contextPatch: createSetContextPatch(), waiting: false };
     }
@@ -699,14 +706,25 @@ export class DAGExecutor {
     const workflowDef = config.workflow;
 
     const input = typeof config.input === "function"
-      ? await config.input(context)
-      : (config.input ?? context.input);
+      ? captureWorkflowStaticValue(
+        await config.input(context),
+        `Sub-workflow "${workflowDef.id}" dynamic input`,
+      )
+      : cloneCapturedWorkflowStaticValue(
+        config.input === undefined ? context.input : config.input,
+        `Sub-workflow "${workflowDef.id}" input`,
+      );
     abortSignal?.throwIfAborted();
 
-    const steps = typeof workflowDef.steps === "function"
+    const rawSteps = typeof workflowDef.steps === "function"
       ? workflowDef.steps({ input, context })
       : workflowDef.steps;
     abortSignal?.throwIfAborted();
+    const steps = captureWorkflowNodes(
+      rawSteps,
+      `Sub-workflow "${workflowDef.id}"`,
+      { allowEmpty: true, emptyElementName: "step" },
+    );
 
     const subRunId = `${node.id}_sub_${generateId()}`;
 

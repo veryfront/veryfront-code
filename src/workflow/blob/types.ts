@@ -7,11 +7,11 @@
 export interface BlobRef {
   /** Stable discriminant used by workflow serialization guards. */
   __kind: "blob";
-  /** Portable identifier containing only ASCII letters, digits, `_`, and `-`. */
+  /** Bounded portable identifier containing only ASCII letters, digits, `_`, and `-`. */
   id: string;
   /** Exact stored payload size in bytes. */
   size: number;
-  /** Media type reported by the selected storage implementation. */
+  /** Bounded canonical media type reported by the selected storage implementation. */
   mimeType: string;
   /** Provider-reported or locally recorded creation time. */
   createdAt: Date;
@@ -19,16 +19,16 @@ export interface BlobRef {
   expiresAt?: Date;
   /** Public URL only when the backend was explicitly configured to provide one. */
   url?: string;
-  /** Backend-specific user metadata, excluding provider-owned internal fields. */
+  /** Bounded string metadata, excluding provider-owned internal fields. */
   metadata?: Record<string, string>;
 }
 
 export interface StoreBlobOptions {
-  /** Portable identifier containing only ASCII letters, digits, `_`, and `-`. */
+  /** Bounded portable identifier containing only ASCII letters, digits, `_`, and `-`. */
   id?: string;
-  /** Payload media type. */
+  /** Bounded canonical payload media type without control characters. */
   mimeType?: string;
-  /** User metadata copied by the selected backend. */
+  /** Bounded string metadata copied before the selected backend performs I/O. */
   metadata?: Record<string, string>;
   /** Logical time-to-live in seconds; zero disables expiry. */
   ttl?: number;
@@ -38,7 +38,7 @@ export interface StoreBlobOptions {
 export const BlobStorageContractName = "BlobStorage" as const;
 
 export interface BlobStorage {
-  /** Store a payload and return its reference snapshot. */
+  /** Store a detached payload under the built-in backends' bounded-buffer contract. */
   put(
     data: string | Uint8Array | Blob | ReadableStream,
     options?: StoreBlobOptions,

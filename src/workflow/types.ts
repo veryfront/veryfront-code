@@ -10,6 +10,11 @@ import type { Tool } from "#veryfront/tool/types.ts";
 import type { BlobRef, BlobStorage } from "./blob/types.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import {
+  MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES,
+  MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS,
+} from "./limits.ts";
 
 // Re-export schema types (Checkpoint excluded - defined locally to use WorkflowContext interface)
 export type {
@@ -132,6 +137,11 @@ export interface WaitNodeConfig extends BaseNodeConfig {
   waitType: WaitType;
   message?: string;
   payload?: unknown | ((context: WorkflowContext) => unknown);
+  /**
+   * Explicit identities allowed to decide the approval. When omitted, the
+   * authenticated host boundary is responsible for supplying the caller's
+   * canonical identity to the approval API.
+   */
   approvers?: string[];
   eventName?: string;
 }
@@ -208,7 +218,6 @@ export interface WorkflowDefinition<TInput = unknown, TOutput = unknown> {
   version?: string;
   inputSchema?: Schema<TInput>;
   outputSchema?: Schema<TOutput>;
-  retry?: RetryConfig;
   timeout?: string | number;
   introspect?: boolean;
   steps: WorkflowNode[] | ((context: StepBuilderContext<TInput>) => WorkflowNode[]);
@@ -280,8 +289,79 @@ export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
 
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
+/** Whether a value is a non-empty approval identity without surrounding whitespace. */
+export function isCanonicalApprovalIdentity(value: unknown): value is string {
+  if (
+    typeof value !== "string" || value.length === 0 ||
+    value.length > MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS || value.trim() !== value
+  ) {
+    return false;
+  }
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return false;
+  }
+  return true;
+}
+
+/** Validate and snapshot an optional explicit approval allowlist. */
+export function captureApprovalApprovers(
+  value: unknown,
+  label = "Approval approvers",
+): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (isProxyWithoutHooks(value) || !Array.isArray(value)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} must be a non-empty array of canonical strings`,
+    });
+  }
+
+  const keys = Reflect.ownKeys(value);
+  const lengthDescriptor = Reflect.getOwnPropertyDescriptor(value, "length");
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (
+    !Number.isSafeInteger(length) || (length as number) < 1 ||
+    (length as number) > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES ||
+    keys.length !== (length as number) + 1
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `${label} must be a dense non-empty array with at most ${MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES} canonical strings`,
+    });
+  }
+
+  const captured: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < (length as number); index++) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor?.enumerable !== true || !("value" in descriptor)) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `${label} must be a dense non-empty array with at most ${MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES} canonical strings`,
+      });
+    }
+    const approver = descriptor.value;
+    if (!isCanonicalApprovalIdentity(approver)) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `${label} must contain canonical strings of at most ${MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS} code units without control characters`,
+      });
+    }
+    if (seen.has(approver)) {
+      throw INVALID_ARGUMENT.create({
+        detail: `${label} must not contain duplicate identities`,
+      });
+    }
+    seen.add(approver);
+    captured.push(approver);
+  }
+  return Object.freeze(captured) as unknown as string[];
+}
+
 /**
- * Maximum retry attempts accepted by workflow definitions.
+ * Maximum retry attempts accepted by executable workflow nodes.
  *
  * This matches the loop iteration ceiling and prevents configurations that can
  * consume effectively unbounded worker time or overflow exponential backoff

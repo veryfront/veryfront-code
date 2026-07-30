@@ -2,16 +2,19 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
-import {
-  getRedisModule,
-  NodeRedisAdapter,
-  type RedisAdapter,
-} from "#veryfront/platform/adapters/redis/index.ts";
-import { RedisBackend } from "../../../src/workflow/backends/redis/index.ts";
+import { createClient } from "npm:redis@5.11.0";
+import { NodeRedisAdapter } from "../../../extensions/ext-redis/src/node-redis-adapter.ts";
+import type { NodeRedisClient } from "../../../extensions/ext-redis/src/node-redis-types.ts";
+import type { RedisAdapter } from "../../../extensions/ext-redis/src/redis-adapter.ts";
+import { RedisBackend } from "../../../extensions/ext-redis/src/workflow-backend.ts";
 import type { PendingApproval, WorkflowRun } from "../../../src/workflow/types.ts";
 
 const REDIS_URL = Deno.env.get("WORKFLOW_REDIS_TEST_URL") ?? "redis://127.0.0.1:6379";
 const SOURCE_POLICY = normalizeSourceIntegrationPolicy(undefined);
+const UNEXPIRED_DECISION_TIMING = {
+  decidedAt: new Date("2026-01-01T00:00:00.000Z"),
+  expiryCondition: "unexpired",
+} as const;
 
 function uniquePrefix(label: string): string {
   return `integration:workflow:${label}:${crypto.randomUUID()}:`;
@@ -46,10 +49,9 @@ function createApproval(id: string): PendingApproval {
 }
 
 async function connectRedis(): Promise<RedisAdapter> {
-  const { NodeRedis } = await getRedisModule();
-  const client = NodeRedis.createClient({ url: REDIS_URL });
+  const client = createClient({ url: REDIS_URL });
   await client.connect();
-  return new NodeRedisAdapter(client);
+  return new NodeRedisAdapter(client as unknown as NodeRedisClient);
 }
 
 function wrapRedis(
@@ -108,8 +110,8 @@ async function redisCommandCalls(adapter: RedisAdapter, command: string): Promis
   return Number(match[1]);
 }
 
-describe("RedisBackend against Redis 7 standalone", () => {
-  it("runs against Redis 7 and never mixes a deleted run with recreated approvals", async () => {
+describe("RedisBackend against Redis 7+ standalone", () => {
+  it("runs against supported Redis and never mixes a deleted run with recreated approvals", async () => {
     const prefix = uniquePrefix("snapshot");
     const primaryBase = await connectRedis();
     const controlBase = await connectRedis();
@@ -125,6 +127,7 @@ describe("RedisBackend against Redis 7 standalone", () => {
           await control.deleteRun("snapshot-run");
           await control.createRun(createRun("snapshot-run", {
             workflowId: "new-workflow",
+            status: "waiting",
           }));
           await control.savePendingApproval("snapshot-run", createApproval("new-approval"));
         },
@@ -133,8 +136,14 @@ describe("RedisBackend against Redis 7 standalone", () => {
 
     try {
       const info = await controlBase.eval("return redis.call('info', 'server')", [], []);
-      assertEquals(typeof info === "string" && /redis_version:7\./.test(info), true);
-      await primary.createRun(createRun("snapshot-run", { workflowId: "old-workflow" }));
+      const majorVersion = typeof info === "string"
+        ? Number(info.match(/(?:^|\r?\n)redis_version:(\d+)\./)?.[1])
+        : Number.NaN;
+      assertEquals(Number.isInteger(majorVersion) && majorVersion >= 7, true);
+      await primary.createRun(createRun("snapshot-run", {
+        workflowId: "old-workflow",
+        status: "waiting",
+      }));
       await primary.savePendingApproval("snapshot-run", createApproval("old-approval"));
 
       const snapshot = await primary.getRun("snapshot-run");
@@ -157,7 +166,7 @@ describe("RedisBackend against Redis 7 standalone", () => {
       client: await connectRedis(),
     });
     try {
-      const run = createRun("approval-race-run");
+      const run = createRun("approval-race-run", { status: "waiting" });
       await backend.createRun(run);
       await backend.savePendingApproval(run.id, createApproval("approval-race"));
 
@@ -165,11 +174,11 @@ describe("RedisBackend against Redis 7 standalone", () => {
         backend.updateApproval(run.id, "approval-race", {
           approved: true,
           approver: "first",
-        }),
+        }, UNEXPIRED_DECISION_TIMING),
         backend.updateApproval(run.id, "approval-race", {
           approved: false,
           approver: "second",
-        }),
+        }, UNEXPIRED_DECISION_TIMING),
       ]);
 
       assertEquals(decisions.filter(Boolean).length, 1);
@@ -177,6 +186,202 @@ describe("RedisBackend against Redis 7 standalone", () => {
       assertEquals(rows.length, 1);
       assertEquals(rows[0]?.approval.decidedBy, decisions[0] ? "first" : "second");
       assertEquals(rows[0]?.approval.status, decisions[0] ? "approved" : "rejected");
+    } finally {
+      await backend.destroy();
+    }
+  });
+
+  it("atomically evaluates persisted approval expiry at the supplied decision time", async () => {
+    const backend = new RedisBackend({
+      prefix: uniquePrefix("approval-expiry"),
+      client: await connectRedis(),
+    });
+    try {
+      const run = createRun("approval-expiry-run", { status: "waiting" });
+      const approval = {
+        ...createApproval("approval-expiry"),
+        expiresAt: new Date("2026-01-01T00:00:10.000Z"),
+      };
+      await backend.createRun(run);
+      await backend.savePendingApproval(run.id, approval);
+
+      assertEquals(
+        await backend.updateApproval(
+          run.id,
+          approval.id,
+          { approved: true, approver: "late-reviewer" },
+          {
+            decidedAt: new Date("2026-01-01T00:00:10.001Z"),
+            expiryCondition: "unexpired",
+          },
+        ),
+        false,
+      );
+      const expiredAt = new Date("2026-01-01T00:00:10.001Z");
+      assertEquals(
+        await backend.updateApproval(
+          run.id,
+          approval.id,
+          { approved: false, approver: "system", comment: "Approval expired" },
+          { decidedAt: expiredAt, expiryCondition: "expired" },
+        ),
+        true,
+      );
+      assertEquals((await backend.getApproval(run.id, approval.id))?.decidedAt, expiredAt);
+    } finally {
+      await backend.destroy();
+    }
+  });
+
+  it("atomically rejects concurrent duplicate approval ids", async () => {
+    const backend = new RedisBackend({
+      prefix: uniquePrefix("approval-id-race"),
+      client: await connectRedis(),
+    });
+    try {
+      const run = createRun("approval-id-race-run", {
+        status: "waiting",
+        workerId: "approval-owner",
+      });
+      await backend.createRun(run);
+
+      const direct = await Promise.allSettled([
+        backend.savePendingApproval(run.id, createApproval("direct-duplicate")),
+        backend.savePendingApproval(run.id, createApproval("direct-duplicate")),
+      ]);
+      assertEquals(direct.filter((result) => result.status === "fulfilled").length, 1);
+      assertEquals(direct.filter((result) => result.status === "rejected").length, 1);
+
+      const owned = await Promise.allSettled([
+        backend.savePendingApprovalIfStatusAndWorker(
+          run.id,
+          ["waiting"],
+          "approval-owner",
+          createApproval("owned-duplicate"),
+        ),
+        backend.savePendingApprovalIfStatusAndWorker(
+          run.id,
+          ["waiting"],
+          "approval-owner",
+          createApproval("owned-duplicate"),
+        ),
+      ]);
+      const ownedWinner = owned.filter((result) => result.status === "fulfilled");
+      assertEquals(ownedWinner.length, 1);
+      assertEquals(ownedWinner[0]?.value, true);
+      assertEquals(owned.filter((result) => result.status === "rejected").length, 1);
+      assertEquals(
+        (await backend.getPendingApprovals(run.id)).map((approval) => approval.id).sort(),
+        ["direct-duplicate", "owned-duplicate"],
+      );
+    } finally {
+      await backend.destroy();
+    }
+  });
+
+  it("rejects ambiguous exact reads from duplicate legacy approval rows", async () => {
+    const prefix = uniquePrefix("duplicate-approval-read");
+    const client = await connectRedis();
+    const backend = new RedisBackend({ prefix, client });
+    try {
+      const run = createRun("duplicate-approval-read-run", { status: "waiting" });
+      const approval = createApproval("duplicate-approval-read");
+      await backend.createRun(run);
+      await backend.savePendingApproval(run.id, approval);
+      await client.rpush(
+        `${prefix}schema-v2:approvals:${run.id}`,
+        JSON.stringify(approval),
+      );
+
+      await assertRejects(
+        () => backend.getApproval(run.id, approval.id),
+        Error,
+        "Duplicate approval id stored",
+      );
+    } finally {
+      await backend.destroy();
+    }
+  });
+
+  it("renews and releases leases only with the acquired lock token", async () => {
+    const backend = new RedisBackend({
+      prefix: uniquePrefix("lock-token"),
+      client: await connectRedis(),
+    });
+    try {
+      const runId = "token-fenced-lock";
+      const token = await backend.acquireLock(runId, 5_000);
+      if (token === null) throw new Error("Expected initial lock acquisition to succeed");
+
+      assertEquals(await backend.extendLock(runId, 5_000, "stale-token"), false);
+      assertEquals(await backend.releaseLock(runId, "stale-token"), false);
+      assertEquals(await backend.acquireLock(runId, 5_000), null);
+
+      assertEquals(await backend.extendLock(runId, 5_000, token), true);
+      assertEquals(await backend.releaseLock(runId, token), true);
+      assertEquals(await backend.releaseLock(runId, token), false);
+
+      const replacement = await backend.acquireLock(runId, 5_000);
+      if (replacement === null) throw new Error("Expected replacement lock acquisition to succeed");
+      assertEquals(replacement === token, false);
+      assertEquals(await backend.releaseLock(runId, replacement), true);
+    } finally {
+      await backend.destroy();
+    }
+  });
+
+  it("atomically fences run transitions with the live lease token", async () => {
+    const backend = new RedisBackend({
+      prefix: uniquePrefix("lock-fenced-transition"),
+      client: await connectRedis(),
+    });
+    try {
+      const run = createRun("lock-fenced-transition", {
+        status: "running",
+        workerId: "run-execution:owner",
+      });
+      await backend.createRun(run);
+      const token = await backend.acquireLock(run.id, 5_000);
+      if (token === null) throw new Error("Expected workflow lease acquisition to succeed");
+
+      assertEquals(
+        await backend.updateRunIfStatusAndLock(
+          run.id,
+          ["running"],
+          "stale-token",
+          { output: { stale: true } },
+          run.workerId,
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.updateRunIfStatusAndLock(
+          run.id,
+          ["running"],
+          token,
+          { output: { wrongOwner: true } },
+          "run-execution:replacement",
+        ),
+        false,
+      );
+      assertEquals((await backend.getRun(run.id))?.output, undefined);
+
+      assertEquals(
+        await backend.updateRunIfStatusAndLock(
+          run.id,
+          ["running"],
+          token,
+          { status: "completed", output: { committed: true } },
+          run.workerId,
+        ),
+        true,
+      );
+      assertEquals((await backend.getRun(run.id))?.output, { committed: true });
+      assertEquals(await backend.releaseLock(run.id, token), false);
+
+      const replacement = await backend.acquireLock(run.id, 5_000);
+      if (replacement === null) throw new Error("Terminal transition did not consume its lease");
+      assertEquals(await backend.releaseLock(run.id, replacement), true);
     } finally {
       await backend.destroy();
     }
@@ -247,7 +452,7 @@ describe("RedisBackend against Redis 7 standalone", () => {
       client: adapter,
     });
     try {
-      const run = createRun("ttl-run");
+      const run = createRun("ttl-run", { status: "waiting" });
       await backend.createRun(run);
       // Make a fresh child TTL observably wrong: retained child state must
       // inherit the run's existing absolute deadline after this delay.

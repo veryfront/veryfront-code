@@ -14,12 +14,13 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
-import { hasWorkerSupport, type WorkflowBackend } from "../backends/types.ts";
+import { hasWorkerSupport, updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
-import { generateId } from "../types.ts";
+import { generateId, parsePositiveDurationWithLabel } from "../types.ts";
 import type { RunExecutionStatus, RunExecutor } from "./executors/types.ts";
-import { ORCHESTRATION_ERROR } from "#veryfront/errors";
+import { CONFIG_INVALID, ensureError, ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { claimWorkflowRunControl } from "../runtime/workflow-run-control.ts";
+import { validatePositiveSafeInteger } from "../dsl/validation.ts";
 
 const logger = baseLogger.component("workflow-run-manager");
 
@@ -31,6 +32,9 @@ const DEFAULT_EXECUTION_TIMEOUT_MS = 30 * 60 * 1_000;
 
 /** Default threshold after which a run is considered stalled */
 const DEFAULT_STALLED_THRESHOLD_MS = 60_000;
+
+/** Default child polling interval while the manager releases its claim lease. */
+const DEFAULT_LOCK_RETRY_INTERVAL_MS = 50;
 
 // Re-export types for convenience
 export type { RunExecutionInfo, RunExecutionStatus, RunExecutor } from "./executors/types.ts";
@@ -60,6 +64,9 @@ export interface WorkflowRunManagerConfig {
   /** Time after which a run is considered stalled (ms) - for crash recovery */
   stalledThreshold?: number;
 
+  /** Child lock polling interval during manager-to-execution handoff (ms) */
+  lockRetryInterval?: number;
+
   /** Enable debug logging */
   debug?: boolean;
 }
@@ -67,7 +74,7 @@ export interface WorkflowRunManagerConfig {
 /**
  * Manager status
  */
-export type ManagerStatus = "idle" | "running" | "stopping" | "stopped";
+export type ManagerStatus = "idle" | "starting" | "running" | "stopping" | "stopped";
 
 /**
  * Manager statistics
@@ -81,6 +88,7 @@ export interface ManagerStats {
   executionsCompleted: number;
   executionsFailed: number;
   activeExecutions: number;
+  pendingCleanupExecutions: number;
   lastPollAt?: Date;
   lastErrorAt?: Date;
   lastError?: string;
@@ -96,6 +104,13 @@ interface TrackedExecution {
   createdAt: Date;
   /** Consecutive sync cycles this execution was absent from the executor's list. */
   missingPolls: number;
+}
+
+interface TeardownCandidate {
+  executionId: string;
+  runId: string;
+  /** Original claim failure retained across cleanup retries. */
+  initialError?: Error;
 }
 
 /** Resolved config type with defaults applied */
@@ -127,21 +142,63 @@ export class WorkflowRunManager {
   private config: ResolvedConfig;
   private status: ManagerStatus = "idle";
   private pollTimeout?: ReturnType<typeof setTimeout>;
+  private pollPromise?: Promise<void>;
+  private startPromise?: Promise<void>;
   private stopPromise?: Promise<void>;
+  private executorDestroyPromise?: Promise<void>;
+  private executorDestroyed = false;
   private activeExecutions = new Map<string, TrackedExecution>();
+  private teardownCandidates = new Map<string, TeardownCandidate>();
   private stats: ManagerStats;
   private managerId: string;
 
   constructor(config: WorkflowRunManagerConfig) {
+    if (!hasWorkerSupport(config.backend)) {
+      throw CONFIG_INVALID.create({
+        detail: "Backend does not support managed workflow execution. " +
+          "Required methods: enqueue, dequeue, acknowledge, acquireLock, extendLock, releaseLock, " +
+          "updateRunIfStatusAndLock, findStalledRuns, claimStalledRun, updateRunIfStatusAndWorker, " +
+          "saveCheckpointIfStatusAndWorker, savePendingApprovalIfStatusAndWorker.",
+      });
+    }
     this.managerId = generateId("mgr");
 
+    const pollInterval = parsePositiveDurationWithLabel(
+      config.pollInterval ?? DEFAULT_POLL_INTERVAL_MS,
+      "WorkflowRunManager pollInterval",
+    );
+    const executionTimeout = parsePositiveDurationWithLabel(
+      config.executionTimeout ?? DEFAULT_EXECUTION_TIMEOUT_MS,
+      "WorkflowRunManager executionTimeout",
+    );
+    const stalledThreshold = parsePositiveDurationWithLabel(
+      config.stalledThreshold ?? DEFAULT_STALLED_THRESHOLD_MS,
+      "WorkflowRunManager stalledThreshold",
+    );
+    if (stalledThreshold < 3) {
+      throw CONFIG_INVALID.create({
+        detail: "WorkflowRunManager stalledThreshold must be at least 3 milliseconds",
+      });
+    }
+    const lockRetryInterval = parsePositiveDurationWithLabel(
+      config.lockRetryInterval ?? DEFAULT_LOCK_RETRY_INTERVAL_MS,
+      "WorkflowRunManager lockRetryInterval",
+    );
+    const maxConcurrentExecutions = config.maxConcurrentExecutions ?? 10;
+    validatePositiveSafeInteger(
+      maxConcurrentExecutions,
+      "WorkflowRunManager maxConcurrentExecutions",
+    );
+
     this.config = {
-      pollInterval: DEFAULT_POLL_INTERVAL_MS,
-      maxConcurrentExecutions: 10,
-      executionTimeout: DEFAULT_EXECUTION_TIMEOUT_MS,
-      stalledThreshold: DEFAULT_STALLED_THRESHOLD_MS,
-      debug: false,
       ...config,
+      pollInterval,
+      maxConcurrentExecutions,
+      executionTimeout,
+      stalledThreshold,
+      lockRetryInterval,
+      env: config.env === undefined ? undefined : { ...config.env },
+      debug: config.debug ?? false,
     };
 
     this.stats = {
@@ -152,6 +209,7 @@ export class WorkflowRunManager {
       executionsCompleted: 0,
       executionsFailed: 0,
       activeExecutions: 0,
+      pendingCleanupExecutions: 0,
     };
   }
 
@@ -159,29 +217,62 @@ export class WorkflowRunManager {
    * Start the workflow run manager.
    */
   async start(): Promise<void> {
-    if (this.status === "running" || this.status === "stopping") {
+    if (this.status === "starting" && this.startPromise) await this.startPromise;
+    else if (this.status === "starting") {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Workflow run manager startup state is inconsistent",
+      });
+    } else if (
+      this.status === "running" || this.status === "stopping" || this.status === "stopped"
+    ) {
       throw ORCHESTRATION_ERROR.create({
         detail: this.status === "running"
           ? "Workflow run manager is already running"
+          : this.status === "stopped"
+          ? "Workflow run manager cannot restart after its executor has been destroyed"
           : "Workflow run manager cannot start while shutdown is in progress",
       });
+    } else {
+      this.status = "starting";
+      this.stats.status = "starting";
+      const startAttempt = (async () => {
+        try {
+          await this.config.executor.initialize?.();
+          if (this.status !== "starting") return;
+
+          this.status = "running";
+          this.stats.status = "running";
+          this.stats.startedAt = new Date();
+
+          if (this.config.debug) logger.info(`Started manager ${this.managerId}`);
+          this.scheduleNextPoll();
+        } catch (error) {
+          if (this.status === "starting") {
+            // Initialization is not required to be transactional. A partially
+            // initialized executor must be torn down and made terminal before
+            // the failed start can return.
+            this.status = "stopping";
+            this.stats.status = "stopping";
+            try {
+              await this.destroyExecutor();
+              this.status = "stopped";
+              this.stats.status = "stopped";
+            } catch (cleanupError) {
+              throw ORCHESTRATION_ERROR.create({
+                detail: "Workflow run manager initialization and executor cleanup both failed",
+                cause: new AggregateError([error, cleanupError]),
+              });
+            }
+          }
+          throw error;
+        }
+      })();
+      const trackedAttempt = startAttempt.finally(() => {
+        if (this.startPromise === trackedAttempt) this.startPromise = undefined;
+      });
+      this.startPromise = trackedAttempt;
+      await trackedAttempt;
     }
-
-    // Initialize executor if needed
-    if (this.config.executor.initialize) {
-      await this.config.executor.initialize();
-    }
-
-    this.status = "running";
-    this.stats.status = "running";
-    this.stats.startedAt = new Date();
-
-    if (this.config.debug) {
-      logger.info(`Started manager ${this.managerId}`);
-    }
-
-    // Start polling loop
-    this.scheduleNextPoll();
   }
 
   /**
@@ -191,7 +282,7 @@ export class WorkflowRunManager {
     if (this.status === "idle" || this.status === "stopped") return;
     if (this.stopPromise) return await this.stopPromise;
 
-    if (this.status === "running") {
+    if (this.status === "starting" || this.status === "running") {
       this.status = "stopping";
       this.stats.status = "stopping";
 
@@ -209,9 +300,16 @@ export class WorkflowRunManager {
         this.pollTimeout = undefined;
       }
 
-      if (this.config.executor.destroy) {
-        await this.config.executor.destroy();
+      if (this.startPromise) {
+        await this.startPromise.catch((error) => {
+          logger.warn("Workflow run manager initialization failed during shutdown", error);
+        });
       }
+
+      if (this.pollPromise) await this.pollPromise;
+
+      await this.destroyExecutor();
+      await this.requeueStoppedExecutions();
 
       this.status = "stopped";
       this.stats.status = "stopped";
@@ -231,14 +329,18 @@ export class WorkflowRunManager {
    * Get manager statistics
    */
   getStats(): ManagerStats {
-    return { ...this.stats, activeExecutions: this.activeExecutions.size };
+    return structuredClone({
+      ...this.stats,
+      activeExecutions: this.activeExecutions.size,
+      pendingCleanupExecutions: this.teardownCandidates.size,
+    });
   }
 
   /**
    * Get active executions
    */
   getActiveExecutions(): TrackedExecution[] {
-    return Array.from(this.activeExecutions.values());
+    return structuredClone(Array.from(this.activeExecutions.values()));
   }
 
   /**
@@ -257,6 +359,7 @@ export class WorkflowRunManager {
     }
 
     this.pollTimeout = setTimeout(async () => {
+      this.pollTimeout = undefined;
       // poll() guards itself, but reschedule from a finally so an unexpected
       // rejection can never kill the loop (leaving the manager alive-but-idle).
       try {
@@ -273,7 +376,17 @@ export class WorkflowRunManager {
   /**
    * Poll for pending workflows and manage run executions
    */
-  private async poll(): Promise<void> {
+  private poll(): Promise<void> {
+    if (this.pollPromise) return this.pollPromise;
+    const pollAttempt = this.pollOperation();
+    const trackedAttempt = pollAttempt.finally(() => {
+      if (this.pollPromise === trackedAttempt) this.pollPromise = undefined;
+    });
+    this.pollPromise = trackedAttempt;
+    return trackedAttempt;
+  }
+
+  private async pollOperation(): Promise<void> {
     if (this.status !== "running") {
       return;
     }
@@ -284,9 +397,11 @@ export class WorkflowRunManager {
     try {
       // 1. Check status of active executions
       await this.syncRunExecutionStatuses();
+      if (this.status !== "running") return;
 
       // 2. Find workflows that need execution
-      const availableSlots = this.config.maxConcurrentExecutions - this.activeExecutions.size;
+      const availableSlots = this.config.maxConcurrentExecutions -
+        this.activeExecutions.size - this.teardownCandidates.size;
       if (availableSlots <= 0) {
         return;
       }
@@ -296,11 +411,13 @@ export class WorkflowRunManager {
         status: "pending",
         limit: availableSlots,
       });
+      if (this.status !== "running") return;
 
       // Also check for stalled workflows (crashed run executions)
       let stalledRuns: WorkflowRun[] = [];
       if (hasWorkerSupport(this.config.backend)) {
         stalledRuns = await this.config.backend.findStalledRuns(this.config.stalledThreshold);
+        if (this.status !== "running") return;
 
         if (stalledRuns.length > 0 && this.config.debug) {
           logger.info(
@@ -313,6 +430,7 @@ export class WorkflowRunManager {
       const runsToProcess = [...pendingRuns, ...stalledRuns].slice(0, availableSlots);
 
       for (const run of runsToProcess) {
+        if (this.status !== "running") return;
         // Skip if already has an active execution
         if (this.activeExecutions.has(run.id)) {
           continue;
@@ -331,6 +449,7 @@ export class WorkflowRunManager {
    */
   private async syncRunExecutionStatuses(): Promise<void> {
     try {
+      await this.retryTeardownCandidates();
       const executions = await this.config.executor.listRunExecutions(this.managerId);
       const presentRunIds = new Set(executions.map((e) => e.runId));
 
@@ -411,11 +530,24 @@ export class WorkflowRunManager {
       managerId: this.managerId,
       executionId,
       stalledThreshold: this.config.stalledThreshold,
+      lockRetryInterval: this.config.lockRetryInterval,
       executionTimeout: this.config.executionTimeout,
       env: this.config.env ?? {},
       debug: this.config.debug,
+      isAdmissionOpen: () => this.status === "running",
       createRunExecution: (config) => this.config.executor.createRunExecution(config),
+      deleteRunExecution: (executionId) => this.config.executor.deleteRunExecution(executionId),
     });
+
+    if (outcome.teardownCandidate) {
+      this.teardownCandidates.set(
+        outcome.teardownCandidate.executionId,
+        {
+          ...outcome.teardownCandidate,
+          initialError: outcome.error,
+        },
+      );
+    }
 
     if (outcome.status === "created" && outcome.execution) {
       const tracked: TrackedExecution = {
@@ -438,6 +570,100 @@ export class WorkflowRunManager {
     if (outcome.status === "failed-before-claim" || outcome.status === "failed-after-claim") {
       this.stats.executionsFailed++;
       logger.error(`Failed to create run execution for ${run.id}:`, outcome.error);
+      return;
+    }
+
+    if (outcome.status === "skipped-claim-lost" && outcome.error) {
+      this.stats.executionsFailed++;
+      logger.error(`Lost run claim while creating execution for ${run.id}:`, outcome.error);
+    }
+  }
+
+  /** Serialize executor teardown across failed startup and explicit shutdown. */
+  private destroyExecutor(): Promise<void> {
+    if (this.executorDestroyed) return Promise.resolve();
+    if (this.executorDestroyPromise) return this.executorDestroyPromise;
+
+    const destroyAttempt = (async () => {
+      await this.config.executor.destroy?.();
+      this.executorDestroyed = true;
+    })();
+    const trackedAttempt = destroyAttempt.finally(() => {
+      if (this.executorDestroyPromise === trackedAttempt) {
+        this.executorDestroyPromise = undefined;
+      }
+    });
+    this.executorDestroyPromise = trackedAttempt;
+    return trackedAttempt;
+  }
+
+  /**
+   * Once executor teardown confirms that children cannot mutate durable state,
+   * requeue only runs still owned by those exact executions. A replacement or
+   * terminal owner wins the compare-and-set and is left untouched.
+   */
+  private async requeueStoppedExecutions(): Promise<void> {
+    for (const [runId, execution] of this.activeExecutions) {
+      await this.requeueTerminatedExecution(execution);
+      this.activeExecutions.delete(runId);
+    }
+
+    for (const [executionId, candidate] of this.teardownCandidates) {
+      await this.drainTeardownCandidate(candidate);
+      this.teardownCandidates.delete(executionId);
+    }
+  }
+
+  /** Retry ambiguous per-execution cleanup while the manager remains live. */
+  private async retryTeardownCandidates(): Promise<void> {
+    for (const [executionId, candidate] of this.teardownCandidates) {
+      try {
+        await this.drainTeardownCandidate(candidate);
+        this.teardownCandidates.delete(executionId);
+      } catch (error) {
+        logger.warn(
+          `[WorkflowRunManager] Cleanup remains pending for run execution ${executionId}:`,
+          error,
+        );
+      }
+    }
+  }
+
+  /** Delete the child idempotently before releasing its exact durable owner. */
+  private async drainTeardownCandidate(candidate: TeardownCandidate): Promise<void> {
+    try {
+      await this.config.executor.deleteRunExecution(candidate.executionId);
+      await this.requeueTerminatedExecution(candidate);
+    } catch (error) {
+      const cleanupError = ensureError(error);
+      if (!candidate.initialError) throw cleanupError;
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Could not drain retained workflow execution "${candidate.executionId}"`,
+        cause: new AggregateError(
+          [candidate.initialError, cleanupError],
+          "Workflow run claim and retained teardown both failed",
+        ),
+      });
+    }
+  }
+
+  /** Requeue only the exact durable owner whose execution has terminated. */
+  private async requeueTerminatedExecution(execution: TeardownCandidate): Promise<void> {
+    const workerId = `run-execution:${execution.executionId}`;
+    const requeued = await updateRunIfStatus(
+      this.config.backend,
+      execution.runId,
+      ["running"],
+      { status: "pending" },
+      workerId,
+    );
+    if (requeued) return;
+
+    const latest = await this.config.backend.getRun(execution.runId);
+    if (latest?.status === "running" && latest.workerId === workerId) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Could not requeue stopped workflow execution "${execution.executionId}"`,
+      });
     }
   }
 

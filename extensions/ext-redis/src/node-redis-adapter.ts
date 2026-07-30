@@ -2,7 +2,16 @@ import type { RedisAdapter } from "./redis-adapter.ts";
 import type { NodeRedisClient } from "./node-redis-types.ts";
 
 export class NodeRedisAdapter implements RedisAdapter {
-  constructor(private client: NodeRedisClient) {}
+  private transportClosed = false;
+  private detachErrorListener?: () => void;
+  private closePromise?: Promise<void>;
+
+  constructor(
+    private client: NodeRedisClient,
+    detachErrorListener?: () => void,
+  ) {
+    this.detachErrorListener = detachErrorListener;
+  }
 
   hset(key: string, fields: Record<string, string>): Promise<number | string> {
     return this.client.hSet(key, fields);
@@ -140,13 +149,38 @@ export class NodeRedisAdapter implements RedisAdapter {
     return this.client.eval(script, { keys, arguments: args });
   }
 
+  private performClose(close: () => Promise<void>): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    const pending = this.closeTransport(close);
+    this.closePromise = pending;
+    void pending.catch(() => {
+      if (this.closePromise === pending) this.closePromise = undefined;
+    });
+    return pending;
+  }
+
+  private async closeTransport(close: () => Promise<void>): Promise<void> {
+    if (!this.transportClosed) {
+      await close();
+      this.transportClosed = true;
+    }
+
+    // Keep the callback when detaching fails so a subsequent destroy() retry
+    // can finish listener cleanup without closing the transport twice.
+    const detach = this.detachErrorListener;
+    if (detach) {
+      detach();
+      this.detachErrorListener = undefined;
+    }
+  }
+
   quit(): Promise<void> {
     // redis v5: quit() renamed to close()
-    return this.client.close();
+    return this.performClose(() => this.client.close());
   }
 
   disconnect(): Promise<void> {
     // redis v5: disconnect() renamed to destroy()
-    return this.client.destroy();
+    return this.performClose(() => this.client.destroy());
   }
 }

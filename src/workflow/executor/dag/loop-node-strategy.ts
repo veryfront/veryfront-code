@@ -10,11 +10,13 @@ import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "#veryfront/utils";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
+import { captureWorkflowNodes } from "../workflow-definition-snapshot.ts";
 import {
   applyContextPatch,
   applyRecordPatch,
   createRecordPatch,
   createSetContextPatch,
+  getOwnRecordValue,
   mergeContextPatches,
 } from "./context-patch.ts";
 
@@ -48,7 +50,10 @@ export async function executeLoopNodeStrategy(
   // "maxIterations" below.
   let exitedViaCondition = false;
 
-  const existingLoopState = context[`${node.id}_loop_state`] as PersistedLoopState | undefined;
+  const existingLoopState = getOwnRecordValue(
+    context,
+    `${node.id}_loop_state`,
+  ) as PersistedLoopState | undefined;
 
   // Child node states for the in-flight (resumed) iteration, so its already
   // completed steps are not re-executed on resume (H9).
@@ -80,10 +85,15 @@ export async function executeLoopNodeStrategy(
       break;
     }
 
-    const steps = typeof config.steps === "function"
+    const rawSteps = typeof config.steps === "function"
       ? config.steps(context, loopContext)
       : config.steps;
     runtime.abortSignal?.throwIfAborted();
+    const steps = captureWorkflowNodes(
+      rawSteps,
+      `Loop "${node.id}" iteration ${iteration}`,
+      { allowEmpty: true, emptyElementName: "step" },
+    );
 
     // On resume, rehydrate the in-flight iteration's child node states so its
     // already-completed steps are skipped instead of re-executed (H9).

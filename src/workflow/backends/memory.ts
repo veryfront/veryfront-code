@@ -15,13 +15,24 @@ import type {
   WorkflowRun,
 } from "../types.ts";
 import {
+  type ApprovalDecisionTiming,
+  assertWorkflowLockId,
   assertWorkflowRunUpdate,
+  assertWorkflowWorkerId,
   type BackendConfig,
+  captureApprovalDecisionTiming,
+  capturePendingApprovalMetadataUpdate,
+  type PendingApprovalMetadataUpdate,
   type WorkflowBackend,
   type WorkflowRunUpdate,
 } from "./types.ts";
 import { requeueRun } from "./shared/requeue-run.ts";
-import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND, WORKFLOW_RUN_CONFLICT } from "#veryfront/errors";
+import {
+  INVALID_ARGUMENT,
+  ORCHESTRATION_ERROR,
+  RESOURCE_NOT_FOUND,
+  WORKFLOW_RUN_CONFLICT,
+} from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 import { compareRunIdsDescending, resolveRunDateBounds, resolveRunListPage } from "./run-filter.ts";
 
@@ -95,29 +106,11 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     try {
-      assertWorkflowRunUpdate(patch);
+      this.applyRunUpdate(runId, run, patch);
+      return Promise.resolve();
     } catch (error) {
       return Promise.reject(error);
     }
-
-    logger.debug(`Updating run: ${runId}`, patch);
-
-    const clonedPatch = structuredClone(patch);
-    const updated: WorkflowRun = {
-      ...run,
-      ...clonedPatch,
-      nodeStates: clonedPatch.nodeStates ?? run.nodeStates,
-      context: clonedPatch.context ?? run.context,
-    };
-
-    this.runs.set(runId, updated);
-
-    // Terminal states should drop any stalled claim lease.
-    if (patch.status && patch.status !== "running") {
-      this.stalledClaims.delete(runId);
-    }
-
-    return Promise.resolve();
   }
 
   updateRunIfStatus(
@@ -131,9 +124,12 @@ export class MemoryBackend implements WorkflowBackend {
     }
     if (!expectedStatuses.includes(run.status)) return Promise.resolve(false);
 
-    // updateRun mutates synchronously before returning, so the status check and
-    // patch are one atomic operation for this in-memory backend.
-    return this.updateRun(runId, patch).then(() => true);
+    try {
+      this.applyRunUpdate(runId, run, patch);
+      return Promise.resolve(true);
+    } catch (error) {
+      return Promise.reject(error);
+    }
   }
 
   updateRunIfStatusAndWorker(
@@ -142,6 +138,11 @@ export class MemoryBackend implements WorkflowBackend {
     expectedWorkerId: string,
     patch: Partial<WorkflowRun>,
   ): Promise<boolean> {
+    try {
+      assertWorkflowWorkerId(expectedWorkerId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     const run = this.runs.get(runId);
     if (!run) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
@@ -150,7 +151,74 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.resolve(false);
     }
 
-    return this.updateRun(runId, patch).then(() => true);
+    try {
+      this.applyRunUpdate(runId, run, patch);
+      return Promise.resolve(true);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  updateRunIfStatusAndLock(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    lockId: string,
+    patch: WorkflowRunUpdate,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    try {
+      assertWorkflowLockId(lockId);
+      if (expectedWorkerId !== undefined) assertWorkflowWorkerId(expectedWorkerId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const run = this.runs.get(runId);
+    if (!run) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+
+    const lock = this.locks.get(runId);
+    if (!lock || lock.lockId !== lockId || lock.expiresAt <= Date.now()) {
+      if (lock?.lockId === lockId && lock.expiresAt <= Date.now()) this.locks.delete(runId);
+      return Promise.resolve(false);
+    }
+    if (
+      !expectedStatuses.includes(run.status) ||
+      (expectedWorkerId !== undefined && run.workerId !== expectedWorkerId)
+    ) {
+      return Promise.resolve(false);
+    }
+
+    try {
+      this.applyRunUpdate(runId, run, patch);
+      if (patch.status !== undefined && patch.status !== "running") {
+        this.locks.delete(runId);
+      }
+      return Promise.resolve(true);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  private applyRunUpdate(
+    runId: string,
+    run: WorkflowRun,
+    patch: WorkflowRunUpdate,
+  ): void {
+    assertWorkflowRunUpdate(patch);
+    logger.debug(`Updating run: ${runId}`, patch);
+
+    const clonedPatch = structuredClone(patch);
+    this.runs.set(runId, {
+      ...run,
+      ...clonedPatch,
+      nodeStates: clonedPatch.nodeStates ?? run.nodeStates,
+      context: clonedPatch.context ?? run.context,
+    });
+
+    if (patch.status && patch.status !== "running") {
+      this.stalledClaims.delete(runId);
+    }
   }
 
   deleteRun(runId: string): Promise<void> {
@@ -195,9 +263,11 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   private snapshotRun(run: WorkflowRun): WorkflowRun {
-    const pendingApprovals = (this.approvals.get(run.id) ?? []).filter(
-      (approval) => approval.status === "pending",
-    );
+    const pendingApprovals = run.status === "waiting"
+      ? (this.approvals.get(run.id) ?? []).filter(
+        (approval) => approval.status === "pending",
+      )
+      : [];
     return structuredClone({ ...run, pendingApprovals });
   }
 
@@ -296,11 +366,26 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   savePendingApproval(runId: string, approval: PendingApproval): Promise<void> {
-    if (!this.runs.has(runId)) {
+    const run = this.runs.get(runId);
+    if (!run) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    if (run.status !== "waiting") {
+      return Promise.reject(
+        INVALID_ARGUMENT.create({
+          detail: `Approval can be saved only while run is waiting, got: ${run.status}`,
+        }),
+      );
     }
     logger.debug("Saving approval", { approvalId: approval.id, runId });
     const approvals = this.approvals.get(runId) ?? [];
+    if (approvals.some((stored) => stored.id === approval.id)) {
+      return Promise.reject(
+        INVALID_ARGUMENT.create({
+          detail: `Approval already exists for run "${runId}": ${approval.id}`,
+        }),
+      );
+    }
     approvals.push(structuredClone(approval));
     this.approvals.set(runId, approvals);
     return Promise.resolve();
@@ -314,12 +399,20 @@ export class MemoryBackend implements WorkflowBackend {
   ): Promise<boolean> {
     const run = this.runs.get(runId);
     if (
-      !run || !expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId
+      !run || run.status !== "waiting" || !expectedStatuses.includes(run.status) ||
+      run.workerId !== expectedWorkerId
     ) {
       return Promise.resolve(false);
     }
 
     const approvals = this.approvals.get(runId) ?? [];
+    if (approvals.some((stored) => stored.id === approval.id)) {
+      return Promise.reject(
+        INVALID_ARGUMENT.create({
+          detail: `Approval already exists for run "${runId}": ${approval.id}`,
+        }),
+      );
+    }
     approvals.push(structuredClone(approval));
     this.approvals.set(runId, approvals);
     return Promise.resolve(true);
@@ -328,7 +421,7 @@ export class MemoryBackend implements WorkflowBackend {
   updatePendingApproval(
     runId: string,
     approvalId: string,
-    patch: Partial<PendingApproval>,
+    patch: PendingApprovalMetadataUpdate,
   ): Promise<void> {
     const approvals = this.approvals.get(runId);
     const index = approvals?.findIndex((approval) => approval.id === approvalId) ?? -1;
@@ -337,25 +430,49 @@ export class MemoryBackend implements WorkflowBackend {
         RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` }),
       );
     }
+    if (
+      approvals.some((approval, candidate) => candidate !== index && approval.id === approvalId)
+    ) {
+      return Promise.reject(
+        INVALID_ARGUMENT.create({
+          detail: `Duplicate approval id stored for run "${runId}": ${approvalId}`,
+        }),
+      );
+    }
+
+    let metadata: Readonly<PendingApprovalMetadataUpdate>;
+    try {
+      metadata = capturePendingApprovalMetadataUpdate(patch);
+    } catch (error) {
+      return Promise.reject(error);
+    }
 
     approvals[index] = {
       ...approvals[index]!,
-      ...structuredClone(patch),
-      id: approvalId,
+      notificationError: metadata.notificationError,
     };
     return Promise.resolve();
   }
 
   getPendingApprovals(runId: string): Promise<PendingApproval[]> {
+    if (this.runs.get(runId)?.status !== "waiting") return Promise.resolve([]);
     const approvals = this.approvals.get(runId) ?? [];
     return Promise.resolve(
       approvals.filter((a) => a.status === "pending").map((a) => structuredClone(a)),
     );
   }
 
-  getPendingApproval(runId: string, approvalId: string): Promise<PendingApproval | null> {
+  getApproval(runId: string, approvalId: string): Promise<PendingApproval | null> {
     const approvals = this.approvals.get(runId) ?? [];
-    const approval = approvals.find((a) => a.id === approvalId);
+    const matches = approvals.filter((approval) => approval.id === approvalId);
+    if (matches.length > 1) {
+      return Promise.reject(
+        INVALID_ARGUMENT.create({
+          detail: `Duplicate approval id stored for run "${runId}": ${approvalId}`,
+        }),
+      );
+    }
+    const approval = matches[0];
     return Promise.resolve(approval ? structuredClone(approval) : null);
   }
 
@@ -363,28 +480,60 @@ export class MemoryBackend implements WorkflowBackend {
     runId: string,
     approvalId: string,
     decision: ApprovalDecision,
+    timingInput: ApprovalDecisionTiming,
   ): Promise<boolean> {
+    let timing: Readonly<ApprovalDecisionTiming>;
+    try {
+      timing = captureApprovalDecisionTiming(timingInput);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
     const approvals = this.approvals.get(runId);
     if (!approvals) {
-      throw RESOURCE_NOT_FOUND.create({ detail: `No approvals found for run: ${runId}` });
+      return Promise.reject(
+        RESOURCE_NOT_FOUND.create({ detail: `No approvals found for run: ${runId}` }),
+      );
     }
 
-    const approval = approvals.find((a) => a.id === approvalId);
-    if (!approval) {
+    const matches = approvals.filter((approval) => approval.id === approvalId);
+    if (matches.length === 0) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
+    if (matches.length !== 1) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Duplicate approval id stored for run "${runId}": ${approvalId}`,
+      });
+    }
+    const approval = matches[0]!;
 
-    // Pending-precondition gate: only the first decision wins. A concurrent
-    // decision on an already-resolved approval is reported as skipped so callers
-    // can treat this return value as the authoritative gate.
-    if (approval.status !== "pending") {
+    // Run status, pending state, and expiry are one synchronous in-memory CAS.
+    // This mirrors the single Redis Lua transaction used by the distributed
+    // backend, so a terminal run cannot admit a late approval decision.
+    if (this.runs.get(runId)?.status !== "waiting" || approval.status !== "pending") {
+      return Promise.resolve(false);
+    }
+
+    const expiryMs = approval.expiresAt?.getTime();
+    if (expiryMs !== undefined && !Number.isFinite(expiryMs)) {
+      return Promise.reject(
+        ORCHESTRATION_ERROR.create({
+          detail: `Approval has an invalid persisted expiry: ${approvalId}`,
+        }),
+      );
+    }
+    const isExpired = expiryMs !== undefined && timing.decidedAt.getTime() > expiryMs;
+    const expiryMatches = timing.expiryCondition === "unexpired"
+      ? !isExpired
+      : expiryMs !== undefined && isExpired;
+    if (!expiryMatches) {
       return Promise.resolve(false);
     }
 
     logger.debug("Updating approval", { approvalId, decision });
     approval.status = decision.approved ? "approved" : "rejected";
     approval.decidedBy = decision.approver;
-    approval.decidedAt = new Date();
+    approval.decidedAt = timing.decidedAt;
     approval.comment = decision.comment;
     return Promise.resolve(true);
   }
@@ -399,6 +548,7 @@ export class MemoryBackend implements WorkflowBackend {
     for (const [runId, approvals] of this.approvals) {
       const run = this.runs.get(runId);
       if (!run) continue;
+      if (run.status !== "waiting") continue;
       if (filter?.workflowId && run.workflowId !== filter.workflowId) continue;
 
       for (const approval of approvals) {
@@ -484,26 +634,29 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(lockId);
   }
 
-  releaseLock(runId: string, lockId?: string): Promise<void> {
+  releaseLock(runId: string, lockId: string): Promise<boolean> {
     logger.debug(`Releasing lock for: ${runId}`);
 
     // Compare-and-delete: a stalled worker whose lock already expired and was
     // re-acquired by another owner must not delete the new owner's lock.
     const existing = this.locks.get(runId);
-    if (lockId !== undefined && existing && existing.lockId !== lockId) {
-      return Promise.resolve();
+    if (!existing) return Promise.resolve(false);
+    if (existing.expiresAt <= Date.now()) {
+      if (existing.lockId === lockId) this.locks.delete(runId);
+      return Promise.resolve(false);
     }
+    if (existing.lockId !== lockId) return Promise.resolve(false);
 
     this.locks.delete(runId);
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
 
-  extendLock(runId: string, duration: number, lockId?: string): Promise<boolean> {
+  extendLock(runId: string, duration: number, lockId: string): Promise<boolean> {
     const existing = this.locks.get(runId);
     const now = Date.now();
 
     if (!existing || existing.expiresAt <= now) return Promise.resolve(false);
-    if (lockId !== undefined && existing.lockId !== lockId) return Promise.resolve(false);
+    if (existing.lockId !== lockId) return Promise.resolve(false);
 
     existing.expiresAt = now + duration;
     return Promise.resolve(true);

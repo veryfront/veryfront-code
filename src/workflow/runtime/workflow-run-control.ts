@@ -25,16 +25,29 @@ export interface WorkflowRunControlExecuteResult {
   error?: string;
 }
 
+export interface WorkflowRunControlExecutionFence {
+  /** Immutable durable owner admitted for this exact execution. */
+  readonly expectedWorkerId?: string;
+  /** Immutable acquired or adopted lease token for this exact execution. */
+  readonly lockId?: string;
+}
+
 export interface WorkflowRunControlExecuteInput {
   backend: WorkflowBackend;
   run: WorkflowRun;
   expectedWorkerId?: string;
+  /** Opaque live lease already acquired by this execution and adopted here. */
+  existingLockId?: string;
   enableLocking?: boolean;
   lockDuration: number;
   heartbeatInterval: number;
   waitForCancellationUpdate(runId: string): Promise<void>;
   waitForCancellationGrace(operation: Promise<unknown>): Promise<void>;
-  registerController?(runId: string, controller: AbortController): void;
+  registerController?(
+    runId: string,
+    controller: AbortController,
+    fence: WorkflowRunControlExecutionFence,
+  ): void;
   clearController?(runId: string, controller: AbortController): void;
   isCurrentExecution(runId: string, controller: AbortController): boolean;
   execute(input: {
@@ -72,10 +85,14 @@ export interface WorkflowRunControlClaimInput {
   managerId: string;
   executionId: string;
   stalledThreshold: number;
+  lockRetryInterval: number;
   executionTimeout: number;
   env: Record<string, string>;
   debug: boolean;
+  /** Synchronous lifecycle fence checked before isolated-execution admission. */
+  isAdmissionOpen(): boolean;
   createRunExecution(config: RunExecutionConfig): Promise<string>;
+  deleteRunExecution(executionId: string): Promise<void>;
 }
 
 export interface WorkflowRunControlClaimCreatedExecution {
@@ -91,10 +108,28 @@ export interface WorkflowRunControlClaimOutcome {
     | "skipped-lock-held"
     | "skipped-status-changed"
     | "skipped-stalled-claim-lost"
+    | "skipped-claim-lost"
+    | "skipped-admission-closed"
     | "failed-before-claim"
     | "failed-after-claim";
   execution?: WorkflowRunControlClaimCreatedExecution;
+  /** Exact attempted owner retained when child teardown or claim compensation is incomplete. */
+  teardownCandidate?: Pick<WorkflowRunControlClaimCreatedExecution, "executionId" | "runId">;
   error?: Error;
+}
+
+function claimCleanupError(
+  detail: string,
+  primaryError: Error,
+  cleanupError: unknown,
+): Error {
+  return ORCHESTRATION_ERROR.create({
+    detail,
+    cause: new AggregateError(
+      [primaryError, ensureError(cleanupError)],
+      "Workflow run claim failed and cleanup also failed",
+    ),
+  });
 }
 
 export interface WorkflowRunControlApprovalDecisionOperation {
@@ -113,6 +148,7 @@ export interface WorkflowRunControlHydrateEnvOperation {
   run: WorkflowRun;
   env: Record<string, string>;
   expectedWorkerId?: string;
+  expectedLockId?: string;
 }
 
 export interface WorkflowRunControlFailExecutionOperation {
@@ -120,6 +156,7 @@ export interface WorkflowRunControlFailExecutionOperation {
   runId: string;
   error: unknown;
   expectedWorkerId?: string;
+  expectedLockId?: string;
 }
 
 export interface WorkflowRunControlReconcileInput {
@@ -143,6 +180,41 @@ export interface WorkflowRunControlReconcileOutcome {
 const DEFAULT_DECISION_RECONCILIATION_ATTEMPTS = 8;
 const ACTIVE_RECONCILE_STATUSES: WorkflowRun["status"][] = ["pending", "running", "waiting"];
 
+function parseLockAcquisitionResult(value: unknown, runId: string): string | null {
+  if (value === null) return null;
+  if (typeof value === "string" && value.trim().length > 0) return value;
+  throw ORCHESTRATION_ERROR.create({
+    detail: `Workflow backend returned an invalid lock token for run "${runId}"`,
+  });
+}
+
+function parseLockMutationResult(
+  value: unknown,
+  operation: "renew" | "release",
+  runId: string,
+): boolean {
+  if (typeof value === "boolean") return value;
+  throw ORCHESTRATION_ERROR.create({
+    detail: `Workflow backend returned a non-boolean lock ${operation} result for run "${runId}"`,
+  });
+}
+
+async function notifyTerminalObserver(
+  kind: "completion" | "failure",
+  runId: string,
+  observer: (() => void | Promise<void>) | undefined,
+): Promise<void> {
+  if (!observer) return;
+  try {
+    await observer();
+  } catch (error) {
+    // Terminal state is already durable at this point. Observer failures must
+    // neither rewrite that state nor replace the execution error that caused a
+    // failed run, but they must remain visible to operators.
+    logger.error(`Workflow ${kind} observer failed after terminal persistence`, { runId }, error);
+  }
+}
+
 export async function reconcileWorkflowRunControl(
   input: WorkflowRunControlReconcileInput,
 ): Promise<WorkflowRunControlReconcileOutcome> {
@@ -165,6 +237,7 @@ export async function claimWorkflowRunControl(
     managerId,
     executionId,
     stalledThreshold,
+    lockRetryInterval,
     executionTimeout,
     env,
     debug,
@@ -173,24 +246,136 @@ export async function claimWorkflowRunControl(
   const workerId = `run-execution:${executionId}`;
   let pendingLockToken: string | null = null;
   let runToProcess: WorkflowRun | null = run;
+  let stalledClaimed = false;
   let claimed = false;
+  let claimHeartbeatIntervalId: ReturnType<typeof setInterval> | undefined;
+  let claimHeartbeatPromise: Promise<void> | undefined;
+  let claimHeartbeatError: Error | undefined;
+
+  const stopClaimHeartbeat = async (): Promise<void> => {
+    if (claimHeartbeatIntervalId) {
+      clearInterval(claimHeartbeatIntervalId);
+      claimHeartbeatIntervalId = undefined;
+    }
+    if (claimHeartbeatPromise) {
+      await claimHeartbeatPromise;
+      claimHeartbeatPromise = undefined;
+    }
+  };
+
+  const startClaimHeartbeat = (): void => {
+    if (!pendingLockToken || !hasLockSupport(backend)) return;
+    const interval = Math.max(1, Math.floor(stalledThreshold / 3));
+    claimHeartbeatIntervalId = setInterval(() => {
+      if (claimHeartbeatPromise || claimHeartbeatError || !pendingLockToken) return;
+      const token = pendingLockToken;
+      claimHeartbeatPromise = (async () => {
+        try {
+          const extended = parseLockMutationResult(
+            await backend.extendLock(runId, stalledThreshold, token),
+            "renew",
+            runId,
+          );
+          if (!extended) {
+            throw ORCHESTRATION_ERROR.create({
+              detail: `Lost pending claim lock for workflow run "${runId}"`,
+            });
+          }
+          const updated = await updateRunIfStatus(
+            backend,
+            runId,
+            ["running"],
+            { heartbeatAt: new Date() },
+            workerId,
+            token,
+          );
+          if (!updated) {
+            throw ORCHESTRATION_ERROR.create({
+              detail: `Lost pending claim ownership for workflow run "${runId}"`,
+            });
+          }
+        } catch (error) {
+          claimHeartbeatError = ensureError(error);
+          if (claimHeartbeatIntervalId) {
+            clearInterval(claimHeartbeatIntervalId);
+            claimHeartbeatIntervalId = undefined;
+          }
+        } finally {
+          claimHeartbeatPromise = undefined;
+        }
+      })();
+    }, interval);
+  };
+
+  const rollbackClosedAdmission = async (): Promise<WorkflowRunControlClaimOutcome> => {
+    if (!claimed && !stalledClaimed) return { status: "skipped-admission-closed" };
+
+    const expectedWorkerId = claimed ? workerId : `mgr:${managerId}`;
+    const expectedLockId = claimed ? pendingLockToken ?? undefined : undefined;
+    let rolledBack = await updateRunIfStatus(
+      backend,
+      runId,
+      ["running"],
+      { status: "pending" },
+      expectedWorkerId,
+      expectedLockId,
+    );
+    if (rolledBack && expectedLockId) {
+      // A lock-fenced transition away from running consumes the claim lease.
+      pendingLockToken = null;
+    }
+
+    if (!rolledBack && expectedLockId) {
+      // No child has been invoked yet, so the unique durable worker identity is
+      // sufficient to requeue an expired manager lease without touching a
+      // replacement owner. The finally block still attempts exact-token cleanup.
+      rolledBack = await updateRunIfStatus(
+        backend,
+        runId,
+        ["running"],
+        { status: "pending" },
+        expectedWorkerId,
+      );
+    }
+
+    if (rolledBack) return { status: "skipped-admission-closed" };
+
+    const latest = await backend.getRun(runId);
+    if (latest?.status !== "running" || latest.workerId !== expectedWorkerId) {
+      return { status: "skipped-admission-closed" };
+    }
+    return {
+      status: "skipped-claim-lost",
+      error: ORCHESTRATION_ERROR.create({
+        detail: `Could not requeue workflow run "${runId}" after execution admission closed`,
+      }),
+    };
+  };
 
   try {
+    if (!input.isAdmissionOpen()) return { status: "skipped-admission-closed" };
+
     if (run.status === "running") {
       if (!hasWorkerSupport(backend)) return { status: "skipped-stalled-claim-lost" };
-      const stalledClaimed = await backend.claimStalledRun(
+      stalledClaimed = await backend.claimStalledRun(
         runId,
         `mgr:${managerId}`,
         stalledThreshold,
       );
       if (!stalledClaimed) return { status: "skipped-stalled-claim-lost" };
+      if (!input.isAdmissionOpen()) return await rollbackClosedAdmission();
     }
 
     if (run.status === "pending" && hasLockSupport(backend)) {
-      pendingLockToken = await backend.acquireLock(runId, stalledThreshold);
+      pendingLockToken = parseLockAcquisitionResult(
+        await backend.acquireLock(runId, stalledThreshold),
+        runId,
+      );
       if (!pendingLockToken) return { status: "skipped-lock-held" };
+      if (!input.isAdmissionOpen()) return { status: "skipped-admission-closed" };
 
       const latest = await backend.getRun(runId);
+      if (!input.isAdmissionOpen()) return { status: "skipped-admission-closed" };
       if (!latest || latest.status !== "pending") {
         return { status: "skipped-status-changed" };
       }
@@ -202,6 +387,7 @@ export async function claimWorkflowRunControl(
     }
 
     requireWorkflowSourceIntegrationPolicy(runToProcess);
+    if (!input.isAdmissionOpen()) return await rollbackClosedAdmission();
 
     const now = new Date();
     const expectedWorkerId = run.status === "running" ? `mgr:${managerId}` : undefined;
@@ -216,26 +402,154 @@ export async function claimWorkflowRunControl(
         workerId,
       },
       expectedWorkerId,
+      pendingLockToken ?? undefined,
     );
     if (!claimed) {
       return {
         status: run.status === "running" ? "skipped-stalled-claim-lost" : "skipped-status-changed",
       };
     }
+    if (!input.isAdmissionOpen()) return await rollbackClosedAdmission();
+
+    const claimedRun: WorkflowRun = {
+      ...runToProcess,
+      status: "running",
+      startedAt: now,
+      heartbeatAt: now,
+      workerId,
+    };
 
     const executionConfig: RunExecutionConfig = {
       executionId,
-      run: runToProcess,
+      run: claimedRun,
       managerId,
       timeout: executionTimeout,
       env,
       debug,
+      lockAcquisition: {
+        duration: stalledThreshold,
+        timeout: stalledThreshold,
+        retryInterval: lockRetryInterval,
+      },
     };
 
-    await runWithWorkflowSourceIntegrationPolicy(
-      runToProcess,
+    // No await may occur between this final fence and invoking the executor:
+    // the synchronous callback invocation is the admission linearization point.
+    if (!input.isAdmissionOpen()) return await rollbackClosedAdmission();
+    startClaimHeartbeat();
+    const createdExecutionId = await runWithWorkflowSourceIntegrationPolicy(
+      claimedRun,
       () => input.createRunExecution(executionConfig),
     );
+    await stopClaimHeartbeat();
+
+    if (createdExecutionId !== executionId) {
+      await input.deleteRunExecution(createdExecutionId);
+      throw ORCHESTRATION_ERROR.create({
+        detail:
+          `Run executor returned execution id "${createdExecutionId}" for requested id "${executionId}"`,
+      });
+    }
+
+    const claimStillOwned = !claimHeartbeatError && await updateRunIfStatus(
+      backend,
+      runId,
+      ["running"],
+      { heartbeatAt: new Date() },
+      workerId,
+      pendingLockToken ?? undefined,
+    );
+    if (!claimStillOwned) {
+      const ownershipError = claimHeartbeatError ?? ORCHESTRATION_ERROR.create({
+        detail: `Lost workflow run claim before execution "${executionId}" was admitted`,
+      });
+      const latest = await backend.getRun(runId);
+      // The intended child may win its fresh lease immediately after the
+      // manager lease expires. Its durable worker identity proves that this is
+      // the admitted execution, even though the old token no longer verifies.
+      if (latest?.workerId === workerId) {
+        return {
+          status: "created",
+          execution: {
+            executionId,
+            runId,
+            status: "pending",
+            createdAt: new Date(),
+          },
+        };
+      }
+      try {
+        await input.deleteRunExecution(executionId);
+      } catch (cleanupError) {
+        return {
+          status: "skipped-claim-lost",
+          teardownCandidate: { executionId, runId },
+          error: claimCleanupError(
+            `Lost workflow run claim and could not clean up execution "${executionId}"`,
+            ownershipError,
+            cleanupError,
+          ),
+        };
+      }
+      return { status: "skipped-claim-lost", error: ownershipError };
+    }
+
+    if (pendingLockToken) {
+      if (!hasLockSupport(backend)) {
+        await input.deleteRunExecution(executionId);
+        return {
+          status: "skipped-claim-lost",
+          error: ORCHESTRATION_ERROR.create({
+            detail: `Workflow backend lost lock support before admitting "${executionId}"`,
+          }),
+        };
+      }
+      const released = parseLockMutationResult(
+        await backend.releaseLock(runId, pendingLockToken),
+        "release",
+        runId,
+      );
+      if (!released) {
+        pendingLockToken = null;
+        const latest = await backend.getRun(runId);
+        // A legitimate child may acquire immediately after an event-loop
+        // pause lets the manager lease expire. Durable worker ownership, not
+        // failure to delete the old token, decides whether that child remains
+        // admitted.
+        if (latest?.workerId === workerId) {
+          return {
+            status: "created",
+            execution: {
+              executionId,
+              runId,
+              status: "pending",
+              createdAt: new Date(),
+            },
+          };
+        }
+        const ownershipError = ORCHESTRATION_ERROR.create({
+          detail: `Lost workflow run claim before releasing execution "${executionId}"`,
+        });
+        try {
+          await input.deleteRunExecution(executionId);
+        } catch (cleanupError) {
+          return {
+            status: "skipped-claim-lost",
+            teardownCandidate: { executionId, runId },
+            error: claimCleanupError(
+              `Could not clean up execution "${executionId}" after losing its claim`,
+              ownershipError,
+              cleanupError,
+            ),
+          };
+        }
+        return {
+          status: "skipped-claim-lost",
+          error: ownershipError,
+        };
+      }
+      pendingLockToken = null;
+    }
 
     return {
       status: "created",
@@ -247,11 +561,67 @@ export async function claimWorkflowRunControl(
       },
     };
   } catch (error) {
-    return await failClaim(input, runToProcess ?? run, workerId, claimed, ensureError(error));
+    await stopClaimHeartbeat();
+    const failure = claimHeartbeatError ?? ensureError(error);
+    try {
+      await input.deleteRunExecution(executionId);
+    } catch (cleanupError) {
+      return {
+        status: "skipped-claim-lost",
+        teardownCandidate: { executionId, runId },
+        error: claimCleanupError(
+          `Could not clean up rejected run execution "${executionId}"`,
+          failure,
+          cleanupError,
+        ),
+      };
+    }
+    let outcome: WorkflowRunControlClaimOutcome;
+    try {
+      outcome = await failClaim(
+        input,
+        runToProcess ?? run,
+        workerId,
+        claimed,
+        pendingLockToken ?? undefined,
+        failure,
+      );
+    } catch (cleanupError) {
+      return {
+        status: "skipped-claim-lost",
+        teardownCandidate: { executionId, runId },
+        error: claimCleanupError(
+          `Could not compensate rejected run execution "${executionId}"`,
+          failure,
+          cleanupError,
+        ),
+      };
+    }
+    if (outcome.status === "failed-before-claim" || outcome.status === "failed-after-claim") {
+      pendingLockToken = null;
+    }
+    return outcome;
   } finally {
+    await stopClaimHeartbeat();
     if (pendingLockToken) {
       try {
-        await backend.releaseLock?.(runId, pendingLockToken);
+        if (!hasLockSupport(backend)) {
+          logger.warn(
+            `Failed to release pending claim lock for ${runId}:`,
+            ORCHESTRATION_ERROR.create({
+              detail: `Workflow backend lost lock support while releasing run "${runId}"`,
+            }),
+          );
+        } else {
+          const released = parseLockMutationResult(
+            await backend.releaseLock(runId, pendingLockToken),
+            "release",
+            runId,
+          );
+          if (!released) {
+            logger.warn(`Pending claim lock was no longer owned for ${runId}`);
+          }
+        }
       } catch (error) {
         logger.warn(`Failed to release pending claim lock for ${runId}:`, error);
       }
@@ -375,8 +745,12 @@ async function reconcileHydrateEnv(
       },
     },
     operation.expectedWorkerId,
+    operation.expectedLockId,
   );
-  const latest = (await backend.getRun(run.id)) ?? run;
+  const latest = await backend.getRun(run.id);
+  if (!latest) {
+    throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${run.id}` });
+  }
   if (updated) return { status: "reconciled", run: latest };
   if (!ACTIVE_RECONCILE_STATUSES.includes(latest.status)) {
     return { status: "skipped-terminal", run: latest };
@@ -408,6 +782,7 @@ async function reconcileExecutionFailure(
       completedAt: new Date(),
     },
     operation.expectedWorkerId,
+    operation.expectedLockId,
   );
   const latest = await backend.getRun(operation.runId);
   if (updated) return { status: "reconciled", run: latest ?? undefined };
@@ -428,6 +803,7 @@ async function failClaim(
   run: WorkflowRun,
   workerId: string,
   claimed: boolean,
+  lockToken?: string,
   error?: Error,
 ): Promise<WorkflowRunControlClaimOutcome> {
   const message = `RUN_EXECUTION_CREATION_FAILED: Failed to create run execution: ${
@@ -440,17 +816,31 @@ async function failClaim(
   };
 
   if (claimed) {
-    await updateRunIfStatus(input.backend, run.id, ["running"], failure, workerId);
-    return { status: "failed-after-claim", error };
+    const failed = await updateRunIfStatus(
+      input.backend,
+      run.id,
+      ["running"],
+      failure,
+      workerId,
+      lockToken,
+    );
+    return failed
+      ? { status: "failed-after-claim", error }
+      : { status: "skipped-claim-lost", error };
   }
 
-  await updateRunIfStatus(
+  const expectedWorkerId = run.status === "running" ? `mgr:${input.managerId}` : undefined;
+  const failed = await updateRunIfStatus(
     input.backend,
     run.id,
     ["pending", "waiting", "running"],
     failure,
+    expectedWorkerId,
+    lockToken,
   );
-  return { status: "failed-before-claim", error };
+  return failed
+    ? { status: "failed-before-claim", error }
+    : { status: "skipped-claim-lost", error };
 }
 
 export async function executeWorkflowRunControl(
@@ -464,7 +854,24 @@ export async function executeWorkflowRunControl(
     heartbeatInterval,
   } = input;
   const runId = run.id;
-  const useLocking = input.enableLocking !== false && hasLockSupport(backend);
+  if (input.enableLocking !== false && !hasLockSupport(backend)) {
+    throw ORCHESTRATION_ERROR.create({
+      detail:
+        "Workflow locking requires backend acquireLock, extendLock, releaseLock, and lock-fenced update methods",
+    });
+  }
+  const lockBackend = input.enableLocking !== false && hasLockSupport(backend) ? backend : null;
+  const useLocking = lockBackend !== null;
+  if (input.existingLockId !== undefined && !useLocking) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "An existing workflow lock requires locking to be enabled",
+    });
+  }
+  if (input.existingLockId !== undefined && expectedWorkerId === undefined) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "An existing workflow lock requires an expected worker owner",
+    });
+  }
   const ownership: CheckpointOwnership | undefined = expectedWorkerId === undefined
     ? undefined
     : { runId, workerId: expectedWorkerId };
@@ -474,9 +881,27 @@ export async function executeWorkflowRunControl(
   let ownershipLostError: Error | undefined;
   let lockToken: string | null = null;
   let pausedForWaiting = false;
+  let durableCancellationObserved = false;
 
   if (useLocking) {
-    lockToken = await backend.acquireLock!(runId, lockDuration);
+    if (input.existingLockId !== undefined) {
+      lockToken = parseLockAcquisitionResult(input.existingLockId, runId);
+      const accepted = parseLockMutationResult(
+        await lockBackend!.extendLock(runId, lockDuration, lockToken!),
+        "renew",
+        runId,
+      );
+      if (!accepted) {
+        throw ORCHESTRATION_ERROR.create({
+          detail: `Cannot execute workflow run "${runId}": existing lock is no longer owned`,
+        });
+      }
+    } else {
+      lockToken = parseLockAcquisitionResult(
+        await lockBackend!.acquireLock(runId, lockDuration),
+        runId,
+      );
+    }
     if (!lockToken) {
       throw ORCHESTRATION_ERROR.create({
         detail: `Cannot execute workflow run "${runId}": another worker is already executing it. ` +
@@ -487,16 +912,33 @@ export async function executeWorkflowRunControl(
   }
 
   const executionController = new AbortController();
-  input.registerController?.(runId, executionController);
+  input.registerController?.(runId, executionController, {
+    expectedWorkerId,
+    lockId: lockToken ?? undefined,
+  });
 
   try {
-    const currentRun = await backend.getRun(runId);
-    if (
-      currentRun?.status === "cancelled" || executionController.signal.aborted ||
-      !input.isCurrentExecution(runId, executionController)
-    ) {
+    let currentRun = await backend.getRun(runId);
+    if (currentRun?.status === "cancelled") {
+      durableCancellationObserved = true;
+      return { status: "cancelled", run: currentRun };
+    }
+    if (executionController.signal.aborted) {
+      // Shutdown can race admission after the execution has acquired its
+      // lease. Keep that lease live until the exact-fenced cancellation has
+      // settled; otherwise finally could release it first and leave a pending
+      // run behind.
+      await input.waitForCancellationUpdate(runId);
+      currentRun = await backend.getRun(runId);
+      if (currentRun?.status === "cancelled") {
+        durableCancellationObserved = true;
+        return { status: "cancelled", run: currentRun };
+      }
+      return { status: "skipped", run: currentRun ?? undefined };
+    }
+    if (!input.isCurrentExecution(runId, executionController)) {
       return {
-        status: currentRun?.status === "cancelled" ? "cancelled" : "skipped",
+        status: "skipped",
         run: currentRun ?? undefined,
       };
     }
@@ -512,6 +954,7 @@ export async function executeWorkflowRunControl(
         heartbeatAt: now,
       },
       expectedWorkerId,
+      lockToken ?? undefined,
     );
     if (!activated) {
       throw ORCHESTRATION_ERROR.create({
@@ -528,10 +971,19 @@ export async function executeWorkflowRunControl(
           !input.isCurrentExecution(runId, executionController)
         ) return;
 
-        if (useLocking && typeof backend.extendLock === "function") {
+        if (useLocking) {
           let extended: boolean;
           try {
-            extended = await backend.extendLock(runId, lockDuration, lockToken ?? undefined);
+            if (!lockToken) {
+              throw ORCHESTRATION_ERROR.create({
+                detail: `Workflow lock token is missing for run "${runId}"`,
+              });
+            }
+            extended = parseLockMutationResult(
+              await lockBackend!.extendLock(runId, lockDuration, lockToken),
+              "renew",
+              runId,
+            );
           } catch (error) {
             if (!lockLostError) {
               lockLostError = ORCHESTRATION_ERROR.create({
@@ -564,26 +1016,23 @@ export async function executeWorkflowRunControl(
         ) return;
 
         try {
-          if (expectedWorkerId === undefined) {
-            await backend.updateRun(runId, { heartbeatAt: new Date() });
-          } else {
-            const updated = await updateRunIfStatus(
-              backend,
-              runId,
-              ["running", "waiting"],
-              { heartbeatAt: new Date() },
-              expectedWorkerId,
-            );
-            if (!updated) {
-              ownershipLostError = ORCHESTRATION_ERROR.create({
-                detail: `Lost execution ownership for run "${runId}" during heartbeat`,
-              });
-              if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
-              executionController.abort(ownershipLostError);
-            }
+          const updated = await updateRunIfStatus(
+            backend,
+            runId,
+            ["running", "waiting"],
+            { heartbeatAt: new Date() },
+            expectedWorkerId,
+            lockToken ?? undefined,
+          );
+          if (!updated) {
+            ownershipLostError = ORCHESTRATION_ERROR.create({
+              detail: `Lost execution ownership for run "${runId}" during heartbeat`,
+            });
+            if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
+            executionController.abort(ownershipLostError);
           }
         } catch (error) {
-          if (expectedWorkerId !== undefined && !ownershipLostError) {
+          if (!ownershipLostError) {
             ownershipLostError = ORCHESTRATION_ERROR.create({
               detail: `Could not verify execution ownership for run "${runId}" during heartbeat`,
               cause: error instanceof Error ? error : undefined,
@@ -591,8 +1040,6 @@ export async function executeWorkflowRunControl(
             logger.error("Could not verify workflow ownership; aborting run", { runId }, error);
             if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
             executionController.abort(ownershipLostError);
-          } else {
-            logger.warn("Heartbeat update failed", { runId }, error);
           }
         } finally {
           heartbeatPromise = undefined;
@@ -613,21 +1060,46 @@ export async function executeWorkflowRunControl(
     if (executionController.signal.aborted) {
       await input.waitForCancellationUpdate(runId);
       const latestRun = await backend.getRun(runId);
-      if (latestRun?.status === "cancelled") return { status: "cancelled", run: latestRun };
+      if (latestRun?.status === "cancelled") {
+        durableCancellationObserved = true;
+        return { status: "cancelled", run: latestRun };
+      }
       executionController.signal.throwIfAborted();
     }
 
+    // A terminal or waiting transition consumes the current lease. Quiesce
+    // any in-flight heartbeat before that atomic transition so a legitimate
+    // lease deletion cannot be mistaken for lock loss by an older renewal.
+    await stopHeartbeat();
+    if (executionController.signal.aborted) executionController.signal.throwIfAborted();
+
     if (result.completed) {
-      const finalRun = await completeRun(input, executionController, result);
+      const finalRun = await completeRun(
+        input,
+        executionController,
+        result,
+        lockToken ?? undefined,
+      );
       if (!finalRun) return { status: "ownership-lost" };
       if (finalRun.status === "cancelled") return { status: "cancelled", run: finalRun };
-      await input.onComplete?.(finalRun);
+      if (useLocking) lockToken = null;
+      await notifyTerminalObserver(
+        "completion",
+        runId,
+        input.onComplete ? () => input.onComplete!(finalRun) : undefined,
+      );
       return { status: "completed", run: finalRun };
     }
 
     if (result.waiting) {
-      const paused = await pauseRun(input, executionController, result);
+      const paused = await pauseRun(
+        input,
+        executionController,
+        result,
+        lockToken ?? undefined,
+      );
       if (!paused) return { status: "ownership-lost" };
+      if (useLocking) lockToken = null;
       pausedForWaiting = true;
 
       await releaseWaitingLock();
@@ -649,12 +1121,29 @@ export async function executeWorkflowRunControl(
     }
 
     const error = ORCHESTRATION_ERROR.create({ detail: result.error || "Unknown error" });
-    const failed = await failRun(input, executionController, error, result, ["running"]);
+    const failed = await failRun(
+      input,
+      executionController,
+      error,
+      result,
+      ["running"],
+      lockToken ?? undefined,
+    );
     if (!failed) return { status: "ownership-lost" };
-    await input.onError?.(run, error, result.context);
+    if (useLocking) lockToken = null;
+    await notifyTerminalObserver(
+      "failure",
+      runId,
+      input.onError ? () => input.onError!(run, error, result.context) : undefined,
+    );
     return { status: "failed" };
   } catch (error) {
     const normalizedError = ensureError(error);
+
+    // Exceptions from the workflow body also lead to a lease-consuming
+    // failed transition. Settle the heartbeat first for the same reason as
+    // the normal completed/waiting/failed paths above.
+    await stopHeartbeat();
 
     if (lockLostError) {
       logger.warn("Aborted run after losing lock; leaving status for new owner", { runId });
@@ -667,9 +1156,28 @@ export async function executeWorkflowRunControl(
 
     await input.waitForCancellationUpdate(runId);
     const latestRun = await backend.getRun(runId);
-    if (latestRun?.status === "cancelled") return { status: "cancelled", run: latestRun };
+    if (latestRun?.status === "cancelled") {
+      durableCancellationObserved = true;
+      return { status: "cancelled", run: latestRun };
+    }
     const failureContext = latestRun?.context ?? run.context;
     const failureNodeStates = latestRun?.nodeStates ?? run.nodeStates;
+
+    // A waiting transition consumes the execution lease before invoking the
+    // callback. If that callback fails, reacquire a fresh lease before
+    // changing the durable waiting state. A replacement may already hold the
+    // lease while it prepares activation; status/worker checks alone cannot
+    // distinguish that window from continued ownership by this executor.
+    if (pausedForWaiting && useLocking && !lockToken) {
+      lockToken = parseLockAcquisitionResult(
+        await lockBackend!.acquireLock(runId, lockDuration),
+        runId,
+      );
+      if (!lockToken) {
+        logger.warn("Waiting callback failed after execution ownership changed", { runId });
+        return { status: "ownership-lost" };
+      }
+    }
 
     const failed = await failRun(
       input,
@@ -680,10 +1188,18 @@ export async function executeWorkflowRunControl(
         nodeStates: failureNodeStates,
       },
       pausedForWaiting ? ["waiting"] : ["running"],
+      lockToken ?? undefined,
     );
     if (!failed) return { status: "ownership-lost" };
+    if (useLocking) lockToken = null;
 
-    await input.onError?.(latestRun ?? run, normalizedError, failureContext);
+    await notifyTerminalObserver(
+      "failure",
+      runId,
+      input.onError
+        ? () => input.onError!(latestRun ?? run, normalizedError, failureContext)
+        : undefined,
+    );
     throw normalizedError;
   } finally {
     if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
@@ -698,12 +1214,28 @@ export async function executeWorkflowRunControl(
     input.clearController?.(runId, executionController);
 
     if (useLocking && !lockLostError && lockToken) {
-      await backend.releaseLock!(runId, lockToken);
-      logger.debug("Released lock for run", { runId });
+      await releaseFinalLock(lockToken, durableCancellationObserved);
     }
   }
 
-  async function releaseWaitingLock(): Promise<void> {
+  async function releaseFinalLock(
+    token: string,
+    allowAlreadyConsumed = false,
+  ): Promise<void> {
+    const released = parseLockMutationResult(
+      await lockBackend!.releaseLock(runId, token),
+      "release",
+      runId,
+    );
+    if (!released && !allowAlreadyConsumed) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Lost lock ownership before releasing workflow run "${runId}"`,
+      });
+    }
+    if (released) logger.debug("Released lock for run", { runId });
+  }
+
+  async function stopHeartbeat(): Promise<void> {
     if (heartbeatIntervalId) {
       clearInterval(heartbeatIntervalId);
       heartbeatIntervalId = undefined;
@@ -712,9 +1244,22 @@ export async function executeWorkflowRunControl(
       await heartbeatPromise;
       heartbeatPromise = undefined;
     }
+  }
+
+  async function releaseWaitingLock(): Promise<void> {
+    await stopHeartbeat();
     if (executionController.signal.aborted) executionController.signal.throwIfAborted();
     if (useLocking && lockToken) {
-      await backend.releaseLock!(runId, lockToken);
+      const released = parseLockMutationResult(
+        await lockBackend!.releaseLock(runId, lockToken),
+        "release",
+        runId,
+      );
+      if (!released) {
+        throw ORCHESTRATION_ERROR.create({
+          detail: `Lost lock ownership before pausing workflow run "${runId}"`,
+        });
+      }
       lockToken = null;
       logger.debug("Released lock for waiting run", { runId });
     }
@@ -725,6 +1270,7 @@ async function completeRun(
   input: WorkflowRunControlExecuteInput,
   executionController: AbortController,
   result: WorkflowRunControlExecuteResult,
+  lockToken?: string,
 ): Promise<WorkflowRun | null> {
   const { backend, run, expectedWorkerId } = input;
   await input.waitForCancellationUpdate(run.id);
@@ -751,6 +1297,7 @@ async function completeRun(
       completedAt: new Date(),
     },
     expectedWorkerId,
+    lockToken,
   );
   if (!completed) return null;
 
@@ -763,6 +1310,7 @@ async function failRun(
   error: Error,
   result: Pick<WorkflowRunControlExecuteResult, "context" | "nodeStates">,
   expectedStatuses: WorkflowRun["status"][],
+  lockToken?: string,
 ): Promise<boolean> {
   const { backend, run, expectedWorkerId } = input;
   await input.waitForCancellationUpdate(run.id);
@@ -786,6 +1334,7 @@ async function failRun(
       completedAt: new Date(),
     },
     expectedWorkerId,
+    lockToken,
   );
 }
 
@@ -793,6 +1342,7 @@ async function pauseRun(
   input: WorkflowRunControlExecuteInput,
   executionController: AbortController,
   result: WorkflowRunControlExecuteResult,
+  lockToken?: string,
 ): Promise<boolean> {
   const { backend, run, expectedWorkerId } = input;
   await input.waitForCancellationUpdate(run.id);
@@ -815,6 +1365,7 @@ async function pauseRun(
       nodeStates: result.nodeStates,
     },
     expectedWorkerId,
+    lockToken,
   );
 }
 

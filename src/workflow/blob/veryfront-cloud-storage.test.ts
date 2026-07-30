@@ -1,8 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { VeryfrontCloudBlobStorage } from "./veryfront-cloud-storage.ts";
+import type { BlobStorage } from "./types.ts";
 
 const originalFetch = globalThis.fetch;
 const FIXED_NOW = new Date("2026-03-08T12:00:00.000Z");
@@ -256,8 +262,7 @@ describe("VeryfrontCloudBlobStorage", () => {
     }
   });
 
-  it("lists stored blobs (newest first) with sidecar filenames", async () => {
-    const service = createMockUploadService();
+  it("does not advertise partial listing without an exhaustive pagination contract", () => {
     const storage = new VeryfrontCloudBlobStorage({
       apiBaseUrl: "https://api.test",
       apiToken: "vf_config_token",
@@ -266,50 +271,7 @@ describe("VeryfrontCloudBlobStorage", () => {
       now: () => FIXED_NOW,
     });
 
-    try {
-      const first = await storage.put("one", {
-        mimeType: "text/plain",
-        metadata: { filename: "first.txt" },
-      });
-      const second = await storage.put("two", {
-        mimeType: "text/plain",
-        metadata: { filename: "second.txt" },
-      });
-
-      const refs = await storage.list();
-
-      // Both data blobs surface (the `.meta.json` sidecars are filtered out),
-      // enriched with the original filename from each sidecar.
-      assertEquals(refs.length, 2);
-      const byId = new Map(refs.map((ref) => [ref.id, ref]));
-      assertEquals(byId.get(first.id)?.metadata?.filename, "first.txt");
-      assertEquals(byId.get(second.id)?.metadata?.filename, "second.txt");
-      assertExists(byId.get(first.id)?.url);
-
-      const listCall = service.fetchCalls.find((call) =>
-        call.method === "GET" && call.url === "https://api.test/projects/demo-project/uploads"
-      );
-      assertExists(listCall);
-    } finally {
-      service.restore();
-    }
-  });
-
-  it("returns an empty list when nothing is stored", async () => {
-    const service = createMockUploadService();
-    const storage = new VeryfrontCloudBlobStorage({
-      apiBaseUrl: "https://api.test",
-      apiToken: "vf_config_token",
-      projectSlug: "demo-project",
-      prefix: ".vf-test/",
-      now: () => FIXED_NOW,
-    });
-
-    try {
-      assertEquals(await storage.list(), []);
-    } finally {
-      service.restore();
-    }
+    assertEquals((storage as BlobStorage).list, undefined);
   });
 
   it("falls back to upload metadata when the sidecar is missing", async () => {
@@ -345,6 +307,306 @@ describe("VeryfrontCloudBlobStorage", () => {
     }
   });
 
+  it("removes the primary cloud upload when its metadata sidecar upload fails", async () => {
+    const service = createMockUploadService();
+    const serviceFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (
+        url.origin === "https://upload.test" && request.method === "PUT" &&
+        decodeURIComponent(url.pathname).endsWith(".meta.json")
+      ) {
+        return new Response("sidecar unavailable", { status: 503 });
+      }
+      return await serviceFetch(input, init);
+    }) as typeof fetch;
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://api.test",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      await assertRejects(
+        () => storage.put("payload", { id: "cleanup-id" }),
+        Error,
+        "Veryfront Cloud upload failed",
+      );
+      assertEquals(service.uploads.size, 0);
+      assertEquals(
+        service.fetchCalls.some((call) =>
+          call.method === "DELETE" && call.url.includes("cleanup-id.blob")
+        ),
+        true,
+      );
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("fails closed when an existing metadata sidecar is corrupt or mismatched", async () => {
+    const service = createMockUploadService();
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://api.test",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      const ref = await storage.put("payload", { id: "valid-id" });
+      const metadataKey = makeStorageKey(
+        "demo-project",
+        `.vf-test/${ref.id}.meta.json`,
+      );
+      const metadataUpload = service.uploads.get(metadataKey);
+      assertExists(metadataUpload);
+
+      service.uploads.set(metadataKey, {
+        ...metadataUpload,
+        bytes: new TextEncoder().encode("{not-json"),
+      });
+      await assertRejects(
+        () => storage.stat(ref.id),
+        Error,
+        "Invalid cloud blob metadata sidecar",
+      );
+
+      service.uploads.set(metadataKey, {
+        ...metadataUpload,
+        bytes: new TextEncoder().encode(JSON.stringify({
+          version: 1,
+          id: "different-id",
+          size: 7,
+          mimeType: "application/octet-stream",
+          createdAt: FIXED_NOW.toISOString(),
+        })),
+      });
+      await assertRejects(
+        () => storage.stat(ref.id),
+        Error,
+        "Invalid cloud blob metadata sidecar",
+      );
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("propagates signed URL failures instead of returning incomplete metadata", async () => {
+    const service = createMockUploadService();
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://api.test",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      const ref = await storage.put("payload");
+      const serviceFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const request = new Request(input, init);
+        const url = new URL(request.url);
+        if (
+          url.origin === "https://api.test" && request.method === "GET" &&
+          url.pathname.endsWith(".blob/url")
+        ) {
+          return new Response("signing unavailable", { status: 503 });
+        }
+        return await serviceFetch(input, init);
+      }) as typeof fetch;
+
+      await assertRejects(
+        () => storage.stat(ref.id),
+        Error,
+        "Veryfront Cloud request failed",
+      );
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("validates and snapshots storage inputs before uploading", async () => {
+    const service = createMockUploadService();
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://api.test",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    });
+
+    try {
+      for (const ttl of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        await assertRejects(
+          () => storage.put("payload", { ttl }),
+          Error,
+          "Blob TTL must be a non-negative safe integer",
+        );
+      }
+      await assertRejects(
+        () =>
+          storage.put("payload", {
+            metadata: { unsafe: 7 } as unknown as Record<string, string>,
+          }),
+        Error,
+        "Blob metadata values must be strings",
+      );
+      await assertRejects(
+        () => storage.put("payload", { mimeType: "" }),
+        Error,
+        "Blob mimeType must be a non-empty string",
+      );
+
+      const metadata = { filename: "original.txt" };
+      const ref = await storage.put("payload", { metadata });
+      metadata.filename = "mutated.txt";
+      assertEquals(ref.metadata, { filename: "original.txt" });
+      assertEquals((await storage.stat(ref.id))?.metadata, { filename: "original.txt" });
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("rejects hostile public records without invoking hooks or making requests", async () => {
+    let hooks = 0;
+    const configProxy = new Proxy({}, {
+      get() {
+        hooks++;
+        throw new Error("must not run");
+      },
+      ownKeys() {
+        hooks++;
+        throw new Error("must not run");
+      },
+    });
+    assertThrows(
+      () =>
+        new VeryfrontCloudBlobStorage(
+          configProxy as unknown as ConstructorParameters<typeof VeryfrontCloudBlobStorage>[0],
+        ),
+      Error,
+      "non-Proxy plain record",
+    );
+    assertEquals(hooks, 0);
+
+    const nowProxy = new Proxy(() => FIXED_NOW, {
+      apply() {
+        hooks++;
+        throw new Error("must not run");
+      },
+    });
+    assertThrows(
+      () => new VeryfrontCloudBlobStorage({ now: nowProxy }),
+      Error,
+      "non-Proxy function",
+    );
+    assertEquals(hooks, 0);
+
+    const config = Object.create(null);
+    Object.defineProperty(config, "apiToken", {
+      enumerable: true,
+      get() {
+        hooks++;
+        return "unsafe";
+      },
+    });
+    assertThrows(
+      () => new VeryfrontCloudBlobStorage(config),
+      Error,
+      "enumerable own data property",
+    );
+    assertEquals(hooks, 0);
+
+    const service = createMockUploadService();
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://api.test",
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+    });
+    try {
+      const options = Object.create(null);
+      Object.defineProperty(options, "metadata", {
+        enumerable: true,
+        get() {
+          hooks++;
+          return { unsafe: "secret" };
+        },
+      });
+      await assertRejects(
+        () => storage.put("payload", options),
+        Error,
+        "enumerable own data property",
+      );
+
+      const payload = new Proxy(new Blob(["payload"]), {
+        get() {
+          hooks++;
+          throw new Error("must not run");
+        },
+      });
+      await assertRejects(
+        () => storage.put(payload),
+        Error,
+        "non-Proxy",
+      );
+      assertEquals(hooks, 0);
+      assertEquals(service.fetchCalls, []);
+    } finally {
+      service.restore();
+    }
+  });
+
+  it("rejects invalid cloud endpoint, prefix, and default timer configuration", async () => {
+    const baseConfig = {
+      apiToken: "vf_config_token",
+      projectSlug: "demo-project",
+    };
+    await assertRejects(
+      () =>
+        new VeryfrontCloudBlobStorage({ ...baseConfig, apiBaseUrl: "file:///tmp/api" }).exists(
+          "valid",
+        ),
+      Error,
+      "apiBaseUrl is invalid",
+    );
+    await assertRejects(
+      () =>
+        new VeryfrontCloudBlobStorage({
+          ...baseConfig,
+          apiBaseUrl: "https://api.test",
+          prefix: "../outside/",
+        }).exists("valid"),
+      Error,
+      "prefix must be a portable relative path",
+    );
+    await assertRejects(
+      () =>
+        new VeryfrontCloudBlobStorage({
+          ...baseConfig,
+          apiBaseUrl: "https://api.test",
+          defaultTtl: Number.NaN,
+        }).exists("valid"),
+      Error,
+      "defaultTtl must be a non-negative safe integer",
+    );
+    await assertRejects(
+      () =>
+        new VeryfrontCloudBlobStorage({
+          ...baseConfig,
+          apiBaseUrl: "https://api.test",
+          requestTimeout: 0,
+        }).exists("valid"),
+      Error,
+      "requestTimeout",
+    );
+  });
+
   it("resolves request-scoped auth and project slug without explicit config overrides", async () => {
     const service = createMockUploadService();
     const storage = new VeryfrontCloudBlobStorage({
@@ -375,6 +637,34 @@ describe("VeryfrontCloudBlobStorage", () => {
     }
   });
 
+  it("snapshots mutable cloud configuration at construction", async () => {
+    const service = createMockUploadService();
+    const config = {
+      apiBaseUrl: "https://api.test",
+      apiToken: "vf_original_token",
+      projectSlug: "original-project",
+      prefix: ".vf-test/",
+      now: () => FIXED_NOW,
+    };
+    const storage = new VeryfrontCloudBlobStorage(config);
+    config.apiBaseUrl = "https://mutated.invalid";
+    config.apiToken = "vf_mutated_token";
+    config.projectSlug = "mutated-project";
+
+    try {
+      await storage.put("snapshot", { id: "config-snapshot" });
+      const createCall = service.fetchCalls.find((call) => call.method === "POST");
+      assertExists(createCall);
+      assertEquals(
+        createCall.url,
+        "https://api.test/projects/original-project/uploads",
+      );
+      assertEquals(createCall.headers.get("Authorization"), "Bearer vf_original_token");
+    } finally {
+      service.restore();
+    }
+  });
+
   it("rejects blob IDs containing path traversal sequences", async () => {
     const storage = new VeryfrontCloudBlobStorage({
       apiBaseUrl: "https://api.test",
@@ -385,19 +675,19 @@ describe("VeryfrontCloudBlobStorage", () => {
     await assertRejects(
       () => storage.put("hello", { id: "../../etc/passwd" }),
       Error,
-      "Invalid blob id",
+      "Blob IDs must contain only",
     );
 
     await assertRejects(
       () => storage.stat("../secret"),
       Error,
-      "Invalid blob id",
+      "Blob IDs must contain only",
     );
 
     await assertRejects(
       () => storage.delete("foo/bar"),
       Error,
-      "Invalid blob id",
+      "Blob IDs must contain only",
     );
   });
 });

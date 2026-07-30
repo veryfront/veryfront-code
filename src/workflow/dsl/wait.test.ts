@@ -3,7 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Wait DSL Tests
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay, waitForApproval, waitForEvent } from "./wait.ts";
 import type { WaitNodeConfig, WorkflowNode } from "../types.ts";
@@ -54,6 +54,23 @@ describe("waitForApproval()", () => {
     approvers[0] = "attacker@example.com";
 
     assertEquals(expectWaitConfig(node).approvers, ["admin@example.com"]);
+  });
+
+  it("rejects empty, non-canonical, and duplicate approver allowlists", () => {
+    for (
+      const approvers of [
+        [],
+        [""],
+        [" alice@example.com"],
+        ["alice@example.com", "alice@example.com"],
+      ]
+    ) {
+      assertThrows(
+        () => waitForApproval("invalid-approvers", { approvers }),
+        Error,
+        "approvers",
+      );
+    }
   });
 });
 

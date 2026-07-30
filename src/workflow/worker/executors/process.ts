@@ -16,9 +16,11 @@ import type {
   RunExecutor,
 } from "./types.ts";
 import { requireWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { parseDurationWithLabel, parsePositiveDurationWithLabel } from "../../types.ts";
 
 const logger = baseLogger.component("process-run-executor");
-const FORCE_KILL_DELAY_MS = 5_000;
+const DEFAULT_TERMINATION_GRACE_PERIOD_MS = 5_000;
 
 /**
  * Non-secret host env vars forwarded to the child when its environment is
@@ -82,6 +84,9 @@ export interface ProcessRunExecutorConfig {
 
   /** Enable debug logging */
   debug?: boolean;
+
+  /** Time to wait after SIGTERM before escalating to SIGKILL (default: 5000). */
+  terminationGracePeriod?: number;
 }
 
 /**
@@ -99,7 +104,9 @@ interface TrackedExecution {
   error?: string;
   timeoutId?: ReturnType<typeof setTimeout>;
   forceKillTimeoutId?: ReturnType<typeof setTimeout>;
+  completion: Promise<void>;
   exited: boolean;
+  terminationRequested: boolean;
 }
 
 /**
@@ -129,19 +136,57 @@ export class ProcessRunExecutor implements RunExecutor {
     env?: Record<string, string>;
   };
   private activeExecutions = new Map<string, TrackedExecution>();
+  private lifecycleState: "open" | "closing" | "closed" = "open";
+  private destroyPromise?: Promise<void>;
 
   constructor(config: ProcessRunExecutorConfig) {
+    if (!config.entrypointPath?.trim()) {
+      throw INVALID_ARGUMENT.create({
+        detail: "ProcessRunExecutor entrypointPath must not be empty",
+      });
+    }
     this.config = {
-      command: "deno",
-      args: ["run", ...WORKFLOW_RUN_PERMISSIONS],
-      debug: false,
       ...config,
+      command: config.command ?? "deno",
+      args: config.args === undefined ? ["run", ...WORKFLOW_RUN_PERMISSIONS] : [...config.args],
+      env: config.env === undefined ? undefined : { ...config.env },
+      debug: config.debug ?? false,
+      terminationGracePeriod: parseDurationWithLabel(
+        config.terminationGracePeriod ?? DEFAULT_TERMINATION_GRACE_PERIOD_MS,
+        "ProcessRunExecutor terminationGracePeriod",
+      ),
     };
   }
 
   createRunExecution(executionConfig: RunExecutionConfig): Promise<string> {
+    if (this.lifecycleState !== "open") {
+      throw INVALID_ARGUMENT.create({
+        detail: `Cannot create run execution: process executor is ${this.lifecycleState}`,
+      });
+    }
     const { executionId, run, managerId, timeout, env, debug } = executionConfig;
     requireWorkflowSourceIntegrationPolicy(run);
+    if (this.activeExecutions.has(executionId)) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Run execution already exists: ${executionId}`,
+      });
+    }
+    const executionTimeout = parsePositiveDurationWithLabel(
+      timeout,
+      "ProcessRunExecutor execution timeout",
+    );
+    const lockDuration = parsePositiveDurationWithLabel(
+      executionConfig.lockAcquisition.duration,
+      "ProcessRunExecutor lock acquisition duration",
+    );
+    const lockAcquisitionTimeout = parsePositiveDurationWithLabel(
+      executionConfig.lockAcquisition.timeout,
+      "ProcessRunExecutor lock acquisition timeout",
+    );
+    const lockRetryInterval = parsePositiveDurationWithLabel(
+      executionConfig.lockAcquisition.retryInterval,
+      "ProcessRunExecutor lock retry interval",
+    );
 
     // Build environment variables. Start from the forwarded runtime-infra vars
     // (needed because the child spawns with clearEnv:true) so operator- and
@@ -153,6 +198,9 @@ export class ProcessRunExecutor implements RunExecutor {
       MODE: "run",
       WORKFLOW_RUN_ID: run.id,
       RUN_EXECUTION_ID: executionId,
+      WORKFLOW_LOCK_DURATION_MS: String(lockDuration),
+      WORKFLOW_LOCK_ACQUISITION_TIMEOUT_MS: String(lockAcquisitionTimeout),
+      WORKFLOW_LOCK_RETRY_INTERVAL_MS: String(lockRetryInterval),
     };
 
     // Add tenant context
@@ -195,7 +243,9 @@ export class ProcessRunExecutor implements RunExecutor {
       status: "running",
       createdAt: new Date(),
       startedAt: new Date(),
+      completion: Promise.resolve(),
       exited: false,
+      terminationRequested: false,
     };
 
     this.activeExecutions.set(executionId, execution);
@@ -205,7 +255,11 @@ export class ProcessRunExecutor implements RunExecutor {
     }
 
     // Monitor the process in background
-    this.monitorProcess(execution, timeout, debug || this.config.debug);
+    execution.completion = this.monitorProcess(
+      execution,
+      executionTimeout,
+      debug || this.config.debug,
+    );
 
     return Promise.resolve(executionId);
   }
@@ -231,35 +285,52 @@ export class ProcessRunExecutor implements RunExecutor {
     return Promise.resolve(executions);
   }
 
-  deleteRunExecution(executionId: string): Promise<void> {
+  async deleteRunExecution(executionId: string): Promise<void> {
     const execution = this.activeExecutions.get(executionId);
     if (!execution) {
-      return Promise.resolve();
+      return;
     }
 
     // Kill the process if still running
     this.terminateProcess(execution);
 
-    if (execution.timeoutId) clearTimeout(execution.timeoutId);
-    this.activeExecutions.delete(executionId);
+    if (execution.timeoutId) {
+      clearTimeout(execution.timeoutId);
+      execution.timeoutId = undefined;
+    }
+    await execution.completion;
+    if (this.activeExecutions.get(executionId) === execution) {
+      this.activeExecutions.delete(executionId);
+    }
 
     if (this.config.debug) {
       logger.info(`Deleted run execution ${executionId}`);
     }
-
-    return Promise.resolve();
   }
 
   destroy(): Promise<void> {
-    // Kill all active processes and clear their timers
-    for (const execution of this.activeExecutions.values()) {
-      if (execution.timeoutId) clearTimeout(execution.timeoutId);
-      this.terminateProcess(execution);
-    }
+    if (this.destroyPromise) return this.destroyPromise;
 
-    this.activeExecutions.clear();
+    this.lifecycleState = "closing";
+    this.destroyPromise = (async () => {
+      const executions = [...this.activeExecutions.values()];
+      for (const execution of executions) {
+        if (execution.timeoutId) {
+          clearTimeout(execution.timeoutId);
+          execution.timeoutId = undefined;
+        }
+        this.terminateProcess(execution);
+      }
 
-    return Promise.resolve();
+      await Promise.all(executions.map((execution) => execution.completion));
+      for (const execution of executions) {
+        if (this.activeExecutions.get(execution.executionId) === execution) {
+          this.activeExecutions.delete(execution.executionId);
+        }
+      }
+      this.lifecycleState = "closed";
+    })();
+    return this.destroyPromise;
   }
 
   /**
@@ -269,7 +340,7 @@ export class ProcessRunExecutor implements RunExecutor {
     execution: TrackedExecution,
     timeout: number,
     debug: boolean,
-  ): void {
+  ): Promise<void> {
     // Set up timeout
     execution.timeoutId = setTimeout(() => {
       execution.timeoutId = undefined;
@@ -284,7 +355,8 @@ export class ProcessRunExecutor implements RunExecutor {
     }, timeout);
 
     // Wait for process to complete (fire-and-forget with error handling)
-    void (async () => {
+    const output = this.streamOutput(execution, debug);
+    return (async () => {
       try {
         const status = await execution.process.status;
         execution.exited = true;
@@ -306,6 +378,12 @@ export class ProcessRunExecutor implements RunExecutor {
           if (debug) {
             logger.info(`Run execution ${execution.executionId} succeeded`);
           }
+        } else if (execution.terminationRequested) {
+          execution.status = "failed";
+          execution.error = "Process terminated during cleanup";
+          if (debug) {
+            logger.debug(`Run execution ${execution.executionId} terminated during cleanup`);
+          }
         } else {
           execution.status = "failed";
           execution.error = `Process exited with code ${status.code}`;
@@ -324,16 +402,15 @@ export class ProcessRunExecutor implements RunExecutor {
         execution.completedAt = new Date();
 
         logger.error(`Run execution ${execution.executionId} error:`, error);
+      } finally {
+        await output;
       }
     })();
-
-    // Piped output must always be consumed. Otherwise a child that fills an OS
-    // pipe buffer blocks forever before its status can resolve.
-    this.streamOutput(execution, debug);
   }
 
   private terminateProcess(execution: TrackedExecution): void {
     if (execution.exited) return;
+    execution.terminationRequested = true;
 
     try {
       execution.process.kill("SIGTERM");
@@ -351,54 +428,60 @@ export class ProcessRunExecutor implements RunExecutor {
       } catch (_) {
         /* expected: process may have exited after the check */
       }
-    }, FORCE_KILL_DELAY_MS);
+    }, this.config.terminationGracePeriod);
   }
 
   /**
    * Stream process output to logs
    */
-  private streamOutput(execution: TrackedExecution, debug: boolean): void {
+  private async streamOutput(execution: TrackedExecution, debug: boolean): Promise<void> {
+    const streams: Promise<void>[] = [];
     // Stream stdout
     const stdout = execution.process.stdout;
     if (stdout) {
-      (async () => {
-        const decoder = debug ? new TextDecoder() : null;
-        for await (const chunk of stdout) {
-          if (!decoder) continue;
-          const text = decoder.decode(chunk).trim();
-          if (text) {
-            logger.debug(`[RunExecution ${execution.executionId}] ${text}`);
+      streams.push(
+        (async () => {
+          const decoder = debug ? new TextDecoder() : null;
+          for await (const chunk of stdout) {
+            if (!decoder) continue;
+            const text = decoder.decode(chunk).trim();
+            if (text) {
+              logger.debug(`[RunExecution ${execution.executionId}] ${text}`);
+            }
           }
-        }
-      })().catch((error) => {
-        logger.debug(
-          `[RunExecution ${execution.executionId}] stdout stream error:`,
-          error,
-        );
-      });
+        })().catch((error) => {
+          logger.debug(
+            `[RunExecution ${execution.executionId}] stdout stream error:`,
+            error,
+          );
+        }),
+      );
     }
 
     // Stream stderr
     const stderr = execution.process.stderr;
     if (stderr) {
-      (async () => {
-        const decoder = debug ? new TextDecoder() : null;
-        for await (const chunk of stderr) {
-          if (!decoder) continue;
-          const text = decoder.decode(chunk).trim();
-          if (text) {
-            logger.error(`[RunExecution ${execution.executionId}] ${text}`);
+      streams.push(
+        (async () => {
+          const decoder = debug ? new TextDecoder() : null;
+          for await (const chunk of stderr) {
+            if (!decoder) continue;
+            const text = decoder.decode(chunk).trim();
+            if (text) {
+              logger.error(`[RunExecution ${execution.executionId}] ${text}`);
+            }
           }
-        }
-      })().catch((error) => {
-        // stderr often carries the only diagnostic for a failing subprocess —
-        // don't discard a failure to read it.
-        logger.warn(
-          `[RunExecution ${execution.executionId}] stderr stream error:`,
-          error,
-        );
-      });
+        })().catch((error) => {
+          // stderr often carries the only diagnostic for a failing subprocess —
+          // don't discard a failure to read it.
+          logger.warn(
+            `[RunExecution ${execution.executionId}] stderr stream error:`,
+            error,
+          );
+        }),
+      );
     }
+    await Promise.all(streams);
   }
 
   /**
@@ -409,9 +492,9 @@ export class ProcessRunExecutor implements RunExecutor {
       executionId: execution.executionId,
       runId: execution.runId,
       status: execution.status,
-      createdAt: execution.createdAt,
-      startedAt: execution.startedAt,
-      completedAt: execution.completedAt,
+      createdAt: new Date(execution.createdAt.getTime()),
+      startedAt: execution.startedAt ? new Date(execution.startedAt.getTime()) : undefined,
+      completedAt: execution.completedAt ? new Date(execution.completedAt.getTime()) : undefined,
       error: execution.error,
       metadata: {
         pid: execution.process.pid,
