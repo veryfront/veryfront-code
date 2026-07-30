@@ -26,7 +26,12 @@ import {
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { deleteEnv, getEnv } from "#veryfront/platform/compat/process.ts";
-import { register, reset } from "#veryfront/extensions/contracts.ts";
+import { register, reset, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  MAX_STUDIO_CAPTURE_BUNDLE_BYTES,
+  type StudioCaptureBundleProvider,
+  StudioCaptureBundleProviderName,
+} from "#veryfront/extensions/studio/index.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import {
@@ -43,6 +48,7 @@ import {
   ensureEnvLoaded,
   orchestrateOrDisposeFS,
   replaceLifecycleResource,
+  resolveStudioCaptureProviderForBootstrap,
   selectReloadedConfig,
   validateProductionEnvironment,
   wireTracingShim,
@@ -291,6 +297,28 @@ describe("bootstrap() ownership", () => {
         Error,
         "adapter id getter failed",
       );
+    }
+  });
+});
+
+describe("Studio capture bootstrap contract", () => {
+  it("rejects an oversized multibyte bundle before publishing a generation", () => {
+    const previous = tryResolve<StudioCaptureBundleProvider>(
+      StudioCaptureBundleProviderName,
+    );
+    register(StudioCaptureBundleProviderName, {
+      browserBundle: "é".repeat(MAX_STUDIO_CAPTURE_BUNDLE_BYTES / 2) + "a",
+    });
+
+    try {
+      assertThrows(
+        resolveStudioCaptureProviderForBootstrap,
+        RangeError,
+        `${MAX_STUDIO_CAPTURE_BUNDLE_BYTES}-byte limit`,
+      );
+    } finally {
+      if (previous === undefined) unregister(StudioCaptureBundleProviderName);
+      else register(StudioCaptureBundleProviderName, previous);
     }
   });
 });

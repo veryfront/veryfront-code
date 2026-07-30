@@ -7,13 +7,13 @@
 import { DOM_IGNORE_TAGS, state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
 import {
-  DATA_HTML2CANVAS_IGNORE,
   DATA_NODE_COLUMN,
   DATA_NODE_FILE,
   DATA_NODE_ID,
   DATA_NODE_LINE,
   DATA_NODE_NAME,
   DATA_NODE_SOURCE,
+  DATA_STUDIO_CAPTURE_IGNORE,
   DATA_VF_ID,
   DATA_VF_IGNORE,
   DATA_VF_SELECTOR,
@@ -46,7 +46,7 @@ export function createOverlay(type: string): HTMLElement {
   const overlay = document.createElement("div");
   overlay.className = "vf-overlay vf-overlay-" + type;
   overlay.setAttribute(DATA_VF_IGNORE, "true");
-  overlay.setAttribute(DATA_HTML2CANVAS_IGNORE, "true");
+  overlay.setAttribute(DATA_STUDIO_CAPTURE_IGNORE, "true");
 
   const label = document.createElement("div");
   label.className = "vf-overlay-label";

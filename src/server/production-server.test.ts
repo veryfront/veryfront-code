@@ -28,6 +28,7 @@ import {
   isSSRClientOnlyFetching,
 } from "#veryfront/rendering/ssr-globals/context.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import { MAX_STUDIO_CAPTURE_BUNDLE_BYTES } from "#veryfront/extensions/studio/index.ts";
 
 afterAll(() => stopEsbuild());
 
@@ -154,6 +155,160 @@ describe("startProductionServer() lifecycle", () => {
     await handle.stop();
 
     assertEquals([originalDisposeCalls, replacementDisposeCalls], [1, 0]);
+  });
+
+  it("pins a supplied Studio capture bundle before asynchronous startup", async () => {
+    const originalBundle = "console.log('original Studio capture bundle');";
+    const invalidReplacementBundle = "\ud800";
+    const suppliedProvider = { browserBundle: originalBundle };
+    const baseBootstrap = createBootstrapResult(() => {});
+    const bootstrap: BootstrapResult = {
+      adapter: baseBootstrap.adapter,
+      get config() {
+        // This getter runs after snapshotSuppliedBootstrap has accepted the
+        // nested provider. Mutating the source here deterministically exposes
+        // any implementation that retained the provider by reference.
+        suppliedProvider.browserBundle = invalidReplacementBundle;
+        return baseBootstrap.config;
+      },
+      usingFSAdapter: baseBootstrap.usingFSAdapter,
+      extensionLoader: baseBootstrap.extensionLoader,
+      dispose: baseBootstrap.dispose,
+      studioCaptureProvider: suppliedProvider,
+    };
+    bootstrap.adapter.serve = (_handler, options) => {
+      options.onListen?.({ hostname: "127.0.0.1", port: 4_321 });
+      return Promise.resolve({
+        addr: { hostname: "127.0.0.1", port: 4_321 },
+        stop: () => Promise.resolve(),
+      });
+    };
+
+    const starting = startLocalCliProxyProductionServer({
+      projectDir: "/project",
+      port: 4_321,
+      bootstrapResult: bootstrap,
+    });
+    const handle = await starting;
+    try {
+      await handle.ready;
+      assertEquals(suppliedProvider.browserBundle, invalidReplacementBundle);
+    } finally {
+      await handle.stop();
+    }
+  });
+
+  it("rejects hostile supplied Studio providers before startup side effects", async () => {
+    let getterCalls = 0;
+    const accessorProvider = Object.defineProperty({}, "browserBundle", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return "must not be read";
+      },
+    });
+    const revocable = Proxy.revocable({ browserBundle: "revoked" }, {});
+    revocable.revoke();
+
+    for (
+      const [provider, expectedMessage] of [
+        [accessorProvider, "string data property"],
+        [revocable.proxy, "could not be inspected"],
+      ] as const
+    ) {
+      let envReads = 0;
+      let serveCalls = 0;
+      let disposeCalls = 0;
+      const bootstrap = {
+        ...createBootstrapResult(() => {
+          disposeCalls++;
+        }),
+        studioCaptureProvider: provider as BootstrapResult["studioCaptureProvider"],
+      } satisfies BootstrapResult;
+      const originalEnv = bootstrap.adapter.env;
+      bootstrap.adapter.env = {
+        get(key) {
+          envReads++;
+          return originalEnv.get(key);
+        },
+        set: originalEnv.set.bind(originalEnv),
+        toObject: originalEnv.toObject.bind(originalEnv),
+      };
+      bootstrap.adapter.serve = () => {
+        serveCalls++;
+        return Promise.reject(new Error("listener must not start"));
+      };
+
+      await assertRejects(
+        () =>
+          startLocalCliProxyProductionServer({
+            projectDir: "/project",
+            port: 4_321,
+            bootstrapResult: bootstrap,
+          }),
+        TypeError,
+        expectedMessage,
+      );
+      assertEquals([envReads, serveCalls, disposeCalls], [0, 0, 0]);
+    }
+    assertEquals(getterCalls, 0);
+  });
+
+  it("rejects noncanonical and oversized supplied Studio bundles before ownership", async () => {
+    const invalidBundles = [
+      ["\ufeffconsole.log('BOM')", TypeError, "must not start with a BOM"],
+      ["console.log('\0')", TypeError, "must not contain NUL"],
+      ["\ud800", TypeError, "canonical Unicode"],
+      [
+        "é".repeat(MAX_STUDIO_CAPTURE_BUNDLE_BYTES / 2) + "a",
+        RangeError,
+        `${MAX_STUDIO_CAPTURE_BUNDLE_BYTES}-byte limit`,
+      ],
+    ] as const;
+
+    for (const [browserBundle, errorType, expectedMessage] of invalidBundles) {
+      let serveCalls = 0;
+      let disposeCalls = 0;
+      const bootstrap = {
+        ...createBootstrapResult(() => {
+          disposeCalls++;
+        }),
+        studioCaptureProvider: { browserBundle },
+      } satisfies BootstrapResult;
+      bootstrap.adapter.serve = () => {
+        serveCalls++;
+        return Promise.reject(new Error("listener must not start"));
+      };
+
+      const error = await assertRejects(
+        () =>
+          startLocalCliProxyProductionServer({
+            projectDir: "/project",
+            port: 4_321,
+            bootstrapResult: bootstrap,
+          }),
+        Error,
+        expectedMessage,
+      );
+      assertInstanceOf(error, errorType);
+      assertEquals([serveCalls, disposeCalls], [0, 0]);
+    }
+
+    const validBootstrap = createBootstrapResult(() => {});
+    validBootstrap.adapter.serve = (_handler, options) => {
+      options.onListen?.({ hostname: "127.0.0.1", port: 4_321 });
+      return Promise.resolve({
+        addr: { hostname: "127.0.0.1", port: 4_321 },
+        stop: () => Promise.resolve(),
+      });
+    };
+    const handle = await startLocalCliProxyProductionServer({
+      projectDir: "/replacement",
+      port: 4_321,
+      bootstrapResult: validBootstrap,
+    });
+    await handle.ready;
+    await handle.stop();
   });
 
   it("rejects a partial primitive generation before opening the listener", async () => {

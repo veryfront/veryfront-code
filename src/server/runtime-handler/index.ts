@@ -44,6 +44,8 @@ import { DevFileHandler } from "../handlers/dev/files/index.ts";
 import { DebugContextHandler } from "../handlers/dev/debug-context.handler.ts";
 import { StylesCSSHandler } from "../handlers/dev/styles-css.handler.ts";
 import { StudioBridgeModulesHandler } from "../handlers/studio/bridge-modules.handler.ts";
+import { createStudioBridgeBundleLoader } from "../handlers/studio/studio-bridge-bundle.ts";
+import type { StudioCaptureBundleProvider } from "#veryfront/extensions/studio/index.ts";
 import { StaticHandler } from "../handlers/request/static.handler.ts";
 import { SnippetHandler } from "../handlers/request/snippet.handler.ts";
 import { LibModulesHandler } from "../handlers/request/lib-modules.handler.ts";
@@ -212,12 +214,14 @@ export interface HandlerDependencies {
   debug?: boolean;
   /** Startup-selected route composition. Defaults to development for compatibility. */
   profile?: RuntimeProfile;
+  /** Explicitly composed Studio browser capture bundle for this generation. */
+  studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
 }
 
 /** Factory for each handler. Only called when no override is provided (lazy instantiation). */
 const handlerFactories: Record<
   HandlerName,
-  (projectDir: string, adapter: RuntimeAdapter) => Handler
+  (projectDir: string, adapter: RuntimeAdapter, dependencies: HandlerDependencies) => Handler
 > = {
   AuthHandler: () => new AuthHandler(),
   CsrfHandler: () => new CsrfHandler(),
@@ -242,7 +246,10 @@ const handlerFactories: Record<
   ChannelInvokeHandler: () => new ChannelInvokeHandler(),
   DevDashboardHandler: () => new DevDashboardHandler(),
   ProjectsHandler: () => new ProjectsHandler(),
-  StudioBridgeModulesHandler: () => new StudioBridgeModulesHandler(),
+  StudioBridgeModulesHandler: (_projectDir, _adapter, dependencies) => {
+    const loader = createStudioBridgeBundleLoader(dependencies.studioCaptureProvider);
+    return new StudioBridgeModulesHandler((localDevelopment) => loader.load(localDevelopment));
+  },
   ProdHydrationModuleHandler: () => new ProdHydrationModuleHandler(),
   CSSHandler: () => new CSSHandler(),
   DevFileHandler: () => new DevFileHandler(),
@@ -293,7 +300,7 @@ export function createHandlerRegistry(
   const handlers = handlerNames.map((name) => {
     if (name === "ApiHandlerWrapper") return apiHandler;
     if (overrides[name]) return overrides[name]!;
-    return handlerFactories[name](projectDir, adapter);
+    return handlerFactories[name](projectDir, adapter, deps);
   });
 
   registry.registerAll(handlers);
@@ -323,6 +330,8 @@ export interface RuntimeHandlerOptions {
   projectEnvFetch?: typeof globalThis.fetch;
   /** Startup-selected route composition. Defaults to development for compatibility. */
   profile?: RuntimeProfile;
+  /** Explicitly composed Studio browser capture bundle for this runtime generation. */
+  studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
 }
 
 export function createVeryfrontHandler(
@@ -398,6 +407,7 @@ export function createVeryfrontHandler(
   const { registry, apiHandler } = createHandlerRegistry(projectDir, adapter, {
     debug: Boolean(opts.debug),
     profile,
+    studioCaptureProvider: opts.studioCaptureProvider,
   });
 
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;

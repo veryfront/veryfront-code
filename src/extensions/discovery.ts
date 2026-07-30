@@ -18,37 +18,108 @@ import { SOURCE_PRIORITY } from "./validation.ts";
  */
 export interface PackageMetadata {
   isExtension: true;
+  /**
+   * Whether discovery may activate the extension without project config.
+   * Absence is the documented legacy equivalent of `"auto"`.
+   */
+  activation?: ExtensionActivationMode;
   capabilities: Capability[];
   contracts?: PackageContractMetadata;
 }
 
+export type ExtensionActivationMode = "auto" | "explicit";
+
+const MISSING_METADATA_PROPERTY = Symbol("missing-extension-metadata-property");
+const INVALID_METADATA_PROPERTY = Symbol("invalid-extension-metadata-property");
+const MAX_EXTENSION_METADATA_ENTRIES = 1_024;
+const MAX_PROJECT_EXTENSION_MANIFEST_BYTES = 256 * 1_024;
+const manifestTextDecoder = new TextDecoder("utf-8", { fatal: true });
+
+function readOwnDataProperty(
+  value: unknown,
+  key: PropertyKey,
+): unknown | typeof MISSING_METADATA_PROPERTY | typeof INVALID_METADATA_PROPERTY {
+  if (!value || typeof value !== "object") return INVALID_METADATA_PROPERTY;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) return MISSING_METADATA_PROPERTY;
+    return !descriptor.enumerable || descriptor.get || descriptor.set
+      ? INVALID_METADATA_PROPERTY
+      : descriptor.value;
+  } catch {
+    return INVALID_METADATA_PROPERTY;
+  }
+}
+
+function readArrayDataValues(value: unknown): unknown[] | undefined {
+  let isArray: boolean;
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    isArray = Array.isArray(value);
+    lengthDescriptor = isArray ? Object.getOwnPropertyDescriptor(value, "length") : undefined;
+  } catch {
+    return undefined;
+  }
+  const length = lengthDescriptor?.value;
+  if (
+    !isArray || lengthDescriptor?.get || lengthDescriptor?.set ||
+    !Number.isSafeInteger(length) || length < 0 ||
+    length > MAX_EXTENSION_METADATA_ENTRIES
+  ) return undefined;
+
+  const entries: unknown[] = [];
+  for (let index = 0; index < length; index++) {
+    const entry = readOwnDataProperty(value, String(index));
+    if (entry !== MISSING_METADATA_PROPERTY && entry !== INVALID_METADATA_PROPERTY) {
+      entries.push(entry);
+    }
+  }
+  return entries;
+}
+
 function isCapability(value: unknown): value is Capability {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  let isArray: boolean;
+  try {
+    isArray = Array.isArray(value);
+  } catch {
     return false;
   }
-  const cap = value as Record<string, unknown>;
-  return typeof cap.type === "string" && cap.type.length > 0;
+  if (value === null || typeof value !== "object" || isArray) return false;
+  const type = readOwnDataProperty(value, "type");
+  return typeof type === "string" && type.length > 0;
 }
 
 function parseStringList(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const entries = value.filter((entry): entry is string =>
+  const values = readArrayDataValues(value);
+  if (!values) return undefined;
+  const entries = values.filter((entry): entry is string =>
     typeof entry === "string" && entry.length > 0
   );
   return entries.length > 0 ? entries : undefined;
 }
 
 function parseContractMetadata(value: unknown): PackageContractMetadata | undefined {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  let isArray: boolean;
+  try {
+    isArray = Array.isArray(value);
+  } catch {
     return undefined;
   }
-  const raw = value as Record<string, unknown>;
+  if (value === null || typeof value !== "object" || isArray) return undefined;
   const contracts: PackageContractMetadata = {};
-  const provides = parseStringList(raw.provides);
-  const requires = parseStringList(raw.requires);
+  const provides = parseStringList(readOwnDataProperty(value, "provides"));
+  const requires = parseStringList(readOwnDataProperty(value, "requires"));
   if (provides) contracts.provides = provides;
   if (requires) contracts.requires = requires;
   return provides || requires ? contracts : undefined;
+}
+
+function parseActivationMode(
+  metadata: Record<string, unknown>,
+): ExtensionActivationMode | undefined {
+  const activation = readOwnDataProperty(metadata, "activation");
+  if (activation === MISSING_METADATA_PROPERTY) return "auto";
+  return activation === "auto" || activation === "explicit" ? activation : undefined;
 }
 
 /**
@@ -61,27 +132,29 @@ function parseContractMetadata(value: unknown): PackageContractMetadata | undefi
 export function parsePackageMetadata(
   pkg: Record<string, unknown>,
 ): PackageMetadata | undefined {
-  const vf = pkg.veryfront;
-  if (
-    vf === null || vf === undefined || typeof vf !== "object" ||
-    Array.isArray(vf)
-  ) {
+  const vf = readOwnDataProperty(pkg, "veryfront");
+  let isArray: boolean;
+  try {
+    isArray = Array.isArray(vf);
+  } catch {
     return undefined;
   }
+  if (vf === null || typeof vf !== "object" || isArray) return undefined;
 
   const meta = vf as Record<string, unknown>;
-  if (meta.extension !== true) {
+  if (readOwnDataProperty(meta, "extension") !== true) {
     return undefined;
   }
+  const activation = parseActivationMode(meta);
+  if (!activation) return undefined;
 
-  const capabilities: Capability[] = Array.isArray(meta.capabilities)
-    ? meta.capabilities.filter(isCapability)
-    : [];
-  const contracts = parseContractMetadata(meta.contracts);
+  const capabilities = (readArrayDataValues(readOwnDataProperty(meta, "capabilities")) ?? [])
+    .filter(isCapability);
+  const contracts = parseContractMetadata(readOwnDataProperty(meta, "contracts"));
 
   return contracts
-    ? { isExtension: true, capabilities, contracts }
-    : { isExtension: true, capabilities };
+    ? { isExtension: true, activation, capabilities, contracts }
+    : { isExtension: true, activation, capabilities };
 }
 
 /**
@@ -174,6 +247,101 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 /**
+ * Read a project extension's activation policy without importing its module.
+ *
+ * Missing manifests retain legacy automatic discovery. Once a manifest is
+ * present, malformed data rejects discovery with a contextual error rather
+ * than guessing an activation mode, so an explicit-only extension cannot fail
+ * open.
+ */
+async function resolveProjectExtensionActivation(
+  extensionDirectory: string,
+): Promise<ExtensionActivationMode> {
+  let resolvedActivation: ExtensionActivationMode = "auto";
+  for (const manifestName of ["deno.json", "package.json"] as const) {
+    const manifestPath = join(extensionDirectory, manifestName);
+    let metadata: Deno.FileInfo;
+    try {
+      metadata = await Deno.lstat(manifestPath);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) continue;
+      throw new TypeError(`Project extension manifest "${manifestPath}" could not be inspected`, {
+        cause: error,
+      });
+    }
+    if (metadata.isSymlink || !metadata.isFile) {
+      throw new TypeError(
+        `Project extension manifest "${manifestPath}" must be a regular file`,
+      );
+    }
+    if (
+      !Number.isSafeInteger(metadata.size) || metadata.size < 0 ||
+      metadata.size > MAX_PROJECT_EXTENSION_MANIFEST_BYTES
+    ) {
+      throw new TypeError(
+        `Project extension manifest "${manifestPath}" exceeds the size limit`,
+      );
+    }
+
+    let bytes: Uint8Array;
+    try {
+      bytes = await Deno.readFile(manifestPath);
+    } catch (error) {
+      throw new TypeError(`Project extension manifest "${manifestPath}" could not be read`, {
+        cause: error,
+      });
+    }
+    if (bytes.byteLength > MAX_PROJECT_EXTENSION_MANIFEST_BYTES) {
+      throw new TypeError(
+        `Project extension manifest "${manifestPath}" exceeds the size limit`,
+      );
+    }
+    let source: string;
+    try {
+      source = manifestTextDecoder.decode(bytes);
+    } catch (error) {
+      throw new TypeError(
+        `Project extension manifest "${manifestPath}" is not valid UTF-8`,
+        { cause: error },
+      );
+    }
+
+    let manifest: unknown;
+    try {
+      manifest = JSON.parse(source);
+    } catch (error) {
+      throw new TypeError(`Project extension manifest "${manifestPath}" is not valid JSON`, {
+        cause: error,
+      });
+    }
+    if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+      throw new TypeError(`Project extension manifest "${manifestPath}" must be an object`);
+    }
+    const veryfront = readOwnDataProperty(manifest, "veryfront");
+    if (veryfront === MISSING_METADATA_PROPERTY) continue;
+    if (
+      veryfront === INVALID_METADATA_PROPERTY || !veryfront ||
+      typeof veryfront !== "object" || Array.isArray(veryfront)
+    ) {
+      throw new TypeError(
+        `Project extension manifest "${manifestPath}" has invalid veryfront metadata; expected an object`,
+      );
+    }
+    const activation = parseActivationMode(veryfront as Record<string, unknown>);
+    if (!activation) {
+      throw new TypeError(
+        `Project extension manifest "${manifestPath}" has an invalid veryfront.activation mode`,
+      );
+    }
+    // When both Deno and npm manifests exist, the stricter declaration owns
+    // activation. A package manifest therefore cannot be bypassed by adding a
+    // second manifest that permits automatic discovery.
+    if (activation === "explicit") resolvedActivation = "explicit";
+  }
+  return resolvedActivation;
+}
+
+/**
  * Scan `node_modules` (including `@scoped` packages) for packages
  * that declare veryfront extension metadata in their `package.json`.
  */
@@ -232,6 +400,9 @@ async function tryReadPackageMeta(
  * Discover project extensions living under `extensions/` in the project root.
  *
  * Looks for `extensions/<name>/src/index.ts` and `extensions/<name>/index.ts`.
+ * Extensions whose manifest declares `veryfront.activation: "explicit"` are
+ * deliberately omitted: only a materialized `config.extensions` entry may
+ * activate them.
  */
 export async function discoverProjectExtensions(
   baseDir: string,
@@ -242,14 +413,18 @@ export async function discoverProjectExtensions(
 
   for (const entry of entries) {
     if (!entry.isDirectory) continue;
-    const srcIndex = join(extDir, entry.name, "src", "index.ts");
-    const rootIndex = join(extDir, entry.name, "index.ts");
+    const extensionDirectory = join(extDir, entry.name);
+    const srcIndex = join(extensionDirectory, "src", "index.ts");
+    const rootIndex = join(extensionDirectory, "index.ts");
+    const entryPoint = await fileExists(srcIndex)
+      ? srcIndex
+      : await fileExists(rootIndex)
+      ? rootIndex
+      : undefined;
+    if (!entryPoint) continue;
 
-    if (await fileExists(srcIndex)) {
-      results.push(srcIndex);
-    } else if (await fileExists(rootIndex)) {
-      results.push(rootIndex);
-    }
+    const activation = await resolveProjectExtensionActivation(extensionDirectory);
+    if (activation === "auto") results.push(entryPoint);
   }
 
   return results;

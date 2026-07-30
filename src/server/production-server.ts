@@ -43,6 +43,7 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { ExclusiveProcessOwner } from "./process-ownership.ts";
 import { HMRHandler } from "./handlers/preview/hmr.handler.ts";
 import { ServerStartupCleanupError } from "./startup-cleanup-error.ts";
+import { snapshotStudioCaptureBundleProvider } from "#veryfront/extensions/studio/index.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -290,6 +291,10 @@ function bootstrapForAuthorization(
 }
 
 function snapshotSuppliedBootstrap(bootstrap: BootstrapResult): BootstrapResult {
+  const suppliedStudioCaptureProvider = bootstrap.studioCaptureProvider;
+  const studioCaptureProvider = suppliedStudioCaptureProvider === undefined
+    ? undefined
+    : snapshotStudioCaptureBundleProvider(suppliedStudioCaptureProvider);
   const adapter = bootstrap.adapter;
   const config = bootstrap.config;
   const usingFSAdapter = bootstrap.usingFSAdapter;
@@ -303,6 +308,7 @@ function snapshotSuppliedBootstrap(bootstrap: BootstrapResult): BootstrapResult 
     usingFSAdapter,
     ...(fsAdapterType !== undefined ? { fsAdapterType } : {}),
     extensionLoader,
+    ...(studioCaptureProvider !== undefined ? { studioCaptureProvider } : {}),
     ...(dispose !== undefined ? { dispose: () => dispose.call(bootstrap) } : {}),
   });
 }
@@ -551,6 +557,7 @@ async function startProductionServerWithAuthorization(
           defaultEnvironment,
           localProjects,
           projectEnvFetch,
+          studioCaptureProvider: bootstrap.studioCaptureProvider,
         });
         activeRuntimeHandler = baseHandler;
         runtimeHandlerDisposed = false;

@@ -1,0 +1,25 @@
+{
+  "name": "@veryfront/ext-studio-capture-html2canvas",
+  "version": "0.1.0",
+  "exports": "./src/index.ts",
+  "veryfront": {
+    "extension": true,
+    "activation": "explicit",
+    "contracts": {
+      "provides": ["StudioCaptureBundleProvider"]
+    },
+    "capabilities": []
+  },
+  "imports": {
+    "html2canvas-pro": "npm:html2canvas-pro@2.0.0",
+    "@std/assert": "jsr:@std/assert@1.0.19",
+    "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
+    "veryfront/extensions": "../../src/extensions/index.ts",
+    "veryfront/studio/bridge": "../../src/studio/bridge/index.ts"
+  },
+  "tasks": {
+    "check": "deno check src/index.ts src/provider.ts src/browser-entry.ts src/*.test.ts",
+    "test": "deno test --allow-all src/",
+    "generate:bridge": "deno run -A scripts/prebundle.ts"
+  }
+}

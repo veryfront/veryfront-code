@@ -1,22 +1,51 @@
 /**
  * Bridge Screenshot
  *
- * html2canvas loading, single and multi-section screenshot capture.
+ * Provider-neutral single and multi-section screenshot capture.
  */
 
 import { logger } from "./bridge-logger.ts";
-import { state } from "./bridge-state.ts";
 import {
   MAX_STUDIO_SCREENSHOT_DATA_LENGTH,
   MAX_STUDIO_SCREENSHOT_SCROLL_OFFSET,
   MAX_STUDIO_SCREENSHOT_SECTIONS,
 } from "../limits.ts";
 import { getStudioLocationHref } from "./bridge-location.ts";
+import { DATA_STUDIO_CAPTURE_IGNORE } from "./bridge-constants.ts";
 
-type Html2CanvasFn = (
-  element: HTMLElement,
-  options?: Record<string, unknown>,
+/** Browser geometry passed to an explicitly composed capture implementation. */
+export interface StudioCaptureViewport {
+  readonly scale: number;
+  readonly width: number;
+  readonly height: number;
+  readonly x: number;
+  readonly y: number;
+  readonly scrollX: number;
+  readonly scrollY: number;
+  readonly windowWidth: number;
+  readonly windowHeight: number;
+}
+
+/** Input owned by core and detached before crossing the extension boundary. */
+export interface StudioCaptureRequest {
+  readonly element: HTMLElement;
+  readonly viewport: Readonly<StudioCaptureViewport>;
+  /** Core-owned policy for excluding Studio-owned elements from rendering. */
+  readonly shouldIgnoreElement: (element: Element) => boolean;
+  /** Aborted when the request is cancelled or exceeds its capture deadline. */
+  readonly signal: AbortSignal;
+}
+
+/** Browser implementation injected by an explicitly composed Studio extension. */
+export type StudioCaptureProvider = (
+  request: Readonly<StudioCaptureRequest>,
 ) => Promise<HTMLCanvasElement>;
+
+/** Generation-owned provider registration. */
+export interface StudioCaptureProviderInstallation {
+  /** Remove this provider only when this installation still owns the slot. */
+  dispose(): boolean;
+}
 
 interface ScreenshotOptions {
   scrollTo?: number;
@@ -37,7 +66,7 @@ interface ScreenshotResult {
   totalSections?: number;
 }
 
-const HTML2CANVAS_CAPTURE_TIMEOUT_MS = 15_000;
+const STUDIO_CAPTURE_TIMEOUT_MS = 15_000;
 const MAX_SCREENSHOT_SECTIONS = MAX_STUDIO_SCREENSHOT_SECTIONS;
 const MAX_SCROLL_OFFSET = MAX_STUDIO_SCREENSHOT_SCROLL_OFFSET;
 const MAX_CANVAS_DIMENSION = 16_384;
@@ -50,7 +79,11 @@ const MAX_PNG_BLOB_BYTES = Math.floor(
 const MAX_DEVICE_SCALE = 2;
 const LINGERING_CAPTURE_ERROR = "A timed-out screenshot capture is still running";
 const CANCELLED_CAPTURE_ERROR = "Screenshot capture cancelled";
-let bundledHtml2Canvas: Html2CanvasFn | null = null;
+export const MISSING_STUDIO_CAPTURE_CAPABILITY_ERROR =
+  "Studio screenshot capture capability is not configured";
+let installedCaptureProvider:
+  | { readonly provider: StudioCaptureProvider; readonly owner: symbol }
+  | null = null;
 let lingeringTimedOutCapture: Promise<unknown> | null = null;
 
 interface ScrollLease {
@@ -76,7 +109,7 @@ function quarantineCapture(capture: Promise<unknown>): void {
 /** Bound third-party canvas work and prevent overlap after an uncooperative timeout. */
 export async function runBoundedCanvasCapture<T>(
   operation: () => Promise<T>,
-  timeoutMs = HTML2CANVAS_CAPTURE_TIMEOUT_MS,
+  timeoutMs = STUDIO_CAPTURE_TIMEOUT_MS,
   signal?: AbortSignal,
   interruptOperation?: () => void,
 ): Promise<{ success: true; value: T } | { success: false; error: string }> {
@@ -203,26 +236,30 @@ export function isAcceptableCanvasDimensions(width: number, height: number): boo
     width * height <= MAX_CANVAS_PIXELS;
 }
 
-function resolveHtml2Canvas(): Html2CanvasFn {
-  const implementation = state.html2canvasImplementation ?? bundledHtml2Canvas;
-  if (!implementation) throw new Error("Studio screenshot renderer is unavailable");
-  return implementation;
-}
-
 /**
- * Install the renderer bundled by the browser-only Studio bridge entry point.
+ * Install one explicitly composed capture provider for this bridge generation.
  *
- * Reinstalling the same function is idempotent; replacing it indicates that
- * two independently owned bridge artifacts were evaluated in one document.
+ * The returned compare-and-swap disposer cannot remove a later generation.
  */
-export function installStudioScreenshotRenderer(renderer: Html2CanvasFn): void {
-  if (typeof renderer !== "function") {
-    throw new TypeError("Studio screenshot renderer must be a function");
+export function installStudioCaptureProvider(
+  provider: StudioCaptureProvider,
+): StudioCaptureProviderInstallation {
+  if (typeof provider !== "function") {
+    throw new TypeError("Studio capture provider must be a function");
   }
-  if (bundledHtml2Canvas && bundledHtml2Canvas !== renderer) {
-    throw new Error("Studio screenshot renderer is already installed");
+  if (installedCaptureProvider) {
+    throw new Error("Studio capture provider is already installed");
   }
-  bundledHtml2Canvas = renderer;
+  const owner = Symbol("veryfront.studio-capture-provider");
+  installedCaptureProvider = Object.freeze({ provider, owner });
+
+  return Object.freeze({
+    dispose(): boolean {
+      if (installedCaptureProvider?.owner !== owner) return false;
+      installedCaptureProvider = null;
+      return true;
+    },
+  });
 }
 
 function failure(error: string): ScreenshotResult {
@@ -253,6 +290,15 @@ function currentScreenshotUrl(): string | undefined {
   return getStudioLocationHref({ includeSearch: false, includeHash: false }) || undefined;
 }
 
+const shouldIgnoreStudioCaptureElement = Object.freeze((element: Element): boolean => {
+  try {
+    return element.hasAttribute(DATA_STUDIO_CAPTURE_IGNORE);
+  } catch {
+    // Uninspectable elements are unsafe for an extension renderer to traverse.
+    return true;
+  }
+});
+
 type CaptureWaitOutcome = "complete" | "cancelled" | "timeout";
 
 function captureInterruption(signal: AbortSignal | undefined, deadlineAt: number): string | null {
@@ -261,7 +307,7 @@ function captureInterruption(signal: AbortSignal | undefined, deadlineAt: number
 }
 
 function remainingCaptureTime(deadlineAt: number): number {
-  return Math.max(0, Math.min(HTML2CANVAS_CAPTURE_TIMEOUT_MS, deadlineAt - Date.now()));
+  return Math.max(0, Math.min(STUDIO_CAPTURE_TIMEOUT_MS, deadlineAt - Date.now()));
 }
 
 function waitForCaptureSettle(
@@ -442,11 +488,13 @@ function encodeCanvasAsPng(canvas: HTMLCanvasElement, signal: AbortSignal): Prom
 export async function captureScreenshot(
   options?: ScreenshotOptions,
   signal?: AbortSignal,
-  deadlineAt = Date.now() + HTML2CANVAS_CAPTURE_TIMEOUT_MS,
+  deadlineAt = Date.now() + STUDIO_CAPTURE_TIMEOUT_MS,
 ): Promise<ScreenshotResult> {
   const normalized = normalizeScreenshotOptions(options);
   if (!normalized) return failure("Invalid screenshot options");
   if (lingeringTimedOutCapture) return failure(LINGERING_CAPTURE_ERROR);
+  const captureProvider = installedCaptureProvider?.provider;
+  if (!captureProvider) return failure(MISSING_STUDIO_CAPTURE_CAPABILITY_ERROR);
   const initialInterruption = captureInterruption(signal, deadlineAt);
   if (initialInterruption) return failure(initialInterruption);
 
@@ -497,19 +545,19 @@ export async function captureScreenshot(
       )
     ) return failure("Screenshot dimensions exceed the capture limit");
 
-    const canvasOptions: Record<string, unknown> = {
-      useCORS: true,
-      logging: false,
-      scale,
-      width: captureWidth,
-      height: captureHeight,
-      x: captureX,
-      y: captureY,
-      scrollX: captureX,
-      scrollY: captureY,
-      windowWidth: captureWidth,
-      windowHeight: captureHeight,
-    };
+    const viewport = Object.freeze(
+      {
+        scale,
+        width: captureWidth,
+        height: captureHeight,
+        x: captureX,
+        y: captureY,
+        scrollX: captureX,
+        scrollY: captureY,
+        windowWidth: captureWidth,
+        windowHeight: captureHeight,
+      } satisfies StudioCaptureViewport,
+    );
 
     if (normalized.fullPage) {
       setOwnedScroll(lease, 0, 0);
@@ -523,18 +571,27 @@ export async function captureScreenshot(
 
     const beforeRenderInterruption = captureInterruption(signal, deadlineAt);
     if (beforeRenderInterruption) return failure(beforeRenderInterruption);
-    const html2canvas = resolveHtml2Canvas();
     const renderTime = remainingCaptureTime(deadlineAt);
     if (renderTime <= 0) return failure("Screenshot capture timed out");
+    const renderController = new AbortController();
+    const request = Object.freeze(
+      {
+        element: capturedDocument.body,
+        viewport,
+        shouldIgnoreElement: shouldIgnoreStudioCaptureElement,
+        signal: renderController.signal,
+      } satisfies StudioCaptureRequest,
+    );
     const capture = await runBoundedCanvasCapture(
-      () => html2canvas(capturedDocument.body, canvasOptions),
+      () => captureProvider(request),
       renderTime,
       signal,
+      () => renderController.abort(),
     );
     if (!capture.success) return failure(capture.error);
     const canvas = capture.value;
     if (!canvas || !isAcceptableCanvasDimensions(canvas.width, canvas.height)) {
-      logger.error("html2canvas produced invalid or oversized canvas dimensions");
+      logger.error("Studio capture provider produced invalid or oversized canvas dimensions");
       return failure("Screenshot canvas dimensions are invalid or too large");
     }
 
@@ -550,7 +607,7 @@ export async function captureScreenshot(
       () => encodingController.abort(),
     );
     if (!encoding.success) {
-      logger.error("html2canvas produced invalid or oversized image data");
+      logger.error("Studio capture provider produced invalid or oversized image data");
       return failure(encoding.error);
     }
     const dataUrl = encoding.value;
@@ -582,8 +639,9 @@ export async function captureScreenshot(
 export async function captureMultipleSections(
   sectionCount?: number,
   signal?: AbortSignal,
-  deadlineAt = Date.now() + HTML2CANVAS_CAPTURE_TIMEOUT_MS,
+  deadlineAt = Date.now() + STUDIO_CAPTURE_TIMEOUT_MS,
 ): Promise<ScreenshotResult[]> {
+  if (!installedCaptureProvider) return [failure(MISSING_STUDIO_CAPTURE_CAPABILITY_ERROR)];
   const initialInterruption = captureInterruption(signal, deadlineAt);
   if (initialInterruption) return [failure(initialInterruption)];
   const capturedWindow = globalThis.window;

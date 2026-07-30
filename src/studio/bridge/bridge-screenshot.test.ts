@@ -4,12 +4,13 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   captureMultipleSections,
   captureScreenshot,
+  installStudioCaptureProvider,
   isAcceptableCanvasDimensions,
+  MISSING_STUDIO_CAPTURE_CAPABILITY_ERROR,
   normalizeScreenshotOptions,
   resolveScreenshotSectionCount,
   runBoundedCanvasCapture,
 } from "./bridge-screenshot.ts";
-import { state } from "./bridge-state.ts";
 
 describe("studio/bridge/bridge-screenshot", () => {
   it("normalizes a bounded detached options snapshot", () => {
@@ -67,6 +68,55 @@ describe("studio/bridge/bridge-screenshot", () => {
     assertEquals(isAcceptableCanvasDimensions(0, 1_000), false);
     assertEquals(isAcceptableCanvasDimensions(Infinity, 1_000), false);
     assertEquals(isAcceptableCanvasDimensions(8_000, 8_000), false);
+  });
+
+  it("fails closed before touching browser state when capture is not composed", async () => {
+    const originalWindow = globalThis.window;
+    let windowReads = 0;
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      get() {
+        windowReads++;
+        throw new Error("window must not be read");
+      },
+    });
+    try {
+      assertEquals(await captureScreenshot(), {
+        success: false,
+        error: MISSING_STUDIO_CAPTURE_CAPABILITY_ERROR,
+      });
+      assertEquals(await captureMultipleSections(), [{
+        success: false,
+        error: MISSING_STUDIO_CAPTURE_CAPABILITY_ERROR,
+      }]);
+      assertEquals(windowReads, 0);
+    } finally {
+      Object.defineProperty(globalThis, "window", {
+        value: originalWindow,
+        configurable: true,
+      });
+    }
+  });
+
+  it("owns provider registration with compare-and-swap disposal", () => {
+    const firstProvider = () => Promise.resolve({} as HTMLCanvasElement);
+    const installation = installStudioCaptureProvider(firstProvider);
+    try {
+      let threw = false;
+      try {
+        installStudioCaptureProvider(() => Promise.resolve({} as HTMLCanvasElement));
+      } catch (error) {
+        threw = error instanceof Error && error.message.includes("already installed");
+      }
+      assertEquals(threw, true);
+      assertEquals(installation.dispose(), true);
+      assertEquals(installation.dispose(), false);
+      const replacement = installStudioCaptureProvider(firstProvider);
+      assertEquals(installation.dispose(), false);
+      assertEquals(replacement.dispose(), true);
+    } finally {
+      installation.dispose();
+    }
   });
 
   it("times out a hung canvas and quarantines it until the work settles", async () => {
@@ -141,10 +191,10 @@ describe("studio/bridge/bridge-screenshot", () => {
       body: { scrollWidth: 1_000 },
       documentElement: { scrollHeight: 2_000, scrollWidth: 1_000 },
     } as unknown as Document;
-    state.html2canvasImplementation = async () => {
+    const providerInstallation = installStudioCaptureProvider(async () => {
       renderCalls++;
       return {} as HTMLCanvasElement;
-    };
+    });
     Object.defineProperty(globalThis, "window", { value: fakeWindow, configurable: true });
     Object.defineProperty(globalThis, "document", { value: fakeDocument, configurable: true });
     const controller = new AbortController();
@@ -165,7 +215,7 @@ describe("studio/bridge/bridge-screenshot", () => {
       });
       assertEquals(renderCalls, 0);
     } finally {
-      state.html2canvasImplementation = null;
+      providerInstallation.dispose();
       Object.defineProperty(globalThis, "window", { value: originalWindow, configurable: true });
       Object.defineProperty(globalThis, "document", {
         value: originalDocument,
@@ -196,10 +246,10 @@ describe("studio/bridge/bridge-screenshot", () => {
       body: { scrollWidth: 1_000 },
       documentElement: { scrollHeight: 2_000, scrollWidth: 1_000 },
     } as unknown as Document;
-    state.html2canvasImplementation = async () => {
+    const providerInstallation = installStudioCaptureProvider(async () => {
       renderCalls++;
       return {} as HTMLCanvasElement;
-    };
+    });
     Object.defineProperty(globalThis, "window", { value: fakeWindow, configurable: true });
     Object.defineProperty(globalThis, "document", { value: fakeDocument, configurable: true });
 
@@ -215,7 +265,7 @@ describe("studio/bridge/bridge-screenshot", () => {
       });
       assertEquals(renderCalls, 0);
     } finally {
-      state.html2canvasImplementation = null;
+      providerInstallation.dispose();
       Object.defineProperty(globalThis, "window", { value: originalWindow, configurable: true });
       Object.defineProperty(globalThis, "document", {
         value: originalDocument,
@@ -224,10 +274,11 @@ describe("studio/bridge/bridge-screenshot", () => {
     }
   });
 
-  it("uses bundled screenshot support and asynchronous PNG encoding", async () => {
+  it("uses the injected provider contract and asynchronous PNG encoding", async () => {
     const originalWindow = globalThis.window;
     const originalDocument = globalThis.document;
-    let canvasOptions: Record<string, unknown> | undefined;
+    let capturedViewport: Record<string, number> | undefined;
+    let captureElementFilter: ((element: Element) => boolean) | undefined;
     let ambientCalls = 0;
     let verifiedCalls = 0;
     let fakeScrollY = 25;
@@ -263,35 +314,55 @@ describe("studio/bridge/bridge-screenshot", () => {
 
     Object.defineProperty(globalThis, "window", { value: fakeWindow, configurable: true });
     Object.defineProperty(globalThis, "document", { value: fakeDocument, configurable: true });
-    state.html2canvasImplementation = (
-      _element: HTMLElement,
-      options?: Record<string, unknown>,
-    ) => {
-      verifiedCalls++;
-      canvasOptions = options;
-      return Promise.resolve(canvas);
-    };
+    const providerInstallation = installStudioCaptureProvider(
+      ({ element, viewport, shouldIgnoreElement, signal }) => {
+        verifiedCalls++;
+        assertEquals(element, fakeDocument.body);
+        assertEquals(signal.aborted, false);
+        capturedViewport = { ...viewport };
+        captureElementFilter = shouldIgnoreElement;
+        return Promise.resolve(canvas);
+      },
+    );
     const ambientImplementation = () => {
       ambientCalls++;
       return Promise.resolve(canvas);
     };
-    fakeWindow.html2canvas = ambientImplementation;
+    fakeWindow.ambientStudioCapture = ambientImplementation;
     try {
       const result = await captureScreenshot();
 
       assertEquals(result.success, true);
       assertEquals(ambientCalls, 0);
       assertEquals(verifiedCalls, 1);
-      assertEquals(fakeWindow.html2canvas, ambientImplementation);
-      assertEquals(canvasOptions?.scale, 2);
-      assertEquals(canvasOptions?.width, 1_000);
-      assertEquals(canvasOptions?.height, 800);
-      assertEquals(canvasOptions?.x, 0);
-      assertEquals(canvasOptions?.y, 25);
-      assertEquals(canvasOptions?.scrollX, 0);
-      assertEquals(canvasOptions?.scrollY, 25);
-      assertEquals(canvasOptions?.windowWidth, 1_000);
-      assertEquals(canvasOptions?.windowHeight, 800);
+      assertEquals(fakeWindow.ambientStudioCapture, ambientImplementation);
+      assertEquals(
+        captureElementFilter?.({
+          hasAttribute: (name: string) => name === "data-vf-studio-capture-ignore",
+        } as unknown as Element),
+        true,
+      );
+      assertEquals(
+        captureElementFilter?.({ hasAttribute: () => false } as unknown as Element),
+        false,
+      );
+      assertEquals(
+        captureElementFilter?.({
+          hasAttribute: () => {
+            throw new Error("uninspectable");
+          },
+        } as unknown as Element),
+        true,
+      );
+      assertEquals(capturedViewport?.scale, 2);
+      assertEquals(capturedViewport?.width, 1_000);
+      assertEquals(capturedViewport?.height, 800);
+      assertEquals(capturedViewport?.x, 0);
+      assertEquals(capturedViewport?.y, 25);
+      assertEquals(capturedViewport?.scrollX, 0);
+      assertEquals(capturedViewport?.scrollY, 25);
+      assertEquals(capturedViewport?.windowWidth, 1_000);
+      assertEquals(capturedViewport?.windowHeight, 800);
       assertEquals(fakeWindow.scrollY, 25);
       assertEquals(result.url, "https://preview.example/page");
       assertEquals(serializationCalls, [["image/png"]]);
@@ -299,23 +370,23 @@ describe("studio/bridge/bridge-screenshot", () => {
       maximumScrollY = 500;
       const clamped = await captureScreenshot({ scrollTo: 900 });
       assertEquals(clamped.scrollY, 500);
-      assertEquals(canvasOptions?.y, 500);
-      assertEquals(canvasOptions?.scrollY, 500);
+      assertEquals(capturedViewport?.y, 500);
+      assertEquals(capturedViewport?.scrollY, 500);
 
       maximumScrollY = Infinity;
       const fullPage = await captureScreenshot({ fullPage: true });
       assertEquals(fullPage.success, true);
-      assertEquals(canvasOptions?.width, 1_000);
-      assertEquals(canvasOptions?.height, 2_000);
-      assertEquals(canvasOptions?.x, 0);
-      assertEquals(canvasOptions?.y, 0);
-      assertEquals(canvasOptions?.scrollX, 0);
-      assertEquals(canvasOptions?.scrollY, 0);
-      assertEquals(canvasOptions?.windowWidth, 1_000);
-      assertEquals(canvasOptions?.windowHeight, 2_000);
+      assertEquals(capturedViewport?.width, 1_000);
+      assertEquals(capturedViewport?.height, 2_000);
+      assertEquals(capturedViewport?.x, 0);
+      assertEquals(capturedViewport?.y, 0);
+      assertEquals(capturedViewport?.scrollX, 0);
+      assertEquals(capturedViewport?.scrollY, 0);
+      assertEquals(capturedViewport?.windowWidth, 1_000);
+      assertEquals(capturedViewport?.windowHeight, 2_000);
       assertEquals(serializationCalls.at(-1), ["image/png"]);
 
-      fakeWindow.html2canvas = () => {
+      fakeWindow.ambientStudioCapture = () => {
         ambientCalls++;
         return Promise.resolve(canvas);
       };
@@ -323,8 +394,7 @@ describe("studio/bridge/bridge-screenshot", () => {
       assertEquals(ambientCalls, 0);
       assertEquals(verifiedCalls, 4);
     } finally {
-      (state as typeof state & { html2canvasImplementation?: unknown }).html2canvasImplementation =
-        null;
+      providerInstallation.dispose();
       Object.defineProperty(globalThis, "window", { value: originalWindow, configurable: true });
       Object.defineProperty(globalThis, "document", {
         value: originalDocument,
@@ -346,7 +416,7 @@ describe("studio/bridge/bridge-screenshot", () => {
         callback(new Blob(["a".repeat(100)], { type: "image/png" }));
       },
     } as unknown as HTMLCanvasElement;
-    const html2canvasImplementation = () => Promise.resolve(canvas);
+    const captureProvider = () => Promise.resolve(canvas);
     const fakeWindow = {
       get scrollX() {
         return scrollX;
@@ -358,7 +428,7 @@ describe("studio/bridge/bridge-screenshot", () => {
       innerHeight: 800,
       devicePixelRatio: 1,
       location: { href: "https://preview.example/page" },
-      html2canvas: html2canvasImplementation,
+      ambientStudioCapture: captureProvider,
       scrollTo(x: number, y: number) {
         scrollX = x;
         scrollY = y;
@@ -372,7 +442,7 @@ describe("studio/bridge/bridge-screenshot", () => {
 
     Object.defineProperty(globalThis, "window", { value: fakeWindow, configurable: true });
     Object.defineProperty(globalThis, "document", { value: fakeDocument, configurable: true });
-    state.html2canvasImplementation = html2canvasImplementation;
+    const providerInstallation = installStudioCaptureProvider(captureProvider);
     try {
       const results = await captureMultipleSections(1);
 
@@ -380,7 +450,7 @@ describe("studio/bridge/bridge-screenshot", () => {
       assertEquals(scrollCalls.at(-1), [-37, 25]);
       assertEquals([scrollX, scrollY], [-37, 25]);
     } finally {
-      state.html2canvasImplementation = null;
+      providerInstallation.dispose();
       Object.defineProperty(globalThis, "window", { value: originalWindow, configurable: true });
       Object.defineProperty(globalThis, "document", {
         value: originalDocument,
@@ -416,18 +486,73 @@ describe("studio/bridge/bridge-screenshot", () => {
 
     Object.defineProperty(globalThis, "window", { value: fakeWindow, configurable: true });
     Object.defineProperty(globalThis, "document", { value: fakeDocument, configurable: true });
-    state.html2canvasImplementation = () => {
+    const providerInstallation = installStudioCaptureProvider(() => {
       renderCalls++;
       return renderCalls === 1
         ? Promise.reject(new Error("temporary renderer failure"))
         : Promise.resolve(canvas);
-    };
+    });
     try {
       assertEquals((await captureScreenshot()).success, false);
       assertEquals((await captureScreenshot()).success, true);
       assertEquals(renderCalls, 2);
     } finally {
-      state.html2canvasImplementation = null;
+      providerInstallation.dispose();
+      Object.defineProperty(globalThis, "window", { value: originalWindow, configurable: true });
+      Object.defineProperty(globalThis, "document", {
+        value: originalDocument,
+        configurable: true,
+      });
+    }
+  });
+
+  it("aborts and quarantines provider work that exceeds the capture deadline", async () => {
+    const originalWindow = globalThis.window;
+    const originalDocument = globalThis.document;
+    const render = Promise.withResolvers<HTMLCanvasElement>();
+    let providerSignal: AbortSignal | undefined;
+    const fakeWindow = {
+      scrollX: 0,
+      scrollY: 0,
+      innerWidth: 1_000,
+      innerHeight: 800,
+      devicePixelRatio: 1,
+      location: { href: "https://preview.example/page" },
+      scrollTo() {},
+    } as unknown as Window;
+    const fakeDocument = {
+      body: { scrollWidth: 1_000 },
+      documentElement: { scrollHeight: 800, scrollWidth: 1_000 },
+    } as unknown as Document;
+
+    Object.defineProperty(globalThis, "window", { value: fakeWindow, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: fakeDocument, configurable: true });
+    const providerInstallation = installStudioCaptureProvider((request) => {
+      providerSignal = request.signal;
+      return render.promise;
+    });
+
+    try {
+      assertEquals(
+        await captureScreenshot(undefined, undefined, Date.now() + 20),
+        { success: false, error: "Screenshot capture timed out" },
+      );
+      assertEquals(providerSignal?.aborted, true);
+      assertEquals(await captureScreenshot(), {
+        success: false,
+        error: "A timed-out screenshot capture is still running",
+      });
+
+      render.resolve({} as HTMLCanvasElement);
+      await render.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      render.resolve({} as HTMLCanvasElement);
+      await Promise.resolve();
+      await Promise.resolve();
+      providerInstallation.dispose();
       Object.defineProperty(globalThis, "window", { value: originalWindow, configurable: true });
       Object.defineProperty(globalThis, "document", {
         value: originalDocument,
@@ -495,7 +620,7 @@ describe("studio/bridge/bridge-screenshot", () => {
       value: HungFileReader,
       configurable: true,
     });
-    state.html2canvasImplementation = () => Promise.resolve(canvas);
+    const providerInstallation = installStudioCaptureProvider(() => Promise.resolve(canvas));
 
     try {
       const timedOut = await captureScreenshot(undefined, undefined, Date.now() + 20);
@@ -509,7 +634,7 @@ describe("studio/bridge/bridge-screenshot", () => {
       });
       assertEquals((await captureScreenshot()).success, true);
     } finally {
-      state.html2canvasImplementation = null;
+      providerInstallation.dispose();
       if (originalFileReader) {
         Object.defineProperty(globalThis, "FileReader", originalFileReader);
       } else {
@@ -577,7 +702,7 @@ describe("studio/bridge/bridge-screenshot", () => {
       value: SuccessfulFileReader,
       configurable: true,
     });
-    state.html2canvasImplementation = () => Promise.resolve(canvas);
+    const providerInstallation = installStudioCaptureProvider(() => Promise.resolve(canvas));
 
     try {
       assertEquals(
@@ -600,7 +725,7 @@ describe("studio/bridge/bridge-screenshot", () => {
       assertEquals((await captureScreenshot()).success, true);
       assertEquals(readerCalls, 1);
     } finally {
-      state.html2canvasImplementation = null;
+      providerInstallation.dispose();
       if (originalFileReader) {
         Object.defineProperty(globalThis, "FileReader", originalFileReader);
       } else {

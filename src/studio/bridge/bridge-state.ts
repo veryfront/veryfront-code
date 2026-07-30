@@ -1,7 +1,7 @@
 /**
  * Bridge Shared State
  *
- * Bridge infrastructure state (inspector, console, screenshot).
+ * Bridge infrastructure state (inspector and console).
  */
 
 // ---------------------------------------------------------------------------
@@ -21,14 +21,6 @@ export const state = {
   // Console
   originalConsole: {} as Record<string, (...args: unknown[]) => void>,
   logCounter: 0,
-
-  // Screenshot
-  html2canvasImplementation: null as
-    | ((
-      element: HTMLElement,
-      options?: Record<string, unknown>,
-    ) => Promise<HTMLCanvasElement>)
-    | null,
 };
 
 export const CONSOLE_METHODS = [

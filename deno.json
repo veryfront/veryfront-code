@@ -58,6 +58,7 @@
     "./extensions/ext-eval-report-mlflow",
     "./extensions/ext-eval-report-http",
     "./extensions/ext-content-mdx",
+    "./extensions/ext-studio-capture-html2canvas",
     "./extensions/ext-schema-zod"
   ],
   "exclude": [
@@ -126,6 +127,7 @@
     "./fs": "./src/fs/index.ts",
     "./integrations": "./src/integrations/index.ts",
     "./sandbox": "./src/sandbox/index.ts",
+    "./studio/bridge": "./src/studio/bridge/index.ts",
     "./embedding": "./src/embedding/index.ts",
     "./knowledge": "./src/knowledge/index.ts",
     "./extensions": "./src/extensions/index.ts",
@@ -175,6 +177,7 @@
     "veryfront/react/components/ui": "./src/react/components/ui/index.ts",
     "veryfront/components/ui": "./src/react/components/ui/index.ts",
     "veryfront/sandbox": "./src/sandbox/index.ts",
+    "veryfront/studio/bridge": "./src/studio/bridge/index.ts",
     "veryfront/embedding": "./src/embedding/index.ts",
     "veryfront/knowledge": "./src/knowledge/index.ts",
     "veryfront/runs": "./src/runs/index.ts",

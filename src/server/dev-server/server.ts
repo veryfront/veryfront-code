@@ -8,6 +8,7 @@ import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { ApiRouteMatcher } from "#veryfront/routing/api/index.ts";
 import { ComponentRegistry } from "#veryfront/modules/component-registry/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { StudioCaptureBundleProvider } from "#veryfront/extensions/studio/index.ts";
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { bootstrapDev, type BootstrapResult, createRetryableDisposer } from "../bootstrap.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
@@ -69,6 +70,7 @@ export class DevServer {
   private adapter!: RuntimeAdapter;
   private server?: Server;
   private appConfig: VeryfrontConfig | undefined;
+  private studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
   private requestHandler?: RequestHandler;
   private _handler?: (req: Request) => Promise<Response>;
   readonly ready: Promise<void>;
@@ -172,6 +174,7 @@ export class DevServer {
       this.bootstrapDispose = bootstrap.dispose;
       this.adapter = bootstrap.adapter;
       this.appConfig = bootstrap.config;
+      this.studioCaptureProvider = bootstrap.studioCaptureProvider;
 
       // Merge CLI enableHMR flag into config to ensure HMR scripts are disabled when --no-hmr is passed
       if (this.appConfig && this.options.enableHMR === false) {
@@ -285,6 +288,7 @@ export class DevServer {
         defaultProjectSlug,
         this.options.defaultProjectId,
         localProjects,
+        { studioCaptureProvider: this.studioCaptureProvider },
       );
       this.requestHandler = requestHandler;
 

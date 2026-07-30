@@ -24,6 +24,11 @@ import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
+  snapshotStudioCaptureBundleProvider,
+  type StudioCaptureBundleProvider,
+  StudioCaptureBundleProviderName,
+} from "#veryfront/extensions/studio/index.ts";
+import {
   type GlobalTelemetryAPIInstallation,
   installGlobalTelemetryAPI,
 } from "#veryfront/observability/tracing/api-shim.ts";
@@ -120,6 +125,9 @@ export interface BootstrapResult {
    * can safely invoke `teardownAll()` unconditionally.
    */
   extensionLoader: ExtensionLoader;
+
+  /** Immutable Studio capture bundle selected by this extension generation. */
+  studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
 
   /**
    * Dispose all bootstrap-owned resources. The caller exclusively owns this
@@ -418,23 +426,42 @@ export function createRetryableDisposer(
   };
 }
 
+interface FinalizedExtensionBootstrap {
+  readonly dispose: () => Promise<void>;
+  readonly studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
+}
+
+/** @internal Snapshot the optional Studio browser capability before publishing a generation. */
+export function resolveStudioCaptureProviderForBootstrap():
+  | Readonly<StudioCaptureBundleProvider>
+  | undefined {
+  const captureProvider = tryResolve<unknown>(StudioCaptureBundleProviderName);
+  return captureProvider === undefined
+    ? undefined
+    : snapshotStudioCaptureBundleProvider(captureProvider);
+}
+
 async function finalizeExtensionBootstrap(
   extensionLoader: ExtensionLoader,
   fsDispose: ResourceDisposer | undefined,
   fileLogHandle: FileLogHandle | null,
   releaseBootstrapOwnership: () => void,
-): Promise<() => Promise<void>> {
+): Promise<FinalizedExtensionBootstrap> {
   let tracingShimInstallation: TracingShimInstallation | undefined;
   try {
     tracingShimInstallation = wireTracingShim();
     assertRequiredContracts();
-    return combineDispose(
-      extensionLoader,
-      fsDispose,
-      fileLogHandle,
-      tracingShimInstallation,
-      releaseBootstrapOwnership,
-    );
+    const studioCaptureProvider = resolveStudioCaptureProviderForBootstrap();
+    return Object.freeze({
+      dispose: combineDispose(
+        extensionLoader,
+        fsDispose,
+        fileLogHandle,
+        tracingShimInstallation,
+        releaseBootstrapOwnership,
+      ),
+      ...(studioCaptureProvider === undefined ? {} : { studioCaptureProvider }),
+    });
   } catch (error) {
     const retryCleanup = combineDispose(
       extensionLoader,
@@ -610,7 +637,7 @@ export async function bootstrap(
         beforeActivate: clearActiveTracingShimForExtensionTransition,
       });
       const ownedFileLog = fileLog;
-      const dispose = await finalizeExtensionBootstrap(
+      const finalized = await finalizeExtensionBootstrap(
         extensionLoader,
         undefined,
         ownedFileLog,
@@ -622,7 +649,10 @@ export async function bootstrap(
         config,
         usingFSAdapter: false,
         extensionLoader,
-        dispose,
+        ...(finalized.studioCaptureProvider === undefined
+          ? {}
+          : { studioCaptureProvider: finalized.studioCaptureProvider }),
+        dispose: finalized.dispose,
       };
     }
 
@@ -685,7 +715,7 @@ export async function bootstrap(
         beforeActivate: clearActiveTracingShimForExtensionTransition,
       });
       const ownedFileLog = fileLog;
-      const dispose = await finalizeExtensionBootstrap(
+      const finalized = await finalizeExtensionBootstrap(
         extensionLoader,
         fsDispose,
         ownedFileLog,
@@ -697,7 +727,10 @@ export async function bootstrap(
         config,
         usingFSAdapter: false,
         extensionLoader,
-        dispose,
+        ...(finalized.studioCaptureProvider === undefined
+          ? {}
+          : { studioCaptureProvider: finalized.studioCaptureProvider }),
+        dispose: finalized.dispose,
       };
     }
 
@@ -752,7 +785,7 @@ export async function bootstrap(
       fsDispose,
     );
     const ownedFileLog = fileLog;
-    const dispose = await finalizeExtensionBootstrap(
+    const finalized = await finalizeExtensionBootstrap(
       extensionLoader,
       fsDispose,
       ownedFileLog,
@@ -766,7 +799,10 @@ export async function bootstrap(
       usingFSAdapter: true,
       fsAdapterType: fsType,
       extensionLoader,
-      dispose,
+      ...(finalized.studioCaptureProvider === undefined
+        ? {}
+        : { studioCaptureProvider: finalized.studioCaptureProvider }),
+      dispose: finalized.dispose,
     };
   } catch (err) {
     // finalizeExtensionBootstrap already owns every remaining resource and

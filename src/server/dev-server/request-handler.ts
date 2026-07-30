@@ -8,6 +8,7 @@ import {
 } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { StudioCaptureBundleProvider } from "#veryfront/extensions/studio/index.ts";
 import { clearConfigCache } from "#veryfront/config";
 import { ErrorOverlay, parseErrorLocation } from "./error-overlay/index.ts";
 import {
@@ -35,6 +36,7 @@ type RuntimeRequestHandler = ((request: Request) => Promise<Response>) & {
 type RuntimeRequestHandlerFactory = () => Promise<RuntimeRequestHandler>;
 interface RequestHandlerDependencies {
   runtimeHandlerFactory?: RuntimeRequestHandlerFactory;
+  studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
 }
 interface LeasedRuntimeHandler {
   handler: RuntimeRequestHandler;
@@ -61,6 +63,7 @@ export class RequestHandler {
   private disposed = false;
   private disposePromise?: Promise<void>;
   private readonly runtimeHandlerFactory?: RuntimeRequestHandlerFactory;
+  private readonly studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
 
   constructor(
     projectDir: string,
@@ -106,6 +109,7 @@ export class RequestHandler {
       this.defaultProjectId = projectIdOrLocalProjects as string | undefined;
       this.localProjects = localProjectsOrDependencies as Record<string, string> | undefined;
       this.runtimeHandlerFactory = legacyDependencies.runtimeHandlerFactory;
+      this.studioCaptureProvider = legacyDependencies.studioCaptureProvider;
       return;
     }
 
@@ -115,6 +119,8 @@ export class RequestHandler {
     this.localProjects = projectIdOrLocalProjects as Record<string, string> | undefined;
     this.runtimeHandlerFactory = (localProjectsOrDependencies as RequestHandlerDependencies)
       ?.runtimeHandlerFactory;
+    this.studioCaptureProvider = (localProjectsOrDependencies as RequestHandlerDependencies)
+      ?.studioCaptureProvider;
   }
 
   async handleRequest(req: Request): Promise<Response> {
@@ -324,6 +330,7 @@ export class RequestHandler {
       defaultProjectSlug: this.defaultProjectSlug,
       defaultProjectId: this.defaultProjectId,
       localProjects: this.localProjects,
+      studioCaptureProvider: this.studioCaptureProvider,
     });
   }
 

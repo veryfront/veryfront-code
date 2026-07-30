@@ -166,7 +166,7 @@ describe("resolveStudioBridgeBundle", () => {
           buildSource: () => Promise.resolve("x".repeat(4_194_305)),
         }),
       Error,
-      "Studio bridge bundle exceeds the size limit",
+      "Studio bridge bundle exceeds the 4194304-byte limit",
     );
   });
 });

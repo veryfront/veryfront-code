@@ -83,7 +83,7 @@ describe("studio/bridge/bridge-inspector", () => {
     const overlay = createOverlay("hover");
 
     assertEquals(overlay.getAttribute("data-vf-ignore"), "true");
-    assertEquals(overlay.getAttribute("data-html2canvas-ignore"), "true");
+    assertEquals(overlay.getAttribute("data-vf-studio-capture-ignore"), "true");
     assertEquals(created.length, 2);
   });
 

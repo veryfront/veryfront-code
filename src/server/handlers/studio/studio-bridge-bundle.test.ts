@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  createStudioBridgeBundleLoader,
   StudioBridgeBundleLoader,
   type StudioBridgeLoaderDependencies,
 } from "./studio-bridge-bundle.ts";
@@ -97,5 +98,35 @@ describe("StudioBridgeBundleLoader", () => {
       etag: "etag:recovered bridge",
     });
     assertEquals(builds, 2);
+  });
+
+  it("pins an explicitly composed extension bundle in development", async () => {
+    const source = { browserBundle: "extension-owned bridge" };
+    const loader = createStudioBridgeBundleLoader(source);
+    source.browserBundle = "mutated after composition";
+
+    const development = await loader.load(true);
+    const production = await loader.load(false);
+    assertEquals(development.js, "extension-owned bridge");
+    assertEquals(production.js, "extension-owned bridge");
+    assertEquals(development, production);
+  });
+
+  it("rejects hostile extension bundle contracts without invoking accessors", () => {
+    let getterCalls = 0;
+    const provider = Object.defineProperty({}, "browserBundle", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return "ambient fallback";
+      },
+    });
+
+    assertThrows(
+      () => createStudioBridgeBundleLoader(provider as never),
+      TypeError,
+      "string data property",
+    );
+    assertEquals(getterCalls, 0);
   });
 });

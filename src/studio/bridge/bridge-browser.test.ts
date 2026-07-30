@@ -10,6 +10,7 @@ import {
 } from "../../../tests/_helpers/playwright.ts";
 import { MessageFromRendererSchema } from "../schemas/studio.schema.ts";
 import { STUDIO_BRIDGE_BUNDLE } from "./bridge-bundle.generated.ts";
+import { MISSING_STUDIO_CAPTURE_CAPABILITY_ERROR } from "./bridge-screenshot.ts";
 
 const STUDIO_ORIGIN = "http://localhost";
 const STUDIO_URL = `${STUDIO_ORIGIN}/studio`;
@@ -132,7 +133,7 @@ async function waitForScreenshot(page: Page): Promise<void> {
     );
   } catch (error) {
     throw new Error(
-      `Timed out waiting for the bundled screenshot renderer: ${
+      `Timed out waiting for the screenshot response: ${
         JSON.stringify(await readStudioMessages(page))
       }`,
       { cause: error },
@@ -143,7 +144,7 @@ async function waitForScreenshot(page: Page): Promise<void> {
 describe(
   "generated Studio bridge browser execution",
   () => {
-    it("delivers schema-valid lifecycle state and bundled screenshots after a trusted handshake", async () => {
+    it("delivers lifecycle state and fails closed when capture is not composed", async () => {
       const browser = await launchChromium();
       if (!browser) return;
 
@@ -222,12 +223,9 @@ describe(
           message.action === "screenshotResult" &&
           message.requestId === "browser-capture"
         );
-        assertEquals(screenshot?.success, true);
-        assertEquals(
-          typeof screenshot?.data === "string" &&
-            screenshot.data.startsWith("data:image/png;base64,"),
-          true,
-        );
+        assertEquals(screenshot?.success, false);
+        assertEquals(screenshot?.error, MISSING_STUDIO_CAPTURE_CAPABILITY_ERROR);
+        assertEquals(screenshot?.data, undefined);
 
         for (const message of messagesWithScreenshot) {
           const parsed = MessageFromRendererSchema.safeParse(message);

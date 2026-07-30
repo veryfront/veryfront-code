@@ -1,12 +1,14 @@
 import { exists, readTextFile, stat } from "#veryfront/platform/compat/fs.ts";
 import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
-import {
-  DEFAULT_MAX_BODY_SIZE_BYTES,
-  MAX_BUNDLE_CHUNK_SIZE_BYTES,
-} from "#veryfront/utils/constants/index.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { isCompiledBinary } from "#veryfront/utils";
 import { computeStrongEtag } from "../utils/etag.ts";
 import { STUDIO_BRIDGE_BUNDLE } from "#veryfront/studio/bridge/bridge-bundle.generated.ts";
+import {
+  snapshotStudioCaptureBundleProvider,
+  type StudioCaptureBundleProvider,
+  validateStudioCaptureBundle,
+} from "#veryfront/extensions/studio/index.ts";
 
 const PROJECT_ROOT = fromFileUrl(new URL("../../../../", import.meta.url));
 const BRIDGE_DIRECTORY = join(PROJECT_ROOT, "browser", "studio-bridge");
@@ -43,9 +45,7 @@ function assertSourceSize(source: string): void {
 }
 
 function assertBundleSize(bundle: string): void {
-  if (exceedsUtf8Limit(bundle, MAX_BUNDLE_CHUNK_SIZE_BYTES)) {
-    throw new Error("Studio bridge bundle exceeds the size limit");
-  }
+  validateStudioCaptureBundle(bundle);
 }
 
 export async function resolveStudioBridgeBundle(
@@ -162,14 +162,31 @@ async function computeBundleEtag(source: string): Promise<string> {
   return etag.slice(1, -1);
 }
 
-const defaultLoader = new StudioBridgeBundleLoader({
-  prebuiltBundle: STUDIO_BRIDGE_BUNDLE,
-  isCompiled: isCompiledBinary,
-  sourceAvailable: () => exists(BRIDGE_ENTRY_POINT),
-  readCoordinator: readBridgeCoordinator,
-  buildSource: buildBridgeSource,
-  computeEtag: computeBundleEtag,
-});
+/**
+ * Create a loader whose optional capture bundle is fixed for one runtime
+ * generation. Extension bundles always use the immutable prebuilt path: core
+ * must never infer or dynamically resolve an extension browser entry.
+ */
+export function createStudioBridgeBundleLoader(
+  captureProvider?: StudioCaptureBundleProvider,
+): StudioBridgeBundleLoader {
+  const captureBundle = captureProvider === undefined
+    ? undefined
+    : snapshotStudioCaptureBundleProvider(captureProvider).browserBundle;
+
+  return new StudioBridgeBundleLoader({
+    prebuiltBundle: captureBundle ?? STUDIO_BRIDGE_BUNDLE,
+    isCompiled: isCompiledBinary,
+    sourceAvailable: captureBundle === undefined
+      ? () => exists(BRIDGE_ENTRY_POINT)
+      : () => Promise.resolve(false),
+    readCoordinator: readBridgeCoordinator,
+    buildSource: buildBridgeSource,
+    computeEtag: computeBundleEtag,
+  });
+}
+
+const defaultLoader = createStudioBridgeBundleLoader();
 
 export function loadStudioBridgeBundle(localDevelopment: boolean): Promise<StudioBridgeBundle> {
   return defaultLoader.load(localDevelopment);

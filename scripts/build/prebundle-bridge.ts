@@ -12,6 +12,7 @@
 
 import { dirname, fromFileUrl, join } from "#std/path.ts";
 import { EsbuildBundler } from "../../extensions/ext-bundler-esbuild/src/esbuild-bundler.ts";
+import type { BundlerPlugin } from "../../src/extensions/bundler/index.ts";
 
 const scriptDir = dirname(fromFileUrl(import.meta.url));
 const projectRoot = join(scriptDir, "..", "..");
@@ -20,8 +21,17 @@ const outputPath = join(projectRoot, outputRelativePath);
 const entryPoint = "browser/studio-bridge/entry.ts";
 const emptyBundleErrorMessage = "esbuild produced empty output";
 
+export interface StudioBridgeBuildOptions {
+  /** Repository-relative entry point. Defaults to the dependency-free bridge. */
+  entryPoint?: string;
+  /** Explicit build-time aliases owned by an extension bundle generator. */
+  plugins?: BundlerPlugin[];
+}
+
 /** Build the production Studio bridge bundle without writing generated files. */
-export async function buildStudioBridgeBundle(): Promise<string> {
+export async function buildStudioBridgeBundle(
+  options: StudioBridgeBuildOptions = {},
+): Promise<string> {
   const bundler = new EsbuildBundler();
   try {
     const { outputFiles } = await bundler.bundle({
@@ -31,7 +41,8 @@ export async function buildStudioBridgeBundle(): Promise<string> {
       format: "esm",
       platform: "browser",
       target: "es2022",
-      entryPoints: [entryPoint],
+      entryPoints: [options.entryPoint ?? entryPoint],
+      ...(options.plugins === undefined ? {} : { plugins: options.plugins }),
     });
 
     const js = outputFiles?.[0]?.text ?? "";

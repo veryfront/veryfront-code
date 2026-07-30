@@ -8,7 +8,8 @@ export const DATA_VF_ID = "data-vf-id";
 export const DATA_VF_SELECTOR = "data-vf-selector";
 export const DATA_VF_TEXT = "data-vf-text";
 export const DATA_VF_IGNORE = "data-vf-ignore";
-export const DATA_HTML2CANVAS_IGNORE = "data-html2canvas-ignore";
+/** Elements carrying this marker must be omitted by any capture provider. */
+export const DATA_STUDIO_CAPTURE_IGNORE = "data-vf-studio-capture-ignore";
 
 export const DATA_NODE_ID = "data-node-id";
 export const DATA_NODE_FILE = "data-node-file";

@@ -246,6 +246,7 @@ export async function createHandler(
         projectDir,
         config: bootstrap.config,
         profile: "production",
+        studioCaptureProvider: bootstrap.studioCaptureProvider,
       });
       runtimeHandlerDispose = internalHandler.dispose;
       runtimeHandlerDisposed = false;

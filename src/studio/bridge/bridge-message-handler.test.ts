@@ -15,6 +15,10 @@ import {
 } from "./bridge-message-handler.ts";
 import { _flushPendingForTest, _resetForTest, isFromStudio } from "./bridge-messaging.ts";
 import { state } from "./bridge-state.ts";
+import {
+  installStudioCaptureProvider,
+  MISSING_STUDIO_CAPTURE_CAPABILITY_ERROR,
+} from "./bridge-screenshot.ts";
 
 // ---------------------------------------------------------------------------
 // Browser API polyfills for Deno test environment
@@ -615,7 +619,9 @@ Deno.test("runExclusiveScreenshotCapture: contains unexpected capture failures",
   });
 });
 
-Deno.test("screenshot: correlates unexpected multi-section failures", async () => {
+async function captureWithThrowingMultiSectionGeometry(
+  requestId: string,
+): Promise<Record<string, unknown>[]> {
   resetState();
   const originalDocumentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
   const parent = fakeParentWindow as unknown as {
@@ -638,19 +644,13 @@ Deno.test("screenshot: correlates unexpected multi-section failures", async () =
   try {
     handleStudioMessage(makeEvent({
       action: "screenshot",
-      requestId: "capture-1",
+      requestId,
       multipleSections: true,
       sectionCount: 1,
     }));
     for (let turn = 0; turn < 5; turn++) await Promise.resolve();
     _flushPendingForTest();
-
-    assertEquals(messages, [{
-      action: "screenshotResult",
-      requestId: "capture-1",
-      multiple: true,
-      results: [{ success: false, error: "Screenshot capture failed" }],
-    }]);
+    return messages;
   } finally {
     parent.postMessage = originalPostMessage;
     if (originalDocumentDescriptor) {
@@ -659,5 +659,33 @@ Deno.test("screenshot: correlates unexpected multi-section failures", async () =
       delete (globalThis as { document?: Document }).document;
     }
     _resetForTest();
+  }
+}
+
+Deno.test("screenshot: fails closed before reading multi-section geometry", async () => {
+  assertEquals(await captureWithThrowingMultiSectionGeometry("missing-capture"), [{
+    action: "screenshotResult",
+    requestId: "missing-capture",
+    multiple: true,
+    results: [{ success: false, error: MISSING_STUDIO_CAPTURE_CAPABILITY_ERROR }],
+  }]);
+});
+
+Deno.test("screenshot: correlates unexpected multi-section failures", async () => {
+  let providerCalls = 0;
+  const providerInstallation = installStudioCaptureProvider(() => {
+    providerCalls++;
+    return Promise.resolve({} as HTMLCanvasElement);
+  });
+  try {
+    assertEquals(await captureWithThrowingMultiSectionGeometry("capture-1"), [{
+      action: "screenshotResult",
+      requestId: "capture-1",
+      multiple: true,
+      results: [{ success: false, error: "Screenshot capture failed" }],
+    }]);
+    assertEquals(providerCalls, 0);
+  } finally {
+    providerInstallation.dispose();
   }
 });

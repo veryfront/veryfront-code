@@ -36,7 +36,7 @@ export type {
 export { resolve, tryResolve } from "./contracts.ts";
 
 // Discovery
-export type { PackageMetadata } from "./discovery.ts";
+export type { ExtensionActivationMode, PackageMetadata } from "./discovery.ts";
 export {
   discoverLocalExtensions,
   discoverPackageExtensions,
@@ -83,3 +83,13 @@ export type {
   SandboxShellToolsProvider,
 } from "./sandbox/index.ts";
 export { SandboxShellToolsProviderName } from "./sandbox/index.ts";
+
+// Studio browser capabilities
+export {
+  createStudioCaptureBundleProvider,
+  MAX_STUDIO_CAPTURE_BUNDLE_BYTES,
+  snapshotStudioCaptureBundleProvider,
+  type StudioCaptureBundleProvider,
+  StudioCaptureBundleProviderName,
+  validateStudioCaptureBundle,
+} from "./studio/index.ts";
