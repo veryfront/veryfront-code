@@ -10,6 +10,46 @@ import {
   type ProjectCreationEvent,
 } from "./project-creation.ts";
 
+async function withGitIdentity(action: () => Promise<void>): Promise<void> {
+  const processEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
+    .process?.env;
+  const keys = [
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+  ];
+  const originalDenoEnv = new Map(keys.map((key) => [key, Deno.env.get(key)]));
+  const originalProcessEnv = new Map(keys.map((key) => [key, processEnv?.[key]]));
+
+  try {
+    const env = {
+      GIT_AUTHOR_NAME: "Veryfront Tests",
+      GIT_AUTHOR_EMAIL: "tests@example.invalid",
+      GIT_COMMITTER_NAME: "Veryfront Tests",
+      GIT_COMMITTER_EMAIL: "tests@example.invalid",
+    };
+    for (const [key, value] of Object.entries(env)) {
+      Deno.env.set(key, value);
+      if (processEnv) processEnv[key] = value;
+    }
+
+    await action();
+  } finally {
+    for (const key of keys) {
+      const denoValue = originalDenoEnv.get(key);
+      if (denoValue === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, denoValue);
+
+      if (processEnv) {
+        const processValue = originalProcessEnv.get(key);
+        if (processValue === undefined) delete processEnv[key];
+        else processEnv[key] = processValue;
+      }
+    }
+  }
+}
+
 function baseRequest(parentDir: string): CreateProjectRequest {
   return {
     name: "contract-project",
@@ -66,6 +106,58 @@ describe("createProject", () => {
       assertEquals(overwritten.projectDir, result.projectDir);
     } finally {
       await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("rejects invalid project names before writing inside or outside parentDir", async () => {
+    const cases = [
+      {
+        name: "nested/project",
+        message: 'Project name cannot contain "/" or "\\"',
+        forbiddenPath: ["parent", "nested"],
+      },
+      {
+        name: "nested\\project",
+        message: 'Project name cannot contain "/" or "\\"',
+        forbiddenPath: ["parent", "nested\\project"],
+      },
+      {
+        name: ".",
+        message: 'Project name cannot be "." or ".."',
+        forbiddenPath: ["parent", "app"],
+      },
+      {
+        name: "..",
+        message: 'Project name cannot be "." or ".."',
+        forbiddenPath: ["app"],
+      },
+      {
+        name: "../vf-escape-probe",
+        message: 'Project name cannot contain "/" or "\\"',
+        forbiddenPath: ["vf-escape-probe"],
+      },
+    ];
+
+    for (const testCase of cases) {
+      const rootDir = await makeTempDir({ prefix: "veryfront-create-invalid-name-" });
+      const parentDir = join(rootDir, "parent");
+
+      try {
+        await assertRejects(
+          () =>
+            createProject({
+              ...baseRequest(parentDir),
+              name: testCase.name,
+              conflictPolicy: "overwrite",
+            }),
+          Error,
+          testCase.message,
+        );
+
+        assertEquals(await exists(join(rootDir, ...testCase.forbiddenPath)), false);
+      } finally {
+        await remove(rootDir, { recursive: true }).catch(() => {});
+      }
     }
   });
 
@@ -148,20 +240,19 @@ describe("createProject", () => {
 
   it("emits dependency installation observer events and installed status", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-install-" });
-    const binDir = await makeTempDir({ prefix: "veryfront-create-bin-" });
-    const originalPath = Deno.env.get("PATH");
     const events: ProjectCreationEvent[] = [];
+    const projectDir = join(parentDir, "install-events");
 
     try {
-      const fakeNpm = join(binDir, "npm");
-      await Deno.writeTextFile(fakeNpm, "#!/bin/sh\nexit 0\n");
-      await Deno.chmod(fakeNpm, 0o755);
-      Deno.env.set("PATH", `${binDir}${originalPath ? `:${originalPath}` : ""}`);
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "package.json"), "{}\n");
 
       const result = await createProject({
         ...baseRequest(parentDir),
         name: "install-events",
+        conflictPolicy: "overwrite",
         installDependencies: true,
+        includePackageMetadata: false,
       }, {
         observer: {
           onEvent(event) {
@@ -180,10 +271,118 @@ describe("createProject", () => {
         },
       ]);
     } finally {
-      if (originalPath === undefined) Deno.env.delete("PATH");
-      else Deno.env.set("PATH", originalPath);
       await remove(parentDir, { recursive: true }).catch(() => {});
-      await remove(binDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("emits dependency installation observer events and failed status", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-install-failed-" });
+    const events: ProjectCreationEvent[] = [];
+    const projectDir = join(parentDir, "install-failed");
+
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "package.json"), "{");
+
+      const result = await createProject({
+        ...baseRequest(parentDir),
+        name: "install-failed",
+        conflictPolicy: "overwrite",
+        installDependencies: true,
+        includePackageMetadata: false,
+      }, {
+        observer: {
+          onEvent(event) {
+            events.push(event);
+          },
+        },
+      });
+
+      assertEquals(result.dependencyInstallation, "failed");
+      assertEquals(events, [
+        { kind: "dependency-installation-started", packageManager: "npm" },
+        {
+          kind: "dependency-installation-finished",
+          packageManager: "npm",
+          status: "failed",
+        },
+      ]);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("returns initialized Git state when Git initialization succeeds", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-git-ok-" });
+
+    try {
+      await withGitIdentity(async () => {
+        const result = await createProject({
+          ...baseRequest(parentDir),
+          name: "git-initialized",
+          initializeGit: true,
+        });
+
+        assertEquals(result.gitInitialization, "initialized");
+        assertEquals(await exists(join(parentDir, "git-initialized", ".git")), true);
+      });
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("returns failed Git state when Git initialization fails", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-git-failed-" });
+    const projectDir = join(parentDir, "git-failed");
+
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.writeTextFile(join(projectDir, ".git"), "not a git directory\n");
+
+      const result = await createProject({
+        ...baseRequest(parentDir),
+        name: "git-failed",
+        conflictPolicy: "overwrite",
+        initializeGit: true,
+      });
+
+      assertEquals(result.gitInitialization, "failed");
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("maps runtime to deterministic package manager preferences", async () => {
+    const cases: Array<{
+      runtime: CreateProjectRequest["runtime"];
+      packageManager: string;
+      createdPath: string;
+    }> = [
+      { runtime: "node", packageManager: "npm", createdPath: "package.json" },
+      { runtime: "bun", packageManager: "bun", createdPath: "package.json" },
+      { runtime: "deno", packageManager: "deno", createdPath: "deno.json" },
+    ];
+
+    for (const testCase of cases) {
+      const parentDir = await makeTempDir({
+        prefix: `veryfront-create-runtime-${testCase.runtime}-`,
+      });
+
+      try {
+        const result = await createProject({
+          ...baseRequest(parentDir),
+          name: `${testCase.runtime}-project`,
+          runtime: testCase.runtime,
+        });
+
+        assertEquals(result.packageManager, testCase.packageManager);
+        assertEquals(result.createdPaths.includes(testCase.createdPath), true);
+        if (testCase.runtime === "deno") {
+          assertEquals(await exists(join(parentDir, "deno-project", "deno.json")), true);
+        }
+      } finally {
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
     }
   });
 });

@@ -4,6 +4,7 @@ import { join } from "veryfront/platform/path";
 import { ensureDir } from "#std/fs.ts";
 import { createDenoConfig } from "../commands/init/deno-config-generator.ts";
 import { createPackageJson } from "../commands/init/config-generator.ts";
+import { validateProjectName } from "../commands/init/interactive-wizard.ts";
 import type { InitRuntime, InitTemplate } from "../commands/init/types.ts";
 import {
   type EnvPromptResult,
@@ -414,6 +415,11 @@ export async function createProject(
   dependencies: CreateProjectDependencies = {},
 ): Promise<CreateProjectResult> {
   const projectName = request.name;
+  if (projectName) {
+    const nameError = validateProjectName(projectName);
+    if (nameError) throw createConfigError(nameError);
+  }
+
   const projectDir = projectName ? join(request.parentDir, projectName) : request.parentDir;
   const fs = createFileSystem();
 
