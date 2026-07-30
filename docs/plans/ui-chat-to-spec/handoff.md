@@ -1,9 +1,30 @@
-# Handoff — `veryfront/ui` + `veryfront/chat` to spec (RFCs #2980 + #3090)
+# Handoff — `veryfront/ui` + `veryfront/chat` to spec (PRs #2980 + #3090)
+
+> **North star:** an amazing component library for open-source users of
+> Veryfront — so they can easily build and compose agentic apps. A better shadcn +
+> AI Elements: drop-in at L1, compose at L2, go headless / bring-your-own-engine
+> at L3, with real accessibility and complete, well-documented primitives.
 
 You are continuing a large, multi-session effort to bring `veryfront/ui` and
 `veryfront/chat` fully to the RFC spec, with a bring-your-own-engine adapter
-system, a complete primitive set, full docs + stories + tests, and three working
+system, a complete primitive set, full docs + stories + tests, and working
 example apps. Work **backward-compatibly** throughout.
+
+## How to use this doc (agents)
+
+Read top-to-bottom once, then work from **[Work breakdown](#work-breakdown--everything-in-scope)**
+(what to build) and the **`_impl/matrix.md` trackers** (what's left). Each section:
+
+| Section                                                                | Use it for                                            |
+| ---------------------------------------------------------------------- | ----------------------------------------------------- |
+| [Repos & setup](#repos--setup)                                         | paths, remotes, PRs, how to run example apps locally  |
+| [Spec documents](#spec-documents-read-these-first)                     | the RFCs = source of truth for "to spec"              |
+| [Locked decisions](#locked-decisions--respect-these)                   | constraints you must not violate                      |
+| [Current state](#current-state)                                        | what's done + the merge blocker (do the rebase first) |
+| [Work breakdown](#work-breakdown--everything-in-scope)                 | the full explicit scope, area by area                 |
+| [The goal](#the-goal-acceptance-criteria)                              | the 10 acceptance criteria                            |
+| [Per-iteration protocol](#per-iteration-protocol)                      | the exact loop to run each time                       |
+| [Key files](#key-files--conventions) / [Gotchas](#testing--ci-gotchas) | where things live, how not to break the build         |
 
 ---
 
@@ -55,8 +76,8 @@ The two RFCs are the source of truth for "to spec":
   **Step zero of chat work: land those docs onto the working branch or read them
   cross-branch.**
 - **Implementation tracking** (on `feat/ui-chat-to-spec`):
-  `docs/rfcs/0001-ui-primitive-adapters/_impl/{spec.md,matrix.md}` and
-  `docs/rfcs/29-chat-api-shape/_impl/{spec.md,matrix.md,tickets/README.md}` — the
+  `docs/plans/ui-chat-to-spec/ui-{spec,matrix}.md` and
+  `docs/plans/ui-chat-to-spec/chat-{spec,matrix,tickets}.md` — the
   distilled per-piece definition-of-done + a matrix of all 25 components + 33 hooks
   with gate columns (Spec/Built/Story/Test/Styled/Verified). Update the matrix as
   you go.
@@ -122,6 +143,74 @@ are in `floating.tsx`, `popover.tsx`, `dropdown-menu.tsx`, `anchored-surface.tsx
 **First task: `git fetch origin main` and reconcile — this is the top priority.**
 
 ---
+
+## Work breakdown — everything in scope
+
+Every item below must reach: **spec-conformant build → Storybook story → docs
+(`/docs-writer`) → tests → reviewed (`/composition-patterns` + `/code-review` +
+`/security-audit`)**. Track per-item progress in `docs/plans/ui-chat-to-spec/{ui,chat}-matrix.md`.
+
+**A. `veryfront/ui` existing components** (audit + bring to spec):
+`Button`, `IconButton`, `Card`, `Badge`, `Pill`, `Tag`, `Avatar`, `Alert`,
+`Status`, `List`, `Skeleton`, `Shimmer`, `ProgressBar`, `ScrollFade`, `FileType`,
+`Input`, `Textarea`, `Label`, `Checkbox`, `Radio`, `Switch`, `Popover`, `Dialog`,
+`Drawer`, `DropdownMenu`, `Tooltip`, `Select`, `Command`, `Tabs`, `Collapsible`,
+`AppShell`, `ColorMode*`.
+
+**B. `veryfront/ui` NEW primitives** (fill the gaps vs Base UI / Radix / shadcn):
+`Combobox`, `Autocomplete`, `Accordion`, `HoverCard`, `ContextMenu`, `Toast`,
+`Toggle`, `ToggleGroup`, `Separator`, `Slider` (add `Menubar`, `NumberField`,
+`AspectRatio`, etc. as the survey warrants). Behavioural = Skin + engine adapter;
+pure-visual = builtin Skin.
+
+**C. `veryfront/chat` components (25) + hooks (~33)** — the full list is in
+`docs/plans/ui-chat-to-spec/chat-matrix.md`. Each to spec with L1/L2/L3
+composition, story, docs, tests. Register every compound in
+`composability.contract.test.tsx`.
+
+**D. Adapters** — vendored templates under `cli/templates/ui-adapters/`, each with
+docs + example/story + tests on the swap path (§7/§13 of RFC #3090):
+
+- **Builtin** — the always-present zero-dependency engine (default; no template).
+- **Full engines** (cover all interactive primitives): **Base UI** (flagship —
+  finish to 5/5 first, then new primitives), **Radix**, **React Aria**, **Ariakit**.
+- **Specialist per-primitive adapters** (best-of-breed for one primitive, the
+  "better shadcn" move — the adapter map is per-key so these mix in): **Vaul**
+  (Drawer), **Sonner** (Toast), **cmdk** (Command / Combobox), **react-day-picker**
+  (Calendar / DatePicker). Add others per primitive as the survey warrants.
+- **NOT adapters (do not build as adapters):** **shadcn** is a token/CLI-vendoring
+  _distribution_ posture, not an engine — a different axis (RFC #3090 §9); we're
+  shadcn-_compatible_ by sitting on the same primitives, nothing to adapter. And
+  **Zag.js / Ark** is explicitly out (locked decision #4). shadcn's component set
+  is still a useful reference for _which primitives_ to add (section B).
+
+**E. Reproductions — `veryfront-router-testing`:** L1/L2/L3 chat example apps
+(scaffolded: `chat-blackbox`/`chat-custom-ui`/`chat-full-custom`; L1 = no config).
+Add: tests validating every example (extend `check-chat-demos.sh`; use `sweep.sh`
+/ `client-sweep.mjs` / `nav-sweep.mjs`); **zero client + server errors** against
+this branch; and an **adapter interop test bed** (a subproject that swaps engines
+via `UIAdapterProvider` and verifies render + behaviour across builtin / Base UI /
+Radix / React Aria / Ariakit).
+
+**F. Tests:** the shared component-conformance harness (one-node · className merge
+· spread-through · handler compose · `asChild` · `ref` · `data-*` · a11y),
+per-hook behaviour tests, adapter builtin-vs-swap conformance, demo boot checks,
+interop. Keep the freeze tests green (`ui/index.test.ts`, `src/chat/index.test.ts`).
+
+**G. Docs:** concise, focused, shadcn/Vercel-style via **`/docs-writer`** — one
+page per component (ui + chat) + the adapter system + each engine adapter. Extend
+`docs/guides/ui-components.md`, `chat-ui.md`, `chat-hooks.md`.
+
+**H. Stories:** every ui + chat component in `storybook/stories/{ui,chat}/`.
+
+**I. Reviews:** run `/composition-patterns`, `/code-review`, `/security-audit`
+(and `/code-review ultra` for the branch) over changed code; fix findings.
+
+**J. Public surface:** everything exported cleanly, no breaking changes,
+`@deprecated` used effectively; both freeze tests pass.
+
+**K. CLI starters:** the `veryfront` CLI starter chat template(s) use the new
+components/shape and work perfectly.
 
 ## The goal (acceptance criteria)
 
@@ -201,6 +290,35 @@ are in `floating.tsx`, `popover.tsx`, `dropdown-menu.tsx`, `anchored-surface.tsx
   explicitly triage every finding; nothing merges with unaddressed P0/P1s.
 
 ---
+
+## Per-iteration protocol
+
+Do exactly this each loop iteration (one small, fully-finished, committed slice):
+
+1. **Rebase gate.** If PR #3185 is red / conflicts with `main`: `git fetch origin
+   main`, reconcile the adapter layer onto `main`'s #3176/#3056 primitives, get it
+   green. Do this before any feature work.
+2. **Pick ONE item** from the [Work breakdown](#work-breakdown--everything-in-scope)
+   / `_impl/matrix.md` — the highest-leverage unchecked thing (finish Base UI 5/5
+   first, then go area by area).
+3. **Build** it to the composition rules (decision #6).
+4. **Story** — add/extend its Storybook story in `storybook/stories/{ui,chat}/`
+   (`deno task storybook` to verify).
+5. **Docs** — write its concise page with the **`/docs-writer` skill** (shadcn/
+   Vercel style: lead with the answer, minimal prose, real examples).
+6. **Tests** — component-conformance or per-hook behaviour test; adapters tested on
+   builtin + swap paths.
+7. **Review** — run `/composition-patterns`, `/code-review`, `/security-audit` on
+   the change; fix findings.
+8. **Verify** — `deno check` + `deno fmt` + `deno lint` on changed files; run the
+   relevant tests green; keep both freeze tests passing.
+9. **Commit + push** to `feat/ui-chat-to-spec` (revert `deno.lock` /
+   `*.generated.ts` churn first; `--no-verify` only if the sole failure is the
+   known `deploy-tool` flake).
+10. **Tick the matrix** so the next iteration knows what's left. Repeat.
+
+A slice is not "done" until **build + story + docs + tests + review** are all
+complete for that item.
 
 ## Key files & conventions
 

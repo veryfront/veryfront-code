@@ -93,29 +93,29 @@ Mode-specific fields:
 ```ts
 type EvalRunReportOutcome =
   | {
-      kind: "single";
-      report: EvalReport;
-      summary: CliEvalSummary;
-      baseline?: EvalReportComparison;
-      artifacts: EvalArtifactPaths;
-      exitCode: 0 | 1;
-      outputHints: EvalRunReportOutputHints;
-    }
+    kind: "single";
+    report: EvalReport;
+    summary: CliEvalSummary;
+    baseline?: EvalReportComparison;
+    artifacts: EvalArtifactPaths;
+    exitCode: 0 | 1;
+    outputHints: EvalRunReportOutputHints;
+  }
   | {
-      kind: "suite";
-      suite: EvalSuiteSummary;
-      artifacts: EvalSuiteArtifactPaths;
-      exitCode: 0 | 1;
-      outputHints: EvalRunReportOutputHints;
-    }
+    kind: "suite";
+    suite: EvalSuiteSummary;
+    artifacts: EvalSuiteArtifactPaths;
+    exitCode: 0 | 1;
+    outputHints: EvalRunReportOutputHints;
+  }
   | {
-      kind: "model-comparison";
-      reports: EvalReport[];
-      comparison: EvalModelComparison;
-      artifacts: EvalModelComparisonArtifactPaths;
-      exitCode: 0 | 1;
-      outputHints: EvalRunReportOutputHints;
-    };
+    kind: "model-comparison";
+    reports: EvalReport[];
+    comparison: EvalModelComparison;
+    artifacts: EvalModelComparisonArtifactPaths;
+    exitCode: 0 | 1;
+    outputHints: EvalRunReportOutputHints;
+  };
 ```
 
 The output hints are structured values the CLI can use to preserve current human output without moving `cliLogger` into `src/eval`.
@@ -157,27 +157,27 @@ The output hints are structured values the CLI can use to preserve current human
 
 ## Ownership table
 
-| Concern | Current owner | New owner |
-| --- | --- | --- |
-| Arg parsing and aliases | `cli/commands/eval/handler.ts` | unchanged |
-| JSON envelope and human logs | `cli/commands/eval/command.ts` | unchanged |
-| Process exit | `evalCommand` | unchanged |
-| Project source context | `runEvalCommand` | unchanged |
-| Runtime auth | `runEvalCommand` | unchanged |
-| Runtime discovery | `runEvalCommand` | unchanged |
-| Extension lifecycle | `runEvalCommand` | unchanged |
-| Agent and Tool adapters | `command.ts` | unchanged |
-| Exporter id resolution and redaction env | `command.ts` | unchanged |
-| Comparison-policy flag and file validation | `command.ts` | unchanged |
-| Run id generation | `command.ts` | `src/eval/run-report.ts` |
-| Report directory and file paths | `command.ts` | `src/eval/run-report.ts` |
-| Summary, JSONL, Markdown, JUnit | `command.ts` | `src/eval/run-report.ts` |
-| Baseline comparison and write-baseline | `command.ts` | `src/eval/run-report.ts` |
-| Billing finalization order | `command.ts` | `src/eval/run-report.ts` |
-| Export-after-billing | `command.ts` | `src/eval/run-report.ts` |
-| Suite orchestration | `command.ts` | `src/eval/run-report.ts` |
-| Model comparison orchestration | `command.ts` | `src/eval/run-report.ts` |
-| Exit decision | `command.ts` helpers | `src/eval/run-report.ts` |
+| Concern                                    | Current owner                  | New owner                |
+| ------------------------------------------ | ------------------------------ | ------------------------ |
+| Arg parsing and aliases                    | `cli/commands/eval/handler.ts` | unchanged                |
+| JSON envelope and human logs               | `cli/commands/eval/command.ts` | unchanged                |
+| Process exit                               | `evalCommand`                  | unchanged                |
+| Project source context                     | `runEvalCommand`               | unchanged                |
+| Runtime auth                               | `runEvalCommand`               | unchanged                |
+| Runtime discovery                          | `runEvalCommand`               | unchanged                |
+| Extension lifecycle                        | `runEvalCommand`               | unchanged                |
+| Agent and Tool adapters                    | `command.ts`                   | unchanged                |
+| Exporter id resolution and redaction env   | `command.ts`                   | unchanged                |
+| Comparison-policy flag and file validation | `command.ts`                   | unchanged                |
+| Run id generation                          | `command.ts`                   | `src/eval/run-report.ts` |
+| Report directory and file paths            | `command.ts`                   | `src/eval/run-report.ts` |
+| Summary, JSONL, Markdown, JUnit            | `command.ts`                   | `src/eval/run-report.ts` |
+| Baseline comparison and write-baseline     | `command.ts`                   | `src/eval/run-report.ts` |
+| Billing finalization order                 | `command.ts`                   | `src/eval/run-report.ts` |
+| Export-after-billing                       | `command.ts`                   | `src/eval/run-report.ts` |
+| Suite orchestration                        | `command.ts`                   | `src/eval/run-report.ts` |
+| Model comparison orchestration             | `command.ts`                   | `src/eval/run-report.ts` |
+| Exit decision                              | `command.ts` helpers           | `src/eval/run-report.ts` |
 
 ## Compatibility invariants
 
