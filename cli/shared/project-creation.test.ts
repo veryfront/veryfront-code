@@ -112,6 +112,16 @@ describe("createProject", () => {
   it("rejects invalid project names before writing inside or outside parentDir", async () => {
     const cases = [
       {
+        name: "",
+        message: "Project name cannot be empty",
+        forbiddenPath: ["parent", "app"],
+      },
+      {
+        name: "   ",
+        message: "Project name cannot be empty",
+        forbiddenPath: ["parent", "   "],
+      },
+      {
         name: "nested/project",
         message: 'Project name cannot contain "/" or "\\"',
         forbiddenPath: ["parent", "nested"],

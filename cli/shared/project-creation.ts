@@ -443,19 +443,21 @@ export async function createProject(
   dependencies: CreateProjectDependencies = {},
 ): Promise<CreateProjectResult> {
   const projectName = request.name;
-  if (projectName) {
+  if (projectName !== undefined) {
     const nameError = validateProjectName(projectName);
     if (nameError) throw createConfigError(nameError);
   }
 
-  const projectDir = projectName ? join(request.parentDir, projectName) : request.parentDir;
+  const projectDir = projectName === undefined
+    ? request.parentDir
+    : join(request.parentDir, projectName);
   const fs = createFileSystem();
 
   validateOrThrow("features", request.features, validateFeatures);
   validateOrThrow("integrations", request.integrations, validateIntegrations);
 
   if (
-    projectName &&
+    projectName !== undefined &&
     request.conflictPolicy === "fail" &&
     await fs.exists(projectDir)
   ) {
@@ -476,7 +478,7 @@ export async function createProject(
     allEnvVars,
   );
 
-  if (projectName) await ensureDir(projectDir);
+  if (projectName !== undefined) await ensureDir(projectDir);
 
   const createdPaths = await writeScaffoldFiles(projectDir, integrationAssembly.files);
   const featureTips = [...featureAssembly.tips, ...integrationAssembly.tips];

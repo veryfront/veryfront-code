@@ -5,6 +5,11 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateProjectName } from "./project-name.ts";
 
 describe("validateProjectName", () => {
+  it("rejects empty and whitespace-only names", () => {
+    assertEquals(validateProjectName(""), "Project name cannot be empty");
+    assertEquals(validateProjectName("   "), "Project name cannot be empty");
+  });
+
   it("accepts a simple name", () => {
     assertEquals(validateProjectName("my-app"), null);
   });

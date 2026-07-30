@@ -11,6 +11,7 @@ import { connectors } from "../../../src/integrations/_data.ts";
 import { filterVisibleIntegrations } from "../../../src/integrations/feature-flags.ts";
 import { INTEGRATION_CATEGORIES } from "../../commands/init/catalog.ts";
 import { createProject as createSharedProject } from "../../shared/project-creation.ts";
+import { validateProjectName } from "../../shared/project-name.ts";
 import type { MCPTool } from "../tools.ts";
 import { directoryExists, formatError, toSlug } from "./helpers.ts";
 import type { InitTemplate } from "../../commands/init/types.ts";
@@ -391,6 +392,10 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
       async () => {
         try {
           const { name, parentDir, projectDir } = resolveCreateProjectPaths(input);
+          const nameError = validateProjectName(name);
+          if (nameError) {
+            return { success: false, message: `Failed to create project: ${nameError}` };
+          }
 
           if (await directoryExists(projectDir)) {
             return { success: false, message: `Directory already exists: ${projectDir}` };

@@ -7,7 +7,7 @@ import { select, textInput } from "../../utils/terminal-select.ts";
 import { DEFAULT_TEMPLATE, getTemplateSelectOptions } from "./catalog.ts";
 import type { InitRuntime, InitTemplate } from "./types.ts";
 
-export { validateProjectName } from "../../shared/project-name.ts";
+export { validateProjectName };
 
 export interface WizardResult {
   projectName: string | null; // null = use current directory

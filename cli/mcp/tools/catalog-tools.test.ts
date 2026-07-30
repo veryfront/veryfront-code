@@ -245,5 +245,20 @@ describe("mcp/tools/catalog-tools", () => {
       assertEquals(result.projectDir, undefined);
       assertEquals(result.message.includes("cannot contain"), true);
     });
+
+    it("reports an empty project name before checking the parent directory", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+
+      const result = await vfCreateProject.execute({
+        name: "",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message, "Failed to create project: Project name cannot be empty");
+    });
   });
 });
