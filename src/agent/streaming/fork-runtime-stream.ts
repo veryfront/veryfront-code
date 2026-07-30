@@ -323,6 +323,7 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     system: input.system,
     tools: input.runtimeTools,
     providerTools: input.providerToolNames ?? [],
+    toolLoading: "eager" as const,
     maxSteps: 1,
     ...(input.providerOptions || input.reasoning
       ? {
