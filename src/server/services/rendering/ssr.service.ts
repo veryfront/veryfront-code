@@ -369,7 +369,7 @@ export class SSRService implements SSRServiceLike {
         };
       case "overloaded":
         return {
-          status: outcome.status ?? HTTP_UNAVAILABLE,
+          status: outcome.status,
           html: ErrorPages.memoryPressure(),
           isStreaming: false,
           cacheStrategy: "no-cache",
