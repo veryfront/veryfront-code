@@ -92,6 +92,7 @@ import {
   getRuntimeToolExposureCheckpoint,
   getRuntimeToolExposureCheckpointPersister,
   getRuntimeToolSearchAuthorization,
+  resolveRuntimeNativeToolSearch,
   resolveRuntimeToolLoading,
 } from "./runtime-tool-config.ts";
 import {
@@ -394,21 +395,6 @@ function observeToolLoadingBenchmark(input: {
     providerWireDeferredMetadataCount,
     loadingPath,
   });
-}
-
-function resolveNativeToolSearch(input: {
-  model: string;
-  authorization: ToolSearchAuthorization;
-}): { mode: "hosted"; variant?: "regex" } | undefined {
-  if (input.authorization.canConfigureAgentTools) return undefined;
-  const provider = resolveProviderReplayProvider(input.model);
-  if (provider === "anthropic") {
-    return { mode: "hosted", variant: "regex" };
-  }
-  if (provider === "openai-responses") {
-    return { mode: "hosted" };
-  }
-  return undefined;
 }
 
 function buildStreamFinishUsage(
@@ -1242,10 +1228,11 @@ export class AgentRuntime {
           )
           : preparedStep.tools;
         const nativeToolSearch = runtimeStepConfig.toolLoading === "deferred"
-          ? resolveNativeToolSearch({
-            model: effectiveModel,
-            authorization: toolSearchAuthorization,
-          })
+          ? resolveRuntimeNativeToolSearch(
+            this.config,
+            effectiveModel,
+            toolSearchAuthorization,
+          )
           : undefined;
         setSpanAttributes(loopSpan, {
           "tool.loading.mode": runtimeStepConfig.toolLoading ?? "deferred",
@@ -1875,10 +1862,11 @@ export class AgentRuntime {
         )
         : preparedStep.tools;
       const nativeToolSearch = runtimeStepConfig.toolLoading === "deferred"
-        ? resolveNativeToolSearch({
-          model: effectiveModel,
-          authorization: toolSearchAuthorization,
-        })
+        ? resolveRuntimeNativeToolSearch(
+          this.config,
+          effectiveModel,
+          toolSearchAuthorization,
+        )
         : undefined;
       setOtelActiveSpanAttributes({
         "tool.loading.mode": runtimeStepConfig.toolLoading ?? "deferred",

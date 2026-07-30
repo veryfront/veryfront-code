@@ -68,22 +68,25 @@ async function observeDeferredTransport(input: {
       return { stream: new ReadableStream() };
     },
   };
-  const assistant = agent({
-    id: `transport-${input.modelId.replaceAll("/", "-")}`,
-    model: input.modelId,
-    system: "Answer directly.",
-    skills: false,
-    tools: {
-      get_release: tool({
-        id: "get_release",
-        description: "Get the current release",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => ({ id: "rel-1" }),
-      }),
-    },
-    maxSteps: 1,
-    resolveModelTransport: () => ({ model }),
-  });
+  const assistant = agent(
+    {
+      id: `transport-${input.modelId.replaceAll("/", "-")}`,
+      model: input.modelId,
+      system: "Answer directly.",
+      skills: false,
+      tools: {
+        get_release: tool({
+          id: "get_release",
+          description: "Get the current release",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ id: "rel-1" }),
+        }),
+      },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfNativeProviderToolSearchEnabled: true,
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
 
   await runAgentToolLoadingBenchmark(
     assistant,
@@ -1333,22 +1336,25 @@ it("benchmark observer separates native model context from wire metadata", async
       return { stream: new ReadableStream() };
     },
   };
-  const assistant = agent({
-    id: "native-tool-loading-observer-test",
-    model: "anthropic/claude-opus-4-6",
-    system: "Answer directly.",
-    skills: false,
-    tools: {
-      get_release: tool({
-        id: "get_release",
-        description: "Get the current release",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => ({ id: "rel-1" }),
-      }),
-    },
-    maxSteps: 1,
-    resolveModelTransport: () => ({ model }),
-  });
+  const assistant = agent(
+    {
+      id: "native-tool-loading-observer-test",
+      model: "anthropic/claude-opus-4-6",
+      system: "Answer directly.",
+      skills: false,
+      tools: {
+        get_release: tool({
+          id: "get_release",
+          description: "Get the current release",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ id: "rel-1" }),
+        }),
+      },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfNativeProviderToolSearchEnabled: true,
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
 
   await runAgentToolLoadingBenchmark(
     assistant,
@@ -1472,6 +1478,7 @@ it("native OpenAI search selection authorizes only the selected deferred generat
         },
         maxSteps: 2,
         resolveModelTransport: () => ({ model }),
+        __vfNativeProviderToolSearchEnabled: true,
         __vfPersistToolExposureCheckpoint: (checkpoint: ToolExposureCheckpoint) => {
           checkpointPersistedBeforeExecution = checkpoint.loadedToolNames.includes("get_release") &&
             checkpoint.loadedToolNames.includes("get_native_status");
@@ -1562,6 +1569,7 @@ it("native Anthropic search selection authorizes a deferred legacy stream call",
       },
       maxSteps: 2,
       resolveModelTransport: () => ({ model }),
+      __vfNativeProviderToolSearchEnabled: true,
       __vfPersistToolExposureCheckpoint: (checkpoint: ToolExposureCheckpoint) => {
         checkpointPersistedBeforeExecution = checkpoint.loadedToolNames.includes("get_release");
       },

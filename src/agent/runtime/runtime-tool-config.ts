@@ -5,6 +5,7 @@ import { resolveEffectiveSourceIntegrationPolicy } from "#veryfront/integrations
 import { type SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import type { ToolExposureCheckpoint, ToolSearchAuthorization } from "./tool-exposure.ts";
 import { resolveToolLoading } from "./agent-definition.ts";
+import { resolveProviderReplayProvider } from "./provider-replay.ts";
 
 export const SOURCE_INTEGRATION_POLICY_CONTEXT_KEY = "__vfSourceIntegrationPolicy";
 
@@ -18,6 +19,7 @@ export type RuntimeToolFilterConfig = AgentConfig & {
     checkpoint: ToolExposureCheckpoint,
   ) => void | Promise<void>;
   __vfOperationalToolLoadingOverride?: ToolLoading;
+  __vfNativeProviderToolSearchEnabled?: boolean;
 } & RuntimeRemoteToolConfig;
 
 /** Effective runtime loading mode and the trusted source that selected it. */
@@ -46,6 +48,28 @@ export function resolveRuntimeToolLoading(
     mode: resolveToolLoading(config.toolLoading),
     provenance: "agent-config",
   };
+}
+
+/** Select provider-native tool search only when the trusted host rollout explicitly enables it. */
+export function resolveRuntimeNativeToolSearch(
+  config: AgentConfig,
+  model: string,
+  authorization: ToolSearchAuthorization,
+): { mode: "hosted"; variant?: "regex" } | undefined {
+  if (
+    (config as RuntimeToolFilterConfig).__vfNativeProviderToolSearchEnabled !== true ||
+    authorization.canConfigureAgentTools
+  ) {
+    return undefined;
+  }
+  const provider = resolveProviderReplayProvider(model);
+  if (provider === "anthropic") {
+    return { mode: "hosted", variant: "regex" };
+  }
+  if (provider === "openai-responses") {
+    return { mode: "hosted" };
+  }
+  return undefined;
 }
 
 export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {

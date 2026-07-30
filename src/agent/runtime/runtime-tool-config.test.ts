@@ -11,6 +11,7 @@ import {
   getRuntimeSourceIntegrationPolicyFromContext,
   getRuntimeToolExposureCheckpoint,
   getRuntimeToolSearchAuthorization,
+  resolveRuntimeNativeToolSearch,
   resolveRuntimeToolLoading,
 } from "./runtime-tool-config.ts";
 
@@ -75,6 +76,57 @@ describe("agent/runtime-tool-config", () => {
       })),
       { canConfigureAgentTools: false, attachableCatalog: [] },
     );
+  });
+
+  describe("resolveRuntimeNativeToolSearch", () => {
+    const authorization = {
+      canConfigureAgentTools: false,
+      attachableCatalog: [],
+    };
+
+    it("defaults provider-native search off and retains framework fallback", () => {
+      assertEquals(
+        resolveRuntimeNativeToolSearch(
+          runtimeConfig({ toolLoading: "deferred" }),
+          "anthropic/claude-sonnet-4-5",
+          authorization,
+        ),
+        undefined,
+      );
+    });
+
+    it("enables Anthropic native search through trusted internal config", () => {
+      assertEquals(
+        resolveRuntimeNativeToolSearch(
+          runtimeConfig({ __vfNativeProviderToolSearchEnabled: true }),
+          "anthropic/claude-sonnet-4-5",
+          authorization,
+        ),
+        { mode: "hosted", variant: "regex" },
+      );
+    });
+
+    it("enables OpenAI native search through trusted internal config", () => {
+      assertEquals(
+        resolveRuntimeNativeToolSearch(
+          runtimeConfig({ __vfNativeProviderToolSearchEnabled: true }),
+          "openai/gpt-5.4",
+          authorization,
+        ),
+        { mode: "hosted" },
+      );
+    });
+
+    it("uses framework fallback when trusted internal config explicitly disables native search", () => {
+      assertEquals(
+        resolveRuntimeNativeToolSearch(
+          runtimeConfig({ __vfNativeProviderToolSearchEnabled: false }),
+          "openai/gpt-5.4",
+          authorization,
+        ),
+        undefined,
+      );
+    });
   });
 
   it("accepts only supported private checkpoint state from internal config", () => {
