@@ -57,10 +57,15 @@ type OpenAINativeToolSearchConfig = {
   mode: OpenAINativeToolSearchMode;
 };
 
-const OPENAI_NATIVE_TOOL_SEARCH_MODEL_PREFIXES = [
+const OPENAI_NATIVE_TOOL_SEARCH_MODEL_IDS = [
   "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.4-pro",
   "gpt-5.5",
   "gpt-5.6",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
 ] as const;
 
 /** Explicit capability gate for Responses API tool search. */
@@ -71,8 +76,9 @@ export function supportsOpenAINativeToolSearch(
   if (providerName !== "openai" && providerName !== "veryfront-cloud") {
     return false;
   }
-  return OPENAI_NATIVE_TOOL_SEARCH_MODEL_PREFIXES.some((prefix) =>
-    modelId === prefix || modelId.startsWith(`${prefix}-`)
+  const baseModelId = modelId.replace(/-\d{4}-\d{2}-\d{2}$/, "");
+  return OPENAI_NATIVE_TOOL_SEARCH_MODEL_IDS.some((supportedModelId) =>
+    baseModelId === supportedModelId
   );
 }
 

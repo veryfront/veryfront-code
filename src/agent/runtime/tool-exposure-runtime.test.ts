@@ -164,6 +164,64 @@ Deno.test("deferred generate searches, exposes on the next step, and executes on
   assertEquals(response.text, "Release rel-1");
 });
 
+Deno.test("deferred generate rejects a guessed tool that was not exposed", async () => {
+  let step = 0;
+  let executionCount = 0;
+  const model: ModelRuntime = {
+    provider: "hosted",
+    modelId: "hosted/deferred-guessed-tool",
+    async doGenerate() {
+      step++;
+      if (step === 1) {
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: "guessed-1",
+            toolName: "get_release",
+            input: "{}",
+          }],
+          finishReason: "tool-calls",
+        };
+      }
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+      };
+    },
+    async doStream() {
+      return { stream: new ReadableStream() };
+    },
+  };
+  const assistant = agent({
+    id: "deferred-guessed-generate",
+    model: "hosted/deferred-guessed-tool",
+    system: "Use tools when needed.",
+    skills: false,
+    tools: {
+      get_release: tool({
+        id: "get_release",
+        description: "Get the current release",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => {
+          executionCount++;
+          return { id: "rel-1" };
+        },
+      }),
+    },
+    maxSteps: 2,
+    resolveModelTransport: () => ({ model }),
+  });
+
+  const response = await assistant.generate({ input: "Find the current release" });
+
+  assertEquals(executionCount, 0);
+  assertEquals(response.toolCalls[0]?.status, "error");
+  assertEquals(
+    response.toolCalls[0]?.error,
+    'Tool "get_release" is not available in the current model step',
+  );
+});
+
 Deno.test("deferred stream searches, exposes on the next step, and executes exact arguments once", async () => {
   const observedTools: string[][] = [];
   let step = 0;
@@ -239,6 +297,65 @@ Deno.test("deferred stream searches, exposes on the next step, and executes exac
   assertEquals(observedTools[1]?.includes("create_release"), true);
   assertEquals(executionInputs, [{ label: "v1.2.3" }]);
   assertEquals(body.includes("Created v1.2.3"), true);
+});
+
+Deno.test("deferred stream rejects a guessed tool that was not exposed", async () => {
+  let step = 0;
+  let executionCount = 0;
+  const model: ModelRuntime = {
+    provider: "hosted",
+    modelId: "hosted/deferred-stream-guessed-tool",
+    async doGenerate() {
+      return { content: [{ type: "text", text: "unused" }] };
+    },
+    async doStream() {
+      step++;
+      if (step === 1) {
+        return {
+          stream: createRuntimeStream([
+            {
+              type: "tool-call",
+              toolCallId: "guessed-1",
+              toolName: "create_release",
+              input: { label: "v1.2.3" },
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      }
+      return {
+        stream: createRuntimeStream([
+          { type: "text-delta", text: "done" },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      };
+    },
+  };
+  const assistant = agent({
+    id: "deferred-stream-guessed-tool",
+    model: "hosted/deferred-stream-guessed-tool",
+    system: "Use tools when needed.",
+    skills: false,
+    tools: {
+      create_release: tool({
+        id: "create_release",
+        description: "Create a release",
+        inputSchema: defineSchema((v) => v.object({ label: v.string() }))(),
+        execute: () => {
+          executionCount++;
+          return { id: "rel-1" };
+        },
+      }),
+    },
+    maxSteps: 2,
+    resolveModelTransport: () => ({ model }),
+  });
+
+  await (await assistant.stream({ input: "Create release v1.2.3" }))
+    .toDataStreamResponse().text();
+
+  assertEquals(executionCount, 0);
+  assertEquals(step, 2);
 });
 
 Deno.test("respond defaults omitted tool loading to deferred and completes search-load-execute", async () => {
@@ -435,6 +552,119 @@ Deno.test("eager generate, stream, and respond preserve a custom tool_search", a
     ["tool_search"],
     ["tool_search"],
   ]);
+});
+
+Deno.test("eager generate executes a custom tool_search", async () => {
+  let step = 0;
+  const executionInputs: string[] = [];
+  const model: ModelRuntime = {
+    provider: "hosted",
+    modelId: "hosted/custom-tool-search-generate",
+    async doGenerate() {
+      step++;
+      if (step === 1) {
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: "custom-search-1",
+            toolName: "tool_search",
+            input: JSON.stringify({ query: "releases" }),
+          }],
+          finishReason: "tool-calls",
+        };
+      }
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+      };
+    },
+    async doStream() {
+      return { stream: new ReadableStream() };
+    },
+  };
+  const assistant = agent({
+    id: "custom-tool-search-generate",
+    model: "hosted/custom-tool-search-generate",
+    system: "Use the custom search.",
+    skills: false,
+    toolLoading: "eager",
+    tools: {
+      tool_search: tool({
+        id: "tool_search",
+        description: "Search a custom application catalog",
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+        execute: ({ query }) => {
+          executionInputs.push(query);
+          return { query };
+        },
+      }),
+    },
+    maxSteps: 2,
+    resolveModelTransport: () => ({ model }),
+  });
+
+  const response = await assistant.generate({ input: "Search releases" });
+
+  assertEquals(executionInputs, ["releases"]);
+  assertEquals(response.toolCalls[0]?.status, "completed");
+});
+
+Deno.test("eager stream executes a custom tool_search", async () => {
+  let step = 0;
+  const executionInputs: string[] = [];
+  const model: ModelRuntime = {
+    provider: "hosted",
+    modelId: "hosted/custom-tool-search-stream",
+    async doGenerate() {
+      return { content: [{ type: "text", text: "unused" }] };
+    },
+    async doStream() {
+      step++;
+      if (step === 1) {
+        return {
+          stream: createRuntimeStream([
+            {
+              type: "tool-call",
+              toolCallId: "custom-search-1",
+              toolName: "tool_search",
+              input: { query: "releases" },
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      }
+      return {
+        stream: createRuntimeStream([
+          { type: "text-delta", text: "done" },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      };
+    },
+  };
+  const assistant = agent({
+    id: "custom-tool-search-stream",
+    model: "hosted/custom-tool-search-stream",
+    system: "Use the custom search.",
+    skills: false,
+    toolLoading: "eager",
+    tools: {
+      tool_search: tool({
+        id: "tool_search",
+        description: "Search a custom application catalog",
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+        execute: ({ query }) => {
+          executionInputs.push(query);
+          return { query };
+        },
+      }),
+    },
+    maxSteps: 2,
+    resolveModelTransport: () => ({ model }),
+  });
+
+  await (await assistant.stream({ input: "Search releases" })).toDataStreamResponse().text();
+
+  assertEquals(executionInputs, ["releases"]);
 });
 
 Deno.test("respond preserves an explicit deferred tool-loading configuration", async () => {

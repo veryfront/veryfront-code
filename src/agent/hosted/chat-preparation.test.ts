@@ -419,7 +419,7 @@ Deno.test("private checkpoints fail closed without a trusted run-event append to
     request: createParsedHostedChatRequest(),
     agentConfig: {
       id: "agent-1",
-      model: "openai/gpt-5.4-nano",
+      model: "openai/gpt-5.4",
       tools: ["get_release"],
     },
     projectId: "project-1",

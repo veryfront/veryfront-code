@@ -1,7 +1,10 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimePromptMessage } from "veryfront/provider/shared";
-import { buildOpenAIResponsesRequest } from "./openai-responses-request-builder.ts";
+import {
+  buildOpenAIResponsesRequest,
+  supportsOpenAINativeToolSearch,
+} from "./openai-responses-request-builder.ts";
 
 function createWarningCollector() {
   const warnings: Array<{
@@ -27,6 +30,42 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-openai/openai-responses-request-builder", () => {
+  it("gates native tool search to documented OpenAI model IDs and snapshots", () => {
+    for (
+      const modelId of [
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-pro",
+        "gpt-5.5",
+        "gpt-5.6",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+      ]
+    ) {
+      assertEquals(supportsOpenAINativeToolSearch(modelId), true);
+      assertEquals(supportsOpenAINativeToolSearch(`${modelId}-2026-07-30`), true);
+    }
+
+    for (
+      const modelId of [
+        "gpt-5.3",
+        "gpt-5.4-nano",
+        "gpt-5.5-pro",
+        "gpt-5.6-codex",
+        "gpt-5.6-arbitrary",
+        "gpt-5.6-sol-codex",
+        "gpt-5.6-sol-2026-07",
+        "gpt-5.6-sol-2026-07-30-extra",
+      ]
+    ) {
+      assertEquals(supportsOpenAINativeToolSearch(modelId), false);
+    }
+
+    assertEquals(supportsOpenAINativeToolSearch("gpt-5.4", "veryfront-cloud"), true);
+    assertEquals(supportsOpenAINativeToolSearch("gpt-5.4", "azure"), false);
+  });
+
   it("requests reasoning summaries by default for Veryfront Cloud GPT-5.5 Responses models", () => {
     const warnings = createWarningCollector();
 
@@ -414,22 +453,24 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
       },
     ]);
 
-    const unsupported = buildOpenAIResponsesRequest(
-      "gpt-5.3",
-      "openai",
-      options as never,
-      false,
-      createWarningCollector(),
-    );
-    assertEquals(unsupported.tools, [
-      {
-        type: "function",
-        name: "tool_search",
-        description: "Search authorized tools",
-        strict: false,
-        parameters: { type: "object", properties: { query: { type: "string" } } },
-      },
-    ]);
+    for (const modelId of ["gpt-5.3", "gpt-5.4-nano", "gpt-5.5-pro"]) {
+      const unsupported = buildOpenAIResponsesRequest(
+        modelId,
+        "openai",
+        options as never,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(unsupported.tools, [
+        {
+          type: "function",
+          name: "tool_search",
+          description: "Search authorized tools",
+          strict: false,
+          parameters: { type: "object", properties: { query: { type: "string" } } },
+        },
+      ]);
+    }
 
     const clientControlled = buildOpenAIResponsesRequest(
       "gpt-5.4",

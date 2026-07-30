@@ -314,6 +314,20 @@ function executeFrameworkToolSearch(input: {
   };
 }
 
+function isToolVisibleForStep(toolName: string, plan: ToolExposurePlan): boolean {
+  return plan.visible.some((tool) => tool.name === toolName);
+}
+
+function isFrameworkToolSearch(toolName: string, plan: ToolExposurePlan): boolean {
+  return toolName === TOOL_SEARCH_TOOL_NAME &&
+    isToolVisibleForStep(toolName, plan) &&
+    !plan.authorized.some((tool) => tool.name === toolName);
+}
+
+function toolNotVisibleError(toolName: string): string {
+  return `Tool "${toolName}" is not available in the current model step`;
+}
+
 function observeToolLoadingBenchmark(input: {
   observer:
     | ((observation: AgentToolLoadingBenchmarkObservation) => void)
@@ -1397,7 +1411,27 @@ export class AgentRuntime {
               }),
             );
 
-            if (tc.toolName === TOOL_SEARCH_TOOL_NAME) {
+            if (!isToolVisibleForStep(tc.toolName, preparedStep.toolExposurePlan)) {
+              toolCall.status = "error";
+              toolCall.error = toolNotVisibleError(tc.toolName);
+              setSpanAttributes(toolSpan, {
+                "tool.status": "blocked",
+                error: true,
+                "error.type": "ToolExposureBlocked",
+                "error.message": toolCall.error,
+              });
+              const errorMessage = createToolErrorMessage(
+                tc.toolCallId,
+                tc.toolName,
+                toolCall.error,
+              );
+              currentMessages.push(errorMessage);
+              await this.memory.add(errorMessage);
+              toolCalls.push(toolCall);
+              return;
+            }
+
+            if (isFrameworkToolSearch(tc.toolName, preparedStep.toolExposurePlan)) {
               let checkpoint: ToolExposureCheckpoint;
               try {
                 const search = executeFrameworkToolSearch({
@@ -1987,6 +2021,18 @@ export class AgentRuntime {
         const matchingResult = finalToolResults.get(tc.id);
         const persistedResult = currentStepToolResults.get(tc.id);
 
+        if (!isToolVisibleForStep(tc.name, preparedStep.toolExposurePlan)) {
+          await this.recordToolError(
+            toolCall,
+            toolNotVisibleError(tc.name),
+            controller,
+            encoder,
+            currentMessages,
+            toolCalls,
+          );
+          continue;
+        }
+
         if (matchingResult) {
           await persistToolResult(matchingResult);
           toolCall.status = matchingResult.error === undefined ? "completed" : "error";
@@ -2099,7 +2145,7 @@ export class AgentRuntime {
           continue;
         }
 
-        if (tc.name === TOOL_SEARCH_TOOL_NAME) {
+        if (isFrameworkToolSearch(tc.name, preparedStep.toolExposurePlan)) {
           let checkpoint: ToolExposureCheckpoint;
           try {
             callbacks?.onToolCall?.(toolCall);
