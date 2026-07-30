@@ -413,6 +413,23 @@ Deno.test("mergeEsmShPins: empty new pins leaves existing deps unchanged", () =>
   assertEquals(conflicts, []);
 });
 
+Deno.test("mergeEsmShPins: new pins are inserted in sorted key order", () => {
+  const { updatedDeps } = mergeEsmShPins(
+    { "zod": "3.23.8", "axios": "1.7.0" },
+    { "lodash": "4.17.21", "chalk": "5.3.0" },
+  );
+  assertEquals(Object.keys(updatedDeps), ["axios", "chalk", "lodash", "zod"]);
+});
+
+Deno.test("mergeEsmShPins: no insertion preserves the existing key order", () => {
+  // An idempotent re-run must not rewrite package.json just to re-order keys.
+  const { updatedDeps } = mergeEsmShPins(
+    { "zod": "3.23.8", "axios": "1.7.0" },
+    { "zod": "3.23.8" },
+  );
+  assertEquals(Object.keys(updatedDeps), ["zod", "axios"]);
+});
+
 // ---------------------------------------------------------------------------
 // Intra-file version conflicts
 // ---------------------------------------------------------------------------
@@ -579,6 +596,49 @@ Deno.test("readProjectPackageJson extracts dependencies from a valid file", asyn
     const result = await readProjectPackageJson(`${dir}/package.json`);
     assertEquals(result.parseError, null);
     assertEquals(result.existingDeps, { "some-lib": "1.0.0" });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("readProjectPackageJson collects declarations from other dependency fields", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(
+      `${dir}/package.json`,
+      JSON.stringify({
+        dependencies: { "some-lib": "1.0.0" },
+        devDependencies: { "dev-lib": "2.0.0" },
+        peerDependencies: { "peer-lib": "^3.0.0" },
+      }),
+    );
+    const result = await readProjectPackageJson(`${dir}/package.json`);
+    assertEquals(result.parseError, null);
+    assertEquals(result.otherFieldDeps["dev-lib"], {
+      field: "devDependencies",
+      version: "2.0.0",
+    });
+    assertEquals(result.otherFieldDeps["peer-lib"], {
+      field: "peerDependencies",
+      version: "^3.0.0",
+    });
+    // `dependencies` entries belong to existingDeps, not otherFieldDeps.
+    assertEquals(Object.hasOwn(result.otherFieldDeps, "some-lib"), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("readProjectPackageJson returns parseError for malformed devDependencies", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(
+      `${dir}/package.json`,
+      JSON.stringify({ dependencies: {}, devDependencies: [] }),
+    );
+    const result = await readProjectPackageJson(`${dir}/package.json`);
+    assert(result.parseError !== null, "malformed devDependencies must abort");
+    assertStringIncludes(result.parseError, "devDependencies");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -814,6 +874,87 @@ Deno.test(
       assertEquals(c.fromVersion, "2.0.0");
       assertStringIncludes(c.file, "second.ts");
       assertEquals(c.specifier, "https://esm.sh/pkg@2.0.0");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+);
+
+Deno.test(
+  "devDependencies version disagreement is a conflict: source and manifest unchanged",
+  async () => {
+    // A URL-derived pin that disagrees with a devDependencies declaration must
+    // not be added to `dependencies` - that would leave two disagreeing
+    // declarations for one package.
+    const dir = await Deno.makeTempDir();
+    const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
+    const manifest = JSON.stringify(
+      { name: "test", dependencies: {}, devDependencies: { lodash: "4.17.20" } },
+      null,
+      2,
+    ) + "\n";
+    try {
+      await Deno.writeTextFile(`${dir}/app.ts`, source);
+      await Deno.writeTextFile(`${dir}/package.json`, manifest);
+
+      let report: unknown;
+      const origLog = console.log.bind(console);
+      console.log = (msg: string) => {
+        try {
+          report = JSON.parse(msg);
+        } catch { /* ignore non-JSON lines */ }
+        origLog(msg);
+      };
+      try {
+        await main(["--", dir]);
+      } finally {
+        console.log = origLog;
+      }
+
+      assertEquals(await Deno.readTextFile(`${dir}/app.ts`), source);
+      assertEquals(await Deno.readTextFile(`${dir}/package.json`), manifest);
+      const conflicts = (report as { conflicts: unknown[] }).conflicts;
+      assertEquals(conflicts.length, 1);
+      const c = conflicts[0] as {
+        pkg: string;
+        existing: string;
+        fromVersion: string;
+        specifier: string;
+      };
+      assertEquals(c.pkg, "lodash");
+      assertEquals(c.existing, "4.17.20 (devDependencies)");
+      assertEquals(c.fromVersion, "4.17.21");
+      assertEquals(c.specifier, "https://esm.sh/lodash@4.17.21");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+);
+
+Deno.test(
+  "matching devDependencies version is not a conflict: pin lands in dependencies",
+  async () => {
+    // The runtime import justifies a `dependencies` entry; an agreeing
+    // devDependencies declaration is not a disagreement.
+    const dir = await Deno.makeTempDir();
+    const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
+    const manifest = JSON.stringify(
+      { name: "test", dependencies: {}, devDependencies: { lodash: "4.17.21" } },
+      null,
+      2,
+    ) + "\n";
+    try {
+      await Deno.writeTextFile(`${dir}/app.ts`, source);
+      await Deno.writeTextFile(`${dir}/package.json`, manifest);
+
+      await main(["--", dir]);
+
+      const src = await Deno.readTextFile(`${dir}/app.ts`);
+      assertStringIncludes(src, 'from "lodash"');
+      const pkg = JSON.parse(await Deno.readTextFile(`${dir}/package.json`)) as {
+        dependencies?: Record<string, string>;
+      };
+      assertEquals(pkg.dependencies?.lodash, "4.17.21");
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

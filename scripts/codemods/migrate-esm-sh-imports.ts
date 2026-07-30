@@ -136,6 +136,13 @@ export interface EsmShReport {
 export interface PackageJsonReadResult {
   data: Record<string, unknown>;
   existingDeps: Record<string, string>;
+  /**
+   * Declarations found in the other dependency fields (devDependencies,
+   * peerDependencies, optionalDependencies): pkg -> first field seen + its
+   * version.  Used to detect cross-field version disagreements before a
+   * URL-derived pin is added to `dependencies`.
+   */
+  otherFieldDeps: Record<string, { field: string; version: string }>;
   /** Set when the file could not be read, parsed, or validated; it must not be overwritten. */
   parseError: string | null;
 }
@@ -383,6 +390,11 @@ export function migrateEsmShImports(source: string): EsmShFileResult {
  *
  * Existing entries win over URL-derived versions.  Every conflict is recorded
  * so the caller can include it in the report.
+ *
+ * When at least one new pin is inserted the merged map is returned with its
+ * keys sorted alphabetically (the npm convention).  When nothing is inserted
+ * the existing key order is preserved, so an idempotent re-run never rewrites
+ * package.json just to re-order it.
  */
 export function mergeEsmShPins(
   existingDeps: Record<string, string>,
@@ -397,6 +409,7 @@ export function mergeEsmShPins(
     existingDeps,
   );
   const conflicts: Array<{ pkg: string; existing: string; fromVersion: string }> = [];
+  let inserted = false;
 
   for (const [pkg, version] of Object.entries(newPins)) {
     if (Object.hasOwn(existingDeps, pkg)) {
@@ -406,10 +419,19 @@ export function mergeEsmShPins(
       // Existing pin wins, do not overwrite.
     } else {
       updatedDeps[pkg] = version;
+      inserted = true;
     }
   }
 
-  return { updatedDeps, conflicts };
+  if (!inserted) {
+    return { updatedDeps, conflicts };
+  }
+
+  const sortedDeps = Object.create(null) as Record<string, string>;
+  for (const pkg of Object.keys(updatedDeps).sort()) {
+    sortedDeps[pkg] = updatedDeps[pkg]!;
+  }
+  return { updatedDeps: sortedDeps, conflicts };
 }
 
 // ---------------------------------------------------------------------------
@@ -437,7 +459,7 @@ export async function readProjectPackageJson(path: string): Promise<PackageJsonR
   } catch (e) {
     if (e instanceof Deno.errors.NotFound) {
       // File does not exist, treat as absent and start with empty deps.
-      return { data: {}, existingDeps: {}, parseError: null };
+      return { data: {}, existingDeps: {}, otherFieldDeps: {}, parseError: null };
     }
     // Any other error (permission denied, I/O failure, etc.) must not be
     // silently treated as "absent", which would risk overwriting a file we
@@ -445,6 +467,7 @@ export async function readProjectPackageJson(path: string): Promise<PackageJsonR
     return {
       data: {},
       existingDeps: {},
+      otherFieldDeps: {},
       parseError: `package.json could not be read: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
@@ -454,6 +477,7 @@ export async function readProjectPackageJson(path: string): Promise<PackageJsonR
       return {
         data: {},
         existingDeps: {},
+        otherFieldDeps: {},
         parseError: "package.json root must be a JSON object.",
       };
     }
@@ -467,17 +491,48 @@ export async function readProjectPackageJson(path: string): Promise<PackageJsonR
       return {
         data: {},
         existingDeps: {},
+        otherFieldDeps: {},
         parseError: "package.json dependencies must be a JSON object with string values.",
       };
     }
 
+    // Collect declarations from the other dependency fields so the caller can
+    // detect cross-field version disagreements. A malformed field aborts the
+    // run the same way a malformed `dependencies` does: overlap cannot be
+    // checked safely, so nothing may be written.
+    const otherFieldDeps = Object.create(null) as Record<
+      string,
+      { field: string; version: string }
+    >;
+    for (const field of ["devDependencies", "peerDependencies", "optionalDependencies"]) {
+      const value = parsed[field];
+      if (value === undefined) continue;
+      if (
+        !isPlainJsonObject(value) ||
+        Object.values(value).some((version) => typeof version !== "string")
+      ) {
+        return {
+          data: {},
+          existingDeps: {},
+          otherFieldDeps: {},
+          parseError: `package.json ${field} must be a JSON object with string values.`,
+        };
+      }
+      for (const [pkg, version] of Object.entries(value as Record<string, string>)) {
+        if (!Object.hasOwn(otherFieldDeps, pkg)) {
+          otherFieldDeps[pkg] = { field, version };
+        }
+      }
+    }
+
     const existingDeps = (dependencies ?? {}) as Record<string, string>;
     const data = parsed;
-    return { data, existingDeps, parseError: null };
+    return { data, existingDeps, otherFieldDeps, parseError: null };
   } catch (e) {
     return {
       data: {},
       existingDeps: {},
+      otherFieldDeps: {},
       parseError: `package.json exists but could not be parsed: ${
         e instanceof Error ? e.message : String(e)
       }`,
@@ -649,6 +704,7 @@ async function main(args: string[]): Promise<void> {
   const {
     data: pkgJson,
     existingDeps,
+    otherFieldDeps,
     parseError: pkgJsonParseError,
   } = await readProjectPackageJson(pkgJsonPath);
 
@@ -664,6 +720,25 @@ async function main(args: string[]): Promise<void> {
       ...c,
       file: meta?.file ?? "",
       specifier: meta?.specifier ?? `${c.pkg}@${c.fromVersion}`,
+    });
+  }
+  // A declaration in another dependency field (devDependencies,
+  // peerDependencies, optionalDependencies) at a DIFFERENT version is a
+  // cross-field conflict: adding the URL-derived pin to `dependencies` would
+  // leave the project with two disagreeing declarations for one package.  A
+  // matching version in another field is fine - the runtime import justifies
+  // a `dependencies` entry.
+  for (const [pkg, version] of Object.entries(candidatePins)) {
+    if (!Object.hasOwn(otherFieldDeps, pkg)) continue;
+    const other = otherFieldDeps[pkg]!;
+    if (other.version === version) continue;
+    const meta = allPins.get(pkg);
+    report.conflicts.push({
+      pkg,
+      existing: `${other.version} (${other.field})`,
+      fromVersion: version,
+      file: meta?.file ?? "",
+      specifier: meta?.specifier ?? `${pkg}@${version}`,
     });
   }
   report.pins = candidatePins;
