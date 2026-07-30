@@ -161,6 +161,28 @@ describe("createProject", () => {
     }
   });
 
+  it("rejects an unknown template without creating the target directory", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-invalid-template-" });
+    const projectDir = join(parentDir, "invalid-template");
+
+    try {
+      await assertRejects(
+        () =>
+          createProject({
+            ...baseRequest(parentDir),
+            name: "invalid-template",
+            template: "missing-template" as CreateProjectRequest["template"],
+          }),
+        Error,
+        "Template missing-template not found",
+      );
+
+      assertEquals(await exists(projectDir), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("omits package metadata when package metadata is disabled", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-metadata-" });
 

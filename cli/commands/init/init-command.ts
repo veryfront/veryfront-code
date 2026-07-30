@@ -13,12 +13,9 @@ import { cwd } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { getDlxCommand, getInstallCommand, getRunCommand } from "../../utils/package-manager.ts";
 import { createProject, type ProjectCreationObserver } from "../../shared/project-creation.ts";
+import { validateProjectName } from "../../shared/project-name.ts";
 import { promptForEnvVars } from "../../utils/env-prompt.ts";
-import {
-  runInteractiveWizard,
-  shouldRunWizard,
-  validateProjectName,
-} from "./interactive-wizard.ts";
+import { runInteractiveWizard, shouldRunWizard } from "./interactive-wizard.ts";
 import { DEFAULT_TEMPLATE } from "./catalog.ts";
 
 type StructureNode = {

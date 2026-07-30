@@ -5,7 +5,6 @@ import { join } from "veryfront/platform/path";
 import { ensureDir } from "#std/fs.ts";
 import { createDenoConfig } from "../commands/init/deno-config-generator.ts";
 import { createPackageJson } from "../commands/init/config-generator.ts";
-import { validateProjectName } from "../commands/init/interactive-wizard.ts";
 import type { InitRuntime, InitTemplate } from "../commands/init/types.ts";
 import {
   type EnvPromptResult,
@@ -37,6 +36,7 @@ import type {
   ResolvedIntegration,
   TemplateFile,
 } from "../templates/types.ts";
+import { validateProjectName } from "./project-name.ts";
 
 export interface CreateProjectRequest {
   name?: string;
@@ -462,8 +462,6 @@ export async function createProject(
     throw createConfigError(`Directory "${projectName}" already exists`);
   }
 
-  if (projectName) await ensureDir(projectDir);
-
   const template = await loadTemplateFiles(request.template);
   const allEnvVars = [...template.envVars];
 
@@ -477,6 +475,8 @@ export async function createProject(
     featureAssembly.files,
     allEnvVars,
   );
+
+  if (projectName) await ensureDir(projectDir);
 
   const createdPaths = await writeScaffoldFiles(projectDir, integrationAssembly.files);
   const featureTips = [...featureAssembly.tips, ...integrationAssembly.tips];
