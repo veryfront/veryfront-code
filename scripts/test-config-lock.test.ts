@@ -121,10 +121,13 @@ Deno.test("strict audit and extension checks use isolated frozen least-privilege
   if (
     !strict.includes("--config=scripts/test.deno.json") ||
     !strict.includes("--frozen") ||
-    !strict.includes("scripts/lint/audit-core-deps-strict.ts")
+    !strict.includes("scripts/lint/audit-core-deps-strict.ts") ||
+    !strict.includes(
+      "--output .veryfront/audits/core-deps-strict.json",
+    )
   ) {
     throw new Error(
-      "strict audit must use its frozen isolated script configuration",
+      "strict audit must use its frozen isolated script configuration and persist evidence",
     );
   }
   assertEquals(permissionFlags(strict), ["--allow-read", "--allow-write"]);

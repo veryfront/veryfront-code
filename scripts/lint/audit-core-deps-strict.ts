@@ -1634,6 +1634,7 @@ async function writeReportAtomically(
   report: StrictAuditReport,
 ): Promise<void> {
   const outputDirectory = dirname(outputPath);
+  await Deno.mkdir(outputDirectory, { recursive: true });
   const temporaryPath = `${outputDirectory}/.${
     basename(outputPath)
   }.${crypto.randomUUID()}.tmp`;

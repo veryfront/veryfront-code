@@ -465,7 +465,7 @@
     "docs:check-links": "deno run -A scripts/lint/check-doc-links.ts",
     "lint:ban-zod": "deno run --allow-read scripts/lint/ban-zod-imports.ts",
     "lint:core-deps": "deno run --allow-read scripts/lint/audit-core-deps.ts",
-    "lint:core-deps:strict": "deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write scripts/lint/audit-core-deps-strict.ts",
+    "lint:core-deps:strict": "deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write scripts/lint/audit-core-deps-strict.ts --output .veryfront/audits/core-deps-strict.json",
     "lint:parser-extension-boundary": "deno run --frozen --allow-read scripts/lint/audit-parser-extension-boundary.ts",
     "lint:dependency-boundaries": "deno run --allow-read scripts/lint/audit-dependency-boundaries.ts",
     "lint:module-boundaries": "DENO_NO_PACKAGE_JSON=1 deno run --frozen --allow-read scripts/lint/check-module-boundaries.ts",

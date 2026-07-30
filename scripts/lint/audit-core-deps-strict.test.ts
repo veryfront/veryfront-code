@@ -146,6 +146,21 @@ Deno.test("strict audit CLI exits 0 and atomically writes deterministic complete
   }
 });
 
+Deno.test("strict audit CLI creates the evidence directory when absent", async () => {
+  const root = await auditFixture();
+  const outputPath = `${root}/.veryfront/audits/core-deps-strict.json`;
+  try {
+    const result = await runAudit(["--root", root, "--output", outputPath]);
+    assertEquals(result.code, 0, result.stderr);
+    const report = JSON.parse(await Deno.readTextFile(outputPath));
+    assertEquals(report.evidenceComplete, true);
+    assertEquals(report.operationalErrors, []);
+    assertEquals(report.issues, []);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("strict audit CLI exits 2 only for complete policy evidence", async () => {
   const root = await auditFixture();
   const outputPath = `${root}/audit.json`;
