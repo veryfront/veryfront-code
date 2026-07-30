@@ -4,9 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   DEFAULT_ALLOWED_CDN_HOSTS,
   DENO_STD_BASE,
-  ESM_CDN_BASE,
   getDenoStdNodeBase,
-  getTailwindCSSUrl,
   MERMAID_ESM_URL,
   MERMAID_VERSION,
   REACT_DEFAULT_VERSION,
@@ -128,23 +126,6 @@ describe("constants/cdn", () => {
     it("should include std@ version", () => {
       const url = getDenoStdNodeBase();
       assertEquals(url.includes("/std@"), true);
-    });
-  });
-
-  describe("getTailwindCSSUrl", () => {
-    it("should return a URL on ESM_CDN_BASE", () => {
-      const url = getTailwindCSSUrl();
-      assertEquals(url.startsWith(ESM_CDN_BASE), true);
-    });
-
-    it("should include tailwindcss in path", () => {
-      const url = getTailwindCSSUrl();
-      assertEquals(url.includes("tailwindcss@"), true);
-    });
-
-    it("should end with index.css", () => {
-      const url = getTailwindCSSUrl();
-      assertEquals(url.endsWith("/index.css"), true);
     });
   });
 });

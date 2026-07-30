@@ -67,7 +67,7 @@ export interface SSRRewriteOptions {
 
 function shouldKeepBareSpecifier(specifier: string): boolean {
   // npm: specifiers are only supported in Deno, not Node.js
-  // In Node.js, we need to convert them to esm.sh URLs (handled in rewriteBareImports)
+  // In Node.js, rewriteBareSpecifier converts them to esm.sh URLs.
   if (specifier.startsWith("npm:")) return isDeno;
 
   // Runtime protocols (node:, data:, jsr:, bun:, file:, http:, and future

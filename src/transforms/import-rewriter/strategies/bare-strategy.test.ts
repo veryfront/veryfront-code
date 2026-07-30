@@ -93,20 +93,30 @@ describe("BareStrategy", () => {
       );
     });
 
-    it("should handle tailwindcss with pinned version", () => {
+    it("does not special-case application CSS packages", () => {
       const result = bareStrategy.rewrite(
         makeInfo("tailwindcss"),
         makeCtx({ target: "browser" }),
       );
-      assertEquals(result.specifier?.includes("tailwindcss@"), true);
+      assertEquals(result.specifier?.includes("https://esm.sh/tailwindcss?"), true);
+      assertEquals(result.specifier?.includes("tailwindcss@"), false);
     });
 
-    it("should preserve versioned specifiers", () => {
-      const result = bareStrategy.rewrite(
-        makeInfo("lodash@4.17.21"),
-        makeCtx({ target: "browser" }),
+    it("preserves application-authored package versions", () => {
+      assertEquals(
+        bareStrategy.rewrite(
+          makeInfo("lodash@4.17.21"),
+          makeCtx({ target: "browser" }),
+        ).specifier,
+        "https://esm.sh/lodash@4.17.21?external=react,react-dom&target=es2022",
       );
-      assertEquals(result.specifier?.includes("esm.sh/lodash@4.17.21"), true);
+      assertEquals(
+        bareStrategy.rewrite(
+          makeInfo("@emotion/react@11.13.5/jsx-runtime"),
+          makeCtx({ target: "browser" }),
+        ).specifier,
+        "https://esm.sh/@emotion/react@11.13.5/jsx-runtime?external=react,react-dom&target=es2022",
+      );
     });
 
     it("pins framework-owned browser dependencies to audited releases", () => {

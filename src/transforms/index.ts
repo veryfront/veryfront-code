@@ -17,7 +17,6 @@ export {
   resolvePathAliases,
   resolveReactImports,
   resolveRelativeImports,
-  rewriteBareImports,
   rewriteVendorImports,
   runPipeline,
   type TransformContext,

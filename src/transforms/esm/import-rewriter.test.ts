@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { addHMRTimestamps, rewriteBareImports } from "./import-rewriter.ts";
+import { addHMRTimestamps } from "./import-rewriter.ts";
 
 describe("transforms/esm/import-rewriter", () => {
   describe("addHMRTimestamps", () => {
@@ -88,65 +88,6 @@ describe("transforms/esm/import-rewriter", () => {
       const code = `import { foo } from "veryfront/runtime";`;
       const result = await addHMRTimestamps(code, "12345");
       assertEquals(result, code);
-    });
-  });
-
-  describe("rewriteBareImports", () => {
-    it("rewrites bare imports to esm.sh URLs", async () => {
-      const code = `import lodash from "lodash";`;
-      const result = await rewriteBareImports(code);
-      assertEquals(result.includes("https://esm.sh/"), true);
-      assertEquals(result.includes("external=react"), true);
-      assertEquals(result.includes("target=es2022"), true);
-    });
-
-    it("does not rewrite relative imports", async () => {
-      const code = `import { foo } from "./foo.js";`;
-      const result = await rewriteBareImports(code);
-      assertEquals(result, code);
-    });
-
-    it("does not rewrite @/ alias imports", async () => {
-      const code = `import { Button } from "@/components/Button";`;
-      const result = await rewriteBareImports(code);
-      assertEquals(result, code);
-    });
-
-    it("does not rewrite http imports", async () => {
-      const code = `import lib from "https://esm.sh/lodash@4";`;
-      const result = await rewriteBareImports(code);
-      assertEquals(result, code);
-    });
-
-    it("does not rewrite # hash imports", async () => {
-      const code = `import { foo } from "#veryfront/utils";`;
-      const result = await rewriteBareImports(code);
-      assertEquals(result, code);
-    });
-
-    it("does not rewrite veryfront imports", async () => {
-      const code = `import { foo } from "veryfront/runtime";`;
-      const result = await rewriteBareImports(code);
-      assertEquals(result, code);
-    });
-
-    it("maps react imports to react import map URLs", async () => {
-      const code = `import React from "react";`;
-      const result = await rewriteBareImports(code);
-      // React should be mapped to a specific URL, not generic esm.sh
-      assertEquals(typeof result, "string");
-    });
-
-    it("handles scoped packages", async () => {
-      const code = `import { something } from "@emotion/react";`;
-      const result = await rewriteBareImports(code);
-      assertEquals(result.includes("https://esm.sh/"), true);
-    });
-
-    it("adds tailwind version for tailwindcss imports", async () => {
-      const code = `import tw from "tailwindcss";`;
-      const result = await rewriteBareImports(code);
-      assertEquals(result.includes("tailwindcss@"), true);
     });
   });
 });

@@ -7,7 +7,6 @@ export {
   resolvePathAliases,
   resolveReactImports,
   resolveRelativeImports,
-  rewriteBareImports,
   rewriteVendorImports,
   transformToESM,
 } from "./esm/index.ts";

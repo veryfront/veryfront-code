@@ -12,7 +12,7 @@ import type {
   RewriteContext,
   RewriteResult,
 } from "../types.ts";
-import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
+import { buildEsmShUrl } from "../url-builder.ts";
 import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
 import { isServerOnlyPackage } from "../../shared/server-only-packages.ts";
 import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
@@ -112,21 +112,18 @@ export class BareStrategy implements ImportRewriteStrategy {
     }
 
     const packageName = parsed.packageName;
-    let version = parsed.version ?? undefined;
+    const version = parsed.version ?? undefined;
     const subpath = parsed.subpath ?? undefined;
     const frameworkVersion = parsed.version
       ? undefined
       : getFrameworkBrowserDependencyVersion(packageName);
 
-    if (packageName === "tailwindcss") {
-      version = TAILWIND_VERSION;
-    } else if (frameworkVersion) {
-      version = frameworkVersion;
-    } else if (!hasVersionSpecifier(bareSpecifier)) {
+    const resolvedVersion = frameworkVersion ?? version;
+    if (!frameworkVersion && !hasVersionSpecifier(bareSpecifier)) {
       warnUnversionedImport(bareSpecifier, ctx.projectId);
     }
 
-    const url = buildEsmShUrl(packageName, version, subpath, {
+    const url = buildEsmShUrl(packageName, resolvedVersion, subpath, {
       external: ["react", "react-dom"],
       pin: frameworkVersion ? ESM_SH_BUILD_PIN : undefined,
     });

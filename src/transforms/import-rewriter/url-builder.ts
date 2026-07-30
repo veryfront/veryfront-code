@@ -11,10 +11,9 @@ import {
   CSSTYPE_VERSION,
   getReactImportMap as getSharedReactImportMap,
   REACT_DEFAULT_VERSION,
-  TAILWIND_VERSION,
 } from "#veryfront/utils/constants/cdn.ts";
 
-export { buildEsmShUrl, buildReactUrl, CSSTYPE_VERSION, TAILWIND_VERSION };
+export { buildEsmShUrl, buildReactUrl, CSSTYPE_VERSION };
 
 /**
  * Default React version - used when not specified.

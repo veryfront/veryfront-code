@@ -4,8 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { applySSRImportRewritesAsync } from "#veryfront/modules/server/ssr-import-rewriter.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "#veryfront/discovery/import-rewriter.ts";
-import { addHMRTimestamps, rewriteBareImports } from "#veryfront/transforms/esm/import-rewriter.ts";
-import { TAILWIND_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { addHMRTimestamps } from "#veryfront/transforms/esm/import-rewriter.ts";
 import {
   stripJsonImportAttributes,
   upgradeImportAssertions,
@@ -62,13 +61,6 @@ describe("import rewrite compatibility golden tests", () => {
         () => true,
       ),
       `import data from "./a.mjs";`,
-    );
-  });
-
-  it("preserves browser bare rewrite output shape", async () => {
-    assertEquals(
-      await rewriteBareImports(`import tw from "tailwindcss";`, undefined, "19.1.1", "p1"),
-      `import tw from "https://esm.sh/tailwindcss@${TAILWIND_VERSION}?external=react&target=es2022";`,
     );
   });
 

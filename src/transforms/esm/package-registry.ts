@@ -8,24 +8,27 @@
 import { rendererLogger } from "#veryfront/utils";
 
 const logger = rendererLogger.component("package-registry");
-import type { VeryfrontConfig } from "#veryfront/config";
 import {
   buildReactUrl,
   CSSTYPE_VERSION,
   DEFAULT_REACT_VERSION,
   getReactImportMap as getReactImportMapFromRewriter,
-  TAILWIND_VERSION,
 } from "../import-rewriter/url-builder.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
 // Re-export constants from unified source
-export { CSSTYPE_VERSION, DEFAULT_REACT_VERSION, TAILWIND_VERSION };
+export { CSSTYPE_VERSION, DEFAULT_REACT_VERSION };
 
 interface CachedDependencyVersions {
   mtimeMs: number | null;
   size: number;
   react?: string;
   veryfront?: string;
+}
+
+interface ReactVersionResolutionConfig {
+  react?: { version?: string };
+  client?: { cdn?: { versions?: "auto" | { react?: string; veryfront?: string } } };
 }
 
 const MAX_CACHED_PROJECT_DEPENDENCY_VERSIONS = 1_000;
@@ -184,7 +187,7 @@ export async function readProjectDependencyVersions(
  */
 export async function resolveProjectReactVersion(options: {
   projectDir?: string | null;
-  config?: VeryfrontConfig | null;
+  config?: ReactVersionResolutionConfig | null;
 }): Promise<string> {
   const { projectDir, config } = options;
 

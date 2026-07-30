@@ -37,7 +37,6 @@ export {
   getReactImportMap,
   isEsmShUrl,
   normalizeExtension,
-  TAILWIND_VERSION,
 } from "./url-builder.ts";
 
 export {

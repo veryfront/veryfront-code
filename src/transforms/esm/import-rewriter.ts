@@ -1,15 +1,7 @@
 import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
-import { getReactImportMap } from "./package-registry.ts";
-import {
-  DEFAULT_REACT_VERSION as REACT_DEFAULT_VERSION,
-  TAILWIND_VERSION,
-} from "#veryfront/transforms/import-rewriter/url-builder.ts";
-import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { sanitizeVendorExportName } from "../shared/vendor-export-name.ts";
-import { buildImportWarningKey, rememberImportWarning } from "../shared/import-warning-dedup.ts";
 
-const logger = rendererLogger.component("esm");
 const MAX_HMR_TIMESTAMP_CODE_UNITS = 256;
 
 export async function addHMRTimestamps(
@@ -49,85 +41,6 @@ export async function addHMRTimestamps(
         return `${specifier}${separator}t=${encodedTimestamp}`;
       }),
     { "transforms.timestamp": timestampValue },
-  );
-}
-
-/**
- * Track unversioned import warnings per-project to avoid cross-tenant warning suppression.
- * Key format: `${projectId}:${specifier}` for project-scoped deduplication.
- * @see plans/architecture-audit/011.1-global-warning-state-pollution.md
- */
-const unversionedImportsWarned = new Set<string>();
-
-function hasVersionSpecifier(specifier: string): boolean {
-  return /@[\d^~x][\d.x^~-]*(?=\/|$)/.test(specifier);
-}
-
-function warnUnversionedImport(specifier: string, projectId?: string): void {
-  const key = buildImportWarningKey(specifier, projectId);
-  if (!rememberImportWarning(unversionedImportsWarned, key)) return;
-
-  const isScoped = specifier.startsWith("@");
-  const parts = specifier.split("/");
-  const packageName = isScoped ? parts.slice(0, 2).join("/") : (parts[0] ?? "");
-
-  logger.warn("Unversioned import may cause reproducibility issues", {
-    import: specifier,
-    projectId,
-    suggestion: `Pin version: import '${packageName}@x.y.z'`,
-    help: `Run 'npm info ${packageName} version' to find current version`,
-  });
-}
-
-function normalizeVersionedSpecifier(specifier: string): string {
-  return specifier.replace(/@[\d^~x][\d.x^~-]*(?=\/|$)/, "");
-}
-
-function shouldSkipRewrite(specifier: string): boolean {
-  return (
-    specifier.startsWith("http://") ||
-    specifier.startsWith("https://") ||
-    specifier.startsWith("./") ||
-    specifier.startsWith("../") ||
-    specifier.startsWith("/") ||
-    specifier.startsWith("@/") ||
-    specifier.startsWith("#") ||
-    specifier.startsWith("veryfront")
-  );
-}
-
-export function rewriteBareImports(
-  code: string,
-  _moduleServerUrl?: string,
-  reactVersion?: string,
-  projectId?: string,
-): Promise<string> {
-  const reactImportMap = getReactImportMap(reactVersion ?? REACT_DEFAULT_VERSION);
-
-  return withSpan(
-    "transforms.esm.rewriteBareImports",
-    () =>
-      replaceSpecifiers(code, (specifier) => {
-        const mapped = reactImportMap[specifier];
-        if (mapped) return mapped;
-
-        if (shouldSkipRewrite(specifier)) return null;
-
-        const normalized = normalizeVersionedSpecifier(specifier);
-
-        let finalSpecifier = normalized;
-        if (normalized === "tailwindcss" || normalized.startsWith("tailwindcss/")) {
-          finalSpecifier = normalized.replace(/^tailwindcss/, `tailwindcss@${TAILWIND_VERSION}`);
-        } else if (!hasVersionSpecifier(specifier)) {
-          warnUnversionedImport(specifier, projectId);
-        }
-
-        return `https://esm.sh/${finalSpecifier}?external=react&target=es2022`;
-      }),
-    {
-      "transforms.code_length": code.length,
-      ...(projectId ? { "transforms.project_id": projectId } : {}),
-    },
   );
 }
 

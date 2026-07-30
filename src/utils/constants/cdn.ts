@@ -7,7 +7,6 @@ export const ESM_SH_BUILD_PIN = "v135";
 
 /** Audited package versions shared by CDN consumers and import rewriting. */
 export const MERMAID_VERSION = "11.16.0";
-export const TAILWIND_VERSION = "4.1.8";
 export const CSSTYPE_VERSION = "3.2.3";
 
 export interface EsmShUrlOptions {
@@ -143,10 +142,6 @@ export const DENO_STD_VERSION = "0.220.0";
 /** Return Deno std node base. */
 export function getDenoStdNodeBase(): string {
   return `${DENO_STD_BASE}/std@${DENO_STD_VERSION}/node`;
-}
-
-export function getTailwindCSSUrl(): string {
-  return `${ESM_CDN_BASE}/tailwindcss@${TAILWIND_VERSION}/index.css`;
 }
 
 export { VERSION as VERYFRONT_VERSION } from "../version-constant.ts";

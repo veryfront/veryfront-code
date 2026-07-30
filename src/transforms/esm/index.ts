@@ -20,4 +20,4 @@ export { computeShortContentHash, getLoaderFromPath, needsTransform } from "./tr
 
 export { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
 export { resolvePathAliases, resolveRelativeImports } from "./path-resolver.ts";
-export { rewriteBareImports, rewriteVendorImports } from "./import-rewriter.ts";
+export { rewriteVendorImports } from "./import-rewriter.ts";
