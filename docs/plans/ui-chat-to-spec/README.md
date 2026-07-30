@@ -15,8 +15,13 @@ Everything for this effort lives here. Start with the handoff.
 | [`handoff.md`](./handoff.md)                                                                                     | **The brief.** Repos/setup, spec-doc paths, locked decisions, current state, full work-breakdown, the 10 goals, per-iteration protocol, key files + gotchas. Read this first. |
 | [`loop-goal.md`](./loop-goal.md)                                                                                 | The `/loop` prompt — paste it after `/loop` to run the plan autonomously.                                                                                                     |
 | [`target-file-tree.md`](./target-file-tree.md)                                                                   | What this branch's file tree should look like when the goal is met.                                                                                                           |
-| [`ui-spec.md`](./ui-spec.md) · [`ui-matrix.md`](./ui-matrix.md)                                                  | `veryfront/ui` definition-of-done + per-primitive tracker.                                                                                                                    |
-| [`chat-spec.md`](./chat-spec.md) · [`chat-matrix.md`](./chat-matrix.md) · [`chat-tickets.md`](./chat-tickets.md) | `veryfront/chat` DoD + the 25-component / 33-hook tracker + batch tickets.                                                                                                    |
+| [`ui-spec.md`](./ui-spec.md) · [`ui-matrix.md`](./ui-matrix.md)                                                  | `veryfront/ui` definition-of-done + per-primitive reference. (Human-readable context — the **live** tracker is the coverage suite below, not these markdown tables.)          |
+| [`chat-spec.md`](./chat-spec.md) · [`chat-matrix.md`](./chat-matrix.md) · [`chat-tickets.md`](./chat-tickets.md) | `veryfront/chat` DoD + 25-component / 33-hook reference + batch tickets. (Same: reference only; the coverage suite is the live tracker + goal.)                               |
+
+> **The matrix and the goal are the tests.** The markdown specs/matrices are
+> orientation; the deterministic source of truth is the coverage suite (below).
+> Run it → red rows are what's left → the goal is a fully green suite. Nothing to
+> hand-tick.
 
 ## The deterministic gate (TDD — red first, work to green)
 
