@@ -336,10 +336,17 @@ DENO_TESTING=1 VF_DISABLE_LRU_INTERVAL=1 NODE_ENV=production LOG_FORMAT=text \
    run any spec/ticket skill; everything stays in-repo as code.
 3. **Build** it to the composition rules (decision #6), using the **`/react-component`**
    and **`/react-best-practices`** skills (React 19 patterns, forwardRef, hooks).
-4. **Story** — add/extend its Storybook story in `storybook/stories/{ui,chat}/`
-   (`deno task storybook` to verify).
-5. **Docs** — write its concise page with the **`/docs-writer` skill** (shadcn/
-   Vercel style: lead with the answer, minimal prose, real examples).
+4. **Story = the doc page** — add/extend its Storybook story in
+   `storybook/stories/{ui,chat}/` with a `DocsPage` (`DocsHero` + `DocsPropsTable`)
+   and **one Story per cva variant**; register it in `storybook/stories/Overview.stories.tsx`
+   (run `deno task storybook:check`). **Docs live IN the component** — the story +
+   prop JSDoc. Do NOT document components/variants in the root guide.
+5. **Docs = prop JSDoc + thin guide.** Every `*Props` field carries a JSDoc comment
+   (`ref`/`className` exempt) — enforced by the `every prop is documented with JSDoc`
+   gate. Keep `docs/guides/ui-components.md` a **thin overview that links to
+   Storybook**; the guardrail test fails if you paste a component/variant catalog
+   into it. (The old "name it in the guide" approach was slop — see the DOCS
+   PRINCIPLE in `coverage.test.tsx`.)
 6. **Tests** — component-conformance or per-hook behaviour test; adapters tested on
    builtin + swap paths.
 7. **Review** — run `/composition-patterns`, `/code-review`, `/security-audit` on
