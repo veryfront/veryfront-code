@@ -78,6 +78,7 @@ const UI: NavGridEntry[] = [
   { title: "AspectRatio", id: "ui-aspectratio--docs" },
   { title: "Toggle", id: "ui-toggle--docs" },
   { title: "ToggleGroup", id: "ui-togglegroup--docs" },
+  { title: "NumberField", id: "ui-numberfield--docs" },
 ];
 
 function SectionLabel({ children }: { children: React.ReactNode }) {

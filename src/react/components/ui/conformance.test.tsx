@@ -55,6 +55,7 @@ import { AppShell } from "./app-shell.tsx";
 import { ColorModeProvider, ColorModeToggle } from "./color-mode.tsx";
 import { Separator } from "./separator.tsx";
 import { AspectRatio } from "./aspect-ratio.tsx";
+import { NumberField } from "./number-field.tsx";
 import { Toggle } from "./toggle.tsx";
 import { ToggleGroup, ToggleGroupItem } from "./toggle-group.tsx";
 
@@ -164,6 +165,7 @@ const LEAVES: LeafCase[] = [
   { name: "Separator", render: (p) => <Separator {...p} /> },
   { name: "AspectRatio", render: (p) => <AspectRatio ratio={16 / 9} {...p} /> },
   { name: "Toggle", render: (p) => <Toggle {...p}>B</Toggle> },
+  { name: "NumberField", render: (p) => <NumberField {...p} /> },
 ];
 
 describe("veryfront/ui conformance — leaves (one node · ref · {...props} · className)", () => {

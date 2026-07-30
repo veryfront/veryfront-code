@@ -81,6 +81,7 @@ const expectedRuntimeExports = [
   "ListItem",
   "ListLabel",
   "LoadingButton",
+  "NumberField",
   "Pill",
   "Popover",
   "PopoverActions",

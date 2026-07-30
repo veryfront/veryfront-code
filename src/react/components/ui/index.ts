@@ -199,6 +199,7 @@ export {
   PopoverTrigger,
 } from "./popover.tsx";
 export { AspectRatio, type AspectRatioProps } from "./aspect-ratio.tsx";
+export { NumberField, type NumberFieldProps } from "./number-field.tsx";
 export { Separator, type SeparatorProps } from "./separator.tsx";
 export { Toggle, type ToggleProps } from "./toggle.tsx";
 export {

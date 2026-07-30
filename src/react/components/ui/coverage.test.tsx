@@ -123,7 +123,7 @@ export const UI_COMPONENTS: UiComponent[] = [
   { name: "ContextMenu", kind: "overlay", interactive: true, status: "planned" },
   { name: "Toast", kind: "overlay", interactive: true, status: "planned" },
   { name: "Menubar", kind: "overlay", interactive: true, status: "planned" },
-  { name: "NumberField", kind: "form", interactive: false, status: "planned" },
+  { name: "NumberField", kind: "form", interactive: false, status: "shipped" },
   { name: "AspectRatio", kind: "visual", interactive: false, status: "shipped" },
 ];
 
@@ -270,7 +270,9 @@ describe("veryfront/ui: every cva variant is covered (story · docs · test)", (
       assert(
         misses.length === 0,
         `${c.name} variants not demonstrated in storybook/stories/ui/${c.name}.stories.tsx:\n  ` +
-          `${misses.join("\n  ")}\n(show each variant in the story — that is where variants are documented)`,
+          `${
+            misses.join("\n  ")
+          }\n(show each variant in the story — that is where variants are documented)`,
       );
     });
   }
@@ -296,8 +298,8 @@ export function propsMissingJsdoc(src: string): string[] {
       }
       continue;
     }
-    const opens = (raw.match(/\{/g)?.length ?? 0);
-    const closes = (raw.match(/\}/g)?.length ?? 0);
+    const opens = raw.match(/\{/g)?.length ?? 0;
+    const closes = raw.match(/\}/g)?.length ?? 0;
     // A direct field of the interface sits at depth 1 before this line's braces.
     if (
       depth === 1 &&
