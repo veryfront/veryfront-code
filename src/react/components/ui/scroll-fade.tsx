@@ -45,8 +45,7 @@ export function ScrollFade({
     if (typeof forwardedRef === "function") {
       forwardedRef(node);
     } else if (forwardedRef != null) {
-      (forwardedRef as React.MutableRefObject<HTMLDivElement | null>).current =
-        node;
+      (forwardedRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
     }
   }, [forwardedRef]);
 
