@@ -1,6 +1,8 @@
 /***********************
  * Runtime identifier for platform-specific code paths
  ***********************/
+import type { NodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
+
 export type RuntimeId = "deno" | "node" | "bun" | "cloudflare" | "memory";
 
 /**
@@ -101,6 +103,10 @@ export interface WebSocketConnection {
 
 const WEBSOCKET_UPGRADE_RESPONSE_KIND = "websocket-upgrade";
 
+/**
+ * Explicit upgrade signal used when a runtime cannot construct a native
+ * `Response` with status 101.
+ */
 export interface WebSocketUpgradeResponse {
   readonly kind: typeof WEBSOCKET_UPGRADE_RESPONSE_KIND;
   readonly status: 101;
@@ -117,19 +123,78 @@ export interface WebSocketUpgrade {
 export function createWebSocketUpgradeResponse(
   input: { headers?: HeadersInit; statusText?: string } = {},
 ): WebSocketUpgradeResponse {
-  return {
+  return Object.freeze({
     kind: WEBSOCKET_UPGRADE_RESPONSE_KIND,
     status: 101,
     statusText: input.statusText ?? "Switching Protocols",
     headers: new Headers(input.headers),
     body: null,
-  };
+  });
+}
+
+type DataPropertyRead =
+  | { readonly readable: true; readonly value: unknown }
+  | { readonly readable: false };
+
+// A Proxy can synthesize a fresh prototype for every getPrototypeOf trap.
+// Bound each structural field lookup so an upgrade discriminator can never
+// turn into attacker-controlled, unbounded traversal.
+const MAX_UPGRADE_RESPONSE_PROTOTYPE_DEPTH = 16;
+const headersGet = Headers.prototype.get;
+
+function readDataProperty(value: object, key: PropertyKey): DataPropertyRead {
+  const visited = new Set<object>();
+  let current: object | null = value;
+
+  try {
+    for (
+      let depth = 0;
+      current !== null && depth < MAX_UPGRADE_RESPONSE_PROTOTYPE_DEPTH;
+      depth++
+    ) {
+      if (visited.has(current)) return { readable: false };
+      visited.add(current);
+      const descriptor = Reflect.getOwnPropertyDescriptor(current, key);
+      if (descriptor) {
+        return "value" in descriptor
+          ? { readable: true, value: descriptor.value }
+          : { readable: false };
+      }
+      current = Reflect.getPrototypeOf(current);
+    }
+  } catch {
+    return { readable: false };
+  }
+
+  return current === null ? { readable: true, value: undefined } : { readable: false };
 }
 
 export function isWebSocketUpgradeResponse(value: unknown): value is WebSocketUpgradeResponse {
-  return typeof value === "object" && value !== null &&
-    (value as { kind?: unknown }).kind === WEBSOCKET_UPGRADE_RESPONSE_KIND &&
-    (value as { status?: unknown }).status === 101;
+  if (typeof value !== "object" || value === null) return false;
+
+  const kind = readDataProperty(value, "kind");
+  if (!kind.readable || kind.value !== WEBSOCKET_UPGRADE_RESPONSE_KIND) return false;
+
+  const status = readDataProperty(value, "status");
+  if (!status.readable || status.value !== 101) return false;
+
+  const statusText = readDataProperty(value, "statusText");
+  if (!statusText.readable || typeof statusText.value !== "string") return false;
+
+  const headers = readDataProperty(value, "headers");
+  if (!headers.readable || typeof headers.value !== "object" || headers.value === null) {
+    return false;
+  }
+  try {
+    // Verify the native Headers internal slot without consulting hostile
+    // properties or Symbol.hasInstance hooks.
+    Reflect.apply(headersGet, headers.value, ["upgrade"]);
+  } catch {
+    return false;
+  }
+
+  const body = readDataProperty(value, "body");
+  return body.readable && body.value === null;
 }
 
 export interface ServeOptions {
@@ -137,6 +202,18 @@ export interface ServeOptions {
   hostname?: string;
   signal?: AbortSignal;
   onListen?: (params: { hostname: string; port: number }) => void;
+  /**
+   * Node.js only. Called synchronously for each raw HTTP listener `error` event
+   * emitted after `onListen` returns. Returned promises are observed only for
+   * rejection and are not awaited by the listener or shutdown.
+   */
+  onRuntimeError?: (error: Error) => void | Promise<void>;
+  /**
+   * Node.js only. Explicitly selected implementation for completing approved
+   * WebSocket upgrades. When absent, HTTP serving remains available and every
+   * Node WebSocket upgrade fails closed.
+   */
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
 }
 
 export interface Server {
