@@ -33,6 +33,22 @@ provider-visible tool execution.
 The legacy path keeps its own status wrapper at the runtime compatibility
 boundary, so no provider redeploy is required.
 
+## What legacy mode does not roll back
+
+Two watchdog behavior changes ship in `createChatStreamWatchdog()` itself and
+apply in every mode, including `legacy`, as soon as this build deploys:
+
+- All `message-metadata` chunks are classified as telemetry and never advance
+  the watchdog deadline. Previously, non-empty metadata (for example a
+  `modelId` carrier) reset the timer, so a stream kept alive only by metadata
+  heartbeats now times out at the semantic deadline.
+- A configured long-running tool no longer disables the watchdog. It now runs
+  under an absolute cap (`toolRunningTimeoutMs`, default 300 seconds); a tool
+  execution that previously waited indefinitely is failed at that cap.
+
+Rolling back these two changes requires reverting the build, not setting the
+mode flag.
+
 ## Incident evidence
 
 Retain: the mode at incident time, the bounded outcome/deadline dashboards,

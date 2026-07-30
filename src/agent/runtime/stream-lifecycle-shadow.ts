@@ -211,6 +211,12 @@ function equalUsage(
     legacy.billableInputTokens === usage.billableInputTokens &&
     legacy.billableOutputTokens === usage.billableOutputTokens &&
     legacy.costUsd === usage.costUsd &&
+    legacy.providerInputCostUsd === usage.providerInputCostUsd &&
+    legacy.providerOutputCostUsd === usage.providerOutputCostUsd &&
+    legacy.providerCostUsd === usage.providerCostUsd &&
+    legacy.veryfrontInputChargeUsd === usage.veryfrontInputChargeUsd &&
+    legacy.veryfrontOutputChargeUsd === usage.veryfrontOutputChargeUsd &&
+    legacy.veryfrontChargeUsd === usage.veryfrontChargeUsd &&
     legacy.veryfrontBilledUsd === usage.veryfrontBilledUsd &&
     legacy.costCredits === usage.costCredits &&
     legacy.costSource === usage.costSource &&

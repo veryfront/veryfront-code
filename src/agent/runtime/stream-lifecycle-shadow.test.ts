@@ -109,6 +109,49 @@ describe("stream lifecycle shadow", () => {
     );
   });
 
+  it("detects divergence in cost and charge usage fields", () => {
+    const shadow = createStreamLifecycleShadow({
+      availableToolNames: [],
+      providerExecutedToolNames: [],
+    });
+    shadow.observePart({
+      type: "finish",
+      finishReason: "stop",
+      totalUsage: {
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+        providerCostUsd: 0.5,
+        veryfrontChargeUsd: 0.6,
+      },
+    });
+    const agreeing = shadow.compareLegacySnapshot({
+      ...createStreamState(),
+      finishReason: "stop",
+      usage: {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+        providerCostUsd: 0.5,
+        veryfrontChargeUsd: 0.6,
+      },
+    });
+    assertEquals(agreeing, { count: 0, categories: [] });
+
+    const diverging = shadow.compareLegacySnapshot({
+      ...createStreamState(),
+      finishReason: "stop",
+      usage: {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+        providerCostUsd: 0.75,
+        veryfrontChargeUsd: 0.6,
+      },
+    });
+    assertEquals(diverging, { count: 1, categories: ["usage"] });
+  });
+
   it("never reads from the provider", () => {
     const shadow = createStreamLifecycleShadow({
       availableToolNames: [],
