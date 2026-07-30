@@ -37,20 +37,17 @@ engine.
 
 ## The primitives
 
-| Category               | Components                                                                                                                                                                                           |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Layout / visual**    | `Button`, `IconButton`, `Card`, `Badge`, `Pill`, `Tag`, `Avatar`, `Alert`, `Status`, `List`, `Skeleton`, `Shimmer`, `ProgressBar`, `ScrollFade`, `FileType`, `CodeBlock`, `Separator`, `AspectRatio` |
-| **Form**               | `Input`, `Textarea`, `Label`, `Checkbox`, `Radio`, `Switch`, `Toggle`, `ToggleGroup`                                                                                                                 |
-| **Overlay / floating** | `Popover`, `Dialog`, `Drawer`, `DropdownMenu`, `Tooltip`, `Select`, `Command`                                                                                                                        |
-| **Structure**          | `Tabs`, `Collapsible`, `AppShell`                                                                                                                                                                    |
-| **Theming**            | `ColorModeProvider`, `ColorModeToggle`, `DesignTokenStyle`                                                                                                                                           |
+Every primitive is **documented where it lives** — each has a Storybook page
+(props, variants, and live examples) and JSDoc on its source. This guide stays a
+thin overview; it deliberately does not re-list every component or variant.
 
-Each compound (e.g. `Dialog`) exposes its parts as named exports **and** as a
+**→ Browse the full catalog in the [Storybook UI workbench](./storybook-ui-workbench.md)**
+(`deno task storybook`) — the Overview page links to a docs page for every
+primitive, grouped by Layout, Form, Overlay, Structure, and Theming.
+
+Compounds (e.g. `Dialog`) expose their parts as named exports **and** as a
 namespace (`DialogTrigger` ≡ `Dialog.Trigger`) so both import styles work and the
 parts tree-shake.
-
-> **Live examples:** run the Storybook workbench (`deno task storybook`) for every
-> primitive's states and props. See [Storybook UI workbench](./storybook-ui-workbench.md).
 
 ## Composition rules
 

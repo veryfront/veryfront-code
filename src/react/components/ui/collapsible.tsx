@@ -19,9 +19,13 @@ const CollapsibleContext = React.createContext<
 
 /** Props accepted by `<Collapsible>`. */
 export interface CollapsibleProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange"> {
+  /** Controlled open state (pair with `onOpenChange`). */
   open?: boolean;
+  /** Initial open state when uncontrolled. */
   defaultOpen?: boolean;
+  /** Fires when the open state changes. */
   onOpenChange?: (open: boolean) => void;
+  /** Disable the trigger. */
   disabled?: boolean;
 }
 
@@ -47,6 +51,7 @@ export function Collapsible({
 
 /** Props accepted by `<CollapsibleTrigger>`. */
 export interface CollapsibleTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  /** Render as a Slot, merging the trigger behaviour onto the child element. */
   asChild?: boolean;
 }
 

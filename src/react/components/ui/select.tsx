@@ -41,12 +41,19 @@ const selectTriggerVariants = cva(
 
 /** Props accepted by `<Select>`. */
 export interface SelectProps {
+  /** `SelectTrigger` + `SelectContent`/`SelectItem` parts to compose. */
   children: React.ReactNode;
+  /** Controlled selected value (pair with `onValueChange`). */
   value?: string;
+  /** Initial selected value when uncontrolled. */
   defaultValue?: string;
+  /** Fires with the newly-selected value. */
   onValueChange?: (value: string) => void;
+  /** Controlled open state of the listbox (pair with `onOpenChange`). */
   open?: boolean;
+  /** Initial open state when uncontrolled. */
   defaultOpen?: boolean;
+  /** Fires when the listbox opens or closes. */
   onOpenChange?: (open: boolean) => void;
 }
 
@@ -160,7 +167,9 @@ export function SelectContent({
 
 /** Props accepted by `<SelectItem>`. */
 export interface SelectItemProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "onSelect"> {
+  /** The value this option contributes to the select. */
   value: string;
+  /** Disable selection and dim the option. */
   disabled?: boolean;
 }
 

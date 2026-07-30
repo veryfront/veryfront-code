@@ -23,8 +23,11 @@ function getSingleInitial(name: string): string {
 
 /** Props accepted by `<Avatar>`. */
 export interface AvatarProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Display name — used for initials and the accessible label. */
   name: string;
+  /** Image URL; falls back to initials if unset or it fails to load. */
   avatarSrc?: string;
+  /** Custom accent color (CSS color) for the fill or ring. */
   accentColor?: string;
   /** `filled` fills with accent (default); `bordered` shows an accent ring. */
   variant?: "filled" | "bordered";

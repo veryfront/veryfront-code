@@ -13,6 +13,7 @@ import { cx as cn } from "./cva.ts";
 
 /** Props accepted by `<Shimmer>`. */
 export interface ShimmerProps extends React.HTMLAttributes<HTMLElement> {
+  /** Content the shimmer sweep animates across (usually text). */
   children: React.ReactNode;
   /** Element to render as. @default "span" */
   as?: React.ElementType;

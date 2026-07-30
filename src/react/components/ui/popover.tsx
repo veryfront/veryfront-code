@@ -20,9 +20,13 @@ import { useAdapter } from "./adapter/context.tsx";
 
 /** Props accepted by `<Popover>`. */
 export interface PopoverProps {
+  /** The trigger and content parts to compose. */
   children: React.ReactNode;
+  /** Controlled open state (pair with `onOpenChange`). */
   open?: boolean;
+  /** Initial open state when uncontrolled. */
   defaultOpen?: boolean;
+  /** Fires when the open state changes. */
   onOpenChange?: (open: boolean) => void;
 }
 

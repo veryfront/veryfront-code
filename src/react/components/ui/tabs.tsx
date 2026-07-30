@@ -32,9 +32,13 @@ const [TabsContext, useTabs] = createStrictContext<TabsContextValue>("TabsItem",
 
 /** Props accepted by `<Tabs>` (the tablist container). */
 export interface TabsProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange"> {
+  /** The active tab's value (controlled). */
   value: string;
+  /** Fires with the newly-selected tab's value. */
   onValueChange: (value: string) => void;
+  /** Tab size. @default "default" */
   size?: TabsSize;
+  /** `TabsItem` children. */
   children: React.ReactNode;
 }
 

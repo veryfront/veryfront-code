@@ -19,9 +19,13 @@ const { ModalRoot: _Root, ModalTrigger: _Trigger, ModalClose: _Close, ModalConte
 
 /** Props accepted by `<Drawer>`. */
 export interface DrawerProps {
+  /** The trigger and content parts to compose. */
   children: React.ReactNode;
+  /** Controlled open state (pair with `onOpenChange`). */
   open?: boolean;
+  /** Initial open state when uncontrolled. */
   defaultOpen?: boolean;
+  /** Fires when the open state changes. */
   onOpenChange?: (open: boolean) => void;
 }
 

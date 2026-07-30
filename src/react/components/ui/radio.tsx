@@ -39,7 +39,9 @@ export function Radio(
 
 /** Props accepted by `<RadioField>`. */
 export interface RadioFieldProps extends RadioProps {
+  /** Clickable label rendered beside the radio. */
   label: React.ReactNode;
+  /** Optional helper text shown under the label. */
   description?: string;
 }
 

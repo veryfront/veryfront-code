@@ -14,7 +14,9 @@ export type StatusColor = "gray" | "blue" | "green" | "red" | "yellow";
 
 /** Props accepted by `<Status>`. */
 export interface StatusProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Text shown next to the dot (and read by screen readers when hidden). */
   label: string;
+  /** Dot color token — maps to the status palette. */
   color: StatusColor;
   /** Pulse the dot (e.g. an in-progress run). */
   pulse?: boolean;

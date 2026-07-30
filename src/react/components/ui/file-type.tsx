@@ -237,6 +237,7 @@ export function getFileTypeLabel(ext: string, mediaType?: string): string {
 
 /** Props accepted by `<FileType>` / `<FileTypeThumb>`. */
 export interface FileTypeProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** File extension (e.g. `"pdf"`, `"png"`) — sets the label and tint. */
   extension: string;
   className?: string;
   ref?: React.Ref<HTMLDivElement>;

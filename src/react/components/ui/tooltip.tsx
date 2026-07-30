@@ -42,7 +42,9 @@ export function TooltipTrigger(
 
 /** Props accepted by `<TooltipContent>`. */
 export interface TooltipContentProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Side of the trigger to place the tooltip. @default "top" */
   side?: TooltipSide;
+  /** Gap in pixels between the trigger and the tooltip. */
   sideOffset?: number;
 }
 

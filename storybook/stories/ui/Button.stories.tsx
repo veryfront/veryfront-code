@@ -298,6 +298,25 @@ export const Icon: Story = {
   },
 };
 
+// Extra-small icon button
+export const IconExtraSmall: Story = {
+  name: "Icon (xs)",
+  tags: ["!dev"],
+  args: {
+    variant: "icon-ghost",
+    size: "icon-xs",
+    children: <PlusIcon />,
+    "aria-label": "Add",
+  },
+  parameters: {
+    docs: {
+      source: {
+        code: `<Button variant="icon-ghost" size="icon-xs" aria-label="Add">\n  <Plus />\n</Button>`,
+      },
+    },
+  },
+};
+
 // Icon Secondary button
 export const IconSecondary: Story = {
   tags: ["!dev"],

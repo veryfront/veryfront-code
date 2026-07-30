@@ -84,9 +84,13 @@ export function Command({
 
 /** Props accepted by `<CommandDialog>`. */
 export interface CommandDialogProps {
+  /** The trigger and content parts to compose. */
   children: React.ReactNode;
+  /** Controlled open state (pair with `onOpenChange`). */
   open?: boolean;
+  /** Initial open state when uncontrolled. */
   defaultOpen?: boolean;
+  /** Fires when the open state changes. */
   onOpenChange?: (open: boolean) => void;
 }
 
@@ -233,7 +237,9 @@ export interface CommandItemProps extends Omit<React.HTMLAttributes<HTMLDivEleme
   value?: string;
   /** Top-align the icon for two-line items. */
   align?: "center" | "start";
+  /** Disable selection and dim the item. */
   disabled?: boolean;
+  /** Fires when the item is chosen (click or Enter), with its `value`. */
   onSelect?: (value?: string) => void;
   /** Consumer ref for the item node. */
   ref?: React.Ref<HTMLDivElement>;

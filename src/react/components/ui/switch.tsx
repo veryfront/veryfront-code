@@ -84,7 +84,9 @@ export function Switch({
 
 /** Props accepted by `<SwitchField>`. */
 export interface SwitchFieldProps extends SwitchProps {
+  /** Clickable label rendered to the left of the switch. */
   label: React.ReactNode;
+  /** Optional helper text shown under the label. */
   description?: string;
 }
 

@@ -5,11 +5,19 @@
  * in `UI_COMPONENTS` must, to be "to spec":
  *   1. be exported from `veryfront/ui`
  *   2. have a Storybook story (`storybook/stories/ui/<Name>.stories.tsx`)
- *   3. be documented (named in `docs/guides/ui-components.md`)
+ *   3. be documented **in its component** — its Storybook story carries a
+ *      `DocsPage` (`DocsHero` + `DocsPropsTable`), colocated with the code. The
+ *      root guide (`docs/guides/ui-components.md`) is a thin overview that LINKS
+ *      to Storybook; it must never become a per-component / per-variant catalog
+ *      (enforced by the guardrail test at the bottom of this file).
  *   4. have a test — its name referenced by some `*.test.tsx` under `ui/` (its own
- *      conformance test or a shared conformance/characterization suite)
- *   5. if interactive, be covered by the adapter contract (a key on the builtin
+ *      conformance test or the shared conformance/characterization suite)
+ *   5. document every prop with JSDoc — each field of its `*Props` interface(s)
+ *      carries a JSDoc comment (the `DocsPropsTable` and IDE hovers read these)
+ *   6. if interactive, be covered by the adapter contract (a key on the builtin
  *      adapter) so it can be swapped to Base UI / Radix / React Aria / Ariakit
+ *
+ * And every `cva` variant must be demonstrated in the component's own story.
  *
  * `status: "planned"` rows are gaps we are building toward — their `exists` check
  * fails until the primitive lands. Flip to `"shipped"` when you add it.
@@ -17,6 +25,10 @@
  * Per-component behaviour (one-node / forwardRef / asChild / className merge /
  * `{...props}` spread) is proven in each primitive's own `*.test.tsx` and the
  * shared conformance harness; this file is the cross-cutting inventory gate.
+ *
+ * DOCS PRINCIPLE (do not regress): component docs live IN THE COMPONENT (its
+ * story's `DocsPage` + source JSDoc). Never satisfy a docs/variant gate by
+ * dumping names or variant tables into the root markdown guide.
  */
 import * as React from "react";
 import { flushSync } from "react-dom";
@@ -161,10 +173,15 @@ describe("veryfront/ui coverage — to-spec gate", () => {
       );
     });
 
-    it(`${c.name}: is documented in the UI guide`, () => {
+    it(`${c.name}: is documented in its story (colocated DocsPage)`, () => {
+      let story = "";
+      try {
+        story = Deno.readTextFileSync(`${STORIES_DIR}${c.name}.stories.tsx`);
+      } catch { /* no story → fails below, which is the point */ }
       assert(
-        guideText.includes(`\`${c.name}\``) || guideText.includes(c.name),
-        `${c.name} is not documented in docs/guides/ui-components.md`,
+        /DocsHero|DocsPropsTable|DocsPage/.test(story),
+        `${c.name} has no colocated docs — its Storybook story must carry a DocsPage ` +
+          `(DocsHero + DocsPropsTable). Component docs live in the story, not the root guide.`,
       );
     });
 
@@ -188,12 +205,13 @@ describe("veryfront/ui coverage — to-spec gate", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Every `cva` VARIANT is covered — in a story, in the docs, AND in a test.
+// Every `cva` VARIANT is demonstrated in the component's OWN story.
 // The source of truth is each component's own `cva({ variants: {...} })` block; we
 // extract every `<group>: { <value>: ... }` and assert each `<value>` token is
-// referenced by (a) its Storybook story, (b) the UI guide, (c) some `*.test.tsx`.
-// This is what makes "has a story / doc / test" mean *complete* coverage, not just
-// "the component is mentioned once". RED until every variant is demonstrated.
+// shown in its Storybook story (`<Name>.stories.tsx`) — which, per the one-Story-
+// per-variant convention, genuinely renders it. Docs live in the story, so the
+// story IS the variant reference; we do NOT grep the root guide for variant tokens
+// (see the guardrail below). RED until every variant is demonstrated.
 // ---------------------------------------------------------------------------
 const UI_DIR_PATH = new URL(".", import.meta.url).pathname;
 const kebab = (s: string) =>
@@ -240,26 +258,120 @@ describe("veryfront/ui: every cva variant is covered (story · docs · test)", (
     const variants = extractVariants(src);
     if (variants.length === 0) continue; // no cva variants → nothing to cover
 
-    it(`${c.name}: all ${variants.length} variants covered in story · docs · test`, () => {
+    it(`${c.name}: all ${variants.length} variants demonstrated in its story`, () => {
       let story = "";
       try {
         story = Deno.readTextFileSync(`${STORIES_DIR}${c.name}.stories.tsx`);
-      } catch { /* no story → every variant misses the story surface */ }
+      } catch { /* no story → every variant misses, which is the point */ }
       const misses: string[] = [];
       for (const { group, value } of variants) {
-        const re = new RegExp(`\\b${value}\\b`);
-        const where: string[] = [];
-        if (!re.test(story)) where.push("story");
-        if (!re.test(guideText)) where.push("docs");
-        if (!re.test(UI_TEST_SRC)) where.push("test");
-        if (where.length) misses.push(`${group}="${value}" (missing: ${where.join(", ")})`);
+        if (!new RegExp(`\\b${value}\\b`).test(story)) misses.push(`${group}="${value}"`);
       }
       assert(
         misses.length === 0,
-        `${c.name} variants not fully covered:\n  ${misses.join("\n  ")}`,
+        `${c.name} variants not demonstrated in storybook/stories/ui/${c.name}.stories.tsx:\n  ` +
+          `${misses.join("\n  ")}\n(show each variant in the story — that is where variants are documented)`,
       );
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Every prop is documented with JSDoc. Each field of a component's `*Props`
+// interface(s) carries a JSDoc comment — these feed the story's `DocsPropsTable`
+// and IDE hovers. `ref` (React 19 boilerplate) is exempt. This is a loop quality
+// gate: props without JSDoc are undocumented API.
+// ---------------------------------------------------------------------------
+/** Names of `*Props` fields (top level of the interface body) missing JSDoc. */
+export function propsMissingJsdoc(src: string): string[] {
+  const lines = src.split("\n");
+  const offenders: string[] = [];
+  let depth = 0; // brace depth inside a `*Props` interface body (0 = outside)
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i] ?? "";
+    const trimmed = raw.trim();
+    if (depth === 0) {
+      if (/(?:export\s+)?interface\s+\w*Props\b[^{]*\{/.test(raw)) {
+        depth = 1;
+      }
+      continue;
+    }
+    const opens = (raw.match(/\{/g)?.length ?? 0);
+    const closes = (raw.match(/\}/g)?.length ?? 0);
+    // A direct field of the interface sits at depth 1 before this line's braces.
+    if (
+      depth === 1 &&
+      /^(?:readonly\s+)?["']?[A-Za-z_$][\w$-]*["']?\s*\??\s*:/.test(trimmed) &&
+      !trimmed.startsWith("//") && !trimmed.startsWith("*")
+    ) {
+      const field = trimmed.match(/^(?:readonly\s+)?["']?([A-Za-z_$][\w$-]*)["']?/)?.[1] ?? "";
+      // `ref` and `className` are universal, self-explanatory boilerplate.
+      if (field && field !== "ref" && field !== "className") {
+        const prev = (lines[i - 1] ?? "").trim();
+        const hasJsdoc = prev.endsWith("*/") || prev.startsWith("/**");
+        if (!hasJsdoc) offenders.push(field);
+      }
+    }
+    depth += opens - closes;
+    if (depth <= 0) depth = 0;
+  }
+  return offenders;
+}
+
+describe("veryfront/ui: every prop is documented with JSDoc", () => {
+  for (const c of UI_COMPONENTS) {
+    if (c.status !== "shipped") continue;
+    const srcPath = `${UI_DIR_PATH}${kebab(c.name)}.tsx`;
+    let src = "";
+    try {
+      src = Deno.readTextFileSync(srcPath);
+    } catch {
+      continue; // component defined elsewhere → checked with its own file
+    }
+    if (!/interface\s+\w*Props\b/.test(src)) continue; // props typed inline elsewhere
+
+    it(`${c.name}: *Props fields all carry JSDoc`, () => {
+      const missing = propsMissingJsdoc(src);
+      assert(
+        missing.length === 0,
+        `${kebab(c.name)}.tsx has props without JSDoc: ${missing.join(", ")} — ` +
+          `every public prop needs a /** … */ (feeds DocsPropsTable + IDE hovers)`,
+      );
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GUARDRAIL — the root guide stays a thin overview. Component + variant docs
+// live in the component's story (DocsPage) and source JSDoc. This test fails if
+// the guide starts re-listing internal cva variant tokens (a per-variant
+// catalog), inverting the old incentive that produced doc slop. Do not weaken.
+// ---------------------------------------------------------------------------
+describe("veryfront/ui: the UI guide stays a thin overview (docs live in components)", () => {
+  it("names no internal cva variant tokens — variant docs belong in the story", () => {
+    const tokens = new Set<string>();
+    for (const c of UI_COMPONENTS) {
+      if (c.status !== "shipped") continue;
+      let src = "";
+      try {
+        src = Deno.readTextFileSync(`${UI_DIR_PATH}${kebab(c.name)}.tsx`);
+      } catch {
+        continue;
+      }
+      // Distinctive compound tokens (hyphenated) — these never occur in prose,
+      // so their presence means someone pasted a variant catalog into the guide.
+      for (const { value } of extractVariants(src)) {
+        if (value.includes("-")) tokens.add(value);
+      }
+    }
+    const offenders = [...tokens].filter((t) => new RegExp(`\\b${t}\\b`).test(guideText));
+    assert(
+      offenders.length === 0,
+      `docs/guides/ui-components.md lists cva variant tokens (${offenders.join(", ")}). ` +
+        `Variant docs belong in each component's Storybook story (DocsPropsTable), not the root ` +
+        `guide — keep the guide a thin overview that links to Storybook.`,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

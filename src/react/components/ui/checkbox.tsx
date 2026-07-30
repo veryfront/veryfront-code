@@ -54,7 +54,9 @@ export function Checkbox({
 
 /** Props accepted by `<CheckboxField>`. */
 export interface CheckboxFieldProps extends CheckboxProps {
+  /** Clickable label rendered beside the checkbox. */
   label: React.ReactNode;
+  /** Optional helper text shown under the label. */
   description?: string;
 }
 

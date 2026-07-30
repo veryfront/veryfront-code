@@ -28,6 +28,7 @@ export function Tag(
 
 /** Props accepted by `<TagLink>`. */
 export interface TagLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
+  /** Destination URL — opens in a new tab with `rel="noopener noreferrer"`. */
   href: string;
   /** Render as a Slot, merging props onto the child element. */
   asChild?: boolean;

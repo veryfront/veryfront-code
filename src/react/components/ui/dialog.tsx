@@ -19,9 +19,13 @@ import { useAdapter } from "./adapter/context.tsx";
 
 /** Props accepted by `<Dialog>`. */
 export interface DialogProps {
+  /** The trigger and content parts to compose. */
   children: React.ReactNode;
+  /** Controlled open state (pair with `onOpenChange`). */
   open?: boolean;
+  /** Initial open state when uncontrolled. */
   defaultOpen?: boolean;
+  /** Fires when the open state changes. */
   onOpenChange?: (open: boolean) => void;
 }
 
@@ -133,6 +137,7 @@ export function DialogForm(
 
 /** Props accepted by `<DialogAction>`. */
 export interface DialogActionProps extends ButtonProps {
+  /** Show the pending/pulsing state and block double-submits. */
   isLoading?: boolean;
 }
 
