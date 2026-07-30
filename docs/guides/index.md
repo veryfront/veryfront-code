@@ -45,10 +45,11 @@ details, see [API reference](../api-reference/index.md).
 
 ## Build chat
 
-| Goal                                  | Guide                           |
-| ------------------------------------- | ------------------------------- |
-| Add a preset or custom chat interface | [Build a chat UI](./chat-ui.md) |
-| Use headless chat state               | [Chat hooks](./chat-hooks.md)   |
+| Goal                                               | Guide                               |
+| -------------------------------------------------- | ----------------------------------- |
+| Use themeable, accessible UI primitives + adapters | [UI components](./ui-components.md) |
+| Add a preset or custom chat interface              | [Build a chat UI](./chat-ui.md)     |
+| Use headless chat state                            | [Chat hooks](./chat-hooks.md)       |
 
 ## Run background work
 

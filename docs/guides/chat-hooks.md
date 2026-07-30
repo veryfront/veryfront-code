@@ -90,6 +90,66 @@ export default function Autocomplete() {
 }
 ```
 
+## Composition hooks
+
+When you compose the chat UI yourself (see [UI + chat](./chat-ui.md)), these
+hooks expose the state behind the components. They must be used inside the
+matching provider (`<ChatInput>` / `<Message>` / `<Chat>`).
+
+### useChatInput
+
+The headless composer. Reads the enclosing `<ChatInput>` context and returns the
+input state plus prop-getters you spread onto your own elements — the getters
+merge your handlers/classes with the internal ones:
+
+```tsx
+import { useChatInput } from "veryfront/chat";
+
+function CustomComposer() {
+  const input = useChatInput();
+  return (
+    <form {...input.getFormProps()}>
+      <textarea {...input.getFieldProps()} placeholder="Message…" />
+      <button {...input.getSubmitProps()}>Send</button>
+    </form>
+  );
+}
+```
+
+Getters: `getFormProps`, `getFieldProps`, `getSubmitProps`, `getAttachProps`,
+`getVoiceProps`. State: `input`, `canSubmit`, `isLoading`, `attachments`, `model`.
+`mergeProps` is exported for composing several getters onto one element.
+
+### useChatScroll
+
+Stick-to-bottom scroll management for a message list. Attach `scrollRef` to the
+viewport and `contentRef` to the growing content; the hook keeps the user pinned
+to the bottom while streaming:
+
+```tsx
+import { useChatScroll } from "veryfront/chat";
+
+const scroll = useChatScroll(messages.length);
+<div ref={scroll.scrollRef} className="overflow-y-auto">
+  <div ref={scroll.contentRef}>{/* messages */}</div>
+</div>;
+```
+
+Also: `viewportRef`, `isAtBottom`, `scrollToBottom`/`scrollToEnd`, `scrollToStart`,
+`scrollToMessage(id)`, and `getViewportProps()`. (`useStickToBottom` is the old
+name, kept as a deprecated alias.)
+
+### useMessageBranches
+
+The regeneration/edit variants of a message (what `BranchPicker` shows). Must be
+used inside a `<Message>`:
+
+```tsx
+import { useMessageBranches } from "veryfront/chat";
+
+const b = useMessageBranches(); // { index, count, hasPrevious, hasNext, previous, next }
+```
+
 ## Inference mode
 
 `useChat` exposes `inferenceMode` so your UI can show whether inference is running through cloud, server-local, or browser runtime.
