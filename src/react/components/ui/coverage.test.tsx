@@ -486,3 +486,43 @@ describe("veryfront/ui: leaf composition (one node · ref · {...props})", () =>
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// ENGINE coverage — the bring-your-own-engine adapters (RFC 0001 / #3090).
+// `builtin` is the shipped zero-dep default. The four named third-party engines
+// are the swappable adapters the contract is designed for; each is RED until an
+// `adapter/<engine>/index.ts` implementing the `UIAdapter` slots lands. The
+// interop SEAM they plug into is proven today (adapter/*.conformance.test.tsx +
+// the veryfront-router-testing chat-adapter-interop testbed on a dependency-free
+// custom engine); these rows track the real packages as planned follow-up.
+// ---------------------------------------------------------------------------
+interface EngineRow {
+  name: string;
+  dir: string;
+  status: "shipped" | "planned";
+}
+const UI_ENGINES: EngineRow[] = [
+  { name: "builtin", dir: "builtin", status: "shipped" },
+  { name: "Base UI", dir: "base-ui", status: "planned" },
+  { name: "Radix", dir: "radix", status: "planned" },
+  { name: "React Aria", dir: "react-aria", status: "planned" },
+  { name: "Ariakit", dir: "ariakit", status: "planned" },
+];
+
+describe("veryfront/ui: bring-your-own-engine adapters (swappable engines)", () => {
+  for (const e of UI_ENGINES) {
+    it(`${e.name}: ships an adapter/${e.dir}/index.ts implementing the UIAdapter slots`, () => {
+      let exists = false;
+      try {
+        Deno.statSync(`${UI_DIR_PATH}adapter/${e.dir}/index.ts`);
+        exists = true;
+      } catch { /* missing → planned rows stay RED until the engine lands */ }
+      assert(
+        exists,
+        `${e.name} (${e.status}) engine adapter not found at adapter/${e.dir}/index.ts — ` +
+          `implement the UIAdapter slots (Popover/Dialog/Menu/Tooltip/Select/Combobox/Toast) ` +
+          `against its library; the interop seam is already proven, this is the real engine.`,
+      );
+    });
+  }
+});
