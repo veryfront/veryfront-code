@@ -16,6 +16,7 @@ function createSentrySdk(options: {
     contexts: [] as Array<[string, Record<string, unknown>]>,
     fingerprints: [] as string[][],
     flushTimeouts: [] as Array<number | undefined>,
+    levels: [] as string[],
     tags: [] as Array<[string, string]>,
   };
   const scope = {
@@ -24,6 +25,9 @@ function createSentrySdk(options: {
     },
     setFingerprint(fingerprint: string[]) {
       state.fingerprints.push(fingerprint);
+    },
+    setLevel(level: string) {
+      state.levels.push(level);
     },
     setTag(key: string, value: string) {
       state.tags.push([key, value]);
@@ -138,6 +142,36 @@ Deno.test("policy captures service and Grafana trace correlation", () => {
     "grafana_trace",
     { trace_id: "trace-1", span_id: "span-1" },
   ]]);
+});
+
+Deno.test("policy applies native Sentry severity level when provided", () => {
+  const { sdk, state } = createSentrySdk();
+
+  captureWithSentryPolicy(sdk, "veryfront-agent", new Error("slow request"), {
+    boundary: "agent.process",
+    level: "warning",
+  });
+
+  captureWithSentryPolicy(sdk, "veryfront-agent", new Error("startup failed"), {
+    boundary: "process.startup",
+    level: "fatal",
+  });
+
+  assertEquals(state.levels, ["warning", "fatal"]);
+});
+
+Deno.test("policy preserves process_role as a native Sentry tag", () => {
+  const { sdk, state } = createSentrySdk();
+
+  captureWithSentryPolicy(sdk, "veryfront-api", new Error("request failed"), {
+    boundary: "api.request",
+    processRole: "api",
+  });
+
+  assertEquals(
+    state.tags.some(([key, value]) => key === "process_role" && value === "api"),
+    true,
+  );
 });
 
 Deno.test("policy redacts application error attribute keys and credential-shaped values", () => {

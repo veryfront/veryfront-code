@@ -9,11 +9,15 @@ function createDenoSentrySdk(options: {
     captured: [] as unknown[],
     flushTimeouts: [] as Array<number | undefined>,
     initOptions: undefined as Parameters<typeof import("@sentry/deno").init>[0] | undefined,
+    levels: [] as string[],
     tags: [] as Array<[string, string]>,
   };
   const scope = {
     setContext() {},
     setFingerprint() {},
+    setLevel(level: string) {
+      state.levels.push(level);
+    },
     setTag(key: string, value: string) {
       state.tags.push([key, value]);
     },
@@ -103,6 +107,53 @@ Deno.test("Deno adapter captures with policy tags and bounded flush", async () =
 
   assertEquals(await reporter.flush(1_500), true);
   assertEquals(state.flushTimeouts, [1_500]);
+});
+
+Deno.test("Deno adapter propagates warning and fatal levels to native Sentry scope", () => {
+  const { sdk, state } = createDenoSentrySdk();
+  const reporter = createDenoSentryApplicationErrorReporter(
+    {
+      dsn: "https://public@example.ingest.sentry.io/1",
+      environment: "",
+      release: "",
+      serviceName: "veryfront-server",
+    },
+    sdk,
+  );
+
+  reporter.capture(new Error("slow request"), {
+    boundary: "server.request",
+    level: "warning",
+  });
+  reporter.capture(new Error("startup failed"), {
+    boundary: "process.startup",
+    level: "fatal",
+  });
+
+  assertEquals(state.levels, ["warning", "fatal"]);
+});
+
+Deno.test("Deno adapter propagates process role to native Sentry tag", () => {
+  const { sdk, state } = createDenoSentrySdk();
+  const reporter = createDenoSentryApplicationErrorReporter(
+    {
+      dsn: "https://public@example.ingest.sentry.io/1",
+      environment: "",
+      release: "",
+      serviceName: "veryfront-server",
+    },
+    sdk,
+  );
+
+  reporter.capture(new Error("request failed"), {
+    boundary: "server.request",
+    processRole: "server",
+  });
+
+  assertEquals(
+    state.tags.some(([key, value]) => key === "process_role" && value === "server"),
+    true,
+  );
 });
 
 Deno.test("Deno adapter isolates SDK capture and flush failures", async () => {

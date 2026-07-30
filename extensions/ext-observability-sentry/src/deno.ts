@@ -1,11 +1,19 @@
 import * as Sentry from "@sentry/deno";
-import type { ApplicationErrorReporter, SentryConfig } from "veryfront/observability/sentry";
+import type { ApplicationErrorReporter } from "../../../src/observability/application-error-contract.ts";
+import type { SentryConfig } from "./config.ts";
 import {
   captureWithSentryPolicy,
   flushWithSentryPolicy,
   prepareSentryEvent,
   type SentryPolicySdk,
 } from "./policy.ts";
+
+export type {
+  ApplicationErrorContext,
+  ApplicationErrorLevel,
+  ApplicationErrorReporter,
+} from "../../../src/observability/application-error-contract.ts";
+export type { SentryConfig } from "./config.ts";
 
 const DISABLED_DENO_INTEGRATIONS = new Set([
   "Breadcrumbs",

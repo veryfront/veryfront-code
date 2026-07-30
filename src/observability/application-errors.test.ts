@@ -1,9 +1,11 @@
 import { assertEquals } from "@std/assert";
 import {
+  type ApplicationErrorContext,
   captureApplicationError,
   flushApplicationErrors,
   setApplicationErrorReporter,
 } from "./application-errors.ts";
+import type { ApplicationErrorContext as SharedApplicationErrorContext } from "./application-error-contract.ts";
 
 Deno.test("application error reporter is optional", async () => {
   setApplicationErrorReporter(undefined);
@@ -40,6 +42,18 @@ Deno.test("application error reporter receives unexpected failures and correlati
   assertEquals(captures, [{ error, boundary: "renderer.request", traceId: "trace-1" }]);
   assertEquals(await flushApplicationErrors(1_500), true);
   assertEquals(flushTimeout, 1_500);
+});
+
+Deno.test("application error context is exported from the shared contract with severity level", () => {
+  const context: ApplicationErrorContext = {
+    boundary: "renderer.request",
+    level: "warning",
+    processRole: "api",
+  };
+  const sharedContext: SharedApplicationErrorContext = context;
+
+  assertEquals(sharedContext.level, "warning");
+  assertEquals(sharedContext.processRole, "api");
 });
 
 Deno.test("application error reporter ignores expected cancellation", () => {

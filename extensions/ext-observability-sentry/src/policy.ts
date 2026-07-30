@@ -1,4 +1,7 @@
-import type { ApplicationErrorContext } from "veryfront/observability/sentry";
+import type {
+  ApplicationErrorContext,
+  ApplicationErrorLevel,
+} from "../../../src/observability/application-error-contract.ts";
 
 export const DEFAULT_FINGERPRINT = "{{ default }}";
 
@@ -14,6 +17,7 @@ const SENSITIVE_ATTRIBUTE_KEY_PATTERN =
 export type SentryPolicyScope = {
   setContext(name: string, context: Record<string, unknown>): void;
   setFingerprint(fingerprint: string[]): void;
+  setLevel(level: ApplicationErrorLevel): void;
   setTag(key: string, value: string): void;
 };
 
@@ -82,7 +86,9 @@ export function applySentryScopePolicy(
   context: ApplicationErrorContext,
 ): void {
   scope.setFingerprint([serviceName, DEFAULT_FINGERPRINT]);
+  if (context.level) scope.setLevel(context.level);
   scope.setTag("service.name", serviceName);
+  if (context.processRole) scope.setTag("process_role", context.processRole);
   scope.setTag("veryfront.boundary", context.boundary);
   if (context.method) scope.setTag("http.request.method", context.method);
   if (context.requestId) scope.setTag("veryfront.request_id", context.requestId);

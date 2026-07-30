@@ -1,16 +1,14 @@
-export type ApplicationErrorContext = {
-  boundary: string;
-  method?: string;
-  requestId?: string;
-  spanId?: string;
-  traceId?: string;
-  attributes?: Record<string, string | number | boolean>;
-};
+import type {
+  ApplicationErrorContext,
+  ApplicationErrorReporter,
+} from "./application-error-contract.ts";
 
-export type ApplicationErrorReporter = {
-  capture(error: unknown, context: ApplicationErrorContext): string | undefined;
-  flush(timeoutMs?: number): Promise<boolean>;
-};
+export type {
+  ApplicationErrorAttributeValue,
+  ApplicationErrorContext,
+  ApplicationErrorLevel,
+  ApplicationErrorReporter,
+} from "./application-error-contract.ts";
 
 let reporter: ApplicationErrorReporter | undefined;
 

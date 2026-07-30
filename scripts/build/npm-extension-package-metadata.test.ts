@@ -4,6 +4,7 @@ import { createDntExtensionEntryPoints } from "./build-npm-extension-packages.ts
 import {
   bareImportPackageNames,
   createExtensionPackageSpec,
+  createExtensionPackageSpecs,
   createVeryfrontPeerTypeImportReplacements,
   type ExtensionManifest,
   firstPartyExtensionManifestPaths,
@@ -204,6 +205,94 @@ describe("createExtensionPackageSpec", () => {
       "@sentry/deno": "10.68.0",
       "@sentry/node": "10.68.0",
     });
+  });
+
+  it("creates lean runtime-specific Sentry package metadata without framework peers or opposite SDKs", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-observability-sentry",
+      exports: {
+        ".": "./src/index.ts",
+        "./node": "./src/node.ts",
+        "./deno": "./src/deno.ts",
+      },
+      veryfront: {
+        extension: true,
+        npm: {
+          runtimePackages: [
+            {
+              name: "@veryfront/ext-observability-sentry-node",
+              export: "./node",
+              dependencies: ["@sentry/node"],
+              peerVeryfront: false,
+            },
+            {
+              name: "@veryfront/ext-observability-sentry-deno",
+              export: "./deno",
+              dependencies: ["@sentry/deno"],
+              peerVeryfront: false,
+            },
+          ],
+        },
+      },
+      imports: {
+        "@sentry/deno": "npm:@sentry/deno@10.68.0",
+        "@sentry/node": "npm:@sentry/node@10.68.0",
+      },
+    };
+
+    const specs = createExtensionPackageSpecs({
+      manifestPath: "extensions/ext-observability-sentry/deno.json",
+      manifest,
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    assertEquals(specs.map((spec) => spec.packageName), [
+      "@veryfront/ext-observability-sentry",
+      "@veryfront/ext-observability-sentry-node",
+      "@veryfront/ext-observability-sentry-deno",
+    ]);
+
+    const legacy = specs[0]!;
+    assertEquals(legacy.entryPoints.map((entryPoint) => entryPoint.name), [
+      ".",
+      "./node",
+      "./deno",
+    ]);
+    assertEquals(legacy.packageJson.peerDependencies, {
+      veryfront: "^0.1.985",
+    });
+    assertEquals(legacy.packageJson.veryfront, manifest.veryfront);
+    assertEquals(legacy.manifestDependencies, {
+      "@sentry/deno": "10.68.0",
+      "@sentry/node": "10.68.0",
+    });
+
+    const node = specs[1]!;
+    assertEquals(node.packageDirectoryName, "ext-observability-sentry-node");
+    assertEquals(node.entryPoints, [{
+      name: ".",
+      path: "extensions/ext-observability-sentry/src/node.ts",
+    }]);
+    assertEquals(node.manifestDependencies, {
+      "@sentry/node": "10.68.0",
+    });
+    assertEquals("peerDependencies" in node.packageJson, false);
+    assertEquals("veryfront" in node.packageJson, false);
+
+    const deno = specs[2]!;
+    assertEquals(deno.packageDirectoryName, "ext-observability-sentry-deno");
+    assertEquals(deno.entryPoints, [{
+      name: ".",
+      path: "extensions/ext-observability-sentry/src/deno.ts",
+    }]);
+    assertEquals(deno.manifestDependencies, {
+      "@sentry/deno": "10.68.0",
+    });
+    assertEquals("peerDependencies" in deno.packageJson, false);
+    assertEquals("veryfront" in deno.packageJson, false);
   });
 
   it("externalizes public Veryfront contracts but not non-public helper imports", () => {
@@ -559,5 +648,66 @@ describe("normalizeExtensionPackageJson", () => {
         types: "./esm/deno.d.ts",
       },
     });
+  });
+
+  it("normalizes lean runtime package metadata without a Veryfront peer", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-observability-sentry",
+      exports: {
+        ".": "./src/index.ts",
+        "./node": "./src/node.ts",
+        "./deno": "./src/deno.ts",
+      },
+      veryfront: {
+        extension: true,
+        npm: {
+          runtimePackages: [{
+            name: "@veryfront/ext-observability-sentry-node",
+            export: "./node",
+            dependencies: ["@sentry/node"],
+            peerVeryfront: false,
+          }],
+        },
+      },
+      imports: {
+        "@sentry/deno": "npm:@sentry/deno@10.68.0",
+        "@sentry/node": "npm:@sentry/node@10.68.0",
+      },
+    };
+    const spec = createExtensionPackageSpecs({
+      manifestPath: "extensions/ext-observability-sentry/deno.json",
+      manifest,
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    })[1]!;
+
+    const normalized = normalizeExtensionPackageJson({
+      spec,
+      version: "0.1.985",
+      packageJson: {
+        name: "@veryfront/ext-observability-sentry-node",
+        module: "./esm/node.js",
+        exports: { ".": { import: "./esm/node.js" } },
+        dependencies: {
+          "@deno/shim-deno": "~0.18.0",
+          "@sentry/deno": "10.68.0",
+          "@sentry/node": "10.68.0",
+          veryfront: "^0.1.985",
+        },
+        peerDependencies: {
+          veryfront: "^0.1.985",
+        },
+      },
+    });
+
+    assertEquals(normalized.dependencies, {
+      "@deno/shim-deno": "~0.18.0",
+      "@sentry/node": "10.68.0",
+    });
+    assertEquals("peerDependencies" in normalized, false);
+    assertEquals("veryfront" in normalized, false);
+    assertEquals(normalized.types, "./esm/node.d.ts");
   });
 });

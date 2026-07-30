@@ -9,11 +9,15 @@ function createNodeSentrySdk(options: {
     captured: [] as unknown[],
     flushTimeouts: [] as Array<number | undefined>,
     initOptions: undefined as Parameters<typeof import("@sentry/node").init>[0] | undefined,
+    levels: [] as string[],
     tags: [] as Array<[string, string]>,
   };
   const scope = {
     setContext() {},
     setFingerprint() {},
+    setLevel(level: string) {
+      state.levels.push(level);
+    },
     setTag(key: string, value: string) {
       state.tags.push([key, value]);
     },
@@ -105,6 +109,53 @@ Deno.test("Node adapter captures with policy tags and bounded flush", async () =
 
   assertEquals(await reporter.flush(1_500), true);
   assertEquals(state.flushTimeouts, [1_500]);
+});
+
+Deno.test("Node adapter propagates warning and fatal levels to native Sentry scope", () => {
+  const { sdk, state } = createNodeSentrySdk();
+  const reporter = createNodeSentryApplicationErrorReporter(
+    {
+      dsn: "https://public@example.ingest.sentry.io/1",
+      environment: "",
+      release: "",
+      serviceName: "veryfront-agent",
+    },
+    sdk,
+  );
+
+  reporter.capture(new Error("slow request"), {
+    boundary: "agent.process",
+    level: "warning",
+  });
+  reporter.capture(new Error("startup failed"), {
+    boundary: "process.startup",
+    level: "fatal",
+  });
+
+  assertEquals(state.levels, ["warning", "fatal"]);
+});
+
+Deno.test("Node adapter propagates process role to native Sentry tag", () => {
+  const { sdk, state } = createNodeSentrySdk();
+  const reporter = createNodeSentryApplicationErrorReporter(
+    {
+      dsn: "https://public@example.ingest.sentry.io/1",
+      environment: "",
+      release: "",
+      serviceName: "veryfront-api",
+    },
+    sdk,
+  );
+
+  reporter.capture(new Error("request failed"), {
+    boundary: "api.request",
+    processRole: "api",
+  });
+
+  assertEquals(
+    state.tags.some(([key, value]) => key === "process_role" && value === "api"),
+    true,
+  );
 });
 
 Deno.test("Node adapter isolates SDK capture and flush failures", async () => {

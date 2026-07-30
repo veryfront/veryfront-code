@@ -1,9 +1,9 @@
 import { build, emptyDir } from "#dnt";
-import { dirname } from "#std/path";
+import { basename, dirname, join, relative, toFileUrl } from "#std/path";
 import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
 import {
   bareImportPackageNames,
-  createExtensionPackageSpec,
+  createExtensionPackageSpecs,
   createVeryfrontPeerTypeImportReplacements,
   type ExtensionManifest,
   type ExtensionPackageSpec,
@@ -30,7 +30,7 @@ export async function buildExtensionPackages(
     const manifest = JSON.parse(
       await Deno.readTextFile(`${options.rootDir}/${manifestPath}`),
     ) as ExtensionManifest;
-    const spec = createExtensionPackageSpec({
+    const specs = createExtensionPackageSpecs({
       manifestPath,
       manifest,
       rootConfig: options.rootConfig,
@@ -38,14 +38,26 @@ export async function buildExtensionPackages(
       version: options.version,
       license: options.license,
     });
-    const outDir = `${options.outDir}/${spec.packageDirectoryName}`;
+    for (const spec of specs) {
+      await buildExtensionPackage(options, spec);
+    }
+  }
+}
 
-    console.log(`📦 Building ${spec.packageName}...`);
+async function buildExtensionPackage(
+  options: BuildExtensionPackagesOptions,
+  spec: ExtensionPackageSpec,
+): Promise<void> {
+  const outDir = `${options.outDir}/${spec.packageDirectoryName}`;
+
+  console.log(`📦 Building ${spec.packageName}...`);
+  const preparedInput = await prepareDntExtensionBuildInput({
+    rootDir: options.rootDir,
+    spec,
+  });
+  try {
     await build({
-      entryPoints: createDntExtensionEntryPoints({
-        rootDir: options.rootDir,
-        spec,
-      }),
+      entryPoints: preparedInput.entryPoints,
       outDir,
       test: false,
       scriptModule: false,
@@ -101,6 +113,8 @@ export async function buildExtensionPackages(
         });
       },
     });
+  } finally {
+    await preparedInput.cleanup();
   }
 }
 
@@ -112,6 +126,108 @@ export function createDntExtensionEntryPoints(input: {
     name: entryPoint.name,
     path: `${input.rootDir}/${entryPoint.path}`,
   }));
+}
+
+async function prepareDntExtensionBuildInput(input: {
+  rootDir: string;
+  spec: Pick<ExtensionPackageSpec, "entryPoints" | "manifestDir">;
+}): Promise<
+  { entryPoints: { name: string; path: string }[]; cleanup(): Promise<void> }
+> {
+  // dnt chooses an extension-local source base for extension entrypoints and
+  // fails before postBuild when a relative import resolves outside that base.
+  // The Sentry runtime packages need the canonical framework contract from
+  // src/observability without turning it into a `veryfront` peer, so stage that
+  // tiny source file beside the copied extension inputs and rewrite only the
+  // build input. Repository source keeps the canonical relative import.
+  const sourceImport =
+    "../../../src/observability/application-error-contract.ts";
+  const usesSharedApplicationErrorContract = await extensionSourceUsesImport({
+    rootDir: input.rootDir,
+    spec: input.spec,
+    importSpecifier: sourceImport,
+  });
+
+  if (!usesSharedApplicationErrorContract) {
+    return {
+      entryPoints: createDntExtensionEntryPoints({
+        rootDir: input.rootDir,
+        spec: input.spec,
+      }),
+      cleanup: () => Promise.resolve(),
+    };
+  }
+
+  const tempDir = await Deno.makeTempDir({
+    prefix: "veryfront-extension-dnt-",
+  });
+  const stagedExtensionDir = join(tempDir, basename(input.spec.manifestDir));
+  const sourceExtensionDir = join(input.rootDir, input.spec.manifestDir);
+  await copyDirectory(sourceExtensionDir, stagedExtensionDir);
+  await Deno.copyFile(
+    join(input.rootDir, "src/observability/application-error-contract.ts"),
+    join(stagedExtensionDir, "src/application-error-contract.ts"),
+  );
+
+  for await (const filePath of walkFiles(stagedExtensionDir)) {
+    if (!filePath.endsWith(".ts")) continue;
+    const original = await Deno.readTextFile(filePath);
+    const next = original
+      .replaceAll(
+        sourceImport,
+        "./application-error-contract.ts",
+      )
+      .replaceAll(
+        '"veryfront/extensions"',
+        `"${toFileUrl(join(input.rootDir, "src/extensions/index.ts")).href}"`,
+      );
+    if (next !== original) {
+      await Deno.writeTextFile(filePath, next);
+    }
+  }
+
+  return {
+    entryPoints: input.spec.entryPoints.map((entryPoint) => ({
+      name: entryPoint.name,
+      path: join(
+        stagedExtensionDir,
+        relative(input.spec.manifestDir, entryPoint.path),
+      ),
+    })),
+    cleanup: () => Deno.remove(tempDir, { recursive: true }),
+  };
+}
+
+async function extensionSourceUsesImport(input: {
+  rootDir: string;
+  spec: Pick<ExtensionPackageSpec, "manifestDir">;
+  importSpecifier: string;
+}): Promise<boolean> {
+  const sourceDir = join(input.rootDir, input.spec.manifestDir, "src");
+  for await (const filePath of walkFiles(sourceDir)) {
+    if (!filePath.endsWith(".ts")) continue;
+    const source = await Deno.readTextFile(filePath);
+    if (source.includes(input.importSpecifier)) return true;
+  }
+  return false;
+}
+
+async function copyDirectory(
+  sourceDir: string,
+  targetDir: string,
+): Promise<void> {
+  await Deno.mkdir(targetDir, { recursive: true });
+  for await (const entry of Deno.readDir(sourceDir)) {
+    const sourcePath = join(sourceDir, entry.name);
+    const targetPath = join(targetDir, entry.name);
+    if (entry.isDirectory) {
+      await copyDirectory(sourcePath, targetPath);
+      continue;
+    }
+    if (entry.isFile) {
+      await Deno.copyFile(sourcePath, targetPath);
+    }
+  }
 }
 
 async function rewriteVeryfrontPeerTypeImports(input: {
@@ -153,7 +269,11 @@ async function removeDntImportMapArtifacts(
   spec: Pick<ExtensionPackageSpec, "entryPoints">,
 ): Promise<void> {
   if (await hasGeneratedDntImportMapReferences(outDir)) return;
-  if (spec.entryPoints.some((entryPoint) => entryPoint.name === "./deno")) {
+  if (
+    spec.entryPoints.some((entryPoint) =>
+      entryPoint.name === "./deno" || entryPoint.path.endsWith("/deno.ts")
+    )
+  ) {
     return;
   }
 
