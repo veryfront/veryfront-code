@@ -1,4 +1,4 @@
-import { join } from "@std/path";
+import { join } from "veryfront/platform/path";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
 import { TRIGGER_CONFIG_INVALID, VeryfrontError } from "#veryfront/errors";

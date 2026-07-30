@@ -1,4 +1,4 @@
-import { dirname } from "@std/path";
+import { dirname } from "veryfront/platform/path";
 import { MAX_STRING_DISPLAY_LENGTH } from "#veryfront/utils/constants/index.ts";
 import { MAX_FILE_LOG_FILES } from "#veryfront/utils/config-resource-limits.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
