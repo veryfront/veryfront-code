@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearRequestScopedFileCache,
@@ -15,6 +15,23 @@ import {
 } from "./multi-project-adapter.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { registerRequestContextFinalizer } from "./request-context.ts";
+import type { StyleArtifactAccess, StyleArtifactRegistry } from "./types.ts";
+
+function createStyleArtifactAccess(projectSlug: string): StyleArtifactAccess {
+  const registry: Readonly<StyleArtifactRegistry> = Object.freeze({
+    resolveStyleArtifact: () => Promise.reject(new Error("not used")),
+    ensureStyleArtifactBuild: () => Promise.reject(new Error("not used")),
+    upsertStyleArtifact: () => Promise.reject(new Error("not used")),
+  });
+  return Object.freeze({
+    contentContext: Object.freeze({
+      sourceType: "release" as const,
+      projectSlug,
+      releaseId: `${projectSlug}-release`,
+    }),
+    registry,
+  });
+}
 
 function createAdapter(): MultiProjectFSAdapter {
   return new MultiProjectFSAdapter({
@@ -116,6 +133,10 @@ describe("MultiProjectFSAdapter", () => {
         assertMethod(adapter, "createStyleConfigBinding");
         assertMethod(adapter, "installStyleConfig");
       });
+    });
+
+    it("should expose request-scoped style artifact access", () => {
+      withAdapter((adapter) => assertMethod(adapter, "getStyleArtifactAccess"));
     });
 
     it("should have refreshSourceSnapshot method", () => {
@@ -556,6 +577,86 @@ describe("MultiProjectFSAdapter", () => {
         } finally {
           (adapter as any).manager = originalManager;
         }
+      });
+    });
+
+    it("routes concurrent style artifact access to each request's exact project adapter", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const accesses = new Map([
+          ["project-a", createStyleArtifactAccess("project-a")],
+          ["project-b", createStyleArtifactAccess("project-b")],
+        ]);
+        const selections: Array<{
+          projectSlug: string;
+          projectId: string | undefined;
+          releaseId: string | null | undefined;
+        }> = [];
+
+        (adapter as any).manager = {
+          getAdapter(
+            projectSlug: string,
+            _token: string,
+            projectId?: string,
+            _productionMode?: boolean,
+            releaseId?: string | null,
+          ) {
+            selections.push({ projectSlug, projectId, releaseId });
+            const access = accesses.get(projectSlug);
+            return Promise.resolve({
+              getStyleArtifactAccess: () => Promise.resolve(access),
+            });
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          const results = await Promise.all(
+            ["project-a", "project-b"].map((projectSlug) =>
+              adapter.runWithContext(
+                projectSlug,
+                `${projectSlug}-token`,
+                async () => {
+                  await Promise.resolve();
+                  return await adapter.getStyleArtifactAccess();
+                },
+                `${projectSlug}-id`,
+                {
+                  productionMode: true,
+                  releaseId: `${projectSlug}-release`,
+                },
+              )
+            ),
+          );
+
+          assertEquals(results.map((result) => result.contentContext.projectSlug), [
+            "project-a",
+            "project-b",
+          ]);
+          assertEquals(results[0], accesses.get("project-a"));
+          assertEquals(results[1], accesses.get("project-b"));
+          assertEquals(
+            [...new Set(selections.map((selection) => selection.projectSlug))].sort(),
+            ["project-a", "project-b"],
+          );
+          for (const selection of selections) {
+            assertEquals(selection.projectId, `${selection.projectSlug}-id`);
+            assertEquals(selection.releaseId, `${selection.projectSlug}-release`);
+          }
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("rejects style artifact access outside a request context", async () => {
+      await withAdapterAsync(async (adapter) => {
+        await assertRejects(
+          () => adapter.getStyleArtifactAccess(),
+          Error,
+          "No request context available",
+        );
       });
     });
 

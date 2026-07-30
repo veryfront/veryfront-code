@@ -17,7 +17,7 @@ import {
 import { denoAdapter } from "../deno.ts";
 import { MultiProjectFSAdapter } from "./veryfront/multi-project-adapter.ts";
 import { VERYFRONT_FS_ADAPTER_KIND } from "./veryfront/adapter-kind.ts";
-import type { ContextualFSAdapter, FSAdapter } from "./veryfront/types.ts";
+import type { ContextualFSAdapter, FSAdapter, StyleArtifactAccess } from "./veryfront/types.ts";
 
 function createMockFSAdapter(overrides: Partial<FSAdapter> = {}): FSAdapter {
   return {
@@ -492,6 +492,39 @@ describe("FSAdapterWrapper", () => {
     });
   });
 
+  describe("style artifact access", () => {
+    it("exposes and delegates the capability with the underlying adapter binding", async () => {
+      const access: StyleArtifactAccess = Object.freeze({
+        contentContext: Object.freeze({
+          sourceType: "release" as const,
+          projectSlug: "project-a",
+          releaseId: "release-a",
+        }),
+        registry: Object.freeze({
+          resolveStyleArtifact: () => Promise.reject(new Error("not used")),
+          ensureStyleArtifactBuild: () => Promise.reject(new Error("not used")),
+          upsertStyleArtifact: () => Promise.reject(new Error("not used")),
+        }),
+      });
+      let receiverMatched = false;
+      const fsAdapter: FSAdapter = createMockFSAdapter({
+        getStyleArtifactAccess() {
+          receiverMatched = this === fsAdapter;
+          return Promise.resolve(access);
+        },
+      });
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      assertExists(wrapper.getStyleArtifactAccess);
+      assertEquals(await wrapper.getStyleArtifactAccess(), access);
+      assertEquals(receiverMatched, true);
+    });
+
+    it("does not advertise style artifact access when the underlying adapter omits it", () => {
+      assertEquals(new FSAdapterWrapper(createMockFSAdapter()).getStyleArtifactAccess, undefined);
+    });
+  });
+
   describe("exists", () => {
     it("should delegate to fsAdapter.exists", async () => {
       const wrapper = new FSAdapterWrapper(createMockFSAdapter());
@@ -781,7 +814,7 @@ describe("FSAdapterWrapper", () => {
         sourceKey: "source-a",
         sourceRevision: 3,
       });
-      const config = Object.freeze({ tailwind: { stylesheet: "styles/project-a.css" } });
+      const config = Object.freeze({ styles: { stylesheet: "styles/project-a.css" } });
       const calls: unknown[][] = [];
       const fsAdapter = createMockContextualAdapter({
         runWithContext: <T>(_slug: string, _token: string, fn: () => Promise<T>) => fn(),

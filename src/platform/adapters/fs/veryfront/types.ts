@@ -1,5 +1,11 @@
 import type { ResolveFileOptions } from "../../base.ts";
-import type { Project } from "../../veryfront-api-client/index.ts";
+import type {
+  EnsureStyleArtifactBuildInput,
+  Project,
+  ProjectStyleArtifactResolution,
+  ResolveStyleArtifactInput,
+  UpsertStyleArtifactInput,
+} from "../../veryfront-api-client/index.ts";
 import type { GitHubConfig } from "../github/types.ts";
 import type { DirectoryEntry } from "../shared-types.ts";
 import type { RequestTokenProvenance } from "./request-context.ts";
@@ -44,6 +50,13 @@ export interface FSAdapter {
   refreshSourceSnapshot?(reason?: string): Promise<void>;
   ensureSourceSnapshotFresh?(reason?: string): Promise<void>;
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
+  /**
+   * Resolve the request-scoped control-plane boundary for prepared CSS.
+   *
+   * Only Veryfront-backed adapters expose this capability. Local and other
+   * non-Veryfront filesystems intentionally omit it and compile CSS locally.
+   */
+  getStyleArtifactAccess?(): Promise<StyleArtifactAccess>;
 }
 
 export interface ContextualFSAdapter extends FSAdapter {
@@ -89,6 +102,30 @@ export interface ResolvedContentContext {
   branch?: string;
   environmentName?: string;
   releaseId?: string;
+}
+
+/** Request-scoped style-artifact operations bound to one project adapter. */
+export interface StyleArtifactRegistry {
+  resolveStyleArtifact(
+    input: ResolveStyleArtifactInput,
+  ): Promise<ProjectStyleArtifactResolution>;
+  ensureStyleArtifactBuild(
+    input: EnsureStyleArtifactBuildInput,
+  ): Promise<ProjectStyleArtifactResolution>;
+  upsertStyleArtifact(
+    input: UpsertStyleArtifactInput,
+  ): Promise<ProjectStyleArtifactResolution>;
+}
+
+/**
+ * Immutable source and registry snapshot for one prepared-CSS request.
+ *
+ * The registry deliberately exposes bound operations rather than the mutable
+ * API client that owns credentials and project-selection state.
+ */
+export interface StyleArtifactAccess {
+  readonly contentContext: Readonly<ResolvedContentContext>;
+  readonly registry: Readonly<StyleArtifactRegistry>;
 }
 
 export interface StylePregenerationFile {

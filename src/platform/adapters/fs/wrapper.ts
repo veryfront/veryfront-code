@@ -10,6 +10,7 @@ import type {
   ContextualFSAdapter,
   DirectoryEntry,
   FSAdapter,
+  StyleArtifactAccess,
   StyleConfigBinding,
 } from "./veryfront/types.ts";
 import type { RequestTokenProvenance } from "./veryfront/request-context.ts";
@@ -32,6 +33,7 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
     binding: StyleConfigBinding,
     config: Readonly<object>,
   ): Promise<boolean>;
+  getStyleArtifactAccess?(): Promise<StyleArtifactAccess>;
   runWithContext<T>(
     projectSlug: string,
     token: string,
@@ -138,6 +140,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   readonly refreshSourceSnapshot?: (reason?: string) => Promise<void>;
   readonly ensureSourceSnapshotFresh?: (reason?: string) => Promise<void>;
   readonly getSourceSnapshotVersion?: () => number | undefined | Promise<number | undefined>;
+  readonly getStyleArtifactAccess?: () => Promise<StyleArtifactAccess>;
 
   constructor(fsAdapter: FSAdapter) {
     this._fsAdapter = fsAdapter;
@@ -159,6 +162,9 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     }
     if (typeof fsAdapter.getSourceSnapshotVersion === "function") {
       this.getSourceSnapshotVersion = () => fsAdapter.getSourceSnapshotVersion!.call(fsAdapter);
+    }
+    if (typeof fsAdapter.getStyleArtifactAccess === "function") {
+      this.getStyleArtifactAccess = () => fsAdapter.getStyleArtifactAccess!.call(fsAdapter);
     }
   }
 

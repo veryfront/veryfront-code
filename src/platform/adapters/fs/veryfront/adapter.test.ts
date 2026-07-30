@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { createAdapter, seedCachedFiles, waitFor } from "./adapter.test-helpers.ts";
@@ -18,6 +24,11 @@ import {
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { runWithRequestContext } from "./request-context.ts";
+import type {
+  ProjectStyleArtifactResolution,
+  ResolveStyleArtifactInput,
+} from "../../veryfront-api-client/index.ts";
+import { createStyleArtifactTuple } from "../../veryfront-api-client/index.ts";
 
 describe("VeryfrontFSAdapter", () => {
   afterEach(() => {
@@ -109,6 +120,7 @@ describe("VeryfrontFSAdapter", () => {
       "getFilePathByEntityId",
       "getPokeMetrics",
       "getClient",
+      "getStyleArtifactAccess",
       "refreshSourceSnapshot",
       "createStyleConfigBinding",
       "installStyleConfig",
@@ -382,8 +394,8 @@ describe("VeryfrontFSAdapter", () => {
       const internals = getStyleInternals(adapter);
       const sourceAFiles = [{ path: "a.css", content: "source-a" }];
       const sourceBFiles = [{ path: "b.css", content: "source-b" }];
-      const sourceAConfig = { tailwind: { stylesheet: "a.css" } };
-      const sourceBConfig = { tailwind: { stylesheet: "b.css" } };
+      const sourceAConfig = { styles: { stylesheet: "a.css" } };
+      const sourceBConfig = { styles: { stylesheet: "b.css" } };
 
       adapter.setContentContext({
         sourceType: "release",
@@ -423,8 +435,8 @@ describe("VeryfrontFSAdapter", () => {
       }> = [];
       const adapter = createProxyStyleAdapter(calls);
       const internals = getStyleInternals(adapter);
-      const oldConfig = { tailwind: { stylesheet: "old.css" } };
-      const nextConfig = { tailwind: { stylesheet: "next.css" } };
+      const oldConfig = { styles: { stylesheet: "old.css" } };
+      const nextConfig = { styles: { stylesheet: "next.css" } };
       const nextFiles = [{ path: "next.css", content: "next" }];
 
       adapter.setContentContext({
@@ -485,6 +497,81 @@ describe("VeryfrontFSAdapter", () => {
 
     it("should default to null before initialize", () => {
       assertEquals(createAdapter().getContentContext(), null);
+    });
+
+    it("fails closed when style artifact access has no resolved content context", async () => {
+      const error = await assertRejects(() => createAdapter().getStyleArtifactAccess());
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "api-client-error");
+      assertEquals(error.status, 502);
+      assertEquals(
+        error.message.includes("requires a resolved Veryfront content context"),
+        true,
+      );
+    });
+
+    it("returns an immutable registry bound to the captured adapter project", async () => {
+      const adapter = createAdapter();
+      const mutableContext: ResolvedContentContext = {
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-a",
+      };
+      adapter.setContentContext(mutableContext);
+      const client = adapter.getClient();
+      const capturedProjectRefs: Array<string | undefined> = [];
+      const recordProjectRef = (input: ResolveStyleArtifactInput, projectRef?: string) => {
+        capturedProjectRefs.push(projectRef);
+        return Promise.resolve<ProjectStyleArtifactResolution>({
+          ...createStyleArtifactTuple(input),
+          status: "missing",
+        });
+      };
+      const artifactClient = client as unknown as {
+        resolveStyleArtifact: typeof recordProjectRef;
+        ensureStyleArtifactBuild: typeof recordProjectRef;
+        upsertStyleArtifact: typeof recordProjectRef;
+      };
+      artifactClient.resolveStyleArtifact = recordProjectRef;
+      artifactClient.ensureStyleArtifactBuild = recordProjectRef;
+      artifactClient.upsertStyleArtifact = recordProjectRef;
+
+      const access = await adapter.getStyleArtifactAccess();
+      mutableContext.releaseId = "release-mutated-after-capture";
+      const tuple = createStyleArtifactTuple({
+        cssPipelineIdentity: "pipeline@1",
+        styleProfileHash: "a".repeat(64),
+        releaseId: "release-a",
+      });
+      const result = await access.registry.resolveStyleArtifact(tuple);
+      await access.registry.ensureStyleArtifactBuild(tuple);
+      await access.registry.upsertStyleArtifact({
+        ...tuple,
+        artifactHash: "b".repeat(64),
+      });
+
+      assertEquals(Object.isFrozen(access), true);
+      assertEquals(Object.isFrozen(access.contentContext), true);
+      assertEquals(Object.isFrozen(access.registry), true);
+      assertEquals("client" in access, false);
+      assertEquals(access.contentContext.releaseId, "release-a");
+      assertEquals(capturedProjectRefs, ["test-project", "test-project", "test-project"]);
+      assertEquals(result.status, "missing");
+    });
+
+    it("fails closed when the content context belongs to another project", async () => {
+      const adapter = createAdapter();
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "another-project",
+        releaseId: "release-a",
+      });
+
+      const error = await assertRejects(() => adapter.getStyleArtifactAccess());
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "api-client-error");
+      assertEquals(error.status, 502);
+      assertEquals(error.message.includes("did not match the Veryfront adapter project"), true);
     });
 
     it("should set branch context", () => {

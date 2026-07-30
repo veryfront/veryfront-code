@@ -37,6 +37,13 @@ interface SourceFileProvider {
   getContentContext?: () => ResolvedContentContext | null;
 }
 
+interface CandidateExtractionContext {
+  /** Authoritative source version already resolved by the request handler. */
+  projectVersion?: string;
+  /** Authoritative source mutability, independent of adapter introspection. */
+  developmentMode?: boolean;
+}
+
 /**
  * Extract CSS processor candidate class names from all project source files.
  *
@@ -44,7 +51,10 @@ interface SourceFileProvider {
  * mode). Falls back to recursive local directory scanning when no adapter or
  * method is available (local dev mode).
  */
-export async function extractProjectCandidates(ctx: HandlerContext): Promise<Set<string>> {
+export async function extractProjectCandidates(
+  ctx: HandlerContext,
+  extractionContext: Readonly<CandidateExtractionContext> = {},
+): Promise<Set<string>> {
   const styleProfile = createStyleScopeProfile(ctx.config);
   const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
 
@@ -70,22 +80,27 @@ export async function extractProjectCandidates(ctx: HandlerContext): Promise<Set
 
   const candidates = new Set<string>(frameworkCandidates);
   const files = await fsAdapter.getAllSourceFiles();
-  const contentContext = typeof fsAdapter.getContentContext === "function"
+  const hasAuthoritativeContext = extractionContext.projectVersion !== undefined &&
+    extractionContext.developmentMode !== undefined;
+  const contentContext = !hasAuthoritativeContext &&
+      typeof fsAdapter.getContentContext === "function"
     ? fsAdapter.getContentContext()
     : null;
 
   for (
     const cls of getProjectCandidates({
       projectScope: ctx.projectSlug ?? contentContext?.projectSlug ?? ctx.projectDir,
-      projectVersion: resolveStyleContentVersion(contentContext, {
-        releaseId: ctx.releaseId,
-        branch: ctx.parsedDomain?.branch,
-        environmentName: ctx.environmentName,
-      }),
+      projectVersion: extractionContext.projectVersion ??
+        resolveStyleContentVersion(contentContext, {
+          releaseId: ctx.releaseId,
+          branch: ctx.parsedDomain?.branch,
+          environmentName: ctx.environmentName,
+        }),
       projectDir: ctx.projectDir,
       styleProfile,
       files,
-      developmentMode: contentContext?.sourceType === "branch",
+      developmentMode: extractionContext.developmentMode ??
+        contentContext?.sourceType === "branch",
     })
   ) {
     candidates.add(cls);

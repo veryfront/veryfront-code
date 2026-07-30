@@ -1,6 +1,12 @@
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
-import type { DirectoryEntry, FSAdapter, FSAdapterConfig, StyleConfigBinding } from "./types.ts";
+import type {
+  DirectoryEntry,
+  FSAdapter,
+  FSAdapterConfig,
+  StyleArtifactAccess,
+  StyleConfigBinding,
+} from "./types.ts";
 import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
@@ -151,6 +157,11 @@ export class MultiProjectFSAdapter implements FSAdapter {
   ): Promise<boolean> {
     const adapter = await this.getAdapter();
     return adapter.installStyleConfig(binding, config);
+  }
+
+  async getStyleArtifactAccess(): Promise<StyleArtifactAccess> {
+    const adapter = await this.getAdapter();
+    return await adapter.getStyleArtifactAccess();
   }
 
   private async getAdapter(): Promise<VeryfrontFSAdapter> {

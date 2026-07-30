@@ -8,6 +8,8 @@ import type {
   FSAdapterConfig,
   InvalidationCallbacks,
   ResolvedContentContext,
+  StyleArtifactAccess,
+  StyleArtifactRegistry,
   StyleCallbacks,
   StyleConfigBinding,
   StylePregenerationFile,
@@ -1611,6 +1613,39 @@ export class VeryfrontFSAdapter implements FSAdapter {
       });
     }
     return this.contentContext;
+  }
+
+  async getStyleArtifactAccess(): Promise<StyleArtifactAccess> {
+    this.assertNotDisposed();
+    const contentContext = this.contentContext;
+    if (!contentContext) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Style artifact access requires a resolved Veryfront content context",
+        status: 502,
+      });
+    }
+    const adapterProjectSlug = this.projectData?.slug ?? this.client.getProjectSlug() ??
+      this.projectSlug;
+    if (!adapterProjectSlug || contentContext.projectSlug !== adapterProjectSlug) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Style artifact access did not match the Veryfront adapter project",
+        status: 502,
+      });
+    }
+
+    const projectSlug = contentContext.projectSlug;
+    const capturedContext = freezeObject({ ...contentContext });
+    const client = this.client;
+    const registry: Readonly<StyleArtifactRegistry> = freezeObject({
+      resolveStyleArtifact: (input) => client.resolveStyleArtifact(input, projectSlug),
+      ensureStyleArtifactBuild: (input) => client.ensureStyleArtifactBuild(input, projectSlug),
+      upsertStyleArtifact: (input) => client.upsertStyleArtifact(input, projectSlug),
+    });
+
+    return freezeObject({
+      contentContext: capturedContext,
+      registry,
+    });
   }
 
   getClient(): VeryfrontApiClient {
