@@ -1,4 +1,5 @@
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import {
   createToolExposureCheckpoint,
@@ -34,7 +35,7 @@ const catalog = [
   definition("load_skill", "Load a configured skill"),
 ];
 
-Deno.test("tool exposure plans eager and deferred visibility deterministically", () => {
+it("tool exposure plans eager and deferred visibility deterministically", () => {
   const eager = createToolExposurePlan({
     authorized: catalog,
     mode: "eager",
@@ -58,7 +59,7 @@ Deno.test("tool exposure plans eager and deferred visibility deterministically",
   );
 });
 
-Deno.test("tool search ranks exact name, description, and parameter matches", () => {
+it("tool search ranks exact name, description, and parameter matches", () => {
   const state = createToolExposureState();
   const exact = searchToolExposure({ query: "get_release", authorized: catalog, state });
   assertEquals(exact.matches[0]?.name, "get_release");
@@ -81,7 +82,7 @@ Deno.test("tool search ranks exact name, description, and parameter matches", ()
   assertEquals(parameter.matches[0]?.name, "get_release");
 });
 
-Deno.test("tool search caps stable schema-free results at five", () => {
+it("tool search caps stable schema-free results at five", () => {
   const authorized = Array.from(
     { length: 8 },
     (_, index) => definition(`tool_${index}`, "Shared searchable description"),
@@ -103,7 +104,7 @@ Deno.test("tool search caps stable schema-free results at five", () => {
   assert(!serialized.includes("outputSchema"));
 });
 
-Deno.test("authorized search matches load for the next step", () => {
+it("authorized search matches load for the next step", () => {
   const state = createToolExposureState();
   const result = searchToolExposure({ query: "get_release", authorized: catalog, state });
   assertEquals(result.matches, [{
@@ -119,7 +120,7 @@ Deno.test("authorized search matches load for the next step", () => {
   );
 });
 
-Deno.test("attachable metadata requires trusted permission and never loads", () => {
+it("attachable metadata requires trusted permission and never loads", () => {
   const attachableCatalog = [{
     name: "list_agents",
     description: "List configured agents",
@@ -154,7 +155,7 @@ Deno.test("attachable metadata requires trusted permission and never loads", () 
   assertEquals([...allowedState.loadedToolNames], []);
 });
 
-Deno.test("tool exposure checkpoints are private, sorted, and restore only currently authorized tools", () => {
+it("tool exposure checkpoints are private, sorted, and restore only currently authorized tools", () => {
   const authorized = catalog.slice(0, 3);
   const state = createToolExposureState(["get_release", "create_release", "get_release"]);
   const checkpoint = createToolExposureCheckpoint(authorized, state);
@@ -184,7 +185,7 @@ Deno.test("tool exposure checkpoints are private, sorted, and restore only curre
   );
 });
 
-Deno.test("new and child runs start with fresh tool exposure state", () => {
+it("new and child runs start with fresh tool exposure state", () => {
   const parent = createToolExposureState(["get_release"]);
   const child = createToolExposureState();
 
@@ -192,7 +193,7 @@ Deno.test("new and child runs start with fresh tool exposure state", () => {
   assertEquals([...child.loadedToolNames], []);
 });
 
-Deno.test("tool_search is reserved only when deferred framework search is injected", () => {
+it("tool_search is reserved only when deferred framework search is injected", () => {
   const customSearch = definition("tool_search", "Custom eager search");
   const eager = createToolExposurePlan({
     authorized: [customSearch],

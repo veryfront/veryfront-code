@@ -50,6 +50,10 @@ import {
   type ProjectAgentRuntimeDiscovery,
   runWithProjectAgentRuntime,
 } from "../../../src/agent/project/agent-runtime.ts";
+import {
+  type AgentToolLoadingBenchmarkObservation,
+  runAgentToolLoadingBenchmark,
+} from "veryfront/_internal/agent-tool-loading-benchmark";
 import { runEvalReport } from "../../../src/eval/run-report.ts";
 import {
   createErrorEnvelope,
@@ -69,9 +73,9 @@ export interface EvalOptions extends EvalArgs {
    */
   internalToolLoadingOverride?: ToolLoading;
   /** @internal Benchmark-only actual request-shape observation callback. */
-  internalToolLoadingBenchmarkObserver?: NonNullable<
-    Parameters<Agent["generate"]>[0]["__vfToolLoadingBenchmarkObserver"]
-  >;
+  internalToolLoadingBenchmarkObserver?: (
+    observation: AgentToolLoadingBenchmarkObservation,
+  ) => void;
 }
 
 interface EvalCommandDependencies {
@@ -722,7 +726,7 @@ export function createAgentAdapter(agent: Agent, options: EvalOptions) {
       example,
       repetition,
     });
-    const response = await agent.generate({
+    const generateInput: Parameters<Agent["generate"]>[0] = {
       input: normalizeEvalInputForAgent(example.input),
       context: {
         eval: {
@@ -734,16 +738,17 @@ export function createAgentAdapter(agent: Agent, options: EvalOptions) {
       },
       ...(options.model ? { model: options.model } : {}),
       ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
-      ...(options.internalToolLoadingOverride
-        ? { __vfToolLoadingOverride: options.internalToolLoadingOverride }
-        : {}),
-      ...(options.internalToolLoadingBenchmarkObserver
-        ? { __vfToolLoadingBenchmarkObserver: options.internalToolLoadingBenchmarkObserver }
-        : {}),
       ...(definition.mockTools !== undefined
         ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
         : {}),
-    });
+    };
+    const response = options.internalToolLoadingOverride ||
+        options.internalToolLoadingBenchmarkObserver
+      ? await runAgentToolLoadingBenchmark(agent, generateInput, {
+        toolLoading: options.internalToolLoadingOverride,
+        observer: options.internalToolLoadingBenchmarkObserver,
+      })
+      : await agent.generate(generateInput);
     return {
       text: response.text,
       trace: {

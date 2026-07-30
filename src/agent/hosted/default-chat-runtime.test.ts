@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
@@ -234,7 +235,7 @@ Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the gl
   }
 });
 
-Deno.test("createDefaultHostedChatRuntime applies the host operational loading override", async () => {
+it("createDefaultHostedChatRuntime applies the host operational loading override", async () => {
   let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
 
   await createDefaultHostedChatRuntime({

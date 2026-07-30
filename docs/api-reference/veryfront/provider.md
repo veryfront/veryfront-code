@@ -160,7 +160,7 @@ import { buildProviderError, createAnthropicRequestInit, createGoogleRequestInit
 | `requestStream` | Request a streaming response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-http.ts#L270) |
 | `stringifyJsonValue` | Serialize a JSON-compatible value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader.ts#L432) |
 | `supportsAnthropicNativeToolSearchModel` | Whether an Anthropic model ID accepts the provider-native tool-search tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/native-tool-search-capabilities.ts#L23) |
-| `supportsOpenAINativeToolSearchModel` | Whether an OpenAI model ID accepts the Responses API tool-search tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/native-tool-search-capabilities.ts#L30) |
+| `supportsOpenAINativeToolSearchModel` | Whether an OpenAI model ID accepts the Responses API tool-search tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/native-tool-search-capabilities.ts#L29) |
 | `toOpenAICompatibleMessages` | Convert runtime prompt messages into OpenAI-compatible chat messages. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader.ts#L476) |
 | `toOpenAICompatibleTools` | Convert runtime tool definitions into OpenAI-compatible function tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader.ts#L544) |
 | `unwrapToolInputSchema` | Zod schema for unwrap tool input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader.ts#L589) |

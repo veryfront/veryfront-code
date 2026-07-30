@@ -1,0 +1,701 @@
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
+import {
+  agent,
+  discoverProjectAgentRuntime,
+  type ProjectAgentRuntimeDiscovery,
+  runWithProjectAgentRuntime,
+} from 'veryfront/agent'
+import toolLoadingEval from '../veryfront-agent-tool-loading.eval'
+import {
+  type DeterministicRuntimeGateResult,
+  runDeterministicToolLoadingRuntimeGate,
+} from './deterministicToolLoadingRuntime'
+import {
+  createEffectiveHostedBenchmarkBinding,
+  type EffectiveHostedBenchmarkBinding,
+} from './effectiveHostedBenchmarkBinding'
+import {
+  runToolLoadingBenchmarkMatrix,
+  type ToolLoadingBenchmarkMode,
+  type ToolLoadingBenchmarkPrompt,
+} from './toolLoadingBenchmarkMatrix'
+
+type BenchmarkMode = ToolLoadingBenchmarkMode
+type BenchmarkPrompt = ToolLoadingBenchmarkPrompt
+
+type ToolLoadingBenchmarkObservation = {
+  step: number
+  authorizedSearchableSchemaCount: number
+  visibleSchemaCount: number
+  deferredSchemaCount: number
+  providerRequestToolDefinitionCount: number
+  providerWireDeferredMetadataCount: number
+  loadingPath: 'eager' | 'framework-fallback' | 'provider-native'
+}
+
+type BenchmarkRecord = {
+  prompt: BenchmarkPrompt
+  mode: BenchmarkMode
+  model: string
+  executionModel: string
+  sourceRevision: string
+  catalogFingerprint: string
+  catalogSourceRevision: string
+  configuredToolNameCount: number
+  effectiveAuthorizedToolNameCount: number
+  authorizedSearchableSchemaCount?: number
+  visibleSchemaCount?: number
+  deferredSchemaCount?: number
+  providerRequestToolDefinitionCount?: number
+  providerWireDeferredMetadataCount?: number
+  requestShapeCaptureStatus: 'complete' | 'unavailable'
+  loadingPath?: ToolLoadingBenchmarkObservation['loadingPath']
+  inputTokens?: number
+  cacheCreationInputTokens?: number
+  cacheReadInputTokens?: number
+  billableInputTokens?: number
+  effectiveInputTokens?: number
+  providerInputCostUsd?: number
+  usageCaptureStatus: 'complete' | 'partial' | 'missing'
+  steps: number
+  toolCalls: number
+  durationMs: number
+  completed: boolean
+  errorCode?: string
+  errorMessage?: string
+}
+
+type BenchmarkComparison = {
+  prompt: BenchmarkPrompt
+  status: 'passed' | 'failed' | 'incomplete'
+  effectiveInputReduction?: number
+  eager: BenchmarkRecord
+  deferred: BenchmarkRecord
+  assertions: Array<{
+    name: string
+    status: 'passed' | 'failed' | 'incomplete'
+    actual?: number | string | boolean
+    expected: string
+  }>
+}
+
+type LiveCanaryRecord = {
+  id: 'authorized-read-only-canary'
+  prompt: string
+  mode: 'deferred'
+  completed: boolean
+  expectedToolName: 'list_projects'
+  observedToolCalls: Array<{
+    name: string
+    status: 'pending' | 'executing' | 'completed' | 'error'
+    input: Record<string, unknown>
+    result: unknown
+    error?: string
+  }>
+  status: 'passed' | 'failed'
+  errorCode?: string
+  errorMessage?: string
+}
+
+const execFileAsync = promisify(execFile)
+const model = 'anthropic/claude-opus-4-6'
+const executionModel = 'veryfront-cloud/anthropic/claude-opus-4-6'
+const reportJsonPath = '.veryfront/evals/tool-loading/live/report.json'
+const reportMarkdownPath = '.veryfront/evals/tool-loading/live/report.md'
+const statusPath = '.veryfront/evals/tool-loading/status.json'
+const configuredTimeoutMs = Number(process.env.VERYFRONT_TOOL_LOADING_TIMEOUT_MS ?? '120000')
+const timeoutMs = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0 ? configuredTimeoutMs : 120_000
+
+async function sourceRevision(projectDir: string): Promise<string> {
+  const configured = process.env.GIT_COMMIT_SHA?.trim() || process.env.RELEASE_VERSION?.trim()
+  if (configured) return configured
+  try {
+    const result = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: projectDir })
+    return result.stdout.trim()
+  } catch {
+    return 'unknown'
+  }
+}
+
+type BenchmarkMainDependencies<TSnapshot> = {
+  projectDir: string
+  sourceRevision: () => Promise<string>
+  loadExamples: () => Promise<Array<{ id: string; input: unknown }>>
+  discover: () => Promise<TSnapshot>
+  execute: (
+    snapshot: TSnapshot,
+    prompt: BenchmarkPrompt,
+    mode: BenchmarkMode,
+    revision: string
+  ) => Promise<BenchmarkRecord>
+  executeCanary: (snapshot: TSnapshot, revision: string) => Promise<LiveCanaryRecord>
+  runDeterministicGate?: () => Promise<DeterministicRuntimeGateResult>
+  cleanupSnapshot?: (snapshot: TSnapshot) => Promise<void>
+  mkdir: (path: string, options: { recursive: true }) => Promise<unknown>
+  writeFile: (path: string, contents: string) => Promise<unknown>
+  writeOutput: (output: string) => void
+}
+
+export function sanitizeBenchmarkErrorMessage(message: string): string {
+  const redacted = message
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(
+      /(\b(?:api[_-]?token|auth[_-]?token|access[_-]?token|refresh[_-]?token|token)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&]+)/gi,
+      '$1[REDACTED]'
+    )
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED_JWT]')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return (redacted || 'Unknown error').slice(0, 1_000)
+}
+
+export function benchmarkErrorFields(error: unknown): Pick<BenchmarkRecord, 'errorCode' | 'errorMessage'> {
+  return {
+    errorCode: error instanceof Error ? error.name : 'UnknownError',
+    errorMessage: sanitizeBenchmarkErrorMessage(error instanceof Error ? error.message : String(error)),
+  }
+}
+
+function requestShapeFields(
+  observation: ToolLoadingBenchmarkObservation | undefined
+): Pick<
+  BenchmarkRecord,
+  | 'authorizedSearchableSchemaCount'
+  | 'visibleSchemaCount'
+  | 'deferredSchemaCount'
+  | 'providerRequestToolDefinitionCount'
+  | 'providerWireDeferredMetadataCount'
+  | 'requestShapeCaptureStatus'
+  | 'loadingPath'
+> {
+  if (!observation) return { requestShapeCaptureStatus: 'unavailable' }
+  return {
+    authorizedSearchableSchemaCount: observation.authorizedSearchableSchemaCount,
+    visibleSchemaCount: observation.visibleSchemaCount,
+    deferredSchemaCount: observation.deferredSchemaCount,
+    providerRequestToolDefinitionCount: observation.providerRequestToolDefinitionCount,
+    providerWireDeferredMetadataCount: observation.providerWireDeferredMetadataCount,
+    requestShapeCaptureStatus: 'complete',
+    loadingPath: observation.loadingPath,
+  }
+}
+
+async function runRecord(
+  snapshot: {
+    runtime: ProjectAgentRuntimeDiscovery
+    binding: EffectiveHostedBenchmarkBinding
+  },
+  prompt: BenchmarkPrompt,
+  mode: BenchmarkMode,
+  revision: string
+): Promise<BenchmarkRecord> {
+  const startedAt = performance.now()
+  const catalogFingerprint = `sha256:${createHash('sha256')
+    .update(snapshot.binding.effectiveToolNames.join('\n'))
+    .digest('hex')}`
+  let latestObservation: ToolLoadingBenchmarkObservation | undefined
+  try {
+    const canonicalAgent = snapshot.runtime.agents.get('veryfront')
+    if (!canonicalAgent) throw new Error('Canonical agent was not discovered')
+
+    const benchmarkAgent = agent({
+      ...canonicalAgent.config,
+      system: snapshot.binding.system,
+      tools: snapshot.binding.tools,
+      mcpServers: snapshot.binding.mcpServers,
+    })
+    const evalOptions = { internalToolLoadingOverride: mode }
+    const abortController = new AbortController()
+    const generateInput = {
+      input: prompt,
+      model: executionModel,
+      __vfToolLoadingOverride: evalOptions.internalToolLoadingOverride,
+      __vfToolLoadingBenchmarkObserver: (observation: ToolLoadingBenchmarkObservation) => {
+        latestObservation = observation
+      },
+      abortSignal: abortController.signal,
+    }
+    let providerTimeoutHandle: ReturnType<typeof setTimeout> | undefined
+    const providerTimeout = new Promise<never>((_resolve, reject) => {
+      providerTimeoutHandle = setTimeout(() => {
+        abortController.abort()
+        const error = new Error(`Provider call exceeded ${timeoutMs}ms`)
+        error.name = 'BenchmarkTimeout'
+        reject(error)
+      }, timeoutMs)
+    })
+    const providerCall = runWithProjectAgentRuntime(snapshot.runtime, () => benchmarkAgent.generate(generateInput))
+    const response = await Promise.race([providerCall, providerTimeout]).finally(() => {
+      if (providerTimeoutHandle) clearTimeout(providerTimeoutHandle)
+    })
+    const inputTokens = response.usage?.promptTokens
+    const cacheCreationInputTokens = response.usage?.cacheCreationInputTokens
+    const cacheReadInputTokens = response.usage?.cacheReadInputTokens
+    const effectiveInputTokens =
+      inputTokens === undefined
+        ? undefined
+        : inputTokens + (cacheCreationInputTokens ?? 0) + (cacheReadInputTokens ?? 0)
+    const steps = Math.max(1, response.messages.filter((message) => message.role === 'assistant').length)
+    return {
+      prompt,
+      mode,
+      model,
+      executionModel,
+      sourceRevision: revision,
+      catalogFingerprint,
+      catalogSourceRevision: revision,
+      configuredToolNameCount: snapshot.binding.configuredToolNames.length,
+      effectiveAuthorizedToolNameCount: snapshot.binding.effectiveToolNames.length,
+      ...requestShapeFields(latestObservation),
+      ...(inputTokens !== undefined ? { inputTokens } : {}),
+      ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+      ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+      ...(response.usage?.billableInputTokens !== undefined
+        ? { billableInputTokens: response.usage.billableInputTokens }
+        : {}),
+      ...(effectiveInputTokens !== undefined ? { effectiveInputTokens } : {}),
+      ...(response.usage?.providerInputCostUsd !== undefined
+        ? { providerInputCostUsd: response.usage.providerInputCostUsd }
+        : {}),
+      usageCaptureStatus: response.usage?.usageCaptureStatus ?? 'missing',
+      steps,
+      toolCalls: response.toolCalls.length,
+      durationMs: Math.round(performance.now() - startedAt),
+      completed: response.status === 'completed',
+    }
+  } catch (error) {
+    return {
+      prompt,
+      mode,
+      model,
+      executionModel,
+      sourceRevision: revision,
+      catalogFingerprint,
+      catalogSourceRevision: revision,
+      configuredToolNameCount: snapshot.binding.configuredToolNames.length,
+      effectiveAuthorizedToolNameCount: snapshot.binding.effectiveToolNames.length,
+      ...requestShapeFields(latestObservation),
+      usageCaptureStatus: 'missing',
+      steps: 0,
+      toolCalls: 0,
+      durationMs: Math.round(performance.now() - startedAt),
+      completed: false,
+      ...benchmarkErrorFields(error),
+    }
+  }
+}
+
+async function runAuthorizedReadOnlyCanary(snapshot: {
+  runtime: ProjectAgentRuntimeDiscovery
+  binding: EffectiveHostedBenchmarkBinding
+}): Promise<LiveCanaryRecord> {
+  const prompt =
+    'Use tool_search to load the authorized list_projects read-only tool, call list_projects exactly once, then summarize the result.'
+  try {
+    const canonicalAgent = snapshot.runtime.agents.get('veryfront')
+    if (!canonicalAgent) throw new Error('Canonical agent was not discovered')
+    if (!snapshot.binding.effectiveToolNames.includes('list_projects')) {
+      throw new Error('Authorized read-only canary tool list_projects is absent from the effective hosted binding')
+    }
+    const canaryAgent = agent({
+      ...canonicalAgent.config,
+      system: snapshot.binding.system,
+      tools: snapshot.binding.tools,
+      mcpServers: snapshot.binding.mcpServers,
+    })
+    const abortController = new AbortController()
+    let providerTimeoutHandle: ReturnType<typeof setTimeout> | undefined
+    const providerTimeout = new Promise<never>((_resolve, reject) => {
+      providerTimeoutHandle = setTimeout(() => {
+        abortController.abort()
+        const error = new Error(`Provider call exceeded ${timeoutMs}ms`)
+        error.name = 'BenchmarkTimeout'
+        reject(error)
+      }, timeoutMs)
+    })
+    const providerCall = runWithProjectAgentRuntime(snapshot.runtime, () =>
+      canaryAgent.generate({
+        input: prompt,
+        model: executionModel,
+        __vfToolLoadingOverride: 'deferred',
+        abortSignal: abortController.signal,
+      })
+    )
+    const response = await Promise.race([providerCall, providerTimeout]).finally(() => {
+      if (providerTimeoutHandle) clearTimeout(providerTimeoutHandle)
+    })
+    const observedToolCalls = response.toolCalls.map((call) => ({
+      name: call.name,
+      status: call.status,
+      input: call.args,
+      result: call.result ?? call.error ?? null,
+      ...(call.error ? { error: call.error } : {}),
+    }))
+    const successfulReadCalls = observedToolCalls.filter(
+      (call) => call.name === 'list_projects' && call.status === 'completed'
+    )
+    const status =
+      response.status === 'completed' &&
+      successfulReadCalls.length === 1 &&
+      observedToolCalls.every((call) => call.status === 'completed')
+        ? 'passed'
+        : 'failed'
+    return {
+      id: 'authorized-read-only-canary',
+      prompt,
+      mode: 'deferred',
+      completed: response.status === 'completed',
+      expectedToolName: 'list_projects',
+      observedToolCalls,
+      status,
+    }
+  } catch (error) {
+    return {
+      id: 'authorized-read-only-canary',
+      prompt,
+      mode: 'deferred',
+      completed: false,
+      expectedToolName: 'list_projects',
+      observedToolCalls: [],
+      status: 'failed',
+      ...benchmarkErrorFields(error),
+    }
+  }
+}
+
+function compare(prompt: BenchmarkPrompt, eager: BenchmarkRecord, deferred: BenchmarkRecord): BenchmarkComparison {
+  const reduction =
+    eager.effectiveInputTokens !== undefined &&
+    deferred.effectiveInputTokens !== undefined &&
+    eager.effectiveInputTokens > 0
+      ? (eager.effectiveInputTokens - deferred.effectiveInputTokens) / eager.effectiveInputTokens
+      : undefined
+  const assertions: BenchmarkComparison['assertions'] = []
+  const assert = (name: string, pass: boolean, actual: number | string | boolean, expected: string) => {
+    assertions.push({ name, status: pass ? 'passed' : 'failed', actual, expected })
+  }
+  const incomplete = (name: string, expected: string) => {
+    assertions.push({ name, status: 'incomplete', expected })
+  }
+
+  assert('underlying-model-controlled', eager.model === deferred.model, deferred.model, eager.model)
+  assert(
+    'execution-model-controlled',
+    eager.executionModel === deferred.executionModel,
+    deferred.executionModel,
+    eager.executionModel
+  )
+  assert(
+    'veryfront-cloud-transport',
+    [eager, deferred].every((record) => record.executionModel.startsWith('veryfront-cloud/')),
+    `${eager.executionModel}, ${deferred.executionModel}`,
+    'veryfront-cloud/* for eager and deferred'
+  )
+  const usageComplete = [eager, deferred].every(
+    (record) =>
+      record.usageCaptureStatus === 'complete' &&
+      record.inputTokens !== undefined &&
+      record.cacheCreationInputTokens !== undefined &&
+      record.cacheReadInputTokens !== undefined &&
+      record.billableInputTokens !== undefined &&
+      record.providerInputCostUsd !== undefined
+  )
+  usageComplete
+    ? assert('usage-capture-complete', true, true, 'complete for eager and deferred')
+    : incomplete('usage-capture-complete', 'complete for eager and deferred')
+  const requestShapeComplete =
+    eager.requestShapeCaptureStatus === 'complete' && deferred.requestShapeCaptureStatus === 'complete'
+  requestShapeComplete
+    ? assert('request-shape-capture-complete', true, true, 'complete for eager and deferred')
+    : incomplete(
+        'request-shape-capture-complete',
+        'framework-produced authorized, visible, deferred, model-context, and provider-wire counts'
+      )
+  deferred.effectiveInputTokens === undefined
+    ? incomplete('deferred-effective-input-limit', '<= 10000')
+    : assert(
+        'deferred-effective-input-limit',
+        deferred.effectiveInputTokens <= 10_000,
+        deferred.effectiveInputTokens,
+        '<= 10000'
+      )
+  reduction === undefined
+    ? incomplete('effective-input-reduction', '>= 0.60')
+    : assert('effective-input-reduction', reduction >= 0.6, reduction, '>= 0.60')
+  eager.providerInputCostUsd === undefined || deferred.providerInputCostUsd === undefined
+    ? incomplete('provider-input-cost-lower', 'deferred < eager')
+    : assert(
+        'provider-input-cost-lower',
+        deferred.providerInputCostUsd < eager.providerInputCostUsd,
+        deferred.providerInputCostUsd,
+        `< ${eager.providerInputCostUsd}`
+      )
+  for (const record of [eager, deferred]) {
+    assert(`${record.mode}-completed`, record.completed, record.completed, 'true')
+    assert(`${record.mode}-one-step`, record.steps === 1, record.steps, '1')
+    assert(`${record.mode}-no-tool-calls`, record.toolCalls === 0, record.toolCalls, '0')
+  }
+  if (
+    eager.providerRequestToolDefinitionCount === undefined ||
+    deferred.providerRequestToolDefinitionCount === undefined
+  ) {
+    incomplete('model-context-definitions-reduced', 'deferred < eager')
+  } else {
+    assert(
+      'model-context-definitions-reduced',
+      deferred.providerRequestToolDefinitionCount < eager.providerRequestToolDefinitionCount,
+      deferred.providerRequestToolDefinitionCount,
+      `< ${eager.providerRequestToolDefinitionCount}`
+    )
+  }
+  if (eager.authorizedSearchableSchemaCount === undefined || deferred.authorizedSearchableSchemaCount === undefined) {
+    incomplete('authorized-catalog-preserved', 'deferred == eager')
+  } else {
+    assert(
+      'authorized-catalog-preserved',
+      deferred.authorizedSearchableSchemaCount === eager.authorizedSearchableSchemaCount,
+      deferred.authorizedSearchableSchemaCount,
+      `${eager.authorizedSearchableSchemaCount}`
+    )
+  }
+  if (eager.catalogFingerprint === 'sha256:unavailable' || deferred.catalogFingerprint === 'sha256:unavailable') {
+    incomplete('catalog-fingerprint-preserved', 'same non-empty fingerprint')
+  } else {
+    assert(
+      'catalog-fingerprint-preserved',
+      deferred.catalogFingerprint === eager.catalogFingerprint,
+      deferred.catalogFingerprint,
+      eager.catalogFingerprint
+    )
+  }
+
+  const status = assertions.some((item) => item.status === 'incomplete')
+    ? 'incomplete'
+    : assertions.some((item) => item.status === 'failed')
+      ? 'failed'
+      : 'passed'
+  return {
+    prompt,
+    status,
+    ...(reduction !== undefined ? { effectiveInputReduction: reduction } : {}),
+    eager,
+    deferred,
+    assertions,
+  }
+}
+
+function markdown(
+  comparisons: BenchmarkComparison[],
+  deterministicGate: DeterministicRuntimeGateResult,
+  canary: LiveCanaryRecord | undefined,
+  status: string
+): string {
+  const lines = [
+    '# Veryfront agent tool-loading benchmark',
+    '',
+    `Status: \`${status}\``,
+    '',
+    `Underlying model: \`${model}\``,
+    '',
+    `Execution model: \`${executionModel}\``,
+    '',
+    '## Deterministic runtime gate',
+    '',
+    `Status: \`${deterministicGate.status}\` (${deterministicGate.executedCaseCount} executed, ${(
+      deterministicGate.passRate * 100
+    ).toFixed(0)}% passed)`,
+    '',
+    '| Case | Status | Observed calls |',
+    '| --- | --- | --- |',
+    ...deterministicGate.cases.map(
+      (testCase) =>
+        `| ${testCase.id} | ${testCase.status} | ${
+          testCase.observedToolCalls.map((call) => `${call.name}:${call.status}`).join(', ') || 'none'
+        } |`
+    ),
+    '',
+  ]
+  for (const comparison of comparisons) {
+    lines.push(
+      `## ${comparison.prompt}`,
+      '',
+      `Status: \`${comparison.status}\``,
+      '',
+      '| Measurement | Eager | Deferred |',
+      '| --- | ---: | ---: |',
+      `| Effective input tokens | ${comparison.eager.effectiveInputTokens ?? '-'} | ${
+        comparison.deferred.effectiveInputTokens ?? '-'
+      } |`,
+      `| Provider input cost USD | ${comparison.eager.providerInputCostUsd ?? '-'} | ${
+        comparison.deferred.providerInputCostUsd ?? '-'
+      } |`,
+      `| Configured tool names | ${comparison.eager.configuredToolNameCount} | ${comparison.deferred.configuredToolNameCount} |`,
+      `| Effective authorized tool names | ${comparison.eager.effectiveAuthorizedToolNameCount} | ${comparison.deferred.effectiveAuthorizedToolNameCount} |`,
+      `| Authorized schemas | ${comparison.eager.authorizedSearchableSchemaCount ?? '-'} | ${
+        comparison.deferred.authorizedSearchableSchemaCount ?? '-'
+      } |`,
+      `| Visible schemas | ${comparison.eager.visibleSchemaCount ?? '-'} | ${
+        comparison.deferred.visibleSchemaCount ?? '-'
+      } |`,
+      `| Deferred schemas | ${comparison.eager.deferredSchemaCount ?? '-'} | ${
+        comparison.deferred.deferredSchemaCount ?? '-'
+      } |`,
+      `| Model-context tool definitions | ${comparison.eager.providerRequestToolDefinitionCount ?? '-'} | ${
+        comparison.deferred.providerRequestToolDefinitionCount ?? '-'
+      } |`,
+      `| Provider HTTP wire deferred metadata | ${comparison.eager.providerWireDeferredMetadataCount ?? '-'} | ${
+        comparison.deferred.providerWireDeferredMetadataCount ?? '-'
+      } |`,
+      `| Loading path | ${comparison.eager.loadingPath ?? '-'} | ${comparison.deferred.loadingPath ?? '-'} |`,
+      `| Steps | ${comparison.eager.steps} | ${comparison.deferred.steps} |`,
+      `| Tool calls | ${comparison.eager.toolCalls} | ${comparison.deferred.toolCalls} |`,
+      `| Duration ms | ${comparison.eager.durationMs} | ${comparison.deferred.durationMs} |`,
+      `| Error | ${comparison.eager.errorMessage?.replaceAll('|', '\\|') ?? '-'} | ${
+        comparison.deferred.errorMessage?.replaceAll('|', '\\|') ?? '-'
+      } |`,
+      ''
+    )
+  }
+  lines.push(
+    '## Authorized read-only live canary',
+    '',
+    canary
+      ? `Status: \`${canary.status}\`; expected \`${canary.expectedToolName}\`; observed ${
+          canary.observedToolCalls.map((call) => `${call.name}:${call.status}`).join(', ') || 'no calls'
+        }.`
+      : 'Status: `not-run` because the deterministic runtime gate did not pass.',
+    ''
+  )
+  return `${lines.join('\n')}\n`
+}
+
+async function runBenchmarkMain<TSnapshot>(dependencies: BenchmarkMainDependencies<TSnapshot>): Promise<number> {
+  const revision = await dependencies.sourceRevision()
+  const deterministicGate = await (dependencies.runDeterministicGate ?? runDeterministicToolLoadingRuntimeGate)()
+  const comparisons: BenchmarkComparison[] = []
+  const evalExamples = await dependencies.loadExamples()
+  const livePrompts: BenchmarkPrompt[] = []
+  for (const example of evalExamples) {
+    if (example.id === 'hi' && example.input === 'hi') livePrompts.push('hi')
+    if (example.id === 'hello-correlation' && example.input === 'Hello') livePrompts.push('Hello')
+  }
+  if (livePrompts.length !== 2) {
+    throw new Error('Canonical tool-loading eval must contain exact hi and Hello live prompts')
+  }
+  let liveCanary: LiveCanaryRecord | undefined
+  if (deterministicGate.status === 'passed') {
+    let discoveredSnapshot: TSnapshot | undefined
+    let liveRecords: BenchmarkRecord[]
+    try {
+      liveRecords = await runToolLoadingBenchmarkMatrix({
+        discover: async () => {
+          discoveredSnapshot = await dependencies.discover()
+          return discoveredSnapshot
+        },
+        execute: (snapshot, attempt) => dependencies.execute(snapshot, attempt.prompt, attempt.mode, revision),
+      })
+      if (discoveredSnapshot === undefined) throw new Error('Benchmark discovery did not produce a runtime snapshot')
+      liveCanary = await dependencies.executeCanary(discoveredSnapshot, revision)
+    } finally {
+      if (discoveredSnapshot !== undefined) {
+        await dependencies.cleanupSnapshot?.(discoveredSnapshot)
+      }
+    }
+    for (const prompt of livePrompts) {
+      const eager = liveRecords.find((record) => record.prompt === prompt && record.mode === 'eager')
+      const deferred = liveRecords.find((record) => record.prompt === prompt && record.mode === 'deferred')
+      if (!eager || !deferred) throw new Error(`Benchmark matrix did not produce both modes for ${prompt}`)
+      comparisons.push(compare(prompt, eager, deferred))
+    }
+  }
+  const status =
+    deterministicGate.status === 'failed' || liveCanary?.status === 'failed'
+      ? 'failed'
+      : comparisons.some((comparison) => comparison.status === 'incomplete')
+        ? 'incomplete'
+        : comparisons.some((comparison) => comparison.status === 'failed')
+          ? 'failed'
+          : 'passed'
+  const report = {
+    kind: 'veryfront-agent-tool-loading-benchmark',
+    evalId: toolLoadingEval.id,
+    status,
+    model,
+    executionModel,
+    liveCalls: deterministicGate.status === 'passed' ? 5 : 0,
+    comparisonLiveCalls: deterministicGate.status === 'passed' ? 4 : 0,
+    canaryLiveCalls: liveCanary ? 1 : 0,
+    deterministicTaskSuccessCases: deterministicGate.executedCaseCount,
+    deterministicGate,
+    liveCanary,
+    reportJsonPath,
+    reportMarkdownPath,
+    comparisons,
+  }
+  for (const path of [reportJsonPath, reportMarkdownPath, statusPath]) {
+    await dependencies.mkdir(dirname(resolve(dependencies.projectDir, path)), { recursive: true })
+  }
+  await dependencies.writeFile(resolve(dependencies.projectDir, reportJsonPath), `${JSON.stringify(report, null, 2)}\n`)
+  await dependencies.writeFile(
+    resolve(dependencies.projectDir, reportMarkdownPath),
+    markdown(comparisons, deterministicGate, liveCanary, status)
+  )
+  await dependencies.writeFile(
+    resolve(dependencies.projectDir, statusPath),
+    `${JSON.stringify(
+      {
+        kind: 'veryfront-agent-tool-loading-benchmark-status',
+        status,
+        model,
+        executionModel,
+        reportJsonPath,
+        reportMarkdownPath,
+      },
+      null,
+      2
+    )}\n`
+  )
+  dependencies.writeOutput(`${JSON.stringify({ status, reportJsonPath, reportMarkdownPath }, null, 2)}\n`)
+  return status === 'passed' ? 0 : 1
+}
+
+export async function main<TSnapshot>(dependencies?: BenchmarkMainDependencies<TSnapshot>): Promise<number> {
+  if (dependencies) return runBenchmarkMain(dependencies)
+
+  const projectDir = process.cwd()
+  return runBenchmarkMain({
+    projectDir,
+    sourceRevision: () => sourceRevision(projectDir),
+    loadExamples: () => toolLoadingEval.dataset.load({ baseDir: projectDir }),
+    discover: async () => {
+      const runtime = await discoverProjectAgentRuntime({ projectDir })
+      const binding = await createEffectiveHostedBenchmarkBinding({ runtime })
+      return { runtime, binding }
+    },
+    execute: (snapshot, prompt, mode, revision) => runRecord(snapshot, prompt, mode, revision),
+    executeCanary: (snapshot) => runAuthorizedReadOnlyCanary(snapshot),
+    cleanupSnapshot: (snapshot) => snapshot.binding.cleanup(),
+    mkdir,
+    writeFile,
+    writeOutput: (output) => process.stdout.write(output),
+  })
+}
+
+const isDirectRun = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+
+if (isDirectRun) {
+  void main()
+    .then((exitCode) => {
+      process.exit(exitCode)
+    })
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error))
+      process.exit(1)
+    })
+}

@@ -1,4 +1,5 @@
 import { assertEquals } from "@std/assert";
+import { it } from "#veryfront/testing/bdd.ts";
 import {
   AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT,
   applyProviderReplayCheckpoint,
@@ -12,7 +13,7 @@ import {
   retainCompatibleProviderReplay,
 } from "./provider-replay.ts";
 
-Deno.test("native tool-search authority requires paired provider selection before exact call", () => {
+it("native tool-search authority requires paired provider selection before exact call", () => {
   const deferred = new Set(["get_release"]);
   const openAIParts = [
     {
@@ -127,7 +128,7 @@ Deno.test("native tool-search authority requires paired provider selection befor
   }
 });
 
-Deno.test("Anthropic native tool-search authority requires matching search result references", () => {
+it("Anthropic native tool-search authority requires matching search result references", () => {
   const parts = [
     {
       type: "provider-block",
@@ -228,7 +229,7 @@ const anthropicBlocks = [
   },
 ];
 
-Deno.test("provider replay checkpoint preserves exact ordered raw blocks", () => {
+it("provider replay checkpoint preserves exact ordered raw blocks", () => {
   const checkpoint = parseProviderReplayCheckpoint({
     version: 1,
     messageId: "assistant-1",
@@ -252,7 +253,7 @@ Deno.test("provider replay checkpoint preserves exact ordered raw blocks", () =>
   });
 });
 
-Deno.test("provider replay checkpoint rejects mixed-provider and malformed blocks", () => {
+it("provider replay checkpoint rejects mixed-provider and malformed blocks", () => {
   assertEquals(
     parseProviderReplayCheckpoint({
       version: 1,
@@ -281,7 +282,7 @@ Deno.test("provider replay checkpoint rejects mixed-provider and malformed block
   );
 });
 
-Deno.test("provider replay merges only into exact assistant and active provider", () => {
+it("provider replay merges only into exact assistant and active provider", () => {
   const messages = [
     {
       id: "user-1",
@@ -322,7 +323,7 @@ Deno.test("provider replay merges only into exact assistant and active provider"
   );
 });
 
-Deno.test("provider replay injection preserves every original public assistant part", () => {
+it("provider replay injection preserves every original public assistant part", () => {
   const publicParts = [
     {
       type: "tool-get_release" as const,
@@ -367,7 +368,7 @@ Deno.test("provider replay injection preserves every original public assistant p
   ]);
 });
 
-Deno.test("provider replay parses and restores an ordered unique checkpoint set", () => {
+it("provider replay parses and restores an ordered unique checkpoint set", () => {
   const checkpoints = parseProviderReplayCheckpoints([
     {
       version: 1,
@@ -433,7 +434,7 @@ Deno.test("provider replay parses and restores an ordered unique checkpoint set"
   );
 });
 
-Deno.test("provider replay provider resolution is explicit and fail closed", () => {
+it("provider replay provider resolution is explicit and fail closed", () => {
   assertEquals(resolveProviderReplayProvider("anthropic/claude-sonnet-4-6"), "anthropic");
   for (
     const model of [
@@ -476,7 +477,7 @@ Deno.test("provider replay provider resolution is explicit and fail closed", () 
   assertEquals(resolveProviderReplayProvider("google/gemini-3"), undefined);
 });
 
-Deno.test("provider replay is removed on unsupported or proxied model switches", () => {
+it("provider replay is removed on unsupported or proxied model switches", () => {
   const message = {
     id: "assistant-1",
     role: "assistant" as const,

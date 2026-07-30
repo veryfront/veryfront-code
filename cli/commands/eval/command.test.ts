@@ -18,6 +18,7 @@ import { markCurrentVeryfrontCloudBillingGroupUsed } from "veryfront/provider";
 import type { ModelRuntime } from "veryfront/provider";
 import { type Tool, tool } from "veryfront/tool";
 import type { ProjectAgentRuntimeDiscovery } from "../../../src/agent/project/agent-runtime.ts";
+import type { AgentToolLoadingBenchmarkObservation } from "../../../src/agent/types.ts";
 import { getActiveSourceIntegrationPolicy } from "../../../src/integrations/source-policy-context.ts";
 import {
   normalizeSourceIntegrationPolicy,
@@ -737,12 +738,39 @@ describe("eval CLI command helpers", () => {
     }]);
   });
 
-  it("passes the internal per-run tool loading override to agent generation", async () => {
-    let capturedGenerateInput: Parameters<Agent["generate"]>[0] | undefined;
-    const observer = () => {};
-    const agent = makeAgentStub(async (input) => {
-      capturedGenerateInput = input;
-      return completedAgentResponse();
+  it("runs the internal eager benchmark path and reports actual exposure", async () => {
+    const observedToolNames: string[][] = [];
+    const observations: AgentToolLoadingBenchmarkObservation[] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/eval-tool-loading-override",
+      async doGenerate(options: unknown) {
+        const tools = (options as {
+          tools?: Array<{ name?: string }> | Record<string, unknown>;
+        }).tools;
+        observedToolNames.push(
+          Array.isArray(tools)
+            ? tools.map((entry) => entry.name ?? "").filter(Boolean).sort()
+            : Object.keys(tools ?? {}).sort(),
+        );
+        return {
+          content: [{ type: "text", text: "real answer" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const agent = createAgent({
+      id: "eval-tool-loading-override-agent",
+      model: "hosted/eval-tool-loading-override",
+      system: "Answer directly.",
+      skills: false,
+      tools: { search_docs: makeEvalTool("search_docs") },
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model }),
     });
     const definition = evalAgent({
       id: "eval:tool-loading-override",
@@ -754,7 +782,7 @@ describe("eval CLI command helpers", () => {
       agent,
       createEvalOptions({
         internalToolLoadingOverride: "eager",
-        internalToolLoadingBenchmarkObserver: observer,
+        internalToolLoadingBenchmarkObserver: (observation) => observations.push(observation),
       }),
     )({
       definition,
@@ -762,8 +790,16 @@ describe("eval CLI command helpers", () => {
       repetition: 1,
     });
 
-    assertEquals(capturedGenerateInput?.__vfToolLoadingOverride, "eager");
-    assertEquals(capturedGenerateInput?.__vfToolLoadingBenchmarkObserver, observer);
+    assertEquals(observedToolNames, [["search_docs"]]);
+    assertEquals(observations, [{
+      step: 0,
+      authorizedSearchableSchemaCount: 1,
+      visibleSchemaCount: 1,
+      deferredSchemaCount: 0,
+      providerRequestToolDefinitionCount: 1,
+      providerWireDeferredMetadataCount: 0,
+      loadingPath: "eager",
+    }]);
   });
 
   it("resolves mock tools once for each example repetition", async () => {
@@ -856,7 +892,10 @@ describe("eval CLI command helpers", () => {
       mockTools: { search_docs: makeEvalTool("search_docs") },
     });
 
-    await createAgentAdapter(agent, createEvalOptions())({
+    await createAgentAdapter(
+      agent,
+      createEvalOptions({ internalToolLoadingOverride: "eager" }),
+    )({
       definition,
       example: { id: "q1", input: "Use skill" },
       repetition: 1,
@@ -923,12 +962,18 @@ describe("eval CLI command helpers", () => {
       resolveModelTransport: async () => ({ model }),
     });
 
-    await createAgentAdapter(defaultSkillsAgent, createEvalOptions())({
+    await createAgentAdapter(
+      defaultSkillsAgent,
+      createEvalOptions({ internalToolLoadingOverride: "eager" }),
+    )({
       definition,
       example: { id: "q1", input: "Use skill" },
       repetition: 1,
     });
-    await createAgentAdapter(disabledSkillsAgent, createEvalOptions())({
+    await createAgentAdapter(
+      disabledSkillsAgent,
+      createEvalOptions({ internalToolLoadingOverride: "eager" }),
+    )({
       definition,
       example: { id: "q1", input: "Use skill" },
       repetition: 1,

@@ -403,18 +403,6 @@ export interface Agent {
      * @internal Retain framework skill loader tools while replacement tools are active.
      */
     retainSkillLoaderTools?: boolean;
-    /**
-     * @internal Eval/benchmark-only per-run exposure override. Not accepted by
-     * hosted request parsing or persisted agent manifests.
-     */
-    __vfToolLoadingOverride?: ToolLoading;
-    /**
-     * @internal Non-serializable eval/benchmark observer. Not accepted by
-     * hosted request parsing or persisted agent manifests.
-     */
-    __vfToolLoadingBenchmarkObserver?: (
-      observation: AgentToolLoadingBenchmarkObservation,
-    ) => void;
     /** Abort signal for cooperative cancellation. */
     abortSignal?: AbortSignal;
   }): Promise<AgentResponse>;

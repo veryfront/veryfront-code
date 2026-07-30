@@ -12,8 +12,11 @@ import type { ToolLoading } from "../types.ts";
 /** Default tool schema loading mode for programmatic and Markdown agents. */
 export const DEFAULT_TOOL_LOADING: ToolLoading = "deferred";
 
-/** Resolve and validate the public tool schema loading mode. */
-export function resolveToolLoading(value: unknown): ToolLoading {
+/** Resolve and validate a tool schema loading mode for the named configuration field. */
+export function resolveToolLoading(
+  value: unknown,
+  field = 'Agent config "toolLoading"',
+): ToolLoading {
   if (value === undefined) {
     return DEFAULT_TOOL_LOADING;
   }
@@ -21,7 +24,7 @@ export function resolveToolLoading(value: unknown): ToolLoading {
     return value;
   }
   throw CONFIG_INVALID.create({
-    detail: 'Agent config "toolLoading" must be "eager" or "deferred".',
+    detail: `${field} must be "eager" or "deferred".`,
   });
 }
 
@@ -144,18 +147,6 @@ function parseThinking(value: unknown): RuntimeAgentThinkingConfig | undefined {
   return undefined;
 }
 
-function parseToolLoading(value: unknown): ToolLoading {
-  if (value === undefined) {
-    return resolveToolLoading(undefined);
-  }
-  if (value === "eager" || value === "deferred") {
-    return value;
-  }
-  throw CONFIG_INVALID.create({
-    detail: 'Agent frontmatter "tool-loading" must be "eager" or "deferred".',
-  });
-}
-
 function parseStringArray(value: unknown, field: string): string[] {
   if (!Array.isArray(value)) {
     throw CONFIG_INVALID.create({
@@ -222,7 +213,10 @@ export function parseRuntimeAgentMarkdownDefinition(
   const providerTools = Object.hasOwn(attrs, "provider-tools")
     ? parseStringArray(attrs["provider-tools"], "provider-tools")
     : undefined;
-  const toolLoading = parseToolLoading(attrs["tool-loading"]);
+  const toolLoading = resolveToolLoading(
+    attrs["tool-loading"],
+    'Agent frontmatter "tool-loading"',
+  );
   const skills = Object.hasOwn(attrs, "skills") ? parseSkillSelector(attrs.skills) : undefined;
   const tools = Object.hasOwn(attrs, "tools")
     ? parseCapabilitySelector(attrs.tools, "tools")

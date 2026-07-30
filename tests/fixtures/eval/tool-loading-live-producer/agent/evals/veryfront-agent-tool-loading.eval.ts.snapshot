@@ -1,0 +1,80 @@
+import {
+  datasets,
+  type EvalMetric,
+  type EvalMetricThreshold,
+  type EvalRecord,
+  type EvalSeverity,
+  evalAgent,
+  metrics,
+} from 'veryfront/eval'
+import { toolLoadingTaskSuccessCases } from './tool-loading/taskSuccessCases'
+
+function effectiveInputTokensMetric(severity: EvalSeverity = 'budget', threshold?: EvalMetricThreshold): EvalMetric {
+  return {
+    name: 'ops.effectiveInputTokens',
+    family: 'ops',
+    severity,
+    ...(threshold ? { threshold } : {}),
+    evaluate(record: EvalRecord) {
+      const effectiveInputTokens =
+        (record.usage.inputTokens ?? 0) +
+        (record.usage.cacheCreationInputTokens ?? 0) +
+        (record.usage.cacheReadInputTokens ?? 0)
+      const pass = effectiveInputTokens <= 10_000
+      return {
+        name: 'ops.effectiveInputTokens',
+        family: 'ops',
+        severity,
+        score: pass ? 1 : 0,
+        pass,
+        evidence: { provider: 'anthropic', effectiveInputTokens, max: 10_000 },
+      }
+    },
+    gate(nextThreshold) {
+      return effectiveInputTokensMetric('gate', nextThreshold)
+    },
+    soft(nextThreshold) {
+      return effectiveInputTokensMetric('soft', nextThreshold)
+    },
+    budget(nextThreshold) {
+      return effectiveInputTokensMetric('budget', nextThreshold)
+    },
+  }
+}
+
+export default evalAgent({
+  id: 'veryfront-agent-tool-loading',
+  name: 'Veryfront Agent Tool Loading',
+  description:
+    'Release-gate cases for eager and deferred tool loading. The runner must execute the same definition in both modes.',
+  target: 'agent:veryfront',
+  repetitions: 1,
+  tags: ['tool-loading', 'release-gate', 'issue-335'],
+  metadata: {
+    benchmarkModel: 'anthropic/claude-opus-4-6',
+    benchmarkExecutionModel: 'veryfront-cloud/anthropic/claude-opus-4-6',
+    benchmarkModes: ['eager', 'deferred'],
+    canonicalPrompt: 'hi',
+    correlationPrompt: 'Hello',
+    minimumEffectiveInputReduction: 0.6,
+    maximumDeferredEffectiveInputTokens: 10_000,
+    requiresInternalRuntimeToolLoadingOverride: true,
+    deterministicRuntimeCases: 12,
+    authorizedReadOnlyLiveCanary: 'list_projects',
+  },
+  dataset: datasets.inline(
+    toolLoadingTaskSuccessCases.map((testCase) => ({
+      id: testCase.id,
+      input: testCase.input,
+      metadata: {
+        expectedToolCalls: testCase.expectedToolCalls,
+        authoringPermission: testCase.authoringPermission,
+        expectedOutcome: testCase.expectedOutcome,
+      },
+    }))
+  ),
+  metrics: [metrics.agent.noFailedTools().gate(), effectiveInputTokensMetric()],
+  check({ expect }) {
+    expect.completed().gate()
+  },
+})

@@ -1,4 +1,5 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { createDetachedRunTracker } from "./detached-run-tracker.ts";
 import { createHostedAgentServiceRouteSet } from "./routes.ts";
 import type { HostedServiceAuthenticatedRequest } from "./auth.ts";
@@ -184,7 +185,7 @@ Deno.test("agent service routes preserve control-plane target agent ids", async 
   assertEquals(preparedRequests[0]?.agentId, "builder");
 });
 
-Deno.test("agent service routes bind verified run-event tokens on both production launch paths", async () => {
+it("agent service routes bind verified run-event tokens on both production launch paths", async () => {
   const verifications: Array<{ token: string; projectId: string; runId: string }> = [];
   const { routeSet, preparedRequests } = createRouteSet({
     verifyRunEventAppendToken: (input) => {
@@ -259,7 +260,7 @@ Deno.test("agent service routes bind verified run-event tokens on both productio
   ]);
 });
 
-Deno.test("ordinary durable-chat routes strip spoofed server-resolved tool state", async () => {
+it("ordinary durable-chat routes strip spoofed server-resolved tool state", async () => {
   const resolved: unknown[] = [];
   const { routeSet, preparedRequests } = createRouteSet({
     prepareExecution: (request) => {
@@ -321,7 +322,7 @@ Deno.test("ordinary durable-chat routes strip spoofed server-resolved tool state
   }]);
 });
 
-Deno.test("verified durable-chat envelopes accept server-resolved tool state", async () => {
+it("verified durable-chat envelopes accept server-resolved tool state", async () => {
   const resolved: unknown[] = [];
   const { routeSet, preparedRequests } = createRouteSet({
     verifyRunEventAppendToken: () => Promise.resolve(true),

@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { toolRegistry } from "#veryfront/tool";
 import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "./agent-markdown-adapter.ts";
@@ -18,7 +19,7 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native to
   assertEquals(runtimeAgent.config.providerTools, ["web_search", "web_fetch"]);
 });
 
-Deno.test("createRuntimeAgentFromMarkdownDefinition preserves tool loading", () => {
+it("createRuntimeAgentFromMarkdownDefinition preserves tool loading", () => {
   const deferredAgent = createRuntimeAgentFromMarkdownDefinition({
     id: "deferred",
     name: "Deferred",

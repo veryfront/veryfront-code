@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "#veryfront/chat/message-prep.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
@@ -413,7 +414,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions uses configured agent tools b
   assertEquals(result.creationOptions.includeRuntimeEssentialToolsWhenEmpty, true);
 });
 
-Deno.test("private checkpoints fail closed without a trusted run-event append token", async () => {
+it("private checkpoints fail closed without a trusted run-event append token", async () => {
   let publicMirrorAppends = 0;
   const result = await prepareHostedChatRuntimeCreationOptions({
     request: createParsedHostedChatRequest(),
@@ -495,7 +496,7 @@ Deno.test("private checkpoints fail closed without a trusted run-event append to
   assertEquals(publicMirrorAppends, 0);
 });
 
-Deno.test("provider replay checkpoint persists a cumulative exact-message snapshot", async () => {
+it("provider replay checkpoint persists a cumulative exact-message snapshot", async () => {
   const appendedEvents: unknown[][] = [];
   const restored = {
     type: "provider-block" as const,
@@ -699,7 +700,7 @@ Deno.test("prepareHostedChatExecution prepares root run, runtime, and final mess
   ]);
 });
 
-Deno.test("prepareHostedChatExecution restores trusted matching-provider replay after restart", async () => {
+it("prepareHostedChatExecution restores trusted matching-provider replay after restart", async () => {
   const rawBlock = {
     type: "provider-block" as const,
     provider: "anthropic" as const,
@@ -790,7 +791,7 @@ Deno.test("prepareHostedChatExecution restores trusted matching-provider replay 
   ]);
 });
 
-Deno.test("prepareHostedChatExecution restores trusted OpenAI Responses replay after restart", async () => {
+it("prepareHostedChatExecution restores trusted OpenAI Responses replay after restart", async () => {
   const rawBlocks = [
     {
       type: "provider-block" as const,
@@ -870,7 +871,7 @@ Deno.test("prepareHostedChatExecution restores trusted OpenAI Responses replay a
   ]);
 });
 
-Deno.test("prepareHostedChatExecution drops cross-provider replay state", async () => {
+it("prepareHostedChatExecution drops cross-provider replay state", async () => {
   const result = await prepareHostedChatExecution({
     request: createParsedHostedChatRequest({
       messages: [assistantMessage, { ...userMessage, id: "user-message-2" }],

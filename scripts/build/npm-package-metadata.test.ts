@@ -513,7 +513,7 @@ describe("npm supply-chain policy", () => {
     assertEquals(exports["./chat/protocol"], "./src/chat/protocol.ts");
   });
 
-  it("exports agent-service evals without legacy agent testing", async () => {
+  it("exports sanctioned eval internals without legacy agent testing", async () => {
     const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
     const exports = denoConfig.exports as Record<string, string>;
     const imports = denoConfig.imports as Record<string, string>;
@@ -525,6 +525,14 @@ describe("npm supply-chain policy", () => {
     assertEquals(
       imports["veryfront/eval/agent-service"],
       "./src/eval/agent-service.ts",
+    );
+    assertEquals(
+      exports["./_internal/agent-tool-loading-benchmark"],
+      "./src/agent/internal-tool-loading-benchmark.ts",
+    );
+    assertEquals(
+      imports["veryfront/_internal/agent-tool-loading-benchmark"],
+      "./src/agent/internal-tool-loading-benchmark.ts",
     );
     assertEquals(exports["./agent/testing"], undefined);
     assertEquals(imports["veryfront/agent/testing"], undefined);

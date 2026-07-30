@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import {
   getForwardedHostedModelId,
   getForwardedHostedRuntimeOverrides,
@@ -10,7 +11,7 @@ import {
   resolveHostedRuntimeThinkingOverride,
 } from "./runtime-request-config.ts";
 
-Deno.test("server-resolved provider replay checkpoints require verified envelope provenance", () => {
+it("server-resolved provider replay checkpoints require verified envelope provenance", () => {
   const block = {
     type: "provider-block" as const,
     provider: "anthropic" as const,
@@ -52,7 +53,7 @@ Deno.test("server-resolved provider replay checkpoints require verified envelope
   );
 });
 
-Deno.test("server-resolved tool exposure checkpoint parses strictly and fails closed", () => {
+it("server-resolved tool exposure checkpoint parses strictly and fails closed", () => {
   const checkpoint = {
     version: 1 as const,
     authorizedCatalogFingerprint: "v1-catalog",
@@ -90,7 +91,7 @@ Deno.test("server-resolved tool exposure checkpoint parses strictly and fails cl
   );
 });
 
-Deno.test("server-resolved tool search authorization fails closed", () => {
+it("server-resolved tool search authorization fails closed", () => {
   assertEquals(getServerResolvedToolSearchAuthorization(undefined, false), {
     canConfigureAgentTools: false,
     attachableCatalog: [],
@@ -109,7 +110,7 @@ Deno.test("server-resolved tool search authorization fails closed", () => {
   );
 });
 
-Deno.test("server-resolved tool search authorization accepts compact trusted metadata", () => {
+it("server-resolved tool search authorization accepts compact trusted metadata", () => {
   assertEquals(
     getServerResolvedToolSearchAuthorization({
       serverResolvedToolSearchAuthorization: {
@@ -148,7 +149,7 @@ Deno.test("server-resolved tool search authorization accepts compact trusted met
   );
 });
 
-Deno.test("ordinary hosted request resolution ignores forwarded tool search authorization", () => {
+it("ordinary hosted request resolution ignores forwarded tool search authorization", () => {
   const result = resolveHostedRuntimeRequestConfig({
     agentConfig: {
       model: "anthropic/claude-opus-4-6",

@@ -6,6 +6,10 @@
     "path": ".veryfront/evals/tool-loading/live/report.json",
     "sha256": "3d9db14c2da86ae7c2fa8aa72df4507926bcfd3d3472801fb17c0b9642da5a79"
   },
+  "producerManifest": {
+    "path": "tests/fixtures/eval/tool-loading-live-producer-manifest.json",
+    "sha256": "dd39e02e3635dc0b7934aef2fb553824a18f5eb6a2e62fcfd9ff681dda64af7a"
+  },
   "model": "anthropic/claude-opus-4-6",
   "executionModel": "veryfront-cloud/anthropic/claude-opus-4-6",
   "sourceRevision": "732a93dc12d2acdd3d563d363e5fb74cbb1e8de5",

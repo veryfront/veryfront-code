@@ -1,0 +1,575 @@
+import { type AgentResponse, agent } from 'veryfront/agent'
+import type { ModelRuntime } from 'veryfront/provider'
+import { dynamicTool, type Tool } from 'veryfront/tool'
+import { type ToolLoadingExpectedCall, toolLoadingTaskSuccessCases } from './taskSuccessCases'
+
+type RuntimeToolCall = {
+  name: string
+  input: Record<string, unknown>
+  status: 'pending' | 'executing' | 'completed' | 'error'
+  result: unknown
+  error?: string
+}
+
+export type DeterministicRuntimeCaseResult = {
+  id: string
+  executedBy: 'veryfront-runtime'
+  status: 'passed' | 'failed'
+  completed: boolean
+  successfulToolCalls: ToolLoadingExpectedCall[]
+  observedToolCalls: RuntimeToolCall[]
+  visibleToolNames: string[][]
+  failure?: string
+}
+
+export type DeterministicRuntimeGateResult = {
+  status: 'passed' | 'failed'
+  passRate: number
+  executedCaseCount: number
+  cases: DeterministicRuntimeCaseResult[]
+}
+
+export const deterministicToolCatalog = [
+  { name: 'get_release', state: 'authorized', parameterDescription: 'Release lookup identifier.' },
+  { name: 'create_release', state: 'authorized', parameterDescription: 'Release creation branch.' },
+  { name: 'list_agents', state: 'attachable', parameterDescription: 'Agent-list owner filter.' },
+  { name: 'delete_project', state: 'unauthorized', parameterDescription: 'Project deletion identifier.' },
+  { name: 'form_input', state: 'bootstrap', parameterDescription: 'Structured input request.' },
+  { name: 'load_skill', state: 'bootstrap', parameterDescription: 'Skill activation identifier.' },
+] satisfies Array<{
+  name: string
+  state: 'authorized' | 'attachable' | 'unauthorized' | 'bootstrap'
+  parameterDescription: string
+}>
+
+const emptySchema = { type: 'object', additionalProperties: false } as const
+const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
+
+function runtimeToolNames(options: unknown): string[] {
+  const rawTools = (options as { tools?: unknown }).tools
+  if (Array.isArray(rawTools)) {
+    return rawTools
+      .map((entry) => (entry as { name?: string; id?: string }).name ?? (entry as { id?: string }).id ?? '')
+      .filter(Boolean)
+      .sort()
+  }
+  return Object.keys((rawTools as Record<string, unknown> | undefined) ?? {}).sort()
+}
+
+function toolCall(toolCallId: string, toolName: string, input: Record<string, unknown>) {
+  return {
+    content: [{ type: 'tool-call', toolCallId, toolName, input: JSON.stringify(input) }],
+    finishReason: 'tool-calls',
+    usage,
+  }
+}
+
+function finalText(text: string) {
+  return {
+    content: [{ type: 'text', text }],
+    finishReason: 'stop',
+    usage,
+  }
+}
+
+function modelFor(
+  steps: Array<{ type: 'tool'; name: string; input: Record<string, unknown> } | { type: 'text'; text: string }>,
+  visibleToolNames: string[][]
+): ModelRuntime {
+  let step = 0
+  return {
+    provider: 'veryfront-deterministic',
+    modelId: 'tool-loading-release-gate',
+    async doGenerate(options) {
+      visibleToolNames.push(runtimeToolNames(options))
+      const next = steps[step++]
+      if (!next) return finalText('Deterministic runtime script exhausted.')
+      return next.type === 'tool' ? toolCall(`call-${step}`, next.name, next.input) : finalText(next.text)
+    },
+    async doStream() {
+      return { stream: new ReadableStream() }
+    },
+  }
+}
+
+function createTools(
+  executions: Record<string, number>,
+  childEvidence: ToolLoadingExpectedCall[][]
+): Record<string, Tool> {
+  const create = (
+    id: string,
+    description: string,
+    inputSchema: Record<string, unknown>,
+    execute: (input: Record<string, unknown>) => unknown
+  ) =>
+    dynamicTool({
+      id,
+      description,
+      inputSchema,
+      execute(input) {
+        executions[id] = (executions[id] ?? 0) + 1
+        return execute(input as Record<string, unknown>)
+      },
+    })
+
+  return {
+    get_release: create('get_release', 'Get the current release by Release lookup identifier.', emptySchema, () => ({
+      id: 'rel_current',
+    })),
+    create_release: create(
+      'create_release',
+      'Create a release using a Release creation branch.',
+      {
+        type: 'object',
+        additionalProperties: false,
+        required: ['releaseId', 'branch'],
+        properties: {
+          releaseId: { type: 'string', description: 'Release creation identifier.' },
+          branch: { type: 'string', description: 'Release creation branch.' },
+        },
+      },
+      (input) => ({ created: true, ...input })
+    ),
+    load_skill: create(
+      'load_skill',
+      'Activate one skill by Skill activation identifier.',
+      {
+        type: 'object',
+        additionalProperties: false,
+        required: ['skillId'],
+        properties: { skillId: { type: 'string', description: 'Skill activation identifier.' } },
+      },
+      () => ({
+        skillId: 'release',
+        allowedTools: ['get_release'],
+        references: [],
+        scripts: [],
+      })
+    ),
+    invoke_agent: create('invoke_agent', 'Invoke a child agent with a fresh tool catalog.', emptySchema, async () => {
+      const childVisible: string[][] = []
+      const childModel = modelFor(
+        [
+          { type: 'tool', name: 'tool_search', input: { query: 'current release' } },
+          { type: 'tool', name: 'get_release', input: {} },
+          { type: 'text', text: 'Child found rel_current.' },
+        ],
+        childVisible
+      )
+      const child = agent({
+        id: 'deterministic-release-child',
+        model: 'veryfront-deterministic/tool-loading-release-gate',
+        system: 'Find the current release.',
+        tools: {
+          get_release: dynamicTool({
+            id: 'get_release',
+            description: 'Get the current release by Release lookup identifier.',
+            inputSchema: emptySchema,
+            execute: () => ({ id: 'rel_current' }),
+          }),
+        },
+        maxSteps: 4,
+        resolveModelTransport: () => ({ model: childModel }),
+      })
+      const response = await child.generate({ input: 'Find the current release.' })
+      const successful = successfulCalls(response)
+      childEvidence.push(successful)
+      return { childFreshFirstStep: childVisible[0], childSuccessfulToolCalls: successful }
+    }),
+  }
+}
+
+function observedCalls(response: AgentResponse): RuntimeToolCall[] {
+  return response.toolCalls.map((call) => ({
+    name: call.name,
+    input: call.args,
+    status: call.status,
+    result: call.result ?? call.error ?? null,
+    ...(call.error ? { error: call.error } : {}),
+  }))
+}
+
+function successfulCalls(response: AgentResponse): ToolLoadingExpectedCall[] {
+  return response.toolCalls
+    .filter((call) => call.status === 'completed')
+    .map((call) => ({
+      name: call.name,
+      ...(Object.keys(call.args).length > 0 ? { input: call.args } : {}),
+    }))
+}
+
+function sameCalls(left: readonly ToolLoadingExpectedCall[], right: readonly ToolLoadingExpectedCall[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((call, index) => {
+      const expected = right[index]
+      return (
+        expected !== undefined &&
+        call.name === expected.name &&
+        (expected.input === undefined || JSON.stringify(call.input) === JSON.stringify(expected.input))
+      )
+    })
+  )
+}
+
+function validateGenerateCaseEvidence(
+  caseId: string,
+  observed: readonly RuntimeToolCall[],
+  visibleToolNames: readonly string[][],
+  childEvidence: readonly ToolLoadingExpectedCall[][]
+): string[] {
+  const failures: string[] = []
+  const call = (name: string) => observed.find((entry) => entry.name === name)
+  const result = (name: string) => call(name)?.result as Record<string, unknown> | undefined
+
+  switch (caseId) {
+    case 'hi':
+    case 'hello-correlation':
+      if (observed.length !== 0) failures.push('direct response unexpectedly used a tool')
+      break
+    case 'find-current-release':
+      if (result('get_release')?.id !== 'rel_current') failures.push('get_release result was not observed')
+      break
+    case 'create-release-stub':
+      if (
+        JSON.stringify(result('create_release')) !==
+        JSON.stringify({ created: true, releaseId: 'rel_fixture', branch: 'main' })
+      ) {
+        failures.push('create_release result or exact arguments were not preserved')
+      }
+      break
+    case 'missing-capability':
+    case 'find-tool-without-authoring-permission':
+      if (result('tool_search')?.miss !== true) failures.push('bounded search miss was not observed')
+      break
+    case 'guessed-unauthorized-tool':
+      if (call('delete_project')?.status !== 'error') failures.push('unauthorized call was not denied')
+      break
+    case 'find-tool-for-new-agent': {
+      const matches = result('tool_search')?.matches
+      if (
+        !Array.isArray(matches) ||
+        JSON.stringify(matches) !==
+          JSON.stringify([
+            {
+              name: 'list_agents',
+              description: 'List agents using an Agent-list owner filter.',
+              status: 'attachable',
+              attachVia: 'tool_ids',
+            },
+          ])
+      ) {
+        failures.push('attachable-only metadata result was not observed')
+      }
+      if (visibleToolNames.some((names) => names.includes('list_agents'))) {
+        failures.push('attachable-only metadata became executable')
+      }
+      break
+    }
+    case 'skill-constrained-request':
+      if (
+        result('load_skill')?.skillId !== 'release' ||
+        result('get_release')?.id !== 'rel_current' ||
+        visibleToolNames.slice(1).some((names) => names.includes('create_release'))
+      ) {
+        failures.push('skill result did not narrow execution to get_release')
+      }
+      break
+    case 'child-request': {
+      const childResult = result('invoke_agent')
+      if (
+        !Array.isArray(childResult?.childFreshFirstStep) ||
+        childResult.childFreshFirstStep.includes('get_release') ||
+        !sameCalls(childEvidence[0] ?? [], [
+          { name: 'tool_search', input: { query: 'current release' } },
+          { name: 'get_release' },
+        ])
+      ) {
+        failures.push('child did not start fresh and return observed runtime calls')
+      }
+      break
+    }
+    case 'revoked-authorization':
+      if (call('get_release')?.status !== 'error' || visibleToolNames.some((names) => names.includes('get_release'))) {
+        failures.push('revoked tool remained visible or executable')
+      }
+      break
+  }
+  return failures
+}
+
+function scriptFor(caseId: string) {
+  switch (caseId) {
+    case 'hi':
+    case 'hello-correlation':
+      return [{ type: 'text', text: 'Hello.' }] as const
+    case 'find-current-release':
+      return [
+        { type: 'tool', name: 'tool_search', input: { query: 'current release' } },
+        { type: 'tool', name: 'get_release', input: {} },
+        { type: 'text', text: 'The current release is rel_current.' },
+      ] as const
+    case 'create-release-stub':
+      return [
+        { type: 'tool', name: 'tool_search', input: { query: 'release creation branch' } },
+        {
+          type: 'tool',
+          name: 'create_release',
+          input: { releaseId: 'rel_fixture', branch: 'main' },
+        },
+        { type: 'text', text: 'Created rel_fixture.' },
+      ] as const
+    case 'missing-capability':
+      return [
+        { type: 'tool', name: 'tool_search', input: { query: 'capability that does not exist' } },
+        { type: 'text', text: 'That capability is unavailable.' },
+      ] as const
+    case 'guessed-unauthorized-tool':
+      return [
+        { type: 'tool', name: 'delete_project', input: { projectId: 'project_fixture' } },
+        { type: 'text', text: 'The unauthorized operation was not executed.' },
+      ] as const
+    case 'find-tool-for-new-agent':
+    case 'find-tool-without-authoring-permission':
+      return [
+        { type: 'tool', name: 'tool_search', input: { query: 'list agents' } },
+        { type: 'text', text: 'Search complete.' },
+      ] as const
+    case 'skill-constrained-request':
+      return [
+        { type: 'tool', name: 'load_skill', input: { skillId: 'release' } },
+        { type: 'tool', name: 'tool_search', input: { query: 'current release' } },
+        { type: 'tool', name: 'get_release', input: {} },
+        { type: 'text', text: 'The current release is rel_current.' },
+      ] as const
+    case 'child-request':
+      return [
+        { type: 'tool', name: 'invoke_agent', input: {} },
+        { type: 'text', text: 'The child completed the lookup.' },
+      ] as const
+    case 'revoked-authorization':
+      return [
+        { type: 'tool', name: 'get_release', input: {} },
+        { type: 'text', text: 'The revoked tool was not executed.' },
+      ] as const
+    default:
+      throw new Error(`No deterministic runtime script for ${caseId}`)
+  }
+}
+
+async function runGenerateCase(
+  testCase: (typeof toolLoadingTaskSuccessCases)[number]
+): Promise<DeterministicRuntimeCaseResult> {
+  const visibleToolNames: string[][] = []
+  const executions: Record<string, number> = {}
+  const childEvidence: ToolLoadingExpectedCall[][] = []
+  const allTools = createTools(executions, childEvidence)
+  const configuredTools = {
+    get_release: allTools.get_release,
+    create_release: allTools.create_release,
+    load_skill: allTools.load_skill,
+    invoke_agent: allTools.invoke_agent,
+  }
+  const model = modelFor([...scriptFor(testCase.id)], visibleToolNames)
+  const privateConfig =
+    testCase.id === 'find-tool-for-new-agent'
+      ? {
+          __vfToolSearchAuthorization: {
+            canConfigureAgentTools: true,
+            attachableCatalog: [
+              {
+                name: 'list_agents',
+                description: 'List agents using an Agent-list owner filter.',
+                attachVia: 'tool_ids' as const,
+              },
+            ],
+          },
+        }
+      : testCase.id === 'revoked-authorization'
+        ? {
+            __vfToolExposureCheckpoint: {
+              version: 1 as const,
+              authorizedCatalogFingerprint: 'sha256:catalog-before-revocation',
+              loadedToolNames: ['get_release'],
+            },
+          }
+        : {}
+  const runtimeAgent = agent({
+    id: `deterministic-${testCase.id}`,
+    model: 'veryfront-deterministic/tool-loading-release-gate',
+    system: 'Execute the deterministic release-gate task.',
+    tools: configuredTools,
+    maxSteps: 6,
+    resolveModelTransport: () => ({ model }),
+    ...privateConfig,
+  })
+  const response = await runtimeAgent.generate({
+    input: testCase.input,
+    ...(testCase.id === 'revoked-authorization' ? { tools: { create_release: allTools.create_release } } : {}),
+  })
+  const successfulToolCalls = successfulCalls(response)
+  const observedToolCalls = observedCalls(response)
+  const failures = validateGenerateCaseEvidence(testCase.id, observedToolCalls, visibleToolNames, childEvidence)
+
+  if (!sameCalls(successfulToolCalls, testCase.expectedToolCalls)) {
+    failures.push(`successful calls ${JSON.stringify(successfulToolCalls)}`)
+  }
+  if (response.status !== 'completed') failures.push(`runtime status ${response.status}`)
+  if (testCase.id === 'guessed-unauthorized-tool' && (executions.delete_project ?? 0) !== 0) {
+    failures.push('unauthorized tool executed')
+  }
+  if (testCase.id === 'revoked-authorization' && (executions.get_release ?? 0) !== 0) {
+    failures.push('revoked tool executed')
+  }
+  if (testCase.id === 'create-release-stub' && executions.create_release !== 1) {
+    failures.push(`create_release executions ${executions.create_release ?? 0}`)
+  }
+  return {
+    id: testCase.id,
+    executedBy: 'veryfront-runtime',
+    status: failures.length === 0 ? 'passed' : 'failed',
+    completed: response.status === 'completed',
+    successfulToolCalls,
+    observedToolCalls,
+    visibleToolNames,
+    ...(failures.length > 0 ? { failure: failures.join('; ') } : {}),
+  }
+}
+
+async function runInterruptedStreamCase(
+  testCase: (typeof toolLoadingTaskSuccessCases)[number]
+): Promise<DeterministicRuntimeCaseResult> {
+  const visibleToolNames: string[][] = []
+  const executions: Record<string, number> = {}
+  const tools = createTools(executions, [])
+  let checkpoint:
+    | {
+        version: 1
+        authorizedCatalogFingerprint: string
+        loadedToolNames: string[]
+      }
+    | undefined
+  const abortController = new AbortController()
+  const firstModel: ModelRuntime = {
+    provider: 'veryfront-deterministic',
+    modelId: 'tool-loading-interrupted-stream',
+    async doGenerate() {
+      return finalText('unused')
+    },
+    async doStream(options) {
+      visibleToolNames.push(runtimeToolNames(options))
+      return {
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue({
+              type: 'tool-call',
+              toolCallId: 'stream-search-1',
+              toolName: 'tool_search',
+              input: { query: 'current release' },
+            })
+            controller.enqueue({ type: 'finish', finishReason: 'tool-calls', usage })
+            controller.close()
+          },
+        }),
+      }
+    },
+  }
+  const firstAgent = agent({
+    id: 'deterministic-interrupted-stream-first',
+    model: 'veryfront-deterministic/tool-loading-release-gate',
+    system: 'Search, then continue after a durable resume.',
+    tools: { get_release: tools.get_release },
+    maxSteps: 4,
+    resolveModelTransport: () => ({ model: firstModel }),
+    ...({
+      __vfPersistToolExposureCheckpoint: (nextCheckpoint: NonNullable<typeof checkpoint>) => {
+        checkpoint = nextCheckpoint
+        abortController.abort()
+      },
+    } as Record<string, unknown>),
+  })
+  const firstStream = await firstAgent.stream({
+    input: testCase.input,
+    abortSignal: abortController.signal,
+  })
+  const firstStreamBody = await firstStream.toDataStreamResponse().text()
+
+  if (!checkpoint) {
+    return {
+      id: testCase.id,
+      executedBy: 'veryfront-runtime',
+      status: 'failed',
+      completed: false,
+      successfulToolCalls: [],
+      observedToolCalls: [],
+      visibleToolNames,
+      failure: 'stream did not persist an exposure checkpoint',
+    }
+  }
+
+  const resumedModel = modelFor(
+    [
+      { type: 'tool', name: 'get_release', input: {} },
+      { type: 'text', text: 'Resumed with rel_current.' },
+    ],
+    visibleToolNames
+  )
+  const resumedAgent = agent({
+    id: 'deterministic-interrupted-stream-resumed',
+    model: 'veryfront-deterministic/tool-loading-release-gate',
+    system: 'Resume the interrupted release lookup.',
+    tools: { get_release: tools.get_release },
+    maxSteps: 3,
+    resolveModelTransport: () => ({ model: resumedModel }),
+    ...({ __vfToolExposureCheckpoint: checkpoint } as Record<string, unknown>),
+  })
+  const resumed = await resumedAgent.generate({ input: 'Resume the interrupted lookup.' })
+  const resumedSuccessful = successfulCalls(resumed)
+  const successfulToolCalls: ToolLoadingExpectedCall[] = [
+    { name: 'tool_search', input: { query: 'current release' } },
+    ...resumedSuccessful,
+  ]
+  const observedToolCalls: RuntimeToolCall[] = [
+    {
+      name: 'tool_search',
+      input: { query: 'current release' },
+      status: 'completed',
+      result: { checkpointPersisted: true, observedStreamOutput: firstStreamBody },
+    },
+    ...observedCalls(resumed),
+  ]
+  const passed =
+    sameCalls(successfulToolCalls, testCase.expectedToolCalls) &&
+    executions.get_release === 1 &&
+    visibleToolNames[1]?.includes('get_release') === true &&
+    firstStreamBody.includes('tool-output-available') &&
+    firstStreamBody.includes('get_release')
+
+  return {
+    id: testCase.id,
+    executedBy: 'veryfront-runtime',
+    status: passed ? 'passed' : 'failed',
+    completed: resumed.status === 'completed',
+    successfulToolCalls,
+    observedToolCalls,
+    visibleToolNames,
+    ...(!passed ? { failure: 'resume duplicated search, failed to execute once, or changed expected calls' } : {}),
+  }
+}
+
+export async function runDeterministicToolLoadingRuntimeGate(): Promise<DeterministicRuntimeGateResult> {
+  const cases: DeterministicRuntimeCaseResult[] = []
+  for (const testCase of toolLoadingTaskSuccessCases) {
+    cases.push(
+      testCase.id === 'interrupted-stream' ? await runInterruptedStreamCase(testCase) : await runGenerateCase(testCase)
+    )
+  }
+  const passed = cases.filter((testCase) => testCase.status === 'passed').length
+  const passRate = cases.length === 0 ? 0 : passed / cases.length
+  return {
+    status: passRate === 1 ? 'passed' : 'failed',
+    passRate,
+    executedCaseCount: cases.length,
+    cases,
+  }
+}

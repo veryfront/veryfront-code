@@ -1,9 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
 import { agent } from "../index.ts";
+import { runAgentToolLoadingBenchmark } from "veryfront/_internal/agent-tool-loading-benchmark";
 import type { AgentConfig, AgentToolLoadingBenchmarkObservation } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import type { ToolExposureCheckpoint } from "./tool-exposure.ts";
@@ -83,16 +85,19 @@ async function observeDeferredTransport(input: {
     resolveModelTransport: () => ({ model }),
   });
 
-  await assistant.generate({
-    input: "hi",
-    __vfToolLoadingOverride: "deferred",
-    __vfToolLoadingBenchmarkObserver: (observation) => observations.push(observation),
-  });
+  await runAgentToolLoadingBenchmark(
+    assistant,
+    { input: "hi" },
+    {
+      toolLoading: "deferred",
+      observer: (observation) => observations.push(observation),
+    },
+  );
 
   return observations[0]!;
 }
 
-Deno.test("deferred generate searches, exposes on the next step, and executes once", async () => {
+it("deferred generate searches, exposes on the next step, and executes once", async () => {
   const observedTools: string[][] = [];
   let step = 0;
   const model: ModelRuntime = {
@@ -164,7 +169,7 @@ Deno.test("deferred generate searches, exposes on the next step, and executes on
   assertEquals(response.text, "Release rel-1");
 });
 
-Deno.test("deferred generate rejects a guessed tool that was not exposed", async () => {
+it("deferred generate rejects a guessed tool that was not exposed", async () => {
   let step = 0;
   let executionCount = 0;
   const model: ModelRuntime = {
@@ -222,7 +227,7 @@ Deno.test("deferred generate rejects a guessed tool that was not exposed", async
   );
 });
 
-Deno.test("deferred stream searches, exposes on the next step, and executes exact arguments once", async () => {
+it("deferred stream searches, exposes on the next step, and executes exact arguments once", async () => {
   const observedTools: string[][] = [];
   let step = 0;
   const model: ModelRuntime = {
@@ -299,7 +304,7 @@ Deno.test("deferred stream searches, exposes on the next step, and executes exac
   assertEquals(body.includes("Created v1.2.3"), true);
 });
 
-Deno.test("deferred stream rejects a guessed tool that was not exposed", async () => {
+it("deferred stream rejects a guessed tool that was not exposed", async () => {
   let step = 0;
   let executionCount = 0;
   const model: ModelRuntime = {
@@ -358,7 +363,7 @@ Deno.test("deferred stream rejects a guessed tool that was not exposed", async (
   assertEquals(step, 2);
 });
 
-Deno.test("respond defaults omitted tool loading to deferred and completes search-load-execute", async () => {
+it("respond defaults omitted tool loading to deferred and completes search-load-execute", async () => {
   const observedTools: string[][] = [];
   let step = 0;
   let executionCount = 0;
@@ -446,7 +451,7 @@ Deno.test("respond defaults omitted tool loading to deferred and completes searc
   assertEquals(body.includes("Release rel-1"), true);
 });
 
-Deno.test("respond preserves an explicit eager tool-loading configuration", async () => {
+it("respond preserves an explicit eager tool-loading configuration", async () => {
   let observedTools: string[] = [];
   const model: ModelRuntime = {
     provider: "hosted",
@@ -492,7 +497,7 @@ Deno.test("respond preserves an explicit eager tool-loading configuration", asyn
   assertEquals(observedTools.includes("tool_search"), false);
 });
 
-Deno.test("eager generate, stream, and respond preserve a custom tool_search", async () => {
+it("eager generate, stream, and respond preserve a custom tool_search", async () => {
   const observedTools: string[][] = [];
   const model: ModelRuntime = {
     provider: "hosted",
@@ -554,7 +559,7 @@ Deno.test("eager generate, stream, and respond preserve a custom tool_search", a
   ]);
 });
 
-Deno.test("eager generate executes a custom tool_search", async () => {
+it("eager generate executes a custom tool_search", async () => {
   let step = 0;
   const executionInputs: string[] = [];
   const model: ModelRuntime = {
@@ -609,7 +614,7 @@ Deno.test("eager generate executes a custom tool_search", async () => {
   assertEquals(response.toolCalls[0]?.status, "completed");
 });
 
-Deno.test("eager stream executes a custom tool_search", async () => {
+it("eager stream executes a custom tool_search", async () => {
   let step = 0;
   const executionInputs: string[] = [];
   const model: ModelRuntime = {
@@ -667,7 +672,7 @@ Deno.test("eager stream executes a custom tool_search", async () => {
   assertEquals(executionInputs, ["releases"]);
 });
 
-Deno.test("respond preserves an explicit deferred tool-loading configuration", async () => {
+it("respond preserves an explicit deferred tool-loading configuration", async () => {
   let observedTools: string[] = [];
   const model: ModelRuntime = {
     provider: "hosted",
@@ -713,7 +718,7 @@ Deno.test("respond preserves an explicit deferred tool-loading configuration", a
   assertEquals(observedTools.includes("tool_search"), true);
 });
 
-Deno.test("generate flushes and restores a deferred tool checkpoint without another search", async () => {
+it("generate flushes and restores a deferred tool checkpoint without another search", async () => {
   let checkpoint: ToolExposureCheckpoint | undefined;
   let checkpointFlushed = false;
   let firstRunStep = 0;
@@ -799,7 +804,7 @@ Deno.test("generate flushes and restores a deferred tool checkpoint without anot
   assertEquals(resumedRequest.includes("loadedToolNames"), false);
 });
 
-Deno.test("stream flushes and restores a deferred tool checkpoint without another search", async () => {
+it("stream flushes and restores a deferred tool checkpoint without another search", async () => {
   let checkpoint: ToolExposureCheckpoint | undefined;
   let checkpointFlushed = false;
   let firstRunStep = 0;
@@ -901,7 +906,7 @@ Deno.test("stream flushes and restores a deferred tool checkpoint without anothe
   assertEquals(firstRunBody.includes("authorizedCatalogFingerprint"), false);
 });
 
-Deno.test("generate aborts before the next model step when checkpoint persistence fails", async () => {
+it("generate aborts before the next model step when checkpoint persistence fails", async () => {
   let modelCalls = 0;
   const model: ModelRuntime = {
     provider: "hosted",
@@ -948,7 +953,7 @@ Deno.test("generate aborts before the next model step when checkpoint persistenc
   assertEquals(modelCalls, 1);
 });
 
-Deno.test("stream aborts before the next model step when checkpoint persistence fails", async () => {
+it("stream aborts before the next model step when checkpoint persistence fails", async () => {
   let modelCalls = 0;
   const model: ModelRuntime = {
     provider: "hosted",
@@ -996,7 +1001,7 @@ Deno.test("stream aborts before the next model step when checkpoint persistence 
   assertEquals(body.includes("checkpoint stream write failed"), true);
 });
 
-Deno.test("generate drops revoked checkpoint tools after the authorized catalog changes", async () => {
+it("generate drops revoked checkpoint tools after the authorized catalog changes", async () => {
   let checkpoint: ToolExposureCheckpoint | undefined;
   let firstRunStep = 0;
   const firstRunModel: ModelRuntime = {
@@ -1081,7 +1086,7 @@ Deno.test("generate drops revoked checkpoint tools after the authorized catalog 
   assertEquals(resumedTools.includes("tool_search"), true);
 });
 
-Deno.test("stream resume drops revoked checkpoint tools after the authorized catalog changes", async () => {
+it("stream resume drops revoked checkpoint tools after the authorized catalog changes", async () => {
   let checkpoint: ToolExposureCheckpoint | undefined;
   let firstRunStep = 0;
   const firstRunModel: ModelRuntime = {
@@ -1167,7 +1172,7 @@ Deno.test("stream resume drops revoked checkpoint tools after the authorized cat
   assertEquals(resumedTools.includes("tool_search"), true);
 });
 
-Deno.test("internal eval override runs one agent eagerly and deferred without mutating it", async () => {
+it("internal eval override runs one agent eagerly and deferred without mutating it", async () => {
   const observedTools: string[][] = [];
   const observations: AgentToolLoadingBenchmarkObservation[] = [];
   const model: ModelRuntime = {
@@ -1202,16 +1207,22 @@ Deno.test("internal eval override runs one agent eagerly and deferred without mu
     resolveModelTransport: () => ({ model }),
   });
 
-  await assistant.generate({
-    input: "hi",
-    __vfToolLoadingOverride: "eager",
-    __vfToolLoadingBenchmarkObserver: (observation) => observations.push(observation),
-  });
-  await assistant.generate({
-    input: "hi",
-    __vfToolLoadingOverride: "deferred",
-    __vfToolLoadingBenchmarkObserver: (observation) => observations.push(observation),
-  });
+  await runAgentToolLoadingBenchmark(
+    assistant,
+    { input: "hi" },
+    {
+      toolLoading: "eager",
+      observer: (observation) => observations.push(observation),
+    },
+  );
+  await runAgentToolLoadingBenchmark(
+    assistant,
+    { input: "hi" },
+    {
+      toolLoading: "deferred",
+      observer: (observation) => observations.push(observation),
+    },
+  );
 
   assertEquals(observedTools, [
     ["get_release"],
@@ -1237,7 +1248,7 @@ Deno.test("internal eval override runs one agent eagerly and deferred without mu
   assertEquals(assistant.config.toolLoading, "deferred");
 });
 
-Deno.test("host operational loading override wins for generate, stream, and respond ingress", async () => {
+it("host operational loading override wins for generate, stream, and respond ingress", async () => {
   const observedTools: string[][] = [];
   const model: ModelRuntime = {
     provider: "hosted",
@@ -1273,11 +1284,14 @@ Deno.test("host operational loading override wins for generate, stream, and resp
     } as AgentConfig & RuntimeToolFilterConfig,
   );
 
-  await assistant.generate({
-    input: "hi",
-    context: { __vfOperationalToolLoadingOverride: "eager" },
-    __vfToolLoadingOverride: "eager",
-  });
+  await runAgentToolLoadingBenchmark(
+    assistant,
+    {
+      input: "hi",
+      context: { __vfOperationalToolLoadingOverride: "eager" },
+    },
+    { toolLoading: "eager" },
+  );
   await (await assistant.stream({
     input: "hi",
     context: { __vfOperationalToolLoadingOverride: "eager" },
@@ -1303,7 +1317,7 @@ Deno.test("host operational loading override wins for generate, stream, and resp
   }
 });
 
-Deno.test("benchmark observer separates native model context from wire metadata", async () => {
+it("benchmark observer separates native model context from wire metadata", async () => {
   const observations: AgentToolLoadingBenchmarkObservation[] = [];
   const model: ModelRuntime = {
     provider: "anthropic",
@@ -1336,11 +1350,14 @@ Deno.test("benchmark observer separates native model context from wire metadata"
     resolveModelTransport: () => ({ model }),
   });
 
-  await assistant.generate({
-    input: "hi",
-    __vfToolLoadingOverride: "deferred",
-    __vfToolLoadingBenchmarkObserver: (observation) => observations.push(observation),
-  });
+  await runAgentToolLoadingBenchmark(
+    assistant,
+    { input: "hi" },
+    {
+      toolLoading: "deferred",
+      observer: (observation) => observations.push(observation),
+    },
+  );
 
   assertEquals(observations, [{
     step: 0,
@@ -1354,7 +1371,7 @@ Deno.test("benchmark observer separates native model context from wire metadata"
   assertEquals(assistant.config.toolLoading, "deferred");
 });
 
-Deno.test("direct Anthropic and OpenAI transports preserve native loading", async () => {
+it("direct Anthropic and OpenAI transports preserve native loading", async () => {
   const anthropic = await observeDeferredTransport({
     modelId: "anthropic/claude-opus-4-6",
     provider: "anthropic",
@@ -1371,7 +1388,7 @@ Deno.test("direct Anthropic and OpenAI transports preserve native loading", asyn
   }
 });
 
-Deno.test("native OpenAI search selection authorizes only the selected deferred generate call", async () => {
+it("native OpenAI search selection authorizes only the selected deferred generate call", async () => {
   for (const selected of [true, false]) {
     let step = 0;
     let executionCount = 0;
@@ -1470,7 +1487,7 @@ Deno.test("native OpenAI search selection authorizes only the selected deferred 
   }
 });
 
-Deno.test("native Anthropic search selection authorizes a deferred legacy stream call", async () => {
+it("native Anthropic search selection authorizes a deferred legacy stream call", async () => {
   let step = 0;
   let executionCount = 0;
   let checkpointPersistedBeforeExecution = false;
@@ -1556,7 +1573,7 @@ Deno.test("native Anthropic search selection authorizes a deferred legacy stream
   assertEquals(executionCount, 1);
 });
 
-Deno.test("provider-executed tools bypass local deferred exposure gating", async () => {
+it("provider-executed tools bypass local deferred exposure gating", async () => {
   const model: ModelRuntime = {
     provider: "anthropic",
     modelId: "claude-opus-4-6",
@@ -1600,7 +1617,7 @@ Deno.test("provider-executed tools bypass local deferred exposure gating", async
   assertEquals(response.toolCalls[0]?.result, { results: ["release"] });
 });
 
-Deno.test("veryfront-cloud Anthropic and OpenAI transports default to framework fallback", async () => {
+it("veryfront-cloud Anthropic and OpenAI transports default to framework fallback", async () => {
   const anthropic = await observeDeferredTransport({
     modelId: "veryfront-cloud/anthropic/claude-opus-4-6",
     provider: "veryfront-cloud",
@@ -1617,7 +1634,7 @@ Deno.test("veryfront-cloud Anthropic and OpenAI transports default to framework 
   }
 });
 
-Deno.test(
+it(
   "framework fallback preserves configured provider tools for generate, stream, and respond",
   async () => {
     for (
@@ -1683,7 +1700,7 @@ Deno.test(
   },
 );
 
-Deno.test("direct Google uses framework fallback to search, expose, and execute once", async () => {
+it("direct Google uses framework fallback to search, expose, and execute once", async () => {
   const observedTools: string[][] = [];
   const observedSystems: string[] = [];
   let step = 0;

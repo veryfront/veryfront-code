@@ -1,0 +1,167 @@
+import { createBashSandboxShellToolsProvider } from '@veryfront/ext-sandbox-shell-tools'
+import {
+  type AgentMcpServerConfig,
+  createHostedChildInvokeTool,
+  createHostedFormInputTool,
+  defaultHostedInvokeAgentInputSchema,
+  type HostedChatRuntimeToolAssemblyResult,
+  type PrepareHostedChatRuntimeToolAssemblyInput,
+  type ProjectAgentRuntimeDiscovery,
+  prepareHostedChatRuntimeToolAssembly,
+  veryfrontApiMcpServer,
+} from 'veryfront/agent'
+import {
+  type AgentServiceSandboxToolsOptions,
+  type AgentServiceSandboxToolsResult,
+  createAgentServiceSandboxTools,
+} from 'veryfront/sandbox'
+import type { HostToolSet, ToolSet } from 'veryfront/tool'
+import { createBenchmarkHostedStudioMcpServer, createBenchmarkStudioMcpServer } from './benchmarkStudioMcpServer'
+
+type BenchmarkEnvironment = {
+  VERYFRONT_API_URL?: string
+  VERYFRONT_STUDIO_MCP_URL?: string
+  VERYFRONT_TOKEN?: string
+  VERYFRONT_API_TOKEN?: string
+  AG_UI_EVAL_PROJECT_ID?: string
+}
+
+type DisabledInvokeResult = {
+  status: 'failed'
+  terminalErrorCode: string
+  terminalErrorMessage: string
+}
+
+export type EffectiveHostedBenchmarkBinding = {
+  configuredToolNames: string[]
+  effectiveToolNames: string[]
+  effectiveRemoteToolNames: string[]
+  tools: ToolSet
+  system: string
+  mcpServers: AgentMcpServerConfig[]
+  cleanup: () => Promise<void>
+}
+
+type EffectiveHostedBenchmarkBindingDependencies = {
+  createSandboxTools: (
+    input: AgentServiceSandboxToolsOptions
+  ) => Promise<Pick<AgentServiceSandboxToolsResult, 'tools' | 'closeSandbox'>>
+  prepareToolAssembly: (
+    input: PrepareHostedChatRuntimeToolAssemblyInput
+  ) => Promise<HostedChatRuntimeToolAssemblyResult>
+}
+
+function requiredEnvironmentValue(environment: BenchmarkEnvironment, name: keyof BenchmarkEnvironment): string {
+  const value = environment[name]?.trim()
+  if (value) return value
+
+  const error = new Error(`${name} is required for the standalone tool-loading benchmark`)
+  error.name = 'BenchmarkConfigurationError'
+  throw error
+}
+
+function configuredToolNames(tools: true | Record<string, unknown> | undefined, discoveredNames: string[]): string[] {
+  if (tools === true) return [...discoveredNames].sort()
+  if (!tools) return []
+  return Object.keys(tools).sort()
+}
+
+function createDisabledInvokeAgentTool() {
+  return createHostedChildInvokeTool({
+    inputSchema: defaultHostedInvokeAgentInputSchema,
+    execute: async (): Promise<DisabledInvokeResult> => ({
+      status: 'failed',
+      terminalErrorCode: 'BENCHMARK_EXECUTION_DISABLED',
+      terminalErrorMessage: 'invoke_agent execution is disabled in the tool-loading benchmark',
+    }),
+    buildFailureResult: (failure): DisabledInvokeResult => ({
+      status: 'failed',
+      terminalErrorCode: failure.terminalErrorCode,
+      terminalErrorMessage: failure.terminalErrorMessage,
+    }),
+  })
+}
+
+export async function createEffectiveHostedBenchmarkBinding(input: {
+  runtime: ProjectAgentRuntimeDiscovery
+  environment?: BenchmarkEnvironment
+  dependencies?: Partial<EffectiveHostedBenchmarkBindingDependencies>
+}): Promise<EffectiveHostedBenchmarkBinding> {
+  const environment = input.environment ?? process.env
+  const canonicalAgent = input.runtime.agents.get('veryfront')
+  if (!canonicalAgent) throw new Error('Canonical agent was not discovered')
+
+  const apiUrl = requiredEnvironmentValue(environment, 'VERYFRONT_API_URL')
+  const userToken = requiredEnvironmentValue(environment, 'VERYFRONT_TOKEN')
+  const configuredNames = configuredToolNames(canonicalAgent.config.tools, [...input.runtime.tools.keys()])
+  const createSandboxTools = input.dependencies?.createSandboxTools ?? createAgentServiceSandboxTools
+  const prepareToolAssembly = input.dependencies?.prepareToolAssembly ?? prepareHostedChatRuntimeToolAssembly
+  const sandboxResult = await createSandboxTools({
+    createBashTool: createBashSandboxShellToolsProvider,
+    apiUrl,
+    authToken: userToken,
+    ...(environment.AG_UI_EVAL_PROJECT_ID?.trim() ? { projectId: environment.AG_UI_EVAL_PROJECT_ID.trim() } : {}),
+  })
+
+  try {
+    const discoveredLocalTools = Object.fromEntries(input.runtime.tools)
+    const configuredLocalTools: HostToolSet = {}
+    if (canonicalAgent.config.tools !== true) {
+      for (const [toolName, definition] of Object.entries(canonicalAgent.config.tools ?? {})) {
+        if (typeof definition === 'object' && definition !== null) {
+          configuredLocalTools[toolName] = definition
+        }
+      }
+    }
+    const localTools = {
+      ...discoveredLocalTools,
+      ...configuredLocalTools,
+      ...sandboxResult.tools,
+      form_input: createHostedFormInputTool({ authToken: userToken }, apiUrl),
+      invoke_agent: createDisabledInvokeAgentTool(),
+    }
+    const system =
+      typeof canonicalAgent.config.system === 'function'
+        ? await canonicalAgent.config.system()
+        : canonicalAgent.config.system
+    const assembly = await prepareToolAssembly({
+      taskContext: {
+        authToken: userToken,
+        agentId: canonicalAgent.id,
+        projectId: environment.AG_UI_EVAL_PROJECT_ID?.trim() || null,
+        branchId: null,
+        model: 'veryfront-cloud/anthropic/claude-opus-4-6',
+      },
+      instructions: system,
+      localTools,
+      apiUrl,
+      apiMcpUrl: new URL('/mcp', apiUrl).toString(),
+      mcpServers: [veryfrontApiMcpServer(), createBenchmarkHostedStudioMcpServer(environment)],
+      allowedToolNames: configuredNames,
+      allowedProviderToolNames: canonicalAgent.config.providerTools,
+      sourceProviderToolNames: canonicalAgent.config.providerTools,
+      preloadLatestConversationUserText: false,
+      sourceIntegrationPolicy: input.runtime.sourceIntegrationPolicy,
+      toolLoading: 'eager',
+    })
+    const providerToolNames = new Set(assembly.providerToolNames)
+    const tools = Object.fromEntries(
+      assembly.availableToolNames
+        .filter((toolName) => !providerToolNames.has(toolName))
+        .map((toolName) => [toolName, assembly.runtimeTools[toolName] ?? true])
+    )
+
+    return {
+      configuredToolNames: configuredNames,
+      effectiveToolNames: [...assembly.availableToolNames],
+      effectiveRemoteToolNames: [...assembly.compatibleRemoteToolNames],
+      tools,
+      system: assembly.systemInstructions,
+      mcpServers: [veryfrontApiMcpServer(), createBenchmarkStudioMcpServer(environment)],
+      cleanup: sandboxResult.closeSandbox,
+    }
+  } catch (error) {
+    await sandboxResult.closeSandbox()
+    throw error
+  }
+}

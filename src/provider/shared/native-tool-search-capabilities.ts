@@ -21,9 +21,8 @@ const OPENAI_NATIVE_TOOL_SEARCH_MODEL_IDS = [
 
 /** Whether an Anthropic model ID accepts the provider-native tool-search tool. */
 export function supportsAnthropicNativeToolSearchModel(modelId: string): boolean {
-  return ANTHROPIC_NATIVE_TOOL_SEARCH_MODEL_PREFIXES.some((prefix) =>
-    modelId === prefix || modelId.startsWith(`${prefix}-`)
-  );
+  const baseModelId = modelId.replace(/-\d{8}$/, "");
+  return ANTHROPIC_NATIVE_TOOL_SEARCH_MODEL_PREFIXES.some((prefix) => baseModelId === prefix);
 }
 
 /** Whether an OpenAI model ID accepts the Responses API tool-search tool. */
