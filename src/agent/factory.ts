@@ -87,7 +87,10 @@ export function runAgentToolLoadingBenchmark(
 ): Promise<AgentResponse> {
   const runner = toolLoadingBenchmarkRunners.get(assistant);
   if (!runner) {
-    throw new Error("Tool-loading benchmarks require a factory-created agent.");
+    throw INVALID_ARGUMENT.create({
+      detail:
+        "Tool-loading benchmark agent is not registered. Pass the exact Agent instance returned by agent().",
+    });
   }
   return runner(input, controls);
 }

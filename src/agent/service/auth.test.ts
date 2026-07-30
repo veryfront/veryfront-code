@@ -12,6 +12,9 @@ import {
   type HostedServiceAuthFetch,
   type HostedServiceJwtVerifier,
 } from "./auth.ts";
+import apiRunEventWriterContract from "../../../tests/fixtures/contracts/api-run-event-writer-jwt-payload.json" with {
+  type: "json",
+};
 
 type JwtFixture = {
   token: string;
@@ -50,6 +53,13 @@ function decodeBase64UrlBytes(input: string): Uint8Array<ArrayBuffer> {
 
 function encodeJsonBase64Url(value: Record<string, unknown>): string {
   return encodeBase64Url(JSON.stringify(value));
+}
+
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function spkiDerToPem(der: ArrayBuffer): string {
@@ -227,16 +237,25 @@ describe("agent/agent-service-auth", () => {
     assertEquals(result.token, fixture.token);
   });
 
-  it("cryptographically binds run-event append tokens to one project and run", async () => {
-    const fixture = await createRs256JwtFixture({
-      userId: "service-account-1",
-      serviceAccountId: "service-account-1",
-      actorType: "service_account",
-      tokenUse: "project_scoped_service_account",
-      projectId: "project-1",
-      runId: "run-1",
-      scope: ["projects:read", "runs:write"],
-    });
+  it("accepts the API-minted dedicated writer contract for exactly one project and run", async () => {
+    assertEquals(
+      apiRunEventWriterContract.contractId,
+      "veryfront.run-event-writer.jwt-payload.v1",
+    );
+    assertEquals(apiRunEventWriterContract.serviceIdentity, "veryfront-server");
+    assertEquals(
+      apiRunEventWriterContract.producer,
+      "veryfront-api/src/usecases/agent-runs/run-event-writer-token.ts",
+    );
+    assertEquals(
+      apiRunEventWriterContract.payloadSha256,
+      "525450414064fd31343aea799d42ad17f9c664c914a7a329c821e36271c66a04",
+    );
+    assertEquals(
+      await sha256(JSON.stringify(apiRunEventWriterContract.payload)),
+      apiRunEventWriterContract.payloadSha256,
+    );
+    const fixture = await createRs256JwtFixture(apiRunEventWriterContract.payload);
     const auth = createHostedServiceAuth({
       authProvider: webCryptoAuthProvider,
       getConfig: () => ({
@@ -249,70 +268,77 @@ describe("agent/agent-service-auth", () => {
     assertEquals(
       await auth.verifyRunEventAppendToken({
         token: fixture.token,
-        projectId: "project-1",
-        runId: "run-1",
+        projectId: "11111111-1111-4111-8111-111111111111",
+        runId: "run_1",
       }),
       true,
     );
     assertEquals(
       await auth.verifyRunEventAppendToken({
         token: fixture.token,
-        projectId: "project-1",
-        runId: "run-2",
+        projectId: "11111111-1111-4111-8111-111111111111",
+        runId: "run_other",
       }),
       false,
     );
   });
 
-  it("rejects broader or user run-event append credentials", async () => {
+  it("rejects obsolete, broader, malformed, or user run-event append credentials", async () => {
     const userFixture = await createRs256JwtFixture({
       userId: "user-1",
-      projectId: "project-1",
-      runId: "run-1",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      runId: "run_1",
       scope: ["projects:read", "runs:write"],
     });
-    const broadFixture = await createRs256JwtFixture({
-      userId: "service-account-1",
-      serviceAccountId: "service-account-1",
-      actorType: "service_account",
-      tokenUse: "project_scoped_service_account",
-      projectId: "project-1",
-      runId: "run-1",
-      scope: ["projects:read", "runs:write", "files:read"],
-    });
-    const userAuth = createHostedServiceAuth({
-      authProvider: webCryptoAuthProvider,
-      getConfig: () => ({
-        OAUTH_PUBLIC_KEY: userFixture.publicKeyPem,
-        NODE_ENV: "production",
-        VERYFRONT_API_URL: "https://api.example.test",
-      }),
-    });
-    const broadAuth = createHostedServiceAuth({
-      authProvider: webCryptoAuthProvider,
-      getConfig: () => ({
-        OAUTH_PUBLIC_KEY: broadFixture.publicKeyPem,
-        NODE_ENV: "production",
-        VERYFRONT_API_URL: "https://api.example.test",
-      }),
-    });
+    const invalidPayloads = [
+      {
+        ...apiRunEventWriterContract.payload,
+        tokenUse: "project_scoped_service_account",
+      },
+      {
+        ...apiRunEventWriterContract.payload,
+        scope: ["projects:read", "runs:write", "files:read"],
+      },
+      {
+        ...apiRunEventWriterContract.payload,
+        scope: ["projects:read", "runs:write", "runs:write"],
+      },
+      {
+        ...apiRunEventWriterContract.payload,
+        scope: ["projects:*", "runs:write"],
+      },
+      {
+        ...apiRunEventWriterContract.payload,
+        scope: ["projects:read", "runs:write", 42],
+      },
+      {
+        ...apiRunEventWriterContract.payload,
+        userId: "another-service-account",
+      },
+    ];
+    const fixtures = await Promise.all([
+      userFixture,
+      ...invalidPayloads.map((payload) => createRs256JwtFixture(payload)),
+    ]);
 
-    assertEquals(
-      await userAuth.verifyRunEventAppendToken({
-        token: userFixture.token,
-        projectId: "project-1",
-        runId: "run-1",
-      }),
-      false,
-    );
-    assertEquals(
-      await broadAuth.verifyRunEventAppendToken({
-        token: broadFixture.token,
-        projectId: "project-1",
-        runId: "run-1",
-      }),
-      false,
-    );
+    for (const fixture of fixtures) {
+      const auth = createHostedServiceAuth({
+        authProvider: webCryptoAuthProvider,
+        getConfig: () => ({
+          OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+          NODE_ENV: "production",
+          VERYFRONT_API_URL: "https://api.example.test",
+        }),
+      });
+      assertEquals(
+        await auth.verifyRunEventAppendToken({
+          token: fixture.token,
+          projectId: "11111111-1111-4111-8111-111111111111",
+          runId: "run_1",
+        }),
+        false,
+      );
+    }
   });
 
   it("uses the built-in AuthProvider for configured public key JWTs", async () => {

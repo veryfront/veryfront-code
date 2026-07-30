@@ -102,6 +102,17 @@ type AuthJwtExtensionModule = {
   createAuthProvider: (options?: Record<string, unknown>) => HostedServiceJwtVerifier;
 };
 
+const RUN_EVENT_WRITER_TOKEN_USE = "run_event_writer";
+const RUN_EVENT_WRITER_SCOPES = ["projects:read", "runs:write"] as const;
+
+function hasExactRunEventWriterScopes(scope: unknown): boolean {
+  return Array.isArray(scope) &&
+    scope.length === RUN_EVENT_WRITER_SCOPES.length &&
+    scope.every((value): value is string => typeof value === "string") &&
+    new Set(scope).size === scope.length &&
+    RUN_EVENT_WRITER_SCOPES.every((requiredScope) => scope.includes(requiredScope));
+}
+
 /** Options accepted by hosted service auth. */
 export type HostedServiceAuthOptions = {
   getConfig: () => HostedServiceAuthConfig;
@@ -412,19 +423,14 @@ export function createHostedServiceAuth(
           config.OAUTH_PUBLIC_KEY,
           { algorithms: ["RS256"] },
         ) as TokenPayload;
-        const scope = Array.isArray(payload.scope)
-          ? payload.scope.filter((value): value is string => typeof value === "string")
-          : [];
 
         return payload.actorType === "service_account" &&
-          payload.tokenUse === "project_scoped_service_account" &&
+          payload.tokenUse === RUN_EVENT_WRITER_TOKEN_USE &&
           typeof payload.serviceAccountId === "string" &&
           payload.userId === payload.serviceAccountId &&
           payload.projectId === input.projectId &&
           payload.runId === input.runId &&
-          scope.length === 2 &&
-          scope.includes("projects:read") &&
-          scope.includes("runs:write");
+          hasExactRunEventWriterScopes(payload.scope);
       } catch (error) {
         options.logger?.debug?.("Run-event append token verification failed", {
           error: error instanceof Error ? error.message : String(error),
