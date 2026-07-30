@@ -1,5 +1,23 @@
 import { dirname, fromFileUrl, join } from "#std/path";
 import {
+  containsUnicodeControlOrLineSeparator,
+  isWellFormedUnicode,
+  MAX_CAPABILITY_CONTAINER_ENTRIES,
+  MAX_CAPABILITY_KEY_CHARACTERS,
+  MAX_CAPABILITY_METADATA_UTF16_CODE_UNITS,
+  MAX_CAPABILITY_METADATA_UTF8_BYTES,
+  MAX_CAPABILITY_NESTING_DEPTH,
+  MAX_CAPABILITY_STRING_CHARACTERS,
+  MAX_CAPABILITY_TYPE_CHARACTERS,
+  MAX_CAPABILITY_VALUE_NODES,
+  MAX_EXTENSION_CAPABILITIES,
+  utf8ByteLength,
+} from "../../src/extensions/metadata-policy.ts";
+import {
+  formatCapabilities as formatRuntimeCapabilityAudit,
+  mapToDenoPermissions,
+} from "../../src/extensions/capabilities.ts";
+import {
   createExtensionMetadataWorkspaceBudget,
   type ExtensionMetadataWorkspaceBudget,
   extractExtensionSourceMetadataFromFile,
@@ -17,12 +35,7 @@ import {
 
 export type Capability = { type: string; [key: string]: unknown };
 
-export const MAX_EXTENSION_CAPABILITIES = 256;
-export const MAX_CAPABILITY_NESTING_DEPTH = 32;
-export const MAX_CAPABILITY_VALUE_NODES = 8192;
-export const MAX_CAPABILITY_CONTAINER_ENTRIES = 4096;
-export const MAX_CAPABILITY_KEY_CHARACTERS = 256;
-export const MAX_CAPABILITY_STRING_CHARACTERS = 8192;
+export { MAX_CAPABILITY_NESTING_DEPTH, MAX_EXTENSION_CAPABILITIES };
 
 export interface ExtensionCapabilityAuditInput {
   manifestPath: string;
@@ -213,6 +226,8 @@ interface ValidatedCapabilities {
 interface CapabilityValidationBudget {
   nodes: number;
   entries: number;
+  utf8Bytes: number;
+  utf16CodeUnits: number;
 }
 
 function validateCapabilityJsonTree(
@@ -236,8 +251,22 @@ function validateCapabilityJsonTree(
     }
     if (value === null || typeof value === "boolean") continue;
     if (typeof value === "string") {
+      if (!isWellFormedUnicode(value)) {
+        return `${field} contains a string without well-formed Unicode`;
+      }
+      if (containsUnicodeControlOrLineSeparator(value)) {
+        return `${field} contains a string with Unicode control characters or line separators`;
+      }
       if (value.length > MAX_CAPABILITY_STRING_CHARACTERS) {
         return `${field} contains a string longer than ${MAX_CAPABILITY_STRING_CHARACTERS} characters`;
+      }
+      budget.utf8Bytes += utf8ByteLength(value);
+      budget.utf16CodeUnits += value.length;
+      if (
+        budget.utf8Bytes > MAX_CAPABILITY_METADATA_UTF8_BYTES ||
+        budget.utf16CodeUnits > MAX_CAPABILITY_METADATA_UTF16_CODE_UNITS
+      ) {
+        return `${field} exceeds ${MAX_CAPABILITY_METADATA_UTF8_BYTES} aggregate UTF-8 bytes or ${MAX_CAPABILITY_METADATA_UTF16_CODE_UNITS} UTF-16 code units`;
       }
       continue;
     }
@@ -294,8 +323,22 @@ function validateCapabilityJsonTree(
       if (key === "__proto__") {
         return `${field} must not declare __proto__`;
       }
+      if (!isWellFormedUnicode(key)) {
+        return `${field} contains a key without well-formed Unicode`;
+      }
+      if (containsUnicodeControlOrLineSeparator(key)) {
+        return `${field} contains a key with Unicode control characters or line separators`;
+      }
       if (key.length > MAX_CAPABILITY_KEY_CHARACTERS) {
         return `${field} contains a key longer than ${MAX_CAPABILITY_KEY_CHARACTERS} characters`;
+      }
+      budget.utf8Bytes += utf8ByteLength(key);
+      budget.utf16CodeUnits += key.length;
+      if (
+        budget.utf8Bytes > MAX_CAPABILITY_METADATA_UTF8_BYTES ||
+        budget.utf16CodeUnits > MAX_CAPABILITY_METADATA_UTF16_CODE_UNITS
+      ) {
+        return `${field} exceeds ${MAX_CAPABILITY_METADATA_UTF8_BYTES} aggregate UTF-8 bytes or ${MAX_CAPABILITY_METADATA_UTF16_CODE_UNITS} UTF-16 code units`;
       }
       if (!descriptor.enumerable || !("value" in descriptor)) {
         return `${field} contains a non-data or non-enumerable property`;
@@ -326,12 +369,7 @@ const ALLOWED_CAPABILITY_FIELDS_BY_TYPE = new Map<string, ReadonlySet<string>>([
 ]);
 
 function containsUnsafePermissionScopeSyntax(value: string): boolean {
-  if (value.includes(",")) return true;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 0x1f || code === 0x7f) return true;
-  }
-  return false;
+  return value.includes(",") || containsUnicodeControlOrLineSeparator(value);
 }
 
 function isCanonicalPermissionScopeString(value: unknown): value is string {
@@ -424,9 +462,13 @@ function validateKnownCapabilitySchema(
           issues.push(
             `${field}.${scopeField}[${index}] must not have surrounding whitespace`,
           );
+        } else if (!isWellFormedUnicode(scope)) {
+          issues.push(
+            `${field}.${scopeField}[${index}] must contain well-formed Unicode`,
+          );
         } else if (containsUnsafePermissionScopeSyntax(scope)) {
           issues.push(
-            `${field}.${scopeField}[${index}] must not contain commas or control characters`,
+            `${field}.${scopeField}[${index}] must not contain commas or control characters, including Unicode C1 controls or line separators`,
           );
         }
       }
@@ -489,9 +531,11 @@ function validateKnownCapabilitySchema(
         issues.push(`${field}.host must be a non-empty string`);
       } else if (host.trim() !== host) {
         issues.push(`${field}.host must not have surrounding whitespace`);
+      } else if (!isWellFormedUnicode(host)) {
+        issues.push(`${field}.host must contain well-formed Unicode`);
       } else if (containsUnsafePermissionScopeSyntax(host)) {
         issues.push(
-          `${field}.host must not contain commas or control characters`,
+          `${field}.host must not contain commas or control characters, including Unicode C1 controls or line separators`,
         );
       } else if (!isValidNetworkHost(host, false)) {
         issues.push(
@@ -523,7 +567,12 @@ function validateCapabilityList(
   }
   const values: Capability[] = [];
   const issues: string[] = [];
-  const budget: CapabilityValidationBudget = { nodes: 0, entries: 0 };
+  const budget: CapabilityValidationBudget = {
+    nodes: 0,
+    entries: 0,
+    utf8Bytes: 0,
+    utf16CodeUnits: 0,
+  };
   for (let index = 0; index < value.length; index += 1) {
     const entry = value[index];
     if (!isRecord(entry)) {
@@ -545,6 +594,16 @@ function validateCapabilityList(
       issues.push(
         `${field}[${index}].type must not have surrounding whitespace`,
       );
+    } else if (!isWellFormedUnicode(entry.type)) {
+      issues.push(`${field}[${index}].type must contain well-formed Unicode`);
+    } else if (containsUnicodeControlOrLineSeparator(entry.type)) {
+      issues.push(
+        `${field}[${index}].type must not contain Unicode control characters or line separators`,
+      );
+    } else if (entry.type.length > MAX_CAPABILITY_TYPE_CHARACTERS) {
+      issues.push(
+        `${field}[${index}].type must not exceed ${MAX_CAPABILITY_TYPE_CHARACTERS} characters`,
+      );
     } else {
       const schemaIssues = validateKnownCapabilitySchema(
         `${field}[${index}]`,
@@ -552,6 +611,28 @@ function validateCapabilityList(
       );
       if (schemaIssues.length > 0) issues.push(...schemaIssues);
       else values.push(entry as Capability);
+    }
+  }
+  if (issues.length === 0) {
+    try {
+      mapToDenoPermissions(values);
+    } catch (error) {
+      issues.push(
+        `${field} cannot be serialized as Deno permissions: ${
+          error instanceof Error ? error.message : "unknown validation failure"
+        }`,
+      );
+    }
+  }
+  if (issues.length === 0) {
+    try {
+      formatRuntimeCapabilityAudit(values);
+    } catch (error) {
+      issues.push(
+        `${field} cannot be formatted for capability audit: ${
+          error instanceof Error ? error.message : "unknown validation failure"
+        }`,
+      );
     }
   }
   return { values, issues };

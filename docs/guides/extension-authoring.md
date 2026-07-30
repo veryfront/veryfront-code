@@ -6,6 +6,9 @@ order: 39
 
 Use this guide when a runtime capability needs a reusable contract and lifecycle.
 Keep the extension focused on one capability boundary.
+Third-party SDKs and their concrete implementations belong in explicit `ext-*`
+packages; dependency-free core code exposes only the provider-neutral contract
+and must not import or auto-load the extension.
 
 Use [Extensions](./extensions.md) when you only need to enable an existing
 extension.
@@ -64,6 +67,9 @@ const myExtension: ExtensionFactory = () => ({
 export default myExtension;
 ```
 
+Extension metadata must be a plain object. Names are limited to 256 characters
+and versions to 128; both must be trimmed, well-formed, single-line Unicode.
+
 ## Provide a contract
 
 Use `provides` when the implementation does not need async setup:
@@ -116,6 +122,12 @@ const asyncAuthExtension: ExtensionFactory = () => ({
 });
 ```
 
+Use either `contracts` or the legacy static `provides` object, never both.
+Each `contracts.provides` or `contracts.requires` list is a dense array of at
+most 256 unique names. Contract names are limited to 256 characters and must be
+trimmed, well-formed, single-line Unicode. Veryfront snapshots this metadata
+before replacing the active extension generation.
+
 ## Declare capabilities
 
 Capabilities document runtime needs. Use a recognized `type` and matching scope
@@ -145,6 +157,40 @@ Common capability types:
 | `process:spawn`   | `commands: string[]` | `--allow-run[=commands]`    |
 | `native:ffi`      | none                 | `--allow-ffi`               |
 | `sandbox:execute` | `tools: string[]`    | Audit only                  |
+
+Omitting a supported scope field explicitly requests the corresponding
+unscoped Deno permission. If you provide a scope field, it must be a non-empty
+array of trimmed strings. Scope values cannot contain commas or control
+characters, including Unicode C1 controls and line separators, because Deno
+uses commas to separate permissions and these characters make command and
+audit boundaries ambiguous. Scope strings must contain well-formed Unicode;
+the same rule applies to every capability metadata key and string so audit
+records remain single-line and unambiguous. Audit output JSON-quotes capability
+types and field names. Raw capability text is limited to 32,768 UTF-8 bytes and
+UTF-16 code units, and its rendered audit output to 49,152 of each. Veryfront
+does not normalize filesystem paths. The combined serialized Deno permission
+flags for one extension are limited to 8,192 UTF-8 bytes and 8,192 UTF-16 code
+units so an accepted declaration remains launchable across supported operating
+systems. For `net:listen`, `host` is valid only together with a non-empty
+`ports` array.
+Veryfront rejects unknown fields on recognized capability types so a typo such
+as `path` instead of `paths` cannot silently broaden access.
+
+Network scopes accept ASCII DNS names (including a leading `*.` wildcard),
+canonical IPv4 addresses, and bracketed IPv6 addresses, with an optional port
+for `net:outbound`. A sole outbound host of `"*"` explicitly requests an
+unscoped `--allow-net` flag; it cannot be combined with narrower hosts. In Deno,
+`*.example.com` grants both subdomains and the apex `example.com`; use explicit
+hosts when apex access is not intended. Deno's single `--allow-net` permission
+covers both outbound connections and listeners, so `net:outbound` versus
+`net:listen` is auditable intent, not process-level directional isolation.
+
+Capability declarations are metadata, not an in-process sandbox. An extension
+loaded into the Veryfront process inherits that process's permissions.
+`mapToDenoPermissions()` only serializes Deno flags; a subprocess launcher must
+apply those flags for Deno to enforce them. Use a separate process plus a
+container or operating-system policy when directional or stronger isolation is
+required.
 
 For first-party extensions, mirror the same `capabilities` array in `deno.json`
 under `veryfront.capabilities`.

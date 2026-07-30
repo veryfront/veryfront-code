@@ -8,6 +8,13 @@ import {
   SEPARATOR,
 } from "#std/path";
 import { hasForbiddenLocalModulePathSyntax } from "./extension-manifest-reader.ts";
+import {
+  containsUnicodeControlOrLineSeparator,
+  isWellFormedUnicode,
+  MAX_CAPABILITY_TYPE_CHARACTERS,
+  MAX_EXTENSION_CONTRACT_NAME_CHARACTERS,
+  MAX_EXTENSION_CONTRACTS_PER_LIST,
+} from "../../src/extensions/metadata-policy.ts";
 
 export type Capability = { type: string; [key: string]: unknown };
 
@@ -48,7 +55,8 @@ export const MAX_EXTENSION_METADATA_FILES = 64;
 export const MAX_EXTENSION_METADATA_RESOLUTION_DEPTH = 16;
 export const MAX_EXTENSION_METADATA_IMPORT_MAPPINGS = 1024;
 export const MAX_EXTENSION_METADATA_TOKENS = 200_000;
-export const MAX_EXTENSION_METADATA_CONTRACT_REFERENCES = 256;
+export const MAX_EXTENSION_METADATA_CONTRACT_REFERENCES =
+  MAX_EXTENSION_CONTRACTS_PER_LIST;
 export const MAX_EXTENSION_METADATA_WORKSPACE_FILES = 256;
 export const MAX_EXTENSION_METADATA_WORKSPACE_SOURCE_BYTES = 16 * 1024 * 1024;
 
@@ -1053,6 +1061,15 @@ function validateResolvedContractName(
   if (value.trim() !== value) {
     return `${path}[${index}] must not have surrounding whitespace`;
   }
+  if (!isWellFormedUnicode(value)) {
+    return `${path}[${index}] must contain well-formed Unicode`;
+  }
+  if (containsUnicodeControlOrLineSeparator(value)) {
+    return `${path}[${index}] must not contain Unicode control characters or line separators`;
+  }
+  if (value.length > MAX_EXTENSION_CONTRACT_NAME_CHARACTERS) {
+    return `${path}[${index}] must not exceed ${MAX_EXTENSION_CONTRACT_NAME_CHARACTERS} characters`;
+  }
   if (seen.has(value)) return `${path}[${index}] duplicates "${value}"`;
   seen.add(value);
   return undefined;
@@ -1813,6 +1830,16 @@ function parseCapabilities(module: StaticModuleBindings): ParsedCapabilities {
       issues.push(`capabilities[${index}].type must be a canonical string`);
       continue;
     }
+    if (
+      !isWellFormedUnicode(capability.type) ||
+      containsUnicodeControlOrLineSeparator(capability.type) ||
+      capability.type.length > MAX_CAPABILITY_TYPE_CHARACTERS
+    ) {
+      issues.push(
+        `capabilities[${index}].type must be well-formed, single-line, and at most ${MAX_CAPABILITY_TYPE_CHARACTERS} characters`,
+      );
+      continue;
+    }
     values.push(capability);
   }
   return { values, issues };
@@ -1863,6 +1890,15 @@ function parseLegacyProvides(
   const names: string[] = [];
   const seen = new Set<string>();
   for (const property of nodeList(object.properties)) {
+    const index = names.length;
+    if (index >= MAX_EXTENSION_CONTRACTS_PER_LIST) {
+      return {
+        values: [],
+        issues: [
+          `legacy provides must contain at most ${MAX_EXTENSION_CONTRACTS_PER_LIST} entries`,
+        ],
+      };
+    }
     if (
       property.type !== "ObjectProperty" && property.type !== "ObjectMethod"
     ) {
@@ -1902,7 +1938,15 @@ function parseLegacyProvides(
         issues: ["legacy provides key must not have surrounding whitespace"],
       };
     }
-    seen.add(name);
+    const validationIssue = validateResolvedContractName(
+      name,
+      "legacy provides",
+      index,
+      seen,
+    );
+    if (validationIssue) {
+      return { values: [], issues: [validationIssue] };
+    }
     names.push(name);
   }
   return { values: names.sort(), issues: [] };

@@ -1,5 +1,12 @@
 import { dirname, fromFileUrl, join } from "#std/path";
 import {
+  containsUnicodeControlOrLineSeparator,
+  isWellFormedUnicode,
+  MAX_EXTENSION_CONTRACT_NAME_CHARACTERS,
+  MAX_EXTENSION_CONTRACTS_PER_LIST,
+  snapshotDenseMetadataArray,
+} from "../../src/extensions/metadata-policy.ts";
+import {
   createExtensionMetadataWorkspaceBudget,
   type ExtensionMetadataWorkspaceBudget,
   extractExtensionSourceMetadataFromFile,
@@ -53,18 +60,39 @@ function validateContractList(
   value: unknown,
 ): ValidatedContractList {
   if (value === undefined) return { values: [], issues: [] };
-  if (!Array.isArray(value)) {
-    return { values: [], issues: [`${field} must be an array`] };
+  let entries: readonly unknown[];
+  try {
+    entries = snapshotDenseMetadataArray(
+      value,
+      field,
+      0,
+      MAX_EXTENSION_CONTRACTS_PER_LIST,
+    );
+  } catch (error) {
+    return {
+      values: [],
+      issues: [error instanceof Error ? error.message : `${field} is invalid`],
+    };
   }
   const values: string[] = [];
   const issues: string[] = [];
   const seen = new Set<string>();
-  for (let index = 0; index < value.length; index += 1) {
-    const entry = value[index];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
     if (typeof entry !== "string" || entry.trim().length === 0) {
       issues.push(`${field}[${index}] must be a non-empty string`);
     } else if (entry.trim() !== entry) {
       issues.push(`${field}[${index}] must not have surrounding whitespace`);
+    } else if (!isWellFormedUnicode(entry)) {
+      issues.push(`${field}[${index}] must contain well-formed Unicode`);
+    } else if (containsUnicodeControlOrLineSeparator(entry)) {
+      issues.push(
+        `${field}[${index}] must not contain Unicode control characters or line separators`,
+      );
+    } else if (entry.length > MAX_EXTENSION_CONTRACT_NAME_CHARACTERS) {
+      issues.push(
+        `${field}[${index}] must not exceed ${MAX_EXTENSION_CONTRACT_NAME_CHARACTERS} characters`,
+      );
     } else if (seen.has(entry)) {
       issues.push(`${field}[${index}] duplicates "${entry}"`);
     } else {

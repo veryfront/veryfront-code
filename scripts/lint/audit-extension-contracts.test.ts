@@ -159,6 +159,55 @@ describe("auditExtensionContracts", () => {
     ]);
   });
 
+  it("rejects hostile contract identifiers and oversized lists", () => {
+    for (const name of ["A\nB", "A\u0085B", "A\u2028B", "A\uD800B"]) {
+      const issues = auditExtensionContracts([
+        input({
+          manifestContracts: { provides: [name] },
+          factoryProvides: [name],
+        }),
+      ]);
+      assertEquals(issues.length >= 1, true);
+    }
+
+    const oversized = Array.from(
+      { length: 257 },
+      (_, index) => `Contract${index}`,
+    );
+    const issues = auditExtensionContracts([
+      input({
+        manifestContracts: { provides: oversized },
+        factoryProvides: oversized,
+      }),
+    ]);
+    assertEquals(
+      issues.every((issue) =>
+        issue.message.includes("must contain at most 256 entries")
+      ),
+      true,
+    );
+  });
+
+  it("statically rejects hostile modern and legacy factory contract names", () => {
+    for (const name of ["A\nB", "A\u0085B", "A\u2029B", "A\uD800B"]) {
+      const modern = extractExtensionSourceMetadata(`
+        export default () => ({
+          capabilities: [],
+          contracts: { provides: [${JSON.stringify(name)}] },
+        });
+      `);
+      assertEquals(modern.contractResolutionIssues.length > 0, true);
+
+      const legacy = extractExtensionSourceMetadata(`
+        export default () => ({
+          capabilities: [],
+          provides: { [${JSON.stringify(name)}]: {} },
+        });
+      `);
+      assertEquals(legacy.contractResolutionIssues.length > 0, true);
+    }
+  });
+
   it("normalizes malformed manifest failures without absolute paths", async () => {
     await withStaticFixture(
       { "extensions/ext-static/deno.json": "{" },

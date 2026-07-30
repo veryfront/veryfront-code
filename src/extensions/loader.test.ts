@@ -10,6 +10,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ExtensionLoader } from "./loader.ts";
 import { register, reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type {
+  Capability,
   Extension,
   ExtensionContext,
   ExtensionLogger,
@@ -255,12 +256,10 @@ describe("ExtensionLoader", () => {
 
     it("should throw on circular dependencies", () => {
       const a = makeExt("ext-a", {
-        provides: { A: {} },
-        contracts: { requires: ["B"] },
+        contracts: { provides: ["A"], requires: ["B"] },
       });
       const b = makeExt("ext-b", {
-        provides: { B: {} },
-        contracts: { requires: ["A"] },
+        contracts: { provides: ["B"], requires: ["A"] },
       });
 
       const loader = new ExtensionLoader(noopLogger);
@@ -1262,28 +1261,39 @@ describe("ExtensionLoader", () => {
       );
     });
 
-    it("clears first-extension static and dynamic registrations on failure", async () => {
-      let teardownCount = 0;
-      const failing = makeExt("first-failing", {
+    it("clears prior static and failing dynamic registrations on failure", async () => {
+      let staticTeardownCount = 0;
+      let dynamicTeardownCount = 0;
+      const staticProvider = makeExt("static-provider", {
         provides: { StaticLeak: { leaked: true } },
+        teardown() {
+          staticTeardownCount++;
+        },
+      });
+      const failing = makeExt("first-failing", {
         contracts: { provides: ["DynamicLeak"] },
         setup(ctx) {
           ctx.provide("DynamicLeak", { leaked: true });
           throw new Error("first-failure");
         },
         teardown() {
-          teardownCount++;
+          dynamicTeardownCount++;
         },
       });
 
       const loader = new ExtensionLoader(noopLogger);
       await assertRejects(
-        () => loader.setupAll([makeResolved(failing)], {}),
+        () =>
+          loader.setupAll([
+            makeResolved(staticProvider),
+            makeResolved(failing),
+          ], {}),
         Error,
         "first-failure",
       );
 
-      assertEquals(teardownCount, 1);
+      assertEquals(staticTeardownCount, 1);
+      assertEquals(dynamicTeardownCount, 1);
       assertEquals(tryResolve("StaticLeak"), undefined);
       assertEquals(tryResolve("DynamicLeak"), undefined);
     });
@@ -1311,6 +1321,28 @@ describe("ExtensionLoader", () => {
 
       assertEquals(teardownCount, 0);
       assertEquals(tryResolve("ValidContract"), undefined);
+    });
+
+    it("escapes invalid extension names in validation errors", async () => {
+      const loader = new ExtensionLoader(noopLogger);
+      let message = "";
+      try {
+        await loader.setupAll([
+          makeResolved({
+            name: "evil\nFORGED",
+            version: "1.0.0",
+            capabilities: [],
+          }),
+        ], {});
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+
+      assertEquals(
+        message.startsWith('Extension "<invalid>" is invalid:\n'),
+        true,
+      );
+      assertEquals(message.split("\n")[0], 'Extension "<invalid>" is invalid:');
     });
 
     it("does not tear down the active generation when replacement preflight fails", async () => {
@@ -1342,6 +1374,240 @@ describe("ExtensionLoader", () => {
         tryResolve("ActiveContract"),
         { active: true },
       );
+    });
+
+    it("rejects inherited replacement metadata before active teardown", async () => {
+      let activeTeardownCount = 0;
+      const active = makeExt("active", {
+        provides: { ActiveContract: { active: true } },
+        teardown() {
+          activeTeardownCount++;
+        },
+      });
+      const inherited = Object.assign(
+        Object.create({ contracts: { provides: ["Danger"] } }),
+        {
+          name: "inherited",
+          version: "1.0.0",
+          capabilities: [],
+          setup(ctx: ExtensionContext) {
+            ctx.provide("Danger", {});
+          },
+        },
+      ) as Extension;
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(active)], {});
+      await assertRejects(
+        () => loader.setupAll([makeResolved(inherited)], {}),
+        Error,
+        'Extension "inherited" is invalid',
+      );
+      assertEquals(activeTeardownCount, 0);
+      assertEquals(tryResolve("ActiveContract"), { active: true });
+    });
+
+    it("revalidates descriptor snapshots before active teardown", async () => {
+      let activeTeardownCount = 0;
+      let nameInspections = 0;
+      const active = makeExt("active", {
+        teardown() {
+          activeTeardownCount++;
+        },
+      });
+      const target = makeExt("replacement", { setup() {} });
+      const replacement = new Proxy(target, {
+        getOwnPropertyDescriptor(object, property) {
+          const descriptor = Reflect.getOwnPropertyDescriptor(object, property);
+          if (property === "name" && descriptor && ++nameInspections > 1) {
+            return { ...descriptor, value: "evil\nFORGED" };
+          }
+          return descriptor;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(active)], {});
+      await assertRejects(
+        () => loader.setupAll([makeResolved(replacement)], {}),
+        TypeError,
+        "extension.name changed after validation",
+      );
+      assertEquals(activeTeardownCount, 0);
+    });
+
+    it("maps the exact captured capabilities before active teardown", async () => {
+      let activeTeardownCount = 0;
+      let capabilityInspections = 0;
+      const active = makeExt("active", {
+        teardown() {
+          activeTeardownCount++;
+        },
+      });
+      const target = makeExt("replacement");
+      const oversized = [{
+        type: "env:read",
+        keys: ["A", "B", "C"].map((prefix) => `${prefix}_${"x".repeat(3_000)}`),
+      }] as Capability[];
+      const replacement = new Proxy(target, {
+        getOwnPropertyDescriptor(object, property) {
+          const descriptor = Reflect.getOwnPropertyDescriptor(object, property);
+          if (
+            property === "capabilities" && descriptor &&
+            ++capabilityInspections > 1
+          ) {
+            return { ...descriptor, value: oversized };
+          }
+          return descriptor;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(active)], {});
+      await assertRejects(
+        () => loader.setupAll([makeResolved(replacement)], {}),
+        TypeError,
+        "Deno permission flags exceed",
+      );
+      assertEquals(activeTeardownCount, 0);
+    });
+
+    it("snapshots capability audit metadata before replacing the active generation", async () => {
+      let activeTeardownCount = 0;
+      let replacementSetupCount = 0;
+      const debugCalls: unknown[][] = [];
+      const logger: ExtensionLogger = {
+        ...noopLogger,
+        debug(message, ...args) {
+          debugCalls.push([message, ...args]);
+        },
+      };
+      const active = makeExt("active", {
+        provides: { ActiveContract: { active: true } },
+        teardown() {
+          activeTeardownCount++;
+        },
+      });
+      const capabilityArray = new Proxy(
+        [{ type: "env:read", keys: ["SAFE_KEY"] }] as Capability[],
+        {
+          get(target, property, receiver) {
+            if (property === "length" || property === "map") {
+              throw new Error("live capability metadata was read");
+            }
+            return Reflect.get(target, property, receiver);
+          },
+        },
+      );
+      const replacement = makeExt("replacement", {
+        capabilities: capabilityArray,
+        setup() {
+          replacementSetupCount++;
+        },
+      });
+
+      const loader = new ExtensionLoader(logger);
+      await loader.setupAll([makeResolved(active)], {});
+      await loader.setupAll([makeResolved(replacement)], {});
+
+      assertEquals(activeTeardownCount, 1);
+      assertEquals(replacementSetupCount, 1);
+      assertEquals(
+        debugCalls.filter(([message]) =>
+          typeof message === "string" && message.includes("declares capabilities")
+        ),
+        [[
+          'Extension "replacement" declares capabilities:',
+          '"env:read" ("keys": ["SAFE_KEY"])',
+        ]],
+      );
+    });
+
+    it("uses immutable contract snapshots throughout replacement activation", async () => {
+      let activeTeardownCount = 0;
+      const active = makeExt("active", {
+        provides: { ActiveContract: { active: true } },
+        teardown() {
+          activeTeardownCount++;
+        },
+      });
+      const legacyImplementation = { source: "legacy" };
+      const legacyProvides = new Proxy({ Danger: legacyImplementation }, {
+        get(target, property, receiver) {
+          if (property === "Danger") {
+            throw new Error("live legacy implementation was read");
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      const modernProvides = new Proxy(["DynamicContract"], {
+        get(target, property, receiver) {
+          if (property === "filter" || property === "length") {
+            throw new Error("live modern contract metadata was read");
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      const legacy = makeExt("legacy", { provides: legacyProvides });
+      const modern = makeExt("modern", {
+        contracts: { provides: modernProvides },
+        setup(ctx) {
+          ctx.provide("DynamicContract", { source: "modern" });
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(active)], {});
+      await loader.setupAll([makeResolved(legacy), makeResolved(modern)], {});
+
+      assertEquals(activeTeardownCount, 1);
+      assertEquals(tryResolve("Danger"), legacyImplementation);
+      assertEquals(tryResolve("DynamicContract"), { source: "modern" });
+    });
+
+    it("uses snapshotted lifecycle metadata after the activation barrier", async () => {
+      let activeTeardownCount = 0;
+      let replacementSetupCount = 0;
+      let replacementTeardownCount = 0;
+      const active = makeExt("active", {
+        teardown() {
+          activeTeardownCount++;
+        },
+      });
+      const replacement = makeExt("replacement", {
+        capabilities: [{ type: "env:read", keys: ["SAFE_KEY"] }],
+        setup() {
+          replacementSetupCount++;
+        },
+        teardown() {
+          replacementTeardownCount++;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(active)], {});
+      await loader.setupAll([makeResolved(replacement)], {}, {
+        beforeActivate() {
+          replacement.name = "mutated";
+          replacement.version = "mutated";
+          replacement.capabilities = new Proxy([], {
+            get() {
+              throw new Error("live capabilities were read");
+            },
+          });
+          replacement.setup = () => {
+            throw new Error("live setup was called");
+          };
+          replacement.teardown = () => {
+            throw new Error("live teardown was called");
+          };
+        },
+      });
+      await loader.teardownAll();
+
+      assertEquals(activeTeardownCount, 1);
+      assertEquals(replacementSetupCount, 1);
+      assertEquals(replacementTeardownCount, 1);
     });
 
     it("rejects invalid timeout values before replacing the active generation", async () => {

@@ -243,6 +243,104 @@ describe("auditExtensionCapabilities", () => {
     );
   });
 
+  it("rejects non-faithful or line-forging permission scope strings", () => {
+    const malformed = [
+      { type: "env:read", keys: ["SAFE\uD800KEY"] },
+      { type: "fs:read", paths: ["./safe\uDC00path"] },
+      { type: "env:read", keys: ["SAFE\u0085SECRET"] },
+      { type: "fs:write", paths: ["./safe\u2029forged"] },
+    ];
+    const issues = auditExtensionCapabilities([
+      input({
+        manifestPath: "extensions/ext-custom/deno.json",
+        manifestCapabilities: malformed,
+        factoryCapabilities: malformed,
+      }),
+    ]);
+
+    assertEquals(issues.length, 8);
+    assertEquals(
+      issues.every((issue) =>
+        issue.message.includes("well-formed Unicode") ||
+        issue.message.includes("control characters")
+      ),
+      true,
+    );
+  });
+
+  it("rejects capability inventories that exceed the Deno argv budget", () => {
+    const oversized = [{
+      type: "env:read",
+      keys: ["A", "B", "C"].map((prefix) => `${prefix}_${"x".repeat(3_000)}`),
+    }];
+    const issues = auditExtensionCapabilities([
+      input({
+        manifestPath: "extensions/ext-custom/deno.json",
+        manifestCapabilities: oversized,
+        factoryCapabilities: oversized,
+      }),
+    ]);
+
+    assertEquals(issues.length, 2);
+    assertEquals(
+      issues.every((issue) =>
+        issue.message.includes(
+          "serialized Deno permission flags exceed the cross-platform budget",
+        )
+      ),
+      true,
+    );
+  });
+
+  it("rejects audit-forging custom metadata keys and strings", () => {
+    for (
+      const capability of [
+        { type: "custom", details: "value\u0085FORGED" },
+        { type: "custom", details: "value\u2028FORGED" },
+        { type: "custom", details: "value\uD800FORGED" },
+        { type: "custom", ["key\u2029FORGED"]: "value" },
+      ]
+    ) {
+      const issues = auditExtensionCapabilities([
+        input({
+          manifestPath: "extensions/ext-custom/deno.json",
+          manifestCapabilities: [capability],
+          factoryCapabilities: [capability],
+        }),
+      ]);
+      assertEquals(issues.length, 2);
+      assertEquals(
+        issues.every((issue) =>
+          issue.message.includes("Unicode") ||
+          issue.message.includes("well-formed")
+        ),
+        true,
+      );
+    }
+  });
+
+  it("bounds aggregate capability metadata size", () => {
+    const oversized = [{
+      type: "custom",
+      details: Array.from({ length: 5 }, () => "x".repeat(7_000)),
+    }];
+    const issues = auditExtensionCapabilities([
+      input({
+        manifestPath: "extensions/ext-custom/deno.json",
+        manifestCapabilities: oversized,
+        factoryCapabilities: oversized,
+      }),
+    ]);
+
+    assertEquals(issues.length, 2);
+    assertEquals(
+      issues.every((issue) =>
+        issue.message.includes("exceeds 32768 aggregate UTF-8 bytes")
+      ),
+      true,
+    );
+  });
+
   it("keys sensitive policies by canonical package identity", () => {
     const renamedDirectory = auditExtensionCapabilities([
       input({

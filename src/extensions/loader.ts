@@ -11,16 +11,31 @@ import {
   EXTENSION_VALIDATION_ERROR,
 } from "./errors.ts";
 import { register, reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
-import { auditCapabilities } from "./capabilities.ts";
+import { formatCapabilities, mapToDenoPermissions } from "./capabilities.ts";
 import {
   detectConflicts,
   selectContractProviders,
+  snapshotExtensionContractMetadata,
   SOURCE_PRIORITY,
   validateExtension,
 } from "./validation.ts";
-import type { Extension, ExtensionContext, ExtensionLogger, ResolvedExtension } from "./types.ts";
+import type { ExtensionContractSnapshot } from "./validation.ts";
+import type {
+  Capability,
+  Extension,
+  ExtensionContext,
+  ExtensionLogger,
+  ExtensionSource,
+  ResolvedExtension,
+} from "./types.ts";
 import { describeThrownValue } from "./safe-value.ts";
 import { getDeferredExtensionState } from "./deferred-extension.ts";
+import {
+  containsUnicodeControlOrLineSeparator,
+  isWellFormedUnicode,
+  MAX_EXTENSION_NAME_CHARACTERS,
+  MAX_EXTENSION_VERSION_CHARACTERS,
+} from "./metadata-policy.ts";
 
 const DEFAULT_SETUP_TIMEOUT_MS = 30_000;
 // JavaScript runtimes clamp larger delays to an implementation-specific short
@@ -36,6 +51,7 @@ interface ContextAuthority {
 
 interface SetupRecord {
   readonly resolved: ResolvedExtension;
+  readonly activation: ActivationSnapshot;
   authority?: ContextAuthority;
   setupState?: "pending" | "settled";
   setupSettled?: Promise<void>;
@@ -44,11 +60,23 @@ interface SetupRecord {
 interface LoadPlan {
   readonly loadOrder: ResolvedExtension[];
   readonly contractWinner: Map<string, ResolvedExtension>;
+  readonly contractSnapshots: ReadonlyMap<ResolvedExtension, ExtensionContractSnapshot>;
+  readonly activationSnapshots: ReadonlyMap<ResolvedExtension, ActivationSnapshot>;
+}
+
+interface ActivationSnapshot {
+  readonly extensionName: string;
+  readonly version: string;
+  readonly source: ExtensionSource;
+  readonly capabilityAuditLines: readonly string[];
+  readonly setup?: Extension["setup"];
+  readonly teardown?: Extension["teardown"];
 }
 
 class ExtensionSetupTimeoutFailure extends Error {
   constructor(
     readonly resolved: ResolvedExtension,
+    readonly extensionName: string,
     readonly timeoutMs: number,
   ) {
     super(`Extension setup timed out after ${timeoutMs}ms`);
@@ -178,29 +206,38 @@ export class ExtensionLoader {
     for (const resolved of extensions) {
       this.assertValidExtension(resolved.extension as unknown);
     }
-    const normalized = this.normalizeExtensionNames(extensions);
-    const contractWinner = selectContractProviders(normalized);
-    return this.topologicalSortWithProviders(normalized, contractWinner);
+    const activationSnapshots = this.snapshotActivationMetadataFor(extensions);
+    const contractSnapshots = this.snapshotContractMetadata(extensions);
+    const normalized = this.normalizeExtensionNames(extensions, activationSnapshots);
+    const contractWinner = selectContractProviders(normalized, contractSnapshots);
+    return this.topologicalSortWithProviders(
+      normalized,
+      contractWinner,
+      contractSnapshots,
+      activationSnapshots,
+    );
   }
 
   private topologicalSortWithProviders(
     extensions: ResolvedExtension[],
     contractWinner: Map<string, ResolvedExtension>,
+    contractSnapshots: ReadonlyMap<ResolvedExtension, ExtensionContractSnapshot>,
+    activationSnapshots: ReadonlyMap<ResolvedExtension, ActivationSnapshot>,
   ): ResolvedExtension[] {
     const providerOf = new Map<string, string>();
     const extByName = new Map<string, ResolvedExtension>();
-    const consumesContracts = new Map<string, string[]>();
+    const consumesContracts = new Map<string, readonly string[]>();
 
     for (const [contract, provider] of contractWinner) {
-      providerOf.set(contract, provider.extension.name);
+      providerOf.set(contract, activationSnapshots.get(provider)!.extensionName);
     }
 
     for (const resolved of extensions) {
-      const ext = resolved.extension;
-      extByName.set(ext.name, resolved);
-      const contracts = requiredContractNames(ext);
+      const name = activationSnapshots.get(resolved)!.extensionName;
+      extByName.set(name, resolved);
+      const contracts = contractSnapshots.get(resolved)!.requires;
       if (contracts.length > 0) {
-        consumesContracts.set(ext.name, contracts);
+        consumesContracts.set(name, contracts);
       }
     }
 
@@ -208,7 +245,7 @@ export class ExtensionLoader {
     const inDegree = new Map<string, number>();
 
     for (const resolved of extensions) {
-      const name = resolved.extension.name;
+      const name = activationSnapshots.get(resolved)!.extensionName;
       graph.set(name, new Set());
       inDegree.set(name, 0);
     }
@@ -244,10 +281,12 @@ export class ExtensionLoader {
     }
 
     if (sorted.length !== extensions.length) {
-      const sortedNames = new Set(sorted.map((resolved) => resolved.extension.name));
+      const sortedNames = new Set(
+        sorted.map((resolved) => activationSnapshots.get(resolved)!.extensionName),
+      );
       const unsorted = extensions
-        .filter((resolved) => !sortedNames.has(resolved.extension.name))
-        .map((resolved) => resolved.extension.name);
+        .filter((resolved) => !sortedNames.has(activationSnapshots.get(resolved)!.extensionName))
+        .map((resolved) => activationSnapshots.get(resolved)!.extensionName);
       throw CIRCULAR_DEPENDENCY_ERROR.create({
         message: `Circular extension dependency detected among: ${unsorted.join(", ")}`,
       });
@@ -256,11 +295,15 @@ export class ExtensionLoader {
     return sorted;
   }
 
-  private normalizeExtensionNames(extensions: ResolvedExtension[]): ResolvedExtension[] {
+  private normalizeExtensionNames(
+    extensions: ResolvedExtension[],
+    activationSnapshots?: ReadonlyMap<ResolvedExtension, ActivationSnapshot>,
+  ): ResolvedExtension[] {
     const winnerByName = new Map<string, ResolvedExtension>();
 
     for (const resolved of extensions) {
-      const name = resolved.extension.name;
+      const name = activationSnapshots?.get(resolved)?.extensionName ??
+        resolved.extension.name;
       const current = winnerByName.get(name);
       if (!current) {
         winnerByName.set(name, resolved);
@@ -283,7 +326,8 @@ export class ExtensionLoader {
 
     const emitted = new Set<string>();
     return extensions.filter((resolved) => {
-      const name = resolved.extension.name;
+      const name = activationSnapshots?.get(resolved)?.extensionName ??
+        resolved.extension.name;
       if (emitted.has(name) || winnerByName.get(name) !== resolved) return false;
       emitted.add(name);
       return true;
@@ -314,7 +358,8 @@ export class ExtensionLoader {
   ): Promise<void> {
     const timeoutMs = this.normalizeSetupTimeout(options?.setupTimeoutMs);
     const materialized = await this.materializeExtensions(extensions);
-    const { loadOrder, contractWinner } = this.prepareLoadPlan(materialized);
+    const { activationSnapshots, contractSnapshots, loadOrder, contractWinner } = this
+      .prepareLoadPlan(materialized);
 
     // A timed-out setup can keep running after Promise.race settles. Do not
     // activate a replacement until that work settles and receives a final
@@ -329,28 +374,32 @@ export class ExtensionLoader {
       }
 
       for (const resolved of loadOrder) {
-        const ext = resolved.extension;
-        auditCapabilities(ext.name, ext.capabilities, this.logger);
+        const activation = activationSnapshots.get(resolved)!;
+        const contracts = contractSnapshots.get(resolved)!;
+        if (activation.capabilityAuditLines.length > 0) {
+          this.logger.debug(
+            `Extension "${activation.extensionName}" declares capabilities:`,
+            ...activation.capabilityAuditLines,
+          );
+        }
 
         // Track the extension before any registration or setup side effect so
         // the first extension receives the same rollback guarantees as later
         // extensions.
-        const record: SetupRecord = { resolved };
+        const record: SetupRecord = { resolved, activation };
         this.setupOrder.push(record);
 
-        if (ext.provides) {
-          for (const [contract, impl] of Object.entries(ext.provides)) {
-            if (contractWinner.get(contract) === resolved) {
-              this.registerOwned(contract, impl);
-            }
+        for (const { contract, implementation } of contracts.legacyProvides) {
+          if (contractWinner.get(contract) === resolved) {
+            this.registerOwned(contract, implementation);
           }
         }
 
-        if (ext.setup) {
+        if (activation.setup) {
           const authority: ContextAuthority = {
             active: true,
             controller: new AbortController(),
-            extensionName: ext.name,
+            extensionName: activation.extensionName,
           };
           record.authority = authority;
           const context = this.createExtensionContext(
@@ -362,9 +411,16 @@ export class ExtensionLoader {
           await this.runExtensionSetup(record, context, timeoutMs);
         }
 
-        this.assertWinningContractsWereProvided(resolved, contractWinner);
+        this.assertWinningContractsWereProvided(
+          resolved,
+          activation.extensionName,
+          contracts,
+          contractWinner,
+        );
 
-        this.logger.debug(`Extension "${ext.name}" v${ext.version} loaded from ${resolved.source}`);
+        this.logger.debug(
+          `Extension "${activation.extensionName}" v${activation.version} loaded from ${activation.source}`,
+        );
       }
     } catch (error) {
       const rollback = this.teardownAllInternal();
@@ -376,9 +432,9 @@ export class ExtensionLoader {
         this.trackTimedOutCleanup(rollback);
         throw EXTENSION_SETUP_TIMEOUT_ERROR.create({
           message:
-            `Extension "${error.resolved.extension.name}" setup() timed out after ${error.timeoutMs}ms`,
+            `Extension "${error.extensionName}" setup() timed out after ${error.timeoutMs}ms`,
           detail:
-            `Extension "${error.resolved.extension.name}" setup() did not complete within ${error.timeoutMs}ms`,
+            `Extension "${error.extensionName}" setup() did not complete within ${error.timeoutMs}ms`,
         });
       }
 
@@ -422,8 +478,20 @@ export class ExtensionLoader {
 
   private prepareLoadPlan(extensions: ResolvedExtension[]): LoadPlan {
     const flattened = this.flattenPresets(extensions);
-    const normalized = this.normalizeExtensionNames(flattened);
-    const conflicts = detectConflicts(normalized);
+    const activationSnapshots = this.snapshotActivationMetadataFor(flattened);
+    const contractSnapshots = this.snapshotContractMetadata(flattened);
+    const normalized = this.normalizeExtensionNames(flattened, activationSnapshots);
+    const extensionNames = new Map(
+      normalized.map((resolved) => [
+        resolved,
+        activationSnapshots.get(resolved)!.extensionName,
+      ]),
+    );
+    const conflicts = detectConflicts(
+      normalized,
+      contractSnapshots,
+      extensionNames,
+    );
     if (conflicts.length > 0) {
       const details = conflicts
         .map((conflict) =>
@@ -437,26 +505,120 @@ export class ExtensionLoader {
       });
     }
 
-    const contractWinner = selectContractProviders(normalized);
-    this.assertRequiredContractsAvailable(normalized, contractWinner);
-    return {
-      loadOrder: this.topologicalSortWithProviders(normalized, contractWinner),
+    const contractWinner = selectContractProviders(normalized, contractSnapshots);
+    this.assertRequiredContractsAvailable(
+      normalized,
+      contractSnapshots,
+      activationSnapshots,
       contractWinner,
+    );
+    const loadOrder = this.topologicalSortWithProviders(
+      normalized,
+      contractWinner,
+      contractSnapshots,
+      activationSnapshots,
+    );
+    return { loadOrder, contractWinner, contractSnapshots, activationSnapshots };
+  }
+
+  private snapshotActivationMetadataFor(
+    extensions: ResolvedExtension[],
+  ): ReadonlyMap<ResolvedExtension, ActivationSnapshot> {
+    const snapshots = new Map<ResolvedExtension, ActivationSnapshot>();
+    for (const resolved of extensions) {
+      snapshots.set(resolved, this.snapshotActivationMetadata(resolved));
+    }
+    return snapshots;
+  }
+
+  private snapshotActivationMetadata(
+    resolved: ResolvedExtension,
+  ): ActivationSnapshot {
+    const extension = resolved.extension;
+    const read = (
+      field: "name" | "version" | "capabilities" | "setup" | "teardown",
+    ): unknown => {
+      let descriptor: PropertyDescriptor | undefined;
+      try {
+        descriptor = Object.getOwnPropertyDescriptor(extension, field);
+      } catch (cause) {
+        throw new TypeError(`extension.${field} could not be inspected`, { cause });
+      }
+      if (!descriptor) return undefined;
+      if (!descriptor.enumerable || !("value" in descriptor)) {
+        throw new TypeError(
+          `extension.${field} must be an enumerable own data property`,
+        );
+      }
+      return descriptor.value;
     };
+
+    const extensionName = read("name") as string;
+    const version = read("version") as string;
+    const capabilities = read("capabilities") as Capability[];
+    const setup = read("setup") as Extension["setup"];
+    const teardown = read("teardown") as Extension["teardown"];
+    function assertCanonical(
+      value: unknown,
+      field: "name" | "version",
+      maximumLength: number,
+    ): asserts value is string {
+      if (
+        typeof value !== "string" || value.trim().length === 0 ||
+        value.trim() !== value || value.length > maximumLength ||
+        !isWellFormedUnicode(value) ||
+        containsUnicodeControlOrLineSeparator(value)
+      ) {
+        throw new TypeError(`extension.${field} changed after validation`);
+      }
+    }
+    assertCanonical(extensionName, "name", MAX_EXTENSION_NAME_CHARACTERS);
+    assertCanonical(version, "version", MAX_EXTENSION_VERSION_CHARACTERS);
+    if (setup !== undefined && typeof setup !== "function") {
+      throw new TypeError("extension.setup changed after validation");
+    }
+    if (teardown !== undefined && typeof teardown !== "function") {
+      throw new TypeError("extension.teardown changed after validation");
+    }
+    mapToDenoPermissions(capabilities);
+    return Object.freeze({
+      extensionName,
+      version,
+      source: resolved.source,
+      capabilityAuditLines: Object.freeze(formatCapabilities(capabilities)),
+      ...(setup ? { setup } : {}),
+      ...(teardown ? { teardown } : {}),
+    });
+  }
+
+  private snapshotContractMetadata(
+    extensions: ResolvedExtension[],
+  ): ReadonlyMap<ResolvedExtension, ExtensionContractSnapshot> {
+    const snapshots = new Map<ResolvedExtension, ExtensionContractSnapshot>();
+    for (const resolved of extensions) {
+      snapshots.set(
+        resolved,
+        snapshotExtensionContractMetadata(resolved.extension),
+      );
+    }
+    return snapshots;
   }
 
   private assertRequiredContractsAvailable(
     extensions: ResolvedExtension[],
+    contractSnapshots: ReadonlyMap<ResolvedExtension, ExtensionContractSnapshot>,
+    activationSnapshots: ReadonlyMap<ResolvedExtension, ActivationSnapshot>,
     contractWinner: Map<string, ResolvedExtension>,
   ): void {
     const missing: Array<{ extension: string; contract: string }> = [];
-    for (const { extension } of extensions) {
-      for (const contract of requiredContractNames(extension)) {
+    for (const resolved of extensions) {
+      const extensionName = activationSnapshots.get(resolved)!.extensionName;
+      for (const contract of contractSnapshots.get(resolved)!.requires) {
         if (
           contractWinner.has(contract) ||
           Object.prototype.hasOwnProperty.call(this.primed, contract)
         ) continue;
-        missing.push({ extension: extension.name, contract });
+        missing.push({ extension: extensionName, contract });
       }
     }
     if (missing.length === 0) return;
@@ -472,18 +634,19 @@ export class ExtensionLoader {
 
   private assertWinningContractsWereProvided(
     resolved: ResolvedExtension,
+    extensionName: string,
+    contracts: ExtensionContractSnapshot,
     contractWinner: Map<string, ResolvedExtension>,
   ): void {
-    const missing = (resolved.extension.contracts?.provides ?? []).filter((contract) =>
+    const missing = contracts.declaredProvides.filter((contract) =>
       contractWinner.get(contract) === resolved && tryResolve(contract) === undefined
     );
     if (missing.length === 0) return;
 
     throw EXTENSION_VALIDATION_ERROR.create({
-      message:
-        `Extension "${resolved.extension.name}" completed setup without providing declared contract${
-          missing.length === 1 ? "" : "s"
-        }: ${missing.map((contract) => `"${contract}"`).join(", ")}`,
+      message: `Extension "${extensionName}" completed setup without providing declared contract${
+        missing.length === 1 ? "" : "s"
+      }: ${missing.map((contract) => `"${contract}"`).join(", ")}`,
     });
   }
 
@@ -549,7 +712,7 @@ export class ExtensionLoader {
     context: ExtensionContext,
     timeoutMs: number,
   ): Promise<void> {
-    const setup = record.resolved.extension.setup!;
+    const setup = record.activation.setup!;
     const setupPromise = Promise.resolve().then(() => setup(context));
     record.setupState = "pending";
     record.setupSettled = setupPromise.then(
@@ -567,6 +730,7 @@ export class ExtensionLoader {
 
     const failure = new ExtensionSetupTimeoutFailure(
       record.resolved,
+      record.activation.extensionName,
       timeoutMs,
     );
     let timerId: ReturnType<typeof setTimeout> | undefined;
@@ -661,14 +825,14 @@ export class ExtensionLoader {
     const pendingSetups: SetupRecord[] = [];
 
     const teardownRecord = async (record: SetupRecord): Promise<void> => {
-      const ext = record.resolved.extension;
-      if (!ext.teardown) return;
+      const { extensionName, teardown } = record.activation;
+      if (!teardown) return;
       try {
-        await ext.teardown();
+        await teardown();
       } catch (error) {
         failures.push(error);
         failedRecords.add(record);
-        this.logger.error(`Error tearing down "${ext.name}":`, error);
+        this.logger.error(`Error tearing down "${extensionName}":`, error);
       }
     };
 
@@ -731,25 +895,29 @@ export class ExtensionLoader {
     const issues = validateExtension(candidate);
     if (issues.length === 0) return;
 
-    let name = "<unknown>";
+    let name = "<invalid>";
     if (candidate !== null && typeof candidate === "object") {
       try {
-        const candidateName = (candidate as Record<string, unknown>).name;
-        if (typeof candidateName === "string" && candidateName.length > 0) {
+        const descriptor = Object.getOwnPropertyDescriptor(candidate, "name");
+        const candidateName = descriptor && "value" in descriptor ? descriptor.value : undefined;
+        if (
+          descriptor?.enumerable && typeof candidateName === "string" &&
+          candidateName.trim().length > 0 && candidateName.trim() === candidateName &&
+          candidateName.length <= MAX_EXTENSION_NAME_CHARACTERS &&
+          isWellFormedUnicode(candidateName) &&
+          !containsUnicodeControlOrLineSeparator(candidateName)
+        ) {
           name = candidateName;
         }
       } catch {
-        // Validation already records the accessor failure.
+        // Validation already records the inspection failure.
       }
     }
+    const renderedName = JSON.stringify(name);
     throw EXTENSION_VALIDATION_ERROR.create({
-      message: `Extension "${name}" is invalid:\n  ${issues.join("\n  ")}`,
+      message: `Extension ${renderedName} is invalid:\n  ${issues.join("\n  ")}`,
     });
   }
-}
-
-function requiredContractNames(ext: Extension): string[] {
-  return ext.contracts?.requires ?? [];
 }
 
 function combineLifecycleFailures(setupError: unknown, teardownError: unknown): AggregateError {
