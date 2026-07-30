@@ -141,6 +141,7 @@ Agent helper.
 | `model?` | `ModelString` | Optional model string in "provider/model" format. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L159) |
 | `system` | <code>string &#124; (() =&gt; string) &#124; (() =&gt; Promise&lt;string&gt;)</code> | System prompt: string, function, or async function | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L160) |
 | `tools?` | <code>true &#124; Record&lt;string, Tool &#124; boolean&gt;</code> | Tools available to the agent | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L161) |
+| `toolLoading?` | `ToolLoading` | Controls when authorized tool schemas become visible to the model. Defaults to `"deferred"`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L166) |
 | `delegates?` | `string[]` | Exact registered agent ids this agent may call through scoped `agent_<id>` tools. Each delegate keeps its own model, skills, and tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L166) |
 | `sandbox?` | `object` | Optional sandbox selection for runtime-owned sandbox tools such as `bash`. `id` attaches to an existing sandbox session and detaches on run cleanup. When omitted, sandbox tools lazily create a request/project-scoped session. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L172) |
 | `providerTools?` | `string[]` | Provider-native tools executed by the selected model provider, such as Anthropic `web_search` and `web_fetch`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L182) |
@@ -1499,6 +1500,7 @@ Clear all stored messages from memory.
 | `ResolveAgentServiceRegistrationInputOptions` | Options accepted by resolve agent service registration input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/registration.ts#L182) |
 | `ResolveConversationHostedTerminalStateInput` | Input payload for resolve conversation hosted terminal state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/conversation/hosted-terminal.ts#L29) |
 | `ResolvedAgentConfig` | Configuration used by resolved agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L248) |
+| `ToolLoading` | Controls when authorized tool schemas become visible to the model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L142) |
 | `ResolvedAgentServiceRegistrationInput` | Input payload for resolved agent service registration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/service/registration.ts#L24) |
 | `ResolvedHostedRuntimeRequestConfig` | Configuration used by resolved hosted runtime request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/runtime-request-config.ts#L42) |
 | `ResolvedModelTransport` | Public API contract for resolved model transport. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L267) |

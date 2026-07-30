@@ -65,7 +65,11 @@ Use this pattern to verify the tool contract before giving the tool to an agent.
 
 ## How agents use tools
 
-When you add a tool to an agent, the framework sends the input schema to the model. The model decides when to call the tool and provides the parameters:
+When you add a tool to an agent, the tool is authorized for that agent. By
+default, the framework sends only bootstrap schemas and `tool_search` to the
+model. A search result loads matching authorized schemas for the next model
+step. The search result contains names and descriptions, not input or output
+schemas.
 
 ```ts
 // agents/assistant.ts
@@ -74,9 +78,15 @@ import { agent } from "veryfront/agent";
 export default agent({
   system: "You are a weather assistant. Use the getWeather tool to answer weather questions.",
   tools: { getWeather: true },
+  toolLoading: "deferred",
   maxSteps: 3,
 });
 ```
+
+Set `toolLoading: "eager"` when every authorized schema must be visible on the
+first step. The framework never selects eager mode based on catalog size.
+Schema loading and tool authorization stay separate, and execution rechecks
+authorization.
 
 In most projects, you can omit `model` and use `openai/gpt-5.4-nano`. Set
 `model: "auto"` when you want runtime defaults to choose local or Veryfront

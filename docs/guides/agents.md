@@ -45,6 +45,7 @@ name: Support
 description: Helps users with support questions
 model: openai/gpt-5.4
 max-steps: 6
+tool-loading: deferred
 ---
 
 You are a support assistant. Answer clearly and ask for missing details before
@@ -130,6 +131,13 @@ models that reject generic sampling parameters or require mode-specific values.
 
 `maxSteps` limits how many tool-call iterations the agent can perform per
 request. See [Tools](./tools.md) for how to define `getWeather`.
+
+Tool schemas load progressively by default. In `deferred` mode, the model first
+sees `tool_search` plus configured bootstrap tools. A successful search makes
+matching authorized schemas visible on the next model step. Use
+`toolLoading: "eager"` in TypeScript or `tool-loading: eager` in Markdown when
+the model must receive every authorized schema immediately. Loading a schema
+never authorizes a tool.
 
 ## Enable provider tools
 
@@ -348,6 +356,7 @@ export default agent({
 | `system`              | `string \| () => string \| Promise<string>`                                                            | System prompt                                                                                         |
 | `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run                                       |
 | `tools`               | `Record<string, boolean \| Tool>`                                                                      | Tools the agent can use                                                                               |
+| `toolLoading`         | `"deferred" \| "eager"`                                                                               | When authorized tool schemas become model-visible (default: `"deferred"`)                            |
 | `delegates`           | `string[]`                                                                                             | Exact agent ids exposed as scoped `agent_<id>` tools                                                  |
 | `providerTools`       | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                                          |
 | `mcpServers`          | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                                                    |
