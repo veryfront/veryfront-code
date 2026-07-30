@@ -24,5 +24,8 @@ registered. There is no regex, no-op, or dynamic-import fallback.
 ## Configuration and capabilities
 
 The factory accepts no options. It consumes CSS and already-collected content
-as bounded in-memory strings, so it requests no filesystem, network, environment,
+as bounded in-memory strings. PurgeCSS loads `fast-glob`, which reads the CPU
+count to size its worker concurrency, so the extension requests only
+`system:read` with `apis: ["cpus"]`. In Deno, this maps to
+`--allow-sys=cpus`. The extension requests no filesystem, network, environment,
 subprocess, or native capability.

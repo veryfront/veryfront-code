@@ -155,12 +155,15 @@ Common capability types:
 | `net:listen`      | `host`, `ports[]`    | `--allow-net=host:port,...` |
 | `env:read`        | `keys: string[]`     | `--allow-env[=keys]`        |
 | `process:spawn`   | `commands: string[]` | `--allow-run[=commands]`    |
+| `system:read`     | `apis: string[]`     | `--allow-sys[=apis]`        |
 | `native:ffi`      | none                 | `--allow-ffi`               |
 | `sandbox:execute` | `tools: string[]`    | Audit only                  |
 
 Omitting a supported scope field explicitly requests the corresponding
-unscoped Deno permission. If you provide a scope field, it must be a non-empty
-array of trimmed strings. Scope values cannot contain commas or control
+unscoped Deno permission, except that `system:read` always requires a non-empty
+`apis` array and never emits bare `--allow-sys`. If you provide another scope
+field, it must be a non-empty array of trimmed strings. Scope values cannot
+contain commas or control
 characters, including Unicode C1 controls and line separators, because Deno
 uses commas to separate permissions and these characters make command and
 audit boundaries ambiguous. Scope strings must contain well-formed Unicode;
@@ -175,6 +178,11 @@ systems. For `net:listen`, `host` is valid only together with a non-empty
 `ports` array.
 Veryfront rejects unknown fields on recognized capability types so a typo such
 as `path` instead of `paths` cannot silently broaden access.
+System API scopes must use a `Deno.SysPermissionDescriptor.kind` supported by
+the pinned Deno 2.7.7 runtime: `loadavg`, `hostname`, `systemMemoryInfo`,
+`networkInterfaces`, `osRelease`, `osUptime`, `uid`, `gid`, `username`, `cpus`,
+`homedir`, `statfs`, or `getPriority`. The `system:read` capability rejects
+`setPriority` because that API changes process scheduling state.
 
 Network scopes accept ASCII DNS names (including a leading `*.` wildcard),
 canonical IPv4 addresses, and bracketed IPv6 addresses, with an optional port

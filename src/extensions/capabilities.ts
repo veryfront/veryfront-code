@@ -75,8 +75,41 @@ const NET_OUTBOUND_FIELDS = new Set(["type", "hosts"]);
 const NET_LISTEN_FIELDS = new Set(["type", "host", "ports"]);
 const ENV_READ_FIELDS = new Set(["type", "keys"]);
 const PROCESS_SPAWN_FIELDS = new Set(["type", "commands"]);
+const SYSTEM_READ_FIELDS = new Set(["type", "apis"]);
 const NATIVE_FFI_FIELDS = new Set(["type"]);
 const SANDBOX_EXECUTE_FIELDS = new Set(["type", "tools"]);
+
+/**
+ * Read-only system information kinds from Deno 2.7.7's broader
+ * `Deno.SysPermissionDescriptor.kind` contract. `setPriority` is deliberately
+ * excluded because it mutates process scheduling state.
+ */
+const DENO_2_7_7_READ_ONLY_SYS_PERMISSION_KINDS = Object.freeze(
+  [
+    "loadavg",
+    "hostname",
+    "systemMemoryInfo",
+    "networkInterfaces",
+    "osRelease",
+    "osUptime",
+    "uid",
+    "gid",
+    "username",
+    "cpus",
+    "homedir",
+    "statfs",
+    "getPriority",
+  ] as const,
+);
+
+const DENO_2_7_7_READ_ONLY_SYS_PERMISSION_KIND_SET: ReadonlySet<string> = new Set(
+  DENO_2_7_7_READ_ONLY_SYS_PERMISSION_KINDS,
+);
+
+/** @internal */
+export function isSupportedDenoSystemReadApi(value: string): boolean {
+  return DENO_2_7_7_READ_ONLY_SYS_PERMISSION_KIND_SET.has(value);
+}
 
 const DNS_LABEL_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
 const DECIMAL_PATTERN = /^\d+$/;
@@ -101,6 +134,8 @@ function knownCapabilityFields(type: string): ReadonlySet<string> | undefined {
       return ENV_READ_FIELDS;
     case "process:spawn":
       return PROCESS_SPAWN_FIELDS;
+    case "system:read":
+      return SYSTEM_READ_FIELDS;
     case "native:ffi":
       return NATIVE_FFI_FIELDS;
     case "sandbox:execute":
@@ -121,6 +156,8 @@ function stringScopeField(type: string): string | undefined {
       return "keys";
     case "process:spawn":
       return "commands";
+    case "system:read":
+      return "apis";
     case "sandbox:execute":
       return "tools";
     default:
@@ -659,11 +696,25 @@ function snapshotCapability(capability: Capability, index: number): CapabilitySn
   const scopeKey = stringScopeField(type);
   const rawScopes = scopeKey ? snapshotStringScopes(fields, index, scopeKey) : undefined;
   let scopes = rawScopes;
+  if (type === "system:read" && scopes === undefined) {
+    throw new TypeError(
+      `capabilities[${index}].apis must be a non-empty array`,
+    );
+  }
   if (type === "env:read" && scopes) {
     for (let scopeIndex = 0; scopeIndex < scopes.length; scopeIndex++) {
       if (scopes[scopeIndex]!.includes("=")) {
         throw new TypeError(
           `capabilities[${index}].keys[${scopeIndex}] must not contain =`,
+        );
+      }
+    }
+  }
+  if (type === "system:read" && scopes) {
+    for (let scopeIndex = 0; scopeIndex < scopes.length; scopeIndex++) {
+      if (!isSupportedDenoSystemReadApi(scopes[scopeIndex]!)) {
+        throw new TypeError(
+          `capabilities[${index}].apis[${scopeIndex}] must be a supported read-only Deno 2.7.7 system API name`,
         );
       }
     }
@@ -698,6 +749,8 @@ function snapshotCapability(capability: Capability, index: number): CapabilitySn
       return { type, permission: { flag: "--allow-env", scopes } };
     case "process:spawn":
       return { type, permission: { flag: "--allow-run", scopes } };
+    case "system:read":
+      return { type, permission: { flag: "--allow-sys", scopes } };
     case "native:ffi":
       return { type, permission: { flag: "--allow-ffi" } };
     case "sandbox:execute":

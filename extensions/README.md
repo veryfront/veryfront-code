@@ -292,6 +292,7 @@ check for drift and to enforce the sensitive capability policies below.
 | `ext-redis`                       | `net:outbound`, `env:read` for `REDIS_*`               | Provides explicitly selected distributed infrastructure |
 | `ext-db-sqlite`                   | `fs:read`, `fs:write`                                  | Opens native SQLite databases                           |
 | `ext-document-kreuzberg`          | `fs:read`                                              | Parses uploaded or user-provided documents              |
+| `ext-css-purgecss`                | Exactly `system:read` with `apis: ["cpus"]`            | Transitive `fast-glob` reads the host CPU count         |
 | `ext-observability-opentelemetry` | `net:outbound`, `env:read` for `OTEL_*`                | Exports telemetry and reads collector config            |
 | `ext-observability-sentry`        | `net:outbound`, declared `env:read` keys               | Sends scrubbed application errors to Sentry             |
 | `ext-eval-report-http`            | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*` | Exports eval reports to an external endpoint            |

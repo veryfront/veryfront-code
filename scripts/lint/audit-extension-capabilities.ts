@@ -15,6 +15,7 @@ import {
 } from "../../src/extensions/metadata-policy.ts";
 import {
   formatCapabilities as formatRuntimeCapabilityAudit,
+  isSupportedDenoSystemReadApi,
   mapToDenoPermissions,
 } from "../../src/extensions/capabilities.ts";
 import {
@@ -58,6 +59,8 @@ export interface SensitiveCapabilityPolicy {
   label: string;
   packageName: string;
   requiredCapabilities: Capability[];
+  /** Require the complete declared capability surface to match exactly. */
+  exactCapabilities?: boolean;
 }
 
 export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
@@ -101,6 +104,12 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
       label: "document extraction",
       packageName: "@veryfront/ext-document-kreuzberg",
       requiredCapabilities: [{ type: "fs:read" }],
+    },
+    {
+      label: "PurgeCSS CPU discovery",
+      packageName: "@veryfront/ext-css-purgecss",
+      requiredCapabilities: [{ type: "system:read", apis: ["cpus"] }],
+      exactCapabilities: true,
     },
     {
       label: "OpenTelemetry observability",
@@ -367,6 +376,7 @@ const STRING_SCOPE_FIELD_BY_TYPE = new Map<string, string>([
   ["net:outbound", "hosts"],
   ["process:spawn", "commands"],
   ["sandbox:execute", "tools"],
+  ["system:read", "apis"],
 ]);
 const ALLOWED_CAPABILITY_FIELDS_BY_TYPE = new Map<string, ReadonlySet<string>>([
   ["env:read", new Set(["type", "keys"])],
@@ -377,6 +387,7 @@ const ALLOWED_CAPABILITY_FIELDS_BY_TYPE = new Map<string, ReadonlySet<string>>([
   ["net:outbound", new Set(["type", "hosts"])],
   ["process:spawn", new Set(["type", "commands"])],
   ["sandbox:execute", new Set(["type", "tools"])],
+  ["system:read", new Set(["type", "apis"])],
 ]);
 
 function containsUnsafePermissionScopeSyntax(value: string): boolean {
@@ -458,6 +469,9 @@ function validateKnownCapabilitySchema(
     }
   }
   const scopeField = STRING_SCOPE_FIELD_BY_TYPE.get(capability.type);
+  if (capability.type === "system:read" && !Object.hasOwn(capability, "apis")) {
+    issues.push(`${field}.apis must be a non-empty array`);
+  }
   if (scopeField && Object.hasOwn(capability, scopeField)) {
     const scopes = capability[scopeField];
     if (!Array.isArray(scopes) || scopes.length === 0) {
@@ -491,6 +505,19 @@ function validateKnownCapabilitySchema(
       const key = capability.keys[index];
       if (isCanonicalPermissionScopeString(key) && key.includes("=")) {
         issues.push(`${field}.keys[${index}] must not contain "="`);
+      }
+    }
+  }
+  if (capability.type === "system:read" && Array.isArray(capability.apis)) {
+    for (let index = 0; index < capability.apis.length; index += 1) {
+      const api = capability.apis[index];
+      if (
+        isCanonicalPermissionScopeString(api) &&
+        !isSupportedDenoSystemReadApi(api)
+      ) {
+        issues.push(
+          `${field}.apis[${index}] must be a supported read-only Deno 2.7.7 system API name`,
+        );
       }
     }
   }
@@ -670,6 +697,7 @@ const CAPABILITY_SET_FIELD_BY_TYPE = new Map<string, string>([
   ["net:outbound", "hosts"],
   ["process:spawn", "commands"],
   ["sandbox:execute", "tools"],
+  ["system:read", "apis"],
 ]);
 
 function normalizeCapability(capability: Capability): Capability {
@@ -888,6 +916,24 @@ export function auditExtensionCapabilities(
 
     const policy = packageName ? policyByPackage.get(packageName) : undefined;
     if (!policy || manifestResult.issues.length > 0) continue;
+
+    if (policy.exactCapabilities) {
+      if (
+        !capabilitiesEqual(
+          manifestCapabilities,
+          policy.requiredCapabilities,
+        )
+      ) {
+        issues.push({
+          manifestPath: input.manifestPath,
+          message:
+            `${input.manifestPath} sensitive extension "${policy.label}" must declare exactly ${
+              formatCapabilities(policy.requiredCapabilities)
+            }; received ${formatCapabilities(manifestCapabilities)}`,
+        });
+      }
+      continue;
+    }
 
     for (const requiredCapability of policy.requiredCapabilities) {
       if (

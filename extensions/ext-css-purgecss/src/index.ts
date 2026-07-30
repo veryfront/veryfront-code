@@ -85,7 +85,7 @@ const extCSSPurgeCSS: ExtensionFactory = (config) => {
     name: "ext-css-purgecss",
     version: extensionPackage.version,
     contracts: { provides: [CSSPurgingEngineName] },
-    capabilities: [],
+    capabilities: [{ type: "system:read", apis: ["cpus"] }],
     setup(ctx) {
       ctx.provide(CSSPurgingEngineName, engine);
       ctx.logger.debug(`[ext-css-purgecss] ${CSSPurgingEngineName} registered`);

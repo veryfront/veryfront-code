@@ -166,6 +166,7 @@ describe("auditExtensionCapabilities", () => {
       { type: "net:listen", ports: [3000], host: "" },
       { type: "net:listen", host: "localhost" },
       { type: "process:spawn", commands: [42] },
+      { type: "system:read", apis: ["cpus=all"] },
       { type: "fs:read", paths: ["./safe,/"] },
       { type: "env:read", keys: ["SAFE,SECRET"] },
       { type: "net:outbound", hosts: ["example.com,*"] },
@@ -183,13 +184,16 @@ describe("auditExtensionCapabilities", () => {
         factoryCapabilities: malformed,
       }),
     ]);
-    assertEquals(malformedIssues.length, 28);
+    assertEquals(malformedIssues.length, 30);
     assertEquals(
       malformedIssues.every((issue) =>
         (issue.message.includes("must be") ||
           issue.message.includes("requires a non-empty ports array") ||
           issue.message.includes("must not contain commas") ||
           issue.message.includes('must not contain "="') ||
+          issue.message.includes(
+            "must be a supported read-only Deno 2.7.7 system API name",
+          ) ||
           issue.message.includes("must be an ASCII") ||
           issue.message.includes('must use "*" only')) &&
         !issue.message.includes("differs from factory")
@@ -202,6 +206,7 @@ describe("auditExtensionCapabilities", () => {
       { type: "env:read", keys: [] },
       { type: "net:outbound", hosts: [] },
       { type: "net:listen", ports: [] },
+      { type: "system:read", apis: [] },
     ];
     const emptyIssues = auditExtensionCapabilities([
       input({
@@ -210,7 +215,7 @@ describe("auditExtensionCapabilities", () => {
         factoryCapabilities: empty,
       }),
     ]);
-    assertEquals(emptyIssues.length, 8);
+    assertEquals(emptyIssues.length, 10);
     assertEquals(
       emptyIssues.every((issue) =>
         issue.message.includes("must be a non-empty array")
@@ -223,6 +228,7 @@ describe("auditExtensionCapabilities", () => {
       { type: "env:read", key: ["SAFE"] },
       { type: "net:outbound", host: ["example.com"] },
       { type: "process:spawn", command: ["safe"] },
+      { type: "system:read", api: ["cpus"], apis: ["cpus"] },
       { type: "net:listen", address: "localhost", ports: [8080] },
       { type: "native:ffi", paths: ["./lib.so"] },
       { type: "sandbox:execute", commands: ["bash"] },
@@ -234,7 +240,7 @@ describe("auditExtensionCapabilities", () => {
         factoryCapabilities: misspelled,
       }),
     ]);
-    assertEquals(misspelledIssues.length, 14);
+    assertEquals(misspelledIssues.length, 16);
     assertEquals(
       misspelledIssues.every((issue) =>
         issue.message.includes("contains unexpected field")
@@ -266,6 +272,38 @@ describe("auditExtensionCapabilities", () => {
       ),
       true,
     );
+  });
+
+  it("rejects unsupported and mutating Deno system API names", () => {
+    for (const api of ["foobar", "setPriority"]) {
+      const issues = auditExtensionCapabilities([
+        input({
+          manifestPath: "extensions/ext-custom/deno.json",
+          manifestCapabilities: [{ type: "system:read", apis: [api] }],
+          factoryCapabilities: [{ type: "system:read", apis: [api] }],
+        }),
+      ]);
+
+      assertEquals(issues.map((issue) => issue.message), [
+        "extensions/ext-custom/deno.json veryfront.capabilities[0].apis[0] must be a supported read-only Deno 2.7.7 system API name",
+        "extensions/ext-custom/deno.json factory capabilities[0].apis[0] must be a supported read-only Deno 2.7.7 system API name",
+      ]);
+    }
+  });
+
+  it("requires explicit system:read API scopes", () => {
+    const issues = auditExtensionCapabilities([
+      input({
+        manifestPath: "extensions/ext-custom/deno.json",
+        manifestCapabilities: [{ type: "system:read" }],
+        factoryCapabilities: [{ type: "system:read" }],
+      }),
+    ]);
+
+    assertEquals(issues.map((issue) => issue.message), [
+      "extensions/ext-custom/deno.json veryfront.capabilities[0].apis must be a non-empty array",
+      "extensions/ext-custom/deno.json factory capabilities[0].apis must be a non-empty array",
+    ]);
   });
 
   it("rejects capability inventories that exceed the Deno argv budget", () => {
@@ -587,6 +625,81 @@ describe("auditExtensionCapabilities", () => {
     assertEquals(issues.map((issue) => issue.message), [
       'extensions/ext-cache-redis/deno.json sensitive extension "Redis token cache" is missing capability {"keys":["REDIS_PASSWORD","REDIS_PREFIX","REDIS_URL"],"type":"env:read"}',
     ]);
+  });
+
+  it("preserves subset matching for non-fixed sensitive policies", () => {
+    const capabilities = [
+      { type: "net:outbound", hosts: ["*"] },
+      {
+        type: "env:read",
+        keys: ["REDIS_PASSWORD", "REDIS_PREFIX", "REDIS_URL"],
+      },
+      { type: "fs:read", paths: ["./certificates"] },
+    ];
+    assertEquals(
+      auditExtensionCapabilities([
+        input({
+          manifestPath: "extensions/ext-cache-redis/deno.json",
+          manifestCapabilities: capabilities,
+          factoryCapabilities: capabilities,
+        }),
+      ]),
+      [],
+    );
+  });
+
+  it("requires the scoped PurgeCSS CPU discovery capability", () => {
+    const manifestPath = "extensions/ext-css-purgecss/deno.json";
+    const exactCapabilities = [{ type: "system:read", apis: ["cpus"] }];
+    assertEquals(
+      auditExtensionCapabilities([
+        input({
+          manifestPath,
+          manifestCapabilities: exactCapabilities,
+          factoryCapabilities: exactCapabilities,
+        }),
+      ]),
+      [],
+    );
+    const issues = auditExtensionCapabilities([
+      input({
+        manifestPath,
+        manifestCapabilities: [],
+        factoryCapabilities: [],
+      }),
+    ]);
+
+    assertEquals(issues.map((issue) => issue.message), [
+      'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS CPU discovery" must declare exactly [{"apis":["cpus"],"type":"system:read"}]; received []',
+    ]);
+  });
+
+  it("rejects broader PurgeCSS capability surfaces", () => {
+    const manifestPath = "extensions/ext-css-purgecss/deno.json";
+    for (
+      const capabilities of [
+        [{ type: "system:read", apis: ["cpus", "hostname"] }],
+        [
+          { type: "system:read", apis: ["cpus"] },
+          { type: "net:outbound", hosts: ["*"] },
+        ],
+      ]
+    ) {
+      const issues = auditExtensionCapabilities([
+        input({
+          manifestPath,
+          manifestCapabilities: capabilities,
+          factoryCapabilities: capabilities,
+        }),
+      ]);
+      assertEquals(issues.length, 1);
+      assertEquals(
+        issues[0]?.message.startsWith(
+          'extensions/ext-css-purgecss/deno.json sensitive extension "PurgeCSS CPU discovery" must declare exactly [{"apis":["cpus"],"type":"system:read"}]; received ',
+        ),
+        true,
+      );
+    }
   });
 
   it("requires MLflow export capabilities and forbids the exporter-id env key", () => {

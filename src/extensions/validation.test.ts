@@ -235,6 +235,12 @@ describe("validateExtension", () => {
         [{ type: "env:read", keys: ["SAFE,SECRET"] }, "commas or control"],
         [{ type: "net:listen", host: "localhost" }, "host requires"],
         [{ type: "process:spawn", command: ["safe"] }, "unexpected field command"],
+        [{ type: "system:read" }, "apis must be a non-empty array"],
+        [{ type: "system:read", api: ["cpus"] }, "unexpected field api"],
+        [
+          { type: "system:read", apis: ["cpus=all"] },
+          "supported read-only Deno 2.7.7 system API name",
+        ],
       ] as const
     ) {
       const issues = validateExtension({

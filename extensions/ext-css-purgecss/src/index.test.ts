@@ -14,7 +14,14 @@ describe("ext-css-purgecss", () => {
     assertEquals(extensionPackage.veryfront.activation, "explicit");
     assertEquals(extension.version, extensionPackage.version);
     assertEquals(extension.contracts?.provides, [CSSPurgingEngineName]);
-    assertEquals(extension.capabilities, []);
+    assertEquals(extensionPackage.veryfront.capabilities, [
+      { type: "system:read", apis: ["cpus"] },
+    ]);
+    assertEquals(extension.capabilities, extensionPackage.veryfront.capabilities);
+    assertEquals(
+      extensionPackage.tasks.test,
+      "deno test --frozen --no-check --allow-sys=cpus src/",
+    );
     await extension.setup?.({
       config: {},
       logger: noopLogger,

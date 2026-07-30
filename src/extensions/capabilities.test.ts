@@ -91,6 +91,19 @@ describe("capabilities", () => {
       assertEquals(perms, ["--allow-run=esbuild"]);
     });
 
+    it("maps scoped system reads without granting unrestricted system access", () => {
+      const caps: Capability[] = [{ type: "system:read", apis: ["cpus"] }];
+      assertEquals(mapToDenoPermissions(caps), ["--allow-sys=cpus"]);
+    });
+
+    it("requires system:read scopes instead of emitting bare --allow-sys", () => {
+      assertThrows(
+        () => mapToDenoPermissions([{ type: "system:read" }]),
+        TypeError,
+        "capabilities[0].apis must be a non-empty array",
+      );
+    });
+
     it("should map net:listen ports to localhost:port by default", () => {
       const caps: Capability[] = [{ type: "net:listen", ports: [3000, 8080] }];
       const perms = mapToDenoPermissions(caps);
@@ -270,6 +283,7 @@ describe("capabilities", () => {
           [{ type: "net:outbound", hosts: [] }, "hosts"],
           [{ type: "env:read", keys: [] }, "keys"],
           [{ type: "process:spawn", commands: [] }, "commands"],
+          [{ type: "system:read", apis: [] }, "apis"],
           [{ type: "sandbox:execute", tools: [] }, "tools"],
         ] as const
       ) {
@@ -392,6 +406,7 @@ describe("capabilities", () => {
           { type: "env:read", key: ["SAFE"] },
           { type: "net:outbound", host: ["example.com"] },
           { type: "process:spawn", command: ["safe"] },
+          { type: "system:read", api: ["cpus"] },
           { type: "native:ffi", libraries: ["safe"] },
         ] as Capability[]
       ) {
@@ -401,6 +416,30 @@ describe("capabilities", () => {
           "contains unexpected field",
         );
       }
+    });
+
+    it("rejects unsupported Deno system API scopes", () => {
+      for (
+        const api of ["foobar", "cpus=all", "node:os.cpus", "1cpus", "cpus-"]
+      ) {
+        assertThrows(
+          () => mapToDenoPermissions([{ type: "system:read", apis: [api] }]),
+          TypeError,
+          "must be a supported read-only Deno 2.7.7 system API name",
+        );
+      }
+    });
+
+    it("rejects Deno's mutating setPriority kind from system:read", () => {
+      assertThrows(
+        () =>
+          mapToDenoPermissions([{
+            type: "system:read",
+            apis: ["setPriority"],
+          }]),
+        TypeError,
+        "must be a supported read-only Deno 2.7.7 system API name",
+      );
     });
 
     it("rejects inherited and accessor-backed scope state", () => {
