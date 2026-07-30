@@ -18,17 +18,55 @@ interface LiveReleaseGateArtifact {
     path: string;
     sha256: string;
   };
+  producer: {
+    revision: string;
+    tree: string;
+    clean: boolean;
+  };
+  frameworkPackage: {
+    version: string;
+    integrity: string;
+    source: string;
+    tarballSha256: string;
+    frameworkRevision: string;
+    frameworkTree: string;
+    frameworkSourceClean: boolean;
+  };
+  sourceRevision: string;
+  sourceTree: string;
+  catalogSourceRevision: string;
+  catalogSourceTree: string;
   deterministicGate: {
     status: "passed" | "failed";
     passRate: number;
     executedCaseCount: number;
   };
+  liveCanary: {
+    id: string;
+    prompt: string;
+    mode: "deferred";
+    completed: boolean;
+    expectedToolName: string;
+    observedToolCalls: Array<{
+      name: string;
+      status: string;
+      input: unknown;
+      result: unknown;
+    }>;
+    status: "passed" | "failed";
+  };
   comparisons: Array<{
     prompt: "hi" | "Hello";
     status: "passed" | "failed";
     effectiveInputReduction: number;
-    eager: EvalToolLoadingBenchmarkRecord;
-    deferred: EvalToolLoadingBenchmarkRecord;
+    eager: EvalToolLoadingBenchmarkRecord & {
+      sourceTree: string;
+      catalogSourceTree: string;
+    };
+    deferred: EvalToolLoadingBenchmarkRecord & {
+      sourceTree: string;
+      catalogSourceTree: string;
+    };
   }>;
 }
 
@@ -61,16 +99,20 @@ interface LiveProducerManifest {
     environmentValuesPersisted: boolean;
   };
   agentProducer: {
-    reportedBaseRevision: string;
+    repositoryRevision: string;
+    repositoryTree: string;
     workingTreeState: string;
     snapshotRoot: string;
     files: LiveProducerSnapshotFile[];
   };
   frameworkProducer: {
     repositoryRevision: string;
+    repositoryTree: string;
+    workingTreeState: string;
     packageVersion: string;
     installedPackageTarget: string;
-    builtPackageTreeSha256: string;
+    packageIntegrity: string;
+    tarballSha256: string;
     snapshotRoot: string;
     files: LiveProducerSnapshotFile[];
   };
@@ -198,8 +240,27 @@ describe("eval/tool-loading-benchmark", () => {
     assertEquals(artifact.sourceArtifact, {
       repository: "veryfront-agent",
       path: ".veryfront/evals/tool-loading/live/report.json",
-      sha256: "3d9db14c2da86ae7c2fa8aa72df4507926bcfd3d3472801fb17c0b9642da5a79",
+      sha256: "0e081ae8d9fd2fb9805e423cf70d3b20223e6a71dfe132ccb83cc07b6cc911ed",
     });
+    assertEquals(artifact.producer, {
+      revision: "760672883619d4b631fe6c087ac65976a0438a96",
+      tree: "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
+      clean: true,
+    });
+    assertEquals(artifact.frameworkPackage, {
+      version: "0.1.1177",
+      integrity:
+        "sha512-CcS6oiFbZ9CmHWUvR9k1WEUOl7AYi+oRjapVotnQ/xY9Y4vP21A8SqizMooQS1+Bk2mGj0RYD6ZtqiZ3oQc/uA==",
+      source: "local-npm-pack",
+      tarballSha256: "1cac6e2e513607e931401cfd2e785d43ea041e4af8d37ab42ab68170a24172a3",
+      frameworkRevision: "a2641bfa9a1df3b832efa6cfe3e7175e0b14e2d4",
+      frameworkTree: "f56735838f2f541c4f4aed1cd79acb7bd339c419",
+      frameworkSourceClean: true,
+    });
+    assertEquals(artifact.sourceRevision, artifact.producer.revision);
+    assertEquals(artifact.sourceTree, artifact.producer.tree);
+    assertEquals(artifact.catalogSourceRevision, artifact.producer.revision);
+    assertEquals(artifact.catalogSourceTree, artifact.producer.tree);
     const producerManifestUrl = new URL(
       "../../tests/fixtures/eval/tool-loading-live-producer-manifest.json",
       import.meta.url,
@@ -241,27 +302,33 @@ describe("eval/tool-loading-benchmark", () => {
       "RELEASE_VERSION",
     ]);
     assertEquals(producer.execution.environmentValuesPersisted, false);
-    assertEquals(
-      producer.agentProducer.reportedBaseRevision,
-      "732a93dc12d2acdd3d563d363e5fb74cbb1e8de5",
-    );
-    assertEquals(producer.agentProducer.workingTreeState, "dirty-with-untracked-evaluator");
+    assertEquals(producer.agentProducer.repositoryRevision, artifact.producer.revision);
+    assertEquals(producer.agentProducer.repositoryTree, artifact.producer.tree);
+    assertEquals(producer.agentProducer.workingTreeState, "clean");
     assertEquals(
       producer.frameworkProducer.repositoryRevision,
-      "ffe38c7562be32c01f815a93cce8a9675e5ce302",
+      artifact.frameworkPackage.frameworkRevision,
     );
+    assertEquals(
+      producer.frameworkProducer.repositoryTree,
+      artifact.frameworkPackage.frameworkTree,
+    );
+    assertEquals(producer.frameworkProducer.workingTreeState, "clean");
     assertEquals(producer.frameworkProducer.packageVersion, "0.1.1177");
     assertEquals(producer.frameworkProducer.installedPackageTarget, "veryfront-code/npm");
     assertEquals(
-      producer.frameworkProducer.builtPackageTreeSha256,
-      "ad6f567ca3a7577275585a69b25da238dacca9004e3f1649851c6ab06930ab72",
+      producer.frameworkProducer.packageIntegrity,
+      artifact.frameworkPackage.integrity,
+    );
+    assertEquals(
+      producer.frameworkProducer.tarballSha256,
+      artifact.frameworkPackage.tarballSha256,
     );
     assertEquals(producer.frameworkProducer.files[0], {
       sourcePath: "npm/package.json",
       artifactPath: "npm-package.json.snapshot",
-      sourceSha256: "a05aae93857bde1932bd0a152f479bd801e17371929c8d72e1573ca011f1971d",
-      artifactNormalization: "appended-final-newline",
-      sha256: "3f223b3e582422c246fc3cec9fce5f3d890856042e5933ec7325d9ff133a90cc",
+      sourceSha256: "31172176081c01a15107cb5aa4eae9632b29f0951b4f46c57055e9f4fb4bf559",
+      sha256: "31172176081c01a15107cb5aa4eae9632b29f0951b4f46c57055e9f4fb4bf559",
     });
     for (const snapshot of [producer.agentProducer, producer.frameworkProducer]) {
       for (const file of snapshot.files) {
@@ -271,6 +338,7 @@ describe("eval/tool-loading-benchmark", () => {
           ),
           file.sha256,
         );
+        assertEquals(file.sourceSha256, file.sha256);
         assertEquals(file.artifactPath.endsWith(".snapshot"), true);
       }
     }
@@ -279,11 +347,34 @@ describe("eval/tool-loading-benchmark", () => {
       passRate: 1,
       executedCaseCount: 12,
     });
+    assertEquals(artifact.liveCanary.status, "passed");
+    assertEquals(artifact.liveCanary.completed, true);
+    assertEquals(artifact.liveCanary.expectedToolName, "list_projects");
+    assertEquals(
+      artifact.liveCanary.observedToolCalls.map(({ name, status }) => ({ name, status })),
+      [
+        { name: "tool_search", status: "completed" },
+        { name: "list_projects", status: "completed" },
+      ],
+    );
+    assertEquals(
+      artifact.liveCanary.observedToolCalls.filter(({ name }) => name === "list_projects").length,
+      1,
+    );
     assertEquals(artifact.comparisons.map(({ prompt }) => prompt), ["hi", "Hello"]);
 
     for (const measured of artifact.comparisons) {
-      assertEquals(measured.eager.sourceRevision, producer.agentProducer.reportedBaseRevision);
-      assertEquals(measured.deferred.sourceRevision, producer.agentProducer.reportedBaseRevision);
+      assertEquals(measured.eager.sourceRevision, producer.agentProducer.repositoryRevision);
+      assertEquals(measured.deferred.sourceRevision, producer.agentProducer.repositoryRevision);
+      assertEquals(measured.eager.sourceTree, producer.agentProducer.repositoryTree);
+      assertEquals(measured.deferred.sourceTree, producer.agentProducer.repositoryTree);
+      assertEquals(measured.eager.catalogSourceRevision, producer.agentProducer.repositoryRevision);
+      assertEquals(
+        measured.deferred.catalogSourceRevision,
+        producer.agentProducer.repositoryRevision,
+      );
+      assertEquals(measured.eager.catalogSourceTree, producer.agentProducer.repositoryTree);
+      assertEquals(measured.deferred.catalogSourceTree, producer.agentProducer.repositoryTree);
       const comparison = compareToolLoadingBenchmark(measured.eager, measured.deferred);
 
       assertEquals(comparison.status, measured.status);

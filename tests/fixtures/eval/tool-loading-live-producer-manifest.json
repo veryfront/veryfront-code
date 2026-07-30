@@ -2,7 +2,7 @@
   "kind": "veryfront-agent-tool-loading-live-producer-manifest",
   "report": {
     "path": "veryfront-agent/.veryfront/evals/tool-loading/live/report.json",
-    "sha256": "3d9db14c2da86ae7c2fa8aa72df4507926bcfd3d3472801fb17c0b9642da5a79"
+    "sha256": "0e081ae8d9fd2fb9805e423cf70d3b20223e6a71dfe132ccb83cc07b6cc911ed"
   },
   "execution": {
     "workingDirectory": "veryfront-agent",
@@ -47,75 +47,88 @@
     "environmentValuesPersisted": false
   },
   "agentProducer": {
-    "reportedBaseRevision": "732a93dc12d2acdd3d563d363e5fb74cbb1e8de5",
-    "workingTreeState": "dirty-with-untracked-evaluator",
+    "repositoryRevision": "760672883619d4b631fe6c087ac65976a0438a96",
+    "repositoryTree": "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
+    "workingTreeState": "clean",
     "snapshotRoot": "tests/fixtures/eval/tool-loading-live-producer/agent",
     "files": [
       {
         "sourcePath": "agents/veryfront.md",
         "artifactPath": "agents/veryfront.md.snapshot",
+        "sourceSha256": "164fdaf7ce0ca6d9efc59ddaf694d74a246e839ef1da6cfc91dbbdd47da25e6f",
         "sha256": "164fdaf7ce0ca6d9efc59ddaf694d74a246e839ef1da6cfc91dbbdd47da25e6f"
       },
       {
         "sourcePath": "evals/tool-loading/benchmarkStudioMcpServer.ts",
         "artifactPath": "evals/tool-loading/benchmarkStudioMcpServer.ts.snapshot",
+        "sourceSha256": "4694887c8352c2374590f318e5ea8c0fa7b6ac020642aa5a3a6ba8fb47bacb29",
         "sha256": "4694887c8352c2374590f318e5ea8c0fa7b6ac020642aa5a3a6ba8fb47bacb29"
       },
       {
         "sourcePath": "evals/tool-loading/deterministicToolLoadingRuntime.ts",
         "artifactPath": "evals/tool-loading/deterministicToolLoadingRuntime.ts.snapshot",
-        "sha256": "9f019fac2a5429b3b2c1297f025c4174313d00a4a685594209d39eecf14d65c3"
+        "sourceSha256": "41def866511e507ea2c565a56a893a4f595e4727388067db9d5b4102946a1042",
+        "sha256": "41def866511e507ea2c565a56a893a4f595e4727388067db9d5b4102946a1042"
       },
       {
         "sourcePath": "evals/tool-loading/effectiveHostedBenchmarkBinding.ts",
         "artifactPath": "evals/tool-loading/effectiveHostedBenchmarkBinding.ts.snapshot",
-        "sha256": "f7d6f367ebceb562ca4b32f1731d7cd708dcf9daed0d767400f6c81c5c093eee"
+        "sourceSha256": "cdf6dff43907d3845ee194e4a178f7305f5c5438093abaccd24b53f269e5245c",
+        "sha256": "cdf6dff43907d3845ee194e4a178f7305f5c5438093abaccd24b53f269e5245c"
       },
       {
         "sourcePath": "evals/tool-loading/runToolLoadingBenchmark.ts",
         "artifactPath": "evals/tool-loading/runToolLoadingBenchmark.ts.snapshot",
-        "sha256": "6fb2952bdf3c21097ee510092238acab8137af3a78bf5e18ba995b06600753a1"
+        "sourceSha256": "2aac79137b15d8b80f994dbc9ff8319c87e66e16c18fde931117bbbcc95708a8",
+        "sha256": "2aac79137b15d8b80f994dbc9ff8319c87e66e16c18fde931117bbbcc95708a8"
       },
       {
         "sourcePath": "evals/tool-loading/taskSuccessCases.ts",
         "artifactPath": "evals/tool-loading/taskSuccessCases.ts.snapshot",
-        "sha256": "406dab3a9e11bab38933c09190864e2383668ee48aa1acbb6d5f03b8a54930c9"
+        "sourceSha256": "fb9c58935f815ebe46d36e5af966d33cc853c1ab29ebe4497abae0dc9c2fc4be",
+        "sha256": "fb9c58935f815ebe46d36e5af966d33cc853c1ab29ebe4497abae0dc9c2fc4be"
       },
       {
         "sourcePath": "evals/tool-loading/toolLoadingBenchmarkMatrix.ts",
         "artifactPath": "evals/tool-loading/toolLoadingBenchmarkMatrix.ts.snapshot",
+        "sourceSha256": "ecc5ea4e99a1e1ff30dee424339080a976e8fc28e3bf34223ac0fc719ab3c657",
         "sha256": "ecc5ea4e99a1e1ff30dee424339080a976e8fc28e3bf34223ac0fc719ab3c657"
       },
       {
         "sourcePath": "evals/veryfront-agent-tool-loading.eval.ts",
         "artifactPath": "evals/veryfront-agent-tool-loading.eval.ts.snapshot",
+        "sourceSha256": "8a67915c8b72dbcb1012e7f80853fcbffc5242eaea600bf10bf6ebdd10e4b5db",
         "sha256": "8a67915c8b72dbcb1012e7f80853fcbffc5242eaea600bf10bf6ebdd10e4b5db"
       },
       {
         "sourcePath": "package.json",
         "artifactPath": "package.json.snapshot",
-        "sha256": "d8f5efe475c168904547a24a02c9c315fba9c8878f6a18370b30a799840ad65f"
+        "sourceSha256": "3254798d134c5fbf6e1c92f86121f98838bdf3912be695f14fbbcd0da7a0268e",
+        "sha256": "3254798d134c5fbf6e1c92f86121f98838bdf3912be695f14fbbcd0da7a0268e"
       },
       {
         "sourcePath": "veryfront.config.ts",
         "artifactPath": "veryfront.config.ts.snapshot",
+        "sourceSha256": "472bc73d9f4789b343edb075ee6108d02188fa32735103a1ee0775154cf94d14",
         "sha256": "472bc73d9f4789b343edb075ee6108d02188fa32735103a1ee0775154cf94d14"
       }
     ]
   },
   "frameworkProducer": {
-    "repositoryRevision": "ffe38c7562be32c01f815a93cce8a9675e5ce302",
+    "repositoryRevision": "a2641bfa9a1df3b832efa6cfe3e7175e0b14e2d4",
+    "repositoryTree": "f56735838f2f541c4f4aed1cd79acb7bd339c419",
+    "workingTreeState": "clean",
     "packageVersion": "0.1.1177",
     "installedPackageTarget": "veryfront-code/npm",
-    "builtPackageTreeSha256": "ad6f567ca3a7577275585a69b25da238dacca9004e3f1649851c6ab06930ab72",
+    "packageIntegrity": "sha512-CcS6oiFbZ9CmHWUvR9k1WEUOl7AYi+oRjapVotnQ/xY9Y4vP21A8SqizMooQS1+Bk2mGj0RYD6ZtqiZ3oQc/uA==",
+    "tarballSha256": "1cac6e2e513607e931401cfd2e785d43ea041e4af8d37ab42ab68170a24172a3",
     "snapshotRoot": "tests/fixtures/eval/tool-loading-live-producer/framework",
     "files": [
       {
         "sourcePath": "npm/package.json",
         "artifactPath": "npm-package.json.snapshot",
-        "sourceSha256": "a05aae93857bde1932bd0a152f479bd801e17371929c8d72e1573ca011f1971d",
-        "artifactNormalization": "appended-final-newline",
-        "sha256": "3f223b3e582422c246fc3cec9fce5f3d890856042e5933ec7325d9ff133a90cc"
+        "sourceSha256": "31172176081c01a15107cb5aa4eae9632b29f0951b4f46c57055e9f4fb4bf559",
+        "sha256": "31172176081c01a15107cb5aa4eae9632b29f0951b4f46c57055e9f4fb4bf559"
       }
     ]
   }

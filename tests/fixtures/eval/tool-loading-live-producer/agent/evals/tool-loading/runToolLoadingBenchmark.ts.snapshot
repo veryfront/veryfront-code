@@ -1,9 +1,15 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import {
+  type AgentToolLoadingBenchmarkObservation,
+  runAgentToolLoadingBenchmark,
+  runWithAgentToolLoadingBenchmarkRequestContext,
+} from 'veryfront/_internal/agent-tool-loading-benchmark'
 import {
   agent,
   discoverProjectAgentRuntime,
@@ -16,6 +22,7 @@ import {
   runDeterministicToolLoadingRuntimeGate,
 } from './deterministicToolLoadingRuntime'
 import {
+  type AuthorizedToolDefinition,
   createEffectiveHostedBenchmarkBinding,
   type EffectiveHostedBenchmarkBinding,
 } from './effectiveHostedBenchmarkBinding'
@@ -27,16 +34,34 @@ import {
 
 type BenchmarkMode = ToolLoadingBenchmarkMode
 type BenchmarkPrompt = ToolLoadingBenchmarkPrompt
+type DirectBenchmarkEnvironment = Record<string, string | undefined>
 
-type ToolLoadingBenchmarkObservation = {
-  step: number
-  authorizedSearchableSchemaCount: number
-  visibleSchemaCount: number
-  deferredSchemaCount: number
-  providerRequestToolDefinitionCount: number
-  providerWireDeferredMetadataCount: number
-  loadingPath: 'eager' | 'framework-fallback' | 'provider-native'
+export type BenchmarkProducerIdentity = {
+  revision: string
+  tree: string
+  clean: true
 }
+
+type RegistryFrameworkPackageIdentity = {
+  version: string
+  integrity: string
+  source: 'package-lock'
+}
+
+type LocalPackFrameworkPackageIdentity = {
+  version: string
+  integrity: string
+  source: 'local-npm-pack'
+  tarballPath: string
+  tarballSha256: string
+  registryDependencyVersion: string
+  registryLockIntegrity: string
+  frameworkRevision: string
+  frameworkTree: string
+  frameworkSourceClean: true
+}
+
+export type BenchmarkFrameworkPackageIdentity = RegistryFrameworkPackageIdentity | LocalPackFrameworkPackageIdentity
 
 type BenchmarkRecord = {
   prompt: BenchmarkPrompt
@@ -44,8 +69,13 @@ type BenchmarkRecord = {
   model: string
   executionModel: string
   sourceRevision: string
+  sourceTree: string
   catalogFingerprint: string
   catalogSourceRevision: string
+  catalogSourceTree: string
+  configuredToolNames: string[]
+  effectiveAuthorizedToolNames: string[]
+  authorizedToolDefinitions: AuthorizedToolDefinition[]
   configuredToolNameCount: number
   effectiveAuthorizedToolNameCount: number
   authorizedSearchableSchemaCount?: number
@@ -54,7 +84,7 @@ type BenchmarkRecord = {
   providerRequestToolDefinitionCount?: number
   providerWireDeferredMetadataCount?: number
   requestShapeCaptureStatus: 'complete' | 'unavailable'
-  loadingPath?: ToolLoadingBenchmarkObservation['loadingPath']
+  loadingPath?: AgentToolLoadingBenchmarkObservation['loadingPath']
   inputTokens?: number
   cacheCreationInputTokens?: number
   cacheReadInputTokens?: number
@@ -90,6 +120,8 @@ type LiveCanaryRecord = {
   mode: 'deferred'
   completed: boolean
   expectedToolName: 'list_projects'
+  producer: BenchmarkProducerIdentity
+  frameworkPackage: BenchmarkFrameworkPackageIdentity
   observedToolCalls: Array<{
     name: string
     status: 'pending' | 'executing' | 'completed' | 'error'
@@ -111,29 +143,267 @@ const statusPath = '.veryfront/evals/tool-loading/status.json'
 const configuredTimeoutMs = Number(process.env.VERYFRONT_TOOL_LOADING_TIMEOUT_MS ?? '120000')
 const timeoutMs = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0 ? configuredTimeoutMs : 120_000
 
-async function sourceRevision(projectDir: string): Promise<string> {
-  const configured = process.env.GIT_COMMIT_SHA?.trim() || process.env.RELEASE_VERSION?.trim()
-  if (configured) return configured
-  try {
-    const result = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: projectDir })
-    return result.stdout.trim()
-  } catch {
-    return 'unknown'
+export async function resolveBenchmarkProducerIdentity(
+  projectDir: string,
+  runGit: (args: string[]) => Promise<string> = async (args) => {
+    const result = await execFileAsync('git', args, { cwd: projectDir })
+    return result.stdout
   }
+): Promise<BenchmarkProducerIdentity> {
+  const revision = (await runGit(['rev-parse', 'HEAD'])).trim()
+  const tree = (await runGit(['rev-parse', 'HEAD^{tree}'])).trim()
+  const configuredRevision = process.env.GIT_COMMIT_SHA?.trim()
+  if (configuredRevision && configuredRevision !== revision) {
+    throw new Error(`GIT_COMMIT_SHA ${configuredRevision} does not match benchmark producer HEAD ${revision}`)
+  }
+  const dirty = await runGit(['status', '--porcelain=v1', '--untracked-files=all'])
+  if (dirty.trim()) {
+    const paths = dirty
+      .trimEnd()
+      .split('\n')
+      .slice(0, 20)
+      .map((entry) => entry.slice(3))
+      .join(', ')
+    throw new Error(
+      `Tool-loading live benchmark requires a clean committed producer; commit or remove these changes first: ${paths}`
+    )
+  }
+  return { revision, tree, clean: true }
+}
+
+function jsonRecord(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be a JSON object`)
+  }
+  return Object.fromEntries(Object.entries(value))
+}
+
+function stringField(record: Record<string, unknown>, name: string, label: string): string {
+  const value = record[name]
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${label}.${name} must be a non-empty string`)
+  }
+  return value
+}
+
+async function directoryContentFingerprint(root: string): Promise<string> {
+  const hash = createHash('sha256')
+  const visit = async (directory: string): Promise<void> => {
+    const entries = (await readdir(directory, { withFileTypes: true })).sort((left, right) =>
+      left.name.localeCompare(right.name)
+    )
+    for (const entry of entries) {
+      const path = resolve(directory, entry.name)
+      const relativePath = relative(root, path).replaceAll('\\', '/')
+      if (relativePath === 'node_modules' || relativePath.startsWith('node_modules/')) continue
+      if (entry.isDirectory()) {
+        hash.update(`directory\0${relativePath}\0`)
+        await visit(path)
+      } else if (entry.isSymbolicLink()) {
+        hash.update(`symlink\0${relativePath}\0${await readlink(path)}\0`)
+      } else if (entry.isFile()) {
+        hash.update(`file\0${relativePath}\0`)
+        hash.update(await readFile(path))
+        hash.update('\0')
+      } else {
+        throw new Error(`Unsupported package entry while fingerprinting ${relativePath}`)
+      }
+    }
+  }
+  await visit(root)
+  return hash.digest('hex')
+}
+
+async function tarballPackageContentFingerprint(tarballPath: string): Promise<string> {
+  const extractDirectory = await mkdtemp(resolve(tmpdir(), 'veryfront-framework-pack-'))
+  try {
+    await execFileAsync('tar', ['-xzf', tarballPath, '-C', extractDirectory])
+    return await directoryContentFingerprint(resolve(extractDirectory, 'package'))
+  } finally {
+    await rm(extractDirectory, { recursive: true, force: true })
+  }
+}
+
+export async function installedPackageMatchesTarball(
+  tarballPath: string,
+  installedPackagePath: string
+): Promise<boolean> {
+  return (
+    (await tarballPackageContentFingerprint(tarballPath)) === (await directoryContentFingerprint(installedPackagePath))
+  )
+}
+
+async function frameworkSourceMatchesTarball(frameworkSourceDir: string, tarballPath: string): Promise<boolean> {
+  const packDirectory = await mkdtemp(resolve(tmpdir(), 'veryfront-framework-source-pack-'))
+  try {
+    const result = await execFileAsync('npm', ['pack', '--silent', '--pack-destination', packDirectory], {
+      cwd: resolve(frameworkSourceDir, 'npm'),
+    })
+    const packedFileName = result.stdout
+      .trim()
+      .split(/\r?\n/)
+      .findLast((line) => line.endsWith('.tgz'))
+    if (!packedFileName) throw new Error('npm pack did not report a framework tarball')
+    return (
+      (await tarballPackageContentFingerprint(resolve(packDirectory, packedFileName))) ===
+      (await tarballPackageContentFingerprint(tarballPath))
+    )
+  } finally {
+    await rm(packDirectory, { recursive: true, force: true })
+  }
+}
+
+export async function resolveBenchmarkFrameworkPackageIdentity(
+  projectDir: string,
+  dependencies: {
+    environment?: Record<string, string | undefined>
+    readText?: (path: string) => Promise<string>
+    readBytes?: (path: string) => Promise<Uint8Array>
+    isSymbolicLink?: (path: string) => Promise<boolean>
+    runGit?: (sourceDir: string, args: string[]) => Promise<string>
+    verifyInstalledPackageMatchesTarball?: (tarballPath: string, installedPackagePath: string) => Promise<boolean>
+    verifyFrameworkSourceMatchesTarball?: (frameworkSourceDir: string, tarballPath: string) => Promise<boolean>
+  } = {}
+): Promise<BenchmarkFrameworkPackageIdentity> {
+  const environment = dependencies.environment ?? process.env
+  const readText = dependencies.readText ?? ((path: string) => readFile(path, 'utf8'))
+  const readBytes = dependencies.readBytes ?? ((path: string) => readFile(path))
+  const frameworkPath = resolve(projectDir, 'node_modules/veryfront')
+  const isSymbolicLink = dependencies.isSymbolicLink ?? (async (path: string) => (await lstat(path)).isSymbolicLink())
+  if (await isSymbolicLink(frameworkPath)) {
+    throw new Error(
+      'Tool-loading live benchmark requires a non-symlinked installed veryfront package; replace the linked framework package before running'
+    )
+  }
+
+  const projectPackage = jsonRecord(JSON.parse(await readText(resolve(projectDir, 'package.json'))), 'package.json')
+  const projectDependencies = jsonRecord(projectPackage.dependencies, 'package.json.dependencies')
+  const expectedVersion = stringField(projectDependencies, 'veryfront', 'package.json.dependencies')
+  const packageLock = jsonRecord(
+    JSON.parse(await readText(resolve(projectDir, 'package-lock.json'))),
+    'package-lock.json'
+  )
+  const lockPackages = jsonRecord(packageLock.packages, 'package-lock.json.packages')
+  const lockRoot = jsonRecord(lockPackages[''], 'package-lock root entry')
+  const lockRootDependencies = jsonRecord(lockRoot.dependencies, 'package-lock root dependencies')
+  const lockedDependency = stringField(lockRootDependencies, 'veryfront', 'package-lock root dependencies')
+  const lockedPackage = jsonRecord(lockPackages['node_modules/veryfront'], 'package-lock veryfront entry')
+  const lockedVersion = stringField(lockedPackage, 'version', 'package-lock veryfront entry')
+  const integrity = stringField(lockedPackage, 'integrity', 'package-lock veryfront entry')
+  const installedPackage = jsonRecord(
+    JSON.parse(await readText(resolve(frameworkPath, 'package.json'))),
+    'installed veryfront package.json'
+  )
+  const installedVersion = stringField(installedPackage, 'version', 'installed veryfront package.json')
+
+  const configuredPackPath = environment.VERYFRONT_FRAMEWORK_PACK_PATH?.trim()
+  if (configuredPackPath) {
+    if (expectedVersion !== lockedDependency || expectedVersion !== lockedVersion) {
+      throw new Error(
+        `Registry dependency must remain clean for a local Veryfront npm pack: package.json=${expectedVersion}, package-lock dependency=${lockedDependency}, package-lock=${lockedVersion}`
+      )
+    }
+    const tarballPath = resolve(projectDir, configuredPackPath)
+    if (!tarballPath.endsWith('.tgz')) {
+      throw new Error('VERYFRONT_FRAMEWORK_PACK_PATH must identify an npm pack .tgz artifact')
+    }
+    const tarballBytes = await readBytes(tarballPath)
+    const tarballSha256 = createHash('sha256').update(tarballBytes).digest('hex')
+    const tarballIntegrity = `sha512-${createHash('sha512').update(tarballBytes).digest('base64')}`
+    const expectedTarballSha256 = environment.VERYFRONT_FRAMEWORK_PACK_SHA256?.trim().toLowerCase()
+    const expectedTarballIntegrity = environment.VERYFRONT_FRAMEWORK_PACK_INTEGRITY?.trim()
+    if (!expectedTarballSha256 || !/^[a-f0-9]{64}$/.test(expectedTarballSha256)) {
+      throw new Error('VERYFRONT_FRAMEWORK_PACK_SHA256 must be the expected 64-character local npm pack sha256')
+    }
+    if (tarballSha256 !== expectedTarballSha256) {
+      throw new Error(
+        `Local Veryfront npm pack sha256 mismatch: expected=${expectedTarballSha256}, actual=${tarballSha256}`
+      )
+    }
+    if (!expectedTarballIntegrity || tarballIntegrity !== expectedTarballIntegrity) {
+      throw new Error(
+        `Local Veryfront npm pack integrity mismatch: expected=${expectedTarballIntegrity ?? 'missing'}, actual=${tarballIntegrity}`
+      )
+    }
+    const verifyInstalledPackageMatchesTarball =
+      dependencies.verifyInstalledPackageMatchesTarball ?? installedPackageMatchesTarball
+    if (!(await verifyInstalledPackageMatchesTarball(tarballPath, frameworkPath))) {
+      throw new Error('Installed Veryfront package contents do not match the attested local npm pack artifact')
+    }
+    const sourceDirectory = environment.VERYFRONT_FRAMEWORK_SOURCE_DIR?.trim()
+    const expectedRevision = environment.VERYFRONT_FRAMEWORK_GIT_REVISION?.trim()
+    const expectedTree = environment.VERYFRONT_FRAMEWORK_GIT_TREE?.trim()
+    if (!sourceDirectory || !expectedRevision || !expectedTree) {
+      throw new Error(
+        'Local Veryfront npm pack requires VERYFRONT_FRAMEWORK_SOURCE_DIR, VERYFRONT_FRAMEWORK_GIT_REVISION, and VERYFRONT_FRAMEWORK_GIT_TREE'
+      )
+    }
+    const frameworkSourceDir = resolve(projectDir, sourceDirectory)
+    const runGit =
+      dependencies.runGit ??
+      (async (sourceDir: string, args: string[]) => {
+        const result = await execFileAsync('git', args, { cwd: sourceDir })
+        return result.stdout
+      })
+    const frameworkRevision = (await runGit(frameworkSourceDir, ['rev-parse', 'HEAD'])).trim()
+    const frameworkTree = (await runGit(frameworkSourceDir, ['rev-parse', 'HEAD^{tree}'])).trim()
+    const dirty = await runGit(frameworkSourceDir, ['status', '--porcelain=v1', '--untracked-files=all'])
+    if (dirty.trim()) {
+      throw new Error('Local Veryfront npm pack requires a clean committed framework source worktree')
+    }
+    if (frameworkRevision !== expectedRevision || frameworkTree !== expectedTree) {
+      throw new Error(
+        `Local Veryfront framework Git identity mismatch: expected=${expectedRevision}/${expectedTree}, actual=${frameworkRevision}/${frameworkTree}`
+      )
+    }
+    const verifyFrameworkSourceMatchesTarball =
+      dependencies.verifyFrameworkSourceMatchesTarball ?? frameworkSourceMatchesTarball
+    if (!(await verifyFrameworkSourceMatchesTarball(frameworkSourceDir, tarballPath))) {
+      throw new Error('Attested Veryfront npm pack contents do not match the exact framework source build')
+    }
+    return {
+      version: installedVersion,
+      integrity: tarballIntegrity,
+      source: 'local-npm-pack',
+      tarballPath,
+      tarballSha256,
+      registryDependencyVersion: expectedVersion,
+      registryLockIntegrity: integrity,
+      frameworkRevision,
+      frameworkTree,
+      frameworkSourceClean: true,
+    }
+  }
+
+  if (
+    expectedVersion !== lockedDependency ||
+    expectedVersion !== lockedVersion ||
+    expectedVersion !== installedVersion
+  ) {
+    throw new Error(
+      `Veryfront framework version mismatch: package.json=${expectedVersion}, package-lock dependency=${lockedDependency}, package-lock=${lockedVersion}, installed=${installedVersion}`
+    )
+  }
+  return { version: expectedVersion, integrity, source: 'package-lock' }
 }
 
 type BenchmarkMainDependencies<TSnapshot> = {
   projectDir: string
-  sourceRevision: () => Promise<string>
+  producerIdentity: () => Promise<BenchmarkProducerIdentity>
+  frameworkPackageIdentity: () => Promise<BenchmarkFrameworkPackageIdentity>
   loadExamples: () => Promise<Array<{ id: string; input: unknown }>>
   discover: () => Promise<TSnapshot>
   execute: (
     snapshot: TSnapshot,
     prompt: BenchmarkPrompt,
     mode: BenchmarkMode,
-    revision: string
+    producer: BenchmarkProducerIdentity
   ) => Promise<BenchmarkRecord>
-  executeCanary: (snapshot: TSnapshot, revision: string) => Promise<LiveCanaryRecord>
+  executeCanary: (
+    snapshot: TSnapshot,
+    producer: BenchmarkProducerIdentity,
+    frameworkPackage: BenchmarkFrameworkPackageIdentity
+  ) => Promise<LiveCanaryRecord>
   runDeterministicGate?: () => Promise<DeterministicRuntimeGateResult>
   cleanupSnapshot?: (snapshot: TSnapshot) => Promise<void>
   mkdir: (path: string, options: { recursive: true }) => Promise<unknown>
@@ -162,8 +432,91 @@ export function benchmarkErrorFields(error: unknown): Pick<BenchmarkRecord, 'err
   }
 }
 
+function canonicalJsonValue(value: unknown, label: string, ancestors = new WeakSet<object>()): unknown {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+  if (Array.isArray(value)) {
+    if (ancestors.has(value)) throw new Error(`${label} contains a cycle`)
+    ancestors.add(value)
+    try {
+      return Array.from(value, (entry, index) => {
+        const entryType = typeof entry
+        return entry === undefined || entryType === 'function' || entryType === 'symbol'
+          ? null
+          : canonicalJsonValue(entry, `${label}[${index}]`, ancestors)
+      })
+    } finally {
+      ancestors.delete(value)
+    }
+  }
+  if (typeof value === 'object') {
+    if (ancestors.has(value)) throw new Error(`${label} contains a cycle`)
+    ancestors.add(value)
+    try {
+      return Object.fromEntries(
+        Object.entries(value)
+          .filter(([, entry]) => {
+            const entryType = typeof entry
+            return entry !== undefined && entryType !== 'function' && entryType !== 'symbol'
+          })
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, entry]) => [key, canonicalJsonValue(entry, `${label}.${key}`, ancestors)])
+      )
+    } finally {
+      ancestors.delete(value)
+    }
+  }
+  throw new Error(`${label} contains an unsupported ${typeof value} value`)
+}
+
+export function fingerprintAuthorizedToolDefinitions(definitions: AuthorizedToolDefinition[]): string {
+  const canonicalDefinitions = [...definitions]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((definition, index) => canonicalJsonValue(definition, `authorizedToolDefinitions[${index}]`))
+  return `sha256:${createHash('sha256').update(JSON.stringify(canonicalDefinitions)).digest('hex')}`
+}
+
+export function sanitizeLiveCanaryToolResult(toolName: string, result: unknown): unknown {
+  if (toolName !== 'list_projects') return canonicalJsonValue(result, `${toolName}.result`)
+
+  const record =
+    typeof result === 'object' && result !== null && !Array.isArray(result)
+      ? (result as Record<string, unknown>)
+      : undefined
+  const structuredContent =
+    typeof record?.structuredContent === 'object' &&
+    record.structuredContent !== null &&
+    !Array.isArray(record.structuredContent)
+      ? (record.structuredContent as Record<string, unknown>)
+      : undefined
+  const projects = [record?.projects, record?.data, structuredContent?.projects, structuredContent?.data].find(
+    Array.isArray
+  )
+  const pageInfoValue =
+    record?.pageInfo ?? record?.page_info ?? structuredContent?.pageInfo ?? structuredContent?.page_info
+  const pageInfo =
+    typeof pageInfoValue === 'object' && pageInfoValue !== null && !Array.isArray(pageInfoValue)
+      ? (pageInfoValue as Record<string, unknown>)
+      : undefined
+  const hasNextPage =
+    typeof pageInfo?.hasNextPage === 'boolean'
+      ? pageInfo.hasNextPage
+      : Object.hasOwn(pageInfo ?? {}, 'next')
+        ? pageInfo?.next !== null
+        : undefined
+
+  return {
+    kind: 'list_projects_summary',
+    ...(projects ? { projectCount: projects.length } : {}),
+    hasPageInfo: pageInfo !== undefined,
+    ...(hasNextPage !== undefined ? { hasNextPage } : {}),
+  }
+}
+
 function requestShapeFields(
-  observation: ToolLoadingBenchmarkObservation | undefined
+  observation: AgentToolLoadingBenchmarkObservation | undefined
 ): Pick<
   BenchmarkRecord,
   | 'authorizedSearchableSchemaCount'
@@ -193,13 +546,16 @@ async function runRecord(
   },
   prompt: BenchmarkPrompt,
   mode: BenchmarkMode,
-  revision: string
+  producer: BenchmarkProducerIdentity
 ): Promise<BenchmarkRecord> {
   const startedAt = performance.now()
-  const catalogFingerprint = `sha256:${createHash('sha256')
-    .update(snapshot.binding.effectiveToolNames.join('\n'))
-    .digest('hex')}`
-  let latestObservation: ToolLoadingBenchmarkObservation | undefined
+  const configuredToolNames = [...snapshot.binding.configuredToolNames].sort()
+  const effectiveAuthorizedToolNames = [...snapshot.binding.effectiveToolNames].sort()
+  const authorizedToolDefinitions = [...snapshot.binding.authorizedToolDefinitions].sort((left, right) =>
+    left.name.localeCompare(right.name)
+  )
+  const catalogFingerprint = fingerprintAuthorizedToolDefinitions(authorizedToolDefinitions)
+  let latestObservation: AgentToolLoadingBenchmarkObservation | undefined
   try {
     const canonicalAgent = snapshot.runtime.agents.get('veryfront')
     if (!canonicalAgent) throw new Error('Canonical agent was not discovered')
@@ -210,16 +566,12 @@ async function runRecord(
       tools: snapshot.binding.tools,
       mcpServers: snapshot.binding.mcpServers,
     })
-    const evalOptions = { internalToolLoadingOverride: mode }
     const abortController = new AbortController()
     const generateInput = {
       input: prompt,
       model: executionModel,
-      __vfToolLoadingOverride: evalOptions.internalToolLoadingOverride,
-      __vfToolLoadingBenchmarkObserver: (observation: ToolLoadingBenchmarkObservation) => {
-        latestObservation = observation
-      },
       abortSignal: abortController.signal,
+      context: snapshot.binding.executionContext,
     }
     let providerTimeoutHandle: ReturnType<typeof setTimeout> | undefined
     const providerTimeout = new Promise<never>((_resolve, reject) => {
@@ -230,7 +582,14 @@ async function runRecord(
         reject(error)
       }, timeoutMs)
     })
-    const providerCall = runWithProjectAgentRuntime(snapshot.runtime, () => benchmarkAgent.generate(generateInput))
+    const providerCall = runWithProjectAgentRuntime(snapshot.runtime, () =>
+      runAgentToolLoadingBenchmark(benchmarkAgent, generateInput, {
+        toolLoading: mode,
+        observer: (observation) => {
+          latestObservation = observation
+        },
+      })
+    )
     const response = await Promise.race([providerCall, providerTimeout]).finally(() => {
       if (providerTimeoutHandle) clearTimeout(providerTimeoutHandle)
     })
@@ -247,11 +606,16 @@ async function runRecord(
       mode,
       model,
       executionModel,
-      sourceRevision: revision,
+      sourceRevision: producer.revision,
+      sourceTree: producer.tree,
       catalogFingerprint,
-      catalogSourceRevision: revision,
-      configuredToolNameCount: snapshot.binding.configuredToolNames.length,
-      effectiveAuthorizedToolNameCount: snapshot.binding.effectiveToolNames.length,
+      catalogSourceRevision: producer.revision,
+      catalogSourceTree: producer.tree,
+      configuredToolNames,
+      effectiveAuthorizedToolNames,
+      authorizedToolDefinitions,
+      configuredToolNameCount: configuredToolNames.length,
+      effectiveAuthorizedToolNameCount: effectiveAuthorizedToolNames.length,
       ...requestShapeFields(latestObservation),
       ...(inputTokens !== undefined ? { inputTokens } : {}),
       ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
@@ -275,11 +639,16 @@ async function runRecord(
       mode,
       model,
       executionModel,
-      sourceRevision: revision,
+      sourceRevision: producer.revision,
+      sourceTree: producer.tree,
       catalogFingerprint,
-      catalogSourceRevision: revision,
-      configuredToolNameCount: snapshot.binding.configuredToolNames.length,
-      effectiveAuthorizedToolNameCount: snapshot.binding.effectiveToolNames.length,
+      catalogSourceRevision: producer.revision,
+      catalogSourceTree: producer.tree,
+      configuredToolNames,
+      effectiveAuthorizedToolNames,
+      authorizedToolDefinitions,
+      configuredToolNameCount: configuredToolNames.length,
+      effectiveAuthorizedToolNameCount: effectiveAuthorizedToolNames.length,
       ...requestShapeFields(latestObservation),
       usageCaptureStatus: 'missing',
       steps: 0,
@@ -291,10 +660,14 @@ async function runRecord(
   }
 }
 
-async function runAuthorizedReadOnlyCanary(snapshot: {
-  runtime: ProjectAgentRuntimeDiscovery
-  binding: EffectiveHostedBenchmarkBinding
-}): Promise<LiveCanaryRecord> {
+async function runAuthorizedReadOnlyCanary(
+  snapshot: {
+    runtime: ProjectAgentRuntimeDiscovery
+    binding: EffectiveHostedBenchmarkBinding
+  },
+  producer: BenchmarkProducerIdentity,
+  frameworkPackage: BenchmarkFrameworkPackageIdentity
+): Promise<LiveCanaryRecord> {
   const prompt =
     'Use tool_search to load the authorized list_projects read-only tool, call list_projects exactly once, then summarize the result.'
   try {
@@ -320,12 +693,16 @@ async function runAuthorizedReadOnlyCanary(snapshot: {
       }, timeoutMs)
     })
     const providerCall = runWithProjectAgentRuntime(snapshot.runtime, () =>
-      canaryAgent.generate({
-        input: prompt,
-        model: executionModel,
-        __vfToolLoadingOverride: 'deferred',
-        abortSignal: abortController.signal,
-      })
+      runAgentToolLoadingBenchmark(
+        canaryAgent,
+        {
+          input: prompt,
+          model: executionModel,
+          abortSignal: abortController.signal,
+          context: snapshot.binding.executionContext,
+        },
+        { toolLoading: 'deferred' }
+      )
     )
     const response = await Promise.race([providerCall, providerTimeout]).finally(() => {
       if (providerTimeoutHandle) clearTimeout(providerTimeoutHandle)
@@ -334,7 +711,7 @@ async function runAuthorizedReadOnlyCanary(snapshot: {
       name: call.name,
       status: call.status,
       input: call.args,
-      result: call.result ?? call.error ?? null,
+      result: sanitizeLiveCanaryToolResult(call.name, call.result ?? call.error ?? null),
       ...(call.error ? { error: call.error } : {}),
     }))
     const successfulReadCalls = observedToolCalls.filter(
@@ -352,6 +729,8 @@ async function runAuthorizedReadOnlyCanary(snapshot: {
       mode: 'deferred',
       completed: response.status === 'completed',
       expectedToolName: 'list_projects',
+      producer,
+      frameworkPackage,
       observedToolCalls,
       status,
     }
@@ -362,6 +741,8 @@ async function runAuthorizedReadOnlyCanary(snapshot: {
       mode: 'deferred',
       completed: false,
       expectedToolName: 'list_projects',
+      producer,
+      frameworkPackage,
       observedToolCalls: [],
       status: 'failed',
       ...benchmarkErrorFields(error),
@@ -397,6 +778,13 @@ function compare(prompt: BenchmarkPrompt, eager: BenchmarkRecord, deferred: Benc
     `${eager.executionModel}, ${deferred.executionModel}`,
     'veryfront-cloud/* for eager and deferred'
   )
+  assert(
+    'producer-revision-controlled',
+    eager.sourceRevision === deferred.sourceRevision,
+    deferred.sourceRevision,
+    eager.sourceRevision
+  )
+  assert('producer-tree-controlled', eager.sourceTree === deferred.sourceTree, deferred.sourceTree, eager.sourceTree)
   const usageComplete = [eager, deferred].every(
     (record) =>
       record.usageCaptureStatus === 'complete' &&
@@ -474,6 +862,18 @@ function compare(prompt: BenchmarkPrompt, eager: BenchmarkRecord, deferred: Benc
       eager.catalogFingerprint
     )
   }
+  assert(
+    'exact-authorized-catalog-controlled',
+    JSON.stringify(deferred.effectiveAuthorizedToolNames) === JSON.stringify(eager.effectiveAuthorizedToolNames),
+    deferred.effectiveAuthorizedToolNames.length,
+    `${eager.effectiveAuthorizedToolNames.length} exact ordered names`
+  )
+  assert(
+    'exact-configured-catalog-controlled',
+    JSON.stringify(deferred.configuredToolNames) === JSON.stringify(eager.configuredToolNames),
+    deferred.configuredToolNames.length,
+    `${eager.configuredToolNames.length} exact ordered names`
+  )
 
   const status = assertions.some((item) => item.status === 'incomplete')
     ? 'incomplete'
@@ -494,13 +894,39 @@ function markdown(
   comparisons: BenchmarkComparison[],
   deterministicGate: DeterministicRuntimeGateResult,
   canary: LiveCanaryRecord | undefined,
-  status: string
+  status: string,
+  producer: BenchmarkProducerIdentity,
+  frameworkPackage: BenchmarkFrameworkPackageIdentity
 ): string {
   const lines = [
     '# Veryfront agent tool-loading benchmark',
     '',
     `Status: \`${status}\``,
     '',
+    `Producer commit: \`${producer.revision}\``,
+    '',
+    `Producer tree: \`${producer.tree}\``,
+    '',
+    'Producer worktree: `clean`',
+    '',
+    `Framework package: \`${frameworkPackage.version}\``,
+    '',
+    `Framework package integrity: \`${frameworkPackage.integrity}\``,
+    '',
+    ...(frameworkPackage.source === 'local-npm-pack'
+      ? [
+          `Framework source commit: \`${frameworkPackage.frameworkRevision}\``,
+          '',
+          `Framework source tree: \`${frameworkPackage.frameworkTree}\``,
+          '',
+          `Framework npm pack sha256: \`${frameworkPackage.tarballSha256}\``,
+          '',
+          `Committed registry dependency: \`${frameworkPackage.registryDependencyVersion}\``,
+          '',
+          `Committed registry lock integrity: \`${frameworkPackage.registryLockIntegrity}\``,
+          '',
+        ]
+      : []),
     `Underlying model: \`${model}\``,
     '',
     `Execution model: \`${executionModel}\``,
@@ -576,7 +1002,8 @@ function markdown(
 }
 
 async function runBenchmarkMain<TSnapshot>(dependencies: BenchmarkMainDependencies<TSnapshot>): Promise<number> {
-  const revision = await dependencies.sourceRevision()
+  const producer = await dependencies.producerIdentity()
+  const frameworkPackage = await dependencies.frameworkPackageIdentity()
   const deterministicGate = await (dependencies.runDeterministicGate ?? runDeterministicToolLoadingRuntimeGate)()
   const comparisons: BenchmarkComparison[] = []
   const evalExamples = await dependencies.loadExamples()
@@ -598,10 +1025,16 @@ async function runBenchmarkMain<TSnapshot>(dependencies: BenchmarkMainDependenci
           discoveredSnapshot = await dependencies.discover()
           return discoveredSnapshot
         },
-        execute: (snapshot, attempt) => dependencies.execute(snapshot, attempt.prompt, attempt.mode, revision),
+        execute: (snapshot, attempt) => dependencies.execute(snapshot, attempt.prompt, attempt.mode, producer),
       })
       if (discoveredSnapshot === undefined) throw new Error('Benchmark discovery did not produce a runtime snapshot')
-      liveCanary = await dependencies.executeCanary(discoveredSnapshot, revision)
+      liveCanary = await dependencies.executeCanary(discoveredSnapshot, producer, frameworkPackage)
+      if (
+        JSON.stringify(liveCanary.producer) !== JSON.stringify(producer) ||
+        JSON.stringify(liveCanary.frameworkPackage) !== JSON.stringify(frameworkPackage)
+      ) {
+        throw new Error('Live canary identity does not match the benchmark producer and installed framework')
+      }
     } finally {
       if (discoveredSnapshot !== undefined) {
         await dependencies.cleanupSnapshot?.(discoveredSnapshot)
@@ -628,6 +1061,8 @@ async function runBenchmarkMain<TSnapshot>(dependencies: BenchmarkMainDependenci
     status,
     model,
     executionModel,
+    producer,
+    frameworkPackage,
     liveCalls: deterministicGate.status === 'passed' ? 5 : 0,
     comparisonLiveCalls: deterministicGate.status === 'passed' ? 4 : 0,
     canaryLiveCalls: liveCanary ? 1 : 0,
@@ -644,7 +1079,7 @@ async function runBenchmarkMain<TSnapshot>(dependencies: BenchmarkMainDependenci
   await dependencies.writeFile(resolve(dependencies.projectDir, reportJsonPath), `${JSON.stringify(report, null, 2)}\n`)
   await dependencies.writeFile(
     resolve(dependencies.projectDir, reportMarkdownPath),
-    markdown(comparisons, deterministicGate, liveCanary, status)
+    markdown(comparisons, deterministicGate, liveCanary, status, producer, frameworkPackage)
   )
   await dependencies.writeFile(
     resolve(dependencies.projectDir, statusPath),
@@ -665,26 +1100,52 @@ async function runBenchmarkMain<TSnapshot>(dependencies: BenchmarkMainDependenci
   return status === 'passed' ? 0 : 1
 }
 
-export async function main<TSnapshot>(dependencies?: BenchmarkMainDependencies<TSnapshot>): Promise<number> {
-  if (dependencies) return runBenchmarkMain(dependencies)
-
+async function runDefaultBenchmark(environment: DirectBenchmarkEnvironment): Promise<number> {
   const projectDir = process.cwd()
   return runBenchmarkMain({
     projectDir,
-    sourceRevision: () => sourceRevision(projectDir),
+    producerIdentity: () => resolveBenchmarkProducerIdentity(projectDir),
+    frameworkPackageIdentity: () => resolveBenchmarkFrameworkPackageIdentity(projectDir),
     loadExamples: () => toolLoadingEval.dataset.load({ baseDir: projectDir }),
     discover: async () => {
       const runtime = await discoverProjectAgentRuntime({ projectDir })
-      const binding = await createEffectiveHostedBenchmarkBinding({ runtime })
+      const binding = await createEffectiveHostedBenchmarkBinding({ runtime, environment })
       return { runtime, binding }
     },
     execute: (snapshot, prompt, mode, revision) => runRecord(snapshot, prompt, mode, revision),
-    executeCanary: (snapshot) => runAuthorizedReadOnlyCanary(snapshot),
+    executeCanary: (snapshot, producer, frameworkPackage) =>
+      runAuthorizedReadOnlyCanary(snapshot, producer, frameworkPackage),
     cleanupSnapshot: (snapshot) => snapshot.binding.cleanup(),
     mkdir,
     writeFile,
     writeOutput: (output) => process.stdout.write(output),
   })
+}
+
+function requiredDirectBenchmarkValue(environment: DirectBenchmarkEnvironment, name: string): string {
+  const value = environment[name]?.trim()
+  if (value) return value
+  throw new Error(`${name} is required for the standalone tool-loading benchmark`)
+}
+
+export async function runDirectBenchmark(
+  environment: DirectBenchmarkEnvironment = process.env,
+  dependencies: {
+    runWithProjectContext?: typeof runWithAgentToolLoadingBenchmarkRequestContext
+    runBenchmark?: () => Promise<number>
+  } = {}
+): Promise<number> {
+  const projectId = requiredDirectBenchmarkValue(environment, 'AG_UI_EVAL_PROJECT_ID')
+  const projectSlug = requiredDirectBenchmarkValue(environment, 'VERYFRONT_PROJECT_SLUG')
+  const authToken = requiredDirectBenchmarkValue(environment, 'VERYFRONT_TOKEN')
+  const runWithProjectContext = dependencies.runWithProjectContext ?? runWithAgentToolLoadingBenchmarkRequestContext
+  const runBenchmark = dependencies.runBenchmark ?? (() => runDefaultBenchmark(environment))
+  return runWithProjectContext({ projectSlug, projectId, authToken }, runBenchmark)
+}
+
+export async function main<TSnapshot>(dependencies?: BenchmarkMainDependencies<TSnapshot>): Promise<number> {
+  if (dependencies) return runBenchmarkMain(dependencies)
+  return runDirectBenchmark()
 }
 
 const isDirectRun = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)

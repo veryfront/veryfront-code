@@ -93,6 +93,10 @@
       "import": "./esm/src/agent/identity-contracts.js",
       "types": "./esm/src/agent/identity-contracts.d.ts"
     },
+    "./_internal/agent-tool-loading-benchmark": {
+      "import": "./esm/src/agent/internal-tool-loading-benchmark.js",
+      "types": "./esm/src/agent/internal-tool-loading-benchmark.d.ts"
+    },
     "./eval": {
       "import": "./esm/src/eval/index.js",
       "types": "./esm/src/eval/index.d.ts"

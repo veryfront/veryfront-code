@@ -42,21 +42,39 @@ export const deterministicToolCatalog = [
   parameterDescription: string
 }>
 
-const emptySchema = { type: 'object', additionalProperties: false } as const
+const emptySchema: Record<string, unknown> = { type: 'object', additionalProperties: false }
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
 
+type DeterministicGenerateResult = {
+  content: unknown[]
+  finishReason: 'tool-calls' | 'stop'
+  usage: typeof usage
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value))
+    : undefined
+}
+
 function runtimeToolNames(options: unknown): string[] {
-  const rawTools = (options as { tools?: unknown }).tools
+  if (typeof options !== 'object' || options === null || !('tools' in options)) return []
+  const rawTools = options.tools
   if (Array.isArray(rawTools)) {
     return rawTools
-      .map((entry) => (entry as { name?: string; id?: string }).name ?? (entry as { id?: string }).id ?? '')
+      .map((entry) => {
+        if (typeof entry !== 'object' || entry === null) return ''
+        if ('name' in entry && typeof entry.name === 'string') return entry.name
+        if ('id' in entry && typeof entry.id === 'string') return entry.id
+        return ''
+      })
       .filter(Boolean)
       .sort()
   }
-  return Object.keys((rawTools as Record<string, unknown> | undefined) ?? {}).sort()
+  return typeof rawTools === 'object' && rawTools !== null ? Object.keys(rawTools).sort() : []
 }
 
-function toolCall(toolCallId: string, toolName: string, input: Record<string, unknown>) {
+function toolCall(toolCallId: string, toolName: string, input: Record<string, unknown>): DeterministicGenerateResult {
   return {
     content: [{ type: 'tool-call', toolCallId, toolName, input: JSON.stringify(input) }],
     finishReason: 'tool-calls',
@@ -64,7 +82,7 @@ function toolCall(toolCallId: string, toolName: string, input: Record<string, un
   }
 }
 
-function finalText(text: string) {
+function finalText(text: string): DeterministicGenerateResult {
   return {
     content: [{ type: 'text', text }],
     finishReason: 'stop',
@@ -108,7 +126,7 @@ function createTools(
       inputSchema,
       execute(input) {
         executions[id] = (executions[id] ?? 0) + 1
-        return execute(input as Record<string, unknown>)
+        return execute(recordValue(input) ?? {})
       },
     })
 
@@ -220,7 +238,7 @@ function validateGenerateCaseEvidence(
 ): string[] {
   const failures: string[] = []
   const call = (name: string) => observed.find((entry) => entry.name === name)
-  const result = (name: string) => call(name)?.result as Record<string, unknown> | undefined
+  const result = (name: string): Record<string, unknown> | undefined => recordValue(call(name)?.result)
 
   switch (caseId) {
     case 'hi':
@@ -298,17 +316,21 @@ function validateGenerateCaseEvidence(
   return failures
 }
 
-function scriptFor(caseId: string) {
+type DeterministicModelStep =
+  | { type: 'tool'; name: string; input: Record<string, unknown> }
+  | { type: 'text'; text: string }
+
+function scriptFor(caseId: string): DeterministicModelStep[] {
   switch (caseId) {
     case 'hi':
     case 'hello-correlation':
-      return [{ type: 'text', text: 'Hello.' }] as const
+      return [{ type: 'text', text: 'Hello.' }]
     case 'find-current-release':
       return [
         { type: 'tool', name: 'tool_search', input: { query: 'current release' } },
         { type: 'tool', name: 'get_release', input: {} },
         { type: 'text', text: 'The current release is rel_current.' },
-      ] as const
+      ]
     case 'create-release-stub':
       return [
         { type: 'tool', name: 'tool_search', input: { query: 'release creation branch' } },
@@ -318,40 +340,41 @@ function scriptFor(caseId: string) {
           input: { releaseId: 'rel_fixture', branch: 'main' },
         },
         { type: 'text', text: 'Created rel_fixture.' },
-      ] as const
+      ]
     case 'missing-capability':
       return [
         { type: 'tool', name: 'tool_search', input: { query: 'capability that does not exist' } },
         { type: 'text', text: 'That capability is unavailable.' },
-      ] as const
+      ]
     case 'guessed-unauthorized-tool':
       return [
         { type: 'tool', name: 'delete_project', input: { projectId: 'project_fixture' } },
         { type: 'text', text: 'The unauthorized operation was not executed.' },
-      ] as const
+      ]
     case 'find-tool-for-new-agent':
     case 'find-tool-without-authoring-permission':
       return [
         { type: 'tool', name: 'tool_search', input: { query: 'list agents' } },
         { type: 'text', text: 'Search complete.' },
-      ] as const
+      ]
     case 'skill-constrained-request':
       return [
         { type: 'tool', name: 'load_skill', input: { skillId: 'release' } },
         { type: 'tool', name: 'tool_search', input: { query: 'current release' } },
         { type: 'tool', name: 'get_release', input: {} },
         { type: 'text', text: 'The current release is rel_current.' },
-      ] as const
+      ]
     case 'child-request':
       return [
+        { type: 'tool', name: 'tool_search', input: { query: 'child agent' } },
         { type: 'tool', name: 'invoke_agent', input: {} },
         { type: 'text', text: 'The child completed the lookup.' },
-      ] as const
+      ]
     case 'revoked-authorization':
       return [
         { type: 'tool', name: 'get_release', input: {} },
         { type: 'text', text: 'The revoked tool was not executed.' },
-      ] as const
+      ]
     default:
       throw new Error(`No deterministic runtime script for ${caseId}`)
   }
@@ -380,7 +403,7 @@ async function runGenerateCase(
               {
                 name: 'list_agents',
                 description: 'List agents using an Agent-list owner filter.',
-                attachVia: 'tool_ids' as const,
+                attachVia: 'tool_ids',
               },
             ],
           },
@@ -388,7 +411,7 @@ async function runGenerateCase(
       : testCase.id === 'revoked-authorization'
         ? {
             __vfToolExposureCheckpoint: {
-              version: 1 as const,
+              version: 1,
               authorizedCatalogFingerprint: 'sha256:catalog-before-revocation',
               loadedToolNames: ['get_release'],
             },
@@ -481,12 +504,12 @@ async function runInterruptedStreamCase(
     tools: { get_release: tools.get_release },
     maxSteps: 4,
     resolveModelTransport: () => ({ model: firstModel }),
-    ...({
+    ...{
       __vfPersistToolExposureCheckpoint: (nextCheckpoint: NonNullable<typeof checkpoint>) => {
         checkpoint = nextCheckpoint
         abortController.abort()
       },
-    } as Record<string, unknown>),
+    },
   })
   const firstStream = await firstAgent.stream({
     input: testCase.input,
@@ -521,7 +544,7 @@ async function runInterruptedStreamCase(
     tools: { get_release: tools.get_release },
     maxSteps: 3,
     resolveModelTransport: () => ({ model: resumedModel }),
-    ...({ __vfToolExposureCheckpoint: checkpoint } as Record<string, unknown>),
+    ...{ __vfToolExposureCheckpoint: checkpoint },
   })
   const resumed = await resumedAgent.generate({ input: 'Resume the interrupted lookup.' })
   const resumedSuccessful = successfulCalls(resumed)

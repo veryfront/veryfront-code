@@ -40,12 +40,12 @@
     "@opentelemetry/sdk-node": "0.220.0",
     "@opentelemetry/sdk-trace-base": "2.9.0",
     "@opentelemetry/semantic-conventions": "1.43.0",
-    "@veryfront/ext-auth-jwt": "0.1.1176",
-    "@veryfront/ext-observability-opentelemetry": "0.1.1176",
-    "@veryfront/ext-observability-sentry": "0.1.1176",
-    "@veryfront/ext-sandbox-shell-tools": "0.1.1176",
-    "ai": "6.0.208",
-    "veryfront": "0.1.1176"
+    "@veryfront/ext-auth-jwt": "0.1.1177",
+    "@veryfront/ext-observability-opentelemetry": "0.1.1177",
+    "@veryfront/ext-observability-sentry": "0.1.1177",
+    "@veryfront/ext-sandbox-shell-tools": "0.1.1177",
+    "ai": "6.0.235",
+    "veryfront": "0.1.1177"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",

@@ -4,17 +4,33 @@
   "sourceArtifact": {
     "repository": "veryfront-agent",
     "path": ".veryfront/evals/tool-loading/live/report.json",
-    "sha256": "3d9db14c2da86ae7c2fa8aa72df4507926bcfd3d3472801fb17c0b9642da5a79"
+    "sha256": "0e081ae8d9fd2fb9805e423cf70d3b20223e6a71dfe132ccb83cc07b6cc911ed"
   },
   "producerManifest": {
     "path": "tests/fixtures/eval/tool-loading-live-producer-manifest.json",
-    "sha256": "e61c4da4ebdfbf67099effbdd5303aa87957e9f66307b18bde9e462e712896e4"
+    "sha256": "c68c2d55106175f005d753adfd300d7b688907f6697b9391d2f73bc1aecae2d5"
+  },
+  "producer": {
+    "revision": "760672883619d4b631fe6c087ac65976a0438a96",
+    "tree": "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
+    "clean": true
+  },
+  "frameworkPackage": {
+    "version": "0.1.1177",
+    "integrity": "sha512-CcS6oiFbZ9CmHWUvR9k1WEUOl7AYi+oRjapVotnQ/xY9Y4vP21A8SqizMooQS1+Bk2mGj0RYD6ZtqiZ3oQc/uA==",
+    "source": "local-npm-pack",
+    "tarballSha256": "1cac6e2e513607e931401cfd2e785d43ea041e4af8d37ab42ab68170a24172a3",
+    "frameworkRevision": "a2641bfa9a1df3b832efa6cfe3e7175e0b14e2d4",
+    "frameworkTree": "f56735838f2f541c4f4aed1cd79acb7bd339c419",
+    "frameworkSourceClean": true
   },
   "model": "anthropic/claude-opus-4-6",
   "executionModel": "veryfront-cloud/anthropic/claude-opus-4-6",
-  "sourceRevision": "732a93dc12d2acdd3d563d363e5fb74cbb1e8de5",
-  "catalogFingerprint": "sha256:5ff9e3ca71d712faf4a83a5f6b459682059c9da4825626db24869b2d005ac82b",
-  "catalogSourceRevision": "732a93dc12d2acdd3d563d363e5fb74cbb1e8de5",
+  "sourceRevision": "760672883619d4b631fe6c087ac65976a0438a96",
+  "sourceTree": "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
+  "catalogFingerprint": "sha256:492b0017fbd1a94390ae8612cb272d9b179e309d5fb8e0b89e36dac906f891e4",
+  "catalogSourceRevision": "760672883619d4b631fe6c087ac65976a0438a96",
+  "catalogSourceTree": "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
   "liveCalls": 5,
   "comparisonLiveCalls": 4,
   "canaryLiveCalls": 1,
@@ -22,6 +38,48 @@
     "status": "passed",
     "passRate": 1,
     "executedCaseCount": 12
+  },
+  "liveCanary": {
+    "id": "authorized-read-only-canary",
+    "prompt": "Use tool_search to load the authorized list_projects read-only tool, call list_projects exactly once, then summarize the result.",
+    "mode": "deferred",
+    "completed": true,
+    "expectedToolName": "list_projects",
+    "observedToolCalls": [
+      {
+        "name": "tool_search",
+        "status": "completed",
+        "input": {
+          "query": "list_projects"
+        },
+        "result": {
+          "attachableMetadataCount": 0,
+          "loadedCount": 1,
+          "matches": [
+            {
+              "description": "List all projects accessible by the authenticated user with pagination support",
+              "name": "list_projects",
+              "status": "loaded"
+            }
+          ],
+          "miss": false,
+          "nextStep": "Continue to the next model step. Loaded tool schemas will be available then.",
+          "resultCount": 1
+        }
+      },
+      {
+        "name": "list_projects",
+        "status": "completed",
+        "input": {},
+        "result": {
+          "kind": "list_projects_summary",
+          "projectCount": 20,
+          "hasPageInfo": true,
+          "hasNextPage": true
+        }
+      }
+    ],
+    "status": "passed"
   },
   "comparisons": [
     {
@@ -34,11 +92,11 @@
         "provider": "anthropic",
         "model": "anthropic/claude-opus-4-6",
         "executionModel": "veryfront-cloud/anthropic/claude-opus-4-6",
-        "sourceRevision": "732a93dc12d2acdd3d563d363e5fb74cbb1e8de5",
-        "catalogFingerprint": "sha256:5ff9e3ca71d712faf4a83a5f6b459682059c9da4825626db24869b2d005ac82b",
-        "catalogSourceRevision": "732a93dc12d2acdd3d563d363e5fb74cbb1e8de5",
-        "configuredToolNameCount": 53,
-        "effectiveAuthorizedToolNameCount": 51,
+        "sourceRevision": "760672883619d4b631fe6c087ac65976a0438a96",
+        "sourceTree": "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
+        "catalogFingerprint": "sha256:492b0017fbd1a94390ae8612cb272d9b179e309d5fb8e0b89e36dac906f891e4",
+        "catalogSourceRevision": "760672883619d4b631fe6c087ac65976a0438a96",
+        "catalogSourceTree": "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
         "authorizedSearchableSchemaCount": 47,
         "visibleSchemaCount": 47,
         "deferredSchemaCount": 0,
@@ -57,7 +115,7 @@
         },
         "steps": 1,
         "toolCalls": 0,
-        "durationMs": 4904,
+        "durationMs": 6770,
         "completed": true
       },
       "deferred": {
@@ -66,11 +124,11 @@
         "provider": "anthropic",
         "model": "anthropic/claude-opus-4-6",
         "executionModel": "veryfront-cloud/anthropic/claude-opus-4-6",
-        "sourceRevision": "732a93dc12d2acdd3d563d363e5fb74cbb1e8de5",
-        "catalogFingerprint": "sha256:5ff9e3ca71d712faf4a83a5f6b459682059c9da4825626db24869b2d005ac82b",
-        "catalogSourceRevision": "732a93dc12d2acdd3d563d363e5fb74cbb1e8de5",
-        "configuredToolNameCount": 53,
-        "effectiveAuthorizedToolNameCount": 51,
+        "sourceRevision": "760672883619d4b631fe6c087ac65976a0438a96",
+        "sourceTree": "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
+        "catalogFingerprint": "sha256:492b0017fbd1a94390ae8612cb272d9b179e309d5fb8e0b89e36dac906f891e4",
+        "catalogSourceRevision": "760672883619d4b631fe6c087ac65976a0438a96",
+        "catalogSourceTree": "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
         "authorizedSearchableSchemaCount": 47,
         "visibleSchemaCount": 2,
         "deferredSchemaCount": 45,
@@ -89,7 +147,7 @@
         },
         "steps": 1,
         "toolCalls": 0,
-        "durationMs": 5969,
+        "durationMs": 5959,
         "completed": true
       }
     },
@@ -103,11 +161,11 @@
         "provider": "anthropic",
         "model": "anthropic/claude-opus-4-6",
         "executionModel": "veryfront-cloud/anthropic/claude-opus-4-6",
-        "sourceRevision": "732a93dc12d2acdd3d563d363e5fb74cbb1e8de5",
-        "catalogFingerprint": "sha256:5ff9e3ca71d712faf4a83a5f6b459682059c9da4825626db24869b2d005ac82b",
-        "catalogSourceRevision": "732a93dc12d2acdd3d563d363e5fb74cbb1e8de5",
-        "configuredToolNameCount": 53,
-        "effectiveAuthorizedToolNameCount": 51,
+        "sourceRevision": "760672883619d4b631fe6c087ac65976a0438a96",
+        "sourceTree": "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
+        "catalogFingerprint": "sha256:492b0017fbd1a94390ae8612cb272d9b179e309d5fb8e0b89e36dac906f891e4",
+        "catalogSourceRevision": "760672883619d4b631fe6c087ac65976a0438a96",
+        "catalogSourceTree": "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
         "authorizedSearchableSchemaCount": 47,
         "visibleSchemaCount": 47,
         "deferredSchemaCount": 0,
@@ -126,7 +184,7 @@
         },
         "steps": 1,
         "toolCalls": 0,
-        "durationMs": 6441,
+        "durationMs": 6529,
         "completed": true
       },
       "deferred": {
@@ -135,11 +193,11 @@
         "provider": "anthropic",
         "model": "anthropic/claude-opus-4-6",
         "executionModel": "veryfront-cloud/anthropic/claude-opus-4-6",
-        "sourceRevision": "732a93dc12d2acdd3d563d363e5fb74cbb1e8de5",
-        "catalogFingerprint": "sha256:5ff9e3ca71d712faf4a83a5f6b459682059c9da4825626db24869b2d005ac82b",
-        "catalogSourceRevision": "732a93dc12d2acdd3d563d363e5fb74cbb1e8de5",
-        "configuredToolNameCount": 53,
-        "effectiveAuthorizedToolNameCount": 51,
+        "sourceRevision": "760672883619d4b631fe6c087ac65976a0438a96",
+        "sourceTree": "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
+        "catalogFingerprint": "sha256:492b0017fbd1a94390ae8612cb272d9b179e309d5fb8e0b89e36dac906f891e4",
+        "catalogSourceRevision": "760672883619d4b631fe6c087ac65976a0438a96",
+        "catalogSourceTree": "4f796353886133a4bc6a3c9ac81ac81cef0cd2d1",
         "authorizedSearchableSchemaCount": 47,
         "visibleSchemaCount": 2,
         "deferredSchemaCount": 45,
@@ -158,7 +216,7 @@
         },
         "steps": 1,
         "toolCalls": 0,
-        "durationMs": 5688,
+        "durationMs": 5376,
         "completed": true
       }
     }

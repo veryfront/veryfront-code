@@ -81,9 +81,9 @@ export const toolLoadingTaskSuccessCases = [
   {
     id: 'child-request',
     input: 'Ask a child to find the current release.',
-    expectedToolCalls: [{ name: 'invoke_agent' }],
+    expectedToolCalls: [{ name: 'tool_search', input: { query: 'child agent' } }, { name: 'invoke_agent' }],
     authoringPermission: false,
-    expectedOutcome: 'starts the child with a fresh searchable catalog',
+    expectedOutcome: 'loads delegation, then starts the child with a fresh searchable catalog',
   },
   {
     id: 'interrupted-stream',

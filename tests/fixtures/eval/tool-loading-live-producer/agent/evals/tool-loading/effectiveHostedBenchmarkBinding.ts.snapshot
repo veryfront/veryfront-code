@@ -1,5 +1,6 @@
 import { createBashSandboxShellToolsProvider } from '@veryfront/ext-sandbox-shell-tools'
 import {
+  type AgentHttpMcpServerConfig,
   type AgentMcpServerConfig,
   createHostedChildInvokeTool,
   createHostedFormInputTool,
@@ -16,7 +17,11 @@ import {
   createAgentServiceSandboxTools,
 } from 'veryfront/sandbox'
 import type { HostToolSet, ToolSet } from 'veryfront/tool'
-import { createBenchmarkHostedStudioMcpServer, createBenchmarkStudioMcpServer } from './benchmarkStudioMcpServer'
+import {
+  BENCHMARK_STUDIO_TOOL_NAMES,
+  createBenchmarkHostedStudioMcpServer,
+  createBenchmarkStudioMcpServer,
+} from './benchmarkStudioMcpServer'
 
 type BenchmarkEnvironment = {
   VERYFRONT_API_URL?: string
@@ -36,10 +41,25 @@ export type EffectiveHostedBenchmarkBinding = {
   configuredToolNames: string[]
   effectiveToolNames: string[]
   effectiveRemoteToolNames: string[]
+  authorizedToolDefinitions: AuthorizedToolDefinition[]
+  executionContext: {
+    agentId: string
+    projectId: string
+    authToken: string
+  }
   tools: ToolSet
   system: string
   mcpServers: AgentMcpServerConfig[]
   cleanup: () => Promise<void>
+}
+
+export type AuthorizedToolDefinition = {
+  name: string
+  source: 'local' | 'remote' | 'provider-native'
+  description: string
+  inputSchema: unknown
+  title?: string
+  annotations?: unknown
 }
 
 type EffectiveHostedBenchmarkBindingDependencies = {
@@ -82,6 +102,31 @@ function createDisabledInvokeAgentTool() {
   })
 }
 
+function createBenchmarkApiMcpServer(input: {
+  apiUrl: string
+  projectId: string
+  userToken: string
+  allowedToolNames: string[]
+}): AgentHttpMcpServerConfig {
+  const endpoint = new URL(`/projects/${encodeURIComponent(input.projectId)}/mcp`, input.apiUrl).toString()
+  return {
+    id: 'veryfront-api-benchmark-http',
+    kind: 'http',
+    transport: {
+      type: 'http',
+      url: () => endpoint,
+    },
+    auth: {
+      type: 'bearer',
+      token: () => input.userToken,
+    },
+    toolPolicy: {
+      allow: [...input.allowedToolNames].sort(),
+      approval: 'never',
+    },
+  }
+}
+
 export async function createEffectiveHostedBenchmarkBinding(input: {
   runtime: ProjectAgentRuntimeDiscovery
   environment?: BenchmarkEnvironment
@@ -93,14 +138,22 @@ export async function createEffectiveHostedBenchmarkBinding(input: {
 
   const apiUrl = requiredEnvironmentValue(environment, 'VERYFRONT_API_URL')
   const userToken = requiredEnvironmentValue(environment, 'VERYFRONT_TOKEN')
+  const projectId = requiredEnvironmentValue(environment, 'AG_UI_EVAL_PROJECT_ID')
   const configuredNames = configuredToolNames(canonicalAgent.config.tools, [...input.runtime.tools.keys()])
   const createSandboxTools = input.dependencies?.createSandboxTools ?? createAgentServiceSandboxTools
   const prepareToolAssembly = input.dependencies?.prepareToolAssembly ?? prepareHostedChatRuntimeToolAssembly
+  const taskContext = {
+    authToken: userToken,
+    agentId: canonicalAgent.id,
+    projectId,
+    branchId: null,
+    model: 'veryfront-cloud/anthropic/claude-opus-4-6',
+  }
   const sandboxResult = await createSandboxTools({
     createBashTool: createBashSandboxShellToolsProvider,
     apiUrl,
     authToken: userToken,
-    ...(environment.AG_UI_EVAL_PROJECT_ID?.trim() ? { projectId: environment.AG_UI_EVAL_PROJECT_ID.trim() } : {}),
+    projectId,
   })
 
   try {
@@ -125,17 +178,11 @@ export async function createEffectiveHostedBenchmarkBinding(input: {
         ? await canonicalAgent.config.system()
         : canonicalAgent.config.system
     const assembly = await prepareToolAssembly({
-      taskContext: {
-        authToken: userToken,
-        agentId: canonicalAgent.id,
-        projectId: environment.AG_UI_EVAL_PROJECT_ID?.trim() || null,
-        branchId: null,
-        model: 'veryfront-cloud/anthropic/claude-opus-4-6',
-      },
+      taskContext,
       instructions: system,
       localTools,
       apiUrl,
-      apiMcpUrl: new URL('/mcp', apiUrl).toString(),
+      apiMcpUrl: new URL(`/projects/${encodeURIComponent(projectId)}/mcp`, apiUrl).toString(),
       mcpServers: [veryfrontApiMcpServer(), createBenchmarkHostedStudioMcpServer(environment)],
       allowedToolNames: configuredNames,
       allowedProviderToolNames: canonicalAgent.config.providerTools,
@@ -145,19 +192,89 @@ export async function createEffectiveHostedBenchmarkBinding(input: {
       toolLoading: 'eager',
     })
     const providerToolNames = new Set(assembly.providerToolNames)
+    const remoteToolNames = new Set(assembly.compatibleRemoteToolNames)
     const tools = Object.fromEntries(
       assembly.availableToolNames
         .filter((toolName) => !providerToolNames.has(toolName))
         .map((toolName) => [toolName, assembly.runtimeTools[toolName] ?? true])
     )
+    const remoteDefinitions = (
+      await Promise.all(
+        assembly.remoteToolSources.map(async (source) =>
+          (
+            await source.listTools({ projectId: taskContext.projectId ?? undefined, authToken: userToken })
+          ).map((definition) => ({
+            name: definition.name,
+            source: 'remote' as const,
+            description: definition.description,
+            inputSchema: definition.parameters,
+            ...(definition.title ? { title: definition.title } : {}),
+            ...(definition.annotations ? { annotations: definition.annotations } : {}),
+          }))
+        )
+      )
+    )
+      .flat()
+      .filter((definition) => remoteToolNames.has(definition.name))
+    const localDefinitions = Object.entries(assembly.runtimeTools)
+      .filter(([toolName]) => assembly.availableToolNames.includes(toolName))
+      .map(([toolName, definition]) => {
+        if (!definition.inputSchemaJson) {
+          throw new Error(`Effective hosted benchmark tool ${toolName} has no canonical JSON input schema`)
+        }
+        return {
+          name: toolName,
+          source: 'local' as const,
+          description: definition.description,
+          inputSchema: definition.inputSchemaJson,
+          ...(definition.mcp?.title ? { title: definition.mcp.title } : {}),
+          ...(definition.mcp?.annotations ? { annotations: definition.mcp.annotations } : {}),
+        }
+      })
+    const providerDefinitions = assembly.providerToolNames
+      .filter((toolName) => assembly.availableToolNames.includes(toolName))
+      .map((toolName) => ({
+        name: toolName,
+        source: 'provider-native' as const,
+        description: `Provider-native tool ${toolName}`,
+        inputSchema: { type: 'provider-native' },
+      }))
+    const authorizedToolDefinitions = [...localDefinitions, ...remoteDefinitions, ...providerDefinitions].sort(
+      (left, right) => left.name.localeCompare(right.name)
+    )
+    const definitionNames = authorizedToolDefinitions.map((definition) => definition.name)
+    const effectiveNames = [...assembly.availableToolNames].sort()
+    if (
+      new Set(definitionNames).size !== definitionNames.length ||
+      definitionNames.join('\n') !== effectiveNames.join('\n')
+    ) {
+      throw new Error('Effective hosted benchmark could not capture one canonical definition per authorized tool')
+    }
+    const studioToolNames = new Set(BENCHMARK_STUDIO_TOOL_NAMES)
+    const apiRemoteToolNames = assembly.compatibleRemoteToolNames.filter((toolName) => !studioToolNames.has(toolName))
+    const benchmarkMcpServers = [
+      createBenchmarkApiMcpServer({
+        apiUrl,
+        projectId,
+        userToken,
+        allowedToolNames: apiRemoteToolNames,
+      }),
+      createBenchmarkStudioMcpServer(environment),
+    ]
 
     return {
       configuredToolNames: configuredNames,
       effectiveToolNames: [...assembly.availableToolNames],
       effectiveRemoteToolNames: [...assembly.compatibleRemoteToolNames],
+      authorizedToolDefinitions,
+      executionContext: {
+        agentId: canonicalAgent.id,
+        projectId,
+        authToken: userToken,
+      },
       tools,
       system: assembly.systemInstructions,
-      mcpServers: [veryfrontApiMcpServer(), createBenchmarkStudioMcpServer(environment)],
+      mcpServers: benchmarkMcpServers,
       cleanup: sandboxResult.closeSandbox,
     }
   } catch (error) {
