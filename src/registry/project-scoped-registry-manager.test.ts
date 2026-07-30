@@ -517,6 +517,88 @@ describe("ProjectScopedRegistryManager", () => {
 describe("ProjectScopedRegistryManager transactions", () => {
   const scope = { projectId: "project-transaction", mode: "preview" as const, versionId: "main" };
 
+  it("can dispose an owned registration before its transaction commits", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("provider");
+
+    await runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          const dispose = manager.registerOwned("local", "transformers");
+          assertEquals(manager.get("local"), "transformers");
+          dispose();
+          dispose();
+          assertEquals(manager.get("local"), undefined);
+        }),
+    );
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("local"), undefined);
+    });
+  });
+
+  it("stages disposal of an earlier owned registration in a later transaction", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("provider");
+    let dispose = () => {};
+    runWithCacheKeyContext(scope, () => {
+      dispose = manager.registerOwned("local", "transformers");
+    });
+
+    const stageReady = Promise.withResolvers<void>();
+    const releaseStage = Promise.withResolvers<void>();
+    const transaction = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          dispose();
+          assertEquals(manager.get("local"), undefined);
+          stageReady.resolve();
+          await releaseStage.promise;
+        }),
+    );
+
+    await stageReady.promise;
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("local"), "transformers");
+    });
+    releaseStage.resolve();
+    await transaction;
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("local"), undefined);
+    });
+  });
+
+  it("allows owned disposal to retry after its transaction aborts", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("provider");
+    let dispose = () => {};
+    runWithCacheKeyContext(scope, () => {
+      dispose = manager.registerOwned("local", "generation-1");
+    });
+
+    await assertRejects(
+      () =>
+        runWithCacheKeyContext(
+          scope,
+          () =>
+            runWithRegistryTransaction(async () => {
+              dispose();
+              assertEquals(manager.get("local"), undefined);
+              throw new Error("abort replacement");
+            }),
+        ),
+      Error,
+      "abort replacement",
+    );
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("local"), "generation-1");
+    });
+    dispose();
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("local"), undefined);
+    });
+  });
+
   it("keeps the live registry visible until a staged replacement commits", async () => {
     const manager = new ProjectScopedRegistryManager<string>("skill");
     runWithCacheKeyContext(scope, () => manager.register("old-skill", "old"));
