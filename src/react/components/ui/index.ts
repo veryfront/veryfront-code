@@ -210,6 +210,14 @@ export {
 } from "./accordion.tsx";
 export { AspectRatio, type AspectRatioProps } from "./aspect-ratio.tsx";
 export {
+  HoverCard,
+  HoverCardContent,
+  type HoverCardContentProps,
+  type HoverCardProps,
+  HoverCardTrigger,
+  type HoverCardTriggerProps,
+} from "./hover-card.tsx";
+export {
   Combobox,
   ComboboxContent,
   type ComboboxContentProps,
@@ -219,7 +227,49 @@ export {
   type ComboboxItemProps,
   type ComboboxProps,
 } from "./combobox.tsx";
+export {
+  ContextMenu,
+  ContextMenuContent,
+  type ContextMenuContentProps,
+  ContextMenuGroup,
+  ContextMenuItem,
+  type ContextMenuItemProps,
+  ContextMenuLabel,
+  type ContextMenuProps,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+  type ContextMenuTriggerProps,
+} from "./context-menu.tsx";
+export {
+  Menubar,
+  MenubarContent,
+  type MenubarContentProps,
+  MenubarItem,
+  type MenubarItemProps,
+  MenubarMenu,
+  type MenubarMenuProps,
+  type MenubarProps,
+  MenubarSeparator,
+  type MenubarSeparatorProps,
+  MenubarTrigger,
+  type MenubarTriggerProps,
+} from "./menubar.tsx";
 export { NumberField, type NumberFieldProps } from "./number-field.tsx";
+export {
+  Toast,
+  ToastClose,
+  ToastDescription,
+  type ToastOptions,
+  type ToastProps,
+  ToastProvider,
+  type ToastProviderProps,
+  ToastTitle,
+  type ToastVariant,
+  ToastViewport,
+  ToastViewport as Toaster,
+  type ToastViewportProps,
+  useToast,
+} from "./toast.tsx";
 export { Separator, type SeparatorProps } from "./separator.tsx";
 export { Slider, type SliderProps } from "./slider.tsx";
 export { Toggle, type ToggleProps } from "./toggle.tsx";
