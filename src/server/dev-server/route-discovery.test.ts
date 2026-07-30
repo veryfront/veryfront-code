@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { ApiRouteMatcher } from "#veryfront/routing/api/api-route-matcher.ts";
@@ -36,5 +36,74 @@ describe("server/dev-server/route-discovery", () => {
     await discovery.discoverRoutes();
 
     assertEquals(router.match("/")?.route.page, "src/app/page.tsx");
+  });
+
+  it("replaces the previous route generation only after discovery succeeds", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/pages/current.tsx", "export default () => null;");
+    const router = new ApiRouteMatcher();
+    router.addRoute("/stale", "pages/stale.tsx");
+    const discovery = new RouteDiscovery("/project", adapter, router, {
+      router: "pages",
+    });
+
+    await discovery.discoverRoutes();
+
+    assertEquals(router.match("/stale"), null);
+    assertEquals(router.match("/current")?.route.page, "pages/current.tsx");
+  });
+
+  it("retains the previous route generation when a nested directory read fails", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/pages/current.tsx", "export default () => null;");
+    adapter.fs.files.set("/project/pages/private/page.tsx", "export default () => null;");
+    const readDir = adapter.fs.readDir.bind(adapter.fs);
+    adapter.fs.readDir = async function* (path: string) {
+      if (path === "/project/pages/private") {
+        throw new Error("permission denied");
+      }
+      yield* readDir(path);
+    };
+    const router = new ApiRouteMatcher();
+    router.addRoute("/stable", "pages/stable.tsx");
+    const discovery = new RouteDiscovery("/project", adapter, router, {
+      router: "pages",
+    });
+
+    await assertRejects(() => discovery.discoverRoutes(), Error, "permission denied");
+
+    assertEquals(router.match("/stable")?.route.page, "pages/stable.tsx");
+    assertEquals(router.match("/current"), null);
+  });
+
+  it("propagates directory stat failures instead of treating them as missing", async () => {
+    const adapter = createMockAdapter();
+    const stat = adapter.fs.stat.bind(adapter.fs);
+    adapter.fs.stat = (path: string) => {
+      if (path === "/project/pages") return Promise.reject(new Error("adapter unavailable"));
+      return stat(path);
+    };
+    const router = new ApiRouteMatcher();
+    router.addRoute("/stable", "pages/stable.tsx");
+    const discovery = new RouteDiscovery("/project", adapter, router, {
+      router: "pages",
+    });
+
+    await assertRejects(() => discovery.discoverRoutes(), Error, "adapter unavailable");
+
+    assertEquals(router.match("/stable")?.route.page, "pages/stable.tsx");
+  });
+
+  it("publishes an empty generation when every configured route directory is absent", async () => {
+    const adapter = createMockAdapter();
+    const router = new ApiRouteMatcher();
+    router.addRoute("/stale", "pages/stale.tsx");
+    const discovery = new RouteDiscovery("/project", adapter, router, {
+      router: "pages",
+    });
+
+    await discovery.discoverRoutes();
+
+    assertEquals(router.listRoutes(), []);
   });
 });
