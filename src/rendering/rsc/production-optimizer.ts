@@ -6,6 +6,9 @@ export class RSCProductionOptimizer {
     return {
       html: RSCProductionOptimizer.minifyHTML(payload.html),
       clientRefs: payload.clientRefs,
+      ...(payload.dependencyPinningCacheKey?.startsWith("on:")
+        ? { dependencyPinningCacheKey: payload.dependencyPinningCacheKey }
+        : {}),
       assets: payload.assets,
       tree: undefined,
     };
@@ -47,6 +50,14 @@ export class RSCProductionOptimizer {
         hash ^= key.charCodeAt(i);
         hash = Math.imul(hash, 16777619);
       }
+    }
+
+    const dependencyPinningCacheKey = payload.dependencyPinningCacheKey?.startsWith("on:")
+      ? payload.dependencyPinningCacheKey
+      : "";
+    for (const char of dependencyPinningCacheKey) {
+      hash ^= char.charCodeAt(0);
+      hash = Math.imul(hash, 16777619);
     }
 
     return `"${(hash >>> 0).toString(36)}"`;

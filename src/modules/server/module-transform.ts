@@ -104,7 +104,17 @@ export async function transformModuleToServable(
         context: { sourceFile },
       });
     }
-    code = await applySSRImportRewritesAsync(code, options.ssrRewriteOptions);
+    code = await applySSRImportRewritesAsync(code, {
+      ...options.ssrRewriteOptions,
+      dependencyPinningCacheKey: options.ssrRewriteOptions.dependencyPinningCacheKey ??
+        transformOpts.dependencyPinningCacheKey,
+      dependencyPinningDependencies: options.ssrRewriteOptions.dependencyPinningDependencies ??
+        transformOpts.dependencyPinningDependencies,
+      dependencyPinningSource: options.ssrRewriteOptions.dependencyPinningSource ??
+        transformOpts.dependencyPinningSource,
+      onDependencyResolutionObserved: options.ssrRewriteOptions.onDependencyResolutionObserved ??
+        transformOpts.onDependencyResolutionObserved,
+    });
   } else if (options.releaseRewriteOptions) {
     code = await rewriteReleaseDependencyImportsForModule(code, options.releaseRewriteOptions);
   }

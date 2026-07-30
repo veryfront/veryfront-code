@@ -35,12 +35,14 @@ import {
 } from "./styles-builder/index.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
 import { buildImportMap, buildRootAttributes, shouldDisableLayout } from "./utils.ts";
+import { appendDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 function pathToModuleUrl(
   path: string,
   studioEmbed?: boolean,
   manifest?: ReleaseAssetManifest | null,
   fallbackReleaseId?: string,
+  dependencyPinningCacheKey?: string,
 ): string {
   if (!path) return "";
 
@@ -56,8 +58,12 @@ function pathToModuleUrl(
     ? `/_vf_modules/${path}.js`
     : `/_vf_modules/${withExtReplaced}`;
 
-  if (studioEmbed) return `${urlBase}?studio_embed=true`;
-  return fallbackReleaseId ? appendReleaseModuleVersion(urlBase, fallbackReleaseId) : urlBase;
+  const moduleUrl = studioEmbed
+    ? `${urlBase}?studio_embed=true`
+    : fallbackReleaseId
+    ? appendReleaseModuleVersion(urlBase, fallbackReleaseId)
+    : urlBase;
+  return appendDependencyPinningPathKey(moduleUrl, dependencyPinningCacheKey);
 }
 
 function appendReleaseModuleVersion(url: string, releaseId: string): string {
@@ -117,7 +123,15 @@ function generateModulePreloadHints(
 
   if (options.pagePath) {
     const relativePath = getRelativePagePath(options.pagePath, projectDir);
-    addHint(pathToModuleUrl(relativePath, studioEmbed, releaseManifest, fallbackReleaseId));
+    addHint(
+      pathToModuleUrl(
+        relativePath,
+        studioEmbed,
+        releaseManifest,
+        fallbackReleaseId,
+        options.dependencyPinningCacheKey,
+      ),
+    );
   }
 
   for (const layout of options.nestedLayouts ?? []) {
@@ -125,7 +139,15 @@ function generateModulePreloadHints(
     if (!layoutPath) continue;
 
     const relativePath = getRelativePagePath(layoutPath, projectDir);
-    addHint(pathToModuleUrl(relativePath, studioEmbed, releaseManifest, fallbackReleaseId));
+    addHint(
+      pathToModuleUrl(
+        relativePath,
+        studioEmbed,
+        releaseManifest,
+        fallbackReleaseId,
+        options.dependencyPinningCacheKey,
+      ),
+    );
   }
 
   // Skip manifest-based preloads in preview/studio-embed mode:
@@ -247,6 +269,9 @@ async function generateHTMLShellPartsImpl(
   const importMapPromise = buildImportMap({
     projectDir: options.projectDir,
     config: options.config,
+    moduleServerOrigin: options.moduleServerOrigin,
+    dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+    dependencyPinningDependencies: options.dependencyPinningDependencies,
     customImports: options.importMap,
     pretty: useDevScripts,
     releaseAssetManifest: releaseManifest,

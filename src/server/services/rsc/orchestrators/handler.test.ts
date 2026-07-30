@@ -3,6 +3,14 @@ import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { afterAll, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { RSCDevServerHandler } from "./handler.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
+import {
+  clearReactVersionCache,
+  getDependencyPinningSnapshot,
+  getDependencyPinningSnapshotSync,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 
 describe(
   "RSCDevServerHandler",
@@ -84,6 +92,102 @@ describe(
         const text = await response.text();
 
         expect(() => JSON.parse(text)).not.toThrow();
+      });
+
+      it("keeps render, React, and manifest module URLs on historical snapshot A after B is current", async () => {
+        const projectDir = await Deno.makeTempDir({
+          prefix: "vf-rsc-historical-pins-",
+        });
+        const appDir = `${projectDir}/app`;
+        const packageJsonPath = `${projectDir}/package.json`;
+        const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+        await Deno.mkdir(appDir, { recursive: true });
+        await Deno.writeTextFile(
+          `${appDir}/Counter.tsx`,
+          `'use client';\nexport default function Counter() { return null; }`,
+        );
+        await Deno.writeTextFile(
+          `${appDir}/page.tsx`,
+          `export default function Page() { return null; }`,
+        );
+
+        try {
+          setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+          clearReactVersionCache();
+          await Deno.writeTextFile(
+            packageJsonPath,
+            JSON.stringify({
+              dependencies: {
+                react: "18.3.1",
+                "example-package": "1.0.0",
+              },
+            }),
+          );
+          const snapshotA = await getDependencyPinningSnapshot(projectDir);
+
+          await Deno.writeTextFile(
+            packageJsonPath,
+            JSON.stringify({
+              dependencies: {
+                react: "19.2.4",
+                "example-package": "2.0.0",
+              },
+            }),
+          );
+          const future = new Date(Date.now() + 2_000);
+          await Deno.utime(packageJsonPath, future, future);
+          const snapshotB = await getDependencyPinningSnapshot(projectDir);
+          expect(snapshotB.cacheKey).not.toBe(snapshotA.cacheKey);
+
+          const historicalHandler = new RSCDevServerHandler(projectDir, {
+            isLocalProject: false,
+            mode: "production",
+          });
+          const rememberedA = getDependencyPinningSnapshotSync(
+            projectDir,
+            snapshotA.cacheKey,
+          );
+          expect(rememberedA).toBeDefined();
+          const resolveSnapshotReact = (historicalHandler as unknown as {
+            renderHandler: {
+              moduleOptions: {
+                reactVersion: (
+                  snapshot: NonNullable<typeof rememberedA>,
+                ) => Promise<string>;
+              };
+            };
+          }).renderHandler.moduleOptions.reactVersion;
+          expect(await resolveSnapshotReact(rememberedA!)).toBe("18.3.1");
+
+          const renderResponse = await historicalHandler.handleRender(
+            "/",
+            new URLSearchParams({ pins: "application-value" }),
+            new Request("http://localhost/_veryfront/rsc/render?pins=application-value", {
+              headers: { [RSC_DEPENDENCY_PINNING_HEADER]: snapshotA.cacheKey },
+            }),
+          );
+          const renderPayload = await renderResponse.json();
+          expect(renderResponse.status).toBe(200);
+          expect(renderPayload.dependencyPinningCacheKey).toBe(
+            snapshotA.cacheKey,
+          );
+
+          const manifestResponse = await historicalHandler.handleManifest(
+            snapshotA.cacheKey,
+          );
+          const manifest = await manifestResponse.json();
+          expect(manifest.dependencyPinningCacheKey).toBe(snapshotA.cacheKey);
+          expect(manifest.components.Counter).toContain(
+            `pins=${encodeURIComponent(snapshotA.cacheKey)}`,
+          );
+          expect(manifest.components.Counter).not.toContain(
+            encodeURIComponent(snapshotB.cacheKey),
+          );
+        } finally {
+          setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+          clearReactVersionCache();
+          await Deno.remove(projectDir, { recursive: true });
+        }
       });
 
       it("uses the configured app directory for manifests and route rendering", async () => {

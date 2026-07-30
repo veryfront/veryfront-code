@@ -130,6 +130,21 @@ describe("AliasStrategy", () => {
         // With moduleServerUrl, we always use absolute paths - no relative path calculation needed
         assertEquals(result.specifier, "/_vf_modules/lib/utils.js");
       });
+
+      it("should preserve the captured snapshot on a browser child-module URL", () => {
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/lib/child"),
+          makeCtx({
+            moduleServerUrl: "/_vf_modules",
+            dependencyPinningCacheKey: "on:snapshot-a",
+          }),
+        );
+
+        assertEquals(
+          result.specifier,
+          "/_vf_modules/_pins/on%3Asnapshot-a/lib/child.js",
+        );
+      });
     });
 
     describe("CSS file imports (issue #453)", () => {
@@ -219,6 +234,21 @@ describe("AliasStrategy", () => {
         );
         assertEquals(result.specifier, "../lib/legacy.js");
       });
+
+      it("should preserve the captured snapshot on a relative browser fallback", () => {
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/lib/child.ts"),
+          makeCtx({
+            filePath: "/project/pages/index.tsx",
+            dependencyPinningCacheKey: "on:snapshot-a",
+          }),
+        );
+
+        assertEquals(
+          result.specifier,
+          "../lib/child.js",
+        );
+      });
     });
 
     describe("source extensions in moduleServerUrl and ssr targets", () => {
@@ -233,8 +263,13 @@ describe("AliasStrategy", () => {
       it("should rewrite .tsx to .js for ssr", () => {
         const result = aliasStrategy.rewrite(
           makeInfo("@/components/Badge.tsx"),
-          makeCtx({ target: "ssr" }),
+          makeCtx({
+            target: "ssr",
+            dependencyPinningCacheKey: "on:snapshot-a",
+          }),
         );
+        // The SSR adapter appends the snapshot together with its other query
+        // params, so this intermediate path must remain query-free.
         assertEquals(result.specifier, "/_vf_modules/components/Badge.js");
       });
     });

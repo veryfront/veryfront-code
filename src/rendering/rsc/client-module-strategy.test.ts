@@ -2,7 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  appendClientModuleDependencyPins,
   buildClientModuleUrl,
+  buildRSCActionUrl,
+  buildRSCTransportHeaders,
   determineClientModuleStrategy,
   getHydrationReactImportSpecifiers,
   resolveClientModuleStrategy,
@@ -42,17 +45,64 @@ describe("rendering/rsc/client-module-strategy", () => {
         strategy: "fs",
         rel: "app/page.tsx",
         version: "abc123",
+        dependencyPinningCacheKey: "on:pins-a",
       }),
-      "/_veryfront/fs/YXBwL3BhZ2UudHN4.js?v=abc123",
+      "/_veryfront/fs/YXBwL3BhZ2UudHN4.js?v=abc123&pins=on%3Apins-a",
     );
     assertEquals(
       buildClientModuleUrl({
         strategy: "rsc-module",
         rel: "app/page.tsx",
         version: "abc123",
+        dependencyPinningCacheKey: "off",
       }),
       "/_veryfront/rsc/module?rel=app%2Fpage.tsx&v=abc123",
     );
+    assertEquals(
+      buildClientModuleUrl({
+        strategy: "rsc-module",
+        rel: "app/page.tsx",
+        version: "abc123",
+        dependencyPinningCacheKey: "on:pins-a",
+      }),
+      "/_veryfront/rsc/module?rel=app%2Fpage.tsx&v=abc123&pins=on%3Apins-a",
+    );
+  });
+
+  it("preserves URL bytes unless dependency pinning is explicitly on", () => {
+    const url = "/_veryfront/rsc/module?label=hello%20world&pins=application-value#entry";
+
+    assertEquals(appendClientModuleDependencyPins(url), url);
+    assertEquals(appendClientModuleDependencyPins(url, "off"), url);
+    assertEquals(appendClientModuleDependencyPins(url, "malformed"), url);
+    assertEquals(
+      appendClientModuleDependencyPins(url, "on:snapshot-a"),
+      "/_veryfront/rsc/module?label=hello+world&pins=on%3Asnapshot-a#entry",
+    );
+  });
+
+  it("binds fetch-capable Server Actions with a header, not application query state", () => {
+    assertEquals(
+      buildRSCActionUrl({
+        dependencyPinningCacheKey: "on:pins-a",
+      }),
+      "/_veryfront/rsc/action",
+    );
+    assertEquals(
+      buildRSCTransportHeaders({
+        dependencyPinningCacheKey: "on:pins-a",
+      }),
+      { "x-veryfront-dependency-pins": "on:pins-a" },
+    );
+    assertEquals(
+      buildRSCActionUrl({
+        dependencyPinningCacheKey: "off",
+      }),
+      "/_veryfront/rsc/action",
+    );
+    assertEquals(buildRSCActionUrl(null), "/_veryfront/rsc/action");
+    assertEquals(buildRSCTransportHeaders({ dependencyPinningCacheKey: "off" }), {});
+    assertEquals(buildRSCTransportHeaders(null), {});
   });
 
   it("prefers release asset urls for remote client modules", () => {

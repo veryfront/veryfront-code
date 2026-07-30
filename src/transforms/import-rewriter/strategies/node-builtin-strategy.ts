@@ -4,6 +4,7 @@ import type {
   RewriteContext,
   RewriteResult,
 } from "../types.ts";
+import { appendDependencyPinningPathKey } from "../url-builder.ts";
 
 const NODE_POLYFILL_MAP: Record<string, string> = {
   "node:async_hooks": "/_vf_modules/_veryfront/platform/polyfills/node-async-hooks.js",
@@ -63,7 +64,12 @@ export class NodeBuiltinStrategy implements ImportRewriteStrategy {
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
     if (ctx.target === "ssr") return { specifier: null };
-    return { specifier: NODE_POLYFILL_MAP[info.specifier] ?? NODE_NOOP_URL };
+    return {
+      specifier: appendDependencyPinningPathKey(
+        NODE_POLYFILL_MAP[info.specifier] ?? NODE_NOOP_URL,
+        ctx.dependencyPinningCacheKey,
+      ),
+    };
   }
 }
 

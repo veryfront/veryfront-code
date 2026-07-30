@@ -126,7 +126,7 @@ export class VeryfrontRenderer {
       layoutCollector: this.services.layoutCollector,
       layoutCompiler: this.services.layoutCompiler,
       layoutCache: createLayoutComponentCache(),
-      componentRegistry: this.services.componentRegistry.getAllAsComponents(),
+      componentRegistry: this.services.componentRegistry,
     });
 
     this.htmlGenerator = new HTMLGenerator({

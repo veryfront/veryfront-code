@@ -33,6 +33,7 @@ export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
     pageType: getPageTypeSchema().optional(),
     nonce: v.string().optional(),
     projectDir: v.string().optional(),
+    moduleServerOrigin: v.string().optional(),
     globalCSS: v.string().optional(),
     frontmatter: v.record(v.string(), v.unknown()).optional(),
     layoutProps: v.record(v.string(), v.record(v.string(), v.unknown())).optional(),
@@ -59,6 +60,8 @@ export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
     isLocalProject: v.boolean().optional(),
     noHmr: v.boolean().optional(),
     forceProductionScripts: v.boolean().optional(),
+    dependencyPinningCacheKey: v.string().optional(),
+    dependencyPinningDependencies: v.record(v.string(), v.string()).optional(),
   })
 );
 
@@ -80,6 +83,7 @@ export const getHydrationDataSchema = defineSchema((v) =>
     layoutProps: v.record(v.string(), v.record(v.string(), v.unknown())).optional(),
     pagePath: v.string().optional(),
     clientModuleStrategy: getClientModuleStrategySchema().optional(),
+    dependencyPinningCacheKey: v.string().optional(),
   })
 );
 

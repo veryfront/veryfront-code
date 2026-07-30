@@ -192,9 +192,18 @@ async function doFetchAndCacheModule(
   const log = getLog(context);
   const { esmCacheDir, adapter, projectDir, projectId, contentSourceId } = context;
   const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
+  const dependencyPinningCacheKey = context.dependencyPinningCacheKey ?? "off";
+  const moduleServerOrigin = dependencyPinningCacheKey.startsWith("on:")
+    ? context.moduleServerOrigin
+    : undefined;
 
   const pathCache = await getModulePathCache(esmCacheDir);
-  const versionedKey = getVersionedPathCacheKey(normalizedPath, effectiveReactVersion);
+  const versionedKey = getVersionedPathCacheKey(
+    normalizedPath,
+    effectiveReactVersion,
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
   const cachedPath = await readValidCachedModulePath({
     normalizedPath,
     pathCache,
@@ -224,6 +233,8 @@ async function doFetchAndCacheModule(
         esmCacheDir,
         pathCache,
         reactVersion: effectiveReactVersion,
+        dependencyPinningCacheKey,
+        moduleServerOrigin,
         parentModulePath,
       });
     }
@@ -238,6 +249,8 @@ async function doFetchAndCacheModule(
         effectiveReactVersion,
         normalizedPath,
         contentHash,
+        dependencyPinningCacheKey,
+        moduleServerOrigin,
       )
       : null;
 
@@ -272,6 +285,10 @@ async function doFetchAndCacheModule(
         normalizedPath,
         projectSlug,
         reactVersion: context.reactVersion,
+        moduleServerOrigin,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies: context.dependencyPinningDependencies,
+        dependencyPinningSource: context.dependencyPinningSource,
         adapter,
         log,
       });
@@ -300,6 +317,8 @@ async function doFetchAndCacheModule(
       log,
       projectSlug,
       reactVersion: effectiveReactVersion,
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
       distributedCacheWrite:
         needsDistributedCacheWrite && distResult?.distributedCache && transformCacheKey &&
           contentSourceId
@@ -333,6 +352,10 @@ export function createModuleFetcherContext(
     isLocalProject?: boolean;
     projectSlug?: string;
     reactVersion?: string;
+    moduleServerOrigin?: string;
+    dependencyPinningCacheKey?: string;
+    dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    dependencyPinningSource?: ModuleFetcherContext["dependencyPinningSource"];
     logger?: Logger;
     strictMissingModules?: boolean;
   },

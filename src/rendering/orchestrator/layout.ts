@@ -12,7 +12,11 @@ import { clearImportMapCache, preloadImportMap } from "#veryfront/modules/import
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  type DependencyPinningSourceInput,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import type { ComponentRegistry } from "../ssr/component-registry.ts";
 
 const logger = rendererLogger.component("layout-orchestrator");
 
@@ -28,7 +32,14 @@ export interface LayoutOrchestratorConfig {
   layoutCollector: LayoutCollector;
   layoutCompiler: LayoutCompiler;
   layoutCache: LayoutComponentCache;
-  componentRegistry: MDXComponents;
+  componentRegistry: MDXComponents | ComponentRegistry;
+}
+
+function isSnapshotAwareComponentRegistry(
+  value: MDXComponents | ComponentRegistry,
+): value is ComponentRegistry {
+  return typeof (value as ComponentRegistry).prepareDependencySnapshot ===
+    "function";
 }
 
 export interface LayoutCollectionResult {
@@ -65,7 +76,22 @@ export class LayoutOrchestrator {
     this.config = config;
   }
 
-  private getReactVersion(): Promise<string> {
+  private getReactVersion(
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  ): Promise<string> {
+    if (
+      dependencyPinningDependencies !== undefined ||
+      dependencyPinningCacheKey?.startsWith("on:")
+    ) {
+      return resolveProjectReactVersion({
+        projectDir: this.config.projectDir,
+        config: this.config.config,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+      });
+    }
+
     this.reactVersionPromise ??= resolveProjectReactVersion({
       projectDir: this.config.projectDir,
       config: this.config.config,
@@ -100,7 +126,13 @@ export class LayoutOrchestrator {
     );
   }
 
-  preloadLayoutModules(nestedLayouts: LayoutItem[]): Promise<LayoutPreloadSummary> {
+  preloadLayoutModules(
+    nestedLayouts: LayoutItem[],
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+    dependencyPinningSource?: DependencyPinningSourceInput,
+    moduleServerOrigin?: string,
+  ): Promise<LayoutPreloadSummary> {
     return withSpan(
       "layout.preloadModules",
       async () => {
@@ -125,7 +157,10 @@ export class LayoutOrchestrator {
           };
         }
 
-        const reactVersion = await this.getReactVersion();
+        const reactVersion = await this.getReactVersion(
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+        );
 
         logger.debug("Preloading layout modules", {
           tsxCount: tsxLayouts.length,
@@ -173,6 +208,11 @@ export class LayoutOrchestrator {
                   this.config.projectSlug,
                   this.config.contentSourceId,
                   reactVersion,
+                  undefined,
+                  dependencyPinningCacheKey,
+                  dependencyPinningDependencies,
+                  dependencyPinningSource,
+                  moduleServerOrigin,
                 );
                 return { type: "tsx" as const, path: componentPath, success: true };
               } catch (error) {
@@ -205,6 +245,10 @@ export class LayoutOrchestrator {
                   this.config.projectSlug,
                   this.config.contentSourceId,
                   reactVersion,
+                  dependencyPinningCacheKey,
+                  dependencyPinningDependencies,
+                  dependencyPinningSource,
+                  moduleServerOrigin,
                 );
                 return { type: "mdx" as const, path: layout.path, success: true };
               } catch (error) {
@@ -283,14 +327,32 @@ export class LayoutOrchestrator {
     projectSlug?: string,
     clientPageIsland?: { clientLayoutPaths: readonly string[] },
     pageProps?: Record<string, unknown>,
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+    dependencyPinningSource?: DependencyPinningSourceInput,
   ): Promise<React.ReactElement> {
     return withSpan(
       "layout.applyLayoutsAndWrappers",
       async () => {
-        const reactVersion = await this.getReactVersion();
+        const reactVersion = await this.getReactVersion(
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+        );
+        const registryComponents = isSnapshotAwareComponentRegistry(
+            this.config.componentRegistry,
+          )
+          ? this.config.componentRegistry.getAllAsComponents(
+            await this.config.componentRegistry.prepareDependencySnapshot(
+              dependencyPinningCacheKey,
+              dependencyPinningDependencies,
+              dependencyPinningSource,
+              requestUrl?.origin,
+            ),
+          )
+          : this.config.componentRegistry;
         const mergedComponents = {
           ...createDefaultMDXComponents(),
-          ...this.config.componentRegistry,
+          ...registryComponents,
         };
 
         const layoutApplicator = new LayoutApplicator({
@@ -311,6 +373,9 @@ export class LayoutOrchestrator {
           pageProps,
           headings,
           reactVersion,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          dependencyPinningSource,
         });
 
         const pageType = pageElement.type;

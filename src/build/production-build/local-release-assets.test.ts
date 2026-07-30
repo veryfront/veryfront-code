@@ -15,6 +15,10 @@ import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { generateLocalReleaseAssetManifest } from "./local-release-assets.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 function makeAdapter() {
   const writes = new Map<string, string>();
@@ -191,6 +195,64 @@ describe("build/production-build/local-release-assets", () => {
     );
     assertExists(reactAsset);
     assertStringIncludes(reactAsset, "react@18.3.1");
+  });
+
+  it("passes the project dependency snapshot to every local framework transform", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const { adapter } = makeAdapter();
+    const snapshot: DependencyPinningSnapshot = Object.freeze({
+      cacheKey: "on:local-build-snapshot",
+      dependencies: Object.freeze({
+        react: "18.3.1",
+        lodash: "4.17.21",
+      }),
+    });
+    const pinningSource = createDependencyPinningSource({
+      projectDir: "/project",
+      contentSourceId: "production-build",
+    });
+    const observed: Array<{
+      snapshot: DependencyPinningSnapshot | undefined;
+      source: unknown;
+      reactVersion: string | undefined;
+    }> = [];
+
+    const manifest = await generateLocalReleaseAssetManifest({
+      // deno-lint-ignore no-explicit-any
+      adapter: adapter as any,
+      projectDir: "/project",
+      outputDir: "/project/dist",
+      dryRun: true,
+      vendorHttpImports: fakeVendorHttpImports,
+      dependencyPinningSnapshot: snapshot,
+      dependencyPinningSource: pinningSource,
+      frameworkTransform: (
+        _source,
+        _sourceFile,
+        _projectDir,
+        _adapter,
+        options,
+      ) => {
+        observed.push({
+          snapshot: options.dependencyPinningSnapshot,
+          source: options.dependencyPinningSource,
+          reactVersion: options.reactVersion,
+        });
+        return Promise.resolve("export const framework = true;");
+      },
+    });
+
+    assertExists(manifest);
+    assertEquals(observed.length > 0, true);
+    assertEquals(
+      observed.every(
+        (value) =>
+          value.snapshot === snapshot &&
+          value.source === pinningSource &&
+          value.reactVersion === "18.3.1",
+      ),
+      true,
+    );
   });
 
   it("includes existing cached HTTP dependency assets in the local manifest", async () => {

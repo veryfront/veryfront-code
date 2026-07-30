@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -40,6 +40,8 @@ const crossProjectImport: CrossProjectImport = {
   version: "1.2.3",
   path: "components/Button.tsx",
 };
+const SNAPSHOT_A_PIN_KEY = "on:34n9smy47dk9";
+const SNAPSHOT_B_PIN_KEY = "on:34n8mjmdp7io";
 
 describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", () => {
   it("returns cached temp path without fetching", async () => {
@@ -64,6 +66,8 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
         projectDir: "/project",
         dev: true,
         apiBaseUrl: "https://registry.example.com/api",
+        moduleServerOrigin: "https://app.example",
+        dependencyPinningCacheKey: "off",
         adapter: denoAdapter,
       },
       cache: {
@@ -87,6 +91,41 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
     assertEquals(result, "/tmp/cached-cross-project.mjs");
     assertEquals(fetchCalls, 0);
     assertEquals(capacityCalls, 0);
+  });
+
+  it("preserves the mainline off key and isolates enabled snapshots and origins", () => {
+    const base = {
+      specifier: crossProjectImport.specifier,
+      projectId: "project-a",
+      reactVersion: "19.1.1",
+      registryBaseUrl: "https://registry.example.com",
+    };
+    const unkeyed = buildCrossProjectImportCacheKey(base);
+    const flagOff = buildCrossProjectImportCacheKey({
+      ...base,
+      moduleServerOrigin: "https://app.example",
+      dependencyPinningCacheKey: "off",
+    });
+    assertEquals(flagOff, unkeyed);
+
+    const snapshotA = buildCrossProjectImportCacheKey({
+      ...base,
+      moduleServerOrigin: "https://app.example",
+      dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
+    });
+    const snapshotB = buildCrossProjectImportCacheKey({
+      ...base,
+      moduleServerOrigin: "https://app.example",
+      dependencyPinningCacheKey: SNAPSHOT_B_PIN_KEY,
+    });
+    const otherOrigin = buildCrossProjectImportCacheKey({
+      ...base,
+      moduleServerOrigin: "https://other.example",
+      dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
+    });
+
+    assertNotEquals(snapshotA, snapshotB);
+    assertNotEquals(snapshotA, otherOrigin);
   });
 
   it("fetches, transforms, writes temp file, and caches transformed cross-project import", async () => {

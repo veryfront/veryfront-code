@@ -38,7 +38,11 @@ import { cacheHttpImportsToLocal, normalizeHttpUrl } from "#veryfront/transforms
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import {
+  createDependencyPinningSource,
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
   getReactUrls,
+  resolveDependencyPinningSnapshot,
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
@@ -139,7 +143,16 @@ export type ReleaseAssetTransform = (
   projectDir: string,
   // deno-lint-ignore no-explicit-any -- adapter is opaque to the executor
   adapter: any,
-  options: { projectId: string; dev: boolean; ssr: boolean; reactVersion?: string },
+  options: {
+    projectId: string;
+    dev: boolean;
+    ssr: boolean;
+    reactVersion?: string;
+    /** Immutable dependency state shared by every transform in this build. */
+    dependencyPinningSnapshot?: DependencyPinningSnapshot;
+    /** Package source paired with dependencyPinningSnapshot. */
+    dependencyPinningSource?: DependencyPinningSourceInput;
+  },
 ) => Promise<string>;
 
 export interface ReleaseAssetVendorDependency {
@@ -1233,6 +1246,8 @@ async function buildFrameworkDependencies(
   input: ReleaseAssetBuildInput,
   tempDir: string,
   transform: ReleaseAssetTransform,
+  dependencyPinningSnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSourceInput,
   dependencyUrls: Map<string, string>,
   uploadQueue: PreparedAsset[],
   pendingBytes: Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>,
@@ -1291,6 +1306,8 @@ async function buildFrameworkDependencies(
         dev: false,
         ssr: false,
         reactVersion: input.reactVersion,
+        dependencyPinningSnapshot,
+        dependencyPinningSource,
       });
 
       const frameworkImportUrls = new Map<string, string>();
@@ -1370,6 +1387,8 @@ export async function buildFrameworkDependencyAssets(options: {
   projectId?: string;
   transform?: ReleaseAssetTransform;
   dependencyUrls: Map<string, string>;
+  dependencyPinningSnapshot?: DependencyPinningSnapshot;
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }): Promise<{
   dependencies: Record<string, PreparedAsset>;
   assets: PreparedReleaseAsset[];
@@ -1378,7 +1397,25 @@ export async function buildFrameworkDependencyAssets(options: {
   const uploadQueue: PreparedAsset[] = [];
   const pendingBytes = new Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
   const gaps: string[] = [];
-  const transform = options.transform ?? transformToESM;
+  const dependencyPinningSource = options.dependencyPinningSource ??
+    createDependencyPinningSource({
+      projectDir: options.tempDir,
+      adapter: options.adapter,
+      contentSourceId: "local-framework-assets",
+    });
+  const dependencyPinningSnapshot = options.dependencyPinningSnapshot ??
+    await resolveDependencyPinningSnapshot(dependencyPinningSource);
+  const transform: ReleaseAssetTransform = options.transform ??
+    ((source, sourceFile, projectDir, adapter, transformOptions) =>
+      transformToESM(source, sourceFile, projectDir, adapter, {
+        projectId: transformOptions.projectId,
+        dev: transformOptions.dev,
+        ssr: transformOptions.ssr,
+        reactVersion: transformOptions.reactVersion,
+        dependencyPinningCacheKey: transformOptions.dependencyPinningSnapshot?.cacheKey,
+        dependencyPinningDependencies: transformOptions.dependencyPinningSnapshot?.dependencies,
+        dependencyPinningSource: transformOptions.dependencyPinningSource,
+      }));
   const dependencies = await buildFrameworkDependencies(
     {
       projectReference: options.projectId ?? "local",
@@ -1393,6 +1430,8 @@ export async function buildFrameworkDependencyAssets(options: {
     },
     options.tempDir,
     transform,
+    dependencyPinningSnapshot,
+    dependencyPinningSource,
     options.dependencyUrls,
     uploadQueue,
     pendingBytes,
@@ -1488,6 +1527,9 @@ export async function runReleaseAssetBuild(
         ssr: options.ssr,
         studioEmbed: false,
         reactVersion: options.reactVersion,
+        dependencyPinningCacheKey: options.dependencyPinningSnapshot?.cacheKey,
+        dependencyPinningDependencies: options.dependencyPinningSnapshot?.dependencies,
+        dependencyPinningSource: options.dependencyPinningSource,
       }));
 
   // H1: wrap the whole build so any non-transform failure also reports failed.
@@ -1528,6 +1570,8 @@ async function resolveReleaseReactVersion(
   releaseConfig: VeryfrontConfig,
   fallbackReactVersion: string | undefined,
   tempDir: string,
+  dependencyPinningSnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSourceInput,
 ): Promise<string | undefined> {
   const hasReleaseReactConfig = !!releaseConfig.react?.version ||
     (releaseConfig.client?.cdn?.versions !== undefined &&
@@ -1536,6 +1580,9 @@ async function resolveReleaseReactVersion(
   const releaseReactVersion = await resolveProjectReactVersion({
     projectDir: tempDir,
     config: releaseConfig,
+    dependencyPinningSource,
+    dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
+    dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
   });
 
   if (hasReleaseReactConfig || hasReleasePackageJson || fallbackReactVersion === undefined) {
@@ -1543,6 +1590,34 @@ async function resolveReleaseReactVersion(
   }
 
   return fallbackReactVersion;
+}
+
+function dependencyConfigForRelease(
+  sourceByPath: Map<string, string>,
+  releaseConfig: VeryfrontConfig,
+  fallbackReactVersion: string | undefined,
+): VeryfrontConfig {
+  const hasReleaseReactConfig = !!releaseConfig.react?.version ||
+    (releaseConfig.client?.cdn?.versions !== undefined &&
+      releaseConfig.client.cdn.versions !== "auto");
+  if (
+    hasReleaseReactConfig ||
+    sourceByPath.has("package.json") ||
+    fallbackReactVersion === undefined
+  ) {
+    return releaseConfig;
+  }
+
+  // The request-context React version is the established fallback when a
+  // release has no package/config declaration. Capture it in the build
+  // snapshot so its cache key and transforms cannot diverge.
+  return {
+    ...releaseConfig,
+    react: {
+      ...releaseConfig.react,
+      version: fallbackReactVersion,
+    },
+  };
 }
 
 async function runBuildInner(
@@ -1582,11 +1657,29 @@ async function runBuildInner(
   const vendorDependencies = isDependencyImportMapEnabled();
   const releaseConfig = await resolveReleaseConfigFromSourceFiles(sourceByPath, input, tempDir);
   const routeDirectories = releaseRouterDirectories(releaseConfig);
-  const releaseReactVersion = await resolveReleaseReactVersion(
+  const dependencyConfig = dependencyConfigForRelease(
     sourceByPath,
     releaseConfig,
     input.reactVersion,
+  );
+  const dependencyPinningSource = createDependencyPinningSource({
+    projectDir: tempDir,
+    projectId: input.projectId,
+    releaseId: input.releaseId,
+    contentSourceId: `release-assets:${input.releaseVersionRef}`,
+    isLocalProject: true,
+    config: dependencyConfig,
+  });
+  const dependencyPinningSnapshot = await resolveDependencyPinningSnapshot(
+    dependencyPinningSource,
+  );
+  const releaseReactVersion = await resolveReleaseReactVersion(
+    sourceByPath,
+    dependencyConfig,
+    input.reactVersion,
     tempDir,
+    dependencyPinningSnapshot,
+    dependencyPinningSource,
   );
   const transformingModules = new Set<string>();
 
@@ -1612,6 +1705,8 @@ async function runBuildInner(
           dev: false,
           ssr: false,
           reactVersion: releaseReactVersion,
+          dependencyPinningSnapshot,
+          dependencyPinningSource,
         });
       } catch (error) {
         const sanitized = sanitizeError(error);
@@ -1727,6 +1822,8 @@ async function runBuildInner(
     { ...input, reactVersion: releaseReactVersion },
     tempDir,
     transform,
+    dependencyPinningSnapshot,
+    dependencyPinningSource,
     dependencyUrls,
     uploadQueue,
     pendingBytes,

@@ -32,7 +32,7 @@ function makeInfo(specifier: string): ImportSpecifierInfo {
       se: specifier.length,
       d: -1,
       a: -1,
-    } as ImportSpecifier,
+    } as ImportSpecifierInfo["raw"],
   };
 }
 
@@ -92,6 +92,21 @@ describe("transforms/import-rewriter/strategies/cross-project-strategy", () => {
         makeCtx({ target: "browser" }),
       );
       assertEquals(result.specifier!.includes("/_vf_modules/_cross/my-project/"), true);
+    });
+
+    it("preserves the captured snapshot on a cross-project child-module URL", () => {
+      const result = crossProjectStrategy.rewrite(
+        makeInfo("my-project@1.0.0/@/components/Button"),
+        makeCtx({
+          target: "browser",
+          dependencyPinningCacheKey: "on:snapshot-a",
+        }),
+      );
+
+      assertEquals(
+        result.specifier,
+        "/_vf_modules/_pins/on%3Asnapshot-a/_cross/my-project@1.0.0/@/components/Button.tsx",
+      );
     });
 
     it("returns null for invalid specifier", () => {

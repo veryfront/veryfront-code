@@ -68,6 +68,7 @@ import {
   createDependencyHashCache,
   type DependencyHashCache,
 } from "#veryfront/cache/dependency-graph.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 const CACHE_FILE_MISSING_PREFIX = "Cache file missing:";
@@ -135,9 +136,19 @@ function publishTransformCacheIfCurrent(input: {
   return true;
 }
 
+function getMdxEsmCacheVariant(
+  options: Pick<SSRModuleLoaderOptions, "dependencyPinningCacheKey" | "moduleServerOrigin">,
+): string | undefined {
+  return buildDependencyPinningCacheVariant(
+    options.dependencyPinningCacheKey,
+    options.moduleServerOrigin,
+  );
+}
+
 /** Internal test seam for the singleflight timeout lifecycle. */
 export const __ssrModuleLoaderInternals = {
   deleteInProgressTransformIfCurrent,
+  getMdxEsmCacheVariant,
   publishTransformCacheIfCurrent,
   scheduleStaleInProgressTransformEviction,
   shouldRetryRejectedInProgressTransform,
@@ -387,6 +398,7 @@ export class SSRModuleLoader {
       this.options.projectDir,
       this.options.reactVersion,
       mdxCacheDirs,
+      getMdxEsmCacheVariant(this.options),
     );
   }
 
@@ -613,6 +625,7 @@ export class SSRModuleLoader {
           contentSourceId: this.options.contentSourceId,
         },
         this.options.reactVersion,
+        getMdxEsmCacheVariant(this.options),
       );
 
       if (mdxCacheResult.status === "hit") {
@@ -781,8 +794,12 @@ export class SSRModuleLoader {
           dev: this.options.dev,
           ssr: true,
           apiBaseUrl: this.options.apiBaseUrl,
+          moduleServerOrigin: this.options.moduleServerOrigin,
           reactVersion: this.options.reactVersion,
           dependencyHashCache,
+          dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
+          dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+          dependencyPinningSource: this.options.dependencyPinningSource,
         };
 
         let transformed = await withSpan(
@@ -816,6 +833,10 @@ export class SSRModuleLoader {
           adapter: this.options.adapter,
           projectDir: this.options.projectDir,
           reactVersion: this.options.reactVersion,
+          moduleServerOrigin: this.options.moduleServerOrigin,
+          dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
+          dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+          dependencyPinningSource: this.options.dependencyPinningSource,
         });
 
         // Ensure HTTP bundles exist for this transform (handles nested bundle deps)

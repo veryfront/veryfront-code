@@ -10,6 +10,7 @@
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 /** Timeout for CSS generation SSR (shorter than full SSR since it's optional) */
 export const CSS_SSR_TIMEOUT_MS = 5_000;
@@ -19,7 +20,7 @@ export const PAGE_CSS_CACHE_MAX_SIZE = 200;
 
 /**
  * Per-page CSS cache to avoid redundant SSR for CSS generation.
- * Key: projectId:environment:slug:contentVersion
+ * Key: projectId:environment:slug:contentVersion[:pins:snapshot+origin]
  * Value: Generated CSS string
  * Uses LRU eviction so frequently-used pages' CSS is retained under cache pressure.
  */
@@ -54,10 +55,17 @@ export function getPageCssCacheKey(
   environment: string | undefined,
   slug: string,
   projectUpdatedAt: string | undefined,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
 ): string {
-  return `${projectId || "default"}:${environment || "preview"}:${slug}:${
+  const legacyKey = `${projectId || "default"}:${environment || "preview"}:${slug}:${
     projectUpdatedAt || "draft"
   }`;
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
+  return cacheVariant ? `${legacyKey}:pins:${cacheVariant}` : legacyKey;
 }
 
 /** Cache CSS for a page - internal implementation */

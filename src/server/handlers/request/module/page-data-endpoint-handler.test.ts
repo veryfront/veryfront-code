@@ -16,6 +16,12 @@ import {
   __clearPageDataEndpointCacheForTests,
   handlePageDataEndpoint,
 } from "./page-data-endpoint-handler.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  clearReactVersionCache,
+  getDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 type PageDataEndpointHandler = typeof handlePageDataEndpoint;
 
@@ -188,6 +194,7 @@ function restoreEnv(name: string, value: string | undefined): void {
 describe("server/handlers/request/module/page-data-endpoint-handler", () => {
   afterEach(async () => {
     __clearPageDataEndpointCacheForTests();
+    clearReactVersionCache();
     await destroyRendererAdapter();
     setRendererInitializer(undefined);
   });
@@ -211,6 +218,224 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     assertEquals(second.status, 200);
     assertEquals(calls, 1);
     assertEquals(await first.text(), await second.text());
+  });
+
+  it("renders a historical requested dependency snapshot without exposing pins to page data", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-page-data-pins-" });
+    const packageJsonPath = `${projectDir}/package.json`;
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({ dependencies: { react: "18.3.1", example: "1.0.0" } }),
+      );
+      const snapshotA = await getDependencyPinningSnapshot(projectDir);
+
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({ dependencies: { react: "19.1.0", example: "2.0.0" } }),
+      );
+      const future = new Date(Date.now() + 2_000);
+      await Deno.utime(packageJsonPath, future, future);
+      const snapshotB = await getDependencyPinningSnapshot(projectDir);
+      assertEquals(snapshotA.cacheKey === snapshotB.cacheKey, false);
+
+      let observed:
+        | {
+          cacheKey?: string;
+          dependencies?: Readonly<Record<string, string>>;
+          requestUrl?: string;
+          requestPinHeader?: string | null;
+          url?: string;
+        }
+        | undefined;
+      setRendererInitializer(
+        createInitializer((slug, _ctx, options) => {
+          observed = {
+            cacheKey: options?.dependencyPinningCacheKey,
+            dependencies: options?.dependencyPinningDependencies,
+            requestUrl: options?.request?.url,
+            requestPinHeader: options?.request?.headers.get(
+              "x-veryfront-dependency-pins",
+            ),
+            url: options?.url?.href,
+          };
+          return Promise.resolve(createPageData(slug, 1));
+        }),
+      );
+
+      const response = await callPageDataEndpoint(
+        new Request(
+          "http://localhost/_veryfront/page-data/index.json?visible=yes&pins=customer-value",
+          {
+            headers: {
+              "x-veryfront-dependency-pins": snapshotA.cacheKey,
+            },
+          },
+        ),
+        makeCtx({ projectDir }),
+      );
+      const body = await response.json();
+
+      assertEquals(response.status, 200);
+      assertEquals(body.dependencyPinningCacheKey, snapshotA.cacheKey);
+      assertEquals(observed?.cacheKey, snapshotA.cacheKey);
+      assertEquals(observed?.dependencies?.example, "1.0.0");
+      assertEquals(observed?.requestPinHeader, null);
+      assertEquals(
+        response.headers.get("x-veryfront-dependency-pins"),
+        snapshotA.cacheKey,
+      );
+      assertEquals(
+        response.headers.get("vary")?.toLowerCase().includes(
+          "x-veryfront-dependency-pins",
+        ),
+        true,
+      );
+      assertEquals(
+        observed?.requestUrl,
+        "http://localhost/_veryfront/page-data/index.json?visible=yes&pins=customer-value",
+      );
+      assertEquals(
+        observed?.url,
+        "http://localhost/_veryfront/page-data/index.json?visible=yes&pins=customer-value",
+      );
+    } finally {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      clearReactVersionCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("recovers a requested current snapshot after an in-process cache reset", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-page-data-cold-pins-" });
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      await Deno.writeTextFile(
+        `${projectDir}/package.json`,
+        JSON.stringify({ dependencies: { react: "19.1.0" } }),
+      );
+      clearReactVersionCache();
+      const snapshot = await getDependencyPinningSnapshot(projectDir);
+      clearReactVersionCache();
+
+      setRendererInitializer(
+        createInitializer((slug) => Promise.resolve(createPageData(slug, 1))),
+      );
+      const response = await callPageDataEndpoint(
+        new Request(
+          "http://localhost/_veryfront/page-data/index.json",
+          {
+            headers: {
+              "x-veryfront-dependency-pins": snapshot.cacheKey,
+            },
+          },
+        ),
+        makeCtx({ projectDir }),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals((await response.json()).dependencyPinningCacheKey, snapshot.cacheKey);
+    } finally {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      clearReactVersionCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("fails closed for missing, malformed, duplicate, and unknown snapshot tokens", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-page-data-invalid-pins-" });
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    let calls = 0;
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      await Deno.writeTextFile(
+        `${projectDir}/package.json`,
+        JSON.stringify({ dependencies: { react: "19.1.0" } }),
+      );
+      clearReactVersionCache();
+      setRendererInitializer(
+        createInitializer((slug) => {
+          calls++;
+          return Promise.resolve(createPageData(slug, calls));
+        }),
+      );
+
+      const requests = [
+        new Request("http://localhost/_veryfront/page-data/index.json?pins=customer-value"),
+        new Request("http://localhost/_veryfront/page-data/index.json", {
+          headers: { "x-veryfront-dependency-pins": "off" },
+        }),
+        new Request("http://localhost/_veryfront/page-data/index.json", {
+          headers: { "x-veryfront-dependency-pins": "on:first, on:second" },
+        }),
+        new Request("http://localhost/_veryfront/page-data/index.json", {
+          headers: { "x-veryfront-dependency-pins": "on:unknown" },
+        }),
+      ];
+      for (const request of requests) {
+        const response = await callPageDataEndpoint(
+          request,
+          makeCtx({ projectDir }),
+        );
+        assertEquals(response.status, 409);
+        assertEquals(response.headers.get("cache-control"), "no-store");
+        assertEquals(
+          response.headers.get("vary")?.toLowerCase().includes(
+            "x-veryfront-dependency-pins",
+          ),
+          true,
+        );
+      }
+      assertEquals(calls, 0);
+    } finally {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      clearReactVersionCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("preserves the legacy unpinned payload when dependency pinning is disabled", async () => {
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    let observedUrl: string | undefined;
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+      clearReactVersionCache();
+      setRendererInitializer(
+        createInitializer((slug, _ctx, options) => {
+          observedUrl = options?.request?.url;
+          return Promise.resolve(createPageData(slug, 1));
+        }),
+      );
+
+      const response = await callPageDataEndpoint(
+        new Request(
+          "http://localhost/_veryfront/page-data/index.json?pins=customer-value",
+        ),
+        makeCtx(),
+      );
+      assertEquals(response.status, 200);
+      assertEquals((await response.json()).dependencyPinningCacheKey, undefined);
+      assertEquals(
+        response.headers.get("vary")?.toLowerCase().includes(
+          "x-veryfront-dependency-pins",
+        ),
+        true,
+      );
+      assertEquals(
+        observedUrl,
+        "http://localhost/_veryfront/page-data/index.json?pins=customer-value",
+      );
+    } finally {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      clearReactVersionCache();
+    }
   });
 
   it("encodes a getServerData redirect() as a 200 payload instead of a 500", async () => {

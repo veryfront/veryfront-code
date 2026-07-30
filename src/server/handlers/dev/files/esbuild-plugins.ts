@@ -24,6 +24,13 @@ import {
   describeBrowserModuleBoundaryViolation,
   inspectBrowserModuleBoundary,
 } from "#veryfront/server/shared/browser-module-boundary.ts";
+import {
+  type DependencyPinningSourceInput,
+  resolveDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { resolveDependencyPinForImport } from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
+import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import { appendSameOriginDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 const logger = serverLogger.component("bare-ext");
 
@@ -296,13 +303,72 @@ export function createRelativeFsPlugin(
   };
 }
 
-/** Map of common packages to their esm.sh URLs for browser imports */
-const ESM_PACKAGE_MAP: Record<string, string> = {};
+/**
+ * Build an esm.sh URL for a bare specifier, injecting a pinned version when
+ * dependency pinning is enabled and the captured declaration is exact.
+ * Raw declarations retain the unversioned URL while the platform resolves
+ * them asynchronously.
+ */
+function buildPinnedEsmUrl(
+  path: string,
+  projectDir: string | undefined,
+  projectId: string | undefined,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+): string {
+  const parsed = parseBarePackageSpecifier(path);
+  if (parsed && !parsed.version) {
+    const version = resolveDependencyPinForImport(parsed.packageName, {
+      projectDir,
+      projectId,
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+      dependencyPinningSource,
+    });
+    if (version) {
+      const versionedPath = `${parsed.packageName}@${version}${parsed.subpath ?? ""}`;
+      return `https://esm.sh/${versionedPath}`;
+    }
+  }
+  return `https://esm.sh/${path}`;
+}
+
+function observeImportMapDependency(
+  path: string,
+  options: BareExternalPluginOptions,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+): void {
+  const parsed = parseBarePackageSpecifier(path);
+  if (
+    parsed?.version ||
+    (
+      parsed?.packageName !== "react" &&
+      parsed?.packageName !== "react-dom" &&
+      parsed?.packageName !== "veryfront"
+    )
+  ) {
+    return;
+  }
+
+  resolveDependencyPinForImport(parsed.packageName, {
+    projectDir: options.projectDir,
+    projectId: options.projectId,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource: options.dependencyPinningSource,
+  });
+}
 
 interface BareExternalPluginOptions {
   bundle?: boolean;
   lockfile?: LockfileManager;
   projectDir?: string;
+  projectId?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
   strict?: boolean;
   importMapImports?: Record<string, string>;
 }
@@ -311,8 +377,7 @@ function isBareImport(path: string): boolean {
   return (
     !path.startsWith(".") &&
     !path.startsWith("/") &&
-    !path.startsWith("http://") &&
-    !path.startsWith("https://")
+    !/^https?:\/\//i.test(path)
   );
 }
 
@@ -322,10 +387,6 @@ function isBareImport(path: string): boolean {
  */
 function isNodeBuiltinSpecifier(path: string): boolean {
   return path === "node" || path.startsWith("node:");
-}
-
-function toEsmUrl(path: string): string {
-  return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${path}`;
 }
 
 function resolveAsExternalOrHttps(
@@ -388,10 +449,21 @@ export function createBareExternalPlugin(
     (opts.projectDir && bundle ? createLockfileManager(opts.projectDir) : null);
   const importMapImports = mergeBrowserImportMapImports(opts.importMapImports);
 
+  // Capture the dependency snapshot once at plugin creation. Every onResolve
+  // callback awaits this same promise so import-map and esm.sh branches observe
+  // one immutable key/map pair.
+  const dependencySnapshot = opts.projectDir
+    ? resolveDependencyPinningSnapshot(
+      opts.dependencyPinningSource ?? opts.projectDir,
+      opts.dependencyPinningCacheKey,
+      opts.dependencyPinningDependencies,
+    )
+    : Promise.resolve(undefined);
+
   return {
     name: "veryfront-bare-ext",
     setup(build: PluginBuild) {
-      build.onResolve({ filter: /.*/ }, (args: OnResolveArgs) => {
+      build.onResolve({ filter: /.*/ }, async (args: OnResolveArgs) => {
         if (!isBareImport(args.path)) return undefined;
         if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
 
@@ -411,13 +483,35 @@ export function createBareExternalPlugin(
           };
         }
 
+        // Ensure the package.json dep cache is warm before consulting it for
+        // a version pin. The warmup Promise resolves immediately on warm paths.
+        const snapshot = await dependencySnapshot;
+
         // Keep import-map-resolved specifiers as bare externals — the browser's
-        // <script type="importmap"> resolves them to the correct CDN URL.
+        // <script type="importmap"> resolves them to the correct CDN URL. React
+        // and Veryfront still need to report their raw declarations before this
+        // winning branch returns.
         if (importMapOwnsSpecifier(args.path, importMapImports)) {
+          observeImportMapDependency(
+            args.path,
+            opts,
+            snapshot?.cacheKey ?? opts.dependencyPinningCacheKey,
+            snapshot?.dependencies ?? opts.dependencyPinningDependencies,
+          );
           return { path: args.path, external: true };
         }
 
-        return resolveAsExternalOrHttps(toEsmUrl(args.path), bundle);
+        return resolveAsExternalOrHttps(
+          buildPinnedEsmUrl(
+            args.path,
+            opts.projectDir,
+            opts.projectId,
+            snapshot?.cacheKey,
+            snapshot?.dependencies,
+            opts.dependencyPinningSource,
+          ),
+          bundle,
+        );
       });
 
       if (!bundle) return;
@@ -466,13 +560,25 @@ export function createBareExternalPlugin(
   };
 }
 
-export function createHttpExternalPlugin(): Plugin {
+interface HttpExternalPluginOptions {
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
+}
+
+export function createHttpExternalPlugin(options: HttpExternalPluginOptions = {}): Plugin {
   return {
     name: "veryfront-http-ext",
     setup(build: PluginBuild) {
-      build.onResolve({ filter: /^https?:\/\// }, (args: OnResolveArgs) => {
+      build.onResolve({ filter: /^(?:https?:)?\/\//i }, (args: OnResolveArgs) => {
         if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
-        return { path: args.path, external: true };
+        return {
+          path: appendSameOriginDependencyPinningPathKey(
+            args.path,
+            options.dependencyPinningCacheKey,
+            options.moduleServerOrigin,
+          ),
+          external: true,
+        };
       });
     },
   };

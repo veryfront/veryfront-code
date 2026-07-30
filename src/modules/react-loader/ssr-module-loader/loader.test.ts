@@ -35,6 +35,8 @@ import {
   waitForDiskCleanup,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 
+const CANONICAL_PIN_KEY = "on:z7bg3qnfgtcb";
+
 /** Hash source as the loader sees it (after node position injection for .tsx in dev/preview) */
 function hashAsLoader(source: string, filePath: string, projectDir: string): string {
   const rel = filePath.startsWith(projectDir)
@@ -150,6 +152,28 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     } finally {
       await remove(projectDir, { recursive: true });
     }
+  });
+
+  it("uses the writer's origin-aware MDX cache variant for lookup and invalidation", () => {
+    const originA = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+      dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      moduleServerOrigin: "https://a.example",
+    });
+    const originB = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+      dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      moduleServerOrigin: "https://b.example",
+    });
+
+    assert(originA?.startsWith(`${CANONICAL_PIN_KEY}:origin:`));
+    assert(originB?.startsWith(`${CANONICAL_PIN_KEY}:origin:`));
+    assert(originA !== originB);
+    assertEquals(
+      __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+        dependencyPinningCacheKey: "off",
+        moduleServerOrigin: "https://a.example",
+      }),
+      undefined,
+    );
   });
 
   it("invalidates stale cache entries with missing local dependencies and retransforms", async () => {

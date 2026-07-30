@@ -20,6 +20,8 @@ export interface HydrationDataStructure {
   pagePath?: string;
   pageType?: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
   clientModuleStrategy?: ClientModuleStrategy;
+  /** Request-scoped dependency snapshot used to version RSC module imports. */
+  dependencyPinningCacheKey?: string;
   /** Production release id used to version fallback module URLs. */
   releaseId?: string;
   /** Production release asset URLs keyed by logical source path. */

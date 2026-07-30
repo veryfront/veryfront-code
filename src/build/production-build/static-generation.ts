@@ -59,6 +59,8 @@ export interface SSGOptions {
   /** React version for import map generation */
   reactVersion?: string;
   releaseAssetManifest?: ReleaseAssetManifest | null;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
 }
 
 function getOutputPath(outputDir: string, slug: string): string {
@@ -89,6 +91,16 @@ function createStaticRouteContext(
     staticDataOnly: true,
     url,
   };
+}
+
+function getConfiguredModuleServerOrigin(baseUrl?: string): string | undefined {
+  if (!baseUrl) return undefined;
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function hasImportMapScript(html: string): boolean {
@@ -236,6 +248,8 @@ export async function buildPagesRoutes(
             contentSourceId,
             ...staticRouteContext,
             releaseAssetManifest: options.releaseAssetManifest,
+            dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+            dependencyPinningDependencies: options.dependencyPinningDependencies,
           }),
       );
 
@@ -257,7 +271,10 @@ export async function buildPagesRoutes(
         const importMap = await buildImportMap({
           projectDir: options.projectDir,
           config: options.config,
+          moduleServerOrigin: getConfiguredModuleServerOrigin(baseUrl),
           releaseAssetManifest: options.releaseAssetManifest,
+          dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+          dependencyPinningDependencies: options.dependencyPinningDependencies,
         });
         enhancedHtml = enhancedHtml.replace(
           "</head>",
@@ -374,11 +391,14 @@ export async function buildAppRoutes(
           routePath: route.path,
           pageFile: route.pageFile,
           contentSourceId,
+          moduleServerOrigin: getConfiguredModuleServerOrigin(options.baseUrl),
           reactVersion,
           config: options.config,
           releaseAssetManifest: options.releaseAssetManifest,
           stylesheetHref,
           includePreviewStylesheet: false,
+          dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+          dependencyPinningDependencies: options.dependencyPinningDependencies,
         }));
 
       const outputPath = getAppRouteOutputPath(outputDir, route.path);

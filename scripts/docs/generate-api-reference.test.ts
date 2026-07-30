@@ -81,7 +81,7 @@ describe("generate-api-reference", () => {
       assertStringIncludes(
         providerReference,
         "| `ModelRuntimeGenerateResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L8) |",
-        "Deno's zero-based locations must render as one-based GitHub anchors",
+        "Deno's one-based locations must stay one-based in GitHub anchors",
       );
       // Alias re-exports must resolve to their target's JSDoc description and a
       // source link. Assert the stable leading phrase + link rather than pinning

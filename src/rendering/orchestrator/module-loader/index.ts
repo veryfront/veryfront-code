@@ -21,9 +21,14 @@ import {
 } from "./dependency-resolver.ts";
 import { persistTransformedModule } from "./module-persistence.ts";
 import { transformModuleCodeWithCache } from "./module-transform-cache.ts";
-import { getModuleCacheKey, resolveCachedModulePath } from "./module-cache-lookup.ts";
+import {
+  buildModuleTransformCacheVariant,
+  getModuleCacheKey,
+  resolveCachedModulePath,
+} from "./module-cache-lookup.ts";
 import { markBuildFailure } from "./build-failure.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 export { isBuildFailure } from "./build-failure.ts";
 
@@ -87,6 +92,8 @@ export async function transformModuleWithDeps(
     contentSourceId,
     config.reactVersion,
     mode,
+    config.dependencyPinningCacheKey,
+    config.moduleServerOrigin,
   );
 
   const cachedPath = await resolveCachedModulePath({
@@ -97,6 +104,8 @@ export async function transformModuleWithDeps(
     contentSourceId,
     moduleCache,
     reactVersion: config.reactVersion,
+    dependencyPinningCacheKey: config.dependencyPinningCacheKey,
+    moduleServerOrigin: config.moduleServerOrigin,
   });
   if (cachedPath) {
     markModuleLoadProgress(config, "module:cache-hit", filePath);
@@ -205,6 +214,10 @@ export async function transformModuleWithDeps(
     mode,
     adapter,
     reactVersion: config.reactVersion,
+    moduleServerOrigin: config.moduleServerOrigin,
+    dependencyPinningCacheKey: config.dependencyPinningCacheKey,
+    dependencyPinningDependencies: config.dependencyPinningDependencies,
+    dependencyPinningSource: config.dependencyPinningSource,
     onProgress: config.onProgress,
     signal: config.signal,
   });
@@ -220,6 +233,8 @@ export async function transformModuleWithDeps(
     cacheKey,
     contentSourceId,
     reactVersion: config.reactVersion,
+    moduleServerOrigin: config.moduleServerOrigin,
+    dependencyPinningCacheKey: config.dependencyPinningCacheKey,
     isCycleTarget: cycleTargets.has(filePath),
   });
   markModuleLoadProgress(config, "module:persisted", filePath);
@@ -236,6 +251,14 @@ export interface ModuleLoaderConfig {
   esmCache: Map<string, string>;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Absolute request origin used to identify same-origin module URLs. */
+  moduleServerOrigin?: string;
+  /** Stable VERYFRONT_DEPENDENCY_PINNING + package dependency-map state. */
+  dependencyPinningCacheKey?: string;
+  /** Immutable package map paired with dependencyPinningCacheKey. */
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Exact package source namespace used to prove write-back authority. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
   /** Cooperative cancellation for one module-load stage. */
   signal?: AbortSignal;
   /** Meaningful module/transform milestones for the stage idle timeout. */
@@ -355,12 +378,23 @@ export async function loadModule(
           config.contentSourceId,
           config.reactVersion,
           config.mode,
+          config.dependencyPinningCacheKey,
+          config.moduleServerOrigin,
         ),
       );
       // tmpDir is the exact cache dir this module was registered under, so the
       // invalidation stays scoped to this tenant (the path-cache key is not
       // project-scoped — see invalidateMdxEsmModule).
-      invalidateMdxEsmModule(tmpDir, filePath, config.projectDir, config.reactVersion);
+      invalidateMdxEsmModule(
+        tmpDir,
+        filePath,
+        config.projectDir,
+        config.reactVersion,
+        buildModuleTransformCacheVariant(
+          config.dependencyPinningCacheKey,
+          config.moduleServerOrigin,
+        ),
+      );
 
       let rebuiltPath: string;
       try {

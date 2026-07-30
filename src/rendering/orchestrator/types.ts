@@ -3,6 +3,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { RenderResult } from "#veryfront/types";
 import type { BuildVersion } from "#veryfront/utils/version.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 export type { RenderResult };
 
@@ -57,6 +58,12 @@ export interface RenderOptions {
   projectSlug?: string;
   /** Content source identifier for cache isolation (branch name or release ID) */
   contentSourceId?: string;
+  /** Internal request-scoped dependency-pinning state for render/transform caches. */
+  dependencyPinningCacheKey?: string;
+  /** Immutable package map paired with dependencyPinningCacheKey. */
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Exact package source namespace paired with the immutable snapshot. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
   /** Release ID for production renders (drives release asset manifest consumption) */
   releaseId?: string;
   /** Request-scoped ready release asset manifest, shared by cache keys and HTML generation. */
@@ -97,6 +104,8 @@ export interface PageDataResponse {
   params: Record<string, string | string[]>;
   layoutProps: Record<string, Record<string, unknown>>;
   buildVersion: BuildVersion;
+  /** Dependency snapshot token for browser module cache identity. */
+  dependencyPinningCacheKey?: string;
   appPath?: string;
   /** Project-relative path to the app-router error.tsx that wraps the page (client boundary). */
   errorPath?: string;

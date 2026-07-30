@@ -43,7 +43,7 @@ export function hasHttpImports(code: string): boolean {
 export { getReactUrls };
 
 /**
- * NOOP plugin for esbuild.
+ * esbuild plugin that fetches HTTP imports and rewrites esm.sh URLs.
  */
 export function createHTTPPlugin(): Plugin {
   return {

@@ -100,6 +100,10 @@ export function generateHydrationData(
       isLocalProject: options.isLocalProject,
       environment: options.environment as HydrationEnvironment | undefined,
     }),
+    ...(options.dependencyPinningCacheKey &&
+        options.dependencyPinningCacheKey !== "off"
+      ? { dependencyPinningCacheKey: options.dependencyPinningCacheKey }
+      : {}),
     releaseId: options.releaseId,
     releaseAssetModules: buildReleaseAssetModules(options.releaseAssetManifest),
     frontmatter: options.frontmatter,

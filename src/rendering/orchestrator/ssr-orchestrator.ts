@@ -155,6 +155,8 @@ export class SSROrchestrator {
               mode: this.config.mode,
               wantsStream,
               debugMode: this.config.debugMode,
+              dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
+              dependencyPinningDependencies: options?.dependencyPinningDependencies,
             }),
           {
             "ssr.wants_stream": wantsStream,
@@ -292,6 +294,9 @@ export class SSROrchestrator {
         renderOptions?.projectSlug,
         renderOptions?.clientPageIsland,
         renderOptions?.props,
+        renderOptions?.dependencyPinningCacheKey,
+        renderOptions?.dependencyPinningDependencies,
+        renderOptions?.dependencyPinningSource,
       )
       : errorInfo.element;
 
@@ -300,6 +305,8 @@ export class SSROrchestrator {
         mode: this.config.mode,
         wantsStream: false,
         debugMode: this.config.debugMode,
+        dependencyPinningCacheKey: renderOptions?.dependencyPinningCacheKey,
+        dependencyPinningDependencies: renderOptions?.dependencyPinningDependencies,
       })
     );
     logger.debug("Rendered app-router error.tsx for a page throw", {

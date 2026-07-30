@@ -7,14 +7,21 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { renderAppRouteToHTML } from "./build-app-route-renderer.ts";
+import { _renderAppRouteToHTMLForTest, renderAppRouteToHTML } from "./build-app-route-renderer.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import {
+  DEPENDENCY_PINNING_ENV_FLAG,
+  RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+} from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 import { CLIENT_PAGE_ISLAND_ID } from "#veryfront/rendering/rsc/page-island.ts";
 import { getProjectReact } from "#veryfront/react";
 import { getReactDOMServer } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+import {
+  clearReactVersionCache,
+  getDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 // React's server scheduler owns one process-lifetime MessagePort. Initialize it
 // during module setup so per-test sanitizers only track resources each render owns.
@@ -248,6 +255,103 @@ Deno.test({
       assertEquals(extractImportMapImports(releaseHtml).react, `/_vf/assets/${reactHash}.js`);
     } finally {
       setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalFlag ?? "");
+      await cleanupProject(projectDir);
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "server/build-app-route-renderer keeps one immutable dependency snapshot across an A-to-B package interleave",
+  async fn() {
+    const originalPinningFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    const { projectDir, pageFile } = await makeProject();
+    const packageJsonPath = join(projectDir, "package.json");
+    const stateA = {
+      react: "19.2.4",
+      veryfront: "0.1.810",
+      "example-package": "1.0.0",
+    };
+    const stateB = {
+      react: "18.3.1",
+      veryfront: "0.1.900",
+      "example-package": "2.0.0",
+    };
+    const observedLoads: Array<{
+      cacheKey?: string;
+      dependencies?: Readonly<Record<string, string>>;
+      moduleServerOrigin?: string;
+    }> = [];
+    let changedToStateB = false;
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({ dependencies: stateA }),
+      );
+      const oldTime = new Date(Date.now() - 10_000);
+      await Deno.utime(packageJsonPath, oldTime, oldTime);
+
+      const html = await _renderAppRouteToHTMLForTest(
+        {
+          adapter: denoAdapter,
+          projectDir,
+          routePath: "/",
+          pageFile,
+          contentSourceId: "test-content-source",
+          moduleServerOrigin: "https://build.example",
+        },
+        {
+          componentLoader: async (_source, filePath, _projectDir, _adapter, options) => {
+            observedLoads.push({
+              cacheKey: options?.dependencyPinningCacheKey,
+              dependencies: options?.dependencyPinningDependencies,
+              moduleServerOrigin: options?.moduleServerOrigin,
+            });
+
+            if (filePath === pageFile && !changedToStateB) {
+              changedToStateB = true;
+              await Deno.writeTextFile(
+                packageJsonPath,
+                JSON.stringify({ dependencies: stateB }),
+              );
+            }
+
+            return function TestComponent() {
+              return null;
+            };
+          },
+        },
+      );
+
+      assertEquals(changedToStateB, true);
+      assertEquals(observedLoads.length, 2);
+      const pageLoad = observedLoads[0]!;
+      const layoutLoad = observedLoads[1]!;
+      assertStringIncludes(pageLoad.cacheKey ?? "", "on:");
+      assertEquals(layoutLoad.cacheKey, pageLoad.cacheKey);
+      assertEquals(pageLoad.dependencies, stateA);
+      assertEquals(layoutLoad.dependencies, stateA);
+      assertEquals(layoutLoad.dependencies === pageLoad.dependencies, true);
+      assertEquals(Object.isFrozen(pageLoad.dependencies), true);
+      assertEquals(pageLoad.moduleServerOrigin, "https://build.example");
+      assertEquals(layoutLoad.moduleServerOrigin, "https://build.example");
+
+      const hydrationData = extractHydrationData(html);
+      assertEquals(hydrationData.dependencyPinningCacheKey, pageLoad.cacheKey);
+
+      const imports = extractImportMapImports(html);
+      assertStringIncludes(imports.react ?? "", "react@19.2.4");
+      assertEquals((imports.react ?? "").includes("react@18.3.1"), false);
+
+      const currentSnapshot = await getDependencyPinningSnapshot(projectDir);
+      assertEquals(currentSnapshot.dependencies, stateB);
+      assertEquals(currentSnapshot.cacheKey === pageLoad.cacheKey, false);
+    } finally {
+      clearReactVersionCache();
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalPinningFlag ?? "");
       await cleanupProject(projectDir);
     }
   },

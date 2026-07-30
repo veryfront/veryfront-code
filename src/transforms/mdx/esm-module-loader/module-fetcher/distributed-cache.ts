@@ -26,9 +26,56 @@ import {
 import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
 import { buildMdxEsmModuleFileName, buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
 import { hashString } from "../utils/hash.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
+const DISTRIBUTED_TRANSFORM_CACHE_PREFIX = "transform";
+const API_CACHE_KEY_MAX_LENGTH = 512;
+const API_CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
+const SHA256_CACHE_KEY_PREFIX = "sha256:";
+
+function getFullyPrefixedTransformCacheKey(cacheKey: string): string {
+  return `${DISTRIBUTED_TRANSFORM_CACHE_PREFIX}:${cacheKey}`;
+}
+
+function isValidApiTransformCacheKey(cacheKey: string): boolean {
+  const fullyPrefixedKey = getFullyPrefixedTransformCacheKey(cacheKey);
+  return fullyPrefixedKey.length <= API_CACHE_KEY_MAX_LENGTH &&
+    API_CACHE_KEY_PATTERN.test(fullyPrefixedKey);
+}
+
+/**
+ * Bound keys against the final API representation, including the transform
+ * backend prefix and allowed charset. The complete identity is retained in the
+ * SHA-256 input.
+ */
+export async function resolveMdxDistributedTransformCacheKey(
+  cacheKey: string,
+): Promise<string> {
+  const fullyPrefixedKey = getFullyPrefixedTransformCacheKey(cacheKey);
+  if (isValidApiTransformCacheKey(cacheKey)) return cacheKey;
+
+  return `${SHA256_CACHE_KEY_PREFIX}${await computeHash(fullyPrefixedKey)}`;
+}
+
+function setDistributedTransformCacheEntry(
+  distributedCache: DistributedCache,
+  cacheKey: string,
+  value: string,
+  onError: (error: unknown) => void,
+): void {
+  if (isValidApiTransformCacheKey(cacheKey)) {
+    distributedCache
+      .set(cacheKey, value, TRANSFORM_CACHE_TTL_SECONDS)
+      .catch(onError);
+    return;
+  }
+
+  void resolveMdxDistributedTransformCacheKey(cacheKey)
+    .then((resolvedKey) => distributedCache.set(resolvedKey, value, TRANSFORM_CACHE_TTL_SECONDS))
+    .catch(onError);
+}
 
 /** Return type for getDistributedTransformBackend */
 type DistributedCache = NonNullable<Awaited<ReturnType<typeof getDistributedTransformBackend>>>;
@@ -74,7 +121,9 @@ export async function readDistributedCache(
   if (!distributedCache) return null;
 
   try {
-    const cached = await distributedCache.get(transformCacheKey);
+    const cached = await distributedCache.get(
+      await resolveMdxDistributedTransformCacheKey(transformCacheKey),
+    );
     if (!cached) return { code: null, distributedCache };
 
     // Detokenize all cache paths for local environment
@@ -86,7 +135,9 @@ export async function readDistributedCache(
     });
 
     const bundleManifestKey = `${transformCacheKey}:bm`;
-    const manifestId = await distributedCache.get(bundleManifestKey).catch((error) => {
+    const manifestId = await distributedCache.get(
+      await resolveMdxDistributedTransformCacheKey(bundleManifestKey),
+    ).catch((error) => {
       log.warn(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed for bundle manifest key`, {
         cacheKey: bundleManifestKey,
         error,
@@ -215,14 +266,17 @@ export function writeDistributedCache(
   const portableCode = tokenizeAllVeryFrontPaths(moduleCode);
 
   // Store transformed code in distributed cache
-  distributedCache
-    .set(transformCacheKey, portableCode, TRANSFORM_CACHE_TTL_SECONDS)
-    .catch((error) => {
+  setDistributedTransformCacheEntry(
+    distributedCache,
+    transformCacheKey,
+    portableCode,
+    (error) => {
       log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
         normalizedPath,
         error,
       });
-    });
+    },
+  );
 
   const moduleFileName = buildMdxEsmModuleFileName(hashString(normalizedPath + moduleCode));
   const moduleRecoveryKey = buildMdxEsmModuleRecoveryCacheKey(
@@ -251,7 +305,7 @@ export function writeDistributedCache(
         await storeBundleManifest(manifest);
         const bundleManifestKey = `${transformCacheKey}:bm`;
         await distributedCache.set(
-          bundleManifestKey,
+          await resolveMdxDistributedTransformCacheKey(bundleManifestKey),
           manifest.manifestId,
           TRANSFORM_CACHE_TTL_SECONDS,
         );

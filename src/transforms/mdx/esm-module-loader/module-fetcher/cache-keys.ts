@@ -5,6 +5,17 @@
  */
 
 import { buildMdxEsmPathCacheKey, buildMdxEsmTransformCacheKey } from "../cache-format.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
+
+export function getMdxModuleCacheVariant(
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): string | undefined {
+  return buildDependencyPinningCacheVariant(
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
+}
 
 /**
  * Build cache key for transformed module.
@@ -19,6 +30,8 @@ export function getTransformCacheKey(
   reactVersion: string,
   normalizedPath: string,
   contentHash: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
 ): string {
   return buildMdxEsmTransformCacheKey(
     projectId,
@@ -26,9 +39,19 @@ export function getTransformCacheKey(
     reactVersion,
     normalizedPath,
     contentHash,
+    getMdxModuleCacheVariant(dependencyPinningCacheKey, moduleServerOrigin),
   );
 }
 
-export function getVersionedPathCacheKey(normalizedPath: string, reactVersion: string): string {
-  return buildMdxEsmPathCacheKey(normalizedPath, reactVersion);
+export function getVersionedPathCacheKey(
+  normalizedPath: string,
+  reactVersion: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): string {
+  return buildMdxEsmPathCacheKey(
+    normalizedPath,
+    reactVersion,
+    getMdxModuleCacheVariant(dependencyPinningCacheKey, moduleServerOrigin),
+  );
 }

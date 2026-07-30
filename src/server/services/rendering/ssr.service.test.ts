@@ -310,6 +310,39 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(delivery, "string");
       });
 
+      it("forwards the exact dependency snapshot to the renderer", async () => {
+        let observedCacheKey: string | undefined;
+        let observedDependencies: Readonly<Record<string, string>> | undefined;
+        const adapter = createMockRendererAdapter({
+          renderPage: (_slug, options) => {
+            observedCacheKey = options?.dependencyPinningCacheKey;
+            observedDependencies = options?.dependencyPinningDependencies;
+            return Promise.resolve({
+              html: "<html>snapshot A</html>",
+              stream: undefined,
+              ssrHash: "snapshot-a",
+              frontmatter: {},
+            });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+        const dependencies = Object.freeze({ react: "18.3.1" });
+
+        const result = await service.renderPage(
+          makeCtx(),
+          makeRenderOptions({
+            dependencyPinningCacheKey: "on:snapshot-a",
+            dependencyPinningDependencies: dependencies,
+          }),
+        );
+
+        assertEquals(observedCacheKey, "on:snapshot-a");
+        assertEquals(observedDependencies, dependencies);
+        assertEquals(result.dependencyPinningCacheKey, "on:snapshot-a");
+      });
+
       it("keeps streaming delivery for no-cache responses", async () => {
         let delivery: unknown;
         const adapter = createMockRendererAdapter({

@@ -1,6 +1,7 @@
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { rscLogger } from "../client/browser-logger.ts";
-import { RSC_ROOT_ID } from "./constants.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER, RSC_ROOT_ID } from "./constants.ts";
+import { seedHydrationDependencyPins } from "./client-module-strategy.ts";
 
 type SlotMessage = { type: "slot"; id: string; html: string };
 
@@ -79,6 +80,13 @@ export async function consumeNdjsonStream(
   const response = "body" in input ? input : null;
   const stream = response?.body ?? (input as ReadableStream<Uint8Array>);
   if (!stream) return;
+
+  if (response) {
+    seedHydrationDependencyPins(
+      doc,
+      response.headers.get(RSC_DEPENDENCY_PINNING_HEADER),
+    );
+  }
 
   const reader = stream.getReader();
   const decoder = new TextDecoder();

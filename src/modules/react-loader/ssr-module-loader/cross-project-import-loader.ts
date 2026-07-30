@@ -11,6 +11,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { globalCrossProjectCache } from "./cache/index.ts";
 import type { SSRModuleLoaderOptions } from "./types.ts";
 import { readLimitedCrossProjectSource } from "#veryfront/modules/server/cross-project-source-limit.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 import { base64urlEncode } from "#veryfront/utils/base64url.ts";
 
 interface CrossProjectImportCache {
@@ -23,7 +24,16 @@ interface TransformCrossProjectImportFlowOptions {
   crossProjectImport: CrossProjectImport;
   options: Pick<
     SSRModuleLoaderOptions,
-    "projectId" | "projectDir" | "dev" | "apiBaseUrl" | "reactVersion" | "adapter"
+    | "projectId"
+    | "projectDir"
+    | "dev"
+    | "apiBaseUrl"
+    | "moduleServerOrigin"
+    | "reactVersion"
+    | "dependencyPinningCacheKey"
+    | "dependencyPinningDependencies"
+    | "dependencyPinningSource"
+    | "adapter"
   >;
   cache: CrossProjectImportCache;
   withTransformCapacity: <T>(
@@ -47,6 +57,8 @@ interface CrossProjectImportCacheKeyOptions {
   projectId: string;
   reactVersion?: string;
   registryBaseUrl: string;
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
 }
 
 export function buildCrossProjectImportCacheKey(
@@ -54,7 +66,13 @@ export function buildCrossProjectImportCacheKey(
 ): string {
   const reactVersion = options.reactVersion ?? "default";
   const registryKey = base64urlEncode(options.registryBaseUrl);
-  return `${options.specifier}:${options.projectId}:${reactVersion}:registry:${registryKey}`;
+  const baseKey =
+    `${options.specifier}:${options.projectId}:${reactVersion}:registry:${registryKey}`;
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    options.dependencyPinningCacheKey,
+    options.moduleServerOrigin,
+  );
+  return cacheVariant ? `${baseKey}:${cacheVariant}` : baseKey;
 }
 
 export async function transformCrossProjectImportFlow(
@@ -79,6 +97,8 @@ export async function transformCrossProjectImportFlow(
     projectId: options.projectId,
     reactVersion: options.reactVersion,
     registryBaseUrl,
+    moduleServerOrigin: options.moduleServerOrigin,
+    dependencyPinningCacheKey: options.dependencyPinningCacheKey,
   });
 
   const cachedEntry = globalCrossProjectCache.get(cacheKey);
@@ -124,7 +144,11 @@ export async function transformCrossProjectImportFlow(
         dev: options.dev,
         ssr: true,
         apiBaseUrl: options.apiBaseUrl,
+        moduleServerOrigin: options.moduleServerOrigin,
         reactVersion: options.reactVersion,
+        dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+        dependencyPinningDependencies: options.dependencyPinningDependencies,
+        dependencyPinningSource: options.dependencyPinningSource,
       };
 
       const filePathWithExt = syntheticFilePath.endsWith(ext)
