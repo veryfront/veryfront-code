@@ -146,6 +146,19 @@ function getAllReady(stream: ReadableStream | null | undefined): Promise<unknown
   return allReady as Promise<unknown>;
 }
 
+function getApiUrlForLogging(error: Error): string | undefined {
+  if (!("context" in error)) return undefined;
+
+  const context = error.context;
+  if (!context || typeof context !== "object" || !("details" in context)) return undefined;
+
+  const details = context.details;
+  if (!details || typeof details !== "object" || !("url" in details)) return undefined;
+
+  const url = details.url;
+  return typeof url === "string" ? url : undefined;
+}
+
 export class SSRService implements SSRServiceLike {
   private readonly cacheRepo?: CacheRepository<string>;
   private readonly rendererProvider: RendererProvider;
@@ -344,6 +357,7 @@ export class SSRService implements SSRServiceLike {
       case "undeployed":
         logger.debug("Project not deployed", {
           projectSlug: ctx.projectSlug,
+          apiUrl: getApiUrlForLogging(outcome.error),
         });
         return {
           status: HTTP_NOT_FOUND,
