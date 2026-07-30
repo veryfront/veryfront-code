@@ -16,14 +16,17 @@
  * `UIAdapterProvider`.
  */
 import * as React from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Popover, PopoverContent, PopoverTrigger } from "../popover.tsx";
+import { Slot } from "../slot.tsx";
 import { UIAdapterProvider } from "./context.tsx";
 import { builtinPopover } from "./builtin/popover.tsx";
+import { useTokenScope } from "./token-scope.tsx";
+import type { PopoverParts } from "./contract.ts";
 
 function installDomGlobals(dom: JSDOM): () => void {
   const window = dom.window;
@@ -324,3 +327,100 @@ function ProviderWrap({ children }: { children: React.ReactNode }): React.ReactE
 }
 
 runPopoverConformance("builtin via UIAdapterProvider (swap path)", ProviderWrap);
+
+// ---------------------------------------------------------------------------
+// CONTRACT-IS-A-REAL-SEAM proof. A SECOND, independently-wired `PopoverParts`
+// with different internals from the builtin — `useReducer` open state, a manual
+// `createPortal` into the token scope (no `Floating` / `createAnchoredSurfaceParts`
+// factory). It shares ONLY the contract-level `useTokenScope` helper every
+// adapter is required to use. `popover.tsx` (the skin) and the RFC conformance
+// suite above are byte-for-byte unchanged; passing them against this proves the
+// skin depends on the CONTRACT, not on builtin internals — i.e. the adapter
+// boundary is a genuine seam a third-party engine can satisfy, not a
+// builtin-shaped assumption. (Runtime proof of what Base UI proves at the type
+// level for popover+dialog; the full cross-engine matrix is the gate-2 interop
+// testbed.)
+// ---------------------------------------------------------------------------
+interface AltState {
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  getContainer: () => HTMLElement;
+}
+const AltContext = React.createContext<AltState | null>(null);
+
+function AltRoot(
+  { children, open, defaultOpen, onOpenChange }:
+    & { children: React.ReactNode }
+    & { open?: boolean; defaultOpen?: boolean; onOpenChange?: (open: boolean) => void },
+): React.ReactElement {
+  const { ref, getContainer } = useTokenScope();
+  const [internalOpen, dispatch] = React.useReducer(
+    (_: boolean, next: boolean) => next,
+    defaultOpen ?? false,
+  );
+  const isControlled = open !== undefined;
+  const isOpen = isControlled ? open : internalOpen;
+  const setOpen = React.useCallback((next: boolean) => {
+    if (!isControlled) dispatch(next);
+    onOpenChange?.(next);
+  }, [isControlled, onOpenChange]);
+  const ctx = React.useMemo<AltState>(() => ({ open: isOpen, setOpen, getContainer }), [
+    isOpen,
+    setOpen,
+    getContainer,
+  ]);
+  return (
+    <span ref={ref} style={{ position: "relative", display: "inline-block" }}>
+      <AltContext.Provider value={ctx}>{children}</AltContext.Provider>
+    </span>
+  );
+}
+
+function AltTrigger(
+  { children, asChild, onClick, ref, ...props }:
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
+): React.ReactElement {
+  const ctx = React.useContext(AltContext);
+  const Comp = asChild ? Slot : "button";
+  return (
+    <Comp
+      {...(asChild ? {} : { type: "button" as const })}
+      ref={ref}
+      aria-haspopup="dialog"
+      aria-expanded={ctx?.open ?? false}
+      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+        onClick?.(e);
+        if (ctx) ctx.setOpen(!ctx.open);
+      }}
+      {...props}
+    >
+      {children}
+    </Comp>
+  );
+}
+
+function AltContent(
+  { children, align: _align, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { align?: "start" | "end"; ref?: React.Ref<HTMLDivElement> },
+): React.ReactElement | null {
+  const ctx = React.useContext(AltContext);
+  if (!ctx || !ctx.open) return null;
+  return createPortal(
+    <div ref={ref} {...props}>{children}</div>,
+    ctx.getContainer(),
+  );
+}
+
+const altPopover: PopoverParts = { Root: AltRoot, Trigger: AltTrigger, Content: AltContent };
+
+function AltWrap({ children }: { children: React.ReactNode }): React.ReactElement {
+  return (
+    <UIAdapterProvider adapter={{ name: "independent-alt", popover: altPopover }}>
+      {children}
+    </UIAdapterProvider>
+  );
+}
+
+runPopoverConformance("independent adapter (contract-is-a-real-seam proof)", AltWrap);
