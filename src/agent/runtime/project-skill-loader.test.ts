@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/skill/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  createSkillDocumentParserProvider,
+  type SkillDocumentParserProvider,
+} from "#veryfront/extensions/parser/skill-document-parser.ts";
 import {
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
@@ -38,6 +43,7 @@ function createLoader(input: {
     options: RuntimeProjectFilesApiOptions,
   ) => Promise<RuntimeProjectFileListItem[]>;
   warnings?: Array<{ message: string; metadata?: Record<string, unknown> }>;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 } = {}) {
   const fileCalls: FileCall[] = [];
   const filesCalls: FilesCall[] = [];
@@ -57,12 +63,39 @@ function createLoader(input: {
       logger: {
         warn: (message, metadata) => warnings.push({ message, metadata }),
       },
+      skillDocumentParserProvider: input.skillDocumentParserProvider,
     }),
     fileCalls,
     filesCalls,
     warnings,
   };
 }
+
+Deno.test("runtime project loader decodes a directory Skill document exactly once", async () => {
+  let decodeCalls = 0;
+  const content = "---\nprovider-specific: true\n---\n# Research";
+  const provider = createSkillDocumentParserProvider(() => {
+    decodeCalls += 1;
+    if (decodeCalls > 1) {
+      throw new Error("directory Skill document was decoded more than once");
+    }
+    return {
+      name: "research",
+      description: "One detached provider snapshot",
+    };
+  });
+  const { loader } = createLoader({
+    skillDocumentParserProvider: provider,
+    getProjectFile: async ({ path }) =>
+      path === "skills/research/SKILL.md" ? { path, content } : null,
+  });
+
+  assertEquals(await loader.loadProjectSkill(PROJECT_CONTEXT, "research"), {
+    instructions: content,
+    references: [],
+  });
+  assertEquals(decodeCalls, 1);
+});
 
 Deno.test("runtime project skill loader returns empty results without project context", async () => {
   const { loader, fileCalls, filesCalls } = createLoader();
@@ -257,13 +290,33 @@ Deno.test("runtime project skill loader falls back to flat project skills withou
   ]);
 });
 
-Deno.test("an invalid directory skill does not fall through to a flat skill", async () => {
+Deno.test("an authored name mismatch remains display metadata and shadows a flat skill", async () => {
   const { loader, fileCalls } = createLoader({
     getProjectFile: async ({ path }) =>
       path === "skills/shared/SKILL.md"
         ? {
           path,
-          content: directorySkill("different", "# Invalid directory override"),
+          content: directorySkill("different", "# Canonical directory override"),
+        }
+        : path === "skills/shared.md"
+        ? { path, content: "# Flat fallback" }
+        : null,
+  });
+
+  assertEquals(await loader.loadProjectSkill(PROJECT_CONTEXT, "shared"), {
+    instructions: directorySkill("different", "# Canonical directory override"),
+    references: [],
+  });
+  assertEquals(fileCalls.map((call) => call.path), ["skills/shared/SKILL.md"]);
+});
+
+Deno.test("a malformed directory skill does not fall through to a flat skill", async () => {
+  const { loader, fileCalls } = createLoader({
+    getProjectFile: async ({ path }) =>
+      path === "skills/shared/SKILL.md"
+        ? {
+          path,
+          content: "---\nname: shared\n---\n# Missing required description",
         }
         : path === "skills/shared.md"
         ? { path, content: "# Flat fallback" }

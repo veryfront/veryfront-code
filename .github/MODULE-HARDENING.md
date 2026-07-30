@@ -5938,28 +5938,63 @@ No known unresolved critical or high-confidence Proxy production risk remains.
 The `proxy` unit is closed at 52 of 58 formal units; six units remain open or
 awaiting top-level revalidation.
 
-### Skill revalidation checkpoint (architectural cleanup pending)
+### Skill dependency-free parsing checkpoint (execution cleanup pending)
 
-The current `skill` review hardened the registry and filesystem ingestion
-boundaries without claiming formal closure. Skill metadata now preserves every
-admitted own string key, including `__proto__`, and rejects control characters
-and malformed UTF-16. Registered roots must be absolute, the MCP loader applies
-the same directory-identity policy as the other CLI loaders, and the affected
-authorization tests and reference documentation describe the current runtime
-identity and selector behavior.
+The current `skill` review now owns the complete untrusted document envelope,
+resource budgets, metadata policy, and data-only snapshot. YAML decoding moved
+behind the dependency-free `SkillDocumentParserProvider` contract, while the
+first-party `@veryfront/ext-yaml` package owns the `@std/yaml` implementation.
+The CLI, compiled binary, and built-in discovery compose that extension before
+parsing; direct application callers pass a provider or activate the extension.
 
-Current reproducible evidence is green: the complete `src/skill` portfolio
-passes 38 suites with 226 nested steps, direct consumers pass 17 suites with 18
-steps, CLI consumers pass four suites with 38 steps, and typecheck, lint,
-formatting, documentation-contract, core-dependency, and module-boundary gates
-pass.
+The current findings are remediated:
 
-Formal closure remains pending because core still contains an undeclared
-`npx --no-install tsx` execution path, missing cloud credentials can silently
-downgrade script execution to the local host, and legacy permissive helpers and
-execution-lifecycle policies require an explicit strict replacement. Those
-architectural changes are handled in a separate checkpoint so this safe input
-and identity hardening remains independently reviewable.
+- **Symptom -> Source -> Consequence -> Remedy:** core mixed YAML-like fallback
+  parsing with strict Skill ingestion, so structured input could be interpreted
+  differently across entry points and a real YAML implementation could not be
+  isolated from the framework. Core now parses and bounds only the document
+  envelope, validates a detached decoded mapping, and delegates YAML decoding
+  through one synchronous extension contract. The old line-oriented grammar is
+  explicitly deprecated and reachable only through the unsafe legacy API.
+- **Symptom -> Source -> Consequence -> Remedy:** CLI and runtime consumers
+  resolved parser state inside broad missing-skill or malformed-document
+  catches. A missing or broken implementation could therefore be reported as
+  an absent Skill. They now snapshot one validated provider generation outside
+  those catches and propagate composition failures fail closed.
+- **Symptom -> Source -> Consequence -> Remedy:** parser values, metadata,
+  allowlists, filesystem entries, and diagnostics trusted mutable intrinsics,
+  accessors, Proxies, or inherited setters at several authorization boundaries.
+  Strict paths now use bounded own-data snapshots, captured primitives,
+  redacted diagnostics, cancellation budgets, and deterministic strict
+  enumeration without breaking the public 4096-character, unbounded-entry,
+  adapter-order compatibility policy.
+- **Symptom -> Source -> Consequence -> Remedy:** the compiled CLI had no
+  behavioral proof that the extension implementation was embedded and loaded.
+  Its E2E suite now validates folded-scalar and sequence YAML through a freshly
+  compiled binary rather than a core fallback.
+
+The exact staged tree passes 83 Skill/parser/extension tests with 274 nested
+steps and 290 direct consumer tests with 55 nested steps under normal type
+checking. Compile metadata, extension package, npm dependency, browser-export,
+extension-contract, capability, core-dependency, parser-boundary, and
+module-boundary gates pass; a fresh compiled binary passes the new YAML
+behavioral case. Documentation validators pass 114 public files, 67 guides,
+and the Skill reference regenerates byte-for-byte. The canonical lockfile now
+contains the YAML workspace closure plus the missing closures for previously
+committed WebSocket and React SSR extension manifests.
+
+One JavaScript limitation remains explicit: a contract-violating parser that
+creates an already-rejected, non-extensible Promise cannot be observed without
+invoking hostile constructor/species hooks. Core rejects it synchronously and
+never invokes those hooks; extension providers are required not to create or
+return Promises.
+
+Formal closure remains pending only on the script-execution decision already
+recorded by the earlier audit: Node/Bun TypeScript execution still names an
+application-supplied `tsx` binary from core, and the public automatic executor
+still chooses local execution when no cloud credential exists. Those behaviors
+require either an extension boundary or an explicitly accepted compatibility
+residual before `skill` can be counted closed.
 
 ### CSS extension-boundary follow-up checkpoint
 

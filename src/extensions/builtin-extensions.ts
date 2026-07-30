@@ -94,6 +94,11 @@ export const OPTIONAL_BUILTIN_EXTENSIONS = Object.freeze(
       sourceDirectory: "ext-sandbox-shell-tools",
     },
     {
+      name: "ext-yaml",
+      origin: "veryfront/ext-yaml",
+      sourceDirectory: "ext-yaml",
+    },
+    {
       name: "ext-eval-report-mlflow",
       origin: "veryfront/ext-eval-report-mlflow",
       sourceDirectory: "ext-eval-report-mlflow",

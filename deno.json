@@ -61,6 +61,7 @@
     "./extensions/ext-parser-babel",
     "./extensions/ext-parser-parse5",
     "./extensions/ext-sandbox-shell-tools",
+    "./extensions/ext-yaml",
     "./extensions/ext-observability-opentelemetry",
     "./extensions/ext-observability-sentry",
     "./extensions/ext-eval-report-mlflow",

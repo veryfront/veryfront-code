@@ -10,10 +10,40 @@ import {
   validateAllowedToolPatterns,
   validateStrictAllowedToolPatterns,
 } from "./allowed-tools.ts";
-import { SKILL_TOOL_IDS } from "./types.ts";
+import { SKILL_ALLOWED_TOOL_PATTERN_REGEX, SKILL_TOOL_IDS } from "./types.ts";
 
 describe("src/skill/allowed-tools", () => {
   describe("snapshotAllowedToolPatterns", () => {
+    it("does not invoke inherited indexed setters while building authorization snapshots", () => {
+      const inherited = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+      let setterCalls = 0;
+      let snapshot: string[] | undefined;
+      try {
+        Object.defineProperty(Array.prototype, "0", {
+          configurable: true,
+          set(this: unknown[], _value: unknown) {
+            setterCalls += 1;
+            Object.defineProperty(this, "0", {
+              configurable: true,
+              enumerable: true,
+              value: "api:*",
+              writable: true,
+            });
+          },
+        });
+        snapshot = snapshotAllowedToolPatterns(["Read"]);
+      } finally {
+        if (inherited === undefined) {
+          delete (Array.prototype as { 0?: unknown })[0];
+        } else {
+          Object.defineProperty(Array.prototype, "0", inherited);
+        }
+      }
+
+      assertEquals(setterCalls, 0);
+      assertEquals(snapshot, ["Read"]);
+    });
+
     it("should snapshot array data properties without invoking an overridden iterator", () => {
       let iteratorGetterReads = 0;
       const patterns = ["read_file"];
@@ -293,6 +323,17 @@ describe("src/skill/allowed-tools", () => {
   });
 
   describe("validateAllowedToolPatterns", () => {
+    it("does not echo control-bearing policy text in validation errors", () => {
+      const token = "TOP_SECRET_POLICY";
+      const error = assertThrows(
+        () => validateStrictAllowedToolPatterns([`Read\u001b[31m${token}`]),
+        Error,
+      );
+
+      assertEquals(error.message.includes("\u001b"), false);
+      assertEquals(error.message.includes(token), false);
+    });
+
     it("should accept valid patterns", () => {
       const result = validateAllowedToolPatterns(["Read", "api:*", "Write"]);
       assertEquals(result, ["Read", "api:*", "Write"]);
@@ -311,11 +352,12 @@ describe("src/skill/allowed-tools", () => {
       assertEquals(validateAllowedToolPatterns([]), []);
     });
 
-    it("preserves legacy unbounded valid pattern acceptance", () => {
+    it("preserves unbounded programmatic validation outside strict trust boundaries", () => {
       const patterns = Array.from({ length: 101 }, () => "Read");
       const overlongPattern = "a".repeat(257);
       assertEquals(validateAllowedToolPatterns(patterns), patterns);
       assertEquals(validateAllowedToolPatterns([overlongPattern]), [overlongPattern]);
+      assertEquals(isToolAllowedBySkill("Read", patterns), true);
     });
 
     it("strict validation rejects pattern lists and entries over their resource budgets", () => {
@@ -329,6 +371,133 @@ describe("src/skill/allowed-tools", () => {
         RangeError,
         "at most 256",
       );
+    });
+
+    it("strict validation rejects hostile arrays without invoking their hooks", () => {
+      let elementGetterReads = 0;
+      const accessorBacked: string[] = [];
+      Object.defineProperty(accessorBacked, 0, {
+        enumerable: true,
+        get() {
+          elementGetterReads += 1;
+          return "Read";
+        },
+      });
+
+      assertThrows(
+        () => validateStrictAllowedToolPatterns(accessorBacked),
+        TypeError,
+        "data property",
+      );
+      assertEquals(elementGetterReads, 0);
+
+      const inherited = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      let inheritedValueReads = 0;
+      try {
+        Object.defineProperty(Object.prototype, "value", {
+          configurable: true,
+          get() {
+            inheritedValueReads += 1;
+            return "Read";
+          },
+        });
+        assertThrows(
+          () => validateStrictAllowedToolPatterns(accessorBacked),
+          TypeError,
+          "data property",
+        );
+      } finally {
+        if (inherited === undefined) {
+          delete (Object.prototype as { value?: unknown }).value;
+        } else {
+          Object.defineProperty(Object.prototype, "value", inherited);
+        }
+      }
+      assertEquals(inheritedValueReads, 0);
+
+      let proxyTrapCalls = 0;
+      const proxied = new Proxy(["Read"], {
+        get(target, property, receiver) {
+          proxyTrapCalls += 1;
+          return Reflect.get(target, property, receiver);
+        },
+        getOwnPropertyDescriptor(target, property) {
+          proxyTrapCalls += 1;
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+      });
+      assertThrows(
+        () => validateStrictAllowedToolPatterns(proxied),
+        TypeError,
+        "must not be a proxy",
+      );
+      assertEquals(proxyTrapCalls, 0);
+    });
+
+    it("keeps deny decisions independent of later built-in mutation", () => {
+      const targets = [
+        [String.prototype, "endsWith"],
+        [String.prototype, "slice"],
+        [String.prototype, "startsWith"],
+        [RegExp.prototype, "test"],
+        [Array.prototype, "filter"],
+        [Array.prototype, "push"],
+        [Array.prototype, "some"],
+        [Set.prototype, "has"],
+      ] as const;
+      const originals = targets.map(([target, property]) =>
+        Object.getOwnPropertyDescriptor(target, property)
+      );
+      let hookCalls = 0;
+      for (const [target, property] of targets) {
+        Object.defineProperty(target, property, {
+          configurable: true,
+          value() {
+            hookCalls += 1;
+            return true;
+          },
+          writable: true,
+        });
+      }
+
+      let directMatch = true;
+      let executionAllowed = true;
+      let filteredTools: Array<{ name: string }> = [{ name: "Write" }];
+      let validated: string[] = [];
+      try {
+        directMatch = matchesAllowedTool("Write", "Read");
+        executionAllowed = isToolAllowedBySkill("Write", ["Read"]);
+        filteredTools = filterToolsForSkill([{ name: "Write" }], ["Read"]);
+        validated = validateStrictAllowedToolPatterns(["Read"]);
+      } finally {
+        targets.forEach(([target, property], index) => {
+          const descriptor = originals[index];
+          if (descriptor) Object.defineProperty(target, property, descriptor);
+        });
+      }
+
+      assertEquals(directMatch, false);
+      assertEquals(executionAllowed, false);
+      assertEquals(filteredTools, []);
+      assertEquals(validated, ["Read"]);
+      assertEquals(hookCalls, 0);
+    });
+
+    it("does not use the mutable public regex as authorization state", () => {
+      const originalSource = SKILL_ALLOWED_TOOL_PATTERN_REGEX.source;
+      let failure: unknown;
+      try {
+        SKILL_ALLOWED_TOOL_PATTERN_REGEX.compile(".*");
+        try {
+          validateStrictAllowedToolPatterns(["Bash(git:*)"]);
+        } catch (error) {
+          failure = error;
+        }
+      } finally {
+        SKILL_ALLOWED_TOOL_PATTERN_REGEX.compile(originalSource);
+      }
+
+      assertEquals(failure instanceof Error, true);
     });
   });
 });

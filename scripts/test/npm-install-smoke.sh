@@ -33,17 +33,19 @@ fail() {
 [ -d "$ROOT_DIR/npm/extensions/ext-css-purgecss" ] || fail "ext-css-purgecss package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-css-tailwind" ] || fail "ext-css-tailwind package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-parser-babel" ] || fail "ext-parser-babel package output missing"
+[ -d "$ROOT_DIR/npm/extensions/ext-yaml" ] || fail "ext-yaml package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-auth-jwt" ] || fail "ext-auth-jwt package output missing"
 
 (cd "$ROOT_DIR/npm" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-content-mdx" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-parser-babel" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+(cd "$ROOT_DIR/npm/extensions/ext-yaml" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-auth-jwt" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 
 cd "$WORKDIR"
 npm init -y >/dev/null 2>&1
-npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-parser-babel-*.tgz
+npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-parser-babel-*.tgz ./veryfront-ext-yaml-*.tgz
 
 echo "== 1. root install excludes independently published CSS implementations"
 node -e "
@@ -74,7 +76,19 @@ node node_modules/veryfront/bin/veryfront.js schema --json >/dev/null ||
 node -e "
 const p = require('./node_modules/veryfront/package.json');
 if (p.dependencies?.['@veryfront/ext-parser-babel'] !== p.version) process.exit(1);
-" || fail "root package does not pin @veryfront/ext-parser-babel to its version"
+if (p.dependencies?.['@veryfront/ext-yaml'] !== p.version) process.exit(1);
+" || fail "root package does not pin its auto-loaded extensions to its version"
+mkdir -p skill-smoke
+cat > skill-smoke/SKILL.md <<'EOF'
+---
+name: skill-smoke
+description: Validate extension-backed YAML parsing
+---
+Smoke instructions.
+EOF
+node node_modules/veryfront/bin/veryfront.js skills validate ./skill-smoke |
+  grep -q 'is valid' ||
+  fail "SkillDocumentParserProvider was not registered through npm CLI skills validate"
 node --input-type=module -e "
 await import('./node_modules/veryfront/esm/_dnt.polyfills.js');
 const resolver = await import(

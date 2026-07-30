@@ -36,6 +36,7 @@ import {
 } from "./limits.ts";
 import { readBoundedSkillTextFile } from "./bounded-text-file.ts";
 import { isWellFormedUtf16 } from "./string-safety.ts";
+const defineOwnProperty = Object.defineProperty;
 const TIMEOUT_EXIT_CODE = 124;
 const OUTPUT_LIMIT_EXIT_CODE = 125;
 const ABORT_EXIT_CODE = 130;
@@ -47,6 +48,15 @@ const SANDBOX_CLEANUP_TIMEOUT_SECONDS = 5;
 const SANDBOX_CLEANUP_MAX_OUTPUT_BYTES = 65_536;
 
 type TerminationSentinel = typeof ABORT_SENTINEL | typeof TIMEOUT_SENTINEL;
+
+function appendOwnArrayElement<T>(values: T[], value: T): void {
+  defineOwnProperty(values, values.length, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
 
 interface ExecutionBudget {
   readonly timeoutMs: number;
@@ -263,7 +273,7 @@ function normalizeScriptArgs(
         `Skill script args must total at most ${SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL} bytes`,
       );
     }
-    args.push(arg);
+    appendOwnArrayElement(args, arg);
   }
   return Object.freeze(args);
 }
@@ -921,7 +931,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       if (executionTermination) {
         executionResult = terminationResult(executionTermination, budget.timeoutMs);
       } else {
-        failures.push(error);
+        appendOwnArrayElement(failures, error);
       }
     }
 
@@ -937,14 +947,14 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         // running until the later asynchronous session deletion completes.
         await terminateSandboxProcesses(sandbox);
       } catch (error) {
-        failures.push(error);
+        appendOwnArrayElement(failures, error);
       }
     }
 
     try {
       await sandbox.close();
     } catch (error) {
-      failures.push(error);
+      appendOwnArrayElement(failures, error);
     }
 
     if (failures.length > 0) {

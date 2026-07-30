@@ -22,6 +22,30 @@ import {
 } from "../sandbox/sandbox.test-helpers.ts";
 import { detectRuntime, getSkillScriptExecutor, LocalScriptExecutor } from "./executor.ts";
 
+function withInheritedArrayIndexSetter<T>(
+  index: number,
+  operation: () => T,
+): { result: T; setterCalls: number } {
+  const key = String(index);
+  const original = Object.getOwnPropertyDescriptor(Array.prototype, key);
+  let setterCalls = 0;
+  Object.defineProperty(Array.prototype, key, {
+    configurable: true,
+    set: () => {
+      setterCalls += 1;
+    },
+  });
+  try {
+    return { result: operation(), setterCalls };
+  } finally {
+    if (original) {
+      Object.defineProperty(Array.prototype, key, original);
+    } else {
+      Reflect.deleteProperty(Array.prototype, key);
+    }
+  }
+}
+
 const SKILL_ENV_KEYS = [
   "SANDBOX_AUTH_TOKEN",
   "VERYFRONT_API_TOKEN",
@@ -155,6 +179,26 @@ describe("src/skill/executor", () => {
   });
 
   describe("LocalScriptExecutor", () => {
+    it("normalizes arguments without invoking inherited numeric array setters", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const args = ["first"];
+
+      const execution = withInheritedArrayIndexSetter(
+        0,
+        () =>
+          new LocalScriptExecutor().execute({
+            scriptPath: "unused.sh",
+            scriptContent: "exit 0",
+            args,
+            abortSignal: controller.signal,
+          }),
+      );
+
+      assertEquals(execution.setterCalls, 0);
+      assertEquals((await execution.result).exitCode, 130);
+    });
+
     it("should execute a simple echo command", async () => {
       const executor = new LocalScriptExecutor();
       const result = await executor.execute({

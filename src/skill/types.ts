@@ -12,6 +12,10 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 // ── Constants ───────────────────────────────────────────────────────────
 
+const apply = Reflect.apply;
+const NativeRegExp = RegExp;
+const regExpExec = RegExp.prototype.exec;
+
 /** Historical public skill-name matcher. */
 export const SKILL_NAME_REGEX = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
@@ -24,9 +28,25 @@ export const SKILL_STRICT_NAME_REGEX = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /** Provider-safe owned skill id: sanitized namespace + short name, max 64 chars */
 export const SKILL_PROVIDER_SAFE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** Valid allowed-tool pattern: exact ID or prefix wildcard (e.g. "api:*") */
-export const SKILL_ALLOWED_TOOL_PATTERN_REGEX =
-  /^[A-Za-z][A-Za-z0-9._-]*(:[A-Za-z][A-Za-z0-9._-]*)*(:\*)?$/;
+const SKILL_ALLOWED_TOOL_PATTERN_SOURCE =
+  "^[A-Za-z][A-Za-z0-9._-]*(:[A-Za-z][A-Za-z0-9._-]*)*(:\\*)?$";
+const INTERNAL_SKILL_ALLOWED_TOOL_PATTERN_REGEX = new NativeRegExp(
+  SKILL_ALLOWED_TOOL_PATTERN_SOURCE,
+);
+
+/**
+ * Public inspection matcher for exact tool IDs and prefix wildcards.
+ * Mutating this compatibility value does not alter authorization decisions.
+ */
+export const SKILL_ALLOWED_TOOL_PATTERN_REGEX = new NativeRegExp(
+  SKILL_ALLOWED_TOOL_PATTERN_SOURCE,
+);
+
+/** Framework-owned allowed-tool grammar check. */
+export function isValidSkillAllowedToolPattern(value: unknown): value is string {
+  return typeof value === "string" &&
+    apply(regExpExec, INTERNAL_SKILL_ALLOWED_TOOL_PATTERN_REGEX, [value]) !== null;
+}
 
 /** Maximum description length in characters */
 export const SKILL_DESCRIPTION_MAX_LENGTH = 1024;
@@ -50,6 +70,7 @@ const SKILL_TOOL_ID_VALUES = [
 ] as const;
 
 const INTERNAL_SKILL_TOOL_IDS = new Set<string>(SKILL_TOOL_ID_VALUES);
+const setHas = Set.prototype.has;
 
 /**
  * Public snapshot of tool IDs that belong to the skill system.
@@ -61,7 +82,7 @@ export const SKILL_TOOL_IDS = new Set<string>(SKILL_TOOL_ID_VALUES);
 
 /** Framework-owned membership check that cannot be changed by public Set mutation. */
 export function isSkillInfrastructureToolId(toolId: string): boolean {
-  return INTERNAL_SKILL_TOOL_IDS.has(toolId);
+  return apply(setHas, INTERNAL_SKILL_TOOL_IDS, [toolId]) as boolean;
 }
 
 /** Conventional subdirectory names */

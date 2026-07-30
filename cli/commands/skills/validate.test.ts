@@ -105,9 +105,11 @@ description: Invalid directory name.
 `,
     }, async (dir) => {
       const issues = await validateSkillDirectory(dir);
-      assertEquals(issues.length, 1);
-      assertEquals(issues[0]?.severity, "error");
-      assertEquals(issues[0]?.message.includes('Invalid skill name "Bad Name"'), true);
+      assertEquals(issues, [{
+        severity: "error",
+        message:
+          "Invalid skill name: must be 1-64 lowercase alphanumeric characters or single hyphens, without leading or trailing hyphens",
+      }]);
     }, "Bad Name");
   });
 

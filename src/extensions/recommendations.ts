@@ -24,6 +24,7 @@ const recommendations = new Map<string, string>([
   ["LLMProvider:anthropic", "@veryfront/ext-llm-anthropic"],
   ["LLMProvider:google", "@veryfront/ext-llm-google"],
   ["CodeParser", "@veryfront/ext-parser-babel"],
+  ["SkillDocumentParserProvider", "@veryfront/ext-yaml"],
   ["SchemaValidator", "@veryfront/ext-schema-zod"],
   ["SqliteStore", "@veryfront/ext-db-sqlite"],
   ["SandboxShellToolsProvider", "@veryfront/ext-sandbox-shell-tools"],

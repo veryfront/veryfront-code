@@ -29,6 +29,17 @@ import {
   validateSkillRegistryCandidate,
 } from "./validation.ts";
 
+const defineOwnProperty = Object.defineProperty;
+
+function appendOwnArrayElement<T>(values: T[], value: T): void {
+  defineOwnProperty(values, values.length, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
 const skillManager = new ProjectScopedRegistryManager<Skill>("skill", {
   validateRegistryCandidate: validateSkillRegistryCandidate,
 });
@@ -156,7 +167,7 @@ class SkillRegistryInternal extends ScopedRegistryFacade<Skill> {
     const ids: string[] = [];
     for (const [id, skill] of this.getAll()) {
       if (isSkillVisibleTo(skill, scope)) {
-        ids.push(id);
+        appendOwnArrayElement(ids, id);
       }
     }
     return ids;
@@ -243,7 +254,7 @@ class SkillRegistry extends ScopedRegistryView<Skill> {
     const ids: string[] = [];
     for (const [id, skill] of this.getAll()) {
       if (isSkillVisibleTo(skill, scope)) {
-        ids.push(id);
+        appendOwnArrayElement(ids, id);
       }
     }
     return ids;

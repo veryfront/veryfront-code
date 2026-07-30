@@ -1,3 +1,5 @@
+import "#veryfront/skill/_test-setup.ts";
+
 /**
  * Owner-scope leak tests for skills (threat model: controlled-adoption plan).
  *

@@ -55,6 +55,15 @@ Deno.test("compiled CLI embeds the Worker-safe Babel parser entry", () => {
   );
 });
 
+Deno.test("compiled CLI embeds the first-party Skill YAML parser", () => {
+  assertEquals(
+    DEFAULT_INCLUDES.includes(
+      "extensions/ext-yaml/src/index.ts",
+    ),
+    true,
+  );
+});
+
 Deno.test("compiled CLI embeds the auto-loaded Sentry reporter", () => {
   assertEquals(
     DEFAULT_INCLUDES.includes(

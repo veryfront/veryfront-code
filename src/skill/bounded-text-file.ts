@@ -11,7 +11,41 @@ import { sanitizeSkillBoundaryFailure } from "./error-boundary.ts";
 import { validateStrictSkillPath } from "./path-safety.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "./string-safety.ts";
 
-const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+const apply = Reflect.apply;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getPrototypeOf = Object.getPrototypeOf;
+const NativeArrayBuffer = ArrayBuffer;
+const NativeNumber = Number;
+const NativeTextDecoder = TextDecoder;
+const NativeUint8Array = Uint8Array;
+const numberIsSafeInteger = Number.isSafeInteger;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const textDecoderDecode = TextDecoder.prototype.decode;
+const typedArrayPrototype = getPrototypeOf(NativeUint8Array.prototype);
+const typedArrayByteLengthGetter = requireIntrinsicGetter(
+  typedArrayPrototype,
+  "byteLength",
+  "Uint8Array byteLength",
+);
+const typedArrayNameGetter = requireIntrinsicGetter(
+  typedArrayPrototype,
+  Symbol.toStringTag,
+  "Uint8Array name",
+);
+
+const UTF8_DECODER = new NativeTextDecoder("utf-8", { fatal: true });
+
+function requireIntrinsicGetter(
+  target: object,
+  property: PropertyKey,
+  name: string,
+): (this: object) => unknown {
+  const getter = getOwnPropertyDescriptor(target, property)?.get;
+  if (typeof getter !== "function") {
+    throw new TypeError(`Required ${name} intrinsic is unavailable`);
+  }
+  return getter;
+}
 
 type FileIdentity = Readonly<{
   dev: number | bigint;
@@ -55,7 +89,7 @@ function requirePath(value: unknown): string {
 
 function requireMaxBytes(value: unknown): number {
   if (
-    !Number.isSafeInteger(value) ||
+    !numberIsSafeInteger(value) ||
     (value as number) <= 0 ||
     (value as number) > SKILL_TEXT_FILE_MAX_BYTES
   ) {
@@ -77,7 +111,7 @@ function assertFileInfo(
   if (!info.isFile) {
     throw new TypeError(`Skill path must point to a file: "${path}"`);
   }
-  if (!Number.isSafeInteger(info.size) || info.size < 0) {
+  if (!numberIsSafeInteger(info.size) || info.size < 0) {
     throw new TypeError(`Skill file size is invalid for "${path}"`);
   }
   if (info.size > maxBytes) {
@@ -86,9 +120,9 @@ function assertFileInfo(
 }
 
 function requireLocalFileSize(path: string, size: number | bigint): number {
-  const normalized = typeof size === "bigint" ? Number(size) : size;
+  const normalized = typeof size === "bigint" ? NativeNumber(size) : size;
   if (
-    !Number.isSafeInteger(normalized) ||
+    !numberIsSafeInteger(normalized) ||
     normalized < 0
   ) {
     throw new TypeError(`Skill file size is invalid for "${path}"`);
@@ -99,7 +133,7 @@ function requireLocalFileSize(path: string, size: number | bigint): number {
 function getFileIdentity(info: LocalFileInfo): FileIdentity | undefined {
   const validPart = (value: number | bigint | null): value is number | bigint =>
     (typeof value === "bigint" && value >= 0n) ||
-    (typeof value === "number" && Number.isSafeInteger(value) && value >= 0);
+    (typeof value === "number" && numberIsSafeInteger(value) && value >= 0);
 
   if (!validPart(info.dev) || !validPart(info.ino)) return undefined;
   return { dev: info.dev, ino: info.ino };
@@ -135,13 +169,13 @@ function assertBoundedUtf8String(
 ): string {
   let byteLength = 0;
   for (let index = 0; index < content.length; index += 1) {
-    const code = content.charCodeAt(index);
+    const code = apply(stringCharCodeAt, content, [index]) as number;
     if (code <= 0x7f) {
       byteLength += 1;
     } else if (code <= 0x7ff) {
       byteLength += 2;
     } else if (code >= 0xd800 && code <= 0xdbff) {
-      const next = content.charCodeAt(index + 1);
+      const next = apply(stringCharCodeAt, content, [index + 1]) as number;
       if (index + 1 >= content.length || next < 0xdc00 || next > 0xdfff) {
         throw new TypeError(`Skill file "${path}" must contain valid Unicode text`);
       }
@@ -162,12 +196,35 @@ function assertBoundedUtf8String(
 
 function decodeUtf8(path: string, bytes: Uint8Array): string {
   try {
-    return UTF8_DECODER.decode(bytes);
+    return apply(textDecoderDecode, UTF8_DECODER, [bytes]) as string;
   } catch (error) {
     throw new TypeError(`Skill file "${path}" must contain valid UTF-8`, {
       cause: error,
     });
   }
+}
+
+function getUint8ArrayByteLength(value: unknown): number | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  try {
+    if (apply(typedArrayNameGetter, value, []) !== "Uint8Array") {
+      return undefined;
+    }
+    const byteLength = apply(typedArrayByteLengthGetter, value, []);
+    return typeof byteLength === "number" && numberIsSafeInteger(byteLength) && byteLength >= 0
+      ? byteLength
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function requireUint8ArrayByteLength(path: string, value: unknown): number {
+  const byteLength = getUint8ArrayByteLength(value);
+  if (byteLength === undefined) {
+    throw new TypeError(`Skill file read returned invalid bytes for "${path}"`);
+  }
+  return byteLength;
 }
 
 function getBoundedAdapterReader(
@@ -196,13 +253,14 @@ async function readAdapterTextFile(
   let content: string;
   if (boundedReader) {
     const bytes = await boundedReader.call(fsAdapter, path, maxBytes + 1);
-    if (!(bytes instanceof Uint8Array)) {
+    const byteLength = getUint8ArrayByteLength(bytes);
+    if (byteLength === undefined) {
       throw new TypeError(`Skill file adapter returned invalid bytes for "${path}"`);
     }
-    if (bytes.byteLength > maxBytes) {
+    if (byteLength > maxBytes) {
       throw new RangeError(`Skill file "${path}" exceeds ${maxBytes} bytes`);
     }
-    if (bytes.byteLength !== info.size) {
+    if (byteLength !== info.size) {
       throw new TypeError(`Skill file changed during reading: "${path}"`);
     }
     boundedBytes = bytes;
@@ -214,10 +272,11 @@ async function readAdapterTextFile(
     // optional bounded capability above can enforce the allocation budget
     // before materialization.
     const bytes = await fsAdapter.readFileBytes(path);
-    if (!(bytes instanceof Uint8Array)) {
+    const byteLength = getUint8ArrayByteLength(bytes);
+    if (byteLength === undefined) {
       throw new TypeError(`Skill file adapter returned invalid bytes for "${path}"`);
     }
-    if (bytes.byteLength > maxBytes) {
+    if (byteLength > maxBytes) {
       throw new RangeError(`Skill file "${path}" exceeds ${maxBytes} bytes`);
     }
     content = decodeUtf8(path, bytes);
@@ -247,10 +306,11 @@ async function readAdapterTextFile(
       path,
       maxBytes + 1,
     );
-    if (!(confirmation instanceof Uint8Array)) {
+    const confirmationByteLength = getUint8ArrayByteLength(confirmation);
+    if (confirmationByteLength === undefined) {
       throw new TypeError(`Skill file adapter returned invalid bytes for "${path}"`);
     }
-    if (confirmation.byteLength > maxBytes) {
+    if (confirmationByteLength > maxBytes) {
       throw new RangeError(`Skill file "${path}" exceeds ${maxBytes} bytes`);
     }
     const confirmedInfo = fsAdapter.lstat
@@ -258,7 +318,7 @@ async function readAdapterTextFile(
       : await fsAdapter.stat(path);
     assertFileInfo(path, confirmedInfo, maxBytes);
     if (
-      confirmation.byteLength !== info.size ||
+      confirmationByteLength !== info.size ||
       confirmedInfo.size !== info.size ||
       !bytesEqual(boundedBytes, confirmation)
     ) {
@@ -328,7 +388,11 @@ async function openLocal(path: string): Promise<LocalReadHandle> {
       return handle.close();
     },
     async read(buffer) {
-      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
+      const byteLength = getUint8ArrayByteLength(buffer);
+      if (byteLength === undefined) {
+        throw new TypeError(`Skill file read buffer is invalid for "${path}"`);
+      }
+      const { bytesRead } = await handle.read(buffer, 0, byteLength, null);
       return bytesRead === 0 ? null : bytesRead;
     },
     async stat() {
@@ -374,14 +438,17 @@ async function readHandleBytes(
   handle: LocalReadHandle,
   maxBytes: number,
 ): Promise<Uint8Array> {
-  const bytes = new Uint8Array(maxBytes + 1);
+  const capacity = maxBytes + 1;
+  const buffer = new NativeArrayBuffer(capacity);
+  const bytes = new NativeUint8Array(buffer);
   let byteLength = 0;
-  while (byteLength < bytes.byteLength) {
-    const remaining = bytes.byteLength - byteLength;
-    const bytesRead = await handle.read(bytes.subarray(byteLength));
+  while (byteLength < capacity) {
+    const remaining = capacity - byteLength;
+    const target = new NativeUint8Array(buffer, byteLength, remaining);
+    const bytesRead = await handle.read(target);
     if (bytesRead === null || bytesRead === 0) break;
     if (
-      !Number.isSafeInteger(bytesRead) ||
+      !numberIsSafeInteger(bytesRead) ||
       bytesRead < 0 ||
       bytesRead > remaining
     ) {
@@ -392,12 +459,20 @@ async function readHandleBytes(
   if (byteLength > maxBytes) {
     throw new RangeError(`Skill file "${path}" exceeds ${maxBytes} bytes`);
   }
-  return bytes.subarray(0, byteLength);
+  return byteLength === capacity ? bytes : new NativeUint8Array(buffer, 0, byteLength);
 }
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.byteLength !== right.byteLength) return false;
-  for (let index = 0; index < left.byteLength; index++) {
+  const leftByteLength = getUint8ArrayByteLength(left);
+  const rightByteLength = getUint8ArrayByteLength(right);
+  if (
+    leftByteLength === undefined ||
+    rightByteLength === undefined ||
+    leftByteLength !== rightByteLength
+  ) {
+    return false;
+  }
+  for (let index = 0; index < leftByteLength; index++) {
     if (left[index] !== right[index]) return false;
   }
   return true;
@@ -462,7 +537,12 @@ async function readCurrentPathSnapshot(
     const bytes = await readHandleBytes(path, handle, maxBytes);
     const after = assertOpenedRegularFile(path, await handle.stat(), maxBytes);
     assertSameSize(path, opened.size, after.size, "reading");
-    assertSameSize(path, opened.size, bytes.byteLength, "reading");
+    assertSameSize(
+      path,
+      opened.size,
+      requireUint8ArrayByteLength(path, bytes),
+      "reading",
+    );
     compareKnownIdentities(
       path,
       opened.identity,
@@ -546,7 +626,12 @@ async function readLocalTextFile(
 
     const after = assertOpenedRegularFile(path, await handle.stat(), maxBytes);
     assertSameSize(path, opened.size, after.size, "reading");
-    assertSameSize(path, opened.size, bytes.byteLength, "reading");
+    assertSameSize(
+      path,
+      opened.size,
+      requireUint8ArrayByteLength(path, bytes),
+      "reading",
+    );
     const handleMatches = compareKnownIdentities(
       path,
       opened.identity,

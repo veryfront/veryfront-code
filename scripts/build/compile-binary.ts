@@ -25,6 +25,7 @@ export const DEFAULT_INCLUDES = [
   "extensions/ext-parser-babel/src/index.ts",
   "extensions/ext-parser-babel/src/parser-only.ts",
   "extensions/ext-sandbox-shell-tools/src/index.ts",
+  "extensions/ext-yaml/src/index.ts",
   // Spawned via `new Worker(new URL(...))`, which deno compile does not trace.
   "extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts",
   "extensions/ext-document-kreuzberg/src/native-progress-extraction-worker.ts",

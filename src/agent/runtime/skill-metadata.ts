@@ -1,5 +1,12 @@
-import { extract } from "#std/front-matter/yaml.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import {
+  type SkillDocumentParserProvider,
+  SkillDocumentParserProviderName,
+  snapshotSkillDocumentParserProvider,
+} from "#veryfront/extensions/parser/skill-document-parser.ts";
 import {
   matchesAllowedTool,
   snapshotAllowedToolPatterns,
@@ -15,6 +22,11 @@ import {
   SKILL_RELATIVE_PATH_MAX_LENGTH,
   SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
+import {
+  parseBoundedSkillDocument,
+  type ParsedSkillContent,
+  parseUnsafeLegacySkillDocument,
+} from "#veryfront/skill/document-parser.ts";
 import { validateSkillFileMetadata } from "#veryfront/skill/parser.ts";
 import {
   assertResolvedSkillSelector,
@@ -28,6 +40,7 @@ import {
   SKILL_METADATA_VALUE_MAX_LENGTH,
   SKILL_NAME_REGEX,
   SKILL_PROVIDER_SAFE_ID_REGEX,
+  type SkillMetadata,
 } from "#veryfront/skill/types.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
 
@@ -254,7 +267,7 @@ export const getRuntimeSkillFrontmatterSchema = defineSchema((v) => {
           normalizeStrictAllowedTools(rawAllowedTools as string | string[]);
         } catch (error) {
           context.addIssue({
-            message: error instanceof Error ? error.message : String(error),
+            message: snapshotThrowableDiagnostic(error),
           });
         }
       }
@@ -262,7 +275,7 @@ export const getRuntimeSkillFrontmatterSchema = defineSchema((v) => {
         normalizeStrictMetadata(d.metadata);
       } catch (error) {
         context.addIssue({
-          message: error instanceof Error ? error.message : String(error),
+          message: snapshotThrowableDiagnostic(error),
         });
       }
     })
@@ -454,6 +467,12 @@ export type RuntimeSkillMetadataLogger = {
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+/** Composition options for synchronous runtime Skill document parsing. */
+export type RuntimeSkillMetadataParseOptions = {
+  logger?: RuntimeSkillMetadataLogger;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
+};
+
 function canUseLegacyInvokeAgent(availableToolNameSet: ReadonlySet<string> | null): boolean {
   return availableToolNameSet?.has("invoke_agent") === true;
 }
@@ -593,11 +612,14 @@ function hasDeclaredAllowedTools(frontmatter: Record<string, unknown>): boolean 
 
 function parseLegacyRuntimeSkillSource(
   content: string,
-  options: { logger?: RuntimeSkillMetadataLogger } = {},
+  options: RuntimeSkillMetadataParseOptions = {},
 ): ParsedRuntimeSkillSource | null {
   try {
-    const parsed = extract<Record<string, unknown>>(content);
-    const result = getUnsafeLegacyRuntimeSkillFrontmatterSchema().safeParse(parsed.attrs);
+    const parsed = parseUnsafeLegacySkillDocument(
+      content,
+      options.skillDocumentParserProvider,
+    );
+    const result = getUnsafeLegacyRuntimeSkillFrontmatterSchema().safeParse(parsed.frontmatter);
 
     if (!result.success) {
       options.logger?.error?.("Invalid skill frontmatter; skipping skill", {
@@ -611,12 +633,12 @@ function parseLegacyRuntimeSkillSource(
         metadata: result.data,
         body: parsed.body,
       },
-      frontmatter: parsed.attrs,
-      allowedToolsDeclared: hasDeclaredAllowedTools(parsed.attrs),
+      frontmatter: parsed.frontmatter,
+      allowedToolsDeclared: hasDeclaredAllowedTools(parsed.frontmatter),
     };
   } catch (error) {
     options.logger?.error?.("Invalid skill frontmatter; skipping skill", {
-      error: error instanceof Error ? error.message : String(error),
+      error: snapshotThrowableDiagnostic(error),
     });
     return null;
   }
@@ -624,23 +646,20 @@ function parseLegacyRuntimeSkillSource(
 
 function parseStrictRuntimeSkillSource(
   content: string,
-  options: { logger?: RuntimeSkillMetadataLogger } = {},
+  options: RuntimeSkillMetadataParseOptions = {},
 ): ParsedRuntimeSkillSource | null {
+  const configuredProvider = options.skillDocumentParserProvider === undefined
+    ? tryResolve<SkillDocumentParserProvider>(SkillDocumentParserProviderName)
+    : options.skillDocumentParserProvider;
+  const parser = configuredProvider === undefined
+    ? undefined
+    : snapshotSkillDocumentParserProvider(configuredProvider);
   try {
-    if (typeof content !== "string") {
-      throw new TypeError("Skill document content must be a string");
-    }
-    if (!isWellFormedUtf16(content)) {
-      throw new TypeError("Skill document content must contain well-formed UTF-16");
-    }
-    if (content.length > SKILL_DOCUMENT_MAX_CHARACTERS) {
-      throw new RangeError(
-        `Skill document exceeds ${SKILL_DOCUMENT_MAX_CHARACTERS} characters`,
-      );
-    }
-
-    const parsed = extract<Record<string, unknown>>(content);
-    const result = getRuntimeSkillFrontmatterSchema().safeParse(parsed.attrs);
+    const parsed: ParsedSkillContent = parseBoundedSkillDocument(
+      content,
+      parser,
+    );
+    const result = getRuntimeSkillFrontmatterSchema().safeParse(parsed.frontmatter);
     if (!result.success) {
       options.logger?.error?.("Invalid skill frontmatter; skipping skill", {
         error: result.issues?.map((i) => i.message).join("; ") ?? "validation failed",
@@ -653,15 +672,56 @@ function parseStrictRuntimeSkillSource(
         metadata: result.data,
         body: parsed.body,
       },
-      frontmatter: parsed.attrs,
-      allowedToolsDeclared: hasDeclaredAllowedTools(parsed.attrs),
+      frontmatter: parsed.frontmatter,
+      allowedToolsDeclared: hasDeclaredAllowedTools(parsed.frontmatter),
     };
   } catch (error) {
+    if (snapshotVeryfrontError(error)?.slug === "missing-extension") {
+      throw error;
+    }
     options.logger?.error?.("Invalid skill frontmatter; skipping skill", {
-      error: error instanceof Error ? error.message : String(error),
+      error: snapshotThrowableDiagnostic(error),
     });
     return null;
   }
+}
+
+type ParsedStrictRuntimeSkillFileSource = {
+  source: ParsedRuntimeSkillSource;
+  metadata: SkillMetadata;
+};
+
+function parseStrictRuntimeSkillFileSource(
+  content: string,
+  canonicalName: string,
+  options: RuntimeSkillMetadataParseOptions,
+  providerSafeName = false,
+): ParsedStrictRuntimeSkillFileSource | null {
+  const source = parseStrictRuntimeSkillSource(content, options);
+  if (!source) return null;
+
+  try {
+    return {
+      source,
+      metadata: validateSkillFileMetadata(source.frontmatter, canonicalName, {
+        providerSafeName,
+      }),
+    };
+  } catch (error) {
+    options.logger?.error?.("Invalid skill frontmatter; skipping skill", {
+      error: snapshotThrowableDiagnostic(error),
+    });
+    return null;
+  }
+}
+
+/** Validate one bounded Agent Skills file from a single decoded snapshot. */
+export function isValidStrictRuntimeSkillFileDocument(
+  content: string,
+  canonicalName: string,
+  options: RuntimeSkillMetadataParseOptions = {},
+): boolean {
+  return parseStrictRuntimeSkillFileSource(content, canonicalName, options) !== null;
 }
 
 /**
@@ -671,7 +731,7 @@ function parseStrictRuntimeSkillSource(
  */
 export function parseUnsafeLegacyRuntimeSkillDocument(
   content: string,
-  options: { logger?: RuntimeSkillMetadataLogger } = {},
+  options: RuntimeSkillMetadataParseOptions = {},
 ): ParsedRuntimeSkillDocument | null {
   return parseLegacyRuntimeSkillSource(content, options)?.document ?? null;
 }
@@ -683,7 +743,7 @@ export function parseUnsafeLegacyRuntimeSkillDocument(
  */
 export function parseUnsafeLegacyRuntimeSkillMetadata(
   content: string,
-  options: { logger?: RuntimeSkillMetadataLogger } = {},
+  options: RuntimeSkillMetadataParseOptions = {},
 ): RuntimeSkillFrontmatter | null {
   return parseUnsafeLegacyRuntimeSkillDocument(content, options)?.metadata ?? null;
 }
@@ -691,7 +751,7 @@ export function parseUnsafeLegacyRuntimeSkillMetadata(
 /** Parses a bounded runtime skill document and fails closed on invalid input. */
 export function parseStrictRuntimeSkillDocument(
   content: string,
-  options: { logger?: RuntimeSkillMetadataLogger } = {},
+  options: RuntimeSkillMetadataParseOptions = {},
 ): ParsedRuntimeSkillDocument | null {
   return parseStrictRuntimeSkillSource(content, options)?.document ?? null;
 }
@@ -699,7 +759,7 @@ export function parseStrictRuntimeSkillDocument(
 /** Strict runtime-boundary parser for hosted and filesystem skill metadata. */
 export function parseStrictRuntimeSkillMetadata(
   content: string,
-  options: { logger?: RuntimeSkillMetadataLogger } = {},
+  options: RuntimeSkillMetadataParseOptions = {},
 ): RuntimeSkillFrontmatter | null {
   return parseStrictRuntimeSkillDocument(content, options)?.metadata ?? null;
 }
@@ -707,7 +767,7 @@ export function parseStrictRuntimeSkillMetadata(
 /** Parses a bounded runtime skill document and fails closed on invalid input. */
 export function parseRuntimeSkillDocument(
   content: string,
-  options: { logger?: RuntimeSkillMetadataLogger } = {},
+  options: RuntimeSkillMetadataParseOptions = {},
 ): ParsedRuntimeSkillDocument | null {
   return parseStrictRuntimeSkillDocument(content, options);
 }
@@ -715,7 +775,7 @@ export function parseRuntimeSkillDocument(
 /** Parses bounded runtime skill metadata and fails closed on invalid input. */
 export function parseRuntimeSkillMetadata(
   content: string,
-  options: { logger?: RuntimeSkillMetadataLogger } = {},
+  options: RuntimeSkillMetadataParseOptions = {},
 ): RuntimeSkillFrontmatter | null {
   return parseStrictRuntimeSkillMetadata(content, options);
 }
@@ -728,6 +788,7 @@ type BuildRuntimeSkillDefinitionInput = {
   shortName?: string;
   sourcePath?: string;
   logger?: RuntimeSkillMetadataLogger;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
 
 function readOwnDataInputProperty(
@@ -798,6 +859,12 @@ function snapshotRuntimeSkillDefinitionInput(
       "Runtime skill definition",
       false,
     ) as RuntimeSkillMetadataLogger | undefined,
+    skillDocumentParserProvider: readOwnDataInputProperty(
+      input,
+      "skillDocumentParserProvider",
+      "Runtime skill definition",
+      false,
+    ) as SkillDocumentParserProvider | undefined,
   });
 }
 
@@ -913,42 +980,42 @@ function getRuntimeSkillDisplayName(
 
 function parseRuntimeSkillDirectoryDocument(
   content: string,
-  input: Pick<BuildRuntimeSkillDefinitionInput, "id" | "ownerAgentId">,
+  input: Pick<
+    BuildRuntimeSkillDefinitionInput,
+    "id" | "ownerAgentId" | "skillDocumentParserProvider"
+  >,
   logger?: RuntimeSkillMetadataLogger,
 ): ParsedRuntimeSkillBuildDocument | null {
-  const source = parseStrictRuntimeSkillSource(content, { logger });
-  if (!source) {
-    return null;
-  }
+  const parsed = parseStrictRuntimeSkillFileSource(
+    content,
+    input.id,
+    {
+      logger,
+      skillDocumentParserProvider: input.skillDocumentParserProvider,
+    },
+    input.ownerAgentId !== undefined,
+  );
+  if (!parsed) return null;
 
-  try {
-    const metadata = validateSkillFileMetadata(source.frontmatter, input.id, {
-      providerSafeName: input.ownerAgentId !== undefined,
-    });
-    return {
-      document: {
-        body: source.document.body,
-        metadata: {
-          ...source.document.metadata,
-          name: metadata.name,
-          description: metadata.description,
-          allowedTools: metadata.allowedTools === undefined
-            ? []
-            : snapshotAllowedToolPatterns(metadata.allowedTools),
-          metadata: metadata.metadata === undefined
-            ? undefined
-            : Object.freeze({ ...metadata.metadata }),
-        },
+  const { source, metadata } = parsed;
+  return {
+    document: {
+      body: source.document.body,
+      metadata: {
+        ...source.document.metadata,
+        name: metadata.name,
+        description: metadata.description,
+        allowedTools: metadata.allowedTools === undefined
+          ? []
+          : snapshotAllowedToolPatterns(metadata.allowedTools),
+        metadata: metadata.metadata === undefined
+          ? undefined
+          : Object.freeze({ ...metadata.metadata }),
       },
-      allowedToolsDeclared: metadata.allowedTools !== undefined,
-      ...(metadata.displayName === undefined ? {} : { displayName: metadata.displayName }),
-    };
-  } catch (error) {
-    logger?.error?.("Invalid skill frontmatter; skipping skill", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  }
+    },
+    allowedToolsDeclared: metadata.allowedTools !== undefined,
+    ...(metadata.displayName === undefined ? {} : { displayName: metadata.displayName }),
+  };
 }
 
 function buildRuntimeSkillDefinitionFromDocument(
@@ -1013,8 +1080,12 @@ function buildRuntimeSkillDefinitionFromDocument(
 function parseRuntimeSkillBuildDocument(
   content: string,
   logger?: RuntimeSkillMetadataLogger,
+  skillDocumentParserProvider?: SkillDocumentParserProvider,
 ): ParsedRuntimeSkillBuildDocument | null {
-  const source = parseStrictRuntimeSkillSource(content, { logger });
+  const source = parseStrictRuntimeSkillSource(content, {
+    logger,
+    skillDocumentParserProvider,
+  });
   return source
     ? {
       document: source.document,
@@ -1030,7 +1101,11 @@ export function buildRuntimeSkillDefinition(
   const snapshot = snapshotRuntimeSkillDefinitionInput(input);
   return buildRuntimeSkillDefinitionFromDocument(
     snapshot,
-    parseRuntimeSkillBuildDocument(snapshot.content, snapshot.logger),
+    parseRuntimeSkillBuildDocument(
+      snapshot.content,
+      snapshot.logger,
+      snapshot.skillDocumentParserProvider,
+    ),
   );
 }
 
@@ -1043,7 +1118,10 @@ export function buildRuntimeSkillDefinition(
 export function buildUnsafeLegacyRuntimeSkillDefinition(
   input: BuildRuntimeSkillDefinitionInput,
 ): RuntimeSkillDefinition | null {
-  const source = parseLegacyRuntimeSkillSource(input.content, { logger: input.logger });
+  const source = parseLegacyRuntimeSkillSource(input.content, {
+    logger: input.logger,
+    skillDocumentParserProvider: input.skillDocumentParserProvider,
+  });
   if (!source) return null;
 
   const { metadata, body } = source.document;
@@ -1091,7 +1169,11 @@ export function buildLegacyRuntimeFlatSkillDefinition(
   const snapshot = snapshotRuntimeSkillDefinitionInput(input);
   return buildRuntimeSkillDefinitionFromDocument(
     snapshot,
-    parseRuntimeSkillBuildDocument(snapshot.content, snapshot.logger),
+    parseRuntimeSkillBuildDocument(
+      snapshot.content,
+      snapshot.logger,
+      snapshot.skillDocumentParserProvider,
+    ),
   );
 }
 

@@ -9,6 +9,17 @@
 import type { Skill } from "./types.ts";
 import { SKILL_ID_MAX_LENGTH } from "./limits.ts";
 
+const defineOwnProperty = Object.defineProperty;
+
+function appendOwnArrayElement<T>(values: T[], value: T): void {
+  defineOwnProperty(values, values.length, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
 /** Maximum number of skills rendered in an agent system prompt. */
 export const MAX_SKILL_MANIFEST_PROMPT_ENTRIES = 30;
 
@@ -41,7 +52,7 @@ export function buildUnsafeLegacySkillManifestPrompt(skills: Map<string, Skill>)
   let displayedSkillCount = 0;
   for (const [id, skill] of skills) {
     const label = skill.metadata.displayName ? `${skill.metadata.displayName} (\`${id}\`)` : id;
-    lines.push(`- **${label}**: ${skill.metadata.description}`);
+    appendOwnArrayElement(lines, `- **${label}**: ${skill.metadata.description}`);
     displayedSkillCount += 1;
     if (displayedSkillCount === MAX_SKILL_MANIFEST_PROMPT_ENTRIES) {
       break;
@@ -49,24 +60,28 @@ export function buildUnsafeLegacySkillManifestPrompt(skills: Map<string, Skill>)
   }
 
   if (skills.size > MAX_SKILL_MANIFEST_PROMPT_ENTRIES) {
-    lines.push("");
-    lines.push(
+    appendOwnArrayElement(lines, "");
+    appendOwnArrayElement(
+      lines,
       `${
         skills.size - MAX_SKILL_MANIFEST_PROMPT_ENTRIES
       } more skill summaries omitted from this prompt. Call load_skill only with a known skill ID.`,
     );
   }
 
-  lines.push("");
-  lines.push("### Skill Tools (call these as tools, never write them as text)");
-  lines.push("");
-  lines.push(
+  appendOwnArrayElement(lines, "");
+  appendOwnArrayElement(lines, "### Skill Tools (call these as tools, never write them as text)");
+  appendOwnArrayElement(lines, "");
+  appendOwnArrayElement(
+    lines,
     "- load_skill: Call with { skillId } to load a skill's full instructions and available references/resources/scripts",
   );
-  lines.push(
+  appendOwnArrayElement(
+    lines,
     "- load_skill_reference: Call with { skillId, reference } only after load_skill lists reference files for that skill",
   );
-  lines.push(
+  appendOwnArrayElement(
+    lines,
     "- execute_skill_script: Call with { skillId, script, args?, env?, timeoutMs? } only after load_skill lists scripts for that skill",
   );
 
@@ -93,7 +108,7 @@ export function buildStrictSkillManifestPrompt(skills: Map<string, Skill>): stri
       "description",
       1_024,
     );
-    lines.push(`- skillId=${quotedId}; description=${quotedDescription}`);
+    appendOwnArrayElement(lines, `- skillId=${quotedId}; description=${quotedDescription}`);
     displayedSkillCount += 1;
     if (displayedSkillCount === MAX_SKILL_MANIFEST_PROMPT_ENTRIES) {
       break;
@@ -101,24 +116,28 @@ export function buildStrictSkillManifestPrompt(skills: Map<string, Skill>): stri
   }
 
   if (skills.size > MAX_SKILL_MANIFEST_PROMPT_ENTRIES) {
-    lines.push("");
-    lines.push(
+    appendOwnArrayElement(lines, "");
+    appendOwnArrayElement(
+      lines,
       `${
         skills.size - MAX_SKILL_MANIFEST_PROMPT_ENTRIES
       } more skill summaries omitted from this prompt. Call load_skill only with a known skill ID.`,
     );
   }
 
-  lines.push("");
-  lines.push("### Skill Tools (call these as tools, never write them as text)");
-  lines.push("");
-  lines.push(
+  appendOwnArrayElement(lines, "");
+  appendOwnArrayElement(lines, "### Skill Tools (call these as tools, never write them as text)");
+  appendOwnArrayElement(lines, "");
+  appendOwnArrayElement(
+    lines,
     "- load_skill: Call with { skillId } to load a skill's full instructions and available references/resources/scripts",
   );
-  lines.push(
+  appendOwnArrayElement(
+    lines,
     "- load_skill_reference: Call with { skillId, reference } only after load_skill lists reference files for that skill",
   );
-  lines.push(
+  appendOwnArrayElement(
+    lines,
     "- execute_skill_script: Call with { skillId, script, args?, env?, timeoutMs? } only after load_skill lists scripts for that skill",
   );
 

@@ -428,8 +428,7 @@ export async function createHandler(
 
           if (!wsServer) {
             const WebSocketServerConstructor = WebSocketServer as unknown as new (
-              options:
-                import("#veryfront/platform/adapters/runtime/node/http-server.ts").NodeWebSocketServerOptions,
+              options: import("#veryfront/extensions/websocket").NodeWebSocketServerOptions,
             ) => import("ws").WebSocketServer;
             wsServer = new WebSocketServerConstructor(handshakeController.serverOptions);
             handshakeController.attach(wsServer);

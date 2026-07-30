@@ -4,6 +4,7 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
+import type { SkillDocumentParserProvider } from "veryfront/extensions/parser";
 import { join } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -18,6 +19,7 @@ import {
   validateStrictSkillPath,
 } from "veryfront/skill";
 import { readSkillDocument } from "../../skills/read-skill-document.ts";
+import { ensureCliSkillDocumentParser } from "#cli/shared/default-contracts";
 import { assertSkillDirectoryIdentity } from "../../skills/validation.ts";
 import type { MCPTool } from "../tools.ts";
 import { directoryExists, formatError, getFs } from "./helpers.ts";
@@ -53,6 +55,7 @@ async function isNonSymlinkDirectory(path: string): Promise<boolean> {
 async function loadBundledSkill(
   skillsDir: string,
   entry: { name: string; isDirectory: boolean; isSymlink?: boolean },
+  parser: Readonly<SkillDocumentParserProvider>,
 ): Promise<DiscoveredBundledSkill | null> {
   if (
     !entry.isDirectory ||
@@ -69,7 +72,7 @@ async function loadBundledSkill(
     }
     const skillPath = await validateStrictSkillPath(directory, "SKILL.md", []);
     const content = await readSkillDocument(skillPath);
-    const parsed = await parseSkillFileFrontmatter(content);
+    const parsed = await parseSkillFileFrontmatter(content, parser);
     assertSkillDirectoryIdentity(parsed.frontmatter, entry.name);
     const metadata = validateSkillFileMetadata(parsed.frontmatter, entry.name);
     const references = (await listStrictSkillSubdir(directory, "references"))
@@ -95,6 +98,7 @@ async function discoverBundledSkills(
   if (!await directoryExists(skillsDir) || !await isNonSymlinkDirectory(skillsDir)) {
     return discovered;
   }
+  const parser = await ensureCliSkillDocumentParser();
 
   let entryCount = 0;
   for await (const entry of getFs().readDir(skillsDir)) {
@@ -105,7 +109,7 @@ async function discoverBundledSkills(
       );
     }
 
-    const skill = await loadBundledSkill(skillsDir, entry);
+    const skill = await loadBundledSkill(skillsDir, entry, parser);
     if (skill) {
       discovered.set(skill.id, skill);
     }
@@ -125,12 +129,13 @@ async function loadBundledSkillById(
   ) {
     return null;
   }
+  const parser = await ensureCliSkillDocumentParser();
 
   return await loadBundledSkill(skillsDir, {
     name: skillId,
     isDirectory: true,
     isSymlink: false,
-  });
+  }, parser);
 }
 
 function isValidSkillId(value: unknown): value is string {

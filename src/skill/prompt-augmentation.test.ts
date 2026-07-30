@@ -9,6 +9,30 @@ import {
 import * as promptAugmentation from "./prompt-augmentation.ts";
 import type { Skill } from "./types.ts";
 
+function withInheritedArrayIndexSetter<T>(
+  index: number,
+  operation: () => T,
+): { result: T; setterCalls: number } {
+  const key = String(index);
+  const original = Object.getOwnPropertyDescriptor(Array.prototype, key);
+  let setterCalls = 0;
+  Object.defineProperty(Array.prototype, key, {
+    configurable: true,
+    set: () => {
+      setterCalls += 1;
+    },
+  });
+  try {
+    return { result: operation(), setterCalls };
+  } finally {
+    if (original) {
+      Object.defineProperty(Array.prototype, key, original);
+    } else {
+      Reflect.deleteProperty(Array.prototype, key);
+    }
+  }
+}
+
 function createSkill(id: string, description: string): Skill {
   return {
     id,
@@ -122,6 +146,24 @@ describe("src/skill/prompt-augmentation", () => {
       assertStringIncludes(result, "load_skill");
       assertStringIncludes(result, "load_skill_reference");
       assertStringIncludes(result, "execute_skill_script");
+    });
+
+    it("builds strict and legacy manifests without invoking inherited numeric setters", () => {
+      const skills = new Map([["safe-skill", createSkill("safe-skill", "Safe summary")]]);
+
+      const strict = withInheritedArrayIndexSetter(
+        5,
+        () => buildSkillManifestPrompt(skills),
+      );
+      const legacy = withInheritedArrayIndexSetter(
+        4,
+        () => promptAugmentation.buildUnsafeLegacySkillManifestPrompt(skills),
+      );
+
+      assertEquals(strict.setterCalls, 0);
+      assertStringIncludes(strict.result, 'skillId="safe-skill"; description="Safe summary"');
+      assertEquals(legacy.setterCalls, 0);
+      assertStringIncludes(legacy.result, "- **safe-skill**: Safe summary");
     });
 
     it("bounds public metadata while preserving legacy formatting behind an unsafe name", () => {

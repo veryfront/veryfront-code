@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/skill/_test-setup.ts";
 import {
   assert,
   assertEquals,

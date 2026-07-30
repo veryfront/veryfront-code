@@ -17,7 +17,11 @@ import {
   validateStrictSkillPath,
 } from "./path-safety.ts";
 import { createSkillTestAdapter } from "./testing.ts";
-import { SKILL_ALLOWED_SUBDIR_MAX_ENTRIES, SKILL_SUBDIR_MAX_ENTRIES } from "./limits.ts";
+import {
+  SKILL_ALLOWED_SUBDIR_MAX_ENTRIES,
+  SKILL_RELATIVE_PATH_MAX_LENGTH,
+  SKILL_SUBDIR_MAX_ENTRIES,
+} from "./limits.ts";
 import { createSkillOperationBudget } from "./operation-budget.ts";
 
 async function settlesWithin(promise: Promise<unknown>, timeoutMs = 50): Promise<boolean> {
@@ -129,6 +133,155 @@ describe("src/skill/path-safety", () => {
         RangeError,
         `${SKILL_ALLOWED_SUBDIR_MAX_ENTRIES}`,
       );
+
+      assertEquals(
+        await validateStrictSkillPath(
+          "/project/skills/test",
+          "references/guide.md",
+          allowedSubdirs.slice(0, SKILL_ALLOWED_SUBDIR_MAX_ENTRIES),
+          adapter,
+        ),
+        "/project/skills/test/references/guide.md",
+      );
+    });
+
+    it("rejects Proxy allowlists before invoking traps or consulting the filesystem", async () => {
+      const adapter = createSkillTestAdapter({
+        "/project/skills/test/references/guide.md": "Guide",
+      });
+      let proxyTrapCalls = 0;
+      const allowedSubdirs = new Proxy(["references"], {
+        get(target, property, receiver) {
+          proxyTrapCalls += 1;
+          return Reflect.get(target, property, receiver);
+        },
+        getOwnPropertyDescriptor(target, property) {
+          proxyTrapCalls += 1;
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+      });
+
+      let failure: unknown;
+      try {
+        await validateStrictSkillPath(
+          "/project/skills/test",
+          "references/guide.md",
+          allowedSubdirs,
+          adapter,
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      assertEquals(failure instanceof TypeError, true);
+      assertEquals(
+        failure instanceof Error ? failure.message.includes("must not be a proxy") : false,
+        true,
+      );
+      assertEquals(proxyTrapCalls, 0);
+    });
+
+    it("does not echo rejected allowlist values into diagnostics", async () => {
+      const rejectedValue = "bad\nALLOWLIST_SECRET";
+      let failure: unknown;
+      try {
+        await validateStrictSkillPath(
+          "/project/skills/test",
+          "SKILL.md",
+          [rejectedValue],
+          createSkillTestAdapter({
+            "/project/skills/test/SKILL.md": "# Demo",
+          }),
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      assertEquals(failure instanceof Error, true);
+      const message = failure instanceof Error ? failure.message : "";
+      assertEquals(message.includes("ALLOWLIST_SECRET"), false);
+      assertEquals(message.includes("\n"), false);
+    });
+
+    it("keeps directory allowlist decisions independent of Array.prototype mutation", async () => {
+      const root = "/project/skills/test";
+      const adapter = createSkillTestAdapter({
+        [`${root}/scripts/run.sh`]: "echo no",
+      });
+      const original = Object.getOwnPropertyDescriptor(Array.prototype, "includes");
+      let hookCalls = 0;
+      Object.defineProperty(Array.prototype, "includes", {
+        configurable: true,
+        value() {
+          hookCalls += 1;
+          return true;
+        },
+        writable: true,
+      });
+
+      let failure: unknown;
+      try {
+        await validateStrictSkillPath(
+          root,
+          "scripts/run.sh",
+          ["references"],
+          adapter,
+        );
+      } catch (error) {
+        failure = error;
+      } finally {
+        if (original) Object.defineProperty(Array.prototype, "includes", original);
+      }
+
+      assertEquals(failure instanceof Error, true);
+      assertEquals(hookCalls, 0);
+    });
+
+    it("does not let inherited index setters rewrite the allowed-directory snapshot", async () => {
+      const root = "/project/skills/test";
+      const adapter = createSkillTestAdapter({
+        [`${root}/scripts/run.sh`]: "echo no",
+      });
+      const original = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+      let authorizationSetterCalls = 0;
+      let authorized = false;
+      let failure: unknown;
+      Object.defineProperty(Array.prototype, "0", {
+        configurable: true,
+        set(value: unknown) {
+          if (value === "references") authorizationSetterCalls += 1;
+          Object.defineProperty(this, "0", {
+            configurable: true,
+            enumerable: true,
+            value: value === "references" ? "scripts" : value,
+            writable: true,
+          });
+        },
+      });
+
+      try {
+        try {
+          await validateStrictSkillPath(
+            root,
+            "scripts/run.sh",
+            ["references"],
+            adapter,
+          );
+          authorized = true;
+        } catch (error) {
+          failure = error;
+        }
+      } finally {
+        if (original) {
+          Object.defineProperty(Array.prototype, "0", original);
+        } else {
+          Reflect.deleteProperty(Array.prototype, "0");
+        }
+      }
+
+      assertEquals(authorized, false);
+      assertEquals(failure instanceof Error, true);
+      assertEquals(authorizationSetterCalls, 0);
     });
 
     it("should validate existing files with fsAdapter", async () => {
@@ -178,6 +331,30 @@ describe("src/skill/path-safety", () => {
           }),
         Error,
         "escapes root",
+      );
+    });
+
+    it("keeps the tighter relative-path ceiling on strict validation only", async () => {
+      const root = "/project/skills/test";
+      const requestedPath = `references/${
+        Array.from(
+          { length: 6 },
+          (_unused, index) => `${index}${"x".repeat(199)}`,
+        ).join("/")
+      }/guide.md`;
+      assertEquals(requestedPath.length > SKILL_RELATIVE_PATH_MAX_LENGTH, true);
+      const adapter = createSkillTestAdapter({
+        [`${root}/${requestedPath}`]: "Guide",
+      });
+
+      assertEquals(
+        await validateSkillPath(root, requestedPath, ["references"], adapter),
+        `${root}/${requestedPath}`,
+      );
+      await assertRejects(
+        () => validateStrictSkillPath(root, requestedPath, ["references"], adapter),
+        TypeError,
+        "bounded path",
       );
     });
 
@@ -298,6 +475,35 @@ describe("src/skill/path-safety", () => {
       );
     });
 
+    it("propagates adapter error proxies without invoking prototype traps", async () => {
+      const adapter = createSkillTestAdapter({});
+      let prototypeReads = 0;
+      const hostile = new Proxy(
+        FILE_NOT_FOUND.create({ detail: "File not found: optional directory" }),
+        {
+          getPrototypeOf(): never {
+            prototypeReads += 1;
+            throw new Error("getPrototypeOf trap must not run");
+          },
+        },
+      );
+
+      let failure: unknown;
+      try {
+        await listSkillSubdir("/project/skills/test", "assets", {
+          ...adapter,
+          async exists() {
+            throw hostile;
+          },
+        });
+      } catch (error) {
+        failure = error;
+      }
+
+      assertEquals(prototypeReads, 0);
+      assertEquals(failure === hostile, true);
+    });
+
     it("should list files via fsAdapter", async () => {
       const adapter = createSkillTestAdapter({
         "/project/skills/test/references/a.md": "A",
@@ -347,6 +553,76 @@ describe("src/skill/path-safety", () => {
         Error,
         "entry name",
       );
+    });
+
+    it("does not echo rejected adapter entry names into diagnostics", async () => {
+      const adapter = createSkillTestAdapter({
+        "/project/skills/test/references/ok.md": "ok",
+      });
+      let failure: unknown;
+      try {
+        await listStrictSkillSubdir(
+          "/project/skills/test",
+          "references",
+          {
+            ...adapter,
+            async *readDir() {
+              yield {
+                name: "bad\nENTRY_SECRET",
+                isFile: true,
+                isDirectory: false,
+                isSymlink: false,
+              };
+            },
+          },
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      assertEquals(failure instanceof Error, true);
+      const message = failure instanceof Error ? failure.message : "";
+      assertEquals(message.includes("ENTRY_SECRET"), false);
+      assertEquals(message.includes("\n"), false);
+    });
+
+    it("rejects accessor-backed adapter entries without reading them twice", async () => {
+      const root = "/project/skills/test";
+      const adapter = createSkillTestAdapter({
+        [`${root}/references/ok.md`]: "ok",
+      });
+      let nameReads = 0;
+      const entry = Object.defineProperties({}, {
+        name: {
+          enumerable: true,
+          get() {
+            nameReads += 1;
+            return nameReads === 1 ? "ok.md" : "../secret.md";
+          },
+        },
+        isFile: { enumerable: true, value: true },
+        isDirectory: { enumerable: true, value: false },
+        isSymlink: { enumerable: true, value: false },
+      });
+
+      let failure: unknown;
+      try {
+        await listStrictSkillSubdir(root, "references", {
+          ...adapter,
+          async *readDir(path) {
+            if (path === `${root}/references`) {
+              yield entry as never;
+              return;
+            }
+            yield* adapter.readDir(path);
+          },
+        });
+      } catch (error) {
+        failure = error;
+      }
+
+      assertEquals(failure instanceof TypeError, true);
+      assertEquals(nameReads, 0);
     });
 
     it("preserves public adapter order while strict listings sort deterministically", async () => {

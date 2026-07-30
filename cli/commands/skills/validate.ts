@@ -10,6 +10,7 @@ import { exitProcess, logError, logSuccess, logWarning } from "#cli/utils";
 import { basename, resolve } from "veryfront/platform/path";
 import { isNotFoundError } from "veryfront/fs";
 import { parseSkillFileFrontmatter, validateSkillFileMetadata } from "veryfront/skill";
+import { ensureCliSkillDocumentParser } from "#cli/shared/default-contracts";
 import { readSkillDocument } from "../../skills/read-skill-document.ts";
 import { assertSkillDirectoryIdentity } from "../../skills/validation.ts";
 
@@ -39,6 +40,7 @@ export async function validateSkillDirectory(dir: string): Promise<ValidationIss
   }
 
   try {
+    await ensureCliSkillDocumentParser();
     const parsed = await parseSkillFileFrontmatter(content);
     const directoryName = basename(resolve(dir));
     assertSkillDirectoryIdentity(parsed.frontmatter, directoryName);

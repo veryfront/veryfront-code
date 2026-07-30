@@ -26,3 +26,10 @@ export type {
   HtmlModuleResolutionOrdering,
   MaxHTMLHeadParseBytes,
 } from "./html-head-locator.ts";
+
+export {
+  createSkillDocumentParserProvider,
+  type SkillDocumentParserProvider,
+  SkillDocumentParserProviderName,
+  snapshotSkillDocumentParserProvider,
+} from "./skill-document-parser.ts";

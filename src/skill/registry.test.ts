@@ -10,6 +10,30 @@ import {
 } from "./registry.ts";
 import type { Skill } from "./types.ts";
 
+function withInheritedArrayIndexSetter<T>(
+  index: number,
+  operation: () => T,
+): { result: T; setterCalls: number } {
+  const key = String(index);
+  const original = Object.getOwnPropertyDescriptor(Array.prototype, key);
+  let setterCalls = 0;
+  Object.defineProperty(Array.prototype, key, {
+    configurable: true,
+    set: () => {
+      setterCalls += 1;
+    },
+  });
+  try {
+    return { result: operation(), setterCalls };
+  } finally {
+    if (original) {
+      Object.defineProperty(Array.prototype, key, original);
+    } else {
+      Reflect.deleteProperty(Array.prototype, key);
+    }
+  }
+}
+
 function createTestSkill(id: string): Skill {
   return {
     id,
@@ -273,6 +297,19 @@ describe("src/skill/registry", () => {
         skillRegistryInternal.resolveVisibleSkill("new-name", { agentId: "agent-b" }),
         undefined,
       );
+    });
+
+    it("builds visible id snapshots without invoking inherited numeric setters", () => {
+      registerSkill("visible", createTestSkill("visible"));
+
+      const { result, setterCalls } = withInheritedArrayIndexSetter(0, () => ({
+        internal: skillRegistryInternal.getVisibleSkillIds(),
+        public: skillRegistry.getVisibleSkillIds(),
+      }));
+
+      assertEquals(setterCalls, 0);
+      assertEquals(result.internal, ["visible"]);
+      assertEquals(result.public, ["visible"]);
     });
   });
 

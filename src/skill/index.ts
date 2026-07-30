@@ -5,14 +5,22 @@
  * Skills are project-level capabilities defined as SKILL.md files
  * using the Agent Skills metadata format and Veryfront's documented,
  * fail-closed allowed-tools subset.
+ * YAML decoding is supplied by the `SkillDocumentParserProvider` extension
+ * contract. The CLI composes `@veryfront/ext-yaml` automatically; standalone
+ * parser calls pass a provider explicitly or use an active registration.
  *
  * @module
  *
  * @example
  * ```ts
  * import { parseSkillFrontmatter, validateSkillFileMetadata } from "veryfront/skill";
+ * import { createStdYamlSkillDocumentParserProvider } from "@veryfront/ext-yaml";
  *
- * const parsed = await parseSkillFrontmatter("---\nname: review\ndescription: Review code\n---\n");
+ * const parser = createStdYamlSkillDocumentParserProvider();
+ * const parsed = await parseSkillFrontmatter(
+ *   "---\nname: review\ndescription: Review code\n---\n",
+ *   parser,
+ * );
  * validateSkillFileMetadata(parsed.frontmatter, "review");
  * ```
  */

@@ -1,3 +1,5 @@
+import "#veryfront/skill/_test-setup.ts";
+
 /**
  * Directory-agent discovery tests: colocated capabilities register with owner
  * metadata (pure registration), and the owner-aware resolver keeps agents

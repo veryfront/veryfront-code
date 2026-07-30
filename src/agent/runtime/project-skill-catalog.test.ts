@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/skill/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "@std/assert";
 import { resolve } from "node:path";
 import {

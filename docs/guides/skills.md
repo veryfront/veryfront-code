@@ -126,11 +126,16 @@ discovery quarantines both definitions and reports a `duplicate_id` error.
 Directory-form project skills still take precedence over legacy flat files,
 and valid project skills still take precedence over built-ins.
 
-Path-safety helpers preserve adapter iteration order and accept canonical
-relative paths up to the general 4096-character path budget. Traversal,
-symlinked directories or entries, and malformed adapter entry names are
-rejected even if an older release happened to enumerate them; those cases are
-intentional security corrections, not supported compatibility behavior.
+Use `validateSkillPath` and `listSkillSubdir` only when you need their public
+compatibility policy: relative paths may contain up to 4096 characters,
+directory enumeration is not entry-capped, and listing preserves adapter
+iteration order. Use `validateStrictSkillPath` and `listStrictSkillSubdir` at
+untrusted runtime filesystem boundaries; they apply the 1024-character
+relative-path budget, the 1000-entry directory budget, and deterministic
+filename sorting. Traversal, symlinked directories or entries, and malformed
+adapter entry names are rejected by both policies even if an older release
+happened to enumerate them; those cases are intentional security corrections,
+not supported compatibility behavior.
 Errors returned from strict Skill reads redact the configured root as
 `<skill-root>` so host filesystem layout is not exposed to callers.
 Framework discovery and tool execution additionally apply tighter resource
@@ -139,6 +144,49 @@ Non-native filesystem adapters used at these bounded Skill boundaries must
 implement a genuine `readFileBytesBounded(path, byteLimit)` operation. Reading
 the complete object and slicing afterward is not bounded; adapters without the
 capability fail closed before `readFile()` is called.
+
+## Parse a Skill document from application code
+
+The `veryfront` CLI composes the first-party YAML provider automatically for
+Skill commands and project discovery. No parser setup is required before
+running `veryfront skills validate` or `veryfront dev`.
+
+When calling `veryfront/skill` directly, install the provider package as a
+direct dependency:
+
+```bash
+deno add npm:@veryfront/ext-yaml
+# npm projects
+npm install @veryfront/ext-yaml
+```
+
+Create the provider once and pass it to each standalone parser call:
+
+```ts
+import { createStdYamlSkillDocumentParserProvider } from "@veryfront/ext-yaml";
+import { parseSkillFrontmatter, validateSkillFileMetadata } from "veryfront/skill";
+
+const parser = createStdYamlSkillDocumentParserProvider();
+const parsed = await parseSkillFrontmatter(
+  "---\nname: review\ndescription: Review code\n---\n",
+  parser,
+);
+const metadata = validateSkillFileMetadata(parsed.frontmatter, "review");
+```
+
+Alternatively, activate the provider through the extension lifecycle:
+
+```ts
+import { defineConfig } from "veryfront";
+import extYaml from "@veryfront/ext-yaml";
+
+export default defineConfig({
+  extensions: [extYaml()],
+});
+```
+
+After extension setup completes, parser calls can omit the provider argument
+and resolve the active `SkillDocumentParserProvider` registration.
 
 ## Agent tools
 

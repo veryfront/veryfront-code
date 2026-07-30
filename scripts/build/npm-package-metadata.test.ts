@@ -242,6 +242,7 @@ Deno.test("root npm CLI package declares auto-loaded first-party extensions afte
       "@veryfront/ext-bundler-esbuild",
       "@veryfront/ext-content-mdx",
       "@veryfront/ext-parser-babel",
+      "@veryfront/ext-yaml",
     ]
   ) {
     const dependencyAssignment =
@@ -275,6 +276,7 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
             "@veryfront/ext-content-mdx": "^0.1.1016",
             "@veryfront/ext-css-tailwind": "^0.1.1016",
             "@veryfront/ext-parser-babel": "^0.1.1016",
+            "@veryfront/ext-yaml": "^0.1.1016",
             "@veryfront/not-an-extension": "^0.1.1016",
             zod: "4.3.6",
           },
@@ -315,6 +317,7 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
       "@veryfront/ext-content-mdx": publishVersion,
       "@veryfront/ext-css-tailwind": publishVersion,
       "@veryfront/ext-parser-babel": publishVersion,
+      "@veryfront/ext-yaml": publishVersion,
       "@veryfront/not-an-extension": "^0.1.1016",
       zod: "4.3.6",
     });
@@ -979,6 +982,7 @@ describe("npm supply-chain policy", () => {
       "ext-bundler-esbuild",
       "ext-content-mdx",
       "ext-parser-babel",
+      "ext-yaml",
     ];
 
     for (const extensionName of autoLoadedExtensions) {
@@ -995,6 +999,8 @@ describe("npm supply-chain policy", () => {
     }
 
     assertStringIncludes(source, "CodeParser was not registered");
+    assertStringIncludes(source, "SkillDocumentParserProvider was not registered");
+    assertStringIncludes(source, "skills validate");
     assertStringIncludes(source, "app/page.tsx");
     assertStringIncludes(source, "@veryfront/ext-parser-babel/parser-only");
     assertStringIncludes(
@@ -1082,6 +1088,7 @@ describe("npm supply-chain policy", () => {
       "ext-observability-sentry",
       "ext-parser-babel",
       "ext-sandbox-shell-tools",
+      "ext-yaml",
     ];
 
     for (const file of runtimeFiles) {

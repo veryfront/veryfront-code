@@ -1,14 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/skill/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   parseSkillFileFrontmatter,
   parseSkillFrontmatter,
+  parseUnsafeLegacySkillFrontmatter,
   validateSkillFileMetadata,
   validateSkillMetadata,
 } from "./parser.ts";
 import * as skillParser from "./parser.ts";
-import { SKILL_NAME_REGEX } from "./types.ts";
+import {
+  SKILL_ALLOWED_TOOL_MAX_PATTERNS,
+  SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
+} from "./limits.ts";
+import { SKILL_METADATA_MAX_ENTRIES, SKILL_NAME_REGEX } from "./types.ts";
 
 describe("src/skill/parser", () => {
   describe("parseSkillFrontmatter", () => {
@@ -80,6 +86,27 @@ Body`);
       assertEquals(result.frontmatter, {
         name: "malformed",
         description: "[unterminated",
+      });
+      assertEquals(result.body, "Body");
+    });
+
+    it("preserves structured YAML through the public legacy parser", async () => {
+      const result = await parseUnsafeLegacySkillFrontmatter(`---
+name: legacy
+description: "Quoted: value"
+allowed-tools:
+  - Read
+  - Bash(git:*)
+metadata:
+  owner: platform
+---
+Body`);
+
+      assertEquals(result.frontmatter, {
+        name: "legacy",
+        description: "Quoted: value",
+        "allowed-tools": ["Read", "Bash(git:*)"],
+        metadata: { owner: "platform" },
       });
       assertEquals(result.body, "Body");
     });
@@ -211,6 +238,21 @@ Body`),
       }
     });
 
+    it("does not echo invalid canonical identities in validation errors", () => {
+      const token = "TOP_SECRET_ID";
+      const error = assertThrows(
+        () =>
+          validateSkillFileMetadata(
+            { name: "safe", description: "Safe" },
+            `safe\u001b[31m${token}`,
+          ),
+        Error,
+      );
+
+      assertEquals(error.message.includes("\u001b"), false);
+      assertEquals(error.message.includes(token), false);
+    });
+
     it("should reject whitespace around the directory canonical name", () => {
       try {
         validateSkillMetadata(
@@ -248,7 +290,7 @@ Body`),
 
     it("should parse allowed-tools from space-delimited string", () => {
       const result = validateSkillMetadata(
-        { description: "desc", "allowed-tools": "Read Write Bash" },
+        { name: "test", description: "desc", "allowed-tools": "Read Write Bash" },
         "test",
       );
       assertEquals(result.allowedTools, ["Read", "Write", "Bash"]);
@@ -256,7 +298,7 @@ Body`),
 
     it("should parse allowed_tools as an alias for allowed-tools", () => {
       const result = validateSkillMetadata(
-        { description: "desc", allowed_tools: "Read Write Bash" },
+        { name: "test", description: "desc", allowed_tools: "Read Write Bash" },
         "test",
       );
       assertEquals(result.allowedTools, ["Read", "Write", "Bash"]);
@@ -264,16 +306,31 @@ Body`),
 
     it("should parse allowed-tools from array", () => {
       const result = validateSkillMetadata(
-        { description: "desc", "allowed-tools": ["Read", "Write"] },
+        { name: "test", description: "desc", "allowed-tools": ["Read", "Write"] },
         "test",
       );
       assertEquals(result.allowedTools, ["Read", "Write"]);
     });
 
+    it("preserves unbounded programmatic allowed-tools compatibility", () => {
+      const patterns = Array.from(
+        { length: SKILL_ALLOWED_TOOL_MAX_PATTERNS + 1 },
+        (_, index) => `Tool${index}`,
+      );
+
+      assertEquals(
+        validateSkillMetadata(
+          { name: "test", description: "desc", "allowed-tools": patterns },
+          "test",
+        ).allowedTools,
+        patterns,
+      );
+    });
+
     it("should reject non-string entries in allowed-tools array", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": ["Read", 123] },
+          { name: "test", description: "desc", "allowed-tools": ["Read", 123] },
           "test",
         );
         throw new Error("Should have thrown");
@@ -284,7 +341,7 @@ Body`),
 
     it("preserves legacy empty allowed-tools omission", () => {
       const result = validateSkillMetadata(
-        { description: "desc", "allowed-tools": "" },
+        { name: "test", description: "desc", "allowed-tools": "" },
         "test",
       );
       assertEquals(result.allowedTools, undefined);
@@ -293,7 +350,7 @@ Body`),
     it("preserves legacy null and canonical alias precedence", () => {
       assertEquals(
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": null },
+          { name: "test", description: "desc", "allowed-tools": null },
           "test",
         ).allowedTools,
         undefined,
@@ -301,6 +358,7 @@ Body`),
       assertEquals(
         validateSkillMetadata(
           {
+            name: "test",
             description: "desc",
             "allowed-tools": "Read",
             allowed_tools: "Write",
@@ -314,7 +372,7 @@ Body`),
     it("should reject non-string non-array allowed-tools (fail closed)", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": 123 },
+          { name: "test", description: "desc", "allowed-tools": 123 },
           "test",
         );
         throw new Error("Should have thrown");
@@ -329,7 +387,7 @@ Body`),
     it("should reject object allowed-tools (fail closed)", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": { Read: true } },
+          { name: "test", description: "desc", "allowed-tools": { Read: true } },
           "test",
         );
         throw new Error("Should have thrown");
@@ -344,7 +402,7 @@ Body`),
     it("should reject boolean allowed-tools (fail closed)", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": true },
+          { name: "test", description: "desc", "allowed-tools": true },
           "test",
         );
         throw new Error("Should have thrown");
@@ -359,7 +417,7 @@ Body`),
     it("should reject false boolean allowed-tools (fail closed)", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": false },
+          { name: "test", description: "desc", "allowed-tools": false },
           "test",
         );
         throw new Error("Should have thrown");
@@ -374,7 +432,7 @@ Body`),
     it("should reject zero numeric allowed-tools (fail closed)", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": 0 },
+          { name: "test", description: "desc", "allowed-tools": 0 },
           "test",
         );
         throw new Error("Should have thrown");
@@ -389,7 +447,7 @@ Body`),
     it("should reject invalid allowed-tools pattern", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": "Bash(git:*)" },
+          { name: "test", description: "desc", "allowed-tools": "Bash(git:*)" },
           "test",
         );
         throw new Error("Should have thrown");
@@ -400,7 +458,7 @@ Body`),
 
     it("should accept prefix wildcard patterns", () => {
       const result = validateSkillMetadata(
-        { description: "desc", "allowed-tools": "api:* Read" },
+        { name: "test", description: "desc", "allowed-tools": "api:* Read" },
         "test",
       );
       assertEquals(result.allowedTools, ["api:*", "Read"]);
@@ -408,16 +466,16 @@ Body`),
 
     it("should parse metadata as string map", () => {
       const result = validateSkillMetadata(
-        { description: "desc", metadata: { author: "test", version: "2" } },
+        { name: "test", description: "desc", metadata: { author: "test", version: "2" } },
         "test",
       );
       assertEquals(result.metadata, { author: "test", version: "2" });
     });
 
-    it("coerces metadata values through the historical public contract", () => {
+    it("coerces primitive metadata values through the historical public contract", () => {
       assertEquals(
         validateSkillMetadata(
-          { description: "desc", metadata: { version: 2, stable: true } },
+          { name: "test", description: "desc", metadata: { version: 2, stable: true } },
           "test",
         ).metadata,
         { version: "2", stable: "true" },
@@ -426,7 +484,7 @@ Body`),
 
     it("should pass through license and compatibility", () => {
       const result = validateSkillMetadata(
-        { description: "desc", license: "MIT", compatibility: ">=1.0" },
+        { name: "test", description: "desc", license: "MIT", compatibility: ">=1.0" },
         "test",
       );
       assertEquals(result.license, "MIT");
@@ -436,10 +494,7 @@ Body`),
     it("truncates descriptions through the historical public contract", () => {
       const longDesc = "x".repeat(2000);
       assertEquals(
-        validateSkillMetadata(
-          { description: longDesc },
-          "test",
-        ).description,
+        validateSkillMetadata({ name: "test", description: longDesc }, "test").description,
         "x".repeat(1024),
       );
     });
@@ -447,7 +502,7 @@ Body`),
     it("preserves unbounded compatibility through the historical public contract", () => {
       assertEquals(
         validateSkillMetadata(
-          { description: "desc", compatibility: "x".repeat(501) },
+          { name: "test", description: "desc", compatibility: "x".repeat(501) },
           "test",
         ).compatibility,
         "x".repeat(501),
@@ -459,7 +514,7 @@ Body`),
       metadata.__proto__ = "legacy-value";
 
       const result = validateSkillMetadata(
-        { description: "desc", metadata },
+        { name: "test", description: "desc", metadata },
         "test",
       );
 
@@ -469,6 +524,43 @@ Body`),
   });
 
   describe("validateSkillFileMetadata", () => {
+    it("does not invoke inherited indexed setters while parsing allowed-tools", () => {
+      const inherited = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+      let setterCalls = 0;
+      let allowedTools: string[] | undefined;
+      try {
+        Object.defineProperty(Array.prototype, "0", {
+          configurable: true,
+          set(this: unknown[], _value: unknown) {
+            setterCalls += 1;
+            Object.defineProperty(this, "0", {
+              configurable: true,
+              enumerable: true,
+              value: "api:*",
+              writable: true,
+            });
+          },
+        });
+        allowedTools = validateSkillFileMetadata(
+          {
+            name: "safe",
+            description: "Safe policy",
+            "allowed-tools": "Read",
+          },
+          "safe",
+        ).allowedTools;
+      } finally {
+        if (inherited === undefined) {
+          delete (Array.prototype as { 0?: unknown })[0];
+        } else {
+          Object.defineProperty(Array.prototype, "0", inherited);
+        }
+      }
+
+      assertEquals(setterCalls, 0);
+      assertEquals(allowedTools, ["Read"]);
+    });
+
     it("retains strict file-boundary metadata validation", () => {
       assertEquals(
         validateSkillFileMetadata(
@@ -533,6 +625,24 @@ Body`),
       }
     });
 
+    it("rejects terminal control characters in displayed Skill fields", () => {
+      for (const field of ["description", "license", "compatibility"] as const) {
+        assertThrows(
+          () =>
+            validateSkillFileMetadata(
+              {
+                name: "safe",
+                description: "Safe description",
+                [field]: "trusted\u001b[31mforged",
+              },
+              "safe",
+            ),
+          TypeError,
+          "control characters",
+        );
+      }
+    });
+
     it("rejects accessor-backed allowed-tools without invoking getters", () => {
       let getterReads = 0;
       const allowedTools: string[] = [];
@@ -558,6 +668,290 @@ Body`),
         "data property",
       );
       assertEquals(getterReads, 0);
+    });
+
+    it("does not inherit descriptor values through Object.prototype pollution", () => {
+      const inherited = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      let inheritedValueReads = 0;
+      const allowedTools: string[] = [];
+      Object.defineProperty(allowedTools, 0, {
+        enumerable: true,
+        get() {
+          throw new Error("array accessor must not run");
+        },
+      });
+
+      try {
+        Object.defineProperty(Object.prototype, "value", {
+          configurable: true,
+          get() {
+            inheritedValueReads += 1;
+            return "Read";
+          },
+        });
+        assertThrows(
+          () =>
+            validateSkillFileMetadata(
+              {
+                name: "test",
+                description: "desc",
+                "allowed-tools": allowedTools,
+              },
+              "test",
+            ),
+          TypeError,
+          "data property",
+        );
+      } finally {
+        if (inherited === undefined) {
+          delete (Object.prototype as { value?: unknown }).value;
+        } else {
+          Object.defineProperty(Object.prototype, "value", inherited);
+        }
+      }
+
+      assertEquals(inheritedValueReads, 0);
+    });
+
+    it("keeps allowed-tools policy independent of later String.prototype.trim mutation", () => {
+      const originalTrim = Object.getOwnPropertyDescriptor(String.prototype, "trim");
+      let hookCalls = 0;
+      let result: ReturnType<typeof validateSkillFileMetadata> | undefined;
+      Object.defineProperty(String.prototype, "trim", {
+        configurable: true,
+        value(this: string) {
+          hookCalls += 1;
+          return this === "Read" ? "api:*" : this;
+        },
+        writable: true,
+      });
+
+      try {
+        result = validateSkillFileMetadata(
+          {
+            name: "test",
+            description: "desc",
+            "allowed-tools": ["Read"],
+          },
+          "test",
+        );
+      } finally {
+        if (originalTrim) {
+          Object.defineProperty(String.prototype, "trim", originalTrim);
+        }
+      }
+
+      assertEquals(result?.allowedTools, ["Read"]);
+      assertEquals(hookCalls, 0);
+    });
+
+    it("rejects top-level Proxy frontmatter without invoking traps", () => {
+      let proxyTrapCalls = 0;
+      const frontmatter = new Proxy(
+        { name: "test", description: "desc" },
+        {
+          get(target, property, receiver) {
+            proxyTrapCalls += 1;
+            return Reflect.get(target, property, receiver);
+          },
+          getOwnPropertyDescriptor(target, property) {
+            proxyTrapCalls += 1;
+            return Reflect.getOwnPropertyDescriptor(target, property);
+          },
+        },
+      );
+
+      assertThrows(
+        () => validateSkillFileMetadata(frontmatter, "test"),
+        TypeError,
+        "must not be a proxy",
+      );
+      assertEquals(proxyTrapCalls, 0);
+    });
+
+    it("rejects nested Proxy containers without invoking traps", () => {
+      for (const field of ["allowed-tools", "metadata"] as const) {
+        let proxyTrapCalls = 0;
+        const target = field === "allowed-tools" ? ["Read"] : { author: "Veryfront" };
+        const proxied = new Proxy(target, {
+          get(innerTarget, property, receiver) {
+            proxyTrapCalls += 1;
+            return Reflect.get(innerTarget, property, receiver);
+          },
+          getOwnPropertyDescriptor(innerTarget, property) {
+            proxyTrapCalls += 1;
+            return Reflect.getOwnPropertyDescriptor(innerTarget, property);
+          },
+          ownKeys(innerTarget) {
+            proxyTrapCalls += 1;
+            return Reflect.ownKeys(innerTarget);
+          },
+        });
+
+        assertThrows(
+          () =>
+            validateSkillFileMetadata(
+              { name: "test", description: "desc", [field]: proxied },
+              "test",
+            ),
+          TypeError,
+          "must not be a proxy",
+        );
+        assertEquals(proxyTrapCalls, 0);
+      }
+    });
+
+    it("rejects metadata accessors without invoking getters", () => {
+      let getterReads = 0;
+      const metadata: Record<string, unknown> = {};
+      Object.defineProperty(metadata, "author", {
+        enumerable: true,
+        get() {
+          getterReads += 1;
+          return "Veryfront";
+        },
+      });
+
+      assertThrows(
+        () =>
+          validateSkillFileMetadata(
+            { name: "test", description: "desc", metadata },
+            "test",
+          ),
+        TypeError,
+        "data properties",
+      );
+      assertEquals(getterReads, 0);
+    });
+
+    it("checks container caps before inspecting nested entries", () => {
+      let allowedToolGetterReads = 0;
+      const allowedTools = Array.from(
+        { length: SKILL_ALLOWED_TOOL_MAX_PATTERNS + 1 },
+        () => "Read",
+      );
+      Object.defineProperty(allowedTools, 0, {
+        enumerable: true,
+        get() {
+          allowedToolGetterReads += 1;
+          return "api:*";
+        },
+      });
+
+      assertThrows(
+        () =>
+          validateSkillFileMetadata(
+            { name: "test", description: "desc", "allowed-tools": allowedTools },
+            "test",
+          ),
+        RangeError,
+        `at most ${SKILL_ALLOWED_TOOL_MAX_PATTERNS}`,
+      );
+      assertEquals(allowedToolGetterReads, 0);
+
+      let metadataGetterReads = 0;
+      const metadata: Record<string, unknown> = {};
+      for (let index = 0; index <= SKILL_METADATA_MAX_ENTRIES; index += 1) {
+        Object.defineProperty(metadata, `key${index}`, {
+          configurable: true,
+          enumerable: true,
+          value: "value",
+        });
+      }
+      Object.defineProperty(metadata, "key0", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          metadataGetterReads += 1;
+          return "forged";
+        },
+      });
+
+      assertThrows(
+        () =>
+          validateSkillFileMetadata(
+            { name: "test", description: "desc", metadata },
+            "test",
+          ),
+        RangeError,
+        `at most ${SKILL_METADATA_MAX_ENTRIES}`,
+      );
+      assertEquals(metadataGetterReads, 0);
+    });
+
+    it("bounds string-form allowed-tools before calling mutable split hooks", () => {
+      const originalSplit = Object.getOwnPropertyDescriptor(String.prototype, "split");
+      const overlongDeclaration = "x".repeat(
+        SKILL_ALLOWED_TOOL_MAX_PATTERNS * (SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH + 1) + 1,
+      );
+      let hookCalls = 0;
+      let failure: unknown;
+      Object.defineProperty(String.prototype, "split", {
+        configurable: true,
+        value() {
+          hookCalls += 1;
+          return ["Read"];
+        },
+        writable: true,
+      });
+
+      try {
+        validateSkillFileMetadata(
+          {
+            name: "test",
+            description: "desc",
+            "allowed-tools": overlongDeclaration,
+          },
+          "test",
+        );
+      } catch (error) {
+        failure = error;
+      } finally {
+        if (originalSplit) {
+          Object.defineProperty(String.prototype, "split", originalSplit);
+        }
+      }
+
+      assertEquals(failure instanceof RangeError, true);
+      assertEquals(hookCalls, 0);
+    });
+
+    it("uses captured descriptor intrinsics for strict snapshots", () => {
+      const originalDescriptor = Object.getOwnPropertyDescriptor(
+        Object,
+        "getOwnPropertyDescriptor",
+      );
+      const nativeGetOwnPropertyDescriptor = originalDescriptor?.value as
+        | typeof Object.getOwnPropertyDescriptor
+        | undefined;
+      let hookCalls = 0;
+      let result: ReturnType<typeof validateSkillFileMetadata> | undefined;
+      Object.defineProperty(Object, "getOwnPropertyDescriptor", {
+        configurable: true,
+        value(target: object, property: PropertyKey) {
+          hookCalls += 1;
+          return Reflect.apply(nativeGetOwnPropertyDescriptor!, Object, [target, property]);
+        },
+        writable: true,
+      });
+
+      try {
+        result = validateSkillFileMetadata(
+          {
+            name: "test",
+            description: "desc",
+            metadata: { author: "Veryfront" },
+          },
+          "test",
+        );
+      } finally {
+        if (originalDescriptor) {
+          Object.defineProperty(Object, "getOwnPropertyDescriptor", originalDescriptor);
+        }
+      }
+
+      assertEquals(result?.metadata, { author: "Veryfront" });
+      assertEquals(hookCalls, 0);
     });
 
     it("round-trips every admitted string metadata key as own data", () => {

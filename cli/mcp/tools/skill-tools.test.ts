@@ -8,6 +8,11 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SKILL_TEXT_FILE_MAX_BYTES } from "veryfront/skill";
 import { SKILL_SUBDIR_MAX_ENTRIES } from "#veryfront/skill/limits.ts";
+import { register, tryResolve, unregister } from "veryfront/extensions/contracts";
+import {
+  type SkillDocumentParserProvider,
+  SkillDocumentParserProviderName,
+} from "veryfront/extensions/parser";
 import {
   createVfGetSkillReference,
   createVfGetSkills,
@@ -111,6 +116,30 @@ describe("mcp/tools/skill-tools", () => {
         assertEquals(loaded.skill?.tools, ["vf_get_errors", "vf_get_logs"]);
         assertEquals(loaded.skill?.references, ["references/GUIDE.md"]);
       });
+    });
+
+    it("reports a broken parser contract instead of misclassifying a valid skill as missing", async () => {
+      const previous = tryResolve<SkillDocumentParserProvider>(
+        SkillDocumentParserProviderName,
+      );
+      register(SkillDocumentParserProviderName, { parseFrontmatter: "invalid" });
+      try {
+        await withTempSkills(async ({ skillsDir }) => {
+          await createSkillFixture(skillsDir, "valid-skill");
+          const result = await createVfGetSkills(skillsDir).execute({
+            name: "valid-skill",
+          });
+
+          assertEquals(result.skill, undefined);
+          assertEquals(result.error?.includes("provider must be a plain object"), true);
+          assertEquals(result.error?.includes("Skill not found"), false);
+        });
+      } finally {
+        unregister(SkillDocumentParserProviderName);
+        if (previous !== undefined) {
+          register(SkillDocumentParserProviderName, previous);
+        }
+      }
     });
 
     it("rejects traversal, absolute paths, and undiscovered skill ids", async () => {

@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { afterEach } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, it } from "#veryfront/testing/bdd.ts";
+import { ensureTestSkillDocumentParser } from "#veryfront/skill/_test-setup.ts";
 import { join, resolve } from "node:path";
 import {
   createHostedAgentProjectSteering,
@@ -48,7 +49,11 @@ afterEach(() => {
   reset();
 });
 
-Deno.test("createHostedAgentProjectSteering registers the built-in schema validator when used directly", async () => {
+beforeEach(() => {
+  ensureTestSkillDocumentParser();
+});
+
+it("createHostedAgentProjectSteering registers the built-in schema validator when used directly", async () => {
   await withTempDir((rootDir) => {
     reset();
     assertEquals(tryResolve<SchemaValidator>("SchemaValidator"), undefined);
@@ -64,7 +69,7 @@ Deno.test("createHostedAgentProjectSteering registers the built-in schema valida
   });
 });
 
-Deno.test("createHostedAgentProjectSteering loads and caches markdown agent definitions", async () => {
+it("createHostedAgentProjectSteering loads and caches markdown agent definitions", async () => {
   await withTempDir((rootDir) => {
     const baseDir = writeAgentDefinition({ rootDir, agentId: "writer" });
     const steering = createHostedAgentProjectSteering({
@@ -86,7 +91,7 @@ Deno.test("createHostedAgentProjectSteering loads and caches markdown agent defi
   });
 });
 
-Deno.test("createHostedAgentProjectSteering logs and rethrows definition load failures", async () => {
+it("createHostedAgentProjectSteering logs and rethrows definition load failures", async () => {
   await withTempDir((rootDir) => {
     const srcDir = join(rootDir, "src");
     Deno.mkdirSync(srcDir, { recursive: true });
@@ -110,7 +115,7 @@ Deno.test("createHostedAgentProjectSteering logs and rethrows definition load fa
   });
 });
 
-Deno.test("createHostedAgentProjectSteering binds project instruction and skill helpers", async () => {
+it("createHostedAgentProjectSteering binds project instruction and skill helpers", async () => {
   await withTempDir(async (rootDir) => {
     const baseDir = writeAgentDefinition({ rootDir, agentId: "support" });
     const calls: Array<{ url: URL; authHeader: string | null }> = [];
@@ -161,7 +166,7 @@ Deno.test("createHostedAgentProjectSteering binds project instruction and skill 
   });
 });
 
-Deno.test("createHostedAgentProjectSteering validates traversal-prone agent inputs", () => {
+it("createHostedAgentProjectSteering validates traversal-prone agent inputs", () => {
   assertThrows(() =>
     createHostedAgentProjectSteering({
       baseDir: "/tmp",
@@ -179,7 +184,7 @@ Deno.test("createHostedAgentProjectSteering validates traversal-prone agent inpu
   );
 });
 
-Deno.test("strict hosted agent steering rejects unsafe project identity before fetch", async () => {
+it("strict hosted agent steering rejects unsafe project identity before fetch", async () => {
   await withTempDir(async (rootDir) => {
     const baseDir = writeAgentDefinition({ rootDir, agentId: "support" });
     let fetchCalls = 0;
@@ -206,7 +211,7 @@ Deno.test("strict hosted agent steering rejects unsafe project identity before f
   });
 });
 
-Deno.test("strict hosted agent steering keeps cancellation request-scoped across its cached adapter", async () => {
+it("strict hosted agent steering keeps cancellation request-scoped across its cached adapter", async () => {
   await withTempDir(async (rootDir) => {
     const baseDir = writeAgentDefinition({ rootDir, agentId: "support" });
     const firstController = new AbortController();
@@ -270,7 +275,7 @@ Deno.test("strict hosted agent steering keeps cancellation request-scoped across
   });
 });
 
-Deno.test("createHostedAgentProjectSteering exposes load_skill and refresh helpers", async () => {
+it("createHostedAgentProjectSteering exposes load_skill and refresh helpers", async () => {
   await withTempDir(async (rootDir) => {
     const baseDir = writeAgentDefinition({ rootDir, agentId: "support" });
     const skillsDir = join(rootDir, "skills");
@@ -278,6 +283,7 @@ Deno.test("createHostedAgentProjectSteering exposes load_skill and refresh helpe
     Deno.writeTextFileSync(
       join(skillsDir, "plan.md"),
       `---
+name: plan
 description: Plans
 ---
 Plan carefully.`,
@@ -319,7 +325,7 @@ Plan carefully.`,
   });
 });
 
-Deno.test("createHostedAgentProjectSteering propagates project-file errors", async () => {
+it("createHostedAgentProjectSteering propagates project-file errors", async () => {
   await withTempDir(async (rootDir) => {
     const baseDir = writeAgentDefinition({ rootDir, agentId: "support" });
     const fetch: RuntimeProjectFilesFetch = () => Promise.reject(new Error("network down"));

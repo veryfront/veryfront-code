@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/skill/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill, skillRegistryInternal } from "./registry.ts";
@@ -1102,6 +1103,46 @@ Do work.`,
     assertEquals(failure instanceof Error, true);
     assertEquals(failure === hostile, false);
     assertEquals(failure instanceof Error ? failure.message : "", "Skill operation failed");
+  });
+
+  it("execute_skill_script classifies timeouts only after detaching Proxy failures", async () => {
+    const root = "/private/workspaces/customer/skills/demo";
+    const scriptPath = `${root}/scripts/run.sh`;
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo run" });
+    registerSkill("demo", {
+      id: "demo",
+      metadata: { name: "demo", description: "Demo" },
+      rootPath: root,
+      fsAdapter: adapter,
+    });
+    let prototypeTrapCalls = 0;
+    const hostile = new Proxy(new Error("runner failed"), {
+      getPrototypeOf() {
+        prototypeTrapCalls += 1;
+        throw new Error(`${root}/private`);
+      },
+    });
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        execute() {
+          throw hostile;
+        },
+      },
+    });
+
+    let failure: unknown;
+    try {
+      await tool.execute({ skillId: "demo", script: "scripts/run.sh" });
+    } catch (error) {
+      failure = error;
+    }
+
+    assertEquals(prototypeTrapCalls, 0);
+    assertEquals(failure instanceof Error, true);
+    assertEquals(
+      failure instanceof Error ? failure.message.includes(root) : true,
+      false,
+    );
   });
 
   it("execute_skill_script settles when cancellation interrupts filesystem preflight", async () => {

@@ -49,6 +49,230 @@ Deno.test("readBoundedSkillTextFile reads bounded local and adapter text", async
   }
 });
 
+Deno.test("readBoundedSkillTextFile uses the captured UTF-8 decoder primitive", async () => {
+  const path = "/project/skills/writer/SKILL.md";
+  const adapter = createSkillTestAdapter({ [path]: "trusted" });
+  const originalDecode = Object.getOwnPropertyDescriptor(
+    TextDecoder.prototype,
+    "decode",
+  );
+  let poisonedDecodeCalls = 0;
+  Object.defineProperty(TextDecoder.prototype, "decode", {
+    configurable: true,
+    value() {
+      poisonedDecodeCalls += 1;
+      return "attacker-controlled";
+    },
+    writable: true,
+  });
+
+  try {
+    assertEquals(await readBoundedSkillTextFile(path, adapter), "trusted");
+    assertEquals(poisonedDecodeCalls, 0);
+  } finally {
+    if (originalDecode) {
+      Object.defineProperty(TextDecoder.prototype, "decode", originalDecode);
+    }
+  }
+});
+
+Deno.test("readBoundedSkillTextFile uses captured string primitives for legacy adapter byte limits", async () => {
+  const path = "/project/skills/writer/SKILL.md";
+  const adapter = createSkillTestAdapter({ [path]: "é" });
+  const reported = { ...await adapter.stat(path), size: 1 };
+  const originalCharCodeAt = Object.getOwnPropertyDescriptor(
+    String.prototype,
+    "charCodeAt",
+  );
+  let poisonedCharCodeCalls = 0;
+  Object.defineProperty(String.prototype, "charCodeAt", {
+    configurable: true,
+    value() {
+      poisonedCharCodeCalls += 1;
+      return 0;
+    },
+    writable: true,
+  });
+
+  try {
+    await assertRejects(
+      () =>
+        readBoundedSkillTextFile(
+          path,
+          {
+            ...adapter,
+            readFileBytesBounded: undefined,
+            readFileBytes: undefined,
+            async readFile() {
+              return "é";
+            },
+            async stat() {
+              return reported;
+            },
+            async lstat() {
+              return reported;
+            },
+          },
+          1,
+        ),
+      RangeError,
+      "exceeds 1 bytes",
+    );
+    assertEquals(poisonedCharCodeCalls, 0);
+  } finally {
+    if (originalCharCodeAt) {
+      Object.defineProperty(String.prototype, "charCodeAt", originalCharCodeAt);
+    }
+  }
+});
+
+Deno.test("readBoundedSkillTextFile uses the captured safe-integer validator", async () => {
+  const path = "/project/skills/writer/SKILL.md";
+  const adapter = createSkillTestAdapter({ [path]: "x" });
+  const originalIsSafeInteger = Object.getOwnPropertyDescriptor(
+    Number,
+    "isSafeInteger",
+  );
+  let poisonedValidatorCalls = 0;
+  Object.defineProperty(Number, "isSafeInteger", {
+    configurable: true,
+    value() {
+      poisonedValidatorCalls += 1;
+      return true;
+    },
+    writable: true,
+  });
+
+  try {
+    await assertRejects(
+      () => readBoundedSkillTextFile(path, adapter, 1.5),
+      RangeError,
+      "positive safe integer",
+    );
+    assertEquals(poisonedValidatorCalls, 0);
+  } finally {
+    if (originalIsSafeInteger) {
+      Object.defineProperty(Number, "isSafeInteger", originalIsSafeInteger);
+    }
+  }
+});
+
+Deno.test("readBoundedSkillTextFile does not consult Uint8Array hasInstance hooks", async () => {
+  const path = "/project/skills/writer/SKILL.md";
+  const adapter = createSkillTestAdapter({ [path]: "trusted" });
+  const originalHasInstance = Object.getOwnPropertyDescriptor(
+    Uint8Array,
+    Symbol.hasInstance,
+  );
+  let hasInstanceCalls = 0;
+  Object.defineProperty(Uint8Array, Symbol.hasInstance, {
+    configurable: true,
+    value() {
+      hasInstanceCalls += 1;
+      throw new Error("Uint8Array hasInstance hook must not run");
+    },
+  });
+
+  try {
+    assertEquals(await readBoundedSkillTextFile(path, adapter), "trusted");
+    assertEquals(hasInstanceCalls, 0);
+  } finally {
+    if (originalHasInstance) {
+      Object.defineProperty(Uint8Array, Symbol.hasInstance, originalHasInstance);
+    } else {
+      Reflect.deleteProperty(Uint8Array, Symbol.hasInstance);
+    }
+  }
+});
+
+Deno.test("readBoundedSkillTextFile measures adapter bytes through intrinsic slots", async () => {
+  const path = "/project/skills/writer/SKILL.md";
+  const bytes = new TextEncoder().encode("outside");
+  let byteLengthHookCalls = 0;
+  Object.defineProperty(bytes, "byteLength", {
+    configurable: true,
+    get() {
+      byteLengthHookCalls += 1;
+      return 1;
+    },
+  });
+  const adapter: BoundedFileSystemAdapter = {
+    ...createSkillTestAdapter({ [path]: "x" }),
+    async readFileBytesBounded() {
+      return bytes;
+    },
+  };
+
+  await assertRejects(
+    () => readBoundedSkillTextFile(path, adapter, 1),
+    RangeError,
+    "exceeds 1 bytes",
+  );
+  assertEquals(byteLengthHookCalls, 0);
+});
+
+Deno.test("readBoundedSkillTextFile uses captured Uint8Array allocation primitives", async () => {
+  const tempDir = await makeTempDir({ prefix: "vf-skill-uint8-intrinsics-" });
+  const path = join(tempDir, "SKILL.md");
+  const originalConstructor = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "Uint8Array",
+  );
+  const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+  const originalByteLength = Object.getOwnPropertyDescriptor(
+    typedArrayPrototype,
+    "byteLength",
+  );
+  const originalSubarray = Object.getOwnPropertyDescriptor(
+    typedArrayPrototype,
+    "subarray",
+  );
+  let poisonedPrimitiveCalls = 0;
+
+  try {
+    await writeTextFile(path, "trusted");
+    Object.defineProperty(globalThis, "Uint8Array", {
+      configurable: true,
+      value: class PoisonedUint8Array {
+        constructor() {
+          poisonedPrimitiveCalls += 1;
+          throw new Error("mutated Uint8Array constructor must not run");
+        }
+      },
+      writable: true,
+    });
+    Object.defineProperty(typedArrayPrototype, "byteLength", {
+      configurable: true,
+      get() {
+        poisonedPrimitiveCalls += 1;
+        throw new Error("mutated byteLength getter must not run");
+      },
+    });
+    Object.defineProperty(typedArrayPrototype, "subarray", {
+      configurable: true,
+      value() {
+        poisonedPrimitiveCalls += 1;
+        throw new Error("mutated subarray method must not run");
+      },
+      writable: true,
+    });
+
+    assertEquals(await readBoundedSkillTextFile(path), "trusted");
+    assertEquals(poisonedPrimitiveCalls, 0);
+  } finally {
+    if (originalConstructor) {
+      Object.defineProperty(globalThis, "Uint8Array", originalConstructor);
+    }
+    if (originalByteLength) {
+      Object.defineProperty(typedArrayPrototype, "byteLength", originalByteLength);
+    }
+    if (originalSubarray) {
+      Object.defineProperty(typedArrayPrototype, "subarray", originalSubarray);
+    }
+    await remove(tempDir, { recursive: true });
+  }
+});
+
 Deno.test("readBoundedSkillTextFile rejects oversized and malformed UTF-8 files", async () => {
   const tempDir = await makeTempDir({ prefix: "vf-skill-bounded-read-" });
   try {

@@ -2,6 +2,8 @@ import { createFileSystem } from "veryfront/platform";
 import { cwd } from "veryfront/platform";
 import { basename } from "veryfront/platform/path";
 import { parseSkillFileFrontmatter, validateSkillFileMetadata } from "veryfront/skill";
+import type { SkillDocumentParserProvider } from "veryfront/extensions/parser";
+import { ensureCliSkillDocumentParser } from "#cli/shared/default-contracts";
 import type { LoadedSkill } from "./types.ts";
 import { CORE_SKILLS } from "./core-skills.ts";
 import { readSkillDocument } from "./read-skill-document.ts";
@@ -14,9 +16,17 @@ function getCoreSkillsDir(): string {
 export async function loadSkill(
   directory: string,
 ): Promise<LoadedSkill | null> {
+  const parser = await ensureCliSkillDocumentParser();
+  return await loadSkillWithParser(directory, parser);
+}
+
+async function loadSkillWithParser(
+  directory: string,
+  parser: Readonly<SkillDocumentParserProvider>,
+): Promise<LoadedSkill | null> {
   try {
     const content = await readSkillDocument(`${directory}/SKILL.md`);
-    const parsed = await parseSkillFileFrontmatter(content);
+    const parsed = await parseSkillFileFrontmatter(content, parser);
     const directoryName = basename(directory);
     assertSkillDirectoryIdentity(parsed.frontmatter, directoryName);
     const metadata = validateSkillFileMetadata(parsed.frontmatter, directoryName);
@@ -27,6 +37,7 @@ export async function loadSkill(
 }
 
 export async function listCoreSkills(): Promise<LoadedSkill[]> {
+  const parser = await ensureCliSkillDocumentParser();
   const fs = createFileSystem();
   const skills: LoadedSkill[] = [];
   const skillsDir = getCoreSkillsDir();
@@ -34,7 +45,7 @@ export async function listCoreSkills(): Promise<LoadedSkill[]> {
   try {
     for await (const entry of fs.readDir(skillsDir)) {
       if (!entry.isDirectory) continue;
-      const skill = await loadSkill(`${skillsDir}/${entry.name}`);
+      const skill = await loadSkillWithParser(`${skillsDir}/${entry.name}`, parser);
       if (skill) skills.push(skill);
     }
   } catch {
@@ -54,6 +65,7 @@ export async function listCoreSkills(): Promise<LoadedSkill[]> {
  * A local skill is any skills/<id>/ directory containing a SKILL.md file.
  */
 export async function listLocalSkills(baseDir: string = cwd()): Promise<LoadedSkill[]> {
+  const parser = await ensureCliSkillDocumentParser();
   const fs = createFileSystem();
   const skills: LoadedSkill[] = [];
   const skillsDir = `${baseDir}/skills`;
@@ -61,7 +73,7 @@ export async function listLocalSkills(baseDir: string = cwd()): Promise<LoadedSk
   try {
     for await (const entry of fs.readDir(skillsDir)) {
       if (!entry.isDirectory) continue;
-      const skill = await loadSkill(`${skillsDir}/${entry.name}`);
+      const skill = await loadSkillWithParser(`${skillsDir}/${entry.name}`, parser);
       if (skill) skills.push(skill);
     }
   } catch {

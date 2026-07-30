@@ -512,10 +512,11 @@ export function createExecuteSkillScriptTool(
         if (context?.abortSignal?.aborted) {
           return abortedScriptResult();
         }
-        if (error instanceof SkillOperationTimeoutError) {
+        const failure = sanitizeSkillToolFailure(error, skillRoot, context);
+        if (failure instanceof SkillOperationTimeoutError) {
           return timedOutScriptResult(timeoutMs);
         }
-        throw sanitizeSkillToolFailure(error, skillRoot, context);
+        throw failure;
       }
     },
   });

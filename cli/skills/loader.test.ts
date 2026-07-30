@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#std/path.ts";
+import { register, tryResolve, unregister } from "veryfront/extensions/contracts";
+import {
+  type SkillDocumentParserProvider,
+  SkillDocumentParserProviderName,
+} from "veryfront/extensions/parser";
 import { CORE_SKILLS } from "./core-skills.ts";
 import { listAllSkills, listCoreSkills, listLocalSkills, loadSkill } from "./loader.ts";
 
@@ -99,6 +104,27 @@ describe("Skill Loader", () => {
     }, async (dir) => {
       assertEquals(await loadSkill(join(dir, "skills", "oversized")), null);
     });
+  });
+
+  it("propagates a broken parser contract instead of hiding a valid skill", async () => {
+    const previous = tryResolve<SkillDocumentParserProvider>(
+      SkillDocumentParserProviderName,
+    );
+    register(SkillDocumentParserProviderName, { parseFrontmatter: "invalid" });
+    try {
+      await withTempDir({ "skills/code-review/SKILL.md": PROJECT_SKILL }, async (dir) => {
+        await assertRejects(
+          () => loadSkill(join(dir, "skills", "code-review")),
+          TypeError,
+          "provider must be a plain object",
+        );
+      });
+    } finally {
+      unregister(SkillDocumentParserProviderName);
+      if (previous !== undefined) {
+        register(SkillDocumentParserProviderName, previous);
+      }
+    }
   });
 
   it("lists project-local skills from skills/<id>/SKILL.md", async () => {

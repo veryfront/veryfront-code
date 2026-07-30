@@ -1,5 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/skill/_test-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes, assertThrows } from "@std/assert";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  createSkillDocumentParserProvider,
+  type SkillDocumentParserProvider,
+  SkillDocumentParserProviderName,
+} from "#veryfront/extensions/parser/skill-document-parser.ts";
 import {
   SKILL_ALLOWED_TOOL_MAX_PATTERNS,
   SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
@@ -24,14 +31,119 @@ import {
   normalizeRuntimeSkillReferencePath,
   normalizeStrictRuntimeSkillReferencePath,
   normalizeUnsafeLegacyRuntimeSkillReferencePath,
+  parseRuntimeSkillDocument,
   parseRuntimeSkillMetadata,
+  parseStrictRuntimeSkillDocument,
   parseStrictRuntimeSkillMetadata,
+  parseUnsafeLegacyRuntimeSkillDocument,
   parseUnsafeLegacyRuntimeSkillMetadata,
   resolveRuntimeSkillSelectorForAgent,
   resolveRuntimeSkillsForAgent,
 } from "./skill-metadata.ts";
 import { buildStrictRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
 import * as runtimeSkillMetadata from "./skill-metadata.ts";
+
+Deno.test("strict runtime parsing honors one explicit Skill document parser generation", () => {
+  const sources: string[] = [];
+  const provider = createSkillDocumentParserProvider((source) => {
+    sources.push(source);
+    return {
+      name: "provider-owned",
+      description: "Decoded by the selected provider",
+    };
+  });
+
+  const parsed = parseStrictRuntimeSkillDocument(
+    "---\nignored: by-core\n---\nProvider body",
+    { skillDocumentParserProvider: provider },
+  );
+
+  assertEquals(sources, ["ignored: by-core"]);
+  assertEquals(parsed, {
+    metadata: {
+      name: "provider-owned",
+      description: "Decoded by the selected provider",
+      allowedTools: [],
+      metadata: undefined,
+      model: undefined,
+      thinking: undefined,
+      maxSteps: undefined,
+    },
+    body: "Provider body",
+  });
+});
+
+Deno.test("strict runtime parsing sanitizes hostile parser failures without invoking hooks", () => {
+  let trapCalls = 0;
+  const hostile = new Proxy(new Error("must-not-leak"), {
+    get() {
+      trapCalls += 1;
+      throw new Error("get trap must not run");
+    },
+    getPrototypeOf() {
+      trapCalls += 1;
+      throw new Error("getPrototypeOf trap must not run");
+    },
+  });
+  const provider = createSkillDocumentParserProvider(() => {
+    throw hostile;
+  });
+  const diagnostics: unknown[] = [];
+
+  assertEquals(
+    parseStrictRuntimeSkillDocument("---\nname: ignored\n---\nBody", {
+      skillDocumentParserProvider: provider,
+      logger: {
+        error: (_message, metadata) => diagnostics.push(metadata?.error),
+      },
+    }),
+    null,
+  );
+  assertEquals(trapCalls, 0);
+  assertEquals(
+    diagnostics,
+    ["Skill frontmatter could not be decoded"],
+  );
+});
+
+Deno.test("runtime parsing propagates missing YAML infrastructure while legacy scalar parsing remains available", () => {
+  const previous = tryResolve<SkillDocumentParserProvider>(
+    SkillDocumentParserProviderName,
+  );
+  unregister(SkillDocumentParserProviderName);
+  try {
+    assertThrows(
+      () =>
+        parseRuntimeSkillDocument(
+          "---\nname: strict\ndescription: Strict\n---\nBody",
+        ),
+      Error,
+      "Missing extension",
+    );
+    assertEquals(parseRuntimeSkillDocument("Plain body"), {
+      metadata: {
+        name: undefined,
+        description: undefined,
+        allowedTools: [],
+        metadata: undefined,
+        model: undefined,
+        thinking: undefined,
+        maxSteps: undefined,
+      },
+      body: "Plain body",
+    });
+    assertEquals(
+      parseUnsafeLegacyRuntimeSkillDocument(
+        "---\nname: legacy\ndescription: Scalar fallback\n---\nBody",
+      )?.metadata.description,
+      "Scalar fallback",
+    );
+  } finally {
+    if (previous !== undefined) {
+      register(SkillDocumentParserProviderName, previous);
+    }
+  }
+});
 
 Deno.test("parseRuntimeSkillMetadata parses valid frontmatter", () => {
   const content = `---

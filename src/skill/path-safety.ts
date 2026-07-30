@@ -15,8 +15,10 @@ import {
 } from "#veryfront/security";
 import { isAbsolute, join, relative, resolve } from "#veryfront/compat/path";
 import { exists, readDir, stat } from "#veryfront/platform/compat/fs.ts";
-import { createError, fromError, toError, VeryfrontError } from "#veryfront/errors";
+import { createError, fromError, toError } from "#veryfront/errors";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   SKILL_ALLOWED_SUBDIR_MAX_ENTRIES,
   SKILL_PATH_SEGMENT_MAX_LENGTH,
@@ -27,6 +29,34 @@ import {
 import { hasControlCharacters, isWellFormedUtf16 } from "./string-safety.ts";
 import type { SkillOperationBudget } from "./operation-budget.ts";
 const SAFE_SKILL_PATH_SEGMENT_REGEX = /^[A-Za-z0-9._-]+$/;
+const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const arrayJoin = Array.prototype.join;
+const arraySort = Array.prototype.sort;
+const defineProperty = Object.defineProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const numberIsSafeInteger = Number.isSafeInteger;
+const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const regExpExec = RegExp.prototype.exec;
+const setAdd = Set.prototype.add;
+const setHas = Set.prototype.has;
+const stringIncludes = String.prototype.includes;
+const stringReplaceAll = String.prototype.replaceAll;
+const stringSplit = String.prototype.split;
+const stringStartsWith = String.prototype.startsWith;
+
+function hasOwn(value: object, key: PropertyKey): boolean {
+  return apply(objectHasOwnProperty, value, [key]) as boolean;
+}
+
+function appendOwnArrayElement<T>(values: T[], value: T): void {
+  defineProperty(values, values.length, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
 
 export interface SkillPathOperationOptions {
   budget?: SkillOperationBudget;
@@ -38,18 +68,75 @@ function isInsideDir(baseDir: string, targetPath: string): boolean {
     (
       !isAbsolute(rel) &&
       rel !== ".." &&
-      !rel.startsWith("../") &&
-      !rel.startsWith("..\\")
+      !(apply(stringStartsWith, rel, ["../"]) as boolean) &&
+      !(apply(stringStartsWith, rel, ["..\\"]) as boolean)
     );
 }
 
 function isFileNotFoundError(error: unknown): boolean {
-  if (error instanceof VeryfrontError && error.slug === "file-not-found") {
+  if (snapshotVeryfrontError(error)?.slug === "file-not-found") {
     return true;
   }
 
   const veryfrontError = fromError(error);
-  return veryfrontError?.type === "file" && veryfrontError.message.startsWith("File not found:");
+  return veryfrontError?.type === "file" &&
+    (apply(stringStartsWith, veryfrontError.message, ["File not found:"]) as boolean);
+}
+
+interface CapturedDirectoryEntry {
+  readonly name: string;
+  readonly isFile: boolean;
+  readonly isDirectory: boolean;
+  readonly isSymlink: boolean;
+}
+
+function captureDirectoryEntry(value: unknown): CapturedDirectoryEntry {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+    throw new TypeError("Skill directory entry must be an object");
+  }
+  if (isProxyWithoutHooks(value)) {
+    throw new TypeError("Skill directory entry must not be a proxy");
+  }
+
+  const readData = (property: keyof CapturedDirectoryEntry): unknown => {
+    const descriptor = getOwnPropertyDescriptor(value, property);
+    if (!descriptor || !hasOwn(descriptor, "value")) {
+      throw new TypeError(`Skill directory entry ${property} must be a data property`);
+    }
+    return descriptor.value;
+  };
+  const name = readData("name");
+  const isFile = readData("isFile");
+  const isDirectory = readData("isDirectory");
+  const isSymlink = readData("isSymlink");
+  if (typeof name !== "string") {
+    throw new TypeError("Skill directory entry name must be a data string");
+  }
+  if (
+    typeof isFile !== "boolean" ||
+    typeof isDirectory !== "boolean" ||
+    typeof isSymlink !== "boolean"
+  ) {
+    throw new TypeError("Skill directory entry type flags must be data booleans");
+  }
+  return { name, isFile, isDirectory, isSymlink };
+}
+
+function splitNonEmpty(value: string, separator: string): string[] {
+  const raw = apply(stringSplit, value, [separator]) as string[];
+  const result: string[] = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    const segment = raw[index];
+    if (segment) appendOwnArrayElement(result, segment);
+  }
+  return result;
+}
+
+function containsExactString(values: readonly string[], candidate: string): boolean {
+  for (let index = 0; index < values.length; index += 1) {
+    if (values[index] === candidate) return true;
+  }
+  return false;
 }
 
 async function pathExists(path: string, fsAdapter?: FileSystemAdapter): Promise<boolean> {
@@ -105,13 +192,14 @@ async function isAdapterSymlink(
   maxEntries = SKILL_SUBDIR_MAX_ENTRIES,
 ): Promise<boolean> {
   let entryCount = 0;
-  for await (const entry of fsAdapter.readDir(parentDir)) {
+  for await (const rawEntry of fsAdapter.readDir(parentDir)) {
     entryCount += 1;
     if (entryCount > maxEntries) {
       throw new RangeError(
         `Skill directory may contain at most ${maxEntries} entries`,
       );
     }
+    const entry = captureDirectoryEntry(rawEntry);
     if (entry.name === segment && entry.isSymlink) return true;
   }
   return false;
@@ -125,7 +213,11 @@ async function hasSymlinkInPath(
 ): Promise<boolean> {
   const resolvedRoot = resolve(skillRoot);
   const resolvedTarget = resolve(canonicalPath);
-  const rel = relative(resolvedRoot, resolvedTarget).replaceAll("\\", "/");
+  const rel = apply(
+    stringReplaceAll,
+    relative(resolvedRoot, resolvedTarget),
+    ["\\", "/"],
+  ) as string;
 
   if (!isInsideDir(resolvedRoot, resolvedTarget)) return true;
 
@@ -137,7 +229,7 @@ async function hasSymlinkInPath(
   if (!rel) return false;
 
   let current = resolvedRoot;
-  for (const segment of rel.split("/").filter(Boolean)) {
+  for (const segment of splitNonEmpty(rel, "/")) {
     if (fsAdapter) {
       if (fsAdapter.lstat) {
         if ((await fsAdapter.lstat(join(current, segment))).isSymlink) return true;
@@ -160,12 +252,12 @@ function assertSafePathSegment(value: string, label: string): void {
     value.length > SKILL_PATH_SEGMENT_MAX_LENGTH ||
     value === "." ||
     value === ".." ||
-    !SAFE_SKILL_PATH_SEGMENT_REGEX.test(value)
+    apply(regExpExec, SAFE_SKILL_PATH_SEGMENT_REGEX, [value]) === null
   ) {
     throw toError(
       createError({
         type: "agent",
-        message: `Invalid skill ${label}: "${value}"`,
+        message: `Invalid skill ${label}`,
       }),
     );
   }
@@ -177,15 +269,15 @@ function assertSafeDirectoryEntryName(value: string): void {
     value.length > SKILL_PATH_SEGMENT_MAX_LENGTH ||
     value === "." ||
     value === ".." ||
-    value.includes("/") ||
-    value.includes("\\") ||
+    (apply(stringIncludes, value, ["/"]) as boolean) ||
+    (apply(stringIncludes, value, ["\\"]) as boolean) ||
     !isWellFormedUtf16(value) ||
     hasControlCharacters(value)
   ) {
     throw toError(
       createError({
         type: "agent",
-        message: `Invalid skill directory entry name: "${value}"`,
+        message: "Invalid skill directory entry name",
       }),
     );
   }
@@ -218,10 +310,23 @@ function normalizeAllowedSubdirs(
   value: unknown,
   maxEntries = SKILL_ALLOWED_SUBDIR_MAX_ENTRIES,
 ): string[] {
-  if (!Array.isArray(value)) {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
     throw new TypeError("Skill allowed subdirectories must be an array");
   }
-  if (value.length > maxEntries) {
+  if (isProxyWithoutHooks(value)) {
+    throw new TypeError("Skill allowed subdirectories must not be a proxy");
+  }
+  if (!arrayIsArray(value)) {
+    throw new TypeError("Skill allowed subdirectories must be an array");
+  }
+  const lengthDescriptor = getOwnPropertyDescriptor(value, "length");
+  const length = lengthDescriptor && hasOwn(lengthDescriptor, "value")
+    ? lengthDescriptor.value
+    : undefined;
+  if (!numberIsSafeInteger(length) || length < 0) {
+    throw new TypeError("Skill allowed subdirectories length must be a data property");
+  }
+  if (length > maxEntries) {
     throw new RangeError(
       `Skill path validation accepts at most ${maxEntries} allowed subdirectories`,
     );
@@ -229,15 +334,15 @@ function normalizeAllowedSubdirs(
 
   const subdirs: string[] = [];
   const seen = new Set<string>();
-  for (let index = 0; index < value.length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, index);
-    if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "string") {
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = getOwnPropertyDescriptor(value, index);
+    if (!descriptor || !hasOwn(descriptor, "value") || typeof descriptor.value !== "string") {
       throw new TypeError(`Skill allowed subdirectory ${index} must be a data string`);
     }
     assertSafePathSegment(descriptor.value, "allowed subdirectory");
-    if (!seen.has(descriptor.value)) {
-      seen.add(descriptor.value);
-      subdirs.push(descriptor.value);
+    if (!(apply(setHas, seen, [descriptor.value]) as boolean)) {
+      apply(setAdd, seen, [descriptor.value]);
+      appendOwnArrayElement(subdirs, descriptor.value);
     }
   }
   return subdirs;
@@ -262,10 +367,13 @@ function validateSkillLexicalPath(
   });
   if (!result.valid || !result.canonicalPath) return result;
 
-  const relativePath = relative(resolve(skillRoot), resolve(result.canonicalPath))
-    .replaceAll("\\", "/");
-  const segments = relativePath.split("/").filter(Boolean);
-  if (segments.length <= 1 || allowedSubdirs.includes(segments[0]!)) {
+  const relativePath = apply(
+    stringReplaceAll,
+    relative(resolve(skillRoot), resolve(result.canonicalPath)),
+    ["\\", "/"],
+  ) as string;
+  const segments = splitNonEmpty(relativePath, "/");
+  if (segments.length <= 1 || containsExactString(allowedSubdirs, segments[0]!)) {
     return result;
   }
 
@@ -273,7 +381,11 @@ function validateSkillLexicalPath(
     valid: false,
     error: allowedSubdirs.length === 0
       ? `Access to directory '${segments[0]}' not allowed: directory allowlist is empty`
-      : `Access to directory '${segments[0]}' not allowed. Allowed: ${allowedSubdirs.join(", ")}`,
+      : `Access to directory '${segments[0]}' not allowed. Allowed: ${apply(
+        arrayJoin,
+        allowedSubdirs,
+        [", "],
+      ) as string}`,
     code: PathValidationError.NOT_IN_ALLOWLIST,
   };
 }
@@ -345,7 +457,10 @@ async function assertSafeSkillDirectory(
 }
 
 /**
- * Validate that a requested path is safe within a skill's root directory.
+ * Validate a requested path with the public compatibility resource policy.
+ * Relative paths may contain up to 4096 characters and filesystem directory
+ * enumeration is not entry-capped. {@link validateStrictSkillPath} applies
+ * the runtime filesystem ceilings.
  *
  * @param skillRoot - Absolute path to the skill directory
  * @param requestedPath - Relative path requested (e.g. "references/CLAUSES.md")
@@ -360,89 +475,22 @@ export async function validateSkillPath(
   allowedSubdirs: string[],
   fsAdapter?: FileSystemAdapter,
 ): Promise<string> {
-  const boundedRoot = requireBoundedPath(
+  return await validateSkillPathWithLimits(
     skillRoot,
-    "root",
-    SKILL_ROOT_PATH_MAX_LENGTH,
-    true,
-  );
-  const boundedRequestedPath = requireBoundedPath(
     requestedPath,
-    "relative path",
-    SKILL_ROOT_PATH_MAX_LENGTH,
-    false,
-  );
-  const normalizedAllowedSubdirs = normalizeAllowedSubdirs(
     allowedSubdirs,
-    Number.POSITIVE_INFINITY,
-  );
-
-  const result = validateSkillLexicalPath(
-    boundedRequestedPath,
-    boundedRoot,
-    normalizedAllowedSubdirs,
-  );
-
-  if (!result.valid) {
-    throw toError(
-      createError({
-        type: "agent",
-        message: `Skill path validation failed for "${boundedRequestedPath}": ${
-          result.error ?? "access denied"
-        }`,
-      }),
-    );
-  }
-
-  if (!result.canonicalPath) {
-    throw toError(
-      createError({
-        type: "agent",
-        message:
-          `Path validation succeeded but canonical path is undefined for: ${boundedRequestedPath}`,
-      }),
-    );
-  }
-  const canonicalPath = result.canonicalPath;
-
-  if (!(await pathExists(canonicalPath, fsAdapter))) {
-    throw toError(
-      createError({
-        type: "agent",
-        message: `File not found: "${boundedRequestedPath}" in skill directory`,
-      }),
-    );
-  }
-  await assertIsFile(canonicalPath, fsAdapter);
-
-  if (
-    await hasSymlinkInPath(
-      boundedRoot,
-      canonicalPath,
-      fsAdapter,
-      Number.POSITIVE_INFINITY,
-    )
-  ) {
-    throw toError(
-      createError({
-        type: "agent",
-        message: `Skill path contains a symlink and is not allowed: "${boundedRequestedPath}"`,
-      }),
-    );
-  }
-
-  await assertRealPathContained(
-    boundedRoot,
-    canonicalPath,
-    boundedRequestedPath,
-    "path",
     fsAdapter,
+    SKILL_ROOT_PATH_MAX_LENGTH,
+    Infinity,
+    Infinity,
   );
-
-  return canonicalPath;
 }
 
-/** Validate a skill path with runtime filesystem resource ceilings. */
+/**
+ * Validate a skill path with runtime filesystem resource ceilings.
+ * Relative paths are limited to 1024 characters and each inspected directory
+ * is limited to 1000 entries.
+ */
 export async function validateStrictSkillPath(
   skillRoot: string,
   requestedPath: string,
@@ -460,6 +508,26 @@ export async function validateStrictSkillPath(
       )
     );
   }
+  return await validateSkillPathWithLimits(
+    skillRoot,
+    requestedPath,
+    allowedSubdirs,
+    fsAdapter,
+    SKILL_RELATIVE_PATH_MAX_LENGTH,
+    SKILL_ALLOWED_SUBDIR_MAX_ENTRIES,
+    SKILL_SUBDIR_MAX_ENTRIES,
+  );
+}
+
+async function validateSkillPathWithLimits(
+  skillRoot: string,
+  requestedPath: string,
+  allowedSubdirs: readonly string[],
+  fsAdapter: FileSystemAdapter | undefined,
+  relativePathMaxLength: number,
+  allowedSubdirMaxEntries: number,
+  directoryMaxEntries: number,
+): Promise<string> {
   const boundedRoot = requireBoundedPath(
     skillRoot,
     "root",
@@ -469,10 +537,13 @@ export async function validateStrictSkillPath(
   const boundedRequestedPath = requireBoundedPath(
     requestedPath,
     "relative path",
-    SKILL_RELATIVE_PATH_MAX_LENGTH,
+    relativePathMaxLength,
     false,
   );
-  const normalizedAllowedSubdirs = normalizeAllowedSubdirs(allowedSubdirs);
+  const normalizedAllowedSubdirs = normalizeAllowedSubdirs(
+    allowedSubdirs,
+    allowedSubdirMaxEntries,
+  );
 
   const result = validateSkillLexicalPath(
     boundedRequestedPath,
@@ -514,7 +585,14 @@ export async function validateStrictSkillPath(
   await assertIsFile(canonicalPath, fsAdapter);
 
   // Enforce strict no-symlink policy for skill files.
-  if (await hasSymlinkInPath(boundedRoot, canonicalPath, fsAdapter)) {
+  if (
+    await hasSymlinkInPath(
+      boundedRoot,
+      canonicalPath,
+      fsAdapter,
+      directoryMaxEntries,
+    )
+  ) {
     throw toError(
       createError({
         type: "agent",
@@ -535,7 +613,10 @@ export async function validateStrictSkillPath(
 }
 
 /**
- * List files in a skill subdirectory.
+ * List files with the public compatibility resource policy.
+ * Enumeration is not entry-capped and preserves the filesystem adapter's
+ * iteration order. {@link listStrictSkillSubdir} applies the runtime
+ * filesystem ceilings and deterministic ordering.
  *
  * @param skillRoot - Absolute path to the skill directory
  * @param subdir - Subdirectory name (e.g. "references", "scripts")
@@ -546,6 +627,43 @@ export async function listSkillSubdir(
   skillRoot: string,
   subdir: string,
   fsAdapter?: FileSystemAdapter,
+): Promise<string[]> {
+  return await listSkillSubdirWithLimits(
+    skillRoot,
+    subdir,
+    fsAdapter,
+    Infinity,
+    false,
+  );
+}
+
+/**
+ * List at most 1000 skill directory entries in deterministic filename order.
+ */
+export async function listStrictSkillSubdir(
+  skillRoot: string,
+  subdir: string,
+  fsAdapter?: FileSystemAdapter,
+  options: SkillPathOperationOptions = {},
+): Promise<string[]> {
+  if (options.budget) {
+    return await options.budget.run(() => listStrictSkillSubdir(skillRoot, subdir, fsAdapter));
+  }
+  return await listSkillSubdirWithLimits(
+    skillRoot,
+    subdir,
+    fsAdapter,
+    SKILL_SUBDIR_MAX_ENTRIES,
+    true,
+  );
+}
+
+async function listSkillSubdirWithLimits(
+  skillRoot: string,
+  subdir: string,
+  fsAdapter: FileSystemAdapter | undefined,
+  maxDirectoryEntries: number,
+  sortDeterministically: boolean,
 ): Promise<string[]> {
   const boundedRoot = requireBoundedPath(
     skillRoot,
@@ -575,77 +693,21 @@ export async function listSkillSubdir(
     dirPath,
     subdir,
     fsAdapter,
-    Number.POSITIVE_INFINITY,
+    maxDirectoryEntries,
   );
-
-  const files: string[] = [];
-  const entries = fsAdapter ? fsAdapter.readDir(dirPath) : readDir(dirPath);
-
-  for await (const entry of entries) {
-    assertSafeDirectoryEntryName(entry.name);
-    if (entry.isSymlink) {
-      throw toError(
-        createError({
-          type: "agent",
-          message:
-            `Skill directory entry is a symlink and is not allowed: "${subdir}/${entry.name}"`,
-        }),
-      );
-    }
-    if (entry.isFile) {
-      files.push(`${subdir}/${entry.name}`);
-    }
-  }
-
-  return files;
-}
-
-/** List skill files with runtime filesystem resource ceilings and deterministic order. */
-export async function listStrictSkillSubdir(
-  skillRoot: string,
-  subdir: string,
-  fsAdapter?: FileSystemAdapter,
-  options: SkillPathOperationOptions = {},
-): Promise<string[]> {
-  if (options.budget) {
-    return await options.budget.run(() => listStrictSkillSubdir(skillRoot, subdir, fsAdapter));
-  }
-  const boundedRoot = requireBoundedPath(
-    skillRoot,
-    "root",
-    SKILL_ROOT_PATH_MAX_LENGTH,
-    true,
-  );
-  assertSafePathSegment(subdir, "subdirectory");
-  const dirPath = join(boundedRoot, subdir);
-
-  let dirExists: boolean;
-  try {
-    dirExists = fsAdapter ? await fsAdapter.exists(dirPath) : await exists(dirPath);
-  } catch (error) {
-    if (isFileNotFoundError(error)) {
-      return [];
-    }
-    throw error;
-  }
-
-  if (!dirExists) {
-    return [];
-  }
-
-  await assertSafeSkillDirectory(boundedRoot, dirPath, subdir, fsAdapter);
 
   const files: string[] = [];
   const entries = fsAdapter ? fsAdapter.readDir(dirPath) : readDir(dirPath);
   let entryCount = 0;
 
-  for await (const entry of entries) {
+  for await (const rawEntry of entries) {
     entryCount += 1;
-    if (entryCount > SKILL_SUBDIR_MAX_ENTRIES) {
+    if (entryCount > maxDirectoryEntries) {
       throw new RangeError(
-        `Skill subdirectory may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+        `Skill subdirectory may contain at most ${maxDirectoryEntries} entries`,
       );
     }
+    const entry = captureDirectoryEntry(rawEntry);
     assertSafeDirectoryEntryName(entry.name);
     if (entry.isSymlink) {
       throw toError(
@@ -657,9 +719,12 @@ export async function listStrictSkillSubdir(
       );
     }
     if (entry.isFile) {
-      files.push(`${subdir}/${entry.name}`);
+      appendOwnArrayElement(files, `${subdir}/${entry.name}`);
     }
   }
 
-  return files.sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  if (!sortDeterministically) return files;
+  return apply(arraySort, files, [
+    (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0,
+  ]) as string[];
 }

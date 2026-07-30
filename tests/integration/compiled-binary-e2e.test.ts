@@ -35,6 +35,7 @@ import {
   assertHtmlDoesNotInclude,
   assertNoBrowserHydrationErrors,
   assertNoServerLogErrors,
+  BINARY_PATH,
   cleanupCompiledBinaryArtifacts,
   createTestProject,
   ensureBinaryCompiled,
@@ -65,6 +66,52 @@ describe("Compiled Binary E2E", COMPILED_BINARY_E2E_OPTIONS, () => {
 
   afterAll(async () => {
     await cleanupCompiledBinaryArtifacts();
+  });
+
+  it("validates Skill YAML through the compiled CLI extension boundary", async () => {
+    const rootDir = await Deno.makeTempDir({ prefix: "vf-binary-skill-" });
+    const skillDir = join(rootDir, "compiled-yaml-skill");
+
+    try {
+      await Deno.mkdir(skillDir, { recursive: true });
+      await Deno.writeTextFile(
+        join(skillDir, "SKILL.md"),
+        `---
+name: compiled-yaml-skill
+description: >-
+  Exercises the compiled CLI parser extension.
+allowed-tools:
+  - Read
+  - api:*
+---
+
+# Compiled YAML Skill
+
+Validate this document through the compiled CLI.
+`,
+      );
+
+      const result = await new Deno.Command(BINARY_PATH, {
+        args: ["skills", "validate", skillDir],
+        cwd: rootDir,
+        clearEnv: true,
+        env: { NO_COLOR: "1" },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const decoder = new TextDecoder();
+      const stdout = decoder.decode(result.stdout);
+      const stderr = decoder.decode(result.stderr);
+
+      assertEquals(
+        result.code,
+        0,
+        `Compiled CLI Skill validation failed.\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+      );
+      assertStringIncludes(stdout, `Skill at "${skillDir}" is valid`);
+    } finally {
+      await Deno.remove(rootDir, { recursive: true }).catch(() => {});
+    }
   });
 
   it("should render page with veryfront/head import correctly", async () => {

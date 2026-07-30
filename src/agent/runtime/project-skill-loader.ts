@@ -15,16 +15,16 @@ import {
 } from "./project-files-client.ts";
 import {
   buildLegacyRuntimeFlatSkillDefinition,
+  isValidStrictRuntimeSkillFileDocument,
   normalizeStrictRuntimeSkillReferencePath,
-  parseStrictRuntimeSkillMetadata,
 } from "./skill-metadata.ts";
+import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/skill-document-parser.ts";
 import {
   SKILL_ID_MAX_LENGTH,
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_STEERING_PATH_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
-import { parseSkillFileFrontmatter, validateSkillFileMetadata } from "#veryfront/skill/parser.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
 import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
 
@@ -78,6 +78,7 @@ export type RuntimeProjectSkillLoaderOptions = {
   steeringPaths?: Pick<ProjectSteeringPaths, "skills">;
   isAccessDeniedError?: (error: unknown) => boolean;
   logger?: RuntimeProjectSkillLoaderLogger;
+  skillDocumentParserProvider?: SkillDocumentParserProvider;
 };
 
 /** Public API contract for runtime project skill loader. */
@@ -401,16 +402,17 @@ async function listProjectSkillReferences(input: {
   });
 }
 
-async function isValidLoadedProjectSkill(input: {
+function isValidLoadedProjectSkill(input: {
   options: RuntimeProjectSkillLoaderOptions;
   source: ProjectSkillSource;
   skillId: string;
   content: string;
-}): Promise<boolean> {
+}): boolean {
   if (input.source.kind === "flat") {
     const valid = buildLegacyRuntimeFlatSkillDefinition({
       id: input.skillId,
       content: input.content,
+      skillDocumentParserProvider: input.options.skillDocumentParserProvider,
     }) !== null;
     if (!valid) {
       input.options.logger?.warn?.(
@@ -423,7 +425,12 @@ async function isValidLoadedProjectSkill(input: {
 
   const skillDir = getSkillDir(input.source, input.skillId);
   const directoryName = skillDir?.split("/").at(-1);
-  if (!directoryName || parseStrictRuntimeSkillMetadata(input.content) === null) {
+  if (
+    !directoryName ||
+    !isValidStrictRuntimeSkillFileDocument(input.content, directoryName, {
+      skillDocumentParserProvider: input.options.skillDocumentParserProvider,
+    })
+  ) {
     input.options.logger?.warn?.(
       "Project skill changed to invalid runtime metadata; refusing to load it",
       { skillId: input.skillId },
@@ -431,17 +438,7 @@ async function isValidLoadedProjectSkill(input: {
     return false;
   }
 
-  try {
-    const parsed = await parseSkillFileFrontmatter(input.content);
-    validateSkillFileMetadata(parsed.frontmatter, directoryName);
-    return true;
-  } catch (error) {
-    input.options.logger?.warn?.("Project skill changed to invalid metadata; refusing to load it", {
-      skillId: input.skillId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return false;
-  }
+  return true;
 }
 
 async function loadProjectSkill(input: {
@@ -468,7 +465,7 @@ async function loadProjectSkill(input: {
       });
       if (
         catalogSkill?.content &&
-        await isValidLoadedProjectSkill({
+        isValidLoadedProjectSkill({
           options: input.options,
           source,
           skillId: input.skillId,
@@ -495,7 +492,7 @@ async function loadProjectSkill(input: {
 
       if (directorySkill?.content) {
         if (
-          !await isValidLoadedProjectSkill({
+          !isValidLoadedProjectSkill({
             options: input.options,
             source: directorySource,
             skillId: input.skillId,
@@ -521,7 +518,7 @@ async function loadProjectSkill(input: {
 
       if (flatSkill?.content) {
         if (
-          !await isValidLoadedProjectSkill({
+          !isValidLoadedProjectSkill({
             options: input.options,
             source: flatSource,
             skillId: input.skillId,

@@ -8,12 +8,14 @@
  * @module
  */
 
-import { isSkillInfrastructureToolId, SKILL_ALLOWED_TOOL_PATTERN_REGEX } from "./types.ts";
+import { isSkillInfrastructureToolId, isValidSkillAllowedToolPattern } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   SKILL_ALLOWED_TOOL_MAX_PATTERNS,
   SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
 } from "./limits.ts";
+import { hasControlCharacters, isWellFormedUtf16 } from "./string-safety.ts";
 
 /** Active skill file-backed capabilities available to skill infrastructure tools. */
 export type SkillToolAvailability = {
@@ -25,6 +27,25 @@ export type SkillToolAvailability = {
 const LOAD_SKILL_TOOL_ID = "load_skill";
 const LOAD_SKILL_REFERENCE_TOOL_ID = "load_skill_reference";
 const EXECUTE_SKILL_SCRIPT_TOOL_ID = "execute_skill_script";
+const apply = Reflect.apply;
+const arrayFilter = Array.prototype.filter;
+const arrayIsArray = Array.isArray;
+const defineProperty = Object.defineProperty;
+const freeze = Object.freeze;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const numberIsSafeInteger = Number.isSafeInteger;
+const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const stringEndsWith = String.prototype.endsWith;
+const stringSlice = String.prototype.slice;
+const stringStartsWith = String.prototype.startsWith;
+
+function hasOwn(value: object, key: PropertyKey): boolean {
+  return apply(objectHasOwnProperty, value, [key]) as boolean;
+}
+
+function isValidAllowedToolPattern(pattern: string): boolean {
+  return isValidSkillAllowedToolPattern(pattern);
+}
 
 function isSkillInfrastructureToolAllowed(
   toolName: string,
@@ -58,14 +79,14 @@ function isSkillInfrastructureToolAllowed(
  */
 export function matchesAllowedTool(toolName: string, pattern: string): boolean {
   // Invalid patterns always fail (fail closed)
-  if (!SKILL_ALLOWED_TOOL_PATTERN_REGEX.test(pattern)) {
+  if (!isValidAllowedToolPattern(pattern)) {
     return false;
   }
 
   // Prefix wildcard
-  if (pattern.endsWith(":*")) {
-    const prefix = pattern.slice(0, -1); // keep the colon: "api:"
-    return toolName.startsWith(prefix);
+  if (apply(stringEndsWith, pattern, [":*"]) as boolean) {
+    const prefix = apply(stringSlice, pattern, [0, -1]) as string; // keep the colon: "api:"
+    return apply(stringStartsWith, toolName, [prefix]) as boolean;
   }
 
   // Exact match
@@ -92,20 +113,21 @@ export function filterToolsForSkill<T extends { name: string }>(
       return tools;
     }
 
-    return tools.filter((tool) => {
+    return apply(arrayFilter, tools, [(tool: T) => {
       const skillToolAllowed = isSkillInfrastructureToolAllowed(
         tool.name,
         skillToolAvailability,
       );
       return skillToolAllowed ?? true;
-    });
+    }]) as T[];
   }
 
-  return tools.filter((tool) => {
+  const capturedAllowedTools = captureProgrammaticAllowedToolPatterns(allowedTools);
+  return apply(arrayFilter, tools, [(tool: T) => {
     const skillToolAllowed = isSkillInfrastructureToolAllowed(tool.name, skillToolAvailability);
     if (skillToolAllowed !== undefined) return skillToolAllowed;
-    return allowedTools.some((pattern) => matchesAllowedTool(tool.name, pattern));
-  });
+    return matchesAnyAllowedTool(tool.name, capturedAllowedTools);
+  }]) as T[];
 }
 
 /**
@@ -123,7 +145,10 @@ export function isToolAllowedBySkill(
   const skillToolAllowed = isSkillInfrastructureToolAllowed(toolName, skillToolAvailability);
   if (skillToolAllowed !== undefined) return skillToolAllowed;
   if (allowedTools === undefined) return true;
-  return allowedTools.some((pattern) => matchesAllowedTool(toolName, pattern));
+  return matchesAnyAllowedTool(
+    toolName,
+    captureProgrammaticAllowedToolPatterns(allowedTools),
+  );
 }
 
 /** Filter provider-native or other name-only tool inventories through the same policy boundary. */
@@ -132,9 +157,25 @@ export function filterToolNamesForSkill(
   allowedTools: string[] | undefined,
   skillToolAvailability?: SkillToolAvailability,
 ): string[] {
-  return toolNames.filter((toolName) =>
-    isToolAllowedBySkill(toolName, allowedTools, skillToolAvailability)
-  );
+  const capturedAllowedTools = allowedTools === undefined
+    ? undefined
+    : captureProgrammaticAllowedToolPatterns(allowedTools);
+  return apply(arrayFilter, toolNames, [(toolName: string) => {
+    const skillToolAllowed = isSkillInfrastructureToolAllowed(
+      toolName,
+      skillToolAvailability,
+    );
+    if (skillToolAllowed !== undefined) return skillToolAllowed;
+    return capturedAllowedTools === undefined ||
+      matchesAnyAllowedTool(toolName, capturedAllowedTools);
+  }]) as string[];
+}
+
+function matchesAnyAllowedTool(toolName: string, patterns: readonly string[]): boolean {
+  for (let index = 0; index < patterns.length; index += 1) {
+    if (matchesAllowedTool(toolName, patterns[index]!)) return true;
+  }
+  return false;
 }
 
 /**
@@ -144,83 +185,105 @@ export function filterToolNamesForSkill(
  * Rejects unsupported patterns with a descriptive error (fail closed).
  *
  * @param patterns - Array of tool patterns to validate
- * @returns Validated patterns (same array if all valid)
+ * @returns A detached mutable copy of the validated patterns
  * @throws If any pattern is invalid
  */
 export function validateAllowedToolPatterns(patterns: string[]): string[] {
-  for (const pattern of patterns) {
-    if (!SKILL_ALLOWED_TOOL_PATTERN_REGEX.test(pattern)) {
-      throw toError(
-        createError({
-          type: "agent",
-          message: `Invalid allowed-tools pattern "${pattern}". ` +
-            `Only exact tool IDs (e.g. "Read") and prefix wildcards (e.g. "api:*") are supported.`,
-        }),
-      );
-    }
-  }
-  return patterns;
+  return captureProgrammaticAllowedToolPatterns(patterns);
 }
 
 /** Validate bounded allowed-tool patterns at filesystem and runtime trust boundaries. */
 export function validateStrictAllowedToolPatterns(patterns: string[]): string[] {
-  if (!Array.isArray(patterns)) {
-    throw new TypeError("Allowed-tools patterns must be an array");
-  }
-  if (patterns.length > SKILL_ALLOWED_TOOL_MAX_PATTERNS) {
-    throw new RangeError(
-      `Allowed-tools accepts at most ${SKILL_ALLOWED_TOOL_MAX_PATTERNS} patterns`,
-    );
-  }
-
-  for (const pattern of patterns) {
-    if (typeof pattern !== "string") {
-      throw new TypeError("Allowed-tools patterns must be strings");
-    }
-    if (pattern.length > SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH) {
-      throw new RangeError(
-        `Allowed-tools patterns must be at most ${SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH} characters`,
-      );
-    }
-    if (!SKILL_ALLOWED_TOOL_PATTERN_REGEX.test(pattern)) {
-      throw toError(
-        createError({
-          type: "agent",
-          message: `Invalid allowed-tools pattern "${pattern}". ` +
-            `Only exact tool IDs (e.g. "Read") and prefix wildcards (e.g. "api:*") are supported.`,
-        }),
-      );
-    }
-  }
-  return patterns;
+  return captureStrictAllowedToolPatterns(patterns);
 }
 
 /** Validate, detach, and freeze an active authorization policy. */
 export function snapshotAllowedToolPatterns(patterns: readonly string[]): string[] {
-  if (!Array.isArray(patterns)) {
+  return freeze(captureStrictAllowedToolPatterns(patterns)) as string[];
+}
+
+type AllowedToolPatternLimits = Readonly<{
+  maxPatterns: number;
+  maxPatternLength: number;
+}>;
+
+const STRICT_ALLOWED_TOOL_PATTERN_LIMITS: AllowedToolPatternLimits = freeze({
+  maxPatterns: SKILL_ALLOWED_TOOL_MAX_PATTERNS,
+  maxPatternLength: SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
+});
+
+function captureProgrammaticAllowedToolPatterns(
+  patterns: readonly string[],
+): string[] {
+  return captureAllowedToolPatterns(patterns, undefined);
+}
+
+function captureStrictAllowedToolPatterns(patterns: readonly string[]): string[] {
+  return captureAllowedToolPatterns(patterns, STRICT_ALLOWED_TOOL_PATTERN_LIMITS);
+}
+
+function captureAllowedToolPatterns(
+  patterns: readonly string[],
+  limits: AllowedToolPatternLimits | undefined,
+): string[] {
+  if (
+    (typeof patterns !== "object" && typeof patterns !== "function") ||
+    patterns === null ||
+    !arrayIsArray(patterns)
+  ) {
     throw new TypeError("Allowed-tools patterns must be an array");
   }
-  const lengthDescriptor = Object.getOwnPropertyDescriptor(patterns, "length");
-  const length = lengthDescriptor && "value" in lengthDescriptor
+  if (isProxyWithoutHooks(patterns)) {
+    throw new TypeError("Allowed-tools patterns must not be a proxy");
+  }
+  const lengthDescriptor = getOwnPropertyDescriptor(patterns, "length");
+  const length = lengthDescriptor && hasOwn(lengthDescriptor, "value")
     ? lengthDescriptor.value
     : undefined;
-  if (!Number.isSafeInteger(length) || length < 0) {
+  if (!numberIsSafeInteger(length) || length < 0) {
     throw new TypeError("Allowed-tools length must be a data property");
   }
-  if (length > SKILL_ALLOWED_TOOL_MAX_PATTERNS) {
+  if (limits && length > limits.maxPatterns) {
     throw new RangeError(
-      `Allowed-tools accepts at most ${SKILL_ALLOWED_TOOL_MAX_PATTERNS} patterns`,
+      `Allowed-tools accepts at most ${limits.maxPatterns} patterns`,
     );
   }
 
   const snapshot: string[] = [];
   for (let index = 0; index < length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(patterns, index);
-    if (!descriptor || !("value" in descriptor)) {
+    const descriptor = getOwnPropertyDescriptor(patterns, index);
+    if (!descriptor || !hasOwn(descriptor, "value")) {
       throw new TypeError(`Allowed-tools pattern ${index} must be a data property`);
     }
-    snapshot.push(descriptor.value);
+    const pattern = descriptor.value;
+    if (typeof pattern !== "string") {
+      throw new TypeError("Allowed-tools patterns must be strings");
+    }
+    if (limits && pattern.length > limits.maxPatternLength) {
+      throw new RangeError(
+        `Allowed-tools patterns must be at most ${limits.maxPatternLength} characters`,
+      );
+    }
+    if (!isWellFormedUtf16(pattern) || hasControlCharacters(pattern)) {
+      throw new TypeError(
+        "Allowed-tools patterns must contain well-formed UTF-16 without control characters",
+      );
+    }
+    if (!isValidAllowedToolPattern(pattern)) {
+      throw toError(
+        createError({
+          type: "agent",
+          message: "Invalid allowed-tools pattern. " +
+            `Only exact tool IDs (e.g. "Read") and prefix wildcards (e.g. "api:*") are supported.`,
+        }),
+      );
+    }
+    defineProperty(snapshot, snapshot.length, {
+      configurable: true,
+      enumerable: true,
+      value: pattern,
+      writable: true,
+    });
   }
-  validateStrictAllowedToolPatterns(snapshot);
-  return Object.freeze(snapshot) as string[];
+  return snapshot;
 }
