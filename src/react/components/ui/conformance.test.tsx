@@ -56,6 +56,7 @@ import { ColorModeProvider, ColorModeToggle } from "./color-mode.tsx";
 import { Separator } from "./separator.tsx";
 import { AspectRatio } from "./aspect-ratio.tsx";
 import { Toggle } from "./toggle.tsx";
+import { ToggleGroup, ToggleGroupItem } from "./toggle-group.tsx";
 
 // ---------------------------------------------------------------------------
 // jsdom harness — installs a fresh DOM per render and stubs the browser APIs
@@ -281,6 +282,15 @@ const SMOKE: SmokeCase[] = [
     ),
   },
   { name: "AppShell", render: () => <AppShell>main content</AppShell> },
+  {
+    name: "ToggleGroup",
+    render: () => (
+      <ToggleGroup type="single" defaultValue="a">
+        <ToggleGroupItem value="a">A</ToggleGroupItem>
+        <ToggleGroupItem value="b">B</ToggleGroupItem>
+      </ToggleGroup>
+    ),
+  },
   {
     name: "ColorModeToggle",
     render: () => (

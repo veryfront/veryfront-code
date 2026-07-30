@@ -40,7 +40,7 @@ engine.
 | Category               | Components                                                                                                                                                                              |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Layout / visual**    | `Button`, `IconButton`, `Card`, `Badge`, `Pill`, `Tag`, `Avatar`, `Alert`, `Status`, `List`, `Skeleton`, `Shimmer`, `ProgressBar`, `ScrollFade`, `FileType`, `Separator`, `AspectRatio` |
-| **Form**               | `Input`, `Textarea`, `Label`, `Checkbox`, `Radio`, `Switch`, `Toggle`                                                                                                                   |
+| **Form**               | `Input`, `Textarea`, `Label`, `Checkbox`, `Radio`, `Switch`, `Toggle`, `ToggleGroup`                                                                                                    |
 | **Overlay / floating** | `Popover`, `Dialog`, `Drawer`, `DropdownMenu`, `Tooltip`, `Select`, `Command`                                                                                                           |
 | **Structure**          | `Tabs`, `Collapsible`, `AppShell`                                                                                                                                                       |
 | **Theming**            | `ColorModeProvider`, `ColorModeToggle`, `DesignTokenStyle`                                                                                                                              |

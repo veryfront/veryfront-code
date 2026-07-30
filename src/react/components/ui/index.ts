@@ -201,6 +201,12 @@ export {
 export { AspectRatio, type AspectRatioProps } from "./aspect-ratio.tsx";
 export { Separator, type SeparatorProps } from "./separator.tsx";
 export { Toggle, type ToggleProps } from "./toggle.tsx";
+export {
+  ToggleGroup,
+  ToggleGroupItem,
+  type ToggleGroupItemProps,
+  type ToggleGroupProps,
+} from "./toggle-group.tsx";
 export { UIAdapterProvider, useAdapter } from "./adapter/context.tsx";
 export { useTokenScope } from "./adapter/token-scope.tsx";
 export type {
