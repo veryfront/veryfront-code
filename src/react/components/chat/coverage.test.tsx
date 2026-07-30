@@ -1,11 +1,13 @@
 /**
  * `veryfront/chat` COVERAGE MANIFEST — the deterministic "to spec" gate.
  *
- * RED until the chat surface is complete. Each component must be exported, have a
- * Storybook story (`storybook/stories/chat/<Name>.stories.tsx`), be documented
- * (named in `docs/guides/chat-ui.md`), and have a test (name referenced by some
- * `*.test.tsx` under `chat/`). Each hook must be exported, documented (named in
- * `docs/guides/chat-hooks.md` or `chat-ui.md`), and have a behaviour test.
+ * RED until the chat surface is complete. Mirrors the ui gate's docs-in-component
+ * model: each component must be exported, have a Storybook story with a `DocsPage`
+ * (its docs live there, NOT the root guide), have every `*Props` field documented
+ * with JSDoc, and have a test. Each hook must be exported, carry a JSDoc doc-comment
+ * on its declaration (its docs live on the hook), and have a behaviour test. Every
+ * cva variant is demonstrated in a story + a test; a guardrail keeps the root guides
+ * from becoming per-variant catalogs.
  *
  * Composability / one-node / ref / asChild are enforced per-compound in
  * `chat/composability.contract.test.tsx` and each component's `*.test.tsx`; this
@@ -140,6 +142,50 @@ try {
   CHAT_STORY_SRC = collectSource(STORIES_DIR, /\.stories\.tsx$/, /(?!)/);
 } catch { /* no chat stories dir */ }
 
+/**
+ * Fields of the named `<Name>Props` interface missing JSDoc, or `null` if that
+ * interface isn't declared anywhere in `src` (props typed inline → not gated).
+ * `ref`/`className` are exempt (universal boilerplate). Mirrors the ui gate.
+ */
+function propsMissingJsdoc(src: string, interfaceName: string): string[] | null {
+  const m = new RegExp(`(?:export\\s+)?interface\\s+${interfaceName}\\b[^{]*\\{`).exec(src);
+  if (!m) return null;
+  const lines = src.slice(m.index + m[0].length).split("\n");
+  const offenders: string[] = [];
+  let depth = 1;
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i] ?? "";
+    const trimmed = raw.trim();
+    if (
+      depth === 1 &&
+      /^(?:readonly\s+)?["']?[A-Za-z_$][\w$-]*["']?\s*\??\s*:/.test(trimmed) &&
+      !trimmed.startsWith("//") && !trimmed.startsWith("*")
+    ) {
+      const field = trimmed.match(/^(?:readonly\s+)?["']?([A-Za-z_$][\w$-]*)["']?/)?.[1] ?? "";
+      if (field && field !== "ref" && field !== "className") {
+        const prev = (lines[i - 1] ?? "").trim();
+        if (!(prev.endsWith("*/") || prev.startsWith("/**"))) offenders.push(field);
+      }
+    }
+    depth += (raw.match(/\{/g)?.length ?? 0) - (raw.match(/\}/g)?.length ?? 0);
+    if (depth <= 0) break;
+  }
+  return offenders;
+}
+
+/** Does `src` declare `name` (fn or const) with a JSDoc comment immediately above? */
+function hasJsdocDecl(src: string, name: string): boolean {
+  const lines = src.split("\n");
+  const decl = new RegExp(`^\\s*(?:export\\s+)?(?:async\\s+)?(?:function|const)\\s+${name}\\b`);
+  for (let i = 0; i < lines.length; i++) {
+    if (decl.test(lines[i] ?? "")) {
+      const prev = (lines[i - 1] ?? "").trim();
+      if (prev.endsWith("*/") || prev.startsWith("/**")) return true;
+    }
+  }
+  return false;
+}
+
 /** Pull `{group,value}` pairs from every `cva({ variants: {...} })` block in `src`. */
 function extractAllVariants(src: string): Array<{ group: string; value: string }> {
   const out: Array<{ group: string; value: string }> = [];
@@ -176,14 +222,14 @@ describe("veryfront/chat: every cva variant is covered (story · docs · test)",
     const k = `${v.group}=${v.value}`;
     return seen.has(k) ? false : (seen.add(k), true);
   });
-  it(`covers all ${variants.length} chat cva variants in story · docs · test`, () => {
-    const docs = uiDoc + "\n" + hooksDoc;
+  it(`covers all ${variants.length} chat cva variants in story · test`, () => {
     const misses: string[] = [];
     for (const { group, value } of variants) {
       const re2 = new RegExp(`\\b${value}\\b`);
       const where: string[] = [];
+      // Docs live in the component's story (not the root guide), so a variant is
+      // documented by being demonstrated there; also require a test reference.
       if (!re2.test(CHAT_STORY_SRC)) where.push("story");
-      if (!re2.test(docs)) where.push("docs");
       if (!re2.test(CHAT_TEST_SRC)) where.push("test");
       if (where.length) misses.push(`${group}="${value}" (missing: ${where.join(", ")})`);
     }
@@ -205,8 +251,24 @@ describe("veryfront/chat coverage — components", () => {
         `missing storybook/stories/chat/${name}.stories.tsx`,
       );
     });
-    it(`${name}: is documented`, () => {
-      assert(uiDoc.includes(name), `${name} is not documented in docs/guides/chat-ui.md`);
+    it(`${name}: is documented in its story (colocated DocsPage)`, () => {
+      let story = "";
+      try {
+        story = Deno.readTextFileSync(`${STORIES_DIR}${name}.stories.tsx`);
+      } catch { /* no story → fails below, the point */ }
+      assert(
+        /DocsHero|DocsPropsTable|DocsPage/.test(story),
+        `${name} has no colocated docs — its Storybook story must carry a DocsPage ` +
+          `(DocsHero + DocsPropsTable). Component docs live in the story, not the root guide.`,
+      );
+    });
+    it(`${name}: props documented with JSDoc`, () => {
+      const missing = propsMissingJsdoc(CHAT_SRC, `${name}Props`);
+      assert(
+        missing === null || missing.length === 0,
+        `${name}Props has undocumented props: ${(missing ?? []).join(", ")} — ` +
+          `every public prop needs a /** … */ (feeds DocsPropsTable + IDE hovers)`,
+      );
     });
     it(`${name}: has a test`, () => {
       assert(
@@ -226,10 +288,11 @@ describe("veryfront/chat coverage — hooks", () => {
         `${name} is not exported from veryfront/chat`,
       );
     });
-    it(`${name}: is documented`, () => {
+    it(`${name}: is documented (JSDoc in source)`, () => {
       assert(
-        hooksDoc.includes(name) || uiDoc.includes(name),
-        `${name} is not documented in docs/guides/chat-hooks.md or chat-ui.md`,
+        hasJsdocDecl(CHAT_SRC, name),
+        `${name} has no JSDoc doc-comment above its declaration — hook docs live on the ` +
+          `hook (a /** … */ with an @example), not the root guide`,
       );
     });
     it(`${name}: has a test`, () => {
@@ -239,4 +302,23 @@ describe("veryfront/chat coverage — hooks", () => {
       );
     });
   }
+});
+
+// GUARDRAIL — the root guides stay thin. Component/hook + variant docs live in the
+// component's story (DocsPage) and source JSDoc; the guides must not become a
+// per-variant catalog. Fails if a guide lists an internal (hyphenated) cva token.
+describe("veryfront/chat: the root guides stay thin (docs live in components)", () => {
+  it("name no internal cva variant tokens — variant docs belong in the story", () => {
+    const guides = uiDoc + "\n" + hooksDoc;
+    const tokens = new Set<string>();
+    for (const { value } of extractAllVariants(CHAT_SRC)) {
+      if (value.includes("-")) tokens.add(value);
+    }
+    const offenders = [...tokens].filter((t) => new RegExp(`\\b${t}\\b`).test(guides));
+    assert(
+      offenders.length === 0,
+      `docs/guides/chat-*.md list cva variant tokens (${offenders.join(", ")}). ` +
+        `Variant docs belong in each component's Storybook story, not the root guides.`,
+    );
+  });
 });
