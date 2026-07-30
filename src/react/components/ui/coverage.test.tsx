@@ -112,7 +112,7 @@ export const UI_COMPONENTS: UiComponent[] = [
   { name: "Toast", kind: "overlay", interactive: true, status: "planned" },
   { name: "Menubar", kind: "overlay", interactive: true, status: "planned" },
   { name: "NumberField", kind: "form", interactive: false, status: "planned" },
-  { name: "AspectRatio", kind: "visual", interactive: false, status: "planned" },
+  { name: "AspectRatio", kind: "visual", interactive: false, status: "shipped" },
 ];
 
 let storyFiles: string[] = [];

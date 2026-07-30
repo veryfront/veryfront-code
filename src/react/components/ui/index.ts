@@ -198,6 +198,7 @@ export {
   PopoverTitle,
   PopoverTrigger,
 } from "./popover.tsx";
+export { AspectRatio, type AspectRatioProps } from "./aspect-ratio.tsx";
 export { Separator, type SeparatorProps } from "./separator.tsx";
 export { UIAdapterProvider, useAdapter } from "./adapter/context.tsx";
 export { useTokenScope } from "./adapter/token-scope.tsx";

@@ -54,6 +54,7 @@ import { Command, CommandItem, CommandList } from "./command.tsx";
 import { AppShell } from "./app-shell.tsx";
 import { ColorModeProvider, ColorModeToggle } from "./color-mode.tsx";
 import { Separator } from "./separator.tsx";
+import { AspectRatio } from "./aspect-ratio.tsx";
 
 // ---------------------------------------------------------------------------
 // jsdom harness — installs a fresh DOM per render and stubs the browser APIs
@@ -159,6 +160,7 @@ const LEAVES: LeafCase[] = [
   { name: "Label", render: (p) => <Label {...p}>Name</Label> },
   { name: "Card", render: (p) => <Card {...p}>content</Card> },
   { name: "Separator", render: (p) => <Separator {...p} /> },
+  { name: "AspectRatio", render: (p) => <AspectRatio ratio={16 / 9} {...p} /> },
 ];
 
 describe("veryfront/ui conformance — leaves (one node · ref · {...props} · className)", () => {

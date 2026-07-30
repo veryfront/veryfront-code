@@ -14,6 +14,7 @@ const expectedRuntimeExports = [
   "AlertContent",
   "AlertIcon",
   "AppShell",
+  "AspectRatio",
   "Avatar",
   "Badge",
   "Button",
