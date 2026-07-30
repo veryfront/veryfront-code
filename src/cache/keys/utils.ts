@@ -318,18 +318,18 @@ export function getAllKeysForProject(projectId: string): Map<string, string[]> {
 
 export function getAllKeysForProjectAsync(
   projectId: string,
-  includeRedis: boolean = true,
+  includeDistributed: boolean = true,
   projectSlug?: string,
-): Promise<{ memory: Map<string, string[]>; redis: Map<string, string[]> }> {
+): Promise<{ memory: Map<string, string[]>; distributed: Map<string, string[]> }> {
   return withSpan(
     SpanNames.CACHE_KEYS_GET_ALL_ASYNC,
     async (span?: Span) => {
       const result = await cacheRegistry.getAllKeysForProjectAsync(
         projectId,
-        includeRedis,
+        includeDistributed,
         projectSlug,
       );
-      span?.setAttribute("cache.include_redis", includeRedis);
+      span?.setAttribute("cache.include_distributed", includeDistributed);
       return result;
     },
     { "cache.project_id": projectId },
@@ -343,13 +343,13 @@ export function deleteAllKeysForProject(projectId: string): number {
 export function deleteAllKeysForProjectAsync(
   projectId: string,
   projectSlug?: string,
-): Promise<{ memoryDeleted: number; redisDeleted: number }> {
+): Promise<{ memoryDeleted: number; distributedDeleted: number }> {
   return withSpan(
     SpanNames.CACHE_KEYS_DELETE_ALL_ASYNC,
     async (span?: Span) => {
       const result = await cacheRegistry.deleteAllKeysForProjectAsync(projectId, projectSlug);
       span?.setAttribute("cache.memory.deleted", result.memoryDeleted);
-      span?.setAttribute("cache.redis.deleted", result.redisDeleted);
+      span?.setAttribute("cache.distributed.deleted", result.distributedDeleted);
       return result;
     },
     { "cache.project_id": projectId },

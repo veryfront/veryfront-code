@@ -2,37 +2,24 @@ import type { CacheBackend } from "#veryfront/cache/backend.ts";
 
 export interface FileCacheBackendCoordinatorOptions {
   createBackend: () => Promise<CacheBackend>;
-  now?: () => number;
-  retryMilliseconds: number;
 }
 
 /**
  * Owns the process-wide distributed file-cache backend lifecycle.
  *
- * The coordinator deliberately retains only distributed backends. A memory
- * backend returned by the factory is a per-attempt degradation signal, so a
- * later call may retry after the cooldown instead of permanently pinning the
- * process to fallback mode.
+ * The coordinator deliberately retains only shared backends. A memory backend
+ * is a valid local-only selection and is not retained as a distributed backend.
+ * Construction failures propagate to the caller and a later explicit call may
+ * retry; there is no hidden cooldown or fail-open state transition.
  */
 export class FileCacheBackendCoordinator {
   readonly #createBackend: () => Promise<CacheBackend>;
-  readonly #now: () => number;
-  readonly #retryMilliseconds: number;
   #backend: CacheBackend | null = null;
   #initialization: Promise<boolean> | null = null;
-  #lastFailureTime: number | undefined;
   #lastFailureError: unknown;
 
   constructor(options: FileCacheBackendCoordinatorOptions) {
-    if (
-      !Number.isFinite(options.retryMilliseconds) ||
-      options.retryMilliseconds < 0
-    ) {
-      throw new RangeError("retryMilliseconds must be a finite non-negative number");
-    }
     this.#createBackend = options.createBackend;
-    this.#now = options.now ?? Date.now;
-    this.#retryMilliseconds = options.retryMilliseconds;
   }
 
   get backend(): CacheBackend | null {
@@ -49,13 +36,6 @@ export class FileCacheBackendCoordinator {
 
   initialize(): Promise<boolean> {
     if (this.#backend) return Promise.resolve(true);
-
-    if (this.#lastFailureTime !== undefined) {
-      const elapsed = this.#now() - this.#lastFailureTime;
-      if (elapsed >= 0 && elapsed < this.#retryMilliseconds) {
-        return Promise.resolve(false);
-      }
-    }
 
     if (this.#initialization) return this.#initialization;
 
@@ -84,23 +64,22 @@ export class FileCacheBackendCoordinator {
 
       const backend = candidate as CacheBackend;
       if (backend.type === "memory") {
-        this.#recordFailure(undefined);
+        this.#backend = null;
+        this.#lastFailureError = undefined;
         return false;
       }
 
       this.#backend = backend;
-      this.#lastFailureTime = undefined;
       this.#lastFailureError = undefined;
       return true;
     } catch (error) {
       this.#recordFailure(error);
-      return false;
+      throw error;
     }
   }
 
   #recordFailure(error: unknown): void {
     this.#backend = null;
-    this.#lastFailureTime = this.#now();
     this.#lastFailureError = error;
   }
 }

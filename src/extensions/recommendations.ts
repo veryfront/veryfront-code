@@ -10,6 +10,7 @@ const recommendations = new Map<string, string>([
   // esbuild are co-bundled into ext-bundler-esbuild).
   ["ModuleLexer", "@veryfront/ext-bundler-esbuild"],
   ["TokenCacheStore", "@veryfront/ext-cache-redis"],
+  ["DistributedRuntimeProvider", "@veryfront/ext-redis"],
   ["CSSProcessor", "@veryfront/ext-css-tailwind"],
   ["ContentProcessor", "@veryfront/ext-content-mdx"],
   ["DocumentExtractor", "@veryfront/ext-document-kreuzberg"],

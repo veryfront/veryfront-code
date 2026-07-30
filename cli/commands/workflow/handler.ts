@@ -8,6 +8,7 @@ const getWorkflowArgsSchema = defineSchema((v) =>
     action: v.enum(["run"]),
     name: v.string(),
     input: v.string().optional(),
+    backend: v.enum(["memory", "distributed"]).default("memory"),
     debug: v.boolean().default(false),
   })
 );
@@ -20,6 +21,7 @@ export const parseWorkflowArgs = createArgParser(WorkflowArgsSchema, {
   action: { keys: ["action"], type: "string", positional: 0 },
   name: { keys: ["name"], type: "string", positional: 1 },
   input: { keys: ["input"], type: "string" },
+  backend: { keys: ["backend"], type: "string" },
   debug: { keys: ["debug"], type: "boolean" },
 });
 

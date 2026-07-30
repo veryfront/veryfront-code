@@ -91,7 +91,7 @@ async function getLoaderCacheKeys(options: {
 }
 
 class FakeDistributedCache implements CacheBackend {
-  readonly type = "redis" as const;
+  readonly type = "distributed" as const;
   private values = new Map<string, string>();
 
   get(key: string): Promise<string | null> {

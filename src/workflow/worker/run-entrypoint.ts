@@ -12,7 +12,6 @@
  * - TENANT_PROJECT_ID: Tenant's project ID
  * - TENANT_PRODUCTION_MODE: Whether running in production mode
  * - TENANT_RELEASE_ID: Current release ID (optional)
- * - REDIS_URL: Redis connection URL
  *
  * Exit codes:
  * - 0: Workflow completed successfully
@@ -76,13 +75,13 @@ export const EXIT_CODES = {
  * @example
  * ```typescript
  * // workflow-runner.ts - Container entrypoint
- * import { RedisBackend } from "veryfront/workflow";
+ * import { createDistributedWorkflowBackend } from "veryfront/workflow";
  * import { WorkflowExecutor } from "veryfront/workflow";
  * import { runWorkflowRun } from "veryfront/workflow/worker";
- * import { getEnv } from "veryfront";
  * import { workflows } from "./workflows.ts";
  *
- * const backend = new RedisBackend({ url: getEnv("REDIS_URL")! });
+ * // Activate a DistributedRuntimeProvider extension before creating the backend.
+ * const backend = createDistributedWorkflowBackend({});
  * const executor = new WorkflowExecutor({ backend });
  *
  * // Register all workflows
@@ -169,18 +168,16 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
 /**
  * Create a simple workflow run entrypoint script.
  *
- * This is a convenience function that creates the entire entrypoint
- * with Redis backend and executor setup.
+ * This is a convenience function that creates the entire entrypoint with the
+ * explicitly activated distributed backend and executor setup.
  *
  * @example
  * ```typescript
  * // workflow-runner.ts
  * import { createWorkflowRunEntrypoint } from "veryfront/workflow/worker";
- * import { getEnv } from "veryfront";
  * import { workflows } from "./workflows.ts";
  *
  * const run = createWorkflowRunEntrypoint({
- *   redisUrl: getEnv("REDIS_URL")!,
  *   workflows,
  * });
  *
@@ -189,9 +186,6 @@ export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promi
  * ```
  */
 export interface CreateWorkflowRunEntrypointOptions {
-  /** Redis URL for backend */
-  redisUrl: string;
-
   /** Workflows to register */
   workflows: Array<{ definition: WorkflowDefinition }>;
 
@@ -203,12 +197,10 @@ export interface CreateWorkflowRunEntrypointOptions {
 export async function createWorkflowRunEntrypoint(
   options: CreateWorkflowRunEntrypointOptions,
 ): Promise<() => Promise<number>> {
-  // Dynamic imports to avoid loading Redis if not needed
-  const { RedisBackend } = await import("../backends/redis.ts");
+  const { createDistributedWorkflowBackend } = await import("../backends/distributed.ts");
   const { WorkflowExecutor } = await import("../executor/workflow-executor.ts");
 
-  const backend = new RedisBackend({
-    url: options.redisUrl,
+  const backend = createDistributedWorkflowBackend({
     debug: options.debug,
   });
 

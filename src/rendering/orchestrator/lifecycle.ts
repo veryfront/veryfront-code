@@ -7,10 +7,10 @@ import { VirtualModuleSystem } from "../virtual-module-system.ts";
 import { CacheCoordinator } from "../cache/index.ts";
 import { createError, toError } from "#veryfront/errors";
 import {
+  createDistributedRenderCacheStore,
   FilesystemCacheStore,
   KVCacheStore,
   MemoryCacheStore,
-  RedisCacheStore,
 } from "../cache/stores/index.ts";
 import type { CacheStore } from "../cache/types.ts";
 import { LayoutCollector, LayoutCompiler } from "../layouts/index.ts";
@@ -219,11 +219,9 @@ export class RendererLifecycle {
             ttlMs: renderCacheConfig.ttl,
           });
           break;
-        case "redis":
-          cacheStore = new RedisCacheStore({
-            url: renderCacheConfig.redisUrl,
-            keyPrefix: renderCacheConfig.redisKeyPrefix,
-            enableFallback: false,
+        case "distributed":
+          cacheStore = createDistributedRenderCacheStore({
+            keyPrefix: renderCacheConfig.keyPrefix,
             ttlSeconds: renderCacheConfig.ttl === undefined
               ? undefined
               : cacheTtlMillisecondsToSeconds(renderCacheConfig.ttl),

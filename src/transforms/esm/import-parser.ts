@@ -44,7 +44,7 @@ const HAS_EXTENSION_RE = /\.(tsx?|jsx?|mjs|cjs|mdx|css)$/;
 /**
  * Compiled MDX, keyed by project, file and content hash.
  *
- * Dependency parsing runs on every render, including every memory, Redis and
+ * Dependency parsing runs on every render, including every local and shared
  * MDX-ESM cache hit, and recurses through the dependency tree. Without this the
  * full remark/rehype compile of every MDX file is paid again on each of them,
  * for a result that cannot change while the content does not.

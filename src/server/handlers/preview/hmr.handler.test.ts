@@ -10,7 +10,7 @@ import {
   type WebSocketConnection,
 } from "#veryfront/platform/adapters/base.ts";
 import { cacheRegistry } from "#veryfront/cache";
-import type { RedisCacheProjectIdentity } from "#veryfront/cache/backends/redis-keyspace.ts";
+import type { DistributedCacheProjectIdentity } from "#veryfront/cache/backends/distributed-keyspace.ts";
 import { ReloadNotifier } from "../../reload-notifier.ts";
 import { addClient } from "./hmr-client-manager.ts";
 import { HMRHandler } from "./hmr.handler.ts";
@@ -250,9 +250,9 @@ describe("server/handlers/preview/hmr.handler", () => {
   });
 
   describe("reload invalidation ordering", () => {
-    it("waits for Redis invalidation before an external unfiltered broadcast", async () => {
-      const originalDeleteRedisKeysForProject = cacheRegistry.deleteRedisKeysForProject;
-      let capturedIdentity: RedisCacheProjectIdentity | undefined;
+    it("waits for distributed invalidation before an external unfiltered broadcast", async () => {
+      const originalDeleteDistributedKeysForProject = cacheRegistry.deleteDistributedKeysForProject;
+      let capturedIdentity: DistributedCacheProjectIdentity | undefined;
       let deleteCalls = 0;
       let markDeleteStarted!: () => void;
       const deleteStarted = new Promise<void>((resolve) => {
@@ -263,7 +263,7 @@ describe("server/handlers/preview/hmr.handler", () => {
         releaseDelete = resolve;
       });
 
-      cacheRegistry.deleteRedisKeysForProject = async (identity) => {
+      cacheRegistry.deleteDistributedKeysForProject = async (identity) => {
         deleteCalls++;
         capturedIdentity = typeof identity === "string" ? { projectId: identity } : identity;
         markDeleteStarted();
@@ -316,23 +316,23 @@ describe("server/handlers/preview/hmr.handler", () => {
       } finally {
         releaseDelete();
         await releaseExternalSource();
-        cacheRegistry.deleteRedisKeysForProject = originalDeleteRedisKeysForProject;
+        cacheRegistry.deleteDistributedKeysForProject = originalDeleteDistributedKeysForProject;
       }
     });
 
     it("suppresses a failed invalidation and broadcasts only a later successful reload", async () => {
-      const originalDeleteRedisKeysForProject = cacheRegistry.deleteRedisKeysForProject;
+      const originalDeleteDistributedKeysForProject = cacheRegistry.deleteDistributedKeysForProject;
       let deleteCalls = 0;
       let markFirstDeleteStarted!: () => void;
       const firstDeleteStarted = new Promise<void>((resolve) => {
         markFirstDeleteStarted = resolve;
       });
 
-      cacheRegistry.deleteRedisKeysForProject = () => {
+      cacheRegistry.deleteDistributedKeysForProject = () => {
         deleteCalls++;
         if (deleteCalls === 1) {
           markFirstDeleteStarted();
-          return Promise.reject(new Error("Redis unavailable"));
+          return Promise.reject(new Error("Distributed cache unavailable"));
         }
         return Promise.resolve(1);
       };
@@ -378,12 +378,12 @@ describe("server/handlers/preview/hmr.handler", () => {
         });
       } finally {
         await releaseExternalSource();
-        cacheRegistry.deleteRedisKeysForProject = originalDeleteRedisKeysForProject;
+        cacheRegistry.deleteDistributedKeysForProject = originalDeleteDistributedKeysForProject;
       }
     });
 
     it("drains in-flight invalidation and suppresses its broadcast during shutdown", async () => {
-      const originalDeleteRedisKeysForProject = cacheRegistry.deleteRedisKeysForProject;
+      const originalDeleteDistributedKeysForProject = cacheRegistry.deleteDistributedKeysForProject;
       let markDeleteStarted!: () => void;
       const deleteStarted = new Promise<void>((resolve) => {
         markDeleteStarted = resolve;
@@ -392,7 +392,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       const deleteReleased = new Promise<void>((resolve) => {
         releaseDelete = resolve;
       });
-      cacheRegistry.deleteRedisKeysForProject = async () => {
+      cacheRegistry.deleteDistributedKeysForProject = async () => {
         markDeleteStarted();
         await deleteReleased;
         return 1;
@@ -431,7 +431,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       } finally {
         releaseDelete();
         await HMRHandler.shutdown();
-        cacheRegistry.deleteRedisKeysForProject = originalDeleteRedisKeysForProject;
+        cacheRegistry.deleteDistributedKeysForProject = originalDeleteDistributedKeysForProject;
       }
     });
   });

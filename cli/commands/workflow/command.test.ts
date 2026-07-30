@@ -1,10 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { step, workflow } from "#veryfront/workflow";
+import { MemoryBackend } from "../../../src/workflow/backends/memory.ts";
 import {
   clearProjectAgentRuntimeRegistries,
   type ProjectAgentRuntimeDiscovery,
@@ -107,6 +108,22 @@ describe("workflow command", () => {
     assertEquals(lines.at(-1), "  - 1 more workflow file failed to load");
   });
 
+  it("rejects valid JSON values that are not workflow input objects", async () => {
+    for (const input of ["null", "[]", '"text"', "42"]) {
+      await assertRejects(
+        () =>
+          runWorkflowCommand({
+            action: "run",
+            name: "example",
+            input,
+            debug: false,
+          }),
+        Error,
+        "must be a valid JSON object",
+      );
+    }
+  });
+
   it("runs project workflows with discovered project tool steps", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-workflow-command-" });
     const resultPath = `${projectDir}/.veryfront/result.json`;
@@ -128,7 +145,7 @@ describe("workflow command", () => {
         steps: [step("start", { tool: "echo", input: { message: "hello" } })],
       });
 
-      Deno.env.delete("REDIS_URL");
+      Deno.env.set("REDIS_URL", "rediss://ignored.example.test:6380");
       Deno.env.set("VERYFRONT_RUN_RESULT_PATH", resultPath);
 
       await runWorkflowCommand(
@@ -153,6 +170,9 @@ describe("workflow command", () => {
 
             return Promise.resolve(discovery);
           },
+          createDistributedWorkflowBackend: () => {
+            throw new Error("environment variables must not select a workflow backend");
+          },
         },
       );
 
@@ -168,6 +188,93 @@ describe("workflow command", () => {
           },
         },
       });
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("activates project extensions before creating an explicitly selected distributed backend", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-workflow-command-" });
+    const resultPath = `${projectDir}/.veryfront/result.json`;
+    const events: string[] = [];
+
+    try {
+      Deno.env.set("VERYFRONT_RUN_RESULT_PATH", resultPath);
+      const echoTool = tool({
+        id: "distributed-echo",
+        description: "Echo workflow input.",
+        inputSchema: defineSchema((v) => v.object({ message: v.string() }))(),
+        execute: (input) => ({ echoed: input.message }),
+      });
+      const echoWorkflow = workflow({
+        id: "distributed-echo",
+        description: "Echo through an explicitly selected backend.",
+        steps: [
+          step("start", {
+            tool: "distributed-echo",
+            input: { message: "durable" },
+          }),
+        ],
+      });
+
+      const backend = new MemoryBackend();
+      const originalInitialize = backend.initialize.bind(backend);
+      const originalDestroy = backend.destroy.bind(backend);
+      backend.initialize = () => {
+        events.push("backend:initialize");
+        return originalInitialize();
+      };
+      backend.destroy = () => {
+        events.push("backend:destroy");
+        return originalDestroy();
+      };
+
+      await runWorkflowCommand(
+        {
+          action: "run",
+          name: echoWorkflow.id,
+          input: undefined,
+          backend: "distributed",
+          debug: false,
+          projectDir,
+        },
+        {
+          orchestrateExtensions: (options) => {
+            events.push("extensions:setup");
+            assertEquals(options.projectDir, projectDir);
+            return Promise.resolve({
+              teardownAll: () => {
+                events.push("extensions:teardown");
+                return Promise.resolve();
+              },
+            });
+          },
+          discoverProjectAgentRuntime: () => {
+            events.push("workflow:discover");
+            toolRegistry.register(echoTool.id, echoTool);
+            const discovery = createEmptyDiscoveryResult();
+            discovery.tools.set(echoTool.id, echoTool);
+            discovery.workflows.set(echoWorkflow.id, echoWorkflow);
+            return Promise.resolve(discovery);
+          },
+          createDistributedWorkflowBackend: () => {
+            events.push("backend:create");
+            return backend;
+          },
+        },
+      );
+
+      assertEquals(JSON.parse(await Deno.readTextFile(resultPath)), {
+        start: { echoed: "durable" },
+      });
+      assertEquals(events, [
+        "extensions:setup",
+        "workflow:discover",
+        "backend:create",
+        "backend:initialize",
+        "backend:destroy",
+        "extensions:teardown",
+      ]);
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }

@@ -7,10 +7,10 @@
  ********************************************************************************/
 
 export const CacheKeyPrefix = {
-  // Redis prefixes (include trailing colon for direct concatenation)
-  SSR_MODULE: "veryfront:ssr-module:",
-  FILE_CACHE: "veryfront:file-cache:",
-  TRANSFORM: "veryfront:transform:",
+  // Distributed-cache prefixes (include trailing colon for direct concatenation)
+  SSR_MODULE: "vf:cache:ssr-module:",
+  FILE_CACHE: "vf:cache:default:",
+  TRANSFORM: "vf:cache:transform:",
 
   // Memory cache prefixes
   CONFIG: "config",

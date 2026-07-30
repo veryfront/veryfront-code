@@ -48,33 +48,31 @@ export async function POST(ctx: APIContext) {
 
 ## Enabling Crash Recovery (Local Dev)
 
-For automatic crash recovery during development, add Redis and a worker:
+For automatic crash recovery during development, install and explicitly activate
+`@veryfront/ext-redis`, then add a worker:
 
 ```typescript
 // app/lib/workflow-client.ts
-import { RedisBackend, WorkflowClient, WorkflowWorker } from "veryfront/workflow";
+import { createDistributedWorkflowBackend, WorkflowClient } from "veryfront/workflow";
+import { WorkflowWorker } from "veryfront/workflow/worker";
 import { contentPipeline } from "../workflows/content-pipeline";
 
-// Shared Redis backend
-const backend = new RedisBackend({
-  url: process.env.REDIS_URL || "redis://localhost:6379",
-});
+// Application startup must activate the extensions in veryfront.config.ts
+// before this module requests the provider-neutral backend.
+const backend = createDistributedWorkflowBackend({});
 
 // Shared client
 export const workflowClient = new WorkflowClient({ backend });
 workflowClient.register(contentPipeline);
 
-// Start worker (runs in the same process)
-// Only do this once - typically in a startup file
-if (process.env.WORKER_ENABLED !== "false") {
-  const worker = new WorkflowWorker({
-    backend,
-    resumeFn: (runId, expectedWorkerId) => workflowClient.resume(runId, expectedWorkerId),
-    pollInterval: 5000,
-    stalledThreshold: 30000, // 30s for dev (faster detection)
-  });
-  worker.start();
-}
+// Application composition explicitly decides whether to start this process-local worker.
+const worker = new WorkflowWorker({
+  backend,
+  resumeFn: (runId, expectedWorkerId) => workflowClient.resume(runId, expectedWorkerId),
+  pollInterval: 5000,
+  stalledThreshold: 30000, // 30s for dev (faster detection)
+});
+worker.start();
 ```
 
 Now if your dev server crashes mid-workflow:
@@ -145,16 +143,22 @@ services:
   app:
     image: my-app:latest
     environment:
-      - REDIS_URL=redis://redis:6379
-      - WORKER_ENABLED=true
+      - REDIS_URL=rediss://cache.internal:6380
+    command: ["veryfront", "serve"]
     deploy:
       replicas: 3
 
-  redis:
-    image: redis:7-alpine
+  worker:
+    image: my-app:latest
+    environment:
+      - REDIS_URL=rediss://cache.internal:6380
+    command: ["veryfront", "worker", "--entrypoint", "./workflow-run.ts"]
+    deploy:
+      replicas: 2
 ```
 
-Each pod runs both HTTP server and workflow worker. Redis handles coordination:
+The web and worker profiles activate the same project extension configuration;
+the distributed provider handles coordination:
 
 - Checkpoints stored in Redis
 - Heartbeats detect stalled workflows
@@ -227,33 +231,25 @@ Tenant B's workflow:
 
 ## Configuration
 
-### Environment Variables
+### Provider configuration and CLI worker options
 
 ```bash
-# Backend
-REDIS_URL=redis://localhost:6379     # Use Redis (default: in-memory)
-
-# Worker mode
-WORKER_ENABLED=true                  # Enable in-process worker
-WORKER_POLL_INTERVAL=5000            # Poll every 5 seconds
-WORKER_STALLED_THRESHOLD=60000       # Consider stalled after 60 seconds
-WORKER_CONCURRENCY=3                 # Max concurrent workflow resumes
-
-# Workflow run manager mode (multi-tenant)
-MODE=workflow-run-manager            # Run as workflow run manager only
-RUN_EXECUTION_NAMESPACE=workflows    # Runtime namespace for run executions
-RUN_EXECUTION_IMAGE=veryfront-renderer:latest
-RUN_EXECUTION_TIMEOUT=1800000        # 30 minute timeout
+REDIS_URL=redis://localhost:6379
+veryfront worker --concurrency 3 --poll-interval 5000 --stalled-threshold 60000
 ```
+
+`REDIS_URL` configures the explicitly activated `ext-redis`; it never selects
+the backend. Worker concurrency and timing are CLI options, not hidden
+environment switches.
 
 ### Programmatic Configuration
 
 ```typescript
-import { RedisBackend, WorkflowClient, WorkflowWorker } from "veryfront/workflow";
+import { createDistributedWorkflowBackend, WorkflowClient } from "veryfront/workflow";
+import { WorkflowWorker } from "veryfront/workflow/worker";
 
 // Backend
-const backend = new RedisBackend({
-  url: process.env.REDIS_URL,
+const backend = createDistributedWorkflowBackend({
   prefix: "wf:",
 });
 
@@ -280,7 +276,8 @@ a replacement worker's progress.
 
 ### Redis run queries and retention maintenance
 
-The built-in Memory and Redis backends return runs in stable `(createdAt DESC, id DESC)` order. Run
+The core memory backend and the Redis extension backend return runs in stable
+`(createdAt DESC, id DESC)` order. Run
 IDs at equal creation times use Redis's UTF-8 byte ordering. `listRuns()` defaults to 100 rows and
 accepts at most 1,000 rows per call. Its public `offset` range is 0 through 10,000, inclusive. Callers
 must use an explicit offset in that range to fetch later pages. Creation-time boundaries are
@@ -315,7 +312,8 @@ with backoff. Do not convert the error to an empty list or approximate count.
 
 ### Redis schema-v2 cutovers
 
-`RedisBackend` preserves configured key, stream, and consumer-group values as deployment base names
+The `@veryfront/ext-redis` workflow backend preserves configured key, stream, and consumer-group
+values as deployment base names
 and appends the versioned `schema-v2` namespace. Readers and workers inspect only their exact schema
 namespace. They do not dual-read, migrate, or backfill unversioned or `schema-v1` rows and queue
 entries. A mixed v1/v2 deployment therefore splits run state and is unsupported.
@@ -372,13 +370,14 @@ documented loss of post-cutover v2 work; v1 cannot consume v2 state.
 The `WorkflowRunManager` uses a `RunExecutor` interface for isolated local process execution. In Veryfront Cloud, task and workflow runs execute through the project runtime target via the canonical Runs API.
 
 ```typescript
-import { ProcessRunExecutor, RedisBackend, WorkflowRunManager } from "veryfront/workflow";
+import { createDistributedWorkflowWorkerResources } from "veryfront/workflow";
+import { ProcessRunExecutor, WorkflowRunManager } from "veryfront/workflow/worker";
 
-const backend = new RedisBackend({ url: process.env.REDIS_URL });
+const { backend, environment } = await createDistributedWorkflowWorkerResources({});
 
 const processExecutor = new ProcessRunExecutor({
   entrypointPath: "./run-entrypoint.ts",
-  env: { REDIS_URL: process.env.REDIS_URL },
+  env: { ...environment },
 });
 
 const manager = new WorkflowRunManager({

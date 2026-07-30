@@ -127,6 +127,7 @@ export class WorkflowRunManager {
   private config: ResolvedConfig;
   private status: ManagerStatus = "idle";
   private pollTimeout?: ReturnType<typeof setTimeout>;
+  private stopPromise?: Promise<void>;
   private activeExecutions = new Map<string, TrackedExecution>();
   private stats: ManagerStats;
   private managerId: string;
@@ -158,8 +159,12 @@ export class WorkflowRunManager {
    * Start the workflow run manager.
    */
   async start(): Promise<void> {
-    if (this.status === "running") {
-      throw ORCHESTRATION_ERROR.create({ detail: "Workflow run manager is already running" });
+    if (this.status === "running" || this.status === "stopping") {
+      throw ORCHESTRATION_ERROR.create({
+        detail: this.status === "running"
+          ? "Workflow run manager is already running"
+          : "Workflow run manager cannot start while shutdown is in progress",
+      });
     }
 
     // Initialize executor if needed
@@ -183,34 +188,43 @@ export class WorkflowRunManager {
    * Stop the workflow run manager gracefully.
    */
   async stop(): Promise<void> {
-    if (this.status !== "running") {
-      return;
+    if (this.status === "idle" || this.status === "stopped") return;
+    if (this.stopPromise) return await this.stopPromise;
+
+    if (this.status === "running") {
+      this.status = "stopping";
+      this.stats.status = "stopping";
+
+      if (this.config.debug) {
+        logger.info(`Stopping manager ${this.managerId}...`);
+      }
     }
 
-    this.status = "stopping";
-    this.stats.status = "stopping";
+    const stopAttempt = (async () => {
+      // Clear the poll timer before executor cleanup. If cleanup fails, the
+      // manager remains in "stopping" and a later explicit stop() retries only
+      // the resource teardown without ever restarting polling.
+      if (this.pollTimeout) {
+        clearTimeout(this.pollTimeout);
+        this.pollTimeout = undefined;
+      }
 
-    if (this.config.debug) {
-      logger.info(`Stopping manager ${this.managerId}...`);
-    }
+      if (this.config.executor.destroy) {
+        await this.config.executor.destroy();
+      }
 
-    // Clear scheduled poll
-    if (this.pollTimeout) {
-      clearTimeout(this.pollTimeout);
-      this.pollTimeout = undefined;
-    }
+      this.status = "stopped";
+      this.stats.status = "stopped";
 
-    // Cleanup executor if needed
-    if (this.config.executor.destroy) {
-      await this.config.executor.destroy();
-    }
-
-    this.status = "stopped";
-    this.stats.status = "stopped";
-
-    if (this.config.debug) {
-      logger.info(`Manager ${this.managerId} stopped`);
-    }
+      if (this.config.debug) {
+        logger.info(`Manager ${this.managerId} stopped`);
+      }
+    })();
+    const trackedAttempt = stopAttempt.finally(() => {
+      if (this.stopPromise === trackedAttempt) this.stopPromise = undefined;
+    });
+    this.stopPromise = trackedAttempt;
+    return await trackedAttempt;
   }
 
   /**

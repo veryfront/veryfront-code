@@ -30,7 +30,7 @@ function baseKeyOptions(modulePath: string) {
 }
 
 class FakeDistributedCache implements CacheBackend {
-  readonly type = "redis" as const;
+  readonly type = "distributed" as const;
   readonly values = new Map<string, string>();
   readonly ttlSeconds = new Map<string, number | undefined>();
 

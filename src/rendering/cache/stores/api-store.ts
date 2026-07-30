@@ -8,7 +8,7 @@ import {
   serializeCachePayload,
 } from "../cache-payload.ts";
 import { requirePositiveIntegerCacheTtlSeconds } from "#veryfront/cache/backends/ttl.ts";
-import { escapeRedisCacheGlobLiteral } from "#veryfront/cache/backends/redis-keyspace.ts";
+import { escapeCacheGlobLiteral } from "#veryfront/cache/backends/distributed-keyspace.ts";
 
 const logger = rendererLogger.component("api-cache-store");
 
@@ -266,7 +266,7 @@ export class APICacheStore implements CacheStore {
         throw new TypeError("API render cache backend does not support prefix invalidation");
       }
       distributedDeleted = await backend.delByPattern(
-        `${escapeRedisCacheGlobLiteral(prefix)}*`,
+        `${escapeCacheGlobLiteral(prefix)}*`,
       );
     } catch (error) {
       await this.deleteLocalByPrefix(prefix);

@@ -4,9 +4,13 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RendererLifecycle, type RendererServices } from "./lifecycle.ts";
 import { ConfigurationManager } from "./config.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { getOwnedRedisCacheNamespaceDescriptors } from "#veryfront/cache/backends/redis-keyspace.ts";
-import { RedisCacheStore } from "../cache/stores/redis-store.ts";
-import type { RedisClientManager } from "#veryfront/utils/redis-client.ts";
+import type { CacheStore } from "../cache/types.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  type DistributedRenderCacheStoreOptions,
+  type DistributedRuntimeProvider,
+  DistributedRuntimeProviderName,
+} from "#veryfront/extensions/distributed/index.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -21,6 +25,48 @@ function createMockAdapter(): RuntimeAdapter {
     },
     env: { get: () => undefined },
   } as unknown as RuntimeAdapter;
+}
+
+function createNoopCacheStore(): CacheStore {
+  return {
+    get: () => Promise.resolve(undefined),
+    set: () => Promise.resolve(),
+    delete: () => Promise.resolve(),
+    clear: () => Promise.resolve(),
+    destroy: () => Promise.resolve(),
+  };
+}
+
+async function withDistributedRenderProvider(
+  createRenderCacheStore: (
+    options: DistributedRenderCacheStoreOptions,
+  ) => CacheStore,
+  run: () => Promise<void>,
+): Promise<void> {
+  const previous = tryResolve<unknown>(DistributedRuntimeProviderName);
+  const unavailable = (): never => {
+    throw new Error("Unexpected distributed provider operation");
+  };
+  const provider: DistributedRuntimeProvider = {
+    id: "lifecycle-test-provider",
+    createCacheBackend: () => Promise.reject(new Error("Unexpected provider operation")),
+    createRenderCacheStore,
+    createWorkflowBackend: unavailable,
+    getWorkflowWorkerEnvironment: () => ({}),
+    createRateLimitStore: unavailable,
+    createAgentMemory: unavailable,
+    createEventPublisher: unavailable,
+    startRoutingInvalidationBus: () => Promise.reject(new Error("Unexpected provider operation")),
+    getCacheAdministration: unavailable,
+  };
+
+  register(DistributedRuntimeProviderName, provider);
+  try {
+    await run();
+  } finally {
+    if (previous === undefined) unregister(DistributedRuntimeProviderName);
+    else register(DistributedRuntimeProviderName, previous);
+  }
 }
 
 describe("rendering/orchestrator/lifecycle", () => {
@@ -472,105 +518,68 @@ describe("rendering/orchestrator/lifecycle", () => {
     });
   });
 
-  describe("initialize Redis render cache", () => {
-    it("propagates configured millisecond TTLs as rounded-up Redis seconds", async () => {
-      const adapter = createMockAdapter();
-      const configManager = new ConfigurationManager({
-        projectDir: "/project",
-        mode: "production",
-        adapter,
-        config: {
-          cache: {
-            render: { type: "redis", ttl: 7_200_001 },
-          },
-        },
-      });
-      await configManager.initialize();
-      const lifecycle = new RendererLifecycle({
-        configManager,
-        port: 3000,
-        projectId: "ttl-project",
-      });
-
-      try {
-        const services = await lifecycle.initialize();
-        const cacheStore = (services.cacheCoordinator as unknown as {
-          store: RedisCacheStore;
-        }).store;
-        const setTtls: number[] = [];
-        const clientManager: RedisClientManager = {
-          getClient: () =>
-            Promise.resolve({
-              connect: () => Promise.resolve(),
-              disconnect: () => Promise.resolve(),
-              get: () => Promise.resolve(null),
-              mGet: (keys) => Promise.resolve(keys.map(() => null)),
-              set: (
-                _key: string,
-                _value: string,
-                options?: { EX?: number },
-              ): Promise<string> => {
-                if (options?.EX !== undefined) setTtls.push(options.EX);
-                return Promise.resolve("OK");
-              },
-              del: () => Promise.resolve(0),
-              scan: () => Promise.resolve({ cursor: 0, keys: [] }),
-              expire: () => Promise.resolve(1),
-              isOpen: true,
-            }),
-          disconnect: () => Promise.resolve(),
-          isConfigured: () => true,
-        };
-        (cacheStore as unknown as { clientManager: RedisClientManager }).clientManager =
-          clientManager;
-
-        await cacheStore.set("page", {
-          result: {
-            html: "<p>cached</p>",
-            frontmatter: {},
-            headings: [],
-            stream: null,
-          },
-          storedAt: Date.now(),
+  describe("initialize distributed render cache", () => {
+    it("passes configured millisecond TTLs to the provider as rounded-up seconds", async () => {
+      let received: DistributedRenderCacheStoreOptions | undefined;
+      await withDistributedRenderProvider((options) => {
+        received = options;
+        return createNoopCacheStore();
+      }, async () => {
+        const adapter = createMockAdapter();
+        const configManager = new ConfigurationManager({
+          projectDir: "/project",
+          mode: "production",
+          adapter,
+          config: { cache: { render: { type: "distributed", ttl: 7_200_001 } } },
+        });
+        await configManager.initialize();
+        const lifecycle = new RendererLifecycle({
+          configManager,
+          port: 3000,
+          projectId: "ttl-project",
         });
 
-        assertEquals(setTtls, [7_201]);
-      } finally {
-        await lifecycle.destroy();
-      }
+        try {
+          await lifecycle.initialize();
+          assertEquals(received?.ttlSeconds, 7_201);
+        } finally {
+          await lifecycle.destroy();
+        }
+      });
     });
 
-    it("normalizes a legacy configured prefix before namespace registration", async () => {
-      const adapter = createMockAdapter();
-      const configManager = new ConfigurationManager({
-        projectDir: "/project",
-        mode: "production",
-        adapter,
-        config: {
-          cache: {
-            render: { type: "redis", redisKeyPrefix: "lifecycle-legacy-prefix" },
+    it("passes a configured namespace to the provider without vendor-specific handling", async () => {
+      let received: DistributedRenderCacheStoreOptions | undefined;
+      await withDistributedRenderProvider((options) => {
+        received = options;
+        return createNoopCacheStore();
+      }, async () => {
+        const adapter = createMockAdapter();
+        const configManager = new ConfigurationManager({
+          projectDir: "/project",
+          mode: "production",
+          adapter,
+          config: {
+            cache: {
+              render: { type: "distributed", keyPrefix: "vf:cache:lifecycle-render:" },
+            },
           },
-        },
-      });
-      await configManager.initialize();
-      const lifecycle = new RendererLifecycle({
-        configManager,
-        port: 3000,
-        projectId: "project-x",
-        contentSourceId: "preview-main",
-      });
+        });
+        await configManager.initialize();
+        const lifecycle = new RendererLifecycle({
+          configManager,
+          port: 3000,
+          projectId: "project-x",
+          contentSourceId: "preview-main",
+        });
 
-      try {
-        await lifecycle.initialize();
-        const descriptor = getOwnedRedisCacheNamespaceDescriptors()
-          .find((candidate) => candidate.prefix === "lifecycle-legacy-prefix:");
-        assertEquals(
-          descriptor?.matchProjectOwnership?.("project-x:preview-main:digest"),
-          { projectId: "project-x", environment: "preview" },
-        );
-      } finally {
-        await lifecycle.destroy();
-      }
+        try {
+          await lifecycle.initialize();
+          assertEquals(received?.keyPrefix, "vf:cache:lifecycle-render:");
+        } finally {
+          await lifecycle.destroy();
+        }
+      });
     });
   });
 

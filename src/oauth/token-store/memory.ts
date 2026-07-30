@@ -84,7 +84,7 @@ function requireTrimmedIdentifier(value: string, name: string, maxLength: number
  * durable: tokens are lost on restart and not shared across instances or
  * workers, and the exported {@link memoryTokenStore} singleton shares one
  * keyspace process-wide. For production inject a persistent, scoped store
- * (Redis, Postgres, ...) keyed the same way.
+ * (for example, an extension-owned distributed store) keyed the same way.
  *
  * The token map is bounded (see {@link MemoryTokenStoreOptions.maxEntries}) so
  * it cannot grow without limit. Never share a single slot per service across
@@ -160,7 +160,7 @@ export class MemoryTokenStore implements RefreshCapableTokenStore {
       "MemoryTokenStore is persisting OAuth tokens in production. It is " +
         "process-local and not durable (tokens are lost on restart and not " +
         "shared across instances). Inject a persistent, scoped TokenStore " +
-        "(Redis/Postgres/...) instead.",
+        "provided by an explicitly configured extension instead.",
     );
   }
 

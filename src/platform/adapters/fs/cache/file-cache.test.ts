@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   FileCache,
@@ -11,7 +16,7 @@ import { FileCacheBackendCoordinator } from "./backend-coordinator.ts";
 
 function createDistributedBackend(): CacheBackend {
   return {
-    type: "redis",
+    type: "distributed",
     get: () => Promise.resolve(null),
     set: () => Promise.resolve(),
     del: () => Promise.resolve(),
@@ -414,8 +419,7 @@ describe("Distributed cache functions", () => {
       assertEquals(typeof (await initializeFileCacheBackend()), "boolean");
     });
 
-    it("retries an auto-selected memory backend after the retry interval", async () => {
-      let now = 1_000;
+    it("does not retain a local-only backend as a distributed backend", async () => {
       let calls = 0;
       const coordinator = new FileCacheBackendCoordinator({
         createBackend: () => {
@@ -424,15 +428,25 @@ describe("Distributed cache functions", () => {
             calls === 1 ? new MemoryCacheBackend() : createDistributedBackend(),
           );
         },
-        now: () => now,
-        retryMilliseconds: 30_000,
       });
 
       assertEquals(await coordinator.initialize(), false);
-      assertEquals(await coordinator.initialize(), false);
-      assertEquals(calls, 1);
+      assertEquals(await coordinator.initialize(), true);
+      assertEquals(calls, 2);
+    });
 
-      now += 30_001;
+    it("propagates construction failures and permits an explicit retry", async () => {
+      let calls = 0;
+      const coordinator = new FileCacheBackendCoordinator({
+        createBackend: () => {
+          calls++;
+          return calls === 1
+            ? Promise.reject(new Error("provider unavailable"))
+            : Promise.resolve(createDistributedBackend());
+        },
+      });
+
+      await assertRejects(() => coordinator.initialize(), Error, "provider unavailable");
       assertEquals(await coordinator.initialize(), true);
       assertEquals(calls, 2);
     });
@@ -448,7 +462,6 @@ describe("Distributed cache functions", () => {
           calls++;
           return pendingBackend;
         },
-        retryMilliseconds: 30_000,
       });
 
       const first = coordinator.initialize();

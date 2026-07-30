@@ -19,7 +19,8 @@ The public module exports:
 - `MiddlewarePipeline` and `MiddlewareContext`
 - `cors` and the legacy-compatible `CorsOptions` subset
 - `logger`, `devLogger`, and `prodLogger`
-- `rateLimit`, `authRateLimit`, `MemoryRateLimitStore`, and `RedisRateLimitStore`
+- `rateLimit`, `authRateLimit`, `MemoryRateLimitStore`, and
+  `createDistributedRateLimitStore`
 - `timeout`, `timeoutFromEnv`, and `getTimeoutFromEnv`
 - The remaining public option, context, handler, and store types
 

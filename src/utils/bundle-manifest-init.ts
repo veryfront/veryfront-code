@@ -7,8 +7,6 @@ interface BundleManifestConfig {
     bundleManifest?: {
       enabled?: boolean;
       type?: string;
-      redisUrl?: string;
-      keyPrefix?: string;
       ttl?: number;
     };
   };
@@ -48,7 +46,7 @@ export async function initializeBundleManifest(
 
   logger.debug("Initializing bundle manifest", { type: storeType, mode });
 
-  const store = await createStore(storeType, config.cache, adapter);
+  const store = createStore(storeType);
   if (store !== getBundleManifestStore()) setBundleManifestStore(store);
 
   try {
@@ -59,19 +57,7 @@ export async function initializeBundleManifest(
   }
 }
 
-async function createStore(
-  storeType: string,
-  _cacheConfig: BundleManifestConfig["cache"],
-  _adapter?: RuntimeAdapter,
-): Promise<BundleManifestStore> {
-  if (storeType === "redis") {
-    throw new UnsupportedBundleManifestStoreError(storeType);
-  }
-
-  if (storeType === "kv") {
-    throw new UnsupportedBundleManifestStoreError(storeType);
-  }
-
+function createStore(storeType: string): BundleManifestStore {
   if (storeType !== "memory") {
     throw new UnsupportedBundleManifestStoreError(storeType, "is not supported");
   }

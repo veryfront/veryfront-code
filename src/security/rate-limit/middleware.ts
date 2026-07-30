@@ -105,7 +105,7 @@ export function createRateLimiter(
       result = await strategyFn(key, { ...config, maxRequests, windowMs }, store);
     } catch (error) {
       // Fail closed: only the rate-limit store/strategy path triggers this.
-      // If the store throws (e.g. Redis outage), reject the request with 503
+      // If the store throws (for example, a remote-store outage), reject with 503
       // instead of letting it through. Failing open would silently disable
       // rate limiting and expose brute-force, scraping, and credential-stuffing
       // surfaces during transient store failures.

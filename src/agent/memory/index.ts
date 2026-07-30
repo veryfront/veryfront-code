@@ -20,9 +20,4 @@ export {
   NoMemory,
   SummaryMemory,
 } from "./memory.ts";
-export {
-  createRedisMemory,
-  type RedisClient,
-  RedisMemory,
-  type RedisMemoryConfig,
-} from "./redis.ts";
+export { createDistributedAgentMemory, type DistributedAgentMemoryOptions } from "./distributed.ts";

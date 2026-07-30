@@ -1270,12 +1270,11 @@ export default config as const;
         for (
           const [projectId, source, reason] of [
             [
-              "hosted-cache-redis",
+              "hosted-cache-distributed",
               `export default {
                 cache: {
                   render: {
-                    type: "redis",
-                    redisUrl: "redis://cache.invalid",
+                    type: "distributed",
                   },
                 },
               };`,
@@ -1296,7 +1295,7 @@ export default config as const;
               "hosted-cache-bundle",
               `export default {
                 cache: {
-                  bundleManifest: { type: "redis" },
+                  bundleManifest: { type: "distributed" },
                 },
               };`,
               "hosted-bundle-manifest-backend",

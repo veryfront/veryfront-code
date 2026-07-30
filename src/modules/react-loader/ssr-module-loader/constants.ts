@@ -12,10 +12,10 @@ export const SSR_MODULE_CACHE_TTL_MS = 30 * MS_PER_MINUTE;
 
 export const SSR_TMP_DIRS_MAX_ENTRIES = 100;
 
-export const REDIS_KEY_PREFIX = "veryfront:ssr-module:";
+export const DISTRIBUTED_KEY_PREFIX = "vf:cache:ssr-module:";
 
-/** Get environment-aware Redis TTL for SSR modules */
-export function getSSRModuleRedisTTL(isProduction: boolean): number {
+/** Get the environment-aware distributed-cache TTL for SSR modules. */
+export function getSSRModuleDistributedTTL(isProduction: boolean): number {
   return getDistributedCacheTTL("ssr-module", isProduction);
 }
 

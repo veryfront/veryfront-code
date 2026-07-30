@@ -13,12 +13,12 @@ export type { CachePayload, CacheStore } from "./types.ts";
 export {
   APICacheStore,
   type APICacheStoreOptions,
+  createDistributedRenderCacheStore,
+  type DistributedRenderCacheStoreOptions,
   FilesystemCacheStore,
   type FilesystemCacheStoreOptions,
   KVCacheStore,
   type KVCacheStoreOptions,
   MemoryCacheStore,
   type MemoryCacheStoreOptions,
-  RedisCacheStore,
-  type RedisCacheStoreOptions,
 } from "./stores/index.ts";

@@ -9,14 +9,6 @@ export const HTTP_DEFAULTS = Object.freeze(
   } as const,
 );
 
-export const REDIS_DEFAULTS = Object.freeze(
-  {
-    URL: "redis://127.0.0.1:6379",
-    PORT: 6379,
-    HOST: "127.0.0.1",
-  } as const,
-);
-
 export const DEV_LOCALHOST_ORIGINS = Object.freeze(
   [
     "http://localhost",

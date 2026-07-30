@@ -116,14 +116,11 @@ after the cleanup deadline. Diagnostics flush before the explicitly selected
 reporter is disposed, and signal handlers are the final rollback resource
 removed.
 
-Redis startup distinguishes borrowed stores from proxy-created stores. Borrowed
-stores are validated but never closed or unregistered by the proxy. A created
-store moves through direct store, cache, and proxy-handler ownership while its
-registry restoration remains independently armed until commit. Direct and
-transitive cleanup share one immutable close attempt, so a cleanup that
-outlives the shared deadline cannot concurrently close a non-idempotent
-extension store twice. Registration, restoration, and cleanup failures remain
-separate ordered causes rather than being hidden by the primary startup error.
+Distributed token-cache startup borrows an already registered `TokenCacheStore`.
+Core validates the store but never imports, constructs, closes, or unregisters
+the extension implementation. Embedding composition roots may inject an owned
+store explicitly; ownership is represented in the startup acquisition rather
+than inferred from its implementation.
 
 The request boundary validates and canonicalizes the `Host` authority before
 using it for project routing or token identity. Ports and DNS trailing dots are
@@ -198,10 +195,11 @@ started.
 ### OAuth token cache
 
 The standalone proxy uses a bounded, process-local LRU token cache by default.
-Setting `CACHE_TYPE=redis` explicitly loads `@veryfront/ext-cache-redis` and
-requires a valid `REDIS_URL`; a missing extension, missing URL, unsupported URL
-scheme, unsafe key prefix, or malformed extension contract stops startup. The
-proxy does not silently replace invalid Redis configuration with memory.
+Setting `CACHE_TYPE=extension` selects an already activated
+`@veryfront/ext-cache-redis` contract. It never loads the package. A missing
+extension, missing URL, unsupported URL scheme, unsafe key prefix, malformed
+extension contract, or connection failure stops startup. The proxy does not
+silently replace Redis with memory.
 `REDIS_PREFIX`, when present, is limited to 256 visible ASCII characters and
 cannot contain Redis glob metacharacters because the extension uses that prefix
 to scope bulk deletion.
@@ -215,28 +213,15 @@ properties, and contains extension exceptions without invoking accessors.
 Unknown project identities are classified only from the token client's typed
 HTTP 400/404 contract; response prose is never used as routing authority.
 
-An operational Redis outage is different from invalid configuration. The
-Redis-backed store is wrapped in a process-local memory fallback and a circuit
-breaker. Three consecutive primary read failures open the circuit for 30
-seconds; a failed mutation opens it immediately because stale writes and
-invalidations are correctness-sensitive. Only one half-open health probe runs
-at a time. Before Redis is trusted again, the proxy replays a bounded journal
-of writes, deletes, and clears accumulated during the outage. Repeated journal
-overflow escalates recovery to a Redis namespace clear and keeps at most 10,000
-new mutations, so an extended outage cannot create unbounded process memory or
-restore stale entries.
-
-Mutations execute in call order so a slow, older Redis write cannot complete
-after a newer write and roll the cache backward. At most 10,000 mutations may
-wait for that ordering boundary; excess work is rejected instead of creating
-an unbounded in-process queue.
+Operational Redis failures remain visible. Reads and mutations are not rerouted
+to a process-local cache, so replicas cannot silently diverge or replay stale
+state after recovery.
 
 Cache keys, entries, backend methods, and statistics are snapshotted and
 validated at the proxy boundary. Already-expired writes behave as deletions.
-Token values and cache keys are not attached to tracing spans. The fallback and
-reconciliation journal are intentionally process-local: Redis is a performance
-cache, not an authority for token validity, and every entry remains
-expiry-bound.
+Token values and cache keys are not attached to tracing spans. Redis remains a
+performance cache rather than an authority for token validity, and every entry
+is expiry-bound.
 
 ### Project metadata caches
 
@@ -312,7 +297,8 @@ valid snapshot for at most five minutes, then routing uses
 generation-fences any DNS result that arrives afterward.
 
 After a deployment pointer commits, the control plane sends an authenticated,
-project-scoped invalidation through the proxy-owned Redis bus. Every subscribed
+project-scoped invalidation through the explicitly activated distributed
+provider's bus. Every subscribed
 proxy evicts the matching routing entries, refreshes the authoritative metadata,
 and acknowledges only after observing the expected environment and release.
 Generation fencing prevents an older in-flight lookup from repopulating the

@@ -1,13 +1,13 @@
 /**
- * Memory Cache for SSR Modules - Redis-First Architecture
+ * Memory Cache for SSR Modules - Distributed-First Architecture
  *
  * Optimized for ephemeral pods with limited memory.
  *
  * Strategy:
- * - Redis: Primary storage for transformed code (shared across pods)
+ * - Distributed backend: primary storage for transformed code (shared across pods)
  * - Memory: Small LRU cache for temp file path tracking only
  *
- * The actual transformed code lives in Redis and temp files.
+ * The actual transformed code lives in distributed storage and temp files.
  * Memory only stores { tempPath, contentHash } pointers.
  *
  * @module module-system/react-loader/ssr-module-loader/cache/memory
@@ -272,7 +272,7 @@ registerCache("ssr-module-cache", () => ({
   name: "ssr-module-cache",
   entries: globalModuleCache.size,
   maxEntries: TEMP_PATH_CACHE_MAX_ENTRIES,
-  mode: "redis-primary-lru-paths",
+  mode: "distributed-primary-lru-paths",
 }));
 
 registerCache("ssr-tmp-dirs", () => ({

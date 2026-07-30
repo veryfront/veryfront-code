@@ -126,7 +126,7 @@ async function getDistributedCache(): Promise<CacheBackend | null> {
     ? injectedDistributedCache
     : await getDistributedModuleResponseCache();
   if (!cache) return null;
-  return cache.type === "api" || cache.type === "redis" ? cache : null;
+  return cache.type === "api" || cache.type === "distributed" ? cache : null;
 }
 
 function assertBoundedIdentity(value: string, label: string): string {

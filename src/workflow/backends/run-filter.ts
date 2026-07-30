@@ -24,7 +24,7 @@ export interface ResolvedRunDateBounds {
 
 const UTF8_ENCODER = new TextEncoder();
 
-/** Match Redis sorted-set member ordering, which compares UTF-8 bytes. */
+/** Apply deterministic UTF-8 byte ordering across every backend. */
 export function compareRunIdsDescending(left: string, right: string): number {
   if (left === right) return 0;
   const leftBytes = UTF8_ENCODER.encode(left);

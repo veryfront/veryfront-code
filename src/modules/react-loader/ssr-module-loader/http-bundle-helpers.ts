@@ -231,7 +231,7 @@ export function extractHttpBundlePaths(code: string): Array<{ path: string; hash
 /**
  * Extract ALL file:// paths from cached code (local imports + HTTP bundles).
  * Used to validate that all paths in cached transforms exist locally before use.
- * This prevents "Module not found" errors when Redis returns transforms from
+ * This prevents "Module not found" errors when distributed storage returns transforms from
  * other pods with different temp directories.
  */
 export function extractAllFilePaths(code: string): string[] {

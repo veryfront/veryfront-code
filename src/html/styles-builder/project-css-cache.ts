@@ -1,14 +1,14 @@
 /**
  * Project-level CSS cache management.
  *
- * Manages per-project CSS caching using both local in-memory fallback
- * and distributed (API/Redis) backends. Provides cache-aside pattern
+ * Manages per-project CSS caching using a bounded local tier and an optional
+ * provider-neutral shared backend. Provides a cache-aside pattern
  * with automatic invalidation on content changes.
  *
  * @module html/styles-builder/project-css-cache
  */
 
-import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "#veryfront/cache/backend.ts";
+import { type CacheBackend, CacheBackends } from "#veryfront/cache/backend.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import {
@@ -99,20 +99,18 @@ export async function initializeProjectCSSCache(): Promise<boolean> {
 
   if (!projectCSSInitPromise) {
     projectCSSInitPromise = (async () => {
-      try {
-        projectCSSBackend = await CacheBackends.projectCSS();
-        projectCssCacheLog.debug("Initialized", { backend: projectCSSBackend.type });
-      } catch (error) {
-        projectCssCacheLog.warn("Backend init failed, using memory", { error });
-        projectCSSBackend = new MemoryCacheBackend(100);
-      } finally {
-        projectCSSInitialized = true;
-      }
+      projectCSSBackend = await CacheBackends.projectCSS();
+      projectCSSInitialized = true;
+      projectCssCacheLog.debug("Initialized", { backend: projectCSSBackend.type });
     })();
   }
 
-  await projectCSSInitPromise;
-  projectCSSInitPromise = null;
+  const pending = projectCSSInitPromise;
+  try {
+    await pending;
+  } finally {
+    if (projectCSSInitPromise === pending) projectCSSInitPromise = null;
+  }
 
   return projectCSSBackend?.type !== "memory";
 }

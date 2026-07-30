@@ -2,9 +2,9 @@ import type { TokenCacheStore } from "../extensions/cache/index.ts";
 import { register, tryResolve, unregister } from "../extensions/contracts.ts";
 import { type CacheFromEnvOptions, createCacheFromEnv } from "./cache/index.ts";
 import {
-  acquireRedisTokenCacheStoreFromEnv,
-  type RedisTokenCacheStoreAcquisition,
-} from "./cache/redis-extension.ts";
+  acquireExtensionTokenCacheStoreFromEnv,
+  type ExtensionTokenCacheStoreAcquisition,
+} from "./cache/extension-store.ts";
 import type { TokenCache } from "./cache/types.ts";
 import {
   assertCacheOptionsObject,
@@ -26,7 +26,7 @@ export interface ProxyStartupCache {
 }
 
 export interface ProxyStartupCacheDependencies {
-  acquireRedisStore?: () => Promise<RedisTokenCacheStoreAcquisition>;
+  acquireExtensionStore?: () => Promise<ExtensionTokenCacheStoreAcquisition>;
   createCache?: (options: CacheFromEnvOptions) => Promise<TokenCache>;
   resolveRegisteredStore?: () => TokenCacheStore | undefined;
   registerStore?: (store: TokenCacheStore) => void;
@@ -59,11 +59,11 @@ function dependency<TFunction extends (...args: never[]) => unknown>(
 }
 
 function snapshotAcquisition(
-  value: RedisTokenCacheStoreAcquisition,
-): RedisTokenCacheStoreAcquisition {
+  value: ExtensionTokenCacheStoreAcquisition,
+): ExtensionTokenCacheStoreAcquisition {
   assertCacheOptionsObject(
     value,
-    "Proxy startup Redis acquisition",
+    "Proxy startup extension acquisition",
     ["kind", "store"],
   );
   const kindDescriptor = Object.getOwnPropertyDescriptor(value, "kind");
@@ -72,7 +72,7 @@ function snapshotAcquisition(
     !kindDescriptor || !("value" in kindDescriptor) ||
     !storeDescriptor || !("value" in storeDescriptor)
   ) {
-    throw new TypeError("Proxy startup Redis acquisition must use data properties");
+    throw new TypeError("Proxy startup extension acquisition must use data properties");
   }
   const kind = kindDescriptor.value;
   const store = storeDescriptor.value;
@@ -85,7 +85,7 @@ function snapshotAcquisition(
     typeof store !== "object" ||
     Array.isArray(store)
   ) {
-    throw new TypeError("Proxy startup Redis acquisition is invalid");
+    throw new TypeError("Proxy startup extension acquisition is invalid");
   }
   return Object.freeze({ kind, store: store as TokenCacheStore });
 }
@@ -117,7 +117,7 @@ function throwCleanupFailures(failures: unknown[]): void {
   if (failures.length === 1) throw failures[0];
   throw new AggregateError(
     failures,
-    "Failed to clean up a late Proxy Redis store acquisition",
+    "Failed to clean up a late Proxy extension store acquisition",
   );
 }
 
@@ -143,8 +143,8 @@ function restoreCreatedStoreRegistration(
   );
 }
 
-async function cleanUpRedisAcquisition(
-  value: RedisTokenCacheStoreAcquisition,
+async function cleanUpExtensionAcquisition(
+  value: ExtensionTokenCacheStoreAcquisition,
   previousStore: TokenCacheStore | undefined,
   resolveRegisteredStore: () => TokenCacheStore | undefined,
   registerStore: (store: TokenCacheStore) => void,
@@ -161,7 +161,7 @@ async function cleanUpRedisAcquisition(
       resolveRegisteredStore,
       registerStore,
       unregisterStore,
-      "Late Proxy Redis store",
+      "Late Proxy extension store",
     );
   } catch (error) {
     failures.push(error);
@@ -169,7 +169,7 @@ async function cleanUpRedisAcquisition(
   try {
     await snapshotTokenCacheClose(
       acquisition.store,
-      "Late Proxy Redis store",
+      "Late Proxy extension store",
     )();
   } catch (error) {
     failures.push(error);
@@ -181,7 +181,7 @@ async function cleanUpRedisAcquisition(
  * Acquire the proxy cache while keeping registry restoration independent from
  * close ownership.
  *
- * A created Redis store moves through store -> cache -> handler ownership.
+ * A created extension store moves through store -> cache -> handler ownership.
  * Borrowed stores are never closed by the proxy startup transaction.
  */
 export async function acquireProxyStartupCache(
@@ -193,18 +193,18 @@ export async function acquireProxyStartupCache(
     dependencies,
     "Proxy startup cache dependencies",
     [
-      "acquireRedisStore",
+      "acquireExtensionStore",
       "createCache",
       "resolveRegisteredStore",
       "registerStore",
       "unregisterStore",
     ],
   );
-  const acquireRedisStore = dependency(
+  const acquireExtensionStore = dependency(
     dependencies,
-    "acquireRedisStore",
-    acquireRedisTokenCacheStoreFromEnv,
-  ) as () => Promise<RedisTokenCacheStoreAcquisition>;
+    "acquireExtensionStore",
+    acquireExtensionTokenCacheStoreFromEnv,
+  ) as () => Promise<ExtensionTokenCacheStoreAcquisition>;
   const createCache = dependency(
     dependencies,
     "createCache",
@@ -228,11 +228,11 @@ export async function acquireProxyStartupCache(
 
   return await rollback.run(async () => {
     const previousStore = resolveRegisteredStore();
-    const redisAcquisition = await rollback.acquire(
-      "redis-token-cache-acquisition",
-      acquireRedisStore,
+    const extensionAcquisition = await rollback.acquire(
+      "extension-token-cache-acquisition",
+      acquireExtensionStore,
       (value) =>
-        cleanUpRedisAcquisition(
+        cleanUpExtensionAcquisition(
           value,
           previousStore,
           resolveRegisteredStore,
@@ -241,7 +241,7 @@ export async function acquireProxyStartupCache(
         ),
       abortSignal,
     );
-    const acquisition = snapshotAcquisition(redisAcquisition.value);
+    const acquisition = snapshotAcquisition(extensionAcquisition.value);
     let cacheStoreAcquisition = acquisition;
 
     let releaseStoreClose = (): void => {};
@@ -249,7 +249,7 @@ export async function acquireProxyStartupCache(
       const createdStore = acquisition.store;
       const cacheStore = snapshotOwnedTokenCacheOperations(
         createdStore,
-        "Created Proxy Redis store",
+        "Created Proxy extension store",
       );
       cacheStoreAcquisition = Object.freeze({
         kind: "created",
@@ -270,25 +270,25 @@ export async function acquireProxyStartupCache(
       });
       releaseStoreClose = ownValidatedCache(
         rollback,
-        "redis-token-cache-store",
+        "extension-token-cache-store",
         cacheStore,
-        "Created Proxy Redis store",
-        redisAcquisition.release,
+        "Created Proxy extension store",
+        extensionAcquisition.release,
       ).release;
     } else if (acquisition.kind === "borrowed") {
       // Validate borrowed infrastructure without ever taking close ownership.
       snapshotTokenCacheOperations(
         acquisition.store,
-        "Borrowed Proxy Redis store",
+        "Borrowed Proxy extension store",
       );
-      redisAcquisition.release();
+      extensionAcquisition.release();
     } else {
-      redisAcquisition.release();
+      extensionAcquisition.release();
     }
 
     const cacheAcquisition = await rollback.acquire(
       "token-cache-acquisition",
-      () => createCache({ redisStore: cacheStoreAcquisition }),
+      () => createCache({ extensionStore: cacheStoreAcquisition }),
       async (lateCache) => {
         await snapshotTokenCacheClose(
           lateCache,

@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { cacheRegistry } from "#veryfront/cache";
-import type { RedisCacheProjectIdentity } from "#veryfront/cache/backends/redis-keyspace.ts";
+import type { DistributedCacheProjectIdentity } from "#veryfront/cache/backends/distributed-keyspace.ts";
 import { invalidateProjectCaches } from "./cache-invalidation.ts";
 import {
   clearImportMapCache,
@@ -16,9 +16,9 @@ import {
 } from "#veryfront/server/services/rsc/endpoints/handler-registry.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 
-Deno.test("invalidateProjectCaches awaits project-scoped Redis invalidation", async () => {
-  const originalDeleteRedisKeysForProject = cacheRegistry.deleteRedisKeysForProject;
-  let capturedIdentity: RedisCacheProjectIdentity | undefined;
+Deno.test("invalidateProjectCaches awaits project-scoped distributed invalidation", async () => {
+  const originalDeleteDistributedKeysForProject = cacheRegistry.deleteDistributedKeysForProject;
+  let capturedIdentity: DistributedCacheProjectIdentity | undefined;
   let markDeleteStarted!: () => void;
   const deleteStarted = new Promise<void>((resolve) => {
     markDeleteStarted = resolve;
@@ -28,7 +28,7 @@ Deno.test("invalidateProjectCaches awaits project-scoped Redis invalidation", as
     releaseDelete = resolve;
   });
 
-  cacheRegistry.deleteRedisKeysForProject = async (identity) => {
+  cacheRegistry.deleteDistributedKeysForProject = async (identity) => {
     capturedIdentity = typeof identity === "string" ? { projectId: identity } : identity;
     markDeleteStarted();
     await deleteReleased;
@@ -58,7 +58,7 @@ Deno.test("invalidateProjectCaches awaits project-scoped Redis invalidation", as
     assertEquals(invalidationSettled, true);
   } finally {
     releaseDelete();
-    cacheRegistry.deleteRedisKeysForProject = originalDeleteRedisKeysForProject;
+    cacheRegistry.deleteDistributedKeysForProject = originalDeleteDistributedKeysForProject;
   }
 });
 

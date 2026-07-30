@@ -164,10 +164,6 @@ function mergeConfigWithEnv(fileConfig: VeryfrontConfig, env: EnvironmentConfig)
     cache: {
       ...fileConfig.cache,
       dir: env.cacheDir || fileConfig.cache?.dir,
-      render: {
-        ...fileConfig.cache?.render,
-        redisUrl: env.redisUrl || fileConfig.cache?.render?.redisUrl,
-      },
     },
 
     dev: {

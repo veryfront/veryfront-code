@@ -19,13 +19,13 @@ import {
 } from "./validation.ts";
 
 export interface TracingTokenCacheOptions {
-  /** Span name prefix, e.g. "cache.redis" produces "cache.redis.get". */
+  /** Span name prefix, e.g. "cache.extension" produces "cache.extension.get". */
   spanPrefix?: string;
   /** Whether closing this wrapper also closes the wrapped cache. */
   closeInner?: boolean;
 }
 
-const DEFAULT_SPAN_PREFIX = "cache.redis";
+const DEFAULT_SPAN_PREFIX = "cache.extension";
 const MAX_SPAN_PREFIX_CODE_UNITS = 128;
 const SPAN_PREFIX_PATTERN = /^[a-z][a-z0-9_.-]*$/u;
 

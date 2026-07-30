@@ -6,6 +6,10 @@ export type { BackendConfig, Lock, WorkflowBackend, WorkflowRunUpdate } from "./
 export { hasEventSupport, hasLockSupport, hasQueueSupport } from "./types.ts";
 
 export { MemoryBackend } from "./memory.ts";
-
-export { RedisBackend } from "./redis.ts";
-export type { RedisBackendConfig, RedisRetentionDrainResult } from "./redis.ts";
+export {
+  createDistributedWorkflowBackend,
+  createDistributedWorkflowWorkerResources,
+  type DistributedWorkflowBackendOptions,
+  type DistributedWorkflowWorkerEnvironment,
+  type DistributedWorkflowWorkerResources,
+} from "./distributed.ts";

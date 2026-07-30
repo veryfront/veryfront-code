@@ -38,7 +38,6 @@ export interface EnvironmentConfig {
 
   experimentalRsc: boolean;
 
-  redisUrl: string | undefined;
   cacheDir: string | undefined;
   disableLruInterval: boolean;
 
@@ -178,7 +177,6 @@ function readEnvSnapshot(
 
     experimentalRsc: readEnv("VERYFRONT_EXPERIMENTAL_RSC") === "1",
 
-    redisUrl: readEnv("REDIS_URL") || undefined,
     cacheDir: readEnv("VERYFRONT_CACHE_DIR") || readEnv("VF_CACHE_DIR") || undefined,
     disableLruInterval: readEnv("VF_DISABLE_LRU_INTERVAL") === "1",
 

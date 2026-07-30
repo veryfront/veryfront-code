@@ -5,7 +5,7 @@ export const MAX_REPOSITORY_IDENTITY_CODE_UNITS = 32 * 1024;
  * Maximum composed repository cache-key size.
  *
  * This matches the strictest general cache backend limit so a key accepted by
- * the repository layer remains portable across memory, disk, API, and Redis
+ * the repository layer remains portable across memory, disk, API, and extension-backed
  * backends.
  */
 export const MAX_REPOSITORY_CACHE_KEY_CODE_UNITS = 64 * 1024;

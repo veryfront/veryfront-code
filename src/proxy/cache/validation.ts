@@ -240,7 +240,7 @@ export function snapshotTokenCacheStats(value: unknown): CacheStats {
     typeof size !== "number" ||
     !Number.isSafeInteger(size) ||
     size < 0 ||
-    (type !== "memory" && type !== "redis")
+    (type !== "memory" && type !== "extension")
   ) {
     throw new TypeError("Token cache returned invalid statistics");
   }

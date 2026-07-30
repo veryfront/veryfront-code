@@ -174,23 +174,23 @@ export async function invalidateProjectCaches(
     }
   }
 
-  const redisProjectIdentity = {
+  const distributedProjectIdentity = {
     projectId,
     projectSlug: realProjectSlug,
   };
   await runPhase("distributed registry cache", async () => {
     if (environment) {
-      await cacheRegistry.deleteRedisKeysForProjectEnvironment(
-        redisProjectIdentity,
+      await cacheRegistry.deleteDistributedKeysForProjectEnvironment(
+        distributedProjectIdentity,
         environment,
       );
     } else {
-      await cacheRegistry.deleteRedisKeysForProject(redisProjectIdentity);
+      await cacheRegistry.deleteDistributedKeysForProject(distributedProjectIdentity);
     }
   });
 
   if (failures.length > 0) {
-    throw new ProjectCacheInvalidationError(redisProjectIdentity, failures);
+    throw new ProjectCacheInvalidationError(distributedProjectIdentity, failures);
   }
 
   logger.debug("✓ Per-project cache invalidation complete", {

@@ -3,7 +3,7 @@
  *
  * These types enforce compile-time safety for cache path handling:
  * - LocalModuleCode: Has local file:// paths, ready to execute
- * - PortableModuleCode: Has __VF_CACHE_DIR__ tokens, safe for Redis
+ * - PortableModuleCode: Has __VF_CACHE_DIR__ tokens, safe for shared storage
  *
  * The type system prevents accidental mixing of tokenized/detokenized code.
  *

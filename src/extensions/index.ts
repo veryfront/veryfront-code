@@ -65,6 +65,13 @@ export { auditCapabilities, formatCapabilities, mapToDenoPermissions } from "./c
 // Recommendations
 export { getRecommendation } from "./recommendations.ts";
 
+// Provider-neutral distributed infrastructure
+export {
+  captureDistributedRuntimeProvider,
+  type DistributedRuntimeProvider,
+  DistributedRuntimeProviderName,
+} from "./distributed/index.ts";
+
 // Errors
 export {
   CIRCULAR_DEPENDENCY_ERROR,

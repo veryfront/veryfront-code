@@ -187,7 +187,7 @@ export const RSC_MANIFEST_CACHE_TTL_MS = 5000;
 
 export const SERVER_ACTION_DEFAULT_TTL_SEC = MINUTES_PER_HOUR * SECONDS_PER_MINUTE;
 
-// Distributed cache TTL (Redis/API)
+// Distributed cache TTL
 // Production: longer TTLs (release content is immutable)
 // Preview: shorter TTLs (branch content changes frequently)
 

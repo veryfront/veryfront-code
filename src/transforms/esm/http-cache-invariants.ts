@@ -26,7 +26,7 @@ const logger = rendererLogger.component("http-cache");
 
 /**
  * Portable cache directory token for cross-environment compatibility.
- * Absolute file:// paths are replaced with this token before storing in Redis.
+ * Absolute file:// paths are replaced with this token before shared-cache storage.
  */
 export { CACHE_DIR_TOKEN };
 

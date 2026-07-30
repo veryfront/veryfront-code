@@ -3,7 +3,7 @@ import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { MAX_CACHE_TTL_SECONDS } from "../backends/ttl.ts";
 
 export const getCacheBackendTypeSchema = defineSchema((v) =>
-  v.enum(["memory", "redis", "api", "disk"])
+  v.enum(["memory", "distributed", "api", "disk"])
 );
 
 export const getCacheSetBatchEntrySchema = defineSchema((v) =>
@@ -18,6 +18,5 @@ export const getCacheSetBatchEntrySchema = defineSchema((v) =>
 export type CacheBackendType = InferSchema<ReturnType<typeof getCacheBackendTypeSchema>>;
 export type CacheSetBatchEntry = InferSchema<ReturnType<typeof getCacheSetBatchEntrySchema>>;
 
-// Backward compat aliases
 export const CacheBackendTypeSchema = lazySchema(getCacheBackendTypeSchema);
 export const CacheSetBatchEntrySchema = lazySchema(getCacheSetBatchEntrySchema);

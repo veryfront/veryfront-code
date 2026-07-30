@@ -46,7 +46,6 @@
     "cycle-sensitive:src/platform/adapters/fs/veryfront/retry.ts -> #veryfront/utils",
     "cycle-sensitive:src/platform/adapters/fs/veryfront/stat-operations.ts -> #veryfront/errors",
     "cycle-sensitive:src/platform/adapters/fs/veryfront/stat-operations.ts -> #veryfront/utils",
-    "cycle-sensitive:src/platform/adapters/redis/modules.ts -> #veryfront/errors",
     "cycle-sensitive:src/platform/adapters/registry.ts -> #veryfront/errors",
     "cycle-sensitive:src/platform/adapters/registry.ts -> #veryfront/utils",
     "cycle-sensitive:src/platform/adapters/runtime/bun/filesystem-adapter.ts -> #veryfront/utils",

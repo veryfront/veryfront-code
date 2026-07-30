@@ -13,7 +13,7 @@ import type {
   SourceIntegrationPolicyConfig,
   SourceIntegrationRestriction,
 } from "#veryfront/integrations/source-policy.ts";
-import { validateLegacyRenderRedisCacheKeyPrefix } from "#veryfront/cache/backends/redis-keyspace.ts";
+import { validateRenderDistributedCacheKeyPrefix } from "#veryfront/cache/backends/distributed-keyspace.ts";
 import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 import { MAX_PORT, MIN_PORT } from "#veryfront/utils/constants/network.ts";
 import {
@@ -77,9 +77,9 @@ function isBoundedSourceIntegrationAllowlist(
   return true;
 }
 
-function isSafeRenderRedisKeyPrefix(prefix: string): boolean {
+function isSafeDistributedRenderCacheKeyPrefix(prefix: string): boolean {
   try {
-    validateLegacyRenderRedisCacheKeyPrefix(prefix);
+    validateRenderDistributedCacheKeyPrefix(prefix);
     return true;
   } catch {
     return false;
@@ -393,15 +393,14 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
             .optional(),
           render: v
             .object({
-              type: v.enum(["memory", "filesystem", "kv", "redis"]).optional(),
+              type: v.enum(["memory", "filesystem", "kv", "distributed"]).optional(),
               ttl: v.number().positive().max(MAX_CACHE_TTL_MILLISECONDS).optional(),
               maxEntries: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
               kvPath: v.string().optional(),
-              redisUrl: v.string().optional(),
-              /** Redis namespace; an omitted trailing colon is normalized at store construction. */
-              redisKeyPrefix: v.string().refine(
-                isSafeRenderRedisKeyPrefix,
-                "Expected a non-blank, bounded Redis key prefix without control characters",
+              /** Namespace owned by the selected distributed cache provider. */
+              keyPrefix: v.string().refine(
+                isSafeDistributedRenderCacheKeyPrefix,
+                "Expected a bounded distributed render-cache prefix below vf:cache:",
               ).optional(),
               /**
                * Explicit contract for caching SSR responses that execute
@@ -431,12 +430,10 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               (config) => {
                 const type = config.type ?? "memory";
                 if (type === "memory" || type === "filesystem") {
-                  return config.kvPath === undefined && config.redisUrl === undefined &&
-                    config.redisKeyPrefix === undefined;
+                  return config.kvPath === undefined && config.keyPrefix === undefined;
                 }
                 if (type === "kv") {
-                  return config.maxEntries === undefined && config.redisUrl === undefined &&
-                    config.redisKeyPrefix === undefined;
+                  return config.maxEntries === undefined && config.keyPrefix === undefined;
                 }
                 return config.maxEntries === undefined && config.kvPath === undefined;
               },

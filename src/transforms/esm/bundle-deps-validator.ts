@@ -58,7 +58,7 @@ export function extractBundleDeps(code: string): Array<{ path: string; hash: str
 
 /**
  * Validate and recover all bundle dependencies (including transitive) to local disk.
- * Used before using Redis-cached bundles - if deps are missing and
+ * Used before using shared-cache bundles - if deps are missing and
  * unrecoverable, we should re-fetch from network instead of using the cache.
  */
 export async function validateBundleDepsExist(
@@ -130,7 +130,7 @@ export async function validateBundleDepsExist(
       return false;
     }
 
-    logger.debug("Recovering missing deps from Redis (batch)", {
+    logger.debug("Recovering missing deps from shared cache (batch)", {
       count: missingDeps.length,
       hashes: missingDeps.map((d) => d.hash),
     });
@@ -140,7 +140,7 @@ export async function validateBundleDepsExist(
     for (const { hash } of missingDeps) {
       const localCode = codes.get(hash);
       if (!localCode) {
-        logger.debug("Dep cannot be recovered from Redis", { hash });
+        logger.debug("Dep cannot be recovered from shared cache", { hash });
         return false;
       }
 
@@ -159,7 +159,7 @@ export async function validateBundleDepsExist(
       try {
         await fs.mkdir(absoluteCacheDir, { recursive: true });
         await fs.writeTextFile(canonicalPath, code);
-        logger.debug("Recovered dep from Redis", { hash });
+        logger.debug("Recovered dep from shared cache", { hash });
 
         for (const dep of extractBundleDeps(code)) {
           if (!seen.has(dep.hash)) pending.push(dep);

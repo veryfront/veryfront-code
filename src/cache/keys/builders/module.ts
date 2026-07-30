@@ -1,7 +1,7 @@
 /********************************************************************************
  * Module/SSR/Transform Cache Key Builders
  *
- * Cache key builders for module resolution, SSR modules, Redis keys,
+ * Cache key builders for module resolution, SSR modules, distributed keys,
  * and transform caching with dependency tracking.
  *
  * @module core/cache/keys/builders/module
@@ -64,15 +64,15 @@ export function buildSSRModuleCacheKey(
   );
 }
 
-export function buildRedisSSRModuleKey(key: string): string {
+export function buildDistributedSSRModuleKey(key: string): string {
   return `${CacheKeyPrefix.SSR_MODULE}${key}`;
 }
 
-export function buildRedisFileCacheKey(key: string): string {
+export function buildDistributedFileCacheKey(key: string): string {
   return `${CacheKeyPrefix.FILE_CACHE}${key}`;
 }
 
-export function buildRedisTransformKey(key: string): string {
+export function buildDistributedTransformKey(key: string): string {
   return `${CacheKeyPrefix.TRANSFORM}${key}`;
 }
 

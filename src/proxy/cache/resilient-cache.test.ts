@@ -89,7 +89,7 @@ function entry(token: string): TokenCacheEntry {
 
 describe("ResilientCache", () => {
   it("reads from primary and writes through both backends", async () => {
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     const cache = new ResilientCache(primary, fallback);
 
@@ -103,7 +103,7 @@ describe("ResilientCache", () => {
   });
 
   it("treats an already expired write as a deletion on both backends", async () => {
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     primary.seed("key", entry("current"));
     fallback.seed("key", entry("current"));
@@ -131,7 +131,7 @@ describe("ResilientCache", () => {
     const firstSetStarted = new Promise<void>((resolve) => {
       markFirstSetStarted = resolve;
     });
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     primary.setGate = setGate;
     primary.onSet = markFirstSetStarted;
@@ -162,7 +162,7 @@ describe("ResilientCache", () => {
     const firstSetStarted = new Promise<void>((resolve) => {
       markFirstSetStarted = resolve;
     });
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     primary.setGate = setGate;
     primary.onSet = markFirstSetStarted;
@@ -187,7 +187,7 @@ describe("ResilientCache", () => {
   });
 
   it("counts only consecutive primary read failures", async () => {
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     fallback.seed("key", entry("fallback"));
     primary.seed("key", entry("primary"));
@@ -205,7 +205,7 @@ describe("ResilientCache", () => {
   });
 
   it("does not let best-effort statistics hide a read outage", async () => {
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     fallback.seed("key", entry("fallback"));
     primary.failures.add("get");
@@ -219,7 +219,7 @@ describe("ResilientCache", () => {
   });
 
   it("opens after consecutive read failures and skips primary while open", async () => {
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     fallback.seed("key", entry("fallback"));
     primary.failures.add("get");
@@ -247,7 +247,7 @@ describe("ResilientCache", () => {
     const probeStarted = new Promise<void>((resolve) => {
       markProbeStarted = resolve;
     });
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     primary.seed("key", entry("primary"));
     fallback.seed("key", entry("fallback"));
@@ -279,7 +279,7 @@ describe("ResilientCache", () => {
 
   it("replays a failed invalidation before trusting recovered primary data", async () => {
     let now = 0;
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     primary.seed("key", entry("stale"));
     fallback.seed("key", entry("stale"));
@@ -305,7 +305,7 @@ describe("ResilientCache", () => {
 
   it("replays the owned snapshot of a write that failed on primary", async () => {
     let now = 0;
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     primary.failures.add("set");
     const cache = new ResilientCache(primary, fallback, {
@@ -326,7 +326,7 @@ describe("ResilientCache", () => {
 
   it("replays a failed clear before trusting recovered primary data", async () => {
     let now = 0;
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     primary.seed("stale", entry("stale"));
     fallback.seed("stale", entry("stale"));
@@ -349,7 +349,7 @@ describe("ResilientCache", () => {
   });
 
   it("keeps the recovery journal bounded after repeated overflow", async () => {
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     primary.failures.add("set");
     const cache = new ResilientCache(primary, fallback, {
@@ -369,7 +369,7 @@ describe("ResilientCache", () => {
 
   it("keeps the circuit open when reconciliation fails", async () => {
     let now = 0;
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     fallback.seed("key", entry("fallback"));
     primary.failures.add("delete");
@@ -389,7 +389,7 @@ describe("ResilientCache", () => {
   });
 
   it("closes both backends and reports teardown failures", async () => {
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     const fallback = new FakeCache("memory");
     primary.failures.add("close");
     const cache = new ResilientCache(primary, fallback);
@@ -405,7 +405,7 @@ describe("ResilientCache", () => {
   });
 
   it("validates construction policy", () => {
-    const primary = new FakeCache("redis");
+    const primary = new FakeCache("extension");
     assertThrows(
       () => new ResilientCache(primary, primary),
       TypeError,

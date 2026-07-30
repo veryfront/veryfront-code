@@ -398,7 +398,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         if (!(await exists(cachePath))) {
           throw FILE_NOT_FOUND.create({
             detail:
-              `[HTTP-CACHE] INVARIANT VIOLATION: Redis recovery write succeeded but file does not exist: ${cachePath}`,
+              `[HTTP-CACHE] INVARIANT VIOLATION: shared-cache recovery write succeeded but file does not exist: ${cachePath}`,
           });
         }
 

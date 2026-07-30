@@ -2,8 +2,8 @@
  * HttpBundleCache wrapper for type-safe distributed cache operations.
  *
  * This wrapper enforces the transformation gateway pattern:
- * - All code stored in Redis is tokenized (PortableModuleCode)
- * - All code retrieved from Redis is detokenized (LocalModuleCode)
+ * - All code stored in a shared backend is tokenized (PortableModuleCode)
+ * - All code retrieved from a shared backend is detokenized (LocalModuleCode)
  *
  * By centralizing cache operations here, we eliminate the class of bugs
  * where code paths forget to tokenize/detokenize.

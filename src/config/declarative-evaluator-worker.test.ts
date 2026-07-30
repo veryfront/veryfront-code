@@ -242,8 +242,7 @@ Deno.test("declarative config worker preserves hosted cache policy failures", as
         `export default {
           cache: {
             render: {
-              type: "redis",
-              redisUrl: "redis://cache.invalid",
+              type: "distributed",
             },
           },
         };`,
@@ -259,7 +258,7 @@ Deno.test("declarative config worker preserves hosted cache policy failures", as
       ],
       [
         `export default {
-          cache: { bundleManifest: { type: "redis" } },
+          cache: { bundleManifest: { type: "distributed" } },
         };`,
         "hosted-bundle-manifest-backend",
       ],

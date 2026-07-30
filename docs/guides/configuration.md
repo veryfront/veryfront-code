@@ -209,10 +209,9 @@ through an explicit route-specific mechanism instead.
 defineConfig({
   cache: {
     render: {
-      type: "redis",
+      type: "distributed",
       ttl: 300_000,
-      redisUrl: "redis://127.0.0.1:6379",
-      redisKeyPrefix: "my-app",
+      keyPrefix: "vf:cache:my-app-render:",
       public: {
         enabled: true,
         varyHeaders: ["accept-language"],
@@ -222,27 +221,27 @@ defineConfig({
 });
 ```
 
-| Option               | Contract                                                                                                                                                                                                                    |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `type`               | One of `memory`, `filesystem`, `kv`, or `redis`.                                                                                                                                                                            |
-| `ttl`                | Positive finite milliseconds. Zero, negative, and non-finite values are rejected.                                                                                                                                           |
-| `maxEntries`         | Maximum entry count for the memory store.                                                                                                                                                                                   |
-| `kvPath`             | Storage path used by the KV store.                                                                                                                                                                                          |
-| `redisUrl`           | Redis connection URL used by the Redis store.                                                                                                                                                                               |
-| `redisKeyPrefix`     | Non-blank Redis namespace prefix. A missing trailing `:` is added automatically. The canonical prefix is at most 512 UTF-8 bytes and cannot contain control characters or overlap another registered or reserved namespace. |
-| `public.enabled`     | Explicitly permits shared caching for production SSR requests. It is disabled by default; authenticated requests, cookie-bearing requests, previews, streams, and Studio variants still bypass it.                          |
-| `public.varyHeaders` | Header names whose values affect public HTML. List every header read by project data hooks that can change the response. The request origin and configured query-parameter identity are included automatically.             |
+The `distributed` selection requires a `DistributedRuntimeProvider` extension
+such as `@veryfront/ext-redis` to be installed and explicitly activated in the
+standalone project's extension list. Provider connection settings do not
+activate the extension, and core does not fall back to memory when the selected
+provider is missing or unavailable.
+
+| Option               | Contract                                                                                                                                                                                                        |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`               | One of `memory`, `filesystem`, `kv`, or `distributed`.                                                                                                                                                          |
+| `ttl`                | Positive finite milliseconds. Zero, negative, and non-finite values are rejected.                                                                                                                               |
+| `maxEntries`         | Maximum entry count for the memory store.                                                                                                                                                                       |
+| `kvPath`             | Storage path used by the KV store.                                                                                                                                                                              |
+| `keyPrefix`          | Distributed namespace below `vf:cache:`. It must end in `:`, is limited to 512 UTF-8 bytes, and cannot contain control characters or overlap another registered or reserved namespace.                          |
+| `public.enabled`     | Explicitly permits shared caching for production SSR requests. It is disabled by default; authenticated requests, cookie-bearing requests, previews, streams, and Studio variants still bypass it.              |
+| `public.varyHeaders` | Header names whose values affect public HTML. List every header read by project data hooks that can change the response. The request origin and configured query-parameter identity are included automatically. |
 
 Enable `public` only when the rendered route is safe for unrelated visitors to
 share. This setting is a project contract: if a data hook reads a request header
 that changes HTML, that header must appear in `varyHeaders`. Veryfront stores a
 nonce-free canonical document and injects the current response's CSP nonce only
 after the cache lookup, so nonces are never shared between requests.
-
-For compatibility, an existing value such as `redisKeyPrefix: "my-app"` remains
-valid and is canonicalized to `my-app:`. Redis entries written by older versions
-with verbatim, undelimited keys are not reused after this normalization and
-expire according to their existing Redis TTL.
 
 Related cache TTL fields have separate contracts:
 
@@ -451,8 +450,8 @@ Shared hosted runtimes allow only the in-memory render cache. Hosted config can
 set `cache.render.type` to `memory` and use `ttl`, `public`, and a
 `maxEntries` value from 1 through 500, along with `cache.queryParams` and the
 current memory-only bundle-manifest controls. It cannot set `cache.dir`, select
-`filesystem`, `kv`, or `redis`, provide backend targets such as `kvPath`,
-`redisUrl`, or `redisKeyPrefix`, or select an unreviewed future cache family.
+`filesystem`, `kv`, or `distributed`, provide backend targets such as `kvPath`
+or `keyPrefix`, or select an unreviewed future cache family.
 The cache-family, bundle-manifest, and render-option allowlists fail closed
 before project config is merged. Trusted local and standalone deployments can
 use every render-cache backend documented above.

@@ -6,7 +6,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseCachePayload } from "../cache-payload.ts";
 import type { CachePayload } from "../types.ts";
 import { APICacheStore } from "./api-store.ts";
-import { escapeRedisCacheGlobLiteral } from "#veryfront/cache/backends/redis-keyspace.ts";
+import { escapeCacheGlobLiteral } from "#veryfront/cache/backends/distributed-keyspace.ts";
 
 function payload(html: string, overrides: Partial<CachePayload> = {}): CachePayload {
   return {
@@ -398,7 +398,7 @@ describe("rendering/cache/stores/api-store", () => {
       await store.set("route:other", payload("keep"));
 
       assertEquals(await store.deleteByPrefix(prefix), 2);
-      assertEquals(backend.patterns.at(-1), `${escapeRedisCacheGlobLiteral(prefix)}*`);
+      assertEquals(backend.patterns.at(-1), `${escapeCacheGlobLiteral(prefix)}*`);
       assertEquals(backend.values.has(`${prefix}page`), false);
       assertEquals(backend.values.has("route:other"), true);
     });

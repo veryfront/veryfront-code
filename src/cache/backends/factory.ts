@@ -9,28 +9,34 @@ import {
   type TokenizingCacheGateway,
 } from "../tokenizing-gateway.ts";
 import { MemoryCacheBackend } from "./memory.ts";
-import { isRedisConfigured, RedisCacheBackend } from "./redis.ts";
 import { ApiCacheBackend } from "./api.ts";
 import { DiskCacheBackend } from "./disk.ts";
 import { getEnvValue } from "./helpers.ts";
+import { resolve as resolveExtensionContract } from "#veryfront/extensions/contracts.ts";
 import {
-  buildRedisCacheKeyPrefix,
-  RedisCacheNamespace,
-  type RedisCacheOwnershipMatcher,
-  registerOwnedRedisCacheNamespace,
-} from "./redis-keyspace.ts";
+  captureDistributedRuntimeProvider,
+  type DistributedRuntimeProvider,
+  DistributedRuntimeProviderName,
+} from "#veryfront/extensions/distributed/index.ts";
+import {
+  buildDistributedCacheKeyPrefix,
+  DistributedCacheNamespace,
+  type DistributedCacheOwnershipMatcher,
+  registerOwnedDistributedCacheNamespace,
+} from "./distributed-keyspace.ts";
 
 const logger = baseLogger.component("cache-backend");
 
 const DEFAULT_MEMORY_MAX_ENTRIES = 500;
 
-// Re-export gateway types for backward compatibility
+export type RuntimeCacheBackendSelection = "api" | "distributed" | "disk" | "memory";
+
 export type { CodeCacheGateway, TokenizingCacheGateway };
 
 export interface CacheBackendConfig {
   keyPrefix?: string;
   memoryMaxEntries?: number;
-  preferredBackend?: "api" | "redis" | "disk" | "memory";
+  preferredBackend?: "api" | "distributed" | "disk" | "memory";
   apiBaseUrl?: string;
   /** Maximum decoded JSON response body accepted from the API cache. */
   apiMaxResponseBytes?: number;
@@ -38,11 +44,11 @@ export interface CacheBackendConfig {
   projectRef?: string;
   circuitBreakerName?: string;
   /**
-   * Exact parser for project ownership in a configured Redis namespace.
+   * Exact parser for project ownership in a configured distributed namespace.
    * Without one, custom namespace keys are intentionally excluded from
-   * project-scoped Redis listing and deletion.
+   * project-scoped distributed listing and deletion.
    */
-  redisProjectOwnershipMatcher?: RedisCacheOwnershipMatcher;
+  distributedProjectOwnershipMatcher?: DistributedCacheOwnershipMatcher;
 }
 
 function isLocalDevelopmentApiUrl(value: string): boolean {
@@ -81,6 +87,24 @@ export function isDiskCacheConfigured(): boolean {
   return getEnv("VF_CACHE_BACKEND") === "disk" || !!getEnv("VF_DISK_CACHE_DIR");
 }
 
+/** Resolve and validate the process-level cache selection in one place. */
+export function getRuntimeCacheBackendSelection(): RuntimeCacheBackendSelection {
+  const selection = getEnv("VF_CACHE_BACKEND");
+  if (
+    selection !== undefined &&
+    selection !== "api" &&
+    selection !== "distributed" &&
+    selection !== "disk" &&
+    selection !== "memory"
+  ) {
+    throw new TypeError("VF_CACHE_BACKEND must be api, distributed, disk, or memory");
+  }
+  if (selection !== undefined) return selection;
+  if (isApiCacheAvailable()) return "api";
+  if (isDiskCacheConfigured()) return "disk";
+  return "memory";
+}
+
 export function createCacheBackend(config: CacheBackendConfig = {}): Promise<CacheBackend> {
   const {
     keyPrefix = "",
@@ -90,14 +114,17 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
     apiMaxResponseBytes,
     projectRef,
     circuitBreakerName,
-    redisProjectOwnershipMatcher,
+    distributedProjectOwnershipMatcher,
   } = config;
 
   return withSpan(
     SpanNames.CACHE_BACKEND_CREATE,
     async (span?: Span) => {
-      const shouldUseApi = preferredBackend === "api" ||
-        (!preferredBackend && isApiCacheAvailable());
+      const environmentSelection = preferredBackend === undefined
+        ? getRuntimeCacheBackendSelection()
+        : undefined;
+      const selectedBackend = preferredBackend ?? environmentSelection;
+      const shouldUseApi = selectedBackend === "api";
       if (shouldUseApi) {
         logger.debug("Using API backend (centralized cache)");
         span?.setAttribute("cache.backend.type", "api");
@@ -110,27 +137,33 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
         });
       }
 
-      const shouldUseRedis = preferredBackend === "redis" ||
-        (!preferredBackend && isRedisConfigured());
-      if (shouldUseRedis) {
-        const redisKeyPrefix = buildRedisCacheKeyPrefix(keyPrefix);
-        registerOwnedRedisCacheNamespace({
-          prefix: redisKeyPrefix,
-          matchProjectOwnership: redisProjectOwnershipMatcher,
+      const shouldUseDistributed = selectedBackend === "distributed";
+      if (shouldUseDistributed) {
+        const distributedKeyPrefix = buildDistributedCacheKeyPrefix(keyPrefix);
+        registerOwnedDistributedCacheNamespace({
+          prefix: distributedKeyPrefix,
+          matchProjectOwnership: distributedProjectOwnershipMatcher,
         });
-        const redisBackend = new RedisCacheBackend(redisKeyPrefix);
-        if (await redisBackend.initialize()) {
-          logger.debug("Using Redis backend");
-          span?.setAttribute("cache.backend.type", "redis");
-          return redisBackend;
+        const provider = captureDistributedRuntimeProvider(
+          resolveExtensionContract<DistributedRuntimeProvider>(
+            DistributedRuntimeProviderName,
+          ),
+        );
+        const distributedBackend = await provider.createCacheBackend({
+          keyPrefix: distributedKeyPrefix,
+        });
+        if (!distributedBackend || distributedBackend.type !== "distributed") {
+          throw new TypeError(
+            `${DistributedRuntimeProviderName} returned an invalid distributed cache backend`,
+          );
         }
-        if (preferredBackend === "redis") {
-          throw new Error("Explicit Redis cache backend could not be initialized");
-        }
+        logger.debug("Using distributed cache backend", { provider: provider.id });
+        span?.setAttribute("cache.backend.type", "distributed");
+        span?.setAttribute("cache.backend.provider", provider.id);
+        return distributedBackend;
       }
 
-      const shouldUseDisk = preferredBackend === "disk" ||
-        (!preferredBackend && isDiskCacheConfigured());
+      const shouldUseDisk = selectedBackend === "disk";
       if (shouldUseDisk) {
         const diskDir = getEnv("VF_DISK_CACHE_DIR") || undefined;
         logger.debug("Using disk backend");
@@ -150,56 +183,30 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
 }
 
 export function isDistributedBackend(backend: CacheBackend): boolean {
-  return backend.type === "redis" || backend.type === "api";
+  return backend.type === "distributed" || backend.type === "api";
 }
-
-const DISTRIBUTED_CACHE_RETRY_MS = 30_000;
 
 export function createDistributedCacheAccessor(
   factory: () => Promise<CacheBackend>,
   name: string,
 ): () => Promise<CacheBackend | null> {
   let backend: CacheBackend | null | undefined;
-  let lastFailureTime: number | undefined;
-
   let inflight: Promise<CacheBackend | null> | null = null;
 
   return () => {
-    if (backend !== undefined) {
-      if (
-        backend === null && lastFailureTime !== undefined &&
-        Date.now() - lastFailureTime >= DISTRIBUTED_CACHE_RETRY_MS
-      ) {
-        backend = undefined;
-        logger.debug(`[${name}] Retrying distributed cache initialization after failure`);
-      }
-
-      if (backend !== undefined) return Promise.resolve(backend);
-    }
+    if (backend !== undefined) return Promise.resolve(backend);
 
     if (!inflight) {
       inflight = (async () => {
-        try {
-          const b = await factory();
-          if (!isDistributedBackend(b)) {
-            backend = null;
-            lastFailureTime = Date.now();
-            logger.debug(`[${name}] Distributed cache degraded to memory; retry scheduled`);
-            return null;
-          }
-
-          backend = b;
-          lastFailureTime = undefined;
-          logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
-          return b;
-        } catch (error) {
-          logger.debug(`[${name}] Failed to initialize distributed cache`, {
-            errorName: error instanceof Error ? error.name : typeof error,
-          });
+        const candidate = await factory();
+        if (!isDistributedBackend(candidate)) {
           backend = null;
-          lastFailureTime = Date.now();
+          logger.debug(`[${name}] Distributed cache is not selected`);
           return null;
         }
+        backend = candidate;
+        logger.debug(`[${name}] Distributed cache initialized`, { type: candidate.type });
+        return candidate;
       })().finally(() => {
         inflight = null;
       });
@@ -210,18 +217,18 @@ export function createDistributedCacheAccessor(
 }
 
 export const CacheBackends = {
-  transform: () => createCacheBackend({ keyPrefix: RedisCacheNamespace.TRANSFORM }),
+  transform: () => createCacheBackend({ keyPrefix: DistributedCacheNamespace.TRANSFORM }),
   file: () => createCacheBackend(),
-  module: () => createCacheBackend({ keyPrefix: RedisCacheNamespace.MODULE }),
-  render: () => createCacheBackend({ keyPrefix: RedisCacheNamespace.RENDER }),
+  module: () => createCacheBackend({ keyPrefix: DistributedCacheNamespace.MODULE }),
+  render: () => createCacheBackend({ keyPrefix: DistributedCacheNamespace.RENDER }),
   userKv: () => createCacheBackend({ keyPrefix: "kv", preferredBackend: "api" }),
   httpModule: () =>
     createCacheBackend({
-      keyPrefix: RedisCacheNamespace.HTTP_MODULE,
+      keyPrefix: DistributedCacheNamespace.HTTP_MODULE,
       circuitBreakerName: "api-cache-http",
     }),
-  ssrModule: () => createCacheBackend({ keyPrefix: RedisCacheNamespace.SSR_MODULE }),
-  projectCSS: () => createCacheBackend({ keyPrefix: RedisCacheNamespace.PROJECT_CSS }),
+  ssrModule: () => createCacheBackend({ keyPrefix: DistributedCacheNamespace.SSR_MODULE }),
+  projectCSS: () => createCacheBackend({ keyPrefix: DistributedCacheNamespace.PROJECT_CSS }),
 
   /**
    * Create a TokenizingCacheGateway for code storage.
@@ -262,5 +269,4 @@ export function createDistributedCodeCacheAccessor(
   };
 }
 
-// Re-export createTokenizingGateway for convenience
 export { createTokenizingGateway };

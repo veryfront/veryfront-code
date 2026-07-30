@@ -8,6 +8,11 @@ import {
 } from "./factory.ts";
 import { DiskCacheBackend } from "./disk.ts";
 import { MemoryCacheBackend } from "./memory.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  type DistributedRuntimeProvider,
+  DistributedRuntimeProviderName,
+} from "#veryfront/extensions/distributed/index.ts";
 
 Deno.test("factory: isDiskCacheConfigured", async (t) => {
   await t.step("returns false when no env vars set", () => {
@@ -89,22 +94,17 @@ Deno.test("factory: isDistributedBackend", async (t) => {
   });
 });
 
-Deno.test("factory: explicit Redis selection fails closed when unavailable", async () => {
-  const originalUrl = Deno.env.get("REDIS_URL");
-  const originalVeryfrontUrl = Deno.env.get("VERYFRONT_REDIS_URL");
-  Deno.env.delete("REDIS_URL");
-  Deno.env.delete("VERYFRONT_REDIS_URL");
+Deno.test("factory: explicit distributed selection fails closed when unavailable", async () => {
+  const previous = tryResolve<DistributedRuntimeProvider>(DistributedRuntimeProviderName);
+  unregister(DistributedRuntimeProviderName);
   try {
     await assertRejects(
-      () => createCacheBackend({ preferredBackend: "redis" }),
+      () => createCacheBackend({ preferredBackend: "distributed" }),
       Error,
-      "could not be initialized",
+      'Missing extension for contract "DistributedRuntimeProvider"',
     );
   } finally {
-    if (originalUrl !== undefined) Deno.env.set("REDIS_URL", originalUrl);
-    if (originalVeryfrontUrl !== undefined) {
-      Deno.env.set("VERYFRONT_REDIS_URL", originalVeryfrontUrl);
-    }
+    if (previous !== undefined) register(DistributedRuntimeProviderName, previous);
   }
 });
 

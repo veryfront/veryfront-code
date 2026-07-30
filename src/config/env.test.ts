@@ -18,7 +18,6 @@ import {
   getOpenAIEnvConfig,
   getOtelMetricsConfig,
   getOtelTracingConfig,
-  getRedisUrlEnv,
   getSsrMaxConcurrentTransformsEnv,
   getV8FlagsEnv,
   getVeryfrontVersion,
@@ -54,7 +53,6 @@ const BASE_MOCK_ENV: EnvironmentConfig = {
   serverStartTime: undefined,
   vcr: undefined,
   experimentalRsc: false,
-  redisUrl: undefined,
   cacheDir: undefined,
   disableLruInterval: false,
   appUrl: undefined,
@@ -125,19 +123,6 @@ describe("config/env", () => {
       assertEquals(
         getSsrMaxConcurrentTransformsEnv(50, createMockEnv({ ssrMaxConcurrentTransforms: 0 })),
         0,
-      );
-    });
-  });
-
-  describe("getRedisUrlEnv", () => {
-    it("should return undefined by default", () => {
-      assertEquals(getRedisUrlEnv(createMockEnv()), undefined);
-    });
-
-    it("should return url when set", () => {
-      assertEquals(
-        getRedisUrlEnv(createMockEnv({ redisUrl: "redis://localhost:6379" })),
-        "redis://localhost:6379",
       );
     });
   });

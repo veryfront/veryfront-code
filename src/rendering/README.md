@@ -94,7 +94,8 @@ The adjacent modules retain these boundaries:
 - `createRenderer`, `VeryfrontRenderer`, `RendererOptions`, `RenderOptions`,
   `RenderResult`, and `PageDataResponse`.
 - Chunk analysis and manifest helpers.
-- Cache coordination and the API, filesystem, KV, memory, and Redis stores.
+- Cache coordination; core API, filesystem, KV, and memory stores; and the
+  provider-neutral distributed-store factory.
 - Low-level layout helpers.
 - Snippet rendering helpers.
 

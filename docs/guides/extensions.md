@@ -32,11 +32,11 @@ Add extension factories to `veryfront.config.ts`:
 
 ```ts
 import { defineConfig } from "veryfront";
-import extRedis from "@veryfront/ext-cache-redis";
+import extRedis from "@veryfront/ext-redis";
 
 export default defineConfig({
   extensions: [
-    extRedis({ url: "redis://localhost:6379", prefix: "myapp:" }),
+    extRedis(),
   ],
 });
 ```
@@ -67,7 +67,8 @@ If the extension factory throws during setup, the dev server reports the setup e
 | Area          | Example package                              | Contract family   |
 | ------------- | -------------------------------------------- | ----------------- |
 | Auth          | `@veryfront/ext-auth-jwt`                    | `AuthProvider`    |
-| Cache         | `@veryfront/ext-cache-redis`                 | `CacheStore`      |
+| Proxy cache   | `@veryfront/ext-cache-redis`                 | `TokenCacheStore` |
+| Distributed infrastructure | `@veryfront/ext-redis`           | `DistributedRuntimeProvider` |
 | Content       | `@veryfront/ext-content-mdx`                 | content parsing   |
 | CSS           | `@veryfront/ext-css-tailwind`                | CSS processing    |
 | Database      | `@veryfront/ext-db-sqlite`                   | database access   |

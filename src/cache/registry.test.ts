@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   CacheRegistry,
   cacheRegistry,
+  type CacheRegistryDistributedProvider,
   extractProjectIdFromKey,
   isKeyForProject,
   isKeyForProjectEnvironment,
@@ -29,18 +30,41 @@ import {
   structuredCacheStoreProjectOwnership,
 } from "./registry.ts";
 import {
-  buildRedisCacheKeyPrefix,
-  registerOwnedRedisCacheKeyPrefix,
-  registerOwnedRedisCacheNamespace,
-} from "./backends/redis-keyspace.ts";
+  buildDistributedCacheKeyPrefix,
+  registerOwnedDistributedCacheKeyPrefix,
+  registerOwnedDistributedCacheNamespace,
+} from "./backends/distributed-keyspace.ts";
 import {
   buildFileCacheKeyPrefix,
   buildFileOperationCacheKey,
   buildRenderCachePrefix,
   buildSSRModuleCacheKey,
 } from "./keys/index.ts";
-import { buildReleaseModuleResponseCacheKey } from "#veryfront/modules/server/module-response-cache.ts";
-import { createProjectCSSRequestContext } from "#veryfront/html/styles-builder/project-css-cache.ts";
+
+interface FakeDistributedProviderOptions {
+  readonly configured?: boolean;
+  readonly keysByPrefix?: ReadonlyMap<string, readonly string[]>;
+  readonly truncatedPrefixes?: ReadonlySet<string>;
+  readonly onDelete?: (keys: readonly string[]) => number | Promise<number>;
+  readonly onList?: (prefix: string, limit: number) => void;
+}
+
+function createDistributedProvider(
+  options: FakeDistributedProviderOptions = {},
+): CacheRegistryDistributedProvider {
+  return {
+    isConfigured: () => options.configured ?? true,
+    listKeys: ({ prefix, limit }) => {
+      options.onList?.(prefix, limit);
+      const keys = [...(options.keysByPrefix?.get(prefix) ?? [])].slice(0, limit);
+      return Promise.resolve({
+        keys,
+        truncated: options.truncatedPrefixes?.has(prefix) ?? false,
+      });
+    },
+    deleteKeys: (keys) => Promise.resolve(options.onDelete?.(keys) ?? keys.length),
+  };
+}
 
 describe("MapCacheStore", () => {
   it("should expose name", () => {
@@ -151,17 +175,17 @@ describe("isKeyForProject", () => {
     assertEquals(isKeyForProject("v1:project123:path", "project123"), true);
   });
 
-  it("should match projectId in redis-prefixed keys", () => {
+  it("should match projectId in distributed-cache namespaces", () => {
     assertEquals(
-      isKeyForProject("veryfront:ssr-module:v1:project123:path", "project123"),
+      isKeyForProject("vf:cache:ssr-module:v1:project123:path", "project123"),
       true,
     );
     assertEquals(
-      isKeyForProject("vf:ssr-module:v1:project123:release-r1:path", "project123"),
+      isKeyForProject("vf:cache:ssr-module:v1:project123:release-r1:path", "project123"),
       true,
     );
     assertEquals(
-      isKeyForProject("vf:cache:file:branch:project123:main:path", "project123"),
+      isKeyForProject("vf:cache:default:file:branch:project123:main:path", "project123"),
       true,
     );
   });
@@ -348,11 +372,11 @@ describe("isKeyForProjectEnvironment", () => {
     );
   });
 
-  // Redis-prefixed keys (veryfront:ssr-module:, etc.)
-  it("should strip veryfront:ssr-module: prefix", () => {
+  // Canonical distributed-cache namespaces.
+  it("should strip the SSR module namespace", () => {
     assertEquals(
       isKeyForProjectEnvironment(
-        "veryfront:ssr-module:v2:proj1:release-abc:file",
+        "vf:cache:ssr-module:v2:proj1:release-abc:file",
         "proj1",
         "production",
       ),
@@ -360,10 +384,10 @@ describe("isKeyForProjectEnvironment", () => {
     );
   });
 
-  it("should strip veryfront:file-cache: prefix", () => {
+  it("should strip the default file-cache namespace", () => {
     assertEquals(
       isKeyForProjectEnvironment(
-        "veryfront:file-cache:file:branch:proj1:main:path",
+        "vf:cache:default:file:branch:proj1:main:path",
         "proj1",
         "preview",
       ),
@@ -371,10 +395,10 @@ describe("isKeyForProjectEnvironment", () => {
     );
   });
 
-  it("should strip veryfront:transform: prefix", () => {
+  it("should strip the transform namespace", () => {
     assertEquals(
       isKeyForProjectEnvironment(
-        "veryfront:transform:proj1:production:key:v1",
+        "vf:cache:transform:proj1:production:key:v1",
         "proj1",
         "production",
       ),
@@ -662,563 +686,286 @@ describe("CacheRegistry", () => {
     assertEquals(deleted, 0);
   });
 
-  it("should scan every Redis page when deleting project keys", async () => {
-    const deletedBatches: string[][] = [];
-    let targetPrefixScans = 0;
-    const targetKey = "veryfront:ssr-module:v1:target:release-r1:file.ts";
-    const registry = new CacheRegistry({
-      isConfigured: () => true,
-      getClient: () =>
-        Promise.resolve({
-          scan: (_cursor, options) => {
-            if (options?.MATCH !== "veryfront:ssr-module:*") {
-              return Promise.resolve({ cursor: 0, keys: [] });
-            }
-            targetPrefixScans++;
-            if (targetPrefixScans === 1) {
-              return Promise.resolve({
-                cursor: 1,
-                keys: Array.from(
-                  { length: 1_000 },
-                  (_, index) => `veryfront:ssr-module:v1:other:release-r1:${index}`,
-                ),
-              });
-            }
-            return Promise.resolve({ cursor: 0, keys: [targetKey] });
-          },
-          del: (keys) => {
-            const batch = Array.isArray(keys) ? [...keys] : [keys];
-            deletedBatches.push(batch);
-            return Promise.resolve(batch.length);
-          },
-        }),
-    });
+  it("returns no distributed keys when no provider is configured", async () => {
+    let listCalls = 0;
+    const registry = new CacheRegistry(createDistributedProvider({
+      configured: false,
+      onList: () => listCalls++,
+    }));
 
-    assertEquals(await registry.deleteRedisKeysForProject({ projectId: "target" }), 1);
-    assertEquals(targetPrefixScans, 2);
-    assertEquals(deletedBatches, [[targetKey]]);
+    assertEquals(await registry.listDistributedKeys("vf:cache:render:"), []);
+    assertEquals(listCalls, 0);
   });
 
-  it("should scan only built-in namespaces with reversible project ownership", async () => {
-    const keysByPattern = new Map<string, string[]>([
-      ["vf:module:*", ["vf:module:v1:target:release-r1:file.ts"]],
-      ["vf:render:*", ["vf:render:target:production:release-r1:v1:page"]],
-      ["vf:http-module:*", ["vf:http-module:v1:target:release-r1:manifest"]],
-      ["vf:project-css:*", ["vf:project-css:v1:target:release-r1:styles"]],
-      ["vf:workflow:*", ["vf:workflow:v1:target:release-r1:must-not-delete"]],
-    ]);
-    const scannedPatterns: string[] = [];
-    const deletedKeys: string[] = [];
-    const registry = new CacheRegistry({
-      isConfigured: () => true,
-      getClient: () =>
-        Promise.resolve({
-          scan: (_cursor, options) => {
-            const pattern = options?.MATCH ?? "";
-            scannedPatterns.push(pattern);
-            return Promise.resolve({ cursor: 0, keys: keysByPattern.get(pattern) ?? [] });
-          },
-          del: (keys) => {
-            const batch = Array.isArray(keys) ? keys : [keys];
-            deletedKeys.push(...batch);
-            return Promise.resolve(batch.length);
-          },
-        }),
-    });
+  it("applies the public listing limit after filtering", async () => {
+    const prefix = "vf:cache:render:";
+    const requestedLimits: number[] = [];
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([
+        [prefix, [
+          prefix + "other:preview:branch:v1:first",
+          prefix + "target:preview:branch:v1:first",
+          prefix + "target:preview:branch:v1:second",
+        ]],
+      ]),
+      onList: (_prefix, limit) => requestedLimits.push(limit),
+    }));
 
-    assertEquals(await registry.deleteRedisKeysForProject({ projectId: "target" }), 1);
     assertEquals(
-      scannedPatterns.includes("vf:render:*") &&
-        scannedPatterns.includes("vf:project-css:*") &&
-        !scannedPatterns.includes("vf:module:*") &&
-        !scannedPatterns.includes("vf:http-module:*"),
-      true,
+      await registry.listDistributedKeys(prefix, 1, (key) => key.includes(":target:")),
+      [prefix + "target:preview:branch:v1:first"],
     );
-    assertEquals(scannedPatterns.includes("vf:workflow:*"), false);
-    assertEquals(deletedKeys, ["vf:render:target:production:release-r1:v1:page"]);
+    assertEquals(requestedLimits, [100_000]);
+    await assertRejects(
+      () => registry.listDistributedKeys(prefix, -1),
+      RangeError,
+      "non-negative integer",
+    );
+    assertEquals(await registry.listDistributedKeys(prefix, 0), []);
   });
 
-  it("should never infer project ownership for opaque configured or content-addressed keys", async () => {
-    const configuredPrefix = buildRedisCacheKeyPrefix("configured");
-    registerOwnedRedisCacheKeyPrefix(configuredPrefix);
-    const fileKey = `vf:cache:${
-      buildFileOperationCacheKey(
-        buildFileCacheKeyPrefix({
-          sourceType: "branch",
-          projectSlug: "target-slug",
-          branch: "main",
-        }),
-        "src/index.ts",
-      )
-    }`;
-    const projectCssKey = `vf:project-css:${
-      createProjectCSSRequestContext("target-slug", undefined, new Set(["flex"]), {
-        compilerIdentity: "test-css-processor@1",
-        environment: "preview",
-      }).cacheKey
-    }`;
-    const ssrKey = `vf:ssr-module:${
-      buildSSRModuleCacheKey(
-        "test",
-        "target",
-        "preview-main:src/page.tsx",
-      )
-    }`;
-    const moduleKey = `vf:module:${await buildReleaseModuleResponseCacheKey({
-      projectIdentity: "target",
-      projectDir: "/workspace/target",
-      projectSlug: "target",
-      branch: "main",
-      releaseId: "release-1",
-      runtimeVersion: "1",
-      modulePath: "/@vite/env",
-    })}`;
-    const opaqueConfiguredKey = `${configuredPrefix}blob:target:opaque`;
-    const keysByPattern = new Map<string, string[]>([
-      ["vf:cache:*", [fileKey]],
-      ["vf:project-css:*", [projectCssKey]],
-      ["vf:ssr-module:*", [ssrKey]],
-      ["vf:module:*", [moduleKey]],
-      ["vf:configured:*", [opaqueConfiguredKey]],
-    ]);
-    const scannedPatterns: string[] = [];
-    const deletedKeys: string[] = [];
-    const registry = new CacheRegistry({
-      isConfigured: () => true,
-      getClient: () =>
-        Promise.resolve({
-          scan: (_cursor, options) => {
-            const pattern = options?.MATCH ?? "";
-            scannedPatterns.push(pattern);
-            return Promise.resolve({ cursor: 0, keys: keysByPattern.get(pattern) ?? [] });
-          },
-          del: (keys) => {
-            const batch = Array.isArray(keys) ? keys : [keys];
-            deletedKeys.push(...batch);
-            return Promise.resolve(batch.length);
-          },
-        }),
-    });
+  it("rejects a partial diagnostic listing instead of returning incomplete keys", async () => {
+    const prefix = "vf:cache:render:";
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([[prefix, [prefix + "target:preview:branch:v1:page"]]]),
+      truncatedPrefixes: new Set([prefix]),
+    }));
+
+    await assertRejects(
+      () => registry.listDistributedKeys(prefix),
+      RangeError,
+      "traversal limit",
+    );
+  });
+
+  it("finds only keys whose registered namespace owns the project identity", async () => {
+    const fileKey = "vf:cache:default:" + buildFileOperationCacheKey(
+      buildFileCacheKeyPrefix({
+        sourceType: "branch",
+        projectSlug: "target-slug",
+        branch: "main",
+      }),
+      "src/page.ts",
+    );
+    const renderKey = "vf:cache:render:target-id:preview:branch-main:v1:page";
+    const ssrKey = "vf:cache:ssr-module:" +
+      buildSSRModuleCacheKey("test", "target-id", "preview-main:src/page.tsx");
+    const projectCssKey = "vf:cache:project-css:target-slug:preview:a:b:c";
+    const opaqueKey = "vf:cache:module:v1:target-id:preview:opaque";
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([
+        ["vf:cache:default:", [fileKey]],
+        ["vf:cache:render:", [renderKey]],
+        ["vf:cache:ssr-module:", [ssrKey]],
+        ["vf:cache:project-css:", [projectCssKey]],
+        ["vf:cache:module:", [opaqueKey]],
+      ]),
+    }));
 
     assertEquals(
-      await registry.getRedisKeysForProject({ projectId: "target-slug" }),
-      new Map(),
-    );
-    assertEquals(
-      await registry.deleteRedisKeysForProject({
-        projectId: "target",
+      await registry.getDistributedKeysForProject({
+        projectId: "target-id",
         projectSlug: "target-slug",
       }),
-      3,
-    );
-    assertEquals(deletedKeys.sort(), [fileKey, projectCssKey, ssrKey].sort());
-    assertEquals(scannedPatterns.includes("vf:module:*"), false);
-    assertEquals(scannedPatterns.includes("vf:configured:*"), false);
-  });
-
-  it("should apply exact namespace ownership when deleting one Redis environment", async () => {
-    const previewFileKey = `vf:cache:${
-      buildFileOperationCacheKey(
-        buildFileCacheKeyPrefix({
-          sourceType: "branch",
-          projectSlug: "target-slug",
-          branch: "main",
-        }),
-        "src/preview.ts",
-      )
-    }`;
-    const productionFileKey = `vf:cache:${
-      buildFileOperationCacheKey(
-        buildFileCacheKeyPrefix({
-          sourceType: "release",
-          projectSlug: "target-slug",
-          releaseId: "release-1",
-        }),
-        "src/production.ts",
-      )
-    }`;
-    const namedEnvironmentFileKey = `vf:cache:${
-      buildFileOperationCacheKey(
-        buildFileCacheKeyPrefix({
-          sourceType: "environment",
-          projectSlug: "target-slug",
-          environmentName: "Staging",
-          releaseId: "release-2",
-        }),
-        "src/staging.ts",
-      )
-    }`;
-    const previewSsrKey = `vf:ssr-module:${
-      buildSSRModuleCacheKey(
-        "test",
-        "target-id",
-        "preview-main:src/preview.tsx",
-      )
-    }`;
-    const productionSsrKey = `vf:ssr-module:${
-      buildSSRModuleCacheKey(
-        "test",
-        "target-id",
-        "release-1:src/production.tsx",
-      )
-    }`;
-    const localSsrKey = `vf:ssr-module:${
-      buildSSRModuleCacheKey(
-        "test",
-        "target-id",
-        "local-main:src/local.tsx",
-      )
-    }`;
-    const previewCssKey = `vf:project-css:${
-      createProjectCSSRequestContext("target-slug", undefined, new Set(["flex"]), {
-        compilerIdentity: "test-css-processor@1",
-        environment: "preview",
-      }).cacheKey
-    }`;
-    const productionCssKey = `vf:project-css:${
-      createProjectCSSRequestContext("target-slug", undefined, new Set(["grid"]), {
-        compilerIdentity: "test-css-processor@1",
-        environment: "production",
-      }).cacheKey
-    }`;
-    const keysByPattern = new Map<string, string[]>([
-      ["vf:cache:*", [previewFileKey, productionFileKey, namedEnvironmentFileKey]],
-      ["vf:ssr-module:*", [previewSsrKey, productionSsrKey, localSsrKey]],
-      ["vf:project-css:*", [previewCssKey, productionCssKey]],
-    ]);
-    const deletedKeys: string[] = [];
-    const registry = new CacheRegistry({
-      isConfigured: () => true,
-      getClient: () =>
-        Promise.resolve({
-          scan: (_cursor, options) =>
-            Promise.resolve({
-              cursor: 0,
-              keys: keysByPattern.get(options?.MATCH ?? "") ?? [],
-            }),
-          del: (keys) => {
-            const batch = Array.isArray(keys) ? keys : [keys];
-            deletedKeys.push(...batch);
-            return Promise.resolve(batch.length);
-          },
-        }),
-    });
-
-    assertEquals(
-      await registry.deleteRedisKeysForProjectEnvironment(
-        { projectId: "target-id", projectSlug: "target-slug" },
-        "preview",
-      ),
-      4,
-    );
-    assertEquals(
-      deletedKeys.sort(),
-      [previewFileKey, previewSsrKey, localSsrKey, previewCssKey].sort(),
-    );
-
-    deletedKeys.length = 0;
-    assertEquals(
-      await registry.deleteRedisKeysForProjectEnvironment(
-        { projectId: "target-id", projectSlug: "target-slug" },
-        "production",
-      ),
-      4,
-    );
-    assertEquals(
-      deletedKeys.sort(),
-      [productionFileKey, namedEnvironmentFileKey, productionSsrKey, productionCssKey].sort(),
+      new Map([
+        ["vf:cache:default", [fileKey]],
+        ["vf:cache:project-css", [projectCssKey]],
+        ["vf:cache:render", [renderKey]],
+        ["vf:cache:ssr-module", [ssrKey]],
+      ]),
     );
   });
 
-  it("should scan an explicitly owned configured namespace as a literal prefix", async () => {
-    const prefix = buildRedisCacheKeyPrefix("configured*[assets]");
-    registerOwnedRedisCacheNamespace({
-      prefix,
-      matchProjectOwnership: (key) => {
-        const parts = key.split(":");
-        return parts[0] === "v1" && parts[1] ? { projectId: parts[1] } : null;
+  it("completes every bounded listing before deleting shared keys", async () => {
+    const firstKey = "vf:cache:render:target:preview:branch:v1:first";
+    const secondKey = "vf:cache:ssr-module:v1:target:preview-main:second";
+    let mutated = false;
+    const listedPrefixes: string[] = [];
+    const deletedBatches: string[][] = [];
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([
+        ["vf:cache:render:", [firstKey]],
+        ["vf:cache:ssr-module:", [secondKey]],
+      ]),
+      onList: (prefix) => {
+        assertEquals(mutated, false);
+        listedPrefixes.push(prefix);
       },
-    });
-    const expectedPattern = "vf:configured\\*\\[assets\\]:*";
-    const targetKey = `${prefix}v1:target:release-r1:asset`;
-    const scannedPatterns: string[] = [];
-    const deletedKeys: string[] = [];
-    const registry = new CacheRegistry({
-      isConfigured: () => true,
-      getClient: () =>
-        Promise.resolve({
-          scan: (_cursor, options) => {
-            const pattern = options?.MATCH ?? "";
-            scannedPatterns.push(pattern);
-            return Promise.resolve({
-              cursor: 0,
-              keys: pattern === expectedPattern ? [targetKey] : [],
-            });
-          },
-          del: (keys) => {
-            const batch = Array.isArray(keys) ? keys : [keys];
-            deletedKeys.push(...batch);
-            return Promise.resolve(batch.length);
-          },
-        }),
-    });
+      onDelete: (keys) => {
+        mutated = true;
+        deletedBatches.push([...keys]);
+        return keys.length;
+      },
+    }));
 
-    assertEquals(await registry.deleteRedisKeysForProject({ projectId: "target" }), 1);
-    assertEquals(scannedPatterns.includes(expectedPattern), true);
-    assertEquals(deletedKeys, [targetKey]);
-  });
-
-  it("should reject ownership upgrades for an existing opaque namespace", () => {
-    assertThrows(
-      () =>
-        registerOwnedRedisCacheNamespace({
-          prefix: "vf:transform:",
-          matchProjectOwnership: (key) => ({ projectId: key }),
-        }),
-      TypeError,
-      "already registered without project ownership",
+    assertEquals(
+      await registry.deleteDistributedKeysForProject({ projectId: "target" }),
+      2,
     );
+    assertEquals(listedPrefixes.length > 2, true);
+    assertEquals(deletedBatches.map((batch) => batch.toSorted()), [
+      [firstKey, secondKey].toSorted(),
+    ]);
   });
 
-  it("should not reinterpret a nested opaque namespace using its parent schema", async () => {
-    const projectId = "nested-opaque-project";
-    const prefix = `vf:render:${projectId}:`;
-    registerOwnedRedisCacheKeyPrefix(prefix);
-    const opaqueKey = `${prefix}preview:release-r1:v1:page`;
-    const deletedKeys: string[] = [];
-    const registry = new CacheRegistry({
-      isConfigured: () => true,
-      getClient: () =>
-        Promise.resolve({
-          scan: (_cursor, options) =>
-            Promise.resolve({
-              cursor: 0,
-              keys: options?.MATCH === "vf:render:*" ? [opaqueKey] : [],
-            }),
-          del: (keys) => {
-            const batch = Array.isArray(keys) ? keys : [keys];
-            deletedKeys.push(...batch);
-            return Promise.resolve(batch.length);
-          },
-        }),
-    });
+  it("refuses a truncated provider listing before mutation", async () => {
+    let deleteCalls = 0;
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([
+        [
+          "vf:cache:render:",
+          ["vf:cache:render:target:preview:branch:v1:page"],
+        ],
+      ]),
+      truncatedPrefixes: new Set(["vf:cache:render:"]),
+      onDelete: () => {
+        deleteCalls++;
+        return 1;
+      },
+    }));
 
-    assertEquals(await registry.getRedisKeysForProject({ projectId }), new Map());
-    assertEquals(await registry.deleteRedisKeysForProject({ projectId }), 0);
+    await assertRejects(
+      () => registry.deleteDistributedKeysForProject({ projectId: "target" }),
+      RangeError,
+      "traversal limit",
+    );
+    assertEquals(deleteCalls, 0);
+  });
+
+  it("keeps local keys intact when shared invalidation cannot be planned", async () => {
+    const localKey = "v1:target:preview-main:file";
+    const local = new Map<string, unknown>([[localKey, 1]]);
+    const registry = new CacheRegistry(createDistributedProvider({
+      truncatedPrefixes: new Set(["vf:cache:render:"]),
+    }));
+    registry.register(
+      new MapCacheStore("local", local, structuredCacheStoreProjectOwnership),
+    );
+
+    await assertRejects(
+      () => registry.deleteAllKeysForProjectAsync("target"),
+      RangeError,
+      "traversal limit",
+    );
+    assertEquals(local.has(localKey), true);
+  });
+
+  it("does not reinterpret an opaque nested namespace through its parent", async () => {
+    const projectId = "nested-opaque-project";
+    const prefix = "vf:cache:render:" + projectId + ":";
+    registerOwnedDistributedCacheKeyPrefix(prefix);
+    const opaqueKey = prefix + "preview:branch:v1:page";
+    const deletedKeys: string[] = [];
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([
+        ["vf:cache:render:", [opaqueKey]],
+      ]),
+      onDelete: (keys) => {
+        deletedKeys.push(...keys);
+        return keys.length;
+      },
+    }));
+
+    assertEquals(await registry.getDistributedKeysForProject({ projectId }), new Map());
+    assertEquals(await registry.deleteDistributedKeysForProject({ projectId }), 0);
     assertEquals(deletedKeys, []);
   });
 
-  it("should reject ownership claims that overlap non-cache Redis data", () => {
-    for (const prefix of ["vf:workflow:", "vf:token:", "vf:token:render:"]) {
-      assertThrows(
-        () => registerOwnedRedisCacheKeyPrefix(prefix),
-        TypeError,
-        "reserved non-cache namespace",
-      );
-    }
+  it("supports an explicitly registered project-ownership matcher", async () => {
+    const prefix = buildDistributedCacheKeyPrefix("registry-custom-owned");
+    registerOwnedDistributedCacheNamespace({
+      prefix,
+      matchProjectOwnership: (key) => {
+        const [version, projectId] = key.split(":");
+        return version === "v1" && projectId ? { projectId } : null;
+      },
+    });
+    const targetKey = prefix + "v1:target:asset";
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([[prefix, [targetKey]]]),
+    }));
+
+    assertEquals(
+      await registry.getDistributedKeysForProject({ projectId: "target" }),
+      new Map([[prefix.slice(0, -1), [targetKey]]]),
+    );
   });
 
-  it("should reject missing or empty Redis project identities before scanning", async () => {
-    const registry = new CacheRegistry({
-      isConfigured: () => false,
-      getClient: () => Promise.reject(new Error("must not connect")),
-    });
+  it("filters project deletion by environment", async () => {
+    const previewKey = "vf:cache:render:target:preview:branch:v1:page";
+    const productionKey = "vf:cache:render:target:production:release:v1:page";
+    const deletedKeys: string[] = [];
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([
+        ["vf:cache:render:", [previewKey, productionKey]],
+      ]),
+      onDelete: (keys) => {
+        deletedKeys.push(...keys);
+        return keys.length;
+      },
+    }));
+
+    assertEquals(
+      await registry.deleteDistributedKeysForProjectEnvironment(
+        { projectId: "target" },
+        "preview",
+      ),
+      1,
+    );
+    assertEquals(deletedKeys, [previewKey]);
+  });
+
+  it("validates project identities before consulting provider availability", async () => {
+    const registry = new CacheRegistry(createDistributedProvider({ configured: false }));
 
     await assertRejects(
-      () => registry.deleteRedisKeysForProject({}),
+      () => registry.deleteDistributedKeysForProject({}),
       TypeError,
       "requires a projectId or projectSlug",
     );
     await assertRejects(
-      () => registry.getRedisKeysForProject({ projectSlug: " " }),
+      () => registry.getDistributedKeysForProject({ projectSlug: " " }),
       TypeError,
       "must be a non-empty string",
     );
   });
 
-  it("should apply the Redis listing limit after project filtering", async () => {
-    let targetPrefixScans = 0;
-    const targetKey = "vf:cache:file:branch:target:main:path.ts";
-    const registry = new CacheRegistry({
-      isConfigured: () => true,
-      getClient: () =>
-        Promise.resolve({
-          scan: (_cursor, options) => {
-            if (options?.MATCH !== "vf:cache:*") {
-              return Promise.resolve({ cursor: 0, keys: [] });
-            }
-            targetPrefixScans++;
-            if (targetPrefixScans === 1) {
-              return Promise.resolve({
-                cursor: "7",
-                keys: Array.from(
-                  { length: 1_000 },
-                  (_, index) => `vf:cache:file:branch:other:main:${index}`,
-                ),
-              });
-            }
-            // SCAN may legally return duplicates; listings should not count
-            // the same cache key twice or let duplicates consume the limit.
-            return Promise.resolve({ cursor: "0", keys: [targetKey, targetKey] });
-          },
-          del: () => Promise.resolve(0),
-        }),
-    });
-
-    assertEquals(
-      await registry.getRedisKeysForProject({ projectSlug: "target" }),
-      new Map([["vf:cache", [targetKey]]]),
-    );
-    assertEquals(targetPrefixScans, 2);
-  });
-
-  it("should finish scanning before deleting any matching Redis keys", async () => {
-    const projectId = "scan-stability-target";
-    const firstKey = `vf:render:${projectId}:preview:release-r1:v1:first`;
-    const secondKey = `vf:render:${projectId}:preview:release-r1:v1:second`;
-    let redisMutated = false;
-    let renderScans = 0;
-    const deletedKeys: string[] = [];
-    const registry = new CacheRegistry({
-      isConfigured: () => true,
-      getClient: () =>
-        Promise.resolve({
-          scan: (_cursor, options) => {
-            if (options?.MATCH !== "vf:render:*") {
-              return Promise.resolve({ cursor: 0, keys: [] });
-            }
-            renderScans++;
-            if (renderScans === 1) {
-              return Promise.resolve({ cursor: 1, keys: [firstKey] });
-            }
-            // Model the weak traversal behavior an implementation can observe
-            // after mutating the keyspace before its cursor reaches this page.
-            return Promise.resolve({
-              cursor: 0,
-              keys: redisMutated ? [] : [secondKey],
-            });
-          },
-          del: (keys) => {
-            redisMutated = true;
-            const batch = Array.isArray(keys) ? keys : [keys];
-            deletedKeys.push(...batch);
-            return Promise.resolve(batch.length);
-          },
-        }),
-    });
-
-    assertEquals(await registry.deleteRedisKeysForProject({ projectId }), 2);
-    assertEquals(renderScans, 2);
-    assertEquals(deletedKeys.sort(), [firstKey, secondKey].sort());
-  });
-
-  it("should preserve legacy string project-ID calls without matching slugs", async () => {
-    const idKey = "vf:render:legacy-id:preview:release-r1:v1:page";
-    const slugKey = `vf:cache:${
-      buildFileOperationCacheKey(
-        buildFileCacheKeyPrefix({
-          sourceType: "branch",
-          projectSlug: "legacy-id",
-          branch: "main",
-        }),
-        "src/page.ts",
-      )
-    }`;
-    const deletedKeys: string[] = [];
-    const registry = new CacheRegistry({
-      isConfigured: () => true,
-      getClient: () =>
-        Promise.resolve({
-          scan: (_cursor, options) =>
-            Promise.resolve({
-              cursor: 0,
-              keys: options?.MATCH === "vf:render:*"
-                ? [idKey]
-                : options?.MATCH === "vf:cache:*"
-                ? [slugKey]
-                : [],
-            }),
-          del: (keys) => {
-            const batch = Array.isArray(keys) ? keys : [keys];
-            deletedKeys.push(...batch);
-            return Promise.resolve(batch.length);
-          },
-        }),
-    });
-
-    assertEquals(
-      await registry.getRedisKeysForProject("legacy-id"),
-      new Map([
-        ["vf:render", [idKey]],
+  it("propagates provider deletion failures", async () => {
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([
+        [
+          "vf:cache:render:",
+          ["vf:cache:render:target:preview:branch:v1:page"],
+        ],
       ]),
-    );
-    assertEquals(await registry.deleteRedisKeysForProject("legacy-id"), 1);
-    assertEquals(deletedKeys, [idKey]);
-  });
-
-  it("should propagate Redis deletion failures", async () => {
-    const registry = new CacheRegistry({
-      isConfigured: () => true,
-      getClient: () =>
-        Promise.resolve({
-          scan: () => Promise.reject(new Error("redis unavailable")),
-          del: () => Promise.resolve(0),
-        }),
-    });
+      onDelete: () => Promise.reject(new Error("provider unavailable")),
+    }));
 
     await assertRejects(
-      () => registry.deleteRedisKeysForProject({ projectId: "target" }),
+      () => registry.deleteDistributedKeysForProject({ projectId: "target" }),
       Error,
-      "redis unavailable",
+      "provider unavailable",
     );
   });
 
-  it("should abort deletion before mutation when Redis repeats a SCAN cursor", async () => {
-    let deleteCalls = 0;
-    const registry = new CacheRegistry({
-      isConfigured: () => true,
-      getClient: () =>
-        Promise.resolve({
-          scan: () =>
-            Promise.resolve({
-              cursor: 7,
-              keys: ["vf:render:target:preview:branch-main:v1:page"],
-            }),
-          del: () => {
-            deleteCalls++;
-            return Promise.resolve(1);
-          },
-        }),
-    });
-
-    await assertRejects(
-      () => registry.deleteRedisKeysForProject({ projectId: "target" }),
-      Error,
-      "repeated a cursor",
+  it("combines local and distributed project keys without renaming either tier", async () => {
+    const local = new Map<string, unknown>([["layout:target:preview:page", true]]);
+    const distributedKey = "vf:cache:render:target:preview:branch:v1:page";
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([
+        ["vf:cache:render:", [distributedKey]],
+      ]),
+    }));
+    registry.register(
+      new MapCacheStore("local", local, structuredCacheStoreProjectOwnership),
     );
-    assertEquals(deleteCalls, 0);
-  });
 
-  it("should reject invalid Redis DEL counts", async () => {
-    const registry = new CacheRegistry({
-      isConfigured: () => true,
-      getClient: () =>
-        Promise.resolve({
-          scan: (_cursor, options) =>
-            Promise.resolve({
-              cursor: 0,
-              keys: options?.MATCH === "vf:render:*"
-                ? ["vf:render:target:preview:branch-main:v1:page"]
-                : [],
-            }),
-          del: () => Promise.resolve(2),
-        }),
-    });
-
-    await assertRejects(
-      () => registry.deleteRedisKeysForProject({ projectId: "target" }),
-      TypeError,
-      "invalid DEL count",
+    assertEquals(
+      await registry.getAllKeysForProjectAsync("target", true),
+      {
+        memory: new Map([["local", ["layout:target:preview:page"]]]),
+        distributed: new Map([["vf:cache:render", [distributedKey]]]),
+      },
     );
   });
 });

@@ -1,5 +1,9 @@
 import { cliLogger } from "#cli/utils";
 import { INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "veryfront/errors";
+import {
+  orchestrateExtensions as orchestrateProjectExtensions,
+  type OrchestrateOptions,
+} from "veryfront/extensions";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import { agentRegistry } from "../../../src/agent/composition/index.ts";
 import {
@@ -9,20 +13,35 @@ import {
 } from "../../../src/agent/project/agent-runtime.ts";
 import { toolRegistry } from "../../../src/tool/registry.ts";
 import type { WorkflowClientConfig } from "../../../src/workflow/api/workflow-client.ts";
+import type { WorkflowBackend } from "../../../src/workflow/backends/types.ts";
 import { sanitizeRunOutputForLogging } from "../../utils/sanitize-run-output.ts";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
-import { getEnv } from "veryfront/platform";
 import type { WorkflowArgs } from "./handler.ts";
 
 const WORKFLOW_STATUS_POLL_INTERVAL_MS = 1_000;
 const MAX_DISCOVERY_ERRORS_TO_PRINT = 5;
 
-export interface WorkflowOptions extends WorkflowArgs {
+export interface WorkflowOptions extends Omit<WorkflowArgs, "backend"> {
+  backend?: WorkflowArgs["backend"];
   projectDir?: string;
 }
 
-interface WorkflowCommandDependencies {
+interface ExtensionLifecycle {
+  teardownAll(): Promise<void>;
+}
+
+type WorkflowExtensionOrchestrator = (
+  options: OrchestrateOptions,
+) => Promise<ExtensionLifecycle>;
+
+type DistributedWorkflowBackendFactory = (
+  options: { debug?: boolean },
+) => WorkflowBackend;
+
+export interface WorkflowCommandDependencies {
   discoverProjectAgentRuntime?: typeof discoverProjectAgentRuntime;
+  orchestrateExtensions?: WorkflowExtensionOrchestrator;
+  createDistributedWorkflowBackend?: DistributedWorkflowBackendFactory;
 }
 
 export interface WorkflowDiscoveryError {
@@ -72,23 +91,61 @@ async function createWorkflowClient(config: WorkflowClientConfig) {
     "../../../src/workflow/api/workflow-client.ts"
   );
   const clientConfig = withProjectStepRegistries(config);
+  return createWorkflowClient(clientConfig);
+}
 
-  const redisUrl = getEnv("REDIS_URL")?.trim();
-  if (!redisUrl) {
-    return createWorkflowClient(clientConfig);
-  }
-
-  const { RedisBackend } = await import(
-    "../../../src/workflow/backends/redis.ts"
+async function runWithCleanup<T>(
+  run: () => Promise<T>,
+  cleanup: () => Promise<void>,
+  combinedFailureMessage: string,
+): Promise<T> {
+  const outcome = await run().then(
+    (value) => ({ ok: true as const, value }),
+    (error: unknown) => ({ ok: false as const, error }),
   );
 
-  const debug = clientConfig.debug ?? false;
-  const backend = new RedisBackend({ url: redisUrl, debug });
-  if (backend.initialize) {
-    await backend.initialize();
+  try {
+    await cleanup();
+  } catch (cleanupError) {
+    if (!outcome.ok) {
+      throw new AggregateError(
+        [outcome.error, cleanupError],
+        combinedFailureMessage,
+      );
+    }
+    throw cleanupError;
   }
 
-  return createWorkflowClient({ ...clientConfig, backend });
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value;
+}
+
+async function createSelectedWorkflowBackend(
+  selection: WorkflowArgs["backend"],
+  debug: boolean,
+  dependencies: WorkflowCommandDependencies,
+): Promise<WorkflowBackend | undefined> {
+  if (selection === "memory") return undefined;
+
+  const createBackend = dependencies.createDistributedWorkflowBackend ??
+    (await import("../../../src/workflow/backends/distributed.ts"))
+      .createDistributedWorkflowBackend;
+  const backend = createBackend({ debug });
+
+  try {
+    await backend.initialize?.();
+    return backend;
+  } catch (initializationError) {
+    try {
+      await backend.destroy();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [initializationError, cleanupError],
+        "Distributed workflow backend initialization and cleanup failed",
+      );
+    }
+    throw initializationError;
+  }
 }
 
 async function waitForWorkflowExit(
@@ -152,13 +209,20 @@ export async function runWorkflowCommand(
 
   let input: Record<string, unknown> = {};
   if (options.input) {
+    let parsed: unknown;
     try {
-      input = JSON.parse(options.input);
+      parsed = JSON.parse(options.input);
     } catch {
       throw INVALID_ARGUMENT.create({
         detail: "Invalid --input JSON: must be a valid JSON object",
       });
     }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Invalid --input JSON: must be a valid JSON object",
+      });
+    }
+    input = parsed as Record<string, unknown>;
   }
 
   const projectDir = options.projectDir ?? Deno.cwd();
@@ -170,64 +234,97 @@ export async function runWorkflowCommand(
 
   await withProjectSourceContext(projectDir, async (context) => {
     const { adapter, config, configCacheKey, proxyContext } = context;
-    const sourceLabel = proxyContext?.branchRef
-      ? `branch ${proxyContext.branchRef}`
-      : proxyContext
-      ? "main"
-      : `${projectDir}/workflows/...`;
-
-    cliLogger.info(`Discovering workflows in ${sourceLabel}`);
-
-    const discovery = await discoverRuntime({
+    const orchestrateExtensions = dependencies.orchestrateExtensions ??
+      orchestrateProjectExtensions;
+    const extensionLoader = await orchestrateExtensions({
       projectDir,
-      adapter,
       config,
-      fsAdapter: adapter.fs,
-      cacheKey: configCacheKey,
-      verbose: options.debug,
+      logger: cliLogger,
     });
 
-    const workflows = [...discovery.workflows.values()];
+    await runWithCleanup(
+      async () => {
+        const sourceLabel = proxyContext?.branchRef
+          ? `branch ${proxyContext.branchRef}`
+          : proxyContext
+          ? "main"
+          : `${projectDir}/workflows/...`;
 
-    if (discovery.errors.length > 0 && options.debug) {
-      for (const err of discovery.errors.map(formatRuntimeDiscoveryError)) {
-        cliLogger.warn(`  Warning: ${err.filePath}: ${err.error}`);
-      }
-    }
+        cliLogger.info(`Discovering workflows in ${sourceLabel}`);
 
-    const workflow = workflows.find((candidate) => candidate.id === workflowId);
-    if (!workflow) {
-      if (discovery.errors.length > 0 && !options.debug) {
-        cliLogger.warn("Some workflow files could not be loaded:");
-        const errors = discovery.errors.map(formatRuntimeDiscoveryError);
-        for (const line of formatWorkflowDiscoveryErrors(errors)) {
-          cliLogger.warn(line);
+        const discovery = await discoverRuntime({
+          projectDir,
+          adapter,
+          config,
+          fsAdapter: adapter.fs,
+          cacheKey: configCacheKey,
+          verbose: options.debug,
+        });
+
+        const workflows = [...discovery.workflows.values()];
+
+        if (discovery.errors.length > 0 && options.debug) {
+          for (const err of discovery.errors.map(formatRuntimeDiscoveryError)) {
+            cliLogger.warn(`  Warning: ${err.filePath}: ${err.error}`);
+          }
         }
-      }
-      if (workflows.length > 0) {
-        cliLogger.info("Available workflows:");
-        for (const candidate of workflows) {
-          cliLogger.info(`  - ${candidate.id}`);
+
+        const workflow = workflows.find((candidate) => candidate.id === workflowId);
+        if (!workflow) {
+          if (discovery.errors.length > 0 && !options.debug) {
+            cliLogger.warn("Some workflow files could not be loaded:");
+            const errors = discovery.errors.map(formatRuntimeDiscoveryError);
+            for (const line of formatWorkflowDiscoveryErrors(errors)) {
+              cliLogger.warn(line);
+            }
+          }
+          if (workflows.length > 0) {
+            cliLogger.info("Available workflows:");
+            for (const candidate of workflows) {
+              cliLogger.info(`  - ${candidate.id}`);
+            }
+          } else {
+            cliLogger.info("No workflows found. Create a workflow file in workflows/.");
+          }
+          throw RESOURCE_NOT_FOUND.create({ detail: `Workflow "${workflowId}" not found.` });
         }
-      } else {
-        cliLogger.info("No workflows found. Create a workflow file in workflows/.");
-      }
-      throw RESOURCE_NOT_FOUND.create({ detail: `Workflow "${workflowId}" not found.` });
-    }
 
-    await runWithProjectAgentRuntime(discovery, async () => {
-      const client = await createWorkflowClient({ debug: options.debug });
+        await runWithProjectAgentRuntime(discovery, async () => {
+          const backend = await createSelectedWorkflowBackend(
+            options.backend ?? "memory",
+            options.debug,
+            dependencies,
+          );
+          let client: Awaited<ReturnType<typeof createWorkflowClient>> | undefined;
 
-      try {
-        client.register(workflow.definition);
-        cliLogger.info(`Running workflow: ${workflow.id}`);
-        cliLogger.info("");
+          await runWithCleanup(
+            async () => {
+              const activeClient = await createWorkflowClient({
+                debug: options.debug,
+                ...(backend ? { backend } : {}),
+              });
+              client = activeClient;
+              activeClient.register(workflow.definition);
+              cliLogger.info(`Running workflow: ${workflow.id}`);
+              cliLogger.info("");
 
-        const handle = await client.start(workflow.id, input);
-        await waitForWorkflowExit(client, handle.runId);
-      } finally {
-        await client.destroy();
-      }
-    });
+              const handle = await activeClient.start(workflow.id, input);
+              await runWithCleanup(
+                () => waitForWorkflowExit(activeClient, handle.runId),
+                () => handle.settled(),
+                "Workflow status observation and execution settlement failed",
+              );
+            },
+            async () => {
+              if (client) await client.destroy();
+              else if (backend) await backend.destroy();
+            },
+            "Workflow execution and backend cleanup failed",
+          );
+        });
+      },
+      () => extensionLoader.teardownAll(),
+      "Workflow command and extension teardown failed",
+    );
   });
 }

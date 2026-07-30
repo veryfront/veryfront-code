@@ -1,13 +1,12 @@
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { logger as baseLogger } from "#veryfront/utils";
-import { isRedisConfigured } from "#veryfront/utils/redis-client.ts";
-import { isApiCacheAvailable, isDiskCacheConfigured } from "./backend.ts";
+import { getRuntimeCacheBackendSelection } from "./backend.ts";
 
 const logger = baseLogger.component("distributed-cache");
 
 interface DistributedCacheStatus {
-  backend: "api" | "redis" | "disk" | "memory";
+  backend: "api" | "distributed" | "disk" | "memory";
   transformCache: boolean;
   ssrModuleCache: boolean;
   fileCache: boolean;
@@ -33,10 +32,7 @@ export type DistributedCacheInitializers = {
 };
 
 function determineBackend(): DistributedCacheStatus["backend"] {
-  if (isApiCacheAvailable()) return "api";
-  if (isRedisConfigured()) return "redis";
-  if (isDiskCacheConfigured()) return "disk";
-  return "memory";
+  return getRuntimeCacheBackendSelection();
 }
 
 function wasSuccessful(result: PromiseSettledResult<boolean>): boolean {
@@ -72,6 +68,16 @@ async function initializeDistributedCachesWithInitializers(
         errorName: result.reason instanceof Error ? result.reason.name : typeof result.reason,
       });
     }
+  }
+
+  const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `Failed to initialize ${failures.length} distributed cache component${
+        failures.length === 1 ? "" : "s"
+      }`,
+    );
   }
 
   const status: DistributedCacheStatus = {

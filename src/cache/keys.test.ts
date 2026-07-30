@@ -39,7 +39,7 @@ const API_CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
 describe("cache/keys", () => {
   describe("CacheKeyPrefix", () => {
     it("should have SSR_MODULE prefix", () => {
-      assertEquals(CacheKeyPrefix.SSR_MODULE, "veryfront:ssr-module:");
+      assertEquals(CacheKeyPrefix.SSR_MODULE, "vf:cache:ssr-module:");
     });
 
     it("should have CONFIG prefix", () => {
@@ -568,7 +568,7 @@ describe("cache/keys", () => {
 
   describe("sanitizeCacheKey / isValidCacheKey", () => {
     it("recognises a well-formed structural key as valid", () => {
-      const key = "veryfront:ssr-module:proj_123:production:rel-abc:components/Button.tsx";
+      const key = "vf:cache:ssr-module:proj_123:production:rel-abc:components/Button.tsx";
       assertEquals(isValidCacheKey(key), true);
     });
 
@@ -588,7 +588,7 @@ describe("cache/keys", () => {
     });
 
     it("returns well-formed keys unchanged (no cache churn)", async () => {
-      const key = "veryfront:ssr-module:proj_123:production:rel-abc:components/Button.tsx";
+      const key = "vf:cache:ssr-module:proj_123:production:rel-abc:components/Button.tsx";
       assertEquals(await sanitizeCacheKey(key), key);
     });
 

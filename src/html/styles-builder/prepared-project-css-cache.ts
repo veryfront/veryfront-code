@@ -1,8 +1,4 @@
-import {
-  type CacheBackend,
-  createCacheBackend,
-  MemoryCacheBackend,
-} from "#veryfront/cache/backend.ts";
+import { type CacheBackend, createCacheBackend } from "#veryfront/cache/backend.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEFAULT_STYLESHEET } from "./css-hash-cache.ts";
@@ -93,22 +89,20 @@ export async function initializePreparedProjectCSSCache(): Promise<boolean> {
 
   if (!preparedProjectCSSInitPromise) {
     preparedProjectCSSInitPromise = (async () => {
-      try {
-        preparedProjectCSSBackend = await createCacheBackend({
-          keyPrefix: "prepared-project-css",
-        });
-        logger.debug("Initialized", { backend: preparedProjectCSSBackend.type });
-      } catch (error) {
-        logger.warn("Backend init failed, using memory", { error });
-        preparedProjectCSSBackend = new MemoryCacheBackend(PREPARED_PROJECT_CSS_LOCAL_MAX);
-      } finally {
-        preparedProjectCSSInitialized = true;
-      }
+      preparedProjectCSSBackend = await createCacheBackend({
+        keyPrefix: "prepared-project-css",
+      });
+      preparedProjectCSSInitialized = true;
+      logger.debug("Initialized", { backend: preparedProjectCSSBackend.type });
     })();
   }
 
-  await preparedProjectCSSInitPromise;
-  preparedProjectCSSInitPromise = null;
+  const pending = preparedProjectCSSInitPromise;
+  try {
+    await pending;
+  } finally {
+    if (preparedProjectCSSInitPromise === pending) preparedProjectCSSInitPromise = null;
+  }
 
   return preparedProjectCSSBackend?.type !== "memory";
 }

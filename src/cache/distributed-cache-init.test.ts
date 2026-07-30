@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#std/assert";
+import { assertEquals, assertRejects } from "#std/assert";
 import { __runDistributedCacheInitializationForTests } from "./distributed-cache-init.ts";
 
 Deno.test("distributed-cache-init does not import higher layers (rendering/transform/platform)", async () => {
@@ -40,21 +40,29 @@ Deno.test("distributed cache init includes httpModule cache status", async () =>
   assertEquals(status.httpModuleCache, true);
 });
 
-Deno.test("distributed cache init marks rejected initializers as disabled", async () => {
-  const status = await __runDistributedCacheInitializationForTests("api", {
-    transformCache: async () => true,
-    ssrModuleCache: async () => true,
-    fileCache: async () => {
-      throw new Error("boom");
-    },
-    projectCSSCache: async () => true,
-    httpModuleCache: async () => false,
-  });
+Deno.test("distributed cache init fails closed after every initializer settles", async () => {
+  const completed: string[] = [];
+  await assertRejects(
+    () =>
+      __runDistributedCacheInitializationForTests("api", {
+        transformCache: async () => true,
+        ssrModuleCache: async () => true,
+        fileCache: async () => {
+          completed.push("file");
+          throw new Error("boom");
+        },
+        projectCSSCache: async () => {
+          completed.push("css");
+          return true;
+        },
+        httpModuleCache: async () => {
+          completed.push("http");
+          return false;
+        },
+      }),
+    AggregateError,
+    "Failed to initialize 1 distributed cache component",
+  );
 
-  assertEquals(status.backend, "api");
-  assertEquals(status.transformCache, true);
-  assertEquals(status.ssrModuleCache, true);
-  assertEquals(status.fileCache, false);
-  assertEquals(status.projectCSSCache, true);
-  assertEquals(status.httpModuleCache, false);
+  assertEquals(completed.toSorted(), ["css", "file", "http"]);
 });

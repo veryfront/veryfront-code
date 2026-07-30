@@ -47,15 +47,17 @@ Forwarded client-address headers are ignored by default. If the app is not
 behind a trusted reverse proxy, use `keyGenerator` with a trusted client or
 account identifier.
 
-For limits that must be shared across processes, use the Redis store. Connection
-attempts and commands are bounded independently; an unavailable or stalled store
-fails closed with a non-cacheable 503 response rather than allowing the request:
+For limits that must be shared across processes, install and explicitly activate
+`@veryfront/ext-redis`, then request a store through the provider-neutral core
+API. Connection attempts and commands are bounded independently; an unavailable
+or stalled store fails closed with a non-cacheable 503 response rather than
+allowing the request:
 
 ```ts
-import { rateLimit, RedisRateLimitStore } from "veryfront/middleware";
+import { createDistributedRateLimitStore, rateLimit } from "veryfront/middleware";
 
-const store = new RedisRateLimitStore({
-  url: "rediss://redis.example.com:6379",
+const store = createDistributedRateLimitStore({
+  endpoint: "rediss://redis.example.com:6379",
   connectTimeoutMs: 5_000,
   operationTimeoutMs: 5_000,
 });
@@ -67,8 +69,9 @@ const distributedLimiter = rateLimit({
 });
 ```
 
-Call `await store.destroy()` during server shutdown. A failed disconnect remains
-tracked so a later shutdown attempt can retry it.
+The extension owns store shutdown. Its teardown is retryable when a disconnect
+fails. Core never imports the Redis implementation or substitutes an in-memory
+store after distributed rate limiting is selected.
 
 ### Logging
 

@@ -26,7 +26,7 @@ import { createSSRImportMapIdentity } from "./import-map-identity.ts";
 import { createDependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
 
 class FakeDistributedCache implements CacheBackend {
-  readonly type = "redis" as const;
+  readonly type = "distributed" as const;
   private values = new Map<string, string>();
 
   get(key: string): Promise<string | null> {
@@ -230,7 +230,7 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
           `export default [stable, child];`,
         ].join("\n"),
         join(projectDir, "pages", "index.tsx"),
-        "redis-cache",
+        "distributed-cache",
         {
           checkLocalPaths: true,
           checkInvalidEsmShPath: true,
@@ -265,7 +265,7 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
       const isValid = await cacheManager.validateCachedCode(
         `import child from "file:///app/.cache/markdown.tsx"; export default child;`,
         join(projectDir, "pages", "index.tsx"),
-        "redis-cache",
+        "distributed-cache",
         {
           checkLocalPaths: true,
           checkInvalidEsmShPath: true,
@@ -344,7 +344,7 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
       const isValid = await cacheManager.validateCachedCode(
         `import child from "file://${childPath}"; export default child;`,
         join(projectDir, "pages", "index.tsx"),
-        "redis-cache",
+        "distributed-cache",
         {
           checkLocalPaths: true,
           checkInvalidEsmShPath: true,
@@ -376,7 +376,7 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
           `export default text;`,
         ].join("\n"),
         join(projectDir, "pages", "index.tsx"),
-        "redis-cache",
+        "distributed-cache",
         {
           checkLocalPaths: false,
           checkInvalidEsmShPath: true,
@@ -391,7 +391,7 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
           `export default x;`,
         ].join("\n"),
         join(projectDir, "pages", "index.tsx"),
-        "redis-cache",
+        "distributed-cache",
         {
           checkLocalPaths: false,
           checkInvalidEsmShPath: true,

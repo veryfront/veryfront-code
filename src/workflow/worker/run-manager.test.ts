@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import type { WorkflowRun } from "../types.ts";
@@ -181,6 +181,25 @@ describe("workflow/worker/run-manager", () => {
 
     assertEquals(manager.getStats().status, "stopped");
     assertEquals(executor.destroyCalls, 1);
+  });
+
+  it("stop() remains retryable when executor cleanup fails", async () => {
+    const executor = new FakeRunExecutor();
+    const cleanupError = new Error("transient executor cleanup failure");
+    executor.destroy = () => {
+      executor.destroyCalls++;
+      return executor.destroyCalls === 1 ? Promise.reject(cleanupError) : Promise.resolve();
+    };
+    const { manager } = makeManager(executor);
+    track(manager);
+    await manager.start();
+
+    await assertRejects(() => manager.stop(), Error, cleanupError.message);
+    assertEquals(manager.getStats().status, "stopping");
+
+    await manager.stop();
+    assertEquals(manager.getStats().status, "stopped");
+    assertEquals(executor.destroyCalls, 2);
   });
 
   it("stop() is a no-op when not running", async () => {

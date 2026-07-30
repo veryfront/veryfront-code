@@ -79,6 +79,17 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
       ],
     },
     {
+      label: "Redis distributed runtime",
+      packageName: "@veryfront/ext-redis",
+      requiredCapabilities: [
+        { type: "net:outbound", hosts: ["*"] },
+        {
+          type: "env:read",
+          keys: ["NODE_ENV", "REDIS_PASSWORD", "REDIS_URL", "REDIS_USERNAME"],
+        },
+      ],
+    },
+    {
       label: "native SQLite storage",
       packageName: "@veryfront/ext-db-sqlite",
       requiredCapabilities: [

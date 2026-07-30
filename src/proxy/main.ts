@@ -13,12 +13,9 @@
  * - VERYFRONT_SERVER_URL: URL of the production server service
  * - VERYFRONT_PROXY_URL: Optional proxy bind URL (e.g. http://0.0.0.0:8080)
  * - LOCAL_PROJECTS: JSON map of slug → filesystem path (for dev)
- * - CACHE_TYPE: "memory" (default) or "redis"
- * - REDIS_URL: Redis connection URL (required if CACHE_TYPE=redis)
- * - REDIS_PREFIX: Optional Redis token-key namespace
- * - REDIS_PASSWORD: Optional Redis password when it is not embedded in REDIS_URL
+ * - CACHE_TYPE: "memory" (default) or "extension"
  * - VERYFRONT_PROXY_EXPECTED_REPLICAS: Minimum proxy replicas required to acknowledge routing changes
- * - VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET: HMAC secret for Redis routing events and acknowledgements
+ * - VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET: HMAC secret for distributed routing events and acknowledgements
  * - VERYFRONT_API_INTERNAL_URL: API URL for internal endpoints (falls back to VERYFRONT_PROXY_API_BASE_URL)
  * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
  * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
@@ -91,7 +88,11 @@ import {
   handleProxyRoutingInvalidationRequest,
   PROXY_ROUTING_INVALIDATION_PATH,
 } from "./routing-invalidation.ts";
-import { startProxyRoutingInvalidationBus } from "./routing-invalidation-redis.ts";
+import {
+  captureDistributedRuntimeProvider,
+  type DistributedRuntimeProvider,
+  DistributedRuntimeProviderName,
+} from "#veryfront/extensions/distributed/index.ts";
 import { readProxyStartupConfig } from "./startup-config.ts";
 import { createProxyAuthProvider } from "./auth-extension.ts";
 import { runProxyShutdownSteps } from "./shutdown.ts";
@@ -333,8 +334,12 @@ const proxyHandler = await acquireProxyStartupResource(
 );
 const routingInvalidationBus = await acquireProxyStartupResource(
   "routing-invalidation-bus",
-  () =>
-    startProxyRoutingInvalidationBus({
+  () => {
+    const registered = tryResolve<DistributedRuntimeProvider>(
+      DistributedRuntimeProviderName,
+    );
+    if (registered === undefined) return Promise.resolve(null);
+    return captureDistributedRuntimeProvider(registered).startRoutingInvalidationBus({
       expectedReplicas: startupConfig.expectedReplicas,
       integritySecret: routingInvalidationSecret,
       logger: routingInvalidationLogger,
@@ -349,13 +354,14 @@ const routingInvalidationBus = await acquireProxyStartupResource(
         error,
       );
       return null;
-    }),
+    });
+  },
   (bus) => bus?.close(),
 );
 if (startupConfig.production && !routingInvalidationBus) {
   await runProxyStartupStage(() => {
     throw new Error(
-      "Proxy routing invalidation bus requires REDIS_URL and a valid VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET in production",
+      `Proxy routing invalidation requires an activated ${DistributedRuntimeProviderName} extension and a valid VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET in production`,
     );
   });
 }

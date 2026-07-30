@@ -34,7 +34,7 @@ export interface CacheStats {
   /** Number of independently bounded cache partitions or directories. */
   cacheDirs?: number;
   estimatedSizeBytes?: number;
-  /** Cache backend type (memory, redis, api) */
+  /** Cache backend type (for example memory, disk, API, or distributed). */
   backend?: string;
 }
 

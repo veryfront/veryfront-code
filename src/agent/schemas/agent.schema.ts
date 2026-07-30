@@ -20,7 +20,7 @@ export const getAgentStatusSchema = defineSchema((v) =>
 
 export const getMemoryConfigSchema = defineSchema((v) =>
   v.object({
-    type: v.enum(["conversation", "buffer", "summary", "redis"] as const),
+    type: v.enum(["conversation", "buffer", "summary"] as const),
     maxTokens: v.number().int().positive().optional(),
     maxMessages: v.number().int().positive().optional(),
     // Persist history across calls on the agent instance. Defaults to true when

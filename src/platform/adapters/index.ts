@@ -127,13 +127,3 @@ export {
   withFallback,
   withFallbackSync,
 } from "./fallback-wrapper.ts";
-
-export {
-  arrayToObject,
-  clearModuleCache,
-  getRedisModule,
-  NodeRedisAdapter,
-  type NodeRedisClient,
-  type NodeRedisModule,
-  type RedisAdapter,
-} from "./redis/index.ts";

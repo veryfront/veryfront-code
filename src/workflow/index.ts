@@ -98,13 +98,13 @@ export type { BackendConfig, WorkflowBackend, WorkflowRunUpdate } from "./backen
 export { hasWorkerSupport } from "./backends/types.ts";
 
 export { MemoryBackend } from "./backends/memory.ts";
-
-export { RedisBackend } from "./backends/redis.ts";
-export type {
-  RedisAdapter,
-  RedisBackendConfig,
-  RedisRetentionDrainResult,
-} from "./backends/redis.ts";
+export {
+  createDistributedWorkflowBackend,
+  createDistributedWorkflowWorkerResources,
+  type DistributedWorkflowBackendOptions,
+  type DistributedWorkflowWorkerEnvironment,
+  type DistributedWorkflowWorkerResources,
+} from "./backends/distributed.ts";
 
 // =============================================================================
 // Client API

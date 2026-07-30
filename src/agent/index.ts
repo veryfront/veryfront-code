@@ -279,14 +279,12 @@ export { getTextFromParts, getToolArguments, hasArgs, hasInput } from "./types.t
 export {
   BufferMemory,
   ConversationMemory,
+  createDistributedAgentMemory,
   createMemory,
-  createRedisMemory,
+  type DistributedAgentMemoryOptions,
   type Memory,
   type MemoryPersistence,
   type MemoryStats,
-  type RedisClient,
-  RedisMemory,
-  type RedisMemoryConfig,
   SummaryMemory,
 } from "./memory/index.ts";
 

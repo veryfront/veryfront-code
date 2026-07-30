@@ -23,7 +23,7 @@ import { type CacheBackend, DiskCacheBackend, MemoryCacheBackend } from "./backe
  * Unlike MemoryCacheBackend, this is treated as "distributed" for testing.
  */
 class MockDistributedBackend implements CacheBackend {
-  readonly type = "redis" as const;
+  readonly type = "distributed" as const;
   private store = new Map<string, string>();
 
   get(key: string): Promise<string | null> {

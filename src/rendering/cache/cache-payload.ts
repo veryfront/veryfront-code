@@ -878,8 +878,8 @@ export function cloneCachePayload(value: CachePayload): CachePayload {
  *
  * Dates become canonical ISO strings for old readers and are rehydrated by new
  * readers through a bounded semantic-path sidecar. Both node-map projections
- * are emitted because origin Redis consumed the top-level form while origin
- * API consumed the nested form.
+ * are emitted because the original distributed-store adapter consumed the
+ * top-level form while the original API adapter consumed the nested form.
  */
 export function serializeCachePayload(value: CachePayload): string {
   const snapshot = cloneCachePayload(value);

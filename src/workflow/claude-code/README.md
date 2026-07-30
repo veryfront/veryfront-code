@@ -387,19 +387,23 @@ Real-time streaming of Claude Code execution is supported via Server-Sent Events
 
 ### Setting Up Streaming
 
+The distributed examples below require `@veryfront/ext-redis` to be installed
+and explicitly activated. `REDIS_URL` supplies connection details only; it does
+not load or select an extension.
+
 #### 1. Create SSE Endpoint
 
 ```typescript
 // app/api/workflows/[runId]/stream/route.ts
 import type { APIContext } from "veryfront";
-import { RedisEventPublisher } from "veryfront/workflow/claude-code";
+import { createDistributedEventPublisher } from "veryfront/workflow/claude-code";
 
 export async function GET(ctx: APIContext) {
   const { runId } = ctx.params;
 
   // Create Redis subscriber
-  const publisher = new RedisEventPublisher({
-    url: Deno.env.get("REDIS_URL")!,
+  const publisher = createDistributedEventPublisher({
+    endpoint: Deno.env.get("REDIS_URL")!,
   });
 
   // Create SSE stream
@@ -433,10 +437,13 @@ export async function GET(ctx: APIContext) {
 #### 2. Configure Agent with Publisher
 
 ```typescript
-import { RedisEventPublisher, streamingClaudeCodeAgent } from "veryfront/workflow/claude-code";
+import {
+  createDistributedEventPublisher,
+  streamingClaudeCodeAgent,
+} from "veryfront/workflow/claude-code";
 
-const publisher = new RedisEventPublisher({
-  url: Deno.env.get("REDIS_URL")!,
+const publisher = createDistributedEventPublisher({
+  endpoint: Deno.env.get("REDIS_URL")!,
 });
 
 const agent = streamingClaudeCodeAgent({
@@ -525,12 +532,12 @@ function AgentViewer({ runId }: { runId: string }) {
 
 ### Publisher Options
 
-| Type                     | Use Case                 |
-| ------------------------ | ------------------------ |
-| `RedisEventPublisher`    | Distributed deployments  |
-| `MemoryEventPublisher`   | Single-process / testing |
-| `SSEEventPublisher`      | Direct HTTP streaming    |
-| `CallbackEventPublisher` | Custom handling          |
+| Type                              | Use Case                 |
+| --------------------------------- | ------------------------ |
+| `createDistributedEventPublisher` | Distributed deployments  |
+| `MemoryEventPublisher`            | Single-process / testing |
+| `SSEEventPublisher`               | Direct HTTP streaming    |
+| `CallbackEventPublisher`          | Custom handling          |
 
 ## Bidirectional Streaming (WebSocket)
 
@@ -568,8 +575,8 @@ WebSocket (Bidirectional):
 // app/api/agent/ws/route.ts
 import {
   AgentController,
+  createDistributedEventPublisher,
   createWebSocketHandler,
-  RedisEventPublisher,
   streamingClaudeCodeAgent,
 } from "veryfront/workflow/claude-code";
 
@@ -587,8 +594,8 @@ export const GET = createWebSocketHandler({
     });
 
     // Subscribe to Redis events (from worker)
-    const redisPublisher = new RedisEventPublisher({
-      url: Deno.env.get("REDIS_URL")!,
+    const redisPublisher = createDistributedEventPublisher({
+      endpoint: Deno.env.get("REDIS_URL")!,
     });
 
     await redisPublisher.subscribe(runId, (event) => {
@@ -942,14 +949,17 @@ worker:
 ```typescript
 // src/workflow/worker/run-entrypoint.ts
 import { RunExecutor } from "../executor/run-executor.ts";
-import { createRedisBackend } from "../backends/redis.ts";
-import { RedisEventPublisher, streamingClaudeCodeAgent } from "../claude-code/index.ts";
+import { createDistributedWorkflowBackend } from "veryfront/workflow";
+import {
+  createDistributedEventPublisher,
+  streamingClaudeCodeAgent,
+} from "veryfront/workflow/claude-code";
 
 const REDIS_URL = Deno.env.get("REDIS_URL")!;
 const CONCURRENCY = parseInt(Deno.env.get("WORKER_CONCURRENCY") || "2");
 
 // Create Redis backend for run queue
-const backend = createRedisBackend({ url: REDIS_URL });
+const backend = createDistributedWorkflowBackend({ endpoint: REDIS_URL });
 
 // Create run executor
 const executor = new RunExecutor({
@@ -959,7 +969,7 @@ const executor = new RunExecutor({
   // Handle Claude Code runs
   handlers: {
     "claude-code": async (run) => {
-      const publisher = new RedisEventPublisher({ url: REDIS_URL });
+      const publisher = createDistributedEventPublisher({ endpoint: REDIS_URL });
 
       try {
         const agent = streamingClaudeCodeAgent({
@@ -1007,13 +1017,13 @@ Deno.addSignalListener("SIGTERM", async () => {
 ```typescript
 // app/api/agent/start/route.ts
 import type { APIContext } from "veryfront";
-import { createRedisBackend } from "veryfront/workflow/backends/redis";
+import { createDistributedWorkflowBackend } from "veryfront/workflow";
 
 export async function POST(ctx: APIContext) {
   const { task, mode, maxIterations } = await ctx.body();
 
-  const backend = createRedisBackend({
-    url: Deno.env.get("REDIS_URL")!,
+  const backend = createDistributedWorkflowBackend({
+    endpoint: Deno.env.get("REDIS_URL")!,
   });
 
   // Enqueue run for worker
@@ -1035,13 +1045,13 @@ export async function POST(ctx: APIContext) {
 ```typescript
 // app/api/agent/[runId]/stream/route.ts
 import type { APIContext } from "veryfront";
-import { RedisEventPublisher } from "veryfront/workflow/claude-code";
+import { createDistributedEventPublisher } from "veryfront/workflow/claude-code";
 
 export async function GET(ctx: APIContext) {
   const { runId } = ctx.params;
 
-  const publisher = new RedisEventPublisher({
-    url: Deno.env.get("REDIS_URL")!,
+  const publisher = createDistributedEventPublisher({
+    endpoint: Deno.env.get("REDIS_URL")!,
   });
 
   const stream = new ReadableStream({

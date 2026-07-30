@@ -37,7 +37,7 @@ class FakeTokenCache implements TokenCache {
       hits: 0,
       misses: 0,
       size: this.entries.size,
-      type: "redis",
+      type: "extension",
     });
   }
 
@@ -72,25 +72,25 @@ describe("proxy cache factory", () => {
     await cache.close();
   });
 
-  it("fails closed when Redis is selected without its extension contract", async () => {
+  it("fails closed when extension is selected without its contract", async () => {
     await assertRejects(
-      () => createCache({ type: "redis" }),
+      () => createCache({ type: "extension" }),
       Error,
-      "no TokenCacheStore is registered",
+      'no activated extension provides "TokenCacheStore"',
     );
 
-    Deno.env.set("CACHE_TYPE", "redis");
+    Deno.env.set("CACHE_TYPE", "extension");
     await assertRejects(
       () => createCacheFromEnv(),
       Error,
-      "no TokenCacheStore is registered",
+      'no activated extension provides "TokenCacheStore"',
     );
   });
 
-  it("wraps a registered Redis contract with stable tracing", async () => {
+  it("wraps a registered extension contract with stable tracing", async () => {
     const backend = new FakeTokenCache();
     register<TokenCache>("TokenCacheStore", backend);
-    const cache = await createCache({ type: "redis" });
+    const cache = await createCache({ type: "extension" });
 
     assertEquals(cache instanceof TracingTokenCache, true);
     await cache.set("key", {
@@ -103,38 +103,38 @@ describe("proxy cache factory", () => {
     assertEquals(backend.closed, true);
   });
 
-  it("closes created Redis stores but leaves borrowed stores open", async () => {
-    Deno.env.set("CACHE_TYPE", "redis");
+  it("closes created Extension stores but leaves borrowed stores open", async () => {
+    Deno.env.set("CACHE_TYPE", "extension");
     const created = new FakeTokenCache();
     const ownedCache = await createCacheFromEnv({
-      redisStore: Object.freeze({ kind: "created", store: created }),
+      extensionStore: Object.freeze({ kind: "created", store: created }),
     });
     await ownedCache.close();
     assertEquals(created.closed, true);
 
     const borrowed = new FakeTokenCache();
     const borrowedCache = await createCacheFromEnv({
-      redisStore: Object.freeze({ kind: "borrowed", store: borrowed }),
+      extensionStore: Object.freeze({ kind: "borrowed", store: borrowed }),
     });
     await borrowedCache.close();
     assertEquals(borrowed.closed, false);
   });
 
-  it("rejects unknown cache types and obsolete inline Redis options", async () => {
+  it("rejects unknown cache types and obsolete inline Extension options", async () => {
     await assertRejects(
       () => createCache({ type: "unknown" } as never),
       TypeError,
-      "memory or redis",
+      "memory or extension",
     );
 
     await assertRejects(
       () =>
         createCache({
-          type: "redis",
+          type: "extension",
           options: { url: "redis://localhost" },
         } as never),
       TypeError,
-      "ext-cache-redis",
+      "selected extension",
     );
 
     Deno.env.set("CACHE_TYPE", "Memory");
@@ -156,7 +156,7 @@ describe("proxy cache factory", () => {
     await assertRejects(
       () => createCache({ type: hostileType } as never),
       TypeError,
-      "memory or redis",
+      "memory or extension",
     );
     assertEquals(typeCoercions, 0);
 

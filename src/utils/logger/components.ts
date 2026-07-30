@@ -66,7 +66,6 @@ export const LogComponents = {
   runtimeHandler: "runtime-handler",
 
   // Platform & adapters
-  redis: "redis",
   fsIntegration: "fs-integration",
   readOperations: "read-operations",
 

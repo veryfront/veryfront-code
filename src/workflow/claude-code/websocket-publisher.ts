@@ -232,24 +232,6 @@ export class WebSocketPublisher implements BidirectionalPublisher {
 }
 
 /**
- * Redis-backed WebSocket publisher for distributed deployments
- *
- * Uses Redis pub/sub to bridge WebSocket connections across multiple servers:
- * - Events are published to Redis, then broadcast to connected WebSockets
- * - Commands from WebSocket are published to Redis for the worker to receive
- */
-interface RedisWebSocketBridgeConfig {
-  /** Redis URL */
-  redisUrl: string;
-
-  /** Channel prefix */
-  channelPrefix?: string;
-
-  /** Enable debug logging */
-  debug?: boolean;
-}
-
-/**
  * Create a WebSocket handler for HTTP upgrade requests
  */
 export function createWebSocketHandler(config: {

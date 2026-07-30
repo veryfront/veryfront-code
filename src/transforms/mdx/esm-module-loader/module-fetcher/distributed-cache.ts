@@ -1,7 +1,7 @@
 /****
  * Distributed transform cache read/write operations.
  *
- * Handles reading from and writing to the distributed (Redis/API) transform cache,
+ * Handles reading from and writing to the provider-neutral transform cache,
  * including validation of cached entries for the current environment.
  *
  * @module transforms/mdx/esm-module-loader/module-fetcher/distributed-cache

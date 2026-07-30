@@ -1,0 +1,41 @@
+{
+  "name": "@veryfront/ext-redis",
+  "version": "0.1.0",
+  "exports": "./src/index.ts",
+  "veryfront": {
+    "extension": true,
+    "activation": "explicit",
+    "contracts": {
+      "provides": ["DistributedRuntimeProvider"]
+    },
+    "capabilities": [
+      { "type": "net:outbound", "hosts": ["*"] },
+      {
+        "type": "env:read",
+        "keys": ["NODE_ENV", "REDIS_PASSWORD", "REDIS_URL", "REDIS_USERNAME"]
+      }
+    ]
+  },
+  "imports": {
+    "redis": "npm:redis@5.11.0",
+    "veryfront/agent": "../../src/agent/index.ts",
+    "veryfront/errors": "../../src/errors/index.ts",
+    "veryfront/extensions": "../../src/extensions/index.ts",
+    "veryfront/extensions/distributed": "../../src/extensions/distributed/index.ts",
+    "veryfront/extensions/distributed/agent-memory-support": "../../src/extensions/distributed/agent-memory-support.ts",
+    "veryfront/extensions/distributed/cache-support": "../../src/extensions/distributed/cache-support.ts",
+    "veryfront/extensions/distributed/rate-limit-support": "../../src/extensions/distributed/rate-limit-support.ts",
+    "veryfront/extensions/distributed/routing-invalidation-support": "../../src/extensions/distributed/routing-invalidation-support.ts",
+    "veryfront/extensions/distributed/workflow-support": "../../src/extensions/distributed/workflow-support.ts",
+    "veryfront/observability": "../../src/observability/index.ts",
+    "veryfront/observability/otlp-setup": "../../src/observability/tracing/otlp-setup.ts",
+    "veryfront/platform": "../../src/platform/index.ts",
+    "veryfront/utils": "../../src/utils/index.ts",
+    "veryfront/workflow": "../../src/workflow/index.ts",
+    "veryfront/workflow/claude-code": "../../src/workflow/claude-code/index.ts"
+  },
+  "tasks": {
+    "check": "deno check --frozen src/index.ts src/*.test.ts",
+    "test": "deno test --frozen --allow-read --allow-net=127.0.0.1 src/"
+  }
+}

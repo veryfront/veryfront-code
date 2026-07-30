@@ -91,7 +91,7 @@ export class HMRHandler extends BaseHandler {
       const projectSlug = project?.projectSlug ?? "preview";
       const generation = HMRHandler.reloadGeneration;
 
-      // Keep invalidate -> broadcast sequences ordered. A slow Redis purge for
+      // Keep invalidate -> broadcast sequences ordered. A slow shared-cache purge for
       // one change must not let a later reload overtake it and reach clients
       // first. The tail always recovers so one unexpected failure cannot poison
       // subsequent reloads.

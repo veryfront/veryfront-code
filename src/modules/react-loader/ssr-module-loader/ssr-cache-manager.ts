@@ -162,12 +162,12 @@ export class SSRCacheManager {
   async validateCachedCode(
     code: string,
     filePath: string,
-    source: "memory-cache" | "redis-cache",
+    source: "memory-cache" | "distributed-cache",
     options: { checkLocalPaths: boolean; checkInvalidEsmShPath: boolean },
   ): Promise<boolean> {
     if (options.checkInvalidEsmShPath && /esm\.sh\/_?vf_modules\//.test(code)) {
       logger.warn(
-        "[SSR-MODULE-LOADER] Redis cache has invalid esm.sh/_vf_modules URL, re-transforming",
+        "[SSR-MODULE-LOADER] Distributed cache has invalid esm.sh/_vf_modules URL, re-transforming",
         {
           file: filePath.slice(-40),
         },
@@ -187,7 +187,7 @@ export class SSRCacheManager {
       logger.warn(
         source === "memory-cache"
           ? "[SSR-MODULE-LOADER] Memory cache has unresolved _vf_modules imports, invalidating"
-          : "[SSR-MODULE-LOADER] Redis cache has unresolved _vf_modules imports, re-transforming",
+          : "[SSR-MODULE-LOADER] Distributed cache has unresolved _vf_modules imports, re-transforming",
         { file: filePath.slice(-40) },
       );
       return false;
@@ -279,7 +279,7 @@ export class SSRCacheManager {
   private async hasMissingHttpBundles(
     code: string,
     filePath: string,
-    source: "memory-cache" | "redis-cache",
+    source: "memory-cache" | "distributed-cache",
   ): Promise<boolean> {
     const bundlePaths = await extractAllHttpBundlePathsRecursive(code);
     if (bundlePaths.length === 0) return false;
@@ -311,7 +311,7 @@ export class SSRCacheManager {
           break;
         }
       } catch (error) {
-        logger.debug("Redis cache has invalid local path, re-transforming", {
+        logger.debug("Distributed cache has invalid local path, re-transforming", {
           file: filePath.slice(-40),
           missingPath: path.slice(-60),
           error,

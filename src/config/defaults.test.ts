@@ -7,8 +7,6 @@ import {
   DEFAULT_METRICS_COLLECT_INTERVAL_MS,
   DEFAULT_PORT,
   DEFAULT_PREFETCH_DELAY_MS,
-  DEFAULT_REDIS_BATCH_DELETE_SIZE,
-  DEFAULT_REDIS_SCAN_COUNT,
   DEFAULT_TIMEOUT_MS,
   defaultConfig,
   DURATION_HISTOGRAM_BOUNDARIES_MS,
@@ -60,14 +58,6 @@ describe("config/defaults", () => {
 
     it("should have correct DEFAULT_METRICS_COLLECT_INTERVAL_MS", () => {
       assertEquals(DEFAULT_METRICS_COLLECT_INTERVAL_MS, 60000);
-    });
-
-    it("should have correct DEFAULT_REDIS_SCAN_COUNT", () => {
-      assertEquals(DEFAULT_REDIS_SCAN_COUNT, 100);
-    });
-
-    it("should have correct DEFAULT_REDIS_BATCH_DELETE_SIZE", () => {
-      assertEquals(DEFAULT_REDIS_BATCH_DELETE_SIZE, 1000);
     });
 
     it("should have correct PAGE_TRANSITION_DELAY_MS", () => {

@@ -2,7 +2,7 @@
  * Cache Path Portability Utilities
  *
  * Centralizes logic for replacing absolute filesystem paths with portable tokens
- * (e.g., __VF_CACHE_DIR__) before storing code in distributed caches (Redis/API).
+ * (e.g., __VF_CACHE_DIR__) before storing code in distributed caches.
  * This ensures that cached code can be shared across different environments
  * (e.g., Build Server -> Production Pod) without "cache path mismatch" errors.
  *

@@ -18,9 +18,9 @@ export type { SSRImportMapIdentity } from "./import-map-identity.ts";
 export {
   CIRCUIT_BREAKER_RESET_MS,
   CIRCUIT_BREAKER_THRESHOLD,
+  DISTRIBUTED_KEY_PREFIX,
   getMaxConcurrentTransforms,
   getTransformPerProjectLimit,
-  REDIS_KEY_PREFIX,
   SSR_MODULE_CACHE_MAX_ENTRIES,
   SSR_MODULE_CACHE_TTL_MS,
   SSR_TMP_DIRS_MAX_ENTRIES,

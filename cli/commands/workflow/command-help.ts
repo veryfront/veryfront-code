@@ -10,9 +10,15 @@ export const workflowHelp: CommandHelp = {
       flag: "--input <json>",
       description: "JSON input to pass to the workflow",
     },
+    {
+      flag: "--backend <memory|distributed>",
+      description: "Workflow state backend; distributed requires an activated provider extension",
+      default: "memory",
+    },
   ],
   examples: [
     "veryfront workflow run publish-site",
     'veryfront workflow run content-pipeline --input \'{"topic":"AI"}\'',
+    "veryfront workflow run publish-site --backend distributed",
   ],
 };

@@ -7492,6 +7492,11 @@
           "npm:parse5@7.3.0"
         ]
       },
+      "extensions/ext-redis": {
+        "dependencies": [
+          "npm:redis@5.11.0"
+        ]
+      },
       "extensions/ext-sandbox-shell-tools": {
         "dependencies": [
           "jsr:@std/assert@1.0.19",

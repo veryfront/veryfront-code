@@ -12,6 +12,7 @@ export { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "./paths.ts";
 export {
   buildComponentCacheKey,
   buildDirCacheKeyPrefix,
+  buildDistributedSSRModuleKey,
   buildErrorPageCacheKey,
   buildFileCacheKeyPrefix,
   buildFileListCacheKey,
@@ -24,7 +25,6 @@ export {
   buildModuleResolveCacheKey,
   buildModuleTransformCacheKey,
   buildProxyManagerCacheKey,
-  buildRedisSSRModuleKey,
   buildStatCacheKeyPrefix,
   cacheRegistry,
   type FileOperationContext,

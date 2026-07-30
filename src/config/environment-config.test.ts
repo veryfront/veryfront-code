@@ -175,7 +175,6 @@ describe("EnvironmentConfig", () => {
           VERYFRONT_ENV: "production",
           VERYFRONT_API_TOKEN: "host-api-token",
           OPENAI_API_KEY: "host-openai-key",
-          REDIS_URL: "redis://host.example:6379",
           OTEL_EXPORTER_OTLP_ENDPOINT: "https://host-collector.example",
           HOME: "/host/home",
         },
@@ -194,7 +193,6 @@ describe("EnvironmentConfig", () => {
           expect(overriddenEnv.veryfrontEnv).toBe("preview");
           expect(defaultEnv.apiToken).toBeUndefined();
           expect(defaultEnv.openaiApiKey).toBeUndefined();
-          expect(defaultEnv.redisUrl).toBeUndefined();
           expect(defaultEnv.otelEndpoint).toBeUndefined();
           expect(defaultEnv.homeDir).toBeUndefined();
         },
@@ -372,7 +370,6 @@ describe("EnvironmentConfig", () => {
               serverStartTime: "2026-07-25T10:00:00Z",
               vcr: "record",
               experimentalRsc: true,
-              redisUrl: "redis://cache.example:6379",
               cacheDir: "/cache/veryfront",
               disableLruInterval: true,
               appUrl: "https://app.example",

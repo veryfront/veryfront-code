@@ -78,12 +78,13 @@ the same contract.
 
 ### Storage
 
-| Package                                           | Contract          | Description                              |
-| ------------------------------------------------- | ----------------- | ---------------------------------------- |
-| [`@veryfront/ext-blob-gcs`](./ext-blob-gcs)       | `BlobStorage`     | Google Cloud Storage object persistence  |
-| [`@veryfront/ext-blob-s3`](./ext-blob-s3)         | `BlobStorage`     | S3-compatible object persistence         |
-| [`@veryfront/ext-cache-redis`](./ext-cache-redis) | `TokenCacheStore` | Redis-backed token and cache persistence |
-| [`@veryfront/ext-db-sqlite`](./ext-db-sqlite)     | `SqliteStore`     | SQLite persistence                       |
+| Package                                           | Contract                     | Description                                                                                                                    |
+| ------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| [`@veryfront/ext-blob-gcs`](./ext-blob-gcs)       | `BlobStorage`                | Google Cloud Storage object persistence                                                                                        |
+| [`@veryfront/ext-blob-s3`](./ext-blob-s3)         | `BlobStorage`                | S3-compatible object persistence                                                                                               |
+| [`@veryfront/ext-cache-redis`](./ext-cache-redis) | `TokenCacheStore`            | Redis-backed proxy token cache                                                                                                 |
+| [`@veryfront/ext-redis`](./ext-redis)             | `DistributedRuntimeProvider` | Redis implementations for distributed cache, rendering, workflows, rate limits, agent memory, events, and routing invalidation |
+| [`@veryfront/ext-db-sqlite`](./ext-db-sqlite)     | `SqliteStore`                | SQLite persistence                                                                                                             |
 
 ### Observability
 
@@ -282,18 +283,19 @@ capability list in the extension factory and in `veryfront.capabilities` inside
 the extension manifest. CI runs `deno task lint:extension-capabilities` to
 check for drift and to enforce the sensitive capability policies below.
 
-| Extension                         | Required capabilities                                  | Why it is sensitive                          |
-| --------------------------------- | ------------------------------------------------------ | -------------------------------------------- |
-| `ext-blob-gcs`                    | `net:outbound` to Google OAuth and Storage             | Obtains tokens and accesses configured blobs |
-| `ext-blob-s3`                     | `net:outbound`, declared AWS runtime `env:read` keys   | Accesses the explicitly configured endpoint  |
-| `ext-sandbox-shell-tools`         | `sandbox:execute` with `tools: ["bash"]`               | Exposes command execution in a sandbox       |
-| `ext-cache-redis`                 | `net:outbound`, `env:read` for `REDIS_*`               | Connects to external cache infrastructure    |
-| `ext-db-sqlite`                   | `fs:read`, `fs:write`                                  | Opens native SQLite databases                |
-| `ext-document-kreuzberg`          | `fs:read`                                              | Parses uploaded or user-provided documents   |
-| `ext-observability-opentelemetry` | `net:outbound`, `env:read` for `OTEL_*`                | Exports telemetry and reads collector config |
-| `ext-observability-sentry`        | `net:outbound`, declared `env:read` keys               | Sends scrubbed application errors to Sentry  |
-| `ext-eval-report-http`            | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*` | Exports eval reports to an external endpoint |
-| `ext-eval-report-mlflow`          | `net:outbound`, declared `MLFLOW_*` `env:read` keys    | Exports eval reports to MLflow               |
+| Extension                         | Required capabilities                                  | Why it is sensitive                                     |
+| --------------------------------- | ------------------------------------------------------ | ------------------------------------------------------- |
+| `ext-blob-gcs`                    | `net:outbound` to Google OAuth and Storage             | Obtains tokens and accesses configured blobs            |
+| `ext-blob-s3`                     | `net:outbound`, declared AWS runtime `env:read` keys   | Accesses the explicitly configured endpoint             |
+| `ext-sandbox-shell-tools`         | `sandbox:execute` with `tools: ["bash"]`               | Exposes command execution in a sandbox                  |
+| `ext-cache-redis`                 | `net:outbound`, `env:read` for `REDIS_*`               | Connects to external cache infrastructure               |
+| `ext-redis`                       | `net:outbound`, `env:read` for `REDIS_*`               | Provides explicitly selected distributed infrastructure |
+| `ext-db-sqlite`                   | `fs:read`, `fs:write`                                  | Opens native SQLite databases                           |
+| `ext-document-kreuzberg`          | `fs:read`                                              | Parses uploaded or user-provided documents              |
+| `ext-observability-opentelemetry` | `net:outbound`, `env:read` for `OTEL_*`                | Exports telemetry and reads collector config            |
+| `ext-observability-sentry`        | `net:outbound`, declared `env:read` keys               | Sends scrubbed application errors to Sentry             |
+| `ext-eval-report-http`            | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*` | Exports eval reports to an external endpoint            |
+| `ext-eval-report-mlflow`          | `net:outbound`, declared `MLFLOW_*` `env:read` keys    | Exports eval reports to MLflow                          |
 
 Use `veryfront.contracts` for contract ownership and dependency ordering. Use
 `veryfront.capabilities` only for runtime resource access and audit metadata.

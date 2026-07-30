@@ -2,7 +2,7 @@
  * Token Cache Interface
  *
  * Abstraction for storing OAuth tokens with TTL support.
- * Implementations: MemoryCache (built-in), RedisCache (via @veryfront/ext-cache-redis)
+ * Implementations: MemoryCache (built in) or an explicitly activated extension.
  */
 
 export interface TokenCacheEntry {
@@ -26,7 +26,7 @@ export interface CacheStats {
   hits: number;
   misses: number;
   size: number;
-  type: "memory" | "redis";
+  type: "memory" | "extension";
 }
 
 export interface MemoryCacheOptions {
@@ -36,24 +36,10 @@ export interface MemoryCacheOptions {
   cleanupInterval?: number;
 }
 
-/**
- * @deprecated Redis connection policy belongs to the `ext-cache-redis`
- * extension. The proxy cache factory only selects an already registered
- * `TokenCacheStore`.
- */
-export interface RedisCacheOptions {
-  url: string;
-  prefix?: string;
-  connectTimeout?: number;
-  tls?: boolean;
-  password?: string;
-  username?: string;
-}
-
 export type CacheOptions =
   | { type: "memory"; options?: MemoryCacheOptions }
   | {
     /** Requires a previously registered `TokenCacheStore` extension contract. */
-    type: "redis";
+    type: "extension";
     options?: never;
   };

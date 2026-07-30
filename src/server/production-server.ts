@@ -801,9 +801,8 @@ if (import.meta.main) {
   });
 
   try {
-    // Initialize OpenTelemetry tracing and distributed caches in parallel
-    // Both can fail independently without blocking the other
-    // Backend: API (production) > Redis (local dev) > Memory (fallback)
+    // Initialize telemetry and cache providers in parallel. Telemetry remains
+    // optional; an explicitly selected cache provider is part of runtime correctness.
     const [otlpResult, cacheResult] = await Promise.allSettled([
       initializeOTLPWithApis(),
       initializeDistributedCaches(defaultDistributedCacheInitializers),
@@ -816,9 +815,7 @@ if (import.meta.main) {
     }
 
     if (cacheResult.status === "rejected") {
-      logger.warn("Distributed cache initialization failed, using memory fallback", {
-        error: cacheResult.reason,
-      });
+      throw cacheResult.reason;
     }
 
     const adapter = await runtime.get();

@@ -599,7 +599,7 @@ export class MDXCacheAdapter {
       }
 
       // Validate HTTP bundle dependencies before returning cached bundle.
-      // If any bundles can't be recovered from Redis, invalidate this cache entry
+      // If any bundles cannot be recovered from shared storage, invalidate this entry
       // and return undefined to trigger recompilation with fresh bundles.
       const httpBundles = extractHttpBundlePaths(compiledCode);
       if (httpBundles.length > 0) {

@@ -46,11 +46,11 @@ export {
   rateLimit,
   type RateLimitOptions,
 } from "./builtin/security/rate-limit.ts";
-export {
-  type RedisRateLimitOptions,
-  RedisRateLimitStore,
-} from "./builtin/security/redis-rate-limit.ts";
 export type { RateLimitStore } from "./builtin/security/types.ts";
+export {
+  createDistributedRateLimitStore,
+  type DistributedRateLimitStoreOptions,
+} from "./builtin/security/distributed-rate-limit.ts";
 
 export {
   devLogger,

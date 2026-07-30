@@ -36,7 +36,7 @@ class FakeStore implements TokenCacheStore {
     return Promise.resolve(false);
   }
   stats(): Promise<CacheStats> {
-    return Promise.resolve({ hits: 0, misses: 0, size: 0, type: "redis" });
+    return Promise.resolve({ hits: 0, misses: 0, size: 0, type: "extension" });
   }
   close(): Promise<void> {
     this.closeCalls++;
@@ -69,7 +69,7 @@ class FakeStartupCache implements TokenCache {
     return Promise.resolve(false);
   }
   stats(): Promise<CacheStats> {
-    return Promise.resolve({ hits: 0, misses: 0, size: 0, type: "redis" });
+    return Promise.resolve({ hits: 0, misses: 0, size: 0, type: "extension" });
   }
   async close(): Promise<void> {
     this.closeCalls++;
@@ -122,7 +122,7 @@ class DelayedStoreClosingCache implements TokenCache {
     return Promise.resolve(false);
   }
   stats(): Promise<CacheStats> {
-    return Promise.resolve({ hits: 0, misses: 0, size: 0, type: "redis" });
+    return Promise.resolve({ hits: 0, misses: 0, size: 0, type: "extension" });
   }
   async close(): Promise<void> {
     this.closeCalls++;
@@ -138,7 +138,7 @@ function cacheFactory(
 ): (options: CacheFromEnvOptions) => Promise<TokenCache> {
   return (options) => {
     receive?.(options);
-    const acquisition = options.redisStore;
+    const acquisition = options.extensionStore;
     const store = acquisition?.store ?? null;
     return Promise.resolve(
       new FakeStartupCache(
@@ -164,7 +164,7 @@ describe("proxy startup cache ownership", () => {
     const acquiring = acquireProxyStartupCache(
       rollback,
       {
-        acquireRedisStore: () => {
+        acquireExtensionStore: () => {
           acquisitionStarted.resolve();
           return storeReady.promise;
         },
@@ -229,7 +229,7 @@ describe("proxy startup cache ownership", () => {
     const acquiring = acquireProxyStartupCache(
       rollback,
       {
-        acquireRedisStore: () => {
+        acquireExtensionStore: () => {
           acquisitionStarted.resolve();
           return storeReady.promise;
         },
@@ -259,7 +259,7 @@ describe("proxy startup cache ownership", () => {
     assertStrictEquals(rejection, interruption);
     assertEquals(store.closeCalls, 1);
     assertEquals(cleanupFailures.length, 1);
-    assertEquals(cleanupFailures[0]?.step, "redis-token-cache-acquisition");
+    assertEquals(cleanupFailures[0]?.step, "extension-token-cache-acquisition");
     const cleanupError = cleanupFailures[0]?.error;
     assertEquals(cleanupError instanceof AggregateError, true);
     assertEquals(
@@ -290,7 +290,7 @@ describe("proxy startup cache ownership", () => {
     const acquiring = acquireProxyStartupCache(
       rollback,
       {
-        acquireRedisStore: () => {
+        acquireExtensionStore: () => {
           acquisitionStarted.resolve();
           return storeReady.promise;
         },
@@ -322,11 +322,11 @@ describe("proxy startup cache ownership", () => {
     assertEquals(store.closeCalls, 1);
     assertEquals(registered, undefined);
     assertEquals(cleanupFailures.length, 1);
-    assertEquals(cleanupFailures[0]?.step, "redis-token-cache-acquisition");
+    assertEquals(cleanupFailures[0]?.step, "extension-token-cache-acquisition");
     assertEquals(cleanupFailures[0]?.error instanceof TypeError, true);
     assertEquals(
       (cleanupFailures[0]?.error as TypeError).message,
-      "Late Proxy Redis store unregistration must complete synchronously",
+      "Late Proxy extension store unregistration must complete synchronously",
     );
   });
 
@@ -344,7 +344,7 @@ describe("proxy startup cache ownership", () => {
     const acquiring = acquireProxyStartupCache(
       rollback,
       {
-        acquireRedisStore: () => {
+        acquireExtensionStore: () => {
           registered = store;
           return Promise.resolve(Object.freeze({ kind: "created" as const, store }));
         },
@@ -412,7 +412,7 @@ describe("proxy startup cache ownership", () => {
     const acquiring = acquireProxyStartupCache(
       rollback,
       {
-        acquireRedisStore: () => {
+        acquireExtensionStore: () => {
           registered = store;
           return Promise.resolve(Object.freeze({ kind: "created" as const, store }));
         },
@@ -466,12 +466,12 @@ describe("proxy startup cache ownership", () => {
     const acquiring = acquireProxyStartupCache(
       rollback,
       {
-        acquireRedisStore: () => {
+        acquireExtensionStore: () => {
           registered = store;
           return Promise.resolve(Object.freeze({ kind: "created" as const, store }));
         },
         createCache: (options) => {
-          const selectedStore = options.redisStore?.store;
+          const selectedStore = options.extensionStore?.store;
           if (!selectedStore) throw new Error("expected created store");
           cache = new DelayedStoreClosingCache(
             selectedStore,
@@ -529,7 +529,7 @@ describe("proxy startup cache ownership", () => {
         return Promise.resolve(false);
       },
       stats() {
-        return Promise.resolve({ hits: 0, misses: 0, size: 0, type: "redis" as const });
+        return Promise.resolve({ hits: 0, misses: 0, size: 0, type: "extension" as const });
       },
     } as Record<string, unknown>;
     Object.defineProperty(malformed, "close", {
@@ -545,7 +545,7 @@ describe("proxy startup cache ownership", () => {
     await assertRejects(
       () =>
         acquireProxyStartupCache(rollback, {
-          acquireRedisStore: () =>
+          acquireExtensionStore: () =>
             Promise.resolve(Object.freeze({
               kind: "created" as const,
               store,
@@ -583,7 +583,7 @@ describe("proxy startup cache ownership", () => {
         return Promise.resolve(false);
       },
       stats() {
-        return Promise.resolve({ hits: 0, misses: 0, size: 0, type: "redis" as const });
+        return Promise.resolve({ hits: 0, misses: 0, size: 0, type: "extension" as const });
       },
       close() {
         closeCalls++;
@@ -596,7 +596,7 @@ describe("proxy startup cache ownership", () => {
     await assertRejects(
       () =>
         acquireProxyStartupCache(rollback, {
-          acquireRedisStore: () => {
+          acquireExtensionStore: () => {
             registered = malformed;
             return Promise.resolve(Object.freeze({
               kind: "created",
@@ -626,7 +626,7 @@ describe("proxy startup cache ownership", () => {
     let registered: TokenCacheStore | undefined;
     const rollback = createProxyStartupRollback({ cleanupTimeoutMs: 100 });
     const startupCache = await acquireProxyStartupCache(rollback, {
-      acquireRedisStore: () => {
+      acquireExtensionStore: () => {
         registered = store;
         return Promise.resolve(Object.freeze({ kind: "created", store }));
       },
@@ -674,7 +674,7 @@ describe("proxy startup cache ownership", () => {
     });
 
     await acquireProxyStartupCache(rollback, {
-      acquireRedisStore: () => {
+      acquireExtensionStore: () => {
         registered = createdStore;
         return Promise.resolve(Object.freeze({
           kind: "created" as const,
@@ -722,7 +722,7 @@ describe("proxy startup cache ownership", () => {
       },
     });
     const startupCache = await acquireProxyStartupCache(rollback, {
-      acquireRedisStore: () => {
+      acquireExtensionStore: () => {
         registered = store;
         return Promise.resolve(Object.freeze({ kind: "created", store }));
       },
@@ -773,7 +773,7 @@ describe("proxy startup cache ownership", () => {
       },
     });
     await acquireProxyStartupCache(rollback, {
-      acquireRedisStore: () => {
+      acquireExtensionStore: () => {
         registered = store;
         return Promise.resolve(Object.freeze({ kind: "created", store }));
       },
@@ -808,7 +808,7 @@ describe("proxy startup cache ownership", () => {
     let restorationCalls = 0;
     const rollback = createProxyStartupRollback({ cleanupTimeoutMs: 100 });
     const startupCache = await acquireProxyStartupCache(rollback, {
-      acquireRedisStore: () => {
+      acquireExtensionStore: () => {
         registered = store;
         return Promise.resolve(Object.freeze({ kind: "created", store }));
       },
@@ -842,7 +842,7 @@ describe("proxy startup cache ownership", () => {
     let received: CacheFromEnvOptions | undefined;
     const rollback = createProxyStartupRollback({ cleanupTimeoutMs: 100 });
     const startupCache = await acquireProxyStartupCache(rollback, {
-      acquireRedisStore: () =>
+      acquireExtensionStore: () =>
         Promise.resolve(Object.freeze({
           kind: "borrowed",
           store: borrowed,
@@ -871,8 +871,8 @@ describe("proxy startup cache ownership", () => {
       "listener failed",
     );
 
-    assertStrictEquals(received?.redisStore?.store, borrowed);
-    assertEquals(received?.redisStore?.kind, "borrowed");
+    assertStrictEquals(received?.extensionStore?.store, borrowed);
+    assertEquals(received?.extensionStore?.kind, "borrowed");
     assertEquals(events, ["cache"]);
     assertEquals(borrowed.closeCalls, 0);
     assertStrictEquals(registered, borrowed);

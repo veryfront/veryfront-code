@@ -1,6 +1,6 @@
 /**
  * SSR rendering engine — page rendering with VeryfrontRenderer, chunk analysis,
- * multi-tier cache coordination (API, filesystem, KV, memory, Redis), and layouts.
+ * multi-tier cache coordination (API, filesystem, KV, memory, distributed), and layouts.
  *
  * @module rendering
  */
@@ -28,10 +28,10 @@ export { CacheCoordinator, type CacheCoordinatorOptions } from "./cache/cache-co
 export type { CachePayload, CacheStore } from "./cache/types.ts";
 export {
   APICacheStore,
+  createDistributedRenderCacheStore,
   FilesystemCacheStore,
   KVCacheStore,
   MemoryCacheStore,
-  RedisCacheStore,
 } from "./cache/stores/index.ts";
 
 // Layout utilities

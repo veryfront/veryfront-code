@@ -5,7 +5,7 @@
  * Handles direct file reads, HTTP fallback, and recursive dependency resolution.
  *
  * Features:
- * - Distributed transform cache for cross-pod sharing (Redis/API)
+ * - Provider-neutral transform cache for cross-pod sharing
  * - Local filesystem cache for fast repeated access
  * - Parallel nested import resolution
  *

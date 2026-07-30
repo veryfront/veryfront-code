@@ -235,7 +235,7 @@ import { __registerLogRecordEmitter, __registerRequestContextGetter, __registerT
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `LogComponent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/components.ts#L93) |
+| `LogComponent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/components.ts#L92) |
 | `LogEntry` | Structured log entry for JSON output. Fields are designed for easy Grafana/Loki filtering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L41) |
 | `LogFormat` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L35) |
 | `Logger` | Public API contract for logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L108) |

@@ -8,7 +8,6 @@ export type {
   CacheOptions,
   CacheStats,
   MemoryCacheOptions,
-  RedisCacheOptions,
   TokenCache,
   TokenCacheEntry,
 } from "./types.ts";
@@ -18,9 +17,8 @@ export { TracingTokenCache } from "./tracing-cache.ts";
 
 import type { CacheOptions, MemoryCacheOptions, TokenCache } from "./types.ts";
 import type { TokenCacheStore } from "../../extensions/cache/index.ts";
-import type { RedisTokenCacheStoreAcquisition } from "./redis-extension.ts";
+import type { ExtensionTokenCacheStoreAcquisition } from "./extension-store.ts";
 import { MemoryCache } from "./memory-cache.ts";
-import { ResilientCache } from "./resilient-cache.ts";
 import { TracingTokenCache } from "./tracing-cache.ts";
 import { tryResolve } from "../../extensions/contracts.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
@@ -32,14 +30,14 @@ import { assertCacheOptionsObject } from "./validation.ts";
 const logger = proxyLogger.child({ module: "cache" });
 
 const MISSING_EXTENSION_INFO =
-  "Redis cache was requested, but no TokenCacheStore is registered. Install and configure @veryfront/ext-cache-redis.";
+  'Extension cache was requested, but no activated extension provides "TokenCacheStore".';
 
 export interface CacheFromEnvOptions {
   /**
    * Explicit startup acquisition. A borrowed store remains open when the
    * proxy-owned cache wrapper closes.
    */
-  redisStore?: RedisTokenCacheStoreAcquisition;
+  extensionStore?: ExtensionTokenCacheStoreAcquisition;
 }
 
 function requireTokenCacheStore(): TokenCacheStore {
@@ -50,19 +48,19 @@ function requireTokenCacheStore(): TokenCacheStore {
   return tokenCache;
 }
 
-function readRedisStoreAcquisition(
+function readExtensionStoreAcquisition(
   options: CacheFromEnvOptions,
-): RedisTokenCacheStoreAcquisition | undefined {
-  const descriptor = Object.getOwnPropertyDescriptor(options, "redisStore");
+): ExtensionTokenCacheStoreAcquisition | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(options, "extensionStore");
   if (!descriptor) return undefined;
   if (!("value" in descriptor)) {
-    throw new TypeError("Proxy cache redisStore must be a data property");
+    throw new TypeError("Proxy cache extensionStore must be a data property");
   }
   const acquisition = descriptor.value;
   if (acquisition === undefined) return undefined;
   assertCacheOptionsObject(
     acquisition,
-    "Proxy Redis store acquisition",
+    "Proxy extension store acquisition",
     ["kind", "store"],
   );
   const kindDescriptor = Object.getOwnPropertyDescriptor(acquisition, "kind");
@@ -71,15 +69,15 @@ function readRedisStoreAcquisition(
     !kindDescriptor || !("value" in kindDescriptor) ||
     !storeDescriptor || !("value" in storeDescriptor)
   ) {
-    throw new TypeError("Proxy Redis store acquisition must use data properties");
+    throw new TypeError("Proxy extension store acquisition must use data properties");
   }
   const kind = kindDescriptor.value;
   const store = storeDescriptor.value;
   if (kind === "disabled") {
     if (store !== null) {
-      throw new TypeError("Disabled Proxy Redis store acquisition must not contain a store");
+      throw new TypeError("Disabled Proxy extension store acquisition must not contain a store");
     }
-    return acquisition as RedisTokenCacheStoreAcquisition;
+    return acquisition as ExtensionTokenCacheStoreAcquisition;
   }
   if (
     (kind !== "borrowed" && kind !== "created") ||
@@ -87,9 +85,9 @@ function readRedisStoreAcquisition(
     typeof store !== "object" ||
     Array.isArray(store)
   ) {
-    throw new TypeError("Proxy Redis store acquisition is invalid");
+    throw new TypeError("Proxy extension store acquisition is invalid");
   }
-  return acquisition as RedisTokenCacheStoreAcquisition;
+  return acquisition as ExtensionTokenCacheStoreAcquisition;
 }
 
 export async function createCache(options: CacheOptions): Promise<TokenCache> {
@@ -99,8 +97,8 @@ export async function createCache(options: CacheOptions): Promise<TokenCache> {
     throw new TypeError("Proxy cache type must be a data property");
   }
   const cacheType = typeDescriptor.value;
-  if (cacheType !== "memory" && cacheType !== "redis") {
-    throw new TypeError("Proxy cache type must be memory or redis");
+  if (cacheType !== "memory" && cacheType !== "extension") {
+    throw new TypeError("Proxy cache type must be memory or extension");
   }
   const optionsDescriptor = Object.getOwnPropertyDescriptor(options, "options");
   if (optionsDescriptor && !("value" in optionsDescriptor)) {
@@ -112,11 +110,9 @@ export async function createCache(options: CacheOptions): Promise<TokenCache> {
   return withSpan(
     "cache.create",
     async () => {
-      if (cacheType === "redis") {
+      if (cacheType === "extension") {
         if (backendOptions !== undefined) {
-          throw new TypeError(
-            "Redis connection options belong to the ext-cache-redis extension",
-          );
+          throw new TypeError("Extension cache configuration belongs to the selected extension");
         }
         return new TracingTokenCache(requireTokenCacheStore());
       }
@@ -129,35 +125,29 @@ export async function createCache(options: CacheOptions): Promise<TokenCache> {
 export async function createCacheFromEnv(
   options: CacheFromEnvOptions = {},
 ): Promise<TokenCache> {
-  assertCacheOptionsObject(options, "Proxy environment cache options", ["redisStore"]);
-  const redisStore = readRedisStoreAcquisition(options);
+  assertCacheOptionsObject(options, "Proxy environment cache options", ["extensionStore"]);
+  const extensionStore = readExtensionStoreAcquisition(options);
   const cacheType = getEnv("CACHE_TYPE") || "memory";
-  if (cacheType !== "memory" && cacheType !== "redis") {
-    throw new TypeError("CACHE_TYPE must be memory or redis");
+  if (cacheType !== "memory" && cacheType !== "extension") {
+    throw new TypeError("CACHE_TYPE must be memory or extension");
   }
-  if (cacheType === "memory" && redisStore && redisStore.kind !== "disabled") {
-    throw new TypeError("A Redis store cannot be supplied when CACHE_TYPE=memory");
+  if (cacheType === "memory" && extensionStore && extensionStore.kind !== "disabled") {
+    throw new TypeError("An extension store cannot be supplied when CACHE_TYPE=memory");
   }
-  if (cacheType === "redis" && redisStore?.kind === "disabled") {
-    throw new TypeError("CACHE_TYPE=redis requires an acquired Redis store");
+  if (cacheType === "extension" && extensionStore?.kind === "disabled") {
+    throw new TypeError("CACHE_TYPE=extension requires an acquired extension store");
   }
 
   return withSpan(
     "cache.createFromEnv",
     async () => {
-      if (cacheType !== "redis") return new MemoryCache();
+      if (cacheType !== "extension") return new MemoryCache();
 
-      // Wrap the extension-provided cache with a memory fallback so a Redis
-      // outage does not take the proxy down. TracingTokenCache sits between
-      // ResilientCache and the extension impl so spans wrap the actual
-      // primary-cache attempt (mirrors the pre-extraction RedisCache which
-      // had inner withSpan calls).
-      logger.debug("[Cache] Using TokenCacheStore extension with memory fallback (ResilientCache)");
-      const store = redisStore?.store ?? requireTokenCacheStore();
-      const traced = new TracingTokenCache(store, {
-        closeInner: redisStore?.kind !== "borrowed",
+      logger.debug("[Cache] Using explicitly activated TokenCacheStore extension");
+      const store = extensionStore?.store ?? requireTokenCacheStore();
+      return new TracingTokenCache(store, {
+        closeInner: extensionStore?.kind !== "borrowed",
       });
-      return new ResilientCache(traced, new MemoryCache());
     },
     { "cache.type": cacheType },
   );

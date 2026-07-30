@@ -8,11 +8,6 @@ export const workerHelp: CommandHelp = {
   usage: "veryfront worker [options]",
   options: [
     {
-      flag: "--redis-url <url>",
-      description: "Redis connection URL",
-      default: "redis://localhost:6379",
-    },
-    {
       flag: "-c, --concurrency <number>",
       description: "Maximum concurrent runs",
       default: "3",
@@ -32,10 +27,14 @@ export const workerHelp: CommandHelp = {
       description: "Path to workflow run entrypoint script",
       default: "./workflow-run.ts",
     },
+    {
+      flag: "--project-dir <path>",
+      description: "Project containing the config and worker entrypoint",
+      default: "current directory",
+    },
   ],
   examples: [
-    "veryfront worker",
-    "veryfront worker --redis-url redis://prod:6379 --concurrency 5",
-    "veryfront worker --entrypoint ./src/runs/workflow-runner.ts",
+    "veryfront worker --concurrency 5",
+    "veryfront worker --project-dir ./my-app --entrypoint ./src/runs/workflow-runner.ts",
   ],
 };

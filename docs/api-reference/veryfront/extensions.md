@@ -9,11 +9,11 @@ order: 10
 ```ts
 import {
   auditCapabilities,
+  captureDistributedRuntimeProvider,
   createStudioCaptureBundleProvider,
   detectConflicts,
   discoverLocalExtensions,
   discoverPackageExtensions,
-  discoverProjectExtensions,
 } from "veryfront/extensions";
 ```
 
@@ -38,6 +38,7 @@ await loader.teardownAll();
 
 | Name | Description | Source |
 |------|-------------|--------|
+| `DistributedRuntimeProviderName` | Registry name used by distributed-infrastructure extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L25) |
 | `SandboxShellToolsProviderName` | Render sandbox shell tools provider name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L5) |
 | `StudioCaptureBundleProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L11) |
 
@@ -46,13 +47,14 @@ await loader.teardownAll();
 | Name | Description | Source |
 |------|-------------|--------|
 | `auditCapabilities` | Log capabilities for a named extension at startup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L781) |
+| `captureDistributedRuntimeProvider` | Capture a provider's complete callable surface without invoking accessors. Later mutation of the registry object cannot redirect active operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L429) |
 | `createStudioCaptureBundleProvider` | Create an immutable provider suitable for extension contract registration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L118) |
 | `detectConflicts` | Detect contract conflicts between resolved extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L509) |
 | `discoverLocalExtensions` | Find `*.extension.ts` files in the project root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L436) |
 | `discoverPackageExtensions` | Scan `node_modules` (including `@scoped` packages) for packages that declare veryfront extension metadata in their `package.json`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L348) |
 | `discoverProjectExtensions` | Discover project extensions living under `extensions/` in the project root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L407) |
 | `formatCapabilities` | Format capabilities as human-readable strings for logging. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L36) |
-| `getRecommendation` | Return recommendation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/recommendations.ts#L29) |
+| `getRecommendation` | Return recommendation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/recommendations.ts#L30) |
 | `loadExtensionFactory` | Dynamically import an extension factory from `path` and resolve it. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/factory-loader.ts#L34) |
 | `mapToDenoPermissions` | Map capabilities to Deno CLI permission flags. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L734) |
 | `mergeExtensions` | Merge extensions from all four sources in priority order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L169) |
@@ -77,6 +79,7 @@ await loader.teardownAll();
 | `Capability` | Declares a system capability an extension requires. Object-based for extensibility -- scoping fields vary by type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L11) |
 | `ConflictInfo` | Information about a contract conflict between extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L29) |
 | `CreateSandboxShellToolsInput` | Input payload for create sandbox shell tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L38) |
+| `DistributedRuntimeProvider` | Optional distributed runtime implementation supplied by an extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L295) |
 | `Extension` | Public API contract for extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L50) |
 | `ExtensionActivationMode` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L30) |
 | `ExtensionConfigEntry` | Entry shape for extension config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L65) |
@@ -192,9 +195,9 @@ import "veryfront/extensions/cache";
 | Name | Description | Source |
 |------|-------------|--------|
 | `CacheStore` | CacheStore contract interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/cache/cache-store.ts#L14) |
-| `TokenCacheEntry` | A cache entry stored by `TokenCacheStore`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/cache/token-cache-store.ts#L19) |
-| `TokenCacheStats` | Aggregate usage statistics for a `TokenCacheStore`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/cache/token-cache-store.ts#L30) |
-| `TokenCacheStore` | TokenCacheStore contract interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/cache/token-cache-store.ts#L43) |
+| `TokenCacheEntry` | A cache entry stored by `TokenCacheStore`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/cache/token-cache-store.ts#L17) |
+| `TokenCacheStats` | Aggregate usage statistics for a `TokenCacheStore`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/cache/token-cache-store.ts#L28) |
+| `TokenCacheStore` | TokenCacheStore contract interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/cache/token-cache-store.ts#L41) |
 
 ### `veryfront/extensions/compat`
 
@@ -290,6 +293,199 @@ import "veryfront/extensions/database";
 |------|-------------|--------|
 | `DatabaseClient` | DatabaseClient contract interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/database/database-client.ts#L23) |
 | `QueryResult` | Result returned from `DatabaseClient.query`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/database/database-client.ts#L10) |
+
+### `veryfront/extensions/distributed`
+
+Provider-neutral contracts for optional distributed runtime infrastructure.
+
+```ts
+import { captureDistributedCacheAdministration, captureDistributedRuntimeProvider, captureDistributedWorkflowWorkerEnvironment } from "veryfront/extensions/distributed";
+```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `DistributedRuntimeProviderName` | Registry name used by distributed-infrastructure extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L25) |
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `captureDistributedCacheAdministration` | Capture the administrative surface returned by a distributed provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L189) |
+| `captureDistributedRuntimeProvider` | Capture a provider's complete callable surface without invoking accessors. Later mutation of the registry object cannot redirect active operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L429) |
+| `captureDistributedWorkflowWorkerEnvironment` | Snapshot and bound provider-owned environment passed to isolated workflow processes. Core reserves execution/tenant identity variables and never evaluates provider-specific names or values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L353) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `DistributedAgentMemoryOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L82) |
+| `DistributedCacheAdministration` | Narrow administrative surface used by core cache diagnostics/invalidation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L127) |
+| `DistributedCacheBackendOptions` | Feature-level cache options. Connection ownership belongs to the extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L56) |
+| `DistributedCacheKeyListing` | Immutable bounded cache listing with explicit completeness. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L121) |
+| `DistributedCacheListOptions` | Bounded provider-neutral cache listing request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L115) |
+| `DistributedEventPublisherOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L90) |
+| `DistributedRateLimitStoreOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L77) |
+| `DistributedRenderCacheStoreOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L60) |
+| `DistributedRoutingInvalidationBus` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L110) |
+| `DistributedRoutingInvalidationLogger` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L95) |
+| `DistributedRoutingInvalidationOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L101) |
+| `DistributedRuntimeProvider` | Optional distributed runtime implementation supplied by an extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L295) |
+| `DistributedWorkflowBackendOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L65) |
+| `DistributedWorkflowWorkerEnvironment` | Provider-owned environment required by an isolated workflow worker process. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L75) |
+
+### `veryfront/extensions/distributed/agent-memory-support`
+
+Provider-neutral agent-memory contracts shared with memory extensions.
+
+```ts
+import { estimateTokens } from "veryfront/extensions/distributed/agent-memory-support";
+```
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `estimateTokens` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/memory/memory-interface.ts#L66) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `Memory` | Public API contract for memory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/memory/memory-interface.ts#L41) |
+| `MemoryConfigBase` | ************************ Memory Interface | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/memory/memory-interface.ts#L12) |
+| `MemoryStats` | Public API contract for memory stats. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/memory/memory-interface.ts#L26) |
+| `MinimalMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/memory/memory-interface.ts#L32) |
+
+### `veryfront/extensions/distributed/cache-support`
+
+Provider-neutral cache helpers shared with distributed store extensions.
+
+```ts
+import { assertCacheBatchSize, buildBatchResults, escapeCacheGlobLiteral } from "veryfront/extensions/distributed/cache-support";
+```
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `assertCacheBatchSize` | Enforce the cache subsystem's shared per-operation batch bound. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/batch-policy.ts#L9) |
+| `buildBatchResults` | Build a `Map` of batch results by resolving each key in order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/batch-results.ts#L21) |
+| `escapeCacheGlobLiteral` | Escape the wildcard syntax shared by cache backend pattern operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L304) |
+| `expiresImmediately` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/ttl.ts#L45) |
+| `parseSerializedCachePayload` | Reject oversized or malformed JSON before constructing an untrusted object graph. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/cache-payload.ts#L950) |
+| `registerRenderDistributedCacheNamespace` | Register a namespace containing render-cache keys. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L276) |
+| `requirePositiveIntegerCacheTtlSeconds` | Validate a constructor-level TTL for whole-second cache protocols. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/ttl.ts#L68) |
+| `resolveIntegerCacheTtlSeconds` | Resolve a TTL for protocols that accept only whole seconds. Positive fractions round up so integer conversion never expires an entry earlier than requested; non-positive values retain their immediate-expiry meaning. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/ttl.ts#L37) |
+| `serializeCachePayload` | Serialize using the origin-compatible payload shape. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/cache-payload.ts#L884) |
+| `validateDistributedCacheKeyPrefix` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L166) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `CacheBackend` | Provides storage operations for memory, disk, API, and extension-backed distributed caches. All cache backends must implement this interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/types.ts#L20) |
+| `CachePayload` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/types.ts#L3) |
+| `CacheStoreStats` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/types.ts#L12) |
+| `RenderCacheStore` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/types.ts#L16) |
+
+#### Constants
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `DEFAULT_CACHE_TTL_SECONDS` | Shared default used when a CacheBackend caller omits a TTL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/ttl.ts#L81) |
+
+### `veryfront/extensions/distributed/rate-limit-support`
+
+Provider-neutral rate-limit helpers shared with store extensions.
+
+```ts
+import { requireRateLimitKey, requireRateLimitWindowMs, MAX_TIMER_DELAY_MS } from "veryfront/extensions/distributed/rate-limit-support";
+```
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `requireRateLimitKey` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit-validation.ts#L6) |
+| `requireRateLimitWindowMs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit-validation.ts#L21) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `RateLimitEntry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/types.ts#L26) |
+| `RateLimitStore` | Public API contract for rate limit store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/types.ts#L32) |
+
+#### Constants
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `MAX_TIMER_DELAY_MS` | Largest delay supported consistently by JavaScript timer implementations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/limits.ts#L34) |
+
+### `veryfront/extensions/distributed/routing-invalidation-support`
+
+Provider-neutral routing-invalidation primitives shared with extensions.
+
+```ts
+import { hasProjectIdentityControlCharacters, isCanonicalOpaqueProjectIdentifier, parseProxyRoutingInvalidationEvent } from "veryfront/extensions/distributed/routing-invalidation-support";
+```
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `hasProjectIdentityControlCharacters` | Whether a string contains a Unicode Cc control code point. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/project-identity.ts#L23) |
+| `isCanonicalOpaqueProjectIdentifier` | Whether a value is a bounded, exact opaque identifier. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/project-identity.ts#L39) |
+| `parseProxyRoutingInvalidationEvent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts#L175) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `ProxyRoutingInvalidationEvent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts#L30) |
+| `ProxyRoutingInvalidationPublisher` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts#L40) |
+| `ProxyRoutingInvalidationPublishResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts#L34) |
+
+### `veryfront/extensions/distributed/workflow-support`
+
+Provider-neutral workflow helpers shared with backend extensions.
+
+```ts
+import { assertWorkflowRunUpdate, requeueRun, requireWorkflowSourceIntegrationPolicy } from "veryfront/extensions/distributed/workflow-support";
+```
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `assertWorkflowRunUpdate` | Reject untyped callers that attempt to rewrite immutable run state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L43) |
+| `requeueRun` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/shared/requeue-run.ts#L8) |
+| `requireWorkflowSourceIntegrationPolicy` | Require the policy snapshot that belongs to the source which created this run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/source-integration-policy.ts#L21) |
+| `resolveRunDateBounds` | Validate optional date filters without invoking caller-provided methods. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/run-filter.ts#L54) |
+| `resolveRunListPage` | Validate and resolve the shared built-in backend pagination contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/run-filter.ts#L66) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `ApprovalDecision` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L264) |
+| `BackendConfig` | Configuration used by backend. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L57) |
+| `Checkpoint` | Checkpoint - defined locally to use WorkflowContext interface (Zod inference doesn't handle index signatures with required properties well) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L59) |
+| `PendingApproval` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L262) |
+| `RunFilter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L266) |
+| `WorkflowBackend` | Public API contract for workflow backend. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L72) |
+| `WorkflowQueueItem` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L265) |
+| `WorkflowRun` | Workflow run state | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L253) |
+| `WorkflowRunUpdate` | Run state that may change after the immutable run snapshot is created. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L13) |
+| `WorkflowStatus` | Public API contract for workflow status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L251) |
+
+#### Constants
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `MAX_WORKFLOW_RUN_LIST_LIMIT` | Maximum workflow-run page size accepted by built-in backends and schemas. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/limits.ts#L5) |
 
 ### `veryfront/extensions/eval`
 

@@ -37,7 +37,6 @@ const MAX_CACHE_KEY_LENGTH = 32 * 1024;
 const MAX_HASH_LENGTH = 1_024;
 const MAX_MANIFEST_ID_LENGTH = 2_048;
 const MAX_INFLIGHT_TRANSFORMS = 1_000;
-const CACHE_INIT_RETRY_MS = 30_000;
 const TRANSFORM_CACHE_FORMAT_VERSION = 2;
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const STORED_ENTRY_KEYS = new Set([
@@ -164,7 +163,6 @@ function publishTransformProgress(
     notifyTransformProgressListener(key, listener, event);
   }
 }
-let lastCacheInitFailureTime: number | undefined;
 let cacheLifecycleGeneration = 0;
 
 interface LocalFallbackLike<K, V> {
@@ -298,7 +296,6 @@ export function __resetInitStateForTests(): void {
   cacheInitialized = false;
   cacheInitPromise = null;
   cacheGateway = null;
-  lastCacheInitFailureTime = undefined;
 }
 
 registerCache("transform-cache", () => ({
@@ -311,13 +308,6 @@ registerCache("transform-cache", () => ({
 export async function initializeTransformCache(): Promise<boolean> {
   if (cacheInitialized && cacheGateway) return isDistributedGateway(cacheGateway);
 
-  if (
-    lastCacheInitFailureTime !== undefined &&
-    Date.now() - lastCacheInitFailureTime < CACHE_INIT_RETRY_MS
-  ) {
-    return false;
-  }
-
   if (!cacheInitPromise) {
     const generation = cacheLifecycleGeneration;
     cacheInitPromise = (async () => {
@@ -328,17 +318,12 @@ export async function initializeTransformCache(): Promise<boolean> {
         if (cacheLifecycleGeneration !== generation) return;
         cacheGateway = gateway;
         cacheInitialized = true;
-        lastCacheInitFailureTime = undefined;
         logger.debug("Initialized with gateway", { backend: gateway.type });
       } catch (error) {
         if (cacheLifecycleGeneration !== generation) return;
         cacheGateway = null;
         cacheInitialized = false;
-        lastCacheInitFailureTime = Date.now();
-        logger.warn("Backend init failed; local fallback remains active", {
-          errorName: error instanceof Error ? error.name : typeof error,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        throw error;
       }
     })();
   }
@@ -701,7 +686,6 @@ export function destroyTransformCache(): void {
   cacheGateway = null;
   cacheInitialized = false;
   cacheInitPromise = null;
-  lastCacheInitFailureTime = undefined;
 }
 
 export async function getDistributedTransformBackend(): Promise<CacheBackend | null> {

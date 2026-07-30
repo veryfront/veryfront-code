@@ -108,7 +108,7 @@ console.log(env.debug); // from VERYFRONT_DEBUG
 - API: `apiBaseUrl`, `apiToken`, `projectSlug`
 - Observability: `otelEnabled`, `otelEndpoint`, `otelServiceName`
 - AI keys: `openaiApiKey`, `anthropicApiKey`, `googleApiKey`
-- Network: `port`, `requestTimeoutMs`, `redisUrl`
+- Network: `port`, `requestTimeoutMs`
 
 ## Runtime Config (`RuntimeConfig`)
 

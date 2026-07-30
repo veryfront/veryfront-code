@@ -16,7 +16,6 @@
  * - TENANT_PROJECT_ID: Tenant's project ID
  * - TENANT_PRODUCTION_MODE: Whether running in production mode
  * - TENANT_RELEASE_ID: Current release ID (optional)
- * - REDIS_URL: Redis connection URL
  * - VERYFRONT_API_URL: Veryfront API URL (default: https://api.veryfront.com)
  *
  * Exit codes:
@@ -110,7 +109,7 @@ async function failDynamicWorkflowRun(
  * Run a workflow run with dynamic discovery.
  *
  * This function:
- * 1. Gets the run from Redis
+ * 1. Gets the run from the configured workflow backend
  * 2. Sets up tenant context
  * 3. Initializes FS adapter with Veryfront API backend
  * 4. Discovers workflows from user's project files
@@ -333,17 +332,15 @@ export async function runDynamicWorkflowRunWithDependencies(
 /**
  * Create a dynamic workflow run entrypoint.
  *
- * This is a convenience function that sets up Redis backend
- * and returns a function to run the workflow run.
+ * This is a convenience function that resolves the explicitly activated
+ * distributed backend and returns a function to run the workflow run.
  *
  * @example
  * ```typescript
  * // workflow-runner.ts
  * import { createDynamicWorkflowRunEntrypoint } from "veryfront/workflow/worker";
- * import { getEnv } from "veryfront";
  *
  * const run = await createDynamicWorkflowRunEntrypoint({
- *   redisUrl: getEnv("REDIS_URL")!,
  * });
  *
  * const exitCode = await run();
@@ -351,9 +348,6 @@ export async function runDynamicWorkflowRunWithDependencies(
  * ```
  */
 export interface CreateDynamicWorkflowRunEntrypointOptions {
-  /** Redis URL for backend */
-  redisUrl: string;
-
   /** Enable debug logging */
   debug?: boolean;
 }
@@ -362,11 +356,9 @@ export interface CreateDynamicWorkflowRunEntrypointOptions {
 export async function createDynamicWorkflowRunEntrypoint(
   options: CreateDynamicWorkflowRunEntrypointOptions,
 ): Promise<() => Promise<number>> {
-  // Dynamic import to avoid loading Redis if not needed
-  const { RedisBackend } = await import("../backends/redis.ts");
+  const { createDistributedWorkflowBackend } = await import("../backends/distributed.ts");
 
-  const backend = new RedisBackend({
-    url: options.redisUrl,
+  const backend = createDistributedWorkflowBackend({
     debug: options.debug,
   });
 

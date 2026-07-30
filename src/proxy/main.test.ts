@@ -80,7 +80,8 @@ describe("proxy main request URL parsing", () => {
       new URL("./startup-config.ts", import.meta.url),
     );
 
-    assertStringIncludes(source, "startProxyRoutingInvalidationBus");
+    assertStringIncludes(source, "DistributedRuntimeProviderName");
+    assertStringIncludes(source, ".startRoutingInvalidationBus({");
     assertStringIncludes(source, "readProxyStartupConfig");
     assertStringIncludes(source, "onInvalidate: proxyHandler.invalidateAndConfirmRoutingLookup");
     assertStringIncludes(source, "handleProxyRoutingInvalidationRequest");

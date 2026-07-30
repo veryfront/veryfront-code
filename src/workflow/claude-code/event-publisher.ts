@@ -4,7 +4,6 @@
  * Provides different ways to publish Claude Code events for streaming.
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
 import type {
   ClaudeCodeEvent,
   ClaudeCodeEventHandler,
@@ -12,8 +11,13 @@ import type {
   ClaudeCodeEventSubscriber,
 } from "./types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
-
-const logger = baseLogger.component("redis-event-publisher");
+import { resolve as resolveExtensionContract } from "#veryfront/extensions/contracts.ts";
+import {
+  captureDistributedRuntimeProvider,
+  type DistributedEventPublisherOptions,
+  type DistributedRuntimeProvider,
+  DistributedRuntimeProviderName,
+} from "#veryfront/extensions/distributed/index.ts";
 
 // =============================================================================
 // In-Memory Publisher (for testing/single-process)
@@ -65,142 +69,6 @@ export class MemoryEventPublisher implements ClaudeCodeEventPublisher, ClaudeCod
   close(): void {
     this.handlers.clear();
     this.globalHandlers.clear();
-  }
-}
-
-// =============================================================================
-// Redis Publisher (for distributed deployments)
-// =============================================================================
-
-/**
- * Redis event publisher configuration
- */
-export interface RedisEventPublisherConfig {
-  /** Redis URL */
-  url: string;
-
-  /** Channel prefix (default: "claude-code") */
-  channelPrefix?: string;
-
-  /** Enable debug logging */
-  debug?: boolean;
-}
-
-/**
- * Redis-based event publisher for distributed streaming
- * Uses Redis Pub/Sub for real-time event delivery
- */
-/** Minimal structural type for a Redis Pub/Sub client */
-interface RedisClient {
-  connect(): Promise<void>;
-  publish(channel: string, message: string): Promise<number>;
-  subscribe(channel: string, listener: (message: string) => void): Promise<void>;
-  unsubscribe(channel: string): Promise<void>;
-  close(): Promise<void>;
-}
-
-/** Implement redis event publisher. */
-export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCodeEventSubscriber {
-  private config: Required<RedisEventPublisherConfig>;
-  private publishClient: RedisClient | null = null;
-  private subscribeClient: RedisClient | null = null;
-  private initialized = false;
-
-  constructor(config: RedisEventPublisherConfig) {
-    this.config = {
-      channelPrefix: "claude-code",
-      debug: false,
-      ...config,
-    };
-  }
-
-  private async ensureInitialized(): Promise<void> {
-    if (this.initialized) return;
-
-    // Dynamic import to avoid loading Redis if not used
-    const { createClient } = await import("redis");
-
-    this.publishClient = createClient({ url: this.config.url }) as unknown as RedisClient;
-    this.subscribeClient = createClient({ url: this.config.url }) as unknown as RedisClient;
-
-    await Promise.all([this.publishClient.connect(), this.subscribeClient.connect()]);
-
-    this.initialized = true;
-  }
-
-  private getChannel(runId: string): string {
-    return `${this.config.channelPrefix}:events:${runId}`;
-  }
-
-  private getPublishClient(): RedisClient {
-    if (!this.publishClient) {
-      throw new Error("Redis publish client not initialized");
-    }
-    return this.publishClient;
-  }
-
-  private getSubscribeClient(): RedisClient {
-    if (!this.subscribeClient) {
-      throw new Error("Redis subscribe client not initialized");
-    }
-    return this.subscribeClient;
-  }
-
-  async publish(event: ClaudeCodeEvent): Promise<void> {
-    await this.ensureInitialized();
-
-    const channel = event.runId
-      ? this.getChannel(event.runId)
-      : `${this.config.channelPrefix}:events:global`;
-
-    const message = JSON.stringify(event);
-
-    await this.getPublishClient().publish(channel, message);
-
-    if (this.config.debug) {
-      logger.info("Published event", { channel, eventType: event.type });
-    }
-  }
-
-  async subscribe(runId: string, handler: ClaudeCodeEventHandler): Promise<() => void> {
-    await this.ensureInitialized();
-
-    const channel = this.getChannel(runId);
-    const subscribeClient = this.getSubscribeClient();
-
-    const listener = (message: string) => {
-      try {
-        const parsed: unknown = JSON.parse(message);
-        if (!parsed || typeof parsed !== "object") return;
-        const event = parsed as ClaudeCodeEvent;
-        handler(event);
-      } catch (error) {
-        logger.error("Failed to parse event", error);
-      }
-    };
-
-    await subscribeClient.subscribe(channel, listener);
-
-    if (this.config.debug) {
-      logger.info("Subscribed to channel", { channel });
-    }
-
-    return async () => {
-      await subscribeClient.unsubscribe(channel);
-    };
-  }
-
-  async close(): Promise<void> {
-    if (!this.initialized) return;
-
-    await Promise.all([
-      this.publishClient?.close(),
-      this.subscribeClient?.close(),
-    ]);
-
-    this.publishClient = null;
-    this.subscribeClient = null;
-    this.initialized = false;
   }
 }
 
@@ -306,13 +174,31 @@ export class MultiEventPublisher implements ClaudeCodeEventPublisher {
 // Factory Functions
 // =============================================================================
 
+/** Create an event publisher from an already-activated distributed provider. */
+export function createDistributedEventPublisher(
+  options: DistributedEventPublisherOptions,
+): ClaudeCodeEventPublisher & ClaudeCodeEventSubscriber {
+  const publisher = captureDistributedRuntimeProvider(
+    resolveExtensionContract<DistributedRuntimeProvider>(
+      DistributedRuntimeProviderName,
+    ),
+  ).createEventPublisher(options);
+  if (!publisher || typeof publisher !== "object" || Array.isArray(publisher)) {
+    throw new TypeError(
+      `${DistributedRuntimeProviderName} returned an invalid event publisher`,
+    );
+  }
+  return publisher;
+}
+
+export type { DistributedEventPublisherOptions };
+
 /**
  * Create an event publisher based on environment
  */
 export function createEventPublisher(
   options: {
-    type: "memory" | "redis" | "sse" | "callback";
-    redisUrl?: string;
+    type: "memory" | "distributed" | "sse" | "callback";
     callback?: ClaudeCodeEventHandler;
   },
 ): ClaudeCodeEventPublisher {
@@ -320,11 +206,8 @@ export function createEventPublisher(
     case "memory":
       return new MemoryEventPublisher();
 
-    case "redis":
-      if (!options.redisUrl) {
-        throw INVALID_ARGUMENT.create({ detail: "Redis URL required for redis publisher" });
-      }
-      return new RedisEventPublisher({ url: options.redisUrl });
+    case "distributed":
+      return createDistributedEventPublisher({});
 
     case "callback":
       if (!options.callback) {

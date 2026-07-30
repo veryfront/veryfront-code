@@ -21,6 +21,6 @@ export const serveHelp: CommandHelp = {
   examples: [
     "veryfront serve",
     "veryfront serve --port 8080",
-    "VERYFRONT_USE_REDIS_CACHE=1 veryfront serve",
+    "VF_CACHE_BACKEND=distributed veryfront serve",
   ],
 };

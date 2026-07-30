@@ -115,7 +115,7 @@ export class WorkflowWorker {
           "Required methods: enqueue, dequeue, acknowledge, acquireLock, releaseLock, " +
           "findStalledRuns, claimStalledRun, updateRunIfStatusAndWorker, " +
           "saveCheckpointIfStatusAndWorker, savePendingApprovalIfStatusAndWorker. " +
-          "Use RedisBackend with worker support enabled.",
+          "Use a distributed workflow backend with worker support enabled.",
       });
     }
 

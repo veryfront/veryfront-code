@@ -6,7 +6,7 @@
  *
  * - L1: In-memory (fastest, per-pod, lost on restart)
  * - L2: Local disk (fast, per-pod, survives restart)
- * - L3: Distributed (Redis/API, cross-pod, shared state)
+ * - L3: Distributed (cross-process shared state)
  *
  * When a cache hit occurs at a lower tier (e.g., L3), the value is automatically
  * backfilled to higher tiers (L1, L2) for faster subsequent access.

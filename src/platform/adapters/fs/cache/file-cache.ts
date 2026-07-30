@@ -6,11 +6,11 @@
  * Strategy:
  * - Uses CacheBackend abstraction for backend selection
  * - API Mode (production): Uses veryfront-api for centralized cache
- * - Redis Mode (local dev/open source): Direct Redis access
- * - Memory Mode (fallback): In-memory cache
+ * - Distributed Mode: Uses an explicitly registered provider
+ * - Memory Mode: Uses the bounded process-local cache
  *
- * Security: In production, renderer has no Redis credentials.
- * All cache access goes through the API which enforces tenant isolation.
+ * Provider credentials remain inside the selected extension. Core cache
+ * consumers only receive the provider-neutral backend contract.
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
@@ -39,12 +39,8 @@ const FALLBACK_MAX_ENTRIES = 200;
 /** Fallback cache max memory (10 MB, for local dev) */
 const FALLBACK_MAX_MEMORY_BYTES = 10 * 1024 * 1024;
 
-/** Avoid hot-looping backend construction after a transient startup failure. */
-const BACKEND_INIT_RETRY_MS = 30_000;
-
 const backendCoordinator = new FileCacheBackendCoordinator({
   createBackend: () => CacheBackends.file(),
-  retryMilliseconds: BACKEND_INIT_RETRY_MS,
 });
 
 function getDistributedBackend(): CacheBackend | null {
@@ -89,7 +85,7 @@ export async function initializeFileCacheBackend(): Promise<boolean> {
       error: backendCoordinator.lastFailureError,
     });
   } else {
-    logger.debug("Distributed backend unavailable; retry scheduled");
+    logger.debug("No shared cache backend selected");
   }
   return enabled;
 }
@@ -102,10 +98,10 @@ export function isFileCacheDistributedEnabled(): boolean {
 }
 
 /**
- * FileCache - Backend-First with Local Fallback
+ * FileCache - shared backend with a bounded local tier
  *
- * When backend is available: Uses backend (API/Redis)
- * When backend unavailable: Small memory fallback for local dev
+ * When a shared backend is selected, operations use it with the local tier for
+ * request latency. Memory mode uses only the bounded local tier.
  */
 export class FileCache {
   private fallbackCache = new Map<string, CacheEntry<unknown>>();
@@ -189,7 +185,7 @@ export class FileCache {
           const raw = await getCachedWithBatching(backend, key);
           if (raw) {
             const entry = decodeCacheEntry<T>(raw);
-            // When using backend (Redis/API), trust the backend's TTL for expiry.
+            // When using a shared backend, trust that backend's TTL for expiry.
             // The backend TTL is derived from this.options.ttl and handles expiry.
             this.hits++;
             return entry.value;
@@ -384,7 +380,7 @@ export class FileCache {
     const count = this.clearLocalByPrefix(prefix);
 
     // Fire-and-forget backend deletion; failure logged at warn so operators can detect
-    // persistent backend issues (e.g. Redis down) without needing debug logging enabled.
+    // persistent shared-backend issues without requiring debug logging.
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
     getDistributedBackend()?.delByPattern?.(`${prefix}*`).catch((error) => {
       logger.warn("Backend invalidation failed", { prefix, error });
@@ -419,7 +415,7 @@ export class FileCache {
     const count = this.clearLocalByPrefixAndSuffix(prefix, suffix);
 
     // Fire-and-forget backend deletion; failure logged at warn so operators can detect
-    // persistent backend issues (e.g. Redis down) without needing debug logging enabled.
+    // persistent shared-backend issues without requiring debug logging.
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
     getDistributedBackend()?.delByPattern?.(`${prefix}*:${suffix}`).catch((error) => {
       logger.warn("Backend invalidation failed", { prefix, suffix, error });

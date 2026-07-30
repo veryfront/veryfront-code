@@ -699,18 +699,20 @@ describe("configSchema", () => {
     assertEquals(config.cache?.bundleManifest?.type, "memory");
   });
 
-  it("preserves legacy render Redis prefixes and rejects unsafe values", () => {
+  it("preserves distributed render-cache prefixes and rejects unsafe values", () => {
     const config = validateVeryfrontConfig({
-      cache: { render: { type: "redis", redisKeyPrefix: "custom" } },
+      cache: { render: { type: "distributed", keyPrefix: "vf:cache:tenant-render:" } },
     });
-    assertEquals(config.cache?.render?.redisKeyPrefix, "custom");
+    assertEquals(config.cache?.render?.keyPrefix, "vf:cache:tenant-render:");
 
     for (
-      const redisKeyPrefix of [
+      const keyPrefix of [
         "",
         "   ",
         "unsafe\nprefix",
         "x".repeat(512),
+        "custom:",
+        "vf:cache:",
         "vf:workflow",
         "vf:transform",
         "vf:render",
@@ -720,10 +722,10 @@ describe("configSchema", () => {
       assertThrows(
         () =>
           validateVeryfrontConfig({
-            cache: { render: { type: "redis", redisKeyPrefix } },
+            cache: { render: { type: "distributed", keyPrefix } },
           }),
         Error,
-        "Invalid veryfront.config at cache.render.redisKeyPrefix:",
+        "Invalid veryfront.config at cache.render.keyPrefix:",
       );
     }
 
@@ -739,10 +741,11 @@ describe("configSchema", () => {
   it("rejects unknown and cross-backend render cache options", () => {
     for (
       const render of [
-        { type: "memory", redisUrl: "redis://cache" },
+        { type: "memory", endpoint: "https://cache.invalid" },
+        { type: "memory", keyPrefix: "vf:cache:tenant-render:" },
         { type: "filesystem", kvPath: "/tmp/cache.sqlite" },
-        { type: "kv", redisKeyPrefix: "custom" },
-        { type: "redis", maxEntries: 100 },
+        { type: "kv", keyPrefix: "vf:cache:tenant-render:" },
+        { type: "distributed", maxEntries: 100 },
         { type: "memory", typoMaxEntry: 100 },
       ]
     ) {
@@ -765,9 +768,11 @@ describe("configSchema", () => {
     );
     assertEquals(
       validateVeryfrontConfig({
-        cache: { render: { type: "redis", redisUrl: "redis://cache", redisKeyPrefix: "custom" } },
+        cache: {
+          render: { type: "distributed", keyPrefix: "vf:cache:tenant-render:" },
+        },
       }).cache?.render?.type,
-      "redis",
+      "distributed",
     );
   });
 

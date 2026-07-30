@@ -1,41 +1,45 @@
 import { rendererLogger } from "#veryfront/utils";
-import { getRedisClient, isRedisConfigured } from "#veryfront/utils/redis-client.ts";
+import { tryResolve as tryResolveExtensionContract } from "#veryfront/extensions/contracts.ts";
+import {
+  captureDistributedCacheAdministration,
+  captureDistributedRuntimeProvider,
+  type DistributedCacheAdministration,
+  type DistributedCacheListOptions,
+  type DistributedRuntimeProvider,
+  DistributedRuntimeProviderName,
+} from "#veryfront/extensions/distributed/index.ts";
 import { type Span, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
-  buildRedisCacheScanPattern,
-  getOwnedRedisCacheNamespaceDescriptors,
-  type RedisCacheEnvironment,
-  type RedisCacheNamespaceDescriptor,
-  type RedisCacheProjectIdentity,
-  stripOwnedRedisCacheKeyPrefix,
-  validateRedisCacheProjectIdentity,
-} from "./backends/redis-keyspace.ts";
+  type DistributedCacheEnvironment,
+  type DistributedCacheNamespaceDescriptor,
+  type DistributedCacheProjectIdentity,
+  getOwnedDistributedCacheNamespaceDescriptors,
+  stripOwnedDistributedCacheKeyPrefix,
+  validateDistributedCacheProjectIdentity,
+} from "./backends/distributed-keyspace.ts";
 import { encodeCacheSourceIdentity } from "./keys/source-identity.ts";
 import { decodeCacheKeyPercentSegment } from "./keys/segment-codec.ts";
 
 const logger = rendererLogger.component("cache-registry");
 
-const DEFAULT_REDIS_SCAN_LIMIT = 1_000;
-const REDIS_SCAN_BATCH_COUNT = 100;
-const REDIS_DELETE_BATCH_SIZE = 1_000;
-const MAX_REDIS_SCAN_ITERATIONS = 10_000;
-const MAX_REDIS_SCANNED_KEYS = 100_000;
+const DEFAULT_DISTRIBUTED_LIST_LIMIT = 1_000;
+const MAX_DISTRIBUTED_SCANNED_KEYS = 100_000;
 const MAX_REGISTERED_CACHE_STORES = 1_000;
 const MAX_CACHE_STORE_NAME_CODE_UNITS = 256;
 
-function matchesRedisProjectIdentity(
-  descriptor: RedisCacheNamespaceDescriptor,
-  descriptors: readonly RedisCacheNamespaceDescriptor[],
+function matchesDistributedProjectIdentity(
+  descriptor: DistributedCacheNamespaceDescriptor,
+  descriptors: readonly DistributedCacheNamespaceDescriptor[],
   key: string,
-  identity: RedisCacheProjectIdentity,
-  environment?: RedisCacheEnvironment,
+  identity: DistributedCacheProjectIdentity,
+  environment?: DistributedCacheEnvironment,
 ): boolean {
   if (!descriptor.matchProjectOwnership || !key.startsWith(descriptor.prefix)) return false;
 
   // A key belongs to the longest registered namespace. Without this guard, an
   // opaque custom namespace nested below a built-in one (for example
-  // `vf:render:private:`) could be reinterpreted using the parent render schema
+  // `vf:cache:render:private:`) could be reinterpreted using the parent schema
   // and deleted as project data. Descriptors are sorted longest-first.
   if (descriptors.find((candidate) => key.startsWith(candidate.prefix)) !== descriptor) {
     return false;
@@ -51,8 +55,8 @@ function matchesRedisProjectIdentity(
   return environment === undefined || ownership.environment === environment;
 }
 
-function redisProjectSpanAttributes(
-  identity: RedisCacheProjectIdentity,
+function distributedProjectSpanAttributes(
+  identity: DistributedCacheProjectIdentity,
 ): Record<string, string> {
   const attributes: Record<string, string> = {};
   if (identity.projectId !== undefined) attributes["cache.project_id"] = identity.projectId;
@@ -60,40 +64,43 @@ function redisProjectSpanAttributes(
   return attributes;
 }
 
-function normalizeRedisProjectIdentity(
-  identity: RedisCacheProjectIdentity | string,
-): RedisCacheProjectIdentity {
-  // Preserve the original public API without reintroducing ID/slug ambiguity:
-  // a legacy string has always represented the project ID, never the slug.
-  return validateRedisCacheProjectIdentity(
-    typeof identity === "string" ? { projectId: identity } : identity,
+function normalizeDistributedProjectIdentity(
+  identity: DistributedCacheProjectIdentity,
+): DistributedCacheProjectIdentity {
+  return validateDistributedCacheProjectIdentity(identity);
+}
+
+export interface CacheRegistryDistributedProvider extends DistributedCacheAdministration {}
+
+function resolveDistributedCacheAdministration(): Readonly<DistributedCacheAdministration> {
+  const registered = tryResolveExtensionContract<DistributedRuntimeProvider>(
+    DistributedRuntimeProviderName,
+  );
+  if (registered === undefined) {
+    throw new Error(`Missing extension for contract "${DistributedRuntimeProviderName}"`);
+  }
+  return captureDistributedCacheAdministration(
+    captureDistributedRuntimeProvider(registered).getCacheAdministration(),
   );
 }
 
-export interface CacheRegistryRedisClient {
-  scan(
-    cursor: number,
-    options?: { MATCH?: string; COUNT?: number },
-  ): Promise<{ cursor: number | string; keys: string[] }>;
-  del(key: string | string[]): Promise<number>;
-}
-
-export interface CacheRegistryRedisProvider {
-  isConfigured(): boolean;
-  getClient(): Promise<CacheRegistryRedisClient>;
-}
-
-function parseRedisCursor(cursor: number | string): number {
-  const parsed = typeof cursor === "number" ? cursor : Number(cursor);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new TypeError("Redis returned an invalid scan cursor");
-  }
-  return parsed;
-}
-
-const defaultRedisProvider: CacheRegistryRedisProvider = {
-  isConfigured: isRedisConfigured,
-  getClient: getRedisClient,
+const defaultDistributedProvider: CacheRegistryDistributedProvider = {
+  isConfigured() {
+    const registered = tryResolveExtensionContract<DistributedRuntimeProvider>(
+      DistributedRuntimeProviderName,
+    );
+    if (registered === undefined) return false;
+    const provider = captureDistributedRuntimeProvider(registered);
+    return captureDistributedCacheAdministration(
+      provider.getCacheAdministration(),
+    ).isConfigured();
+  },
+  listKeys(options: DistributedCacheListOptions) {
+    return resolveDistributedCacheAdministration().listKeys(options);
+  },
+  deleteKeys(keys: readonly string[]) {
+    return resolveDistributedCacheAdministration().deleteKeys(keys);
+  },
 };
 
 export interface CacheStore {
@@ -213,7 +220,10 @@ export class LRUCacheStore implements CacheStore {
 export class CacheRegistry {
   private stores = new Map<string, CacheStore>();
 
-  constructor(private readonly redisProvider: CacheRegistryRedisProvider = defaultRedisProvider) {}
+  constructor(
+    private readonly distributedProvider: CacheRegistryDistributedProvider =
+      defaultDistributedProvider,
+  ) {}
 
   register(store: CacheStore): () => boolean {
     const name = store.name;
@@ -360,96 +370,61 @@ export class CacheRegistry {
     this.stores.clear();
   }
 
-  scanRedisKeys(
-    pattern: string,
-    limit = DEFAULT_REDIS_SCAN_LIMIT,
+  listDistributedKeys(
+    prefix: string,
+    limit = DEFAULT_DISTRIBUTED_LIST_LIMIT,
     predicate: (key: string) => boolean = () => true,
   ): Promise<string[]> {
     if (!Number.isSafeInteger(limit) || limit < 0) {
-      return Promise.reject(new RangeError("Redis scan limit must be a non-negative integer"));
+      return Promise.reject(
+        new RangeError("Distributed cache list limit must be a non-negative integer"),
+      );
     }
-    if (limit === 0 || !this.redisProvider.isConfigured()) return Promise.resolve([]);
+    if (limit === 0 || !this.distributedProvider.isConfigured()) return Promise.resolve([]);
 
     return withSpan(
-      SpanNames.CACHE_REGISTRY_SCAN_REDIS,
+      SpanNames.CACHE_REGISTRY_LIST_DISTRIBUTED_KEYS,
       async (span?: Span) => {
-        try {
-          const client = await this.redisProvider.getClient();
-          const keys = new Set<string>();
-          let cursor = 0;
-          let iterations = 0;
-          let scannedKeys = 0;
-          const seenCursors = new Set<number>();
-
-          do {
-            if (iterations++ >= MAX_REDIS_SCAN_ITERATIONS) {
-              throw new RangeError("Redis scan exceeded the iteration limit");
-            }
-            if (seenCursors.has(cursor)) {
-              throw new Error("Redis scan repeated a cursor before completion");
-            }
-            seenCursors.add(cursor);
-            const result = await client.scan(cursor, {
-              MATCH: pattern,
-              COUNT: REDIS_SCAN_BATCH_COUNT,
-            });
-            cursor = parseRedisCursor(result.cursor);
-            if (
-              !Array.isArray(result.keys) || !result.keys.every((key) => typeof key === "string")
-            ) {
-              throw new TypeError("Redis returned invalid scan keys");
-            }
-            scannedKeys += result.keys.length;
-            if (scannedKeys > MAX_REDIS_SCANNED_KEYS) {
-              throw new RangeError("Redis scan exceeded the key traversal limit");
-            }
-            for (const key of result.keys) {
-              if (predicate(key)) keys.add(key);
-              if (keys.size === limit) break;
-            }
-          } while (cursor !== 0 && keys.size < limit);
-
-          span?.setAttribute("cache.redis.keys_found", keys.size);
-          return [...keys];
-        } catch (error) {
-          logger.warn("Redis scan failed", {
-            patternLength: pattern.length,
-            errorName: error instanceof Error ? error.name : typeof error,
-          });
-          span?.setAttribute("cache.redis.error", true);
-          return [];
+        const listing = await this.distributedProvider.listKeys({
+          prefix,
+          limit: MAX_DISTRIBUTED_SCANNED_KEYS,
+        });
+        if (listing.truncated) {
+          throw new RangeError("Distributed cache listing exceeded the key traversal limit");
         }
+        const keys = new Set<string>();
+        for (const key of listing.keys) {
+          if (predicate(key)) keys.add(key);
+          if (keys.size === limit) break;
+        }
+        span?.setAttribute("cache.distributed.keys_found", keys.size);
+        return [...keys];
       },
-      { "cache.redis.pattern_length": pattern.length, "cache.redis.limit": limit },
+      { "cache.distributed.prefix_length": prefix.length, "cache.distributed.limit": limit },
     );
   }
 
-  /** @deprecated Pass an identity object when the project slug is available. */
-  getRedisKeysForProject(projectId: string): Promise<Map<string, string[]>>;
-  getRedisKeysForProject(
-    projectIdentity: RedisCacheProjectIdentity,
-  ): Promise<Map<string, string[]>>;
-  async getRedisKeysForProject(
-    projectIdentity: RedisCacheProjectIdentity | string,
+  async getDistributedKeysForProject(
+    projectIdentity: DistributedCacheProjectIdentity,
   ): Promise<Map<string, string[]>> {
-    const identity = normalizeRedisProjectIdentity(projectIdentity);
+    const identity = normalizeDistributedProjectIdentity(projectIdentity);
     return await withSpan(
-      SpanNames.CACHE_REGISTRY_GET_REDIS_KEYS,
+      SpanNames.CACHE_REGISTRY_GET_DISTRIBUTED_KEYS,
       async (span?: Span) => {
         const result = new Map<string, string[]>();
-        const descriptors = getOwnedRedisCacheNamespaceDescriptors();
+        const descriptors = getOwnedDistributedCacheNamespaceDescriptors();
 
         let totalKeys = 0;
         const listedKeys = new Set<string>();
         for (const descriptor of descriptors) {
           if (!descriptor.matchProjectOwnership) continue;
-          const keys = await this.scanRedisKeys(
-            buildRedisCacheScanPattern(descriptor.prefix),
-            DEFAULT_REDIS_SCAN_LIMIT,
+          const keys = await this.listDistributedKeys(
+            descriptor.prefix,
+            DEFAULT_DISTRIBUTED_LIST_LIMIT,
             (key) => {
               if (
                 listedKeys.has(key) ||
-                !matchesRedisProjectIdentity(descriptor, descriptors, key, identity)
+                !matchesDistributedProjectIdentity(descriptor, descriptors, key, identity)
               ) return false;
               listedKeys.add(key);
               return true;
@@ -461,225 +436,192 @@ export class CacheRegistry {
           totalKeys += keys.length;
         }
 
-        span?.setAttribute("cache.redis.total_keys", totalKeys);
-        span?.setAttribute("cache.redis.prefix_count", result.size);
+        span?.setAttribute("cache.distributed.total_keys", totalKeys);
+        span?.setAttribute("cache.distributed.prefix_count", result.size);
         return result;
       },
-      redisProjectSpanAttributes(identity),
+      distributedProjectSpanAttributes(identity),
     );
   }
 
   getAllKeysForProjectAsync(
     projectId: string,
-    includeRedis = false,
+    includeDistributed = false,
     projectSlug?: string,
-  ): Promise<{ memory: Map<string, string[]>; redis: Map<string, string[]> }> {
+  ): Promise<{ memory: Map<string, string[]>; distributed: Map<string, string[]> }> {
     return withSpan(
       SpanNames.CACHE_KEYS_GET_ALL_ASYNC,
       async (span?: Span) => {
         const memory = this.getKeysForProject(projectId);
 
-        span?.setAttribute("cache.include_redis", includeRedis);
-        if (!includeRedis) return { memory, redis: new Map() };
+        span?.setAttribute("cache.include_distributed", includeDistributed);
+        if (!includeDistributed) return { memory, distributed: new Map() };
 
-        const redis = await this.getRedisKeysForProject({ projectId, projectSlug });
-        return { memory, redis };
+        const distributed = await this.getDistributedKeysForProject({ projectId, projectSlug });
+        return { memory, distributed };
       },
       { "cache.project_id": projectId },
     );
   }
 
-  /** @deprecated Pass an identity object when the project slug is available. */
-  deleteRedisKeysForProject(projectId: string): Promise<number>;
-  deleteRedisKeysForProject(projectIdentity: RedisCacheProjectIdentity): Promise<number>;
-  async deleteRedisKeysForProject(
-    projectIdentity: RedisCacheProjectIdentity | string,
+  async deleteDistributedKeysForProject(
+    projectIdentity: DistributedCacheProjectIdentity,
   ): Promise<number> {
-    const identity = normalizeRedisProjectIdentity(projectIdentity);
-    if (!this.redisProvider.isConfigured()) return Promise.resolve(0);
+    const identity = normalizeDistributedProjectIdentity(projectIdentity);
+    if (!this.distributedProvider.isConfigured()) return 0;
 
     return await withSpan(
-      SpanNames.CACHE_REGISTRY_DELETE_REDIS_KEYS,
+      SpanNames.CACHE_REGISTRY_DELETE_DISTRIBUTED_KEYS,
       async (span?: Span) => {
         try {
-          const client = await this.redisProvider.getClient();
-          const deleted = await this.deleteRedisKeysMatching(
-            client,
-            identity,
-          );
+          const deleted = await this.deleteDistributedKeysMatching(identity);
 
-          span?.setAttribute("cache.redis.deleted", deleted);
+          span?.setAttribute("cache.distributed.deleted", deleted);
           return deleted;
         } catch (error) {
-          logger.warn("Redis delete failed", {
+          logger.warn("Distributed cache delete failed", {
             ...identity,
             errorName: error instanceof Error ? error.name : typeof error,
           });
-          span?.setAttribute("cache.redis.error", true);
+          span?.setAttribute("cache.distributed.error", true);
           throw error;
         }
       },
-      redisProjectSpanAttributes(identity),
+      distributedProjectSpanAttributes(identity),
     );
   }
 
   deleteAllKeysForProjectAsync(projectId: string, projectSlug?: string): Promise<{
     memoryDeleted: number;
-    redisDeleted: number;
+    distributedDeleted: number;
   }> {
     return withSpan(
       SpanNames.CACHE_KEYS_DELETE_ALL_ASYNC,
       async (span?: Span) => {
+        const distributedDeleted = await this.deleteDistributedKeysForProject({
+          projectId,
+          projectSlug,
+        });
+        // Traverse and mutate the failure-prone shared tier first. A provider
+        // listing error must not leave the deterministic local tier partially
+        // invalidated while shared entries remain untouched.
         const memoryDeleted = this.deleteKeysForProject(projectId);
-        const redisDeleted = await this.deleteRedisKeysForProject({ projectId, projectSlug });
 
         span?.setAttribute("cache.memory.deleted", memoryDeleted);
-        span?.setAttribute("cache.redis.deleted", redisDeleted);
-        return { memoryDeleted, redisDeleted };
+        span?.setAttribute("cache.distributed.deleted", distributedDeleted);
+        return { memoryDeleted, distributedDeleted };
       },
       { "cache.project_id": projectId },
     );
   }
 
-  /** Delete all cache entries for a specific project and environment (memory + Redis) */
+  /** Delete all cache entries for a specific project and environment. */
   deleteAllKeysForProjectEnvironmentAsync(
     projectId: string,
     environment: "production" | "preview",
     projectSlug?: string,
-  ): Promise<{ memoryDeleted: number; redisDeleted: number }> {
+  ): Promise<{ memoryDeleted: number; distributedDeleted: number }> {
     return withSpan(
       SpanNames.CACHE_KEYS_DELETE_ALL_ASYNC,
       async (span?: Span) => {
-        const memoryDeleted = this.deleteKeysForProjectEnvironment(projectId, environment);
-        const redisDeleted = await this.deleteRedisKeysForProjectEnvironment(
+        const distributedDeleted = await this.deleteDistributedKeysForProjectEnvironment(
           { projectId, projectSlug },
           environment,
         );
+        const memoryDeleted = this.deleteKeysForProjectEnvironment(projectId, environment);
 
         span?.setAttribute("cache.memory.deleted", memoryDeleted);
-        span?.setAttribute("cache.redis.deleted", redisDeleted);
+        span?.setAttribute("cache.distributed.deleted", distributedDeleted);
         span?.setAttribute("cache.environment", environment);
 
         logger.info("Invalidated cache for project environment", {
           projectId,
           environment,
           memoryDeleted,
-          redisDeleted,
+          distributedDeleted,
         });
 
-        return { memoryDeleted, redisDeleted };
+        return { memoryDeleted, distributedDeleted };
       },
       { "cache.project_id": projectId, "cache.environment": environment },
     );
   }
 
-  async deleteRedisKeysForProjectEnvironment(
-    projectIdentity: RedisCacheProjectIdentity,
+  async deleteDistributedKeysForProjectEnvironment(
+    projectIdentity: DistributedCacheProjectIdentity,
     environment: "production" | "preview",
   ): Promise<number> {
-    const identity = validateRedisCacheProjectIdentity(projectIdentity);
-    if (!this.redisProvider.isConfigured()) return Promise.resolve(0);
+    const identity = validateDistributedCacheProjectIdentity(projectIdentity);
+    if (!this.distributedProvider.isConfigured()) return 0;
 
     return await withSpan(
-      SpanNames.CACHE_REGISTRY_DELETE_REDIS_KEYS,
+      SpanNames.CACHE_REGISTRY_DELETE_DISTRIBUTED_KEYS,
       async (span?: Span) => {
         try {
-          const client = await this.redisProvider.getClient();
-          const deleted = await this.deleteRedisKeysMatching(
-            client,
-            identity,
-            environment,
-          );
+          const deleted = await this.deleteDistributedKeysMatching(identity, environment);
 
-          span?.setAttribute("cache.redis.deleted", deleted);
+          span?.setAttribute("cache.distributed.deleted", deleted);
           span?.setAttribute("cache.environment", environment);
           return deleted;
         } catch (error) {
-          logger.warn("Redis delete for environment failed", {
+          logger.warn("Distributed cache delete for environment failed", {
             ...identity,
             environment,
             errorName: error instanceof Error ? error.name : typeof error,
           });
-          span?.setAttribute("cache.redis.error", true);
+          span?.setAttribute("cache.distributed.error", true);
           throw error;
         }
       },
-      { ...redisProjectSpanAttributes(identity), "cache.environment": environment },
+      { ...distributedProjectSpanAttributes(identity), "cache.environment": environment },
     );
   }
 
-  private async deleteRedisKeysMatching(
-    client: CacheRegistryRedisClient,
-    identity: RedisCacheProjectIdentity,
-    environment?: RedisCacheEnvironment,
+  private async deleteDistributedKeysMatching(
+    identity: DistributedCacheProjectIdentity,
+    environment?: DistributedCacheEnvironment,
   ): Promise<number> {
     const matchingKeys = new Set<string>();
-    const descriptors = getOwnedRedisCacheNamespaceDescriptors();
-    let totalScanIterations = 0;
-    let totalScannedKeys = 0;
+    const descriptors = getOwnedDistributedCacheNamespaceDescriptors();
+    let totalListedKeys = 0;
 
     for (const descriptor of descriptors) {
       if (!descriptor.matchProjectOwnership) continue;
-      let cursor = 0;
-      const seenCursors = new Set<number>();
-      do {
-        if (totalScanIterations++ >= MAX_REDIS_SCAN_ITERATIONS) {
-          throw new RangeError("Redis scan exceeded the iteration limit");
-        }
-        if (seenCursors.has(cursor)) {
-          throw new Error("Redis scan repeated a cursor before completion");
-        }
-        seenCursors.add(cursor);
-        const result = await client.scan(cursor, {
-          MATCH: buildRedisCacheScanPattern(descriptor.prefix),
-          COUNT: REDIS_SCAN_BATCH_COUNT,
-        });
-        cursor = parseRedisCursor(result.cursor);
-        if (!Array.isArray(result.keys) || !result.keys.every((key) => typeof key === "string")) {
-          throw new TypeError("Redis returned invalid scan keys");
-        }
-        totalScannedKeys += result.keys.length;
-        if (totalScannedKeys > MAX_REDIS_SCANNED_KEYS) {
-          throw new RangeError("Redis scan exceeded the key traversal limit");
-        }
-
-        for (const key of result.keys) {
-          if (
-            matchingKeys.has(key) ||
-            !matchesRedisProjectIdentity(
-              descriptor,
-              descriptors,
-              key,
-              identity,
-              environment,
-            )
-          ) continue;
-          matchingKeys.add(key);
-        }
-      } while (cursor !== 0);
-    }
-
-    // Complete every SCAN traversal before mutating Redis. Deleting pages while
-    // a cursor is active weakens SCAN's iteration guarantees and can leave
-    // undiscovered project keys behind after a nominally successful purge.
-    const keys = [...matchingKeys];
-    let deleted = 0;
-    for (let index = 0; index < keys.length; index += REDIS_DELETE_BATCH_SIZE) {
-      const batch = keys.slice(index, index + REDIS_DELETE_BATCH_SIZE);
-      const count = await client.del(batch);
-      if (!Number.isSafeInteger(count) || count < 0 || count > batch.length) {
-        throw new TypeError("Redis returned an invalid DEL count");
+      const listing = await this.distributedProvider.listKeys({
+        prefix: descriptor.prefix,
+        limit: MAX_DISTRIBUTED_SCANNED_KEYS,
+      });
+      if (listing.truncated) {
+        throw new RangeError("Distributed cache listing exceeded the key traversal limit");
       }
-      deleted += count;
+      totalListedKeys += listing.keys.length;
+      if (totalListedKeys > MAX_DISTRIBUTED_SCANNED_KEYS) {
+        throw new RangeError("Distributed cache listing exceeded the key traversal limit");
+      }
+      for (const key of listing.keys) {
+        if (
+          matchingKeys.has(key) ||
+          !matchesDistributedProjectIdentity(
+            descriptor,
+            descriptors,
+            key,
+            identity,
+            environment,
+          )
+        ) continue;
+        matchingKeys.add(key);
+      }
     }
 
-    return deleted;
+    // Complete every bounded provider listing before mutating shared storage.
+    const keys = [...matchingKeys];
+    return await this.distributedProvider.deleteKeys(keys);
   }
 }
 
 export function isKeyForProject(key: string, projectId: string): boolean {
   if (projectId.trim().length === 0) return false;
-  const normalizedKey = stripRedisPrefix(key);
+  const normalizedKey = stripDistributedPrefix(key);
   const parts = normalizedKey.split(":");
   if (parts.length < 2) return false;
 
@@ -733,8 +675,8 @@ export function extractProjectIdFromKey(key: string): string | null {
   return parts[1] ?? null;
 }
 
-function stripRedisPrefix(key: string): string {
-  return stripOwnedRedisCacheKeyPrefix(key);
+function stripDistributedPrefix(key: string): string {
+  return stripOwnedDistributedCacheKeyPrefix(key);
 }
 
 function getEnvironmentFromContentSourceId(
@@ -764,7 +706,7 @@ function getEnvironmentFromContentSourceId(
 }
 
 function getEnvironmentFromKey(key: string, projectId: string): CacheEnvironment | null {
-  const normalizedKey = stripRedisPrefix(key);
+  const normalizedKey = stripDistributedPrefix(key);
   const parts = normalizedKey.split(":");
   if (parts.length < 2) return null;
   const decodedFirstSegment = parts[0] ? decodeCacheKeyPercentSegment(parts[0]) : null;
@@ -808,7 +750,7 @@ function isKeyForContentSource(
   projectId: string,
   contentSourceId: string,
 ): boolean {
-  const normalizedKey = stripRedisPrefix(key);
+  const normalizedKey = stripDistributedPrefix(key);
   const parts = normalizedKey.split(":");
   const decodedFirstSegment = parts[0] ? decodeCacheKeyPercentSegment(parts[0]) : null;
   const encodedContentSourceId = encodeCacheSourceIdentity({

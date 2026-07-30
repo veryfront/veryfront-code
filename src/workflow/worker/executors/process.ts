@@ -113,7 +113,7 @@ interface TrackedExecution {
  * const executor = new ProcessRunExecutor({
  *   entrypointPath: "./src/workflow-run-entrypoint.ts",
  *   env: {
- *     REDIS_URL: "redis://localhost:6379",
+ *     DISTRIBUTED_STORE_URL: "protocol://store.internal",
  *   },
  * });
  *

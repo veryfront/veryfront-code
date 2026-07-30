@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 /**
  * Cache Backend Tests
  *
- * Tests MemoryCacheBackend, ApiCacheBackend, RedisCacheBackend,
+ * Tests core cache backends and the Redis extension backend,
  * isDistributedBackend, createDistributedCacheAccessor, and
  * CacheBackends factory functions.
  *
@@ -17,7 +17,11 @@ import {
   type Span,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
-import type { RedisClient, RedisClientManager } from "#veryfront/utils/redis-client.ts";
+import { RedisCacheBackend } from "../../extensions/ext-redis/src/cache-backend.ts";
+import type {
+  RedisClient,
+  RedisClientManager,
+} from "../../extensions/ext-redis/src/redis-client-manager.ts";
 import { verifyControlPlaneRequest } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
   createControlPlaneSignature,
@@ -36,8 +40,11 @@ type RecordedSpan = {
   attributes: Record<string, AttributeValue>;
 };
 
-async function importBackend(): Promise<typeof import("./backend.ts")> {
-  return await import("./backend.ts");
+async function importBackend() {
+  return {
+    ...(await import("./backend.ts")),
+    RedisCacheBackend,
+  };
 }
 
 function injectRedisClient(
@@ -152,10 +159,11 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
+    const core = await import("./backend.ts");
     const mod = await importBackend();
 
     assertExists(mod.MemoryCacheBackend);
-    assertExists(mod.RedisCacheBackend);
+    assertEquals("RedisCacheBackend" in core, false);
     assertExists(mod.ApiCacheBackend);
     assertExists(mod.createCacheBackend);
     assertExists(mod.CacheBackends);
@@ -1345,7 +1353,7 @@ Deno.test("RedisCacheBackend type property", async () => {
   const { RedisCacheBackend } = await importBackend();
 
   const cache = new RedisCacheBackend();
-  assertEquals(cache.type, "redis");
+  assertEquals(cache.type, "distributed");
 });
 
 Deno.test("RedisCacheBackend requires an explicit namespace boundary", async () => {
@@ -1372,7 +1380,7 @@ Deno.test("RedisCacheBackend returns null without client", async () => {
 
 Deno.test("RedisCacheBackend translates Redis TTL sentinel values", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:test:");
+  const cache = new RedisCacheBackend("vf:cache:test:");
   let ttl = 12;
   const keys: string[] = [];
   injectRedisClient(cache, {
@@ -1387,12 +1395,12 @@ Deno.test("RedisCacheBackend translates Redis TTL sentinel values", async () => 
   assertEquals(await cache.getRemainingTtlSeconds("key"), Infinity);
   ttl = -2;
   assertEquals(await cache.getRemainingTtlSeconds("key"), null);
-  assertEquals(keys, ["vf:test:key", "vf:test:key", "vf:test:key"]);
+  assertEquals(keys, ["vf:cache:test:key", "vf:cache:test:key", "vf:cache:test:key"]);
 });
 
 Deno.test("RedisCacheBackend expires non-positive TTL entries without SET EX 0", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:test:");
+  const cache = new RedisCacheBackend("vf:cache:test:");
   const store = new Map<string, string>();
   const setExpiries: number[] = [];
   injectRedisClient(cache, {
@@ -1441,7 +1449,7 @@ Deno.test("RedisCacheBackend set rejects without a configured client", async () 
 
 Deno.test("RedisCacheBackend propagates set failures", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:test:");
+  const cache = new RedisCacheBackend("vf:cache:test:");
   injectRedisClient(cache, {
     set: () => Promise.reject(new Error("redis set failed")),
   });
@@ -1460,7 +1468,7 @@ Deno.test("RedisCacheBackend propagates set failures", async () => {
 
 Deno.test("RedisCacheBackend waits for every batch write before reporting failure", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:test:");
+  const cache = new RedisCacheBackend("vf:cache:test:");
   let releaseSlowWrite!: () => void;
   const slowWriteReleased = new Promise<void>((resolve) => {
     releaseSlowWrite = resolve;
@@ -1514,7 +1522,7 @@ Deno.test("RedisCacheBackend delByPattern rejects without a configured client", 
 
 Deno.test("RedisCacheBackend propagates delete failures", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:test:");
+  const cache = new RedisCacheBackend("vf:cache:test:");
   injectRedisClient(cache, {
     del: () => Promise.reject(new Error("redis delete failed")),
   });
@@ -1528,7 +1536,7 @@ Deno.test("RedisCacheBackend propagates delete failures", async () => {
 
 Deno.test("RedisCacheBackend propagates pattern delete failures", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:test:");
+  const cache = new RedisCacheBackend("vf:cache:test:");
   injectRedisClient(cache, {
     scan: () => Promise.reject(new Error("redis scan failed")),
   });
@@ -1565,18 +1573,18 @@ Deno.test("RedisCacheBackend reacquires a client after command failure", async (
     },
     isConfigured: () => true,
   };
-  const cache = new RedisCacheBackend("vf:test:", { clientManager: manager });
+  const cache = new RedisCacheBackend("vf:cache:test:", { clientManager: manager });
 
   await assertRejects(() => cache.set("page", "first"), Error, "stale connection");
   await cache.set("page", "second");
 
   assertEquals(disconnects, 1);
-  assertEquals(written, ["vf:test:page"]);
+  assertEquals(written, ["vf:cache:test:page"]);
 });
 
 Deno.test("RedisCacheBackend escapes only its literal prefix in SCAN patterns", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:te*st?:");
+  const cache = new RedisCacheBackend("vf:cache:te*st?:");
   let match = "";
   injectRedisClient(cache, {
     scan: (_cursor, options) => {
@@ -1586,15 +1594,15 @@ Deno.test("RedisCacheBackend escapes only its literal prefix in SCAN patterns", 
   });
 
   assertEquals(await cache.delByPattern("project:*"), 0);
-  assertEquals(match, "vf:te\\*st\\?:project:*");
+  assertEquals(match, "vf:cache:te\\*st\\?:project:*");
 });
 
 Deno.test("RedisCacheBackend rejects repeated SCAN cursors before deleting", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:test:");
+  const cache = new RedisCacheBackend("vf:cache:test:");
   let deletes = 0;
   injectRedisClient(cache, {
-    scan: () => Promise.resolve({ cursor: 1, keys: ["vf:test:page"] }),
+    scan: () => Promise.resolve({ cursor: 1, keys: ["vf:cache:test:page"] }),
     del: () => {
       deletes++;
       return Promise.resolve(1);
@@ -1611,7 +1619,7 @@ Deno.test("RedisCacheBackend rejects repeated SCAN cursors before deleting", asy
 
 Deno.test("RedisCacheBackend completes SCAN before bounded deletion", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:test:");
+  const cache = new RedisCacheBackend("vf:cache:test:");
   let scans = 0;
   let deletes = 0;
   injectRedisClient(cache, {
@@ -1620,7 +1628,7 @@ Deno.test("RedisCacheBackend completes SCAN before bounded deletion", async () =
       assertEquals(deletes, 0);
       return Promise.resolve({
         cursor: scans === 1 ? 7 : 0,
-        keys: [`vf:test:${scans}`],
+        keys: [`vf:cache:test:${scans}`],
       });
     },
     del: (keys) => {
@@ -1636,7 +1644,7 @@ Deno.test("RedisCacheBackend completes SCAN before bounded deletion", async () =
 
 Deno.test("RedisCacheBackend rejects invalid DEL counts", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:test:");
+  const cache = new RedisCacheBackend("vf:cache:test:");
   injectRedisClient(cache, { del: () => Promise.resolve(2) });
 
   await assertRejects(() => cache.del("page"), TypeError, "invalid count");
@@ -1644,7 +1652,7 @@ Deno.test("RedisCacheBackend rejects invalid DEL counts", async () => {
 
 Deno.test("RedisCacheBackend delByPattern deletes every scanned key in bounded batches", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:test:");
+  const cache = new RedisCacheBackend("vf:cache:test:");
   let scanCalls = 0;
   const deleteBatches: string[][] = [];
   const client = {
@@ -1662,7 +1670,7 @@ Deno.test("RedisCacheBackend delByPattern deletes every scanned key in bounded b
       scanCalls += 1;
       return Promise.resolve({
         cursor: scanCalls < 1005 ? scanCalls : 0,
-        keys: [`vf:test:${scanCalls}`],
+        keys: [`vf:cache:test:${scanCalls}`],
       });
     },
     expire: () => Promise.resolve(0),
@@ -1679,7 +1687,7 @@ Deno.test("RedisCacheBackend delByPattern deletes every scanned key in bounded b
 
 Deno.test("RedisCacheBackend delByPattern keeps Redis delete batches bounded", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:test:");
+  const cache = new RedisCacheBackend("vf:cache:test:");
   let scanCalls = 0;
   const deleteBatches: string[][] = [];
   const client = {
@@ -1697,7 +1705,7 @@ Deno.test("RedisCacheBackend delByPattern keeps Redis delete batches bounded", a
       scanCalls += 1;
       const keys = Array.from(
         { length: 250 },
-        (_, index) => `vf:test:${scanCalls}:${index}`,
+        (_, index) => `vf:cache:test:${scanCalls}:${index}`,
       );
       return Promise.resolve({
         cursor: scanCalls < 50 ? scanCalls : 0,
@@ -1750,7 +1758,7 @@ Deno.test("RedisCacheBackend getBatch returns empty map for empty keys", async (
 
 Deno.test("RedisCacheBackend getBatch uses one MGET call for prefixed keys", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:test:");
+  const cache = new RedisCacheBackend("vf:cache:test:");
   const getCalls: string[] = [];
   const mGetCalls: string[][] = [];
   const client = {
@@ -1774,7 +1782,7 @@ Deno.test("RedisCacheBackend getBatch uses one MGET call for prefixed keys", asy
 
   const results = await cache.getBatch(["a", "b", "c"]);
 
-  assertEquals(mGetCalls, [["vf:test:a", "vf:test:b", "vf:test:c"]]);
+  assertEquals(mGetCalls, [["vf:cache:test:a", "vf:cache:test:b", "vf:cache:test:c"]]);
   assertEquals(getCalls, []);
   assertEquals(results.get("a"), "value-a");
   assertEquals(results.get("b"), null);
@@ -1783,7 +1791,7 @@ Deno.test("RedisCacheBackend getBatch uses one MGET call for prefixed keys", asy
 
 Deno.test("RedisCacheBackend getBatch falls back to GET when MGET fails", async () => {
   const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:test:");
+  const cache = new RedisCacheBackend("vf:cache:test:");
   const getCalls: string[] = [];
   const client = {
     connect: () => Promise.resolve(),
@@ -1791,9 +1799,9 @@ Deno.test("RedisCacheBackend getBatch falls back to GET when MGET fails", async 
     get: (key: string) => {
       getCalls.push(key);
       const values = new Map<string, string | null>([
-        ["vf:test:a", "value-a"],
-        ["vf:test:b", null],
-        ["vf:test:c", "value-c"],
+        ["vf:cache:test:a", "value-a"],
+        ["vf:cache:test:b", null],
+        ["vf:cache:test:c", "value-c"],
       ]);
       return Promise.resolve(values.get(key) ?? null);
     },
@@ -1808,7 +1816,7 @@ Deno.test("RedisCacheBackend getBatch falls back to GET when MGET fails", async 
 
   const results = await cache.getBatch(["a", "b", "c"]);
 
-  assertEquals(getCalls, ["vf:test:a", "vf:test:b", "vf:test:c"]);
+  assertEquals(getCalls, ["vf:cache:test:a", "vf:cache:test:b", "vf:cache:test:c"]);
   assertEquals(results.get("a"), "value-a");
   assertEquals(results.get("b"), null);
   assertEquals(results.get("c"), "value-c");
@@ -1935,7 +1943,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "createDistributedCacheAccessor handles factory errors gracefully",
+  name: "createDistributedCacheAccessor propagates factory errors",
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
@@ -1946,12 +1954,12 @@ Deno.test({
       "test-fail",
     );
 
-    assertEquals(await accessor(), null);
+    await assertRejects(() => accessor(), Error, "Init failed");
   },
 });
 
 Deno.test({
-  name: "createDistributedCacheAccessor retries after failure when enough time has passed",
+  name: "createDistributedCacheAccessor retries after a rejected initialization",
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
@@ -1969,30 +1977,15 @@ Deno.test({
       "test-retry",
     );
 
-    // First call fails
-    assertEquals(await accessor(), null);
+    await assertRejects(() => accessor(), Error, "Init failed");
     assertEquals(callCount, 1);
-
-    // Immediate second call returns cached null (no retry yet)
-    assertEquals(await accessor(), null);
-    assertEquals(callCount, 1);
-
-    const originalDateNow = Date.now;
-    try {
-      // Advance time by 31 seconds
-      Date.now = () => originalDateNow() + 31_000;
-
-      // Now it should retry since enough time has passed
-      assertEquals(await accessor(), apiBackend);
-      assertEquals(callCount, 2);
-    } finally {
-      Date.now = originalDateNow;
-    }
+    assertEquals(await accessor(), apiBackend);
+    assertEquals(callCount, 2);
   },
 });
 
 Deno.test({
-  name: "createDistributedCacheAccessor retries after a transient memory fallback",
+  name: "createDistributedCacheAccessor caches an explicit non-distributed selection",
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
@@ -2012,14 +2005,8 @@ Deno.test({
     assertEquals(await accessor(), null);
     assertEquals(callCount, 1);
 
-    const originalDateNow = Date.now;
-    try {
-      Date.now = () => originalDateNow() + 60_000;
-      assertEquals(await accessor(), recovered);
-      assertEquals(callCount, 2);
-    } finally {
-      Date.now = originalDateNow;
-    }
+    assertEquals(await accessor(), null);
+    assertEquals(callCount, 1);
   },
 });
 

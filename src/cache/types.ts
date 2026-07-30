@@ -14,7 +14,7 @@ export type { CacheBackendType, CacheSetBatchEntry } from "./schemas/index.ts";
 import type { CacheBackendType, CacheSetBatchEntry } from "./schemas/index.ts";
 
 /**
- * Interface for cache backends (memory, redis, api).
+ * Provides storage operations for memory, disk, API, and extension-backed distributed caches.
  * All cache backends must implement this interface.
  */
 export interface CacheBackend {

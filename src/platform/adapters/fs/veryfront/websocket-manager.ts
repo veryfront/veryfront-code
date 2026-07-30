@@ -980,7 +980,7 @@ export class WebSocketManager {
             !this.isInvalidationWorkCurrent(invalidationGeneration, invalidationWorkVersion)
           ) return;
 
-          logger.debug("Fresh files cached (memory + Redis)", {
+          logger.debug("Fresh files cached (local + shared)", {
             cacheKey,
             fileCount: files.length,
             styleAssetPath: preparedStyleArtifact?.assetPath,
@@ -1120,7 +1120,7 @@ export class WebSocketManager {
 
       const fileListCount = fileListDeleted ? 1 : 0;
 
-      logger.debug("CACHES CLEARED (memory + Redis)", {
+      logger.debug("CACHES CLEARED (local + shared)", {
         fileCacheCleared: fileCount,
         statCacheCleared: statCount,
         dirCacheCleared: dirCount,

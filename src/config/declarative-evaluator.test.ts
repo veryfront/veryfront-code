@@ -682,8 +682,8 @@ export default {};`,
 
     for (
       const bundleManifest of [
-        `{ type: "redis" }`,
-        `{ redisUrl: "redis://cache.invalid" }`,
+        `{ type: "distributed" }`,
+        `{ endpoint: "https://cache.invalid" }`,
         `{ type: "memory", futureBackendTarget: "cache.invalid" }`,
       ]
     ) {
@@ -708,14 +708,14 @@ export default {};`,
       const render of [
         `{ type: "filesystem" }`,
         `{ type: "kv" }`,
-        `{ type: "redis" }`,
+        `{ type: "distributed" }`,
         `{ type: "disk" }`,
         `{ kvPath: ".tenant-cache/render.kv" }`,
-        `{ redisUrl: "redis://cache.invalid" }`,
-        `{ redisKeyPrefix: "tenant:" }`,
+        `{ endpoint: "https://cache.invalid" }`,
+        `{ keyPrefix: "vf:cache:tenant-render:" }`,
         `{ type: "memory", kvPath: ".tenant-cache/render.kv" }`,
-        `{ type: "memory", redisUrl: "redis://cache.invalid" }`,
-        `{ type: "memory", redisKeyPrefix: "tenant:" }`,
+        `{ type: "memory", endpoint: "https://cache.invalid" }`,
+        `{ type: "memory", keyPrefix: "vf:cache:tenant-render:" }`,
         `{ type: "memory", storagePath: ".tenant-cache/future" }`,
       ]
     ) {

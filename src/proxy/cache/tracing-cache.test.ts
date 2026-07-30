@@ -10,7 +10,7 @@ class FakeCache implements TokenCache {
   readonly calls: CallRecord[] = [];
   entry: TokenCacheEntry | null = null;
   hasResult = false;
-  statsResult: CacheStats = { hits: 0, misses: 0, size: 0, type: "redis" };
+  statsResult: CacheStats = { hits: 0, misses: 0, size: 0, type: "extension" };
 
   get(key: string): Promise<TokenCacheEntry | null> {
     this.calls.push({ method: "get", args: [key] });
@@ -128,12 +128,12 @@ describe("TracingTokenCache", () => {
 
   it("delegates stats() and propagates the snapshot", async () => {
     const fake = new FakeCache();
-    fake.statsResult = { hits: 5, misses: 2, size: 7, type: "redis" };
+    fake.statsResult = { hits: 5, misses: 2, size: 7, type: "extension" };
     const traced = new TracingTokenCache(fake);
 
     const stats = await traced.stats();
 
-    assertEquals(stats, { hits: 5, misses: 2, size: 7, type: "redis" });
+    assertEquals(stats, { hits: 5, misses: 2, size: 7, type: "extension" });
     assertEquals(fake.calls, [{ method: "stats", args: [] }]);
   });
 
@@ -168,7 +168,7 @@ describe("TracingTokenCache", () => {
       delete: () => Promise.resolve(),
       clear: () => Promise.resolve(),
       has: () => Promise.resolve(false),
-      stats: () => Promise.resolve({ hits: 0, misses: 0, size: 0, type: "redis" as const }),
+      stats: () => Promise.resolve({ hits: 0, misses: 0, size: 0, type: "extension" as const }),
       close: () => Promise.resolve(),
     };
     const traced = new TracingTokenCache(fake);

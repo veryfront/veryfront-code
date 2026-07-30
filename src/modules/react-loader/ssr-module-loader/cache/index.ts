@@ -23,8 +23,8 @@ export {
 export type { ClearSSRModuleCacheForProjectOptions } from "./memory.ts";
 
 export {
-  getFromRedis,
+  getFromDistributedCache,
   initializeSSRDistributedCache,
   isSSRDistributedCacheEnabled,
-  setInRedis,
-} from "./redis.ts";
+  setInDistributedCache,
+} from "./distributed.ts";

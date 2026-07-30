@@ -43,7 +43,7 @@ import type {
 import type { Logger } from "#veryfront/utils";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/discovery";
-import { createWorkflowClient, RedisBackend } from "#veryfront/workflow";
+import { createDistributedWorkflowBackend, createWorkflowClient } from "#veryfront/workflow";
 import type { WorkflowClientConfig } from "#veryfront/workflow";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { ensureProjectDiscovery } from "./api/project-discovery.ts";
@@ -300,14 +300,21 @@ async function createRuntimeWorkflowClient(
   config?: WorkflowClientConfig,
 ): Promise<WorkflowClientView> {
   const clientConfig = withRuntimeStepRegistries(config);
-  const redisUrl = getHostEnv("REDIS_URL")?.trim();
-  if (!redisUrl) {
+  const persistence = getHostEnv("VERYFRONT_WORKFLOW_PERSISTENCE")?.trim() || "ephemeral";
+  if (persistence !== "ephemeral" && persistence !== "distributed") {
+    throw new TypeError(
+      "VERYFRONT_WORKFLOW_PERSISTENCE must be ephemeral or distributed",
+    );
+  }
+  if (persistence === "ephemeral") {
     return Object.assign(createWorkflowClient(clientConfig), {
       statePersistence: "ephemeral" as const,
     });
   }
 
-  const backend = new RedisBackend({ url: redisUrl, debug: config?.debug });
+  const backend = createDistributedWorkflowBackend({
+    debug: config?.debug,
+  });
   if (backend.initialize) {
     await backend.initialize();
   }

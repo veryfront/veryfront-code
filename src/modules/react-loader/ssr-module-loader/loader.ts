@@ -35,13 +35,13 @@ import {
   TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
 } from "./constants.ts";
 import {
-  getFromRedis,
+  getFromDistributedCache,
   getTransformSemaphore,
   globalInProgress,
   globalModuleCache,
   isSSRDistributedCacheEnabled,
   releaseTransformSlot,
-  setInRedis,
+  setInDistributedCache,
   tryAcquireTransformSlot,
 } from "./cache/index.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
@@ -181,10 +181,10 @@ async function waitForInProgressTransform(
 }
 
 /**
- * SSR Module Loader with Redis Support.
+ * SSR Module Loader with Distributed Cache Support.
  *
  * Loads and transforms React components for server-side rendering.
- * Supports Redis caching to share transformed modules across pods.
+ * Supports distributed caching to share transformed modules across pods.
  */
 export class SSRModuleLoader {
   private cache: SSRCacheManager;
@@ -350,7 +350,8 @@ export class SSRModuleLoader {
           hash,
           file: filePath.slice(-40),
           cacheDir,
-          hint: "Bundle may have expired from Redis (24h TTL) while transform was still cached",
+          hint:
+            "Bundle may have expired from distributed storage while its transform remained cached",
         });
         throw importError;
       }
@@ -665,24 +666,24 @@ export class SSRModuleLoader {
     }
 
     if (stableSourceGraphHash && isSSRDistributedCacheEnabled()) {
-      const redisCode = await getFromRedis(contentCacheKey);
-      if (redisCode) {
-        const isValidRedisCode = await this.cache.validateCachedCode(
-          redisCode,
+      const distributedCode = await getFromDistributedCache(contentCacheKey);
+      if (distributedCode) {
+        const isValidDistributedCode = await this.cache.validateCachedCode(
+          distributedCode,
           filePath,
-          "redis-cache",
+          "distributed-cache",
           {
             checkLocalPaths: true,
             checkInvalidEsmShPath: true,
           },
         );
-        if (isValidRedisCode) {
-          const transformedHash = await this.cache.hashContentAsync(redisCode);
+        if (isValidDistributedCode) {
+          const transformedHash = await this.cache.hashContentAsync(distributedCode);
           const tempPath = await this.cache.getTempPath(filePath, transformedHash);
           const written = await writeCacheFile(
             this.cache.getFs(),
             tempPath,
-            redisCode,
+            distributedCode,
             "SSR-MODULE-LOADER",
           );
           if (written) {
@@ -692,7 +693,7 @@ export class SSRModuleLoader {
             globalModuleCache.set(contentCacheKey, entry);
             globalModuleCache.set(filePathCacheKey, entry);
 
-            logger.debug("Redis cache hit", { file: filePath.slice(-40) });
+            logger.debug("Distributed cache hit", { file: filePath.slice(-40) });
 
             await dependencyValidator.ensureDependenciesExist(
               code,
@@ -1014,12 +1015,12 @@ export class SSRModuleLoader {
             ...(stableSourceGraphHash && isSSRDistributedCacheEnabled()
               ? {
                 publishDistributed: () => {
-                  void setInRedis(contentCacheKey, transformed, {
+                  void setInDistributedCache(contentCacheKey, transformed, {
                     isProduction: this.cache.isProductionContentSource(),
                   }).catch((error) => {
-                    logger.debug("Distributed cache set failed", {
-                      key: contentCacheKey,
-                      error,
+                    logger.warn("Distributed cache publication failed", {
+                      keyLength: contentCacheKey.length,
+                      errorName: error instanceof Error ? error.name : typeof error,
                     });
                   });
                 },

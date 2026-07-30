@@ -79,8 +79,6 @@ export const defaultConfig = Object.freeze(
 
 export const DEFAULT_PREFETCH_DELAY_MS = 100;
 export const DEFAULT_METRICS_COLLECT_INTERVAL_MS = 60000;
-export const DEFAULT_REDIS_SCAN_COUNT = 100;
-export const DEFAULT_REDIS_BATCH_DELETE_SIZE = 1000;
 export const PAGE_TRANSITION_DELAY_MS = 150;
 
 export type DefaultConfig = typeof defaultConfig;

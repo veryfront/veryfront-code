@@ -5,10 +5,10 @@ import { cliLogger } from "#cli/utils";
 import { DEFAULT_CACHE_DIR } from "veryfront/utils/constants/server";
 import { CacheCoordinator, type CacheStore } from "veryfront/rendering";
 import {
+  createDistributedRenderCacheStore,
   FilesystemCacheStore,
   KVCacheStore,
   MemoryCacheStore,
-  RedisCacheStore,
 } from "veryfront/rendering";
 import type { RuntimeAdapter } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
@@ -16,12 +16,11 @@ import { confirmPrompt, logSuccess, logWarning } from "#cli/utils";
 import { createSpinner } from "#cli/ui";
 
 interface RenderCacheConfig {
-  type?: "memory" | "filesystem" | "kv" | "redis";
+  type?: "memory" | "filesystem" | "kv" | "distributed";
   ttl?: number;
   maxEntries?: number;
   kvPath?: string;
-  redisUrl?: string;
-  redisKeyPrefix?: string;
+  keyPrefix?: string;
 }
 
 export interface CleanOptions {
@@ -135,12 +134,9 @@ function createRenderCacheStore(
     });
   }
 
-  if (type === "redis") {
-    if (!renderConfig.redisUrl) return null;
-    return new RedisCacheStore({
-      url: renderConfig.redisUrl,
-      keyPrefix: renderConfig.redisKeyPrefix ?? "veryfront:render:",
-      enableFallback: false,
+  if (type === "distributed") {
+    return createDistributedRenderCacheStore({
+      keyPrefix: renderConfig.keyPrefix,
     });
   }
 

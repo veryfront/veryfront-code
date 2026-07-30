@@ -4,7 +4,7 @@
  * This file preserves backward compatibility for all existing imports.
  * Actual implementations live in ./backends/ directory:
  *   - backends/memory.ts  — MemoryCacheBackend
- *   - backends/redis.ts   — RedisCacheBackend
+ *   - extension contract — optional distributed backend
  *   - backends/api.ts     — ApiCacheBackend
  *   - backends/factory.ts — createCacheBackend, CacheBackends, etc.
  *
@@ -21,11 +21,12 @@ export {
   createDistributedCodeCacheAccessor,
   createTokenizingGateway,
   DiskCacheBackend,
+  getRuntimeCacheBackendSelection,
   isApiCacheAvailable,
   isDiskCacheConfigured,
   isDistributedBackend,
   MemoryCacheBackend,
-  RedisCacheBackend,
+  type RuntimeCacheBackendSelection,
 } from "./backends/index.ts";
 
 // Re-export types

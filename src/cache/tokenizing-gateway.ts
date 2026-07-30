@@ -4,7 +4,7 @@
  * This wrapper enforces tokenization/detokenization for ANY distributed cache
  * storing code, eliminating the "forgot to tokenize" bug class.
  *
- * All code stored in distributed cache (Redis/API) must go through this gateway.
+ * All code stored in a distributed cache must go through this gateway.
  * The gateway automatically:
  * - Tokenizes code on write (replaces absolute paths with __VF_CACHE_DIR__)
  * - Detokenizes code on read (replaces tokens with local paths)
@@ -83,7 +83,7 @@ export interface CodeCacheGateway {
   del(key: string): Promise<void>;
 
   /**
-   * Check if the underlying backend is distributed (Redis/API) vs memory.
+   * Check if the underlying backend is distributed rather than process-local.
    */
   isDistributed(): boolean;
 }
@@ -107,10 +107,10 @@ export class TokenizingCacheGateway implements CodeCacheGateway {
   }
 
   /**
-   * Check if the underlying backend is distributed (Redis/API) vs memory.
+   * Check if the underlying backend is distributed rather than process-local.
    */
   isDistributed(): boolean {
-    return this.type === "redis" || this.type === "api";
+    return this.type === "distributed" || this.type === "api";
   }
 
   /**

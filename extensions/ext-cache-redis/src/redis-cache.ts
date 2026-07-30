@@ -222,7 +222,7 @@ export class RedisTokenCacheStore implements TokenCacheStore {
       });
     }
 
-    return { hits: this.hits, misses: this.misses, size, type: "redis" as const };
+    return { hits: this.hits, misses: this.misses, size, type: "extension" as const };
   }
 
   async close(): Promise<void> {

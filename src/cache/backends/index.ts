@@ -9,7 +9,6 @@ export type { CacheBackend } from "../types.ts";
 
 // Backend implementations
 export { MemoryCacheBackend } from "./memory.ts";
-export { RedisCacheBackend } from "./redis.ts";
 export { ApiCacheBackend } from "./api.ts";
 export { DiskCacheBackend } from "./disk.ts";
 
@@ -20,9 +19,11 @@ export {
   createCacheBackend,
   createDistributedCacheAccessor,
   createDistributedCodeCacheAccessor,
+  getRuntimeCacheBackendSelection,
   isApiCacheAvailable,
   isDiskCacheConfigured,
   isDistributedBackend,
+  type RuntimeCacheBackendSelection,
 } from "./factory.ts";
 
 // Gateway re-exports

@@ -41,14 +41,13 @@ export {
 // Event Publishers (one-way)
 export {
   CallbackEventPublisher,
+  createDistributedEventPublisher,
   createEventPublisher,
   MemoryEventPublisher,
   MultiEventPublisher,
-  RedisEventPublisher,
   SSEEventPublisher,
 } from "./event-publisher.ts";
-
-export type { RedisEventPublisherConfig } from "./event-publisher.ts";
+export type { DistributedEventPublisherOptions } from "./event-publisher.ts";
 
 // WebSocket Publisher (bidirectional)
 export {

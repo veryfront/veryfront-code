@@ -30,7 +30,6 @@ import { deleteEnv, getEnv, getHostEnv, setEnv } from "#veryfront/platform/compa
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
-import { isDiskCacheConfigured } from "#veryfront/cache/backend.ts";
 import {
   createProjectDiscoveryConfig,
   getProjectDiscoveryDirectories,
@@ -215,20 +214,9 @@ export class DevServer {
 
       await this.logRSCStatus();
 
-      // Initialize disk cache in dev mode when explicitly configured
-      if (isDiskCacheConfigured()) {
-        void initializeDistributedCaches(defaultDistributedCacheInitializers).catch(
-          (error: unknown) => {
-            // Warn (not debug): the cache was explicitly configured, so a failure likely
-            // indicates a misconfiguration (wrong Redis host/password). Developers need
-            // to see this — a debug log is too easy to miss.
-            logger.warn(
-              "[DevServer] Configured cache initialization failed — falling back to in-memory cache. Check your Redis / distributed-cache configuration.",
-              { error },
-            );
-          },
-        );
-      }
+      // Memory selection is a no-op. Explicit non-memory selections resolve
+      // their provider here and abort startup if the configured cache cannot initialize.
+      await initializeDistributedCaches(defaultDistributedCacheInitializers);
 
       // Auto-discover runtime primitives (tools, agents, workflows, prompts, resources)
       await this.runPrimitiveDiscovery();
