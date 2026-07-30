@@ -230,6 +230,11 @@ export {
   type UseStickToBottomOptions,
   type UseStickToBottomResult,
 } from "./hooks/use-stick-to-bottom.ts";
+export {
+  mergeProps,
+  useChatInput,
+  type UseChatInputResult,
+} from "./hooks/use-chat-input.ts";
 
 export {
   extractSourcesFromParts,

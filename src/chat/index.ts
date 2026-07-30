@@ -251,6 +251,21 @@ export {
   useReasoning,
   useToolCall,
 } from "#veryfront/react/components/chat/chat.tsx";
+// RFC 2980 canonical hook + context surface (additive; old names kept @deprecated).
+export {
+  ChatInputContextProvider,
+  type ChatInputContextValue,
+  mergeProps,
+  useChatInput,
+  useChatInputContext,
+  useChatInputContextOptional,
+  type UseChatInputResult,
+  useChatScroll,
+  type UseChatScrollOptions,
+  type UseChatScrollResult,
+  useMessageBranches,
+  type UseMessageBranchesResult,
+} from "#veryfront/react/components/chat/chat.tsx";
 export { Markdown, type MarkdownProps } from "#veryfront/react/components/chat/markdown.tsx";
 
 // Layout primitives — chat-independent, re-exported from the `veryfront/ui`
