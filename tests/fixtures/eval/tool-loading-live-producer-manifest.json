@@ -2,7 +2,7 @@
   "kind": "veryfront-agent-tool-loading-live-producer-manifest",
   "report": {
     "path": "veryfront-agent/.veryfront/evals/tool-loading/live/report.json",
-    "sha256": "887a6be7a1e813d1d6e4cdc9fac40a220f3cc5f9e712a1f86a64b6c188ce7e32"
+    "sha256": "21e0db634295b14616b977f03ff8b456d2834cc78f1db3c34c9a131f06cc6b43"
   },
   "execution": {
     "workingDirectory": "veryfront-agent",
@@ -48,8 +48,8 @@
     "environmentValuesPersisted": false
   },
   "agentProducer": {
-    "repositoryRevision": "582b5430d04dbf3c64e979c1a0d6d0d4ce433fb3",
-    "repositoryTree": "97ff6a0c698003abbb8adc3ad85a9e5c9044a7ce",
+    "repositoryRevision": "9528932043e25be660eb64a2704efb4ac4f05eac",
+    "repositoryTree": "12bc9ba0a323161840ced0fcb2a9a62d25361a5d",
     "workingTreeState": "clean",
     "snapshotRoot": "tests/fixtures/eval/tool-loading-live-producer/agent",
     "files": [
@@ -86,8 +86,8 @@
       {
         "sourcePath": "evals/tool-loading/runToolLoadingBenchmark.ts",
         "artifactPath": "evals/tool-loading/runToolLoadingBenchmark.ts.snapshot",
-        "sourceSha256": "0d6faf7cf1c3733344cd587f4bc736588d90997645fdc5cedc12dd1f8f60259f",
-        "sha256": "0d6faf7cf1c3733344cd587f4bc736588d90997645fdc5cedc12dd1f8f60259f"
+        "sourceSha256": "daee13a355859b09524916d1e05c5a5fc5eb8b6f8d86eee01bbfa72c6cd5728a",
+        "sha256": "daee13a355859b09524916d1e05c5a5fc5eb8b6f8d86eee01bbfa72c6cd5728a"
       },
       {
         "sourcePath": "evals/tool-loading/taskSuccessCases.ts",
@@ -116,8 +116,8 @@
       {
         "sourcePath": "tests/unit/evals/toolLoadingEval.test.ts",
         "artifactPath": "tests/unit/evals/toolLoadingEval.test.ts.snapshot",
-        "sourceSha256": "b1e7855dadb8cdacbb2059f0831f8e3ec978399fbeef1cad7e5c4458fec3f2be",
-        "sha256": "b1e7855dadb8cdacbb2059f0831f8e3ec978399fbeef1cad7e5c4458fec3f2be"
+        "sourceSha256": "63e0052d456290ed521fdcc072dd648b09c80c8f19d0e75f9d6964560e640938",
+        "sha256": "63e0052d456290ed521fdcc072dd648b09c80c8f19d0e75f9d6964560e640938"
       },
       {
         "sourcePath": "veryfront.config.ts",

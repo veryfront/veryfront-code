@@ -245,11 +245,11 @@ describe("eval/tool-loading-benchmark", () => {
     assertEquals(artifact.sourceArtifact, {
       repository: "veryfront-agent",
       path: ".veryfront/evals/tool-loading/live/report.json",
-      sha256: "887a6be7a1e813d1d6e4cdc9fac40a220f3cc5f9e712a1f86a64b6c188ce7e32",
+      sha256: "21e0db634295b14616b977f03ff8b456d2834cc78f1db3c34c9a131f06cc6b43",
     });
     assertEquals(artifact.producer, {
-      revision: "582b5430d04dbf3c64e979c1a0d6d0d4ce433fb3",
-      tree: "97ff6a0c698003abbb8adc3ad85a9e5c9044a7ce",
+      revision: "9528932043e25be660eb64a2704efb4ac4f05eac",
+      tree: "12bc9ba0a323161840ced0fcb2a9a62d25361a5d",
       clean: true,
     });
     assertEquals(artifact.frameworkPackage, {
@@ -374,6 +374,13 @@ describe("eval/tool-loading-benchmark", () => {
       privacyTestSource,
       "'[REDACTED_PROJECT_ID_2]': { kind: 'slug' }",
     );
+    assertStringIncludes(
+      privacyTestSource,
+      "redacts common normalized credential names without treating ordinary key-like metadata as secrets",
+    );
+    assertStringIncludes(privacyTestSource, "sessionToken: '[REDACTED]'");
+    assertStringIncludes(privacyTestSource, "tokenBudget: 5");
+    assertStringIncludes(privacyTestSource, "publicKey: 'visible-public-key'");
     for (const snapshot of [producer.agentProducer, producer.frameworkProducer]) {
       for (const file of snapshot.files) {
         assertEquals(

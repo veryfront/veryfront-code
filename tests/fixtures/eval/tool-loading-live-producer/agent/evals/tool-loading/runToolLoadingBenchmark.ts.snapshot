@@ -442,22 +442,14 @@ function redactSensitiveString(value: string, projectIdentities: readonly string
 function isSensitiveCredentialKey(key: string): boolean {
   const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '')
   return (
-    /^(?:api|auth|access|refresh|id|bearer|client)?token$/.test(normalized) ||
-    [
-      'apikey',
-      'authorization',
-      'authorizationheader',
-      'auth',
-      'authheader',
-      'clientsecret',
-      'credential',
-      'credentials',
-      'password',
-      'passwd',
-      'privatekey',
-      'secret',
-      'signingkey',
-    ].includes(normalized)
+    normalized.endsWith('token') ||
+    normalized.endsWith('apikey') ||
+    /secret(?:key)?$/.test(normalized) ||
+    /(?:password|passwd)$/.test(normalized) ||
+    /(?:privatekey|signingkey)$/.test(normalized) ||
+    /authorization(?:header)?$/.test(normalized) ||
+    /^(?:basic|bearer|proxy)?auth(?:header)?$/.test(normalized) ||
+    /credentials?$/.test(normalized)
   )
 }
 

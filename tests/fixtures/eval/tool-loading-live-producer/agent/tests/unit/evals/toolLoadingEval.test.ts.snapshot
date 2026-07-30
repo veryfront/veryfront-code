@@ -198,6 +198,73 @@ describe('Veryfront agent tool-loading eval', () => {
     })
   })
 
+  it('redacts common normalized credential names without treating ordinary key-like metadata as secrets', () => {
+    expect(
+      sanitizePersistedBenchmarkValue(
+        {
+          api_secret: 'opaque-api-secret',
+          oauth_token: 'opaque-oauth-token',
+          secretKey: 'opaque-secret-key',
+          sessionToken: 'opaque-session-token',
+          'x-api-key': 'opaque-x-api-key',
+          bearerToken: 'opaque-bearer-token',
+          id_token: 'opaque-id-token',
+          access_token: 'opaque-access-token',
+          refreshToken: 'opaque-refresh-token',
+          client_secret: 'opaque-client-secret',
+          webhook_secret: 'opaque-webhook-secret',
+          consumerSecret: 'opaque-consumer-secret',
+          private_key: 'opaque-private-key',
+          signing_key: 'opaque-signing-key',
+          basicAuth: 'opaque-basic-auth',
+          auth_header: 'opaque-auth-header',
+          credentials: 'opaque-credentials',
+          dbPassword: 'opaque-password',
+          apiKeyCount: 3,
+          authenticationMode: 'oauth',
+          keyboardLayout: 'qwerty',
+          metadata: 'visible-metadata',
+          monkey: 'visible-word',
+          publicKey: 'visible-public-key',
+          secretKeyCount: 2,
+          sessionTokenCount: 4,
+          tokenBudget: 5,
+          tokenizer: 'visible-tokenizer',
+        },
+        []
+      )
+    ).toEqual({
+      access_token: '[REDACTED]',
+      api_secret: '[REDACTED]',
+      apiKeyCount: 3,
+      auth_header: '[REDACTED]',
+      authenticationMode: 'oauth',
+      basicAuth: '[REDACTED]',
+      bearerToken: '[REDACTED]',
+      client_secret: '[REDACTED]',
+      consumerSecret: '[REDACTED]',
+      credentials: '[REDACTED]',
+      dbPassword: '[REDACTED]',
+      id_token: '[REDACTED]',
+      keyboardLayout: 'qwerty',
+      metadata: 'visible-metadata',
+      monkey: 'visible-word',
+      oauth_token: '[REDACTED]',
+      private_key: '[REDACTED]',
+      publicKey: 'visible-public-key',
+      refreshToken: '[REDACTED]',
+      secretKey: '[REDACTED]',
+      secretKeyCount: 2,
+      sessionToken: '[REDACTED]',
+      sessionTokenCount: 4,
+      signing_key: '[REDACTED]',
+      tokenBudget: 5,
+      tokenizer: 'visible-tokenizer',
+      webhook_secret: '[REDACTED]',
+      'x-api-key': '[REDACTED]',
+    })
+  })
+
   it('preserves sibling values when multiple project identity keys are redacted', () => {
     expect(
       sanitizePersistedBenchmarkValue(
