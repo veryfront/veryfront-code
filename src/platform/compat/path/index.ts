@@ -11,5 +11,6 @@ export { delimiter, hasNodePath, isDeno, nodePath, sep, sep as SEPARATOR } from 
 export { basename, dirname, extname, join } from "./basic-operations.ts";
 export { isAbsolute, normalize, relative, resolve } from "./resolution.ts";
 export { format, parse } from "./parse-format.ts";
+export { posix, type PosixPath } from "./posix.ts";
 export { fromFileUrl, toFileUrl } from "./url-conversion.ts";
 export { validatePathSecurity } from "./security.ts";

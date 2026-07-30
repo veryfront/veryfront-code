@@ -24,6 +24,7 @@ import { FRAMEWORK_ROOT, HASH_SEED_FNV1A } from "../constants.ts";
 import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
 import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
 import { getDefaultImportMap } from "#veryfront/modules/import-map/index.ts";
+import { normalizePath } from "./module-cache.ts";
 
 function getTransformCacheKey(
   projectId: string,
@@ -44,26 +45,6 @@ function rewriteVeryfrontImports(code: string): string {
     const mapped = resolveVeryfrontModuleUrl(specifier);
     return `from "${mapped ?? specifier}"`;
   });
-}
-
-function normalizePath(modulePath: string, parentModulePath?: string): string {
-  const stripped = modulePath.replace(/^\//, "");
-  if (!parentModulePath) return stripped;
-
-  const isRelative = modulePath.startsWith("./") || modulePath.startsWith("../");
-  if (!isRelative) return stripped;
-
-  const parentDir = parentModulePath.replace(/\/[^/]+$/, "");
-  const parts = [...parentDir.split("/"), ...modulePath.split("/")];
-
-  const resolved: string[] = [];
-  for (const part of parts) {
-    if (part === "..") resolved.pop();
-    else if (part !== ".") resolved.push(part);
-  }
-
-  const joined = resolved.join("/");
-  return joined.startsWith("_vf_modules/") ? joined : `_vf_modules/${joined}`;
 }
 
 function findNestedImports(moduleCode: string): {
