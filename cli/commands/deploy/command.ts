@@ -9,44 +9,26 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { createFileSystem, cwd, runtime } from "veryfront/platform";
-import { join, relative, resolve } from "veryfront/platform/path";
-import { type EnvironmentConfig, getConfig, getEnvironmentConfig } from "veryfront/config";
-import {
-  type ApiClient,
-  createApiClient,
-  type ProjectReferenceSource,
-  resolveConfigWithAuth,
-  resolveConfigWithAuthDetails,
-  type ResolvedConfig,
-} from "#cli/shared/config";
-import { writeProjectLink } from "../../shared/project-link.ts";
+import { cwd } from "veryfront/platform";
+import { type ApiClient, type ResolvedConfig } from "#cli/shared/config";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { exitProcess, isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
 import {
   DEPLOYMENT_ERROR,
-  ENVIRONMENT_NOT_FOUND,
   RELEASE_MISSING_VERSION,
   SOURCE_DIGEST_MISMATCH,
   UNKNOWN_ERROR,
   VeryfrontError,
 } from "veryfront/errors";
 import { brand, createNoopSpinner, createSpinner, dim, formatDuration } from "#cli/ui";
-import { reserveProjectSlug } from "#cli/shared/reserve-slug";
-import { normalizeProjectSlug } from "#cli/shared/slug";
-import { pushCommand } from "../push/index.ts";
 import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import {
   computeSourceDigest,
-  normalizeControlPlane,
-  type ProjectTarget,
-  PUSH_RECEIPT_RELATIVE_PATH,
-  type PushReceipt,
   readPushReceipt,
   resolveGitSource,
   validatePushReceipt,
 } from "../../shared/deployment-provenance.ts";
-import { type ReleaseAssetManifestResponse, routeForPage } from "veryfront/release-assets";
+import type { ReleaseAssetManifestResponse } from "veryfront/release-assets";
 import {
   createHttpDeployControlPlane,
   type DeployDeployment,
@@ -64,7 +46,6 @@ import {
 } from "../../shared/deployment/deploy-project.ts";
 import type { DeployResult } from "../../shared/deployment/result.ts";
 import { parseProjectDomain } from "veryfront/server";
-import { isWithinDirectory, normalizePath } from "veryfront/utils";
 
 /**
  * Schema factory for deploy command arguments
@@ -176,44 +157,6 @@ export interface DeploymentVerification {
 }
 
 export type { DeployResult };
-
-function createDeployResult({
-  verification,
-  release,
-  environment,
-  deployment,
-  environmentUrl,
-  config,
-  branch,
-}: {
-  verification: DeploymentVerification;
-  release: Release;
-  environment: Environment;
-  deployment: Deployment;
-  environmentUrl: string;
-  config: ResolvedConfig;
-  branch: string;
-}): DeployResult {
-  return {
-    projectId: verification.projectId,
-    projectSlug: verification.projectSlug,
-    release: {
-      id: verification.releaseId,
-      name: release.name,
-      version: verification.releaseVersion,
-    },
-    environment: verification.environmentName,
-    environmentId: verification.environmentId,
-    deploymentId: verification.deploymentId,
-    url: environmentUrl,
-    protected: environment.protected,
-    routingConvergence: deployment.routing_convergence ?? null,
-    commitSha: verification.commitSha,
-    sourceDigest: verification.sourceDigest,
-    controlPlane: normalizeControlPlane(config.apiUrl),
-    branch,
-  };
-}
 
 export interface ReleaseSourceVerification {
   projectId: string;
@@ -617,22 +560,6 @@ export async function resolvePushedSource(input: {
   return { commitSha, sourceDigest: receipt.sourceDigest };
 }
 
-function getErrorStatus(error: unknown): number | undefined {
-  if (typeof error !== "object" || error === null) return undefined;
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" ? status : undefined;
-}
-
-function buildEnvironmentUrl(projectSlug: string, environment: Environment): string {
-  const domain = environment.domains?.[0];
-  if (domain) {
-    return domain.startsWith("http://") || domain.startsWith("https://")
-      ? domain
-      : `https://${domain}`;
-  }
-  return `https://${projectSlug}.${environment.name}.veryfront.com`;
-}
-
 function buildCanonicalEnvironmentUrl(
   projectSlug: string,
   environmentName: string,
@@ -686,10 +613,6 @@ function buildEnvironmentProbeUrl(baseUrl: string, route: string): string {
 
   const probeUrl = new URL(route, url);
   return route === "/" ? probeUrl.origin : probeUrl.href;
-}
-
-function buildReadyEnvironmentUrl(baseUrl: string, route: string | null): string {
-  return route ? buildEnvironmentProbeUrl(baseUrl, route) : baseUrl;
 }
 
 function secureEnvironmentProbeUrl(url: string): string {
@@ -822,221 +745,6 @@ export async function waitForEnvironmentReady(
       await wait(Math.min(pollIntervalMs, remainingMs));
     }
   }
-}
-
-async function inferDeployProjectSlug(projectDir: string): Promise<string> {
-  const fs = createFileSystem();
-  const packagePath = join(projectDir, "package.json");
-
-  try {
-    if (await fs.exists(packagePath)) {
-      const pkg = JSON.parse(await fs.readTextFile(packagePath)) as { name?: string };
-      if (pkg.name) return normalizeProjectSlug(pkg.name);
-    }
-  } catch {
-    // Fall back to the directory name below.
-  }
-
-  const dirName = projectDir.split(/[/\\]/).filter(Boolean).pop() ?? "my-app";
-  return normalizeProjectSlug(dirName);
-}
-
-function shouldPersistProjectLink(source: ProjectReferenceSource): boolean {
-  return source.kind === "inferred" || source.kind === "local-link";
-}
-
-function projectApiReference(config: ResolvedConfig): string {
-  return config.projectId ?? config.projectSlug;
-}
-
-function needsBootstrapPush(
-  receipt: PushReceipt | null,
-  skipSourcePush: boolean | undefined,
-): boolean {
-  return !skipSourcePush && !receipt;
-}
-
-async function persistProjectLink(
-  projectDir: string,
-  config: ResolvedConfig,
-  project: ProjectTarget,
-): Promise<ResolvedConfig> {
-  await writeProjectLink(projectDir, {
-    controlPlane: config.apiUrl,
-    projectId: project.id,
-    projectSlug: project.slug,
-  });
-  return { ...config, projectId: project.id, projectSlug: project.slug };
-}
-
-async function ensureProjectLinkedForDeploy(
-  projectDir: string,
-  env: EnvironmentConfig,
-  receipt: PushReceipt | null,
-  dryRun: boolean,
-  quiet: boolean,
-): Promise<{
-  config: ResolvedConfig;
-  client: ApiClient;
-  project: ProjectTarget | null;
-  plannedProjectSlug: string;
-}> {
-  const details = await resolveConfigWithAuthDetails(projectDir, env);
-  const initial = details.config;
-  const projectReferenceSource = details.projectReferenceSource;
-  const isInferredReference = projectReferenceSource.kind === "inferred";
-  const projectReference = isInferredReference
-    ? normalizeProjectSlug(initial.projectSlug || await inferDeployProjectSlug(projectDir))
-    : initial.projectSlug;
-  const config = { ...initial, projectSlug: projectReference };
-  const client = createApiClient(config);
-
-  if (!isInferredReference) {
-    try {
-      const project = await getProject(client, projectApiReference(config));
-      const resolvedConfig = shouldPersistProjectLink(projectReferenceSource)
-        ? dryRun
-          ? { ...config, projectId: project.id, projectSlug: project.slug }
-          : await persistProjectLink(projectDir, config, project)
-        : { ...config, projectSlug: project.slug };
-      return {
-        config: resolvedConfig,
-        client,
-        project,
-        plannedProjectSlug: project.slug,
-      };
-    } catch (error) {
-      if (getErrorStatus(error) !== 404) {
-        throw new Error(
-          `Could not check project "${projectReference}": ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    }
-
-    throw new Error(
-      `Project "${projectReference}" was not found. Check the project reference or remove it to let deploy create a project for this directory.`,
-    );
-  }
-
-  const suggestedSlug = normalizeProjectSlug(projectReference);
-  if (receipt) {
-    throw new Error(
-      `The local push receipt is orphaned: ${PUSH_RECEIPT_RELATIVE_PATH} targets project "${receipt.projectSlug}", but deploy inferred "${suggestedSlug}" because there is no explicit config or local project link. Remove the receipt and run veryfront push again, or relink this project before deploying.`,
-    );
-  }
-
-  if (dryRun) {
-    if (!quiet) logInfo(`Would create project ${suggestedSlug}`);
-    return {
-      config: { ...initial, projectSlug: suggestedSlug },
-      client: createApiClient({ ...initial, projectSlug: suggestedSlug }),
-      project: null,
-      plannedProjectSlug: suggestedSlug,
-    };
-  }
-
-  const created = await reserveProjectSlug(
-    suggestedSlug,
-    initial.apiToken,
-    env,
-    initial.apiUrl,
-  );
-  if (!quiet && isVerbose()) logInfo(`Created project ${created.slug}`);
-  const createdConfig = { ...initial, projectSlug: created.slug };
-  const createdClient = createApiClient(createdConfig);
-  const project = created.projectId
-    ? { id: created.projectId, slug: created.slug }
-    : await getProject(createdClient, created.slug);
-  const linkedConfig = await persistProjectLink(projectDir, createdConfig, project);
-  return {
-    config: linkedConfig,
-    client: createdClient,
-    project,
-    plannedProjectSlug: created.slug,
-  };
-}
-
-async function getProjectRouteDirectories(
-  projectDir: string,
-): Promise<{ app: string; pages: string }> {
-  const adapter = await runtime.get();
-  const config = await getConfig(projectDir, adapter);
-  return {
-    app: normalizeConfiguredRouteDirectory(config.directories?.app ?? "app"),
-    pages: normalizeConfiguredRouteDirectory(config.directories?.pages ?? "pages"),
-  };
-}
-
-function normalizeConfiguredRouteDirectory(path: string): string {
-  return path.replace(/\\/g, "/");
-}
-
-function isAbsoluteConfiguredRouteDirectory(path: string): boolean {
-  return path.startsWith("/") || /^[A-Za-z]:\//.test(path);
-}
-
-function resolveProjectRouteDirectory(
-  projectDir: string,
-  directory: string,
-  name: "app" | "pages",
-): string {
-  if (isAbsoluteConfiguredRouteDirectory(directory)) {
-    throw new Error(
-      `Configured ${name} directory "${directory}" must be project-relative. Set directories.${name} to a path inside the project, for example "${name}" or "src/${name}".`,
-    );
-  }
-
-  const projectRoot = normalizePath(projectDir);
-  const routeRoot = normalizePath(resolve(projectRoot, directory));
-  if (!isWithinDirectory(projectRoot, routeRoot)) {
-    throw new Error(
-      `Configured ${name} directory "${directory}" resolves outside the project directory. Set directories.${name} to a project-relative path inside the project.`,
-    );
-  }
-  return routeRoot;
-}
-
-async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
-  const fs = createFileSystem();
-  const directories = await getProjectRouteDirectories(projectDir);
-  const routes = new Set<string>();
-
-  async function walk(rootDir: string, dir: string, routeRoot: "app" | "pages"): Promise<void> {
-    let entries;
-    try {
-      if (!(await fs.exists(dir))) return;
-      entries = await fs.readDir(dir);
-    } catch {
-      return;
-    }
-
-    for await (const entry of entries) {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory) {
-        await walk(rootDir, path, routeRoot);
-        continue;
-      }
-      if (!/\.(tsx|ts|jsx|mdx|js)$/.test(entry.name)) continue;
-
-      const relativePath = relative(rootDir, path).replace(/\\/g, "/");
-      if (relativePath === "." || relativePath === ".." || relativePath.startsWith("../")) {
-        continue;
-      }
-      const route = routeForPage(`${routeRoot}/${relativePath}`);
-      if (route) routes.add(route);
-    }
-  }
-
-  const appDir = resolveProjectRouteDirectory(projectDir, directories.app, "app");
-  const pagesDir = resolveProjectRouteDirectory(projectDir, directories.pages, "pages");
-  await Promise.all([
-    walk(appDir, appDir, "app"),
-    walk(pagesDir, pagesDir, "pages"),
-  ]);
-
-  return [...routes].sort();
 }
 
 function assertReadyManifestCoversPageRoutes(
@@ -1220,7 +928,7 @@ async function deployCommandHuman(
   options: DeployOptions,
   seams: DeployCommandTestingSeams,
 ): Promise<DeployResult | null> {
-  const { env, dryRun, quiet = false } = options;
+  const { env, quiet = false } = options;
   const startedAt = Date.now();
   const verbose = isVerbose();
   let progressText = verbose ? "Resolving configuration..." : "Linking project...";

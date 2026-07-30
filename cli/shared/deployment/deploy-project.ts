@@ -973,7 +973,7 @@ export function createDeployProject(options: {
       );
       let receipt = await readPushReceipt(request.projectDir);
       const branch = request.branch ?? "main";
-      let setup = await ensureProjectLinkedForDeploy(
+      const setup = await ensureProjectLinkedForDeploy(
         request.projectDir,
         environmentConfig,
         receipt,

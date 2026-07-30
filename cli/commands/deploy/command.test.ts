@@ -160,7 +160,7 @@ describe("deploy command adapters", () => {
       },
     });
     const options = {
-      projectDir: "/tmp/adapter-must-not-read",
+      projectDir: "adapter-must-not-read",
       branch: "main",
       env: "production",
       releaseName: "release-from-options",
@@ -205,7 +205,7 @@ describe("deploy command adapters", () => {
     assertEquals(observedRequests.length, 2);
     assertEquals(observedRequests[0], observedRequests[1]);
     assertEquals(observedRequests[0], {
-      projectDir: "/tmp/adapter-must-not-read",
+      projectDir: "adapter-must-not-read",
       branch: "main",
       environment: "production",
       releaseName: "release-from-options",
