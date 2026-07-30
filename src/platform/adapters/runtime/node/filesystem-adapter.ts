@@ -11,6 +11,7 @@ import {
   createWatcherIterator,
   setupNodeFsWatcher,
 } from "../shared/shared-watcher.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { makeNodeTempDir } from "../shared/temp-dir.ts";
 import { serverLogger } from "#veryfront/utils";
 
@@ -38,7 +39,9 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
       await fs.access(path);
       return true;
     } catch (error) {
-      serverLogger.debug(`File access check failed for ${path}:`, error);
+      if (!isNotFoundError(error)) {
+        serverLogger.debug(`File access check failed for ${path}:`, error);
+      }
       return false;
     }
   }
