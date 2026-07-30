@@ -899,6 +899,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       { json: false, verbose: true },
       { json: true, verbose: false },
     ];
+    const adapterResults: Array<{ json: boolean; verbose: boolean; result: unknown }> = [];
     for (const outputMode of outputModes) {
       const { json: jsonMode, verbose } = outputMode;
       setJsonMode(jsonMode);
@@ -926,6 +927,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         result?.url,
         "https://my-project.production.veryfront.com/dashboard",
       );
+      adapterResults.push({ json: jsonMode, verbose, result });
       assertEquals(environmentReads, 2);
       assertEquals(environmentUrlReads, 2);
       assertEquals(releaseSourceReads, 2);
@@ -951,6 +953,22 @@ it("uses canonical production read-back in human and JSON modes", async () => {
             status?: string;
             data?: { url?: string };
           }
+        );
+        assertEquals(
+          events
+            .filter((event) => event.type === "step" && event.status === "completed")
+            .map((event) => event.name),
+          [
+            "resolve-config",
+            "resolve-target",
+            "verify-source",
+            "create-release",
+            "verify-release-source",
+            "wait-release-assets",
+            "deploy",
+            "verify-deployment",
+            "wait-environment-url",
+          ],
         );
         assertEquals(
           events.slice(-4).map((event) =>
@@ -1001,6 +1019,9 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         assertEquals(verboseOutput.includes("npx"), false);
       }
     }
+    const humanResult = adapterResults.find((entry) => !entry.json && !entry.verbose)?.result;
+    const jsonResult = adapterResults.find((entry) => entry.json)?.result;
+    assertEquals(jsonResult, humanResult);
 
     setJsonMode(false);
     setVerboseMode(false);
