@@ -1,6 +1,10 @@
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 
 const RUNTIME_TOOL_INVENTORY_HEADER = "Current run tool inventory:";
+const RUNTIME_TOOL_INVENTORY_FOOTER =
+  `Only treat the tools listed above as actually available in this run.
+If the list is "- none", say plainly that no tools are available.
+Do NOT infer tool availability from examples, skills, or the base prompt.`;
 
 function createRuntimeToolInventoryMessage(toolNames: readonly string[]): ChatSystemMessage {
   const toolList = toolNames.length > 0
@@ -13,14 +17,29 @@ function createRuntimeToolInventoryMessage(toolNames: readonly string[]): ChatSy
 
 ${toolList}
 
-Only treat the tools listed above as actually available in this run.
-If the list is "- none", say plainly that no tools are available.
-Do NOT infer tool availability from examples, skills, or the base prompt.`,
+${RUNTIME_TOOL_INVENTORY_FOOTER}`,
   };
 }
 
 function isRuntimeToolInventoryMessage(message: ChatSystemMessage): boolean {
   return message.content.includes(RUNTIME_TOOL_INVENTORY_HEADER);
+}
+
+function removeFlattenedRuntimeToolInventory(instructions: string): string {
+  const headerIndex = instructions.lastIndexOf(RUNTIME_TOOL_INVENTORY_HEADER);
+  if (headerIndex < 0) {
+    return instructions;
+  }
+
+  const inventory = instructions.slice(headerIndex);
+  if (
+    !inventory.startsWith(`${RUNTIME_TOOL_INVENTORY_HEADER}\n\n- `) ||
+    !inventory.endsWith(RUNTIME_TOOL_INVENTORY_FOOTER)
+  ) {
+    return instructions;
+  }
+
+  return instructions.slice(0, headerIndex).trimEnd();
 }
 
 /** Returns whether instructions already carry a hosted runtime tool inventory. */
@@ -39,7 +58,10 @@ export function withRuntimeToolInventory(
 ): ChatSystemMessage[] {
   const inventoryMessage = createRuntimeToolInventoryMessage(toolNames);
   if (typeof instructions === "string") {
-    return [{ role: "system", content: instructions }, inventoryMessage];
+    const baseInstructions = removeFlattenedRuntimeToolInventory(instructions);
+    return baseInstructions.length > 0
+      ? [{ role: "system", content: baseInstructions }, inventoryMessage]
+      : [inventoryMessage];
   }
 
   return [

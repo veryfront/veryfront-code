@@ -43,6 +43,26 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
     ]);
   });
 
+  it("replaces stale inventory after materialized instructions are flattened", () => {
+    const flattenedInstructions = flattenSystemInstructions(
+      withRuntimeToolInventory("Base system", ["stale_tool"]),
+    );
+
+    assertEquals(withRuntimeToolInventory(flattenedInstructions, ["current_tool"]), [
+      { role: "system", content: "Base system" },
+      {
+        role: "system",
+        content: `Current run tool inventory:
+
+- current_tool
+
+Only treat the tools listed above as actually available in this run.
+If the list is "- none", say plainly that no tools are available.
+Do NOT infer tool availability from examples, skills, or the base prompt.`,
+      },
+    ]);
+  });
+
   it("flattens non-empty system text with blank-line separation", () => {
     assertEquals(
       flattenSystemInstructions([
