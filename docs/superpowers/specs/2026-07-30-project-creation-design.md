@@ -28,6 +28,7 @@ This could model every step as a port, but it would expose more implementation k
 
 ```ts
 export interface CreateProjectRequest {
+  /** A single directory name. Path separators and traversal are rejected. */
   name?: string;
   parentDir: string;
   template: InitTemplate;
@@ -97,7 +98,7 @@ The existing `initCommand()` remains the public CLI command surface. Its deploy 
 ## Consumer migration
 
 - CLI handler: continues to call `initCommand()`.
-- App: calls `createProject()` and uses `result.projectDir` instead of rebuilding the path.
+- App: passes `join(cwd(), "projects")` as `parentDir`, passes the reserved slug as the single-directory `name`, and uses `result.projectDir` instead of rebuilding the path.
 - MCP: calls `createProject()` and builds its public response from the result.
 - Demo: calls `createProject()`, then performs its existing registration, link, and push steps.
 

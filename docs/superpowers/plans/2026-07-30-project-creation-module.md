@@ -43,6 +43,7 @@
 
 ```ts
 export interface CreateProjectRequest {
+  /** A single directory name. Path separators and traversal are rejected. */
   name?: string;
   parentDir: string;
   template: InitTemplate;
@@ -368,8 +369,8 @@ For App, use:
 
 ```ts
 const creation = await createProject({
-  name: `projects/${slug}`,
-  parentDir: cwd(),
+  name: slug,
+  parentDir: join(cwd(), "projects"),
   template,
   runtime: "node",
   features: [],
