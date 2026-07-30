@@ -1,5 +1,4 @@
 import "./init.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { deepEquals, safeStringify } from "./utils.ts";
 
 // deno-lint-ignore no-explicit-any -- any[] required: constructor params are contravariant
@@ -45,7 +44,7 @@ interface AssertImpl {
   assertLessOrEqual(actual: number, expected: number, msg?: string): void;
 }
 
-function createNodeAssertImpl(): AssertImpl {
+function createPortableAssertImpl(): AssertImpl {
   function withAssertionMessage(message: string, assertionMessage?: string): string {
     return assertionMessage ? `${message}: ${assertionMessage}` : message;
   }
@@ -181,7 +180,11 @@ function createNodeAssertImpl(): AssertImpl {
     },
 
     assertMatch(actual: string, expected: RegExp, msg?: string): void {
-      if (expected.test(actual)) return;
+      const previousLastIndex = expected.lastIndex;
+      expected.lastIndex = 0;
+      const matches = expected.test(actual);
+      expected.lastIndex = previousLastIndex;
+      if (matches) return;
       throw new Error(msg || `Expected "${actual}" to match ${expected}`);
     },
 
@@ -342,35 +345,7 @@ function matchesSetSubset(
   return true;
 }
 
-let impl: AssertImpl;
-
-if (isDeno) {
-  const denoAssert = await import("#std/assert.ts");
-  impl = {
-    assertEquals: denoAssert.assertEquals,
-    assertNotEquals: denoAssert.assertNotEquals,
-    assertStrictEquals: denoAssert.assertStrictEquals,
-    assert: denoAssert.assert,
-    assertExists: denoAssert.assertExists,
-    assertThrows: denoAssert.assertThrows,
-    assertRejects: denoAssert.assertRejects,
-    assertStringIncludes: denoAssert.assertStringIncludes,
-    assertMatch: denoAssert.assertMatch,
-    assertInstanceOf: denoAssert.assertInstanceOf,
-    fail: denoAssert.fail,
-    assertNotStrictEquals: denoAssert.assertNotStrictEquals,
-    assertObjectMatch(actual, expected, msg): void {
-      if (matchesObjectSubset(actual, expected)) return;
-      denoAssert.fail(getObjectMatchMessage(actual, expected, msg));
-    },
-    assertGreater: denoAssert.assertGreater,
-    assertGreaterOrEqual: denoAssert.assertGreaterOrEqual,
-    assertLess: denoAssert.assertLess,
-    assertLessOrEqual: denoAssert.assertLessOrEqual,
-  };
-} else {
-  impl = createNodeAssertImpl();
-}
+const impl: AssertImpl = createPortableAssertImpl();
 
 /** Assert that two values are deeply equal. */
 export function assertEquals<T>(actual: T, expected: T, msg?: string): void {

@@ -9,6 +9,7 @@ import {
   assert,
   assertEquals,
   assertExists,
+  assertMatch,
   assertObjectMatch,
   assertRejects,
   assertStrictEquals,
@@ -149,6 +150,16 @@ describe("testing/assert", () => {
       Error,
       "custom rejection assertion",
     );
+  });
+
+  it("does not mutate stateful regular expressions", () => {
+    const expression = /value/g;
+    expression.lastIndex = 3;
+
+    assertMatch("value", expression);
+    assertEquals(expression.lastIndex, 3);
+    assertThrows(() => assertMatch("other", expression), Error, "to match");
+    assertEquals(expression.lastIndex, 3);
   });
 });
 
