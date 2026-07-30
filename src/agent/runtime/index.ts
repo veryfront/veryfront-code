@@ -206,6 +206,7 @@ import {
 import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
 import {
   attachProviderReplaySidecar,
+  getNativeToolSearchSelectedNamesBeforeCall,
   getProviderReplaySidecar,
   resolveProviderReplayProvider,
   retainCompatibleProviderReplay,
@@ -326,6 +327,32 @@ function isFrameworkToolSearch(toolName: string, plan: ToolExposurePlan): boolea
 
 function toolNotVisibleError(toolName: string): string {
   return `Tool "${toolName}" is not available in the current model step`;
+}
+
+function resolveToolExecutionAuthority(input: {
+  toolName: string;
+  toolCallId: string;
+  plan: ToolExposurePlan;
+  nativeProvider: ReturnType<typeof resolveProviderReplayProvider>;
+  providerReplayParts: readonly unknown[];
+}):
+  | { kind: "visible"; selectedToolNames: ReadonlySet<string> }
+  | { kind: "native-selected"; selectedToolNames: ReadonlySet<string> }
+  | undefined {
+  if (isToolVisibleForStep(input.toolName, input.plan)) {
+    return { kind: "visible", selectedToolNames: new Set() };
+  }
+  if (!input.nativeProvider) return undefined;
+  const selectedToolNames = getNativeToolSearchSelectedNamesBeforeCall({
+    provider: input.nativeProvider,
+    parts: input.providerReplayParts,
+    toolCallId: input.toolCallId,
+    toolName: input.toolName,
+    authorizedDeferredToolNames: new Set(input.plan.deferred.map((tool) => tool.name)),
+  });
+  return selectedToolNames?.has(input.toolName)
+    ? { kind: "native-selected", selectedToolNames }
+    : undefined;
 }
 
 function observeToolLoadingBenchmark(input: {
@@ -1411,7 +1438,20 @@ export class AgentRuntime {
               }),
             );
 
-            if (!isToolVisibleForStep(tc.toolName, preparedStep.toolExposurePlan)) {
+            const executionAuthority = resolveToolExecutionAuthority({
+              toolName: tc.toolName,
+              toolCallId: tc.toolCallId,
+              plan: preparedStep.toolExposurePlan,
+              nativeProvider: nativeToolSearch
+                ? resolveProviderReplayProvider(effectiveModel)
+                : undefined,
+              providerReplayParts: response.providerReplayParts ?? [],
+            });
+            if (
+              !hasToolReplacements &&
+              generatedToolResult === undefined &&
+              executionAuthority === undefined
+            ) {
               toolCall.status = "error";
               toolCall.error = toolNotVisibleError(tc.toolName);
               setSpanAttributes(toolSpan, {
@@ -1430,8 +1470,26 @@ export class AgentRuntime {
               toolCalls.push(toolCall);
               return;
             }
+            if (
+              !hasToolReplacements &&
+              generatedToolResult === undefined &&
+              executionAuthority?.kind === "native-selected"
+            ) {
+              for (const selectedToolName of executionAuthority.selectedToolNames) {
+                toolExposureState.loadedToolNames.add(selectedToolName);
+              }
+              await persistToolExposureCheckpoint?.(
+                createToolExposureCheckpoint(
+                  preparedStep.toolExposurePlan.authorized,
+                  toolExposureState,
+                ),
+              );
+            }
 
-            if (isFrameworkToolSearch(tc.toolName, preparedStep.toolExposurePlan)) {
+            if (
+              generatedToolResult === undefined &&
+              isFrameworkToolSearch(tc.toolName, preparedStep.toolExposurePlan)
+            ) {
               let checkpoint: ToolExposureCheckpoint;
               try {
                 const search = executeFrameworkToolSearch({
@@ -2021,18 +2079,6 @@ export class AgentRuntime {
         const matchingResult = finalToolResults.get(tc.id);
         const persistedResult = currentStepToolResults.get(tc.id);
 
-        if (!isToolVisibleForStep(tc.name, preparedStep.toolExposurePlan)) {
-          await this.recordToolError(
-            toolCall,
-            toolNotVisibleError(tc.name),
-            controller,
-            encoder,
-            currentMessages,
-            toolCalls,
-          );
-          continue;
-        }
-
         if (matchingResult) {
           await persistToolResult(matchingResult);
           toolCall.status = matchingResult.error === undefined ? "completed" : "error";
@@ -2187,6 +2233,38 @@ export class AgentRuntime {
           }
           await persistToolExposureCheckpoint?.(checkpoint);
           continue;
+        }
+
+        const executionAuthority = resolveToolExecutionAuthority({
+          toolName: tc.name,
+          toolCallId: tc.id,
+          plan: preparedStep.toolExposurePlan,
+          nativeProvider: nativeToolSearch
+            ? resolveProviderReplayProvider(effectiveModel)
+            : undefined,
+          providerReplayParts: state.providerReplayOrder ?? [],
+        });
+        if (executionAuthority === undefined) {
+          await this.recordToolError(
+            toolCall,
+            toolNotVisibleError(tc.name),
+            controller,
+            encoder,
+            currentMessages,
+            toolCalls,
+          );
+          continue;
+        }
+        if (executionAuthority.kind === "native-selected") {
+          for (const selectedToolName of executionAuthority.selectedToolNames) {
+            toolExposureState.loadedToolNames.add(selectedToolName);
+          }
+          await persistToolExposureCheckpoint?.(
+            createToolExposureCheckpoint(
+              preparedStep.toolExposurePlan.authorized,
+              toolExposureState,
+            ),
+          );
         }
 
         const policyCheck = enforceSkillPolicy(

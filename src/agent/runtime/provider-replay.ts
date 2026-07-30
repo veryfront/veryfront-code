@@ -41,6 +41,14 @@ type ProviderReplayMessage = Message & {
   [PROVIDER_REPLAY_SIDECAR]?: ProviderReplaySidecar;
 };
 
+type NativeToolSearchSelectionInput = {
+  provider: ProviderReplayProvider;
+  parts: readonly unknown[];
+  toolCallId: string;
+  toolName: string;
+  authorizedDeferredToolNames: ReadonlySet<string>;
+};
+
 const ANTHROPIC_NATIVE_TOOL_SEARCH_MODEL_PREFIXES = [
   "claude-opus-4-5",
   "claude-opus-4-6",
@@ -103,6 +111,100 @@ function isRuntimeProviderBlock(
   return provider === "anthropic"
     ? isAnthropicProviderBlock(value.block)
     : isOpenAIProviderBlock(value.block);
+}
+
+function isExactToolCallMarker(
+  value: unknown,
+  toolCallId: string,
+  toolName: string,
+): boolean {
+  if (!isRecord(value) || value.type !== "tool-call" || value.toolCallId !== toolCallId) {
+    return false;
+  }
+  return value.toolName === undefined || value.toolName === toolName;
+}
+
+/**
+ * Prove that a direct provider's native tool search selected this exact
+ * authorized deferred function before emitting its tool-call marker.
+ */
+export function getNativeToolSearchSelectedNamesBeforeCall(
+  input: NativeToolSearchSelectionInput,
+): Set<string> | undefined {
+  const selectedNames = new Set<string>();
+  const pendingSearchIds = new Set<string>();
+
+  for (const part of input.parts) {
+    if (isExactToolCallMarker(part, input.toolCallId, input.toolName)) {
+      if (pendingSearchIds.size > 0) return undefined;
+      return new Set(
+        [...selectedNames].filter((name) => input.authorizedDeferredToolNames.has(name)),
+      );
+    }
+    if (isRecord(part) && part.type === "provider-block") {
+      if (!isRuntimeProviderBlock(part, input.provider)) return undefined;
+    } else {
+      continue;
+    }
+
+    const block = part.block;
+    if (input.provider === "anthropic") {
+      if (
+        block.type === "server_tool_use" &&
+        (block.name === "tool_search_tool_regex" || block.name === "tool_search_tool_bm25")
+      ) {
+        pendingSearchIds.add(block.id);
+        continue;
+      }
+      if (block.type !== "tool_search_tool_result") {
+        continue;
+      }
+      if (
+        !pendingSearchIds.has(block.tool_use_id) ||
+        !isRecord(block.content) ||
+        block.content.type !== "tool_search_tool_search_result" ||
+        !Array.isArray(block.content.tool_references)
+      ) return undefined;
+      pendingSearchIds.delete(block.tool_use_id);
+      for (const reference of block.content.tool_references) {
+        if (
+          isRecord(reference) &&
+          reference.type === "tool_reference" &&
+          typeof reference.tool_name === "string"
+        ) {
+          selectedNames.add(reference.tool_name);
+        } else return undefined;
+      }
+      continue;
+    }
+
+    if (
+      block.type === "tool_search_call" &&
+      block.execution === "server" &&
+      block.status === "completed"
+    ) {
+      pendingSearchIds.add(typeof block.call_id === "string" ? block.call_id : "");
+      continue;
+    }
+    if (block.type === "tool_search_call") return undefined;
+    if (block.type !== "tool_search_output") {
+      continue;
+    }
+    if (
+      block.execution !== "server" ||
+      block.status !== "completed" ||
+      !pendingSearchIds.has(typeof block.call_id === "string" ? block.call_id : "") ||
+      !Array.isArray(block.tools)
+    ) return undefined;
+    pendingSearchIds.delete(typeof block.call_id === "string" ? block.call_id : "");
+    for (const tool of block.tools) {
+      if (isRecord(tool) && tool.type === "function" && typeof tool.name === "string") {
+        selectedNames.add(tool.name);
+      } else return undefined;
+    }
+  }
+
+  return undefined;
 }
 
 /** Resolve private replay only for the exact direct transports with native tool search. */

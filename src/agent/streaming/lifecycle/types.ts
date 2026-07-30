@@ -1,3 +1,5 @@
+import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
+
 export type StreamLifecyclePhase =
   | "awaiting_first_progress"
   | "streaming"
@@ -128,6 +130,7 @@ export type StreamProtocolEvent =
 
 export type StreamSignal =
   | { kind: "protocol"; event: StreamProtocolEvent }
+  | { kind: "provider_block"; block: RuntimeProviderBlock }
   | { kind: "usage"; usage: StreamUsage }
   | { kind: "provider_error"; error: StreamProviderError }
   | { kind: "diagnostic_candidate"; candidate: StreamRawDiagnosticCandidate };
@@ -191,6 +194,18 @@ export interface StreamToolSnapshot {
   dynamic?: boolean;
 }
 
+export type StreamProviderReplayPart =
+  | RuntimeProviderBlock
+  | { type: "text"; text: string }
+  | { type: "tool-call"; toolCallId: string }
+  | {
+    type: "reasoning";
+    id: string;
+    text: string;
+    signature?: string;
+    redactedData?: string;
+  };
+
 export interface StreamSnapshot {
   phase: StreamLifecyclePhase;
   accumulatedText: string;
@@ -200,6 +215,10 @@ export interface StreamSnapshot {
     signature?: string;
     redactedData?: string;
   }[];
+  /** Framework-private opaque blocks retained for exact provider replay. */
+  providerBlocks?: readonly RuntimeProviderBlock[];
+  /** Framework-private provider-visible assistant content in arrival order. */
+  providerReplayOrder?: readonly StreamProviderReplayPart[];
   tools: readonly StreamToolSnapshot[];
   finishReason:
     | "stop"

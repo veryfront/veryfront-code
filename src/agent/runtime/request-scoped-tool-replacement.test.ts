@@ -464,6 +464,7 @@ describe("request-scoped tool replacement for generate()", () => {
     const assistant = agent({
       model: "hosted/request-tools-existing-behavior",
       system: "Use lookup.",
+      toolLoading: "eager",
       maxSteps: 1,
       tools: {
         lookup: makeLookupTool("configured"),

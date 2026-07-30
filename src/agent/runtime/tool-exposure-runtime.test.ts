@@ -1371,6 +1371,235 @@ Deno.test("direct Anthropic and OpenAI transports preserve native loading", asyn
   }
 });
 
+Deno.test("native OpenAI search selection authorizes only the selected deferred generate call", async () => {
+  for (const selected of [true, false]) {
+    let step = 0;
+    let executionCount = 0;
+    let checkpointPersistedBeforeExecution = false;
+    const model: ModelRuntime = {
+      provider: "openai",
+      modelId: "gpt-5.5",
+      async doGenerate() {
+        step++;
+        if (step === 1) {
+          return {
+            content: [
+              {
+                type: "provider-block",
+                provider: "openai-responses",
+                block: {
+                  type: "tool_search_call",
+                  execution: "server",
+                  call_id: "search-1",
+                  status: "completed",
+                },
+              },
+              {
+                type: "provider-block",
+                provider: "openai-responses",
+                block: {
+                  type: "tool_search_output",
+                  execution: "server",
+                  call_id: "search-1",
+                  status: "completed",
+                  tools: selected
+                    ? [
+                      { type: "function", name: "get_release" },
+                      { type: "function", name: "get_native_status" },
+                    ]
+                    : [],
+                },
+              },
+              {
+                type: "tool-call",
+                toolCallId: "release-1",
+                toolName: "get_release",
+                input: "{}",
+              },
+            ],
+            finishReason: "tool-calls",
+          };
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const assistant = agent(
+      {
+        id: `native-openai-selection-${selected}`,
+        model: "openai/gpt-5.5",
+        system: "Use tools.",
+        skills: false,
+        tools: {
+          get_release: tool({
+            id: "get_release",
+            description: "Get the current release",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => {
+              executionCount++;
+              assertEquals(checkpointPersistedBeforeExecution, true);
+              return { id: "rel-1" };
+            },
+          }),
+          get_native_status: tool({
+            id: "get_native_status",
+            description: "Get the current status",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => ({ status: "ready" }),
+          }),
+        },
+        maxSteps: 2,
+        resolveModelTransport: () => ({ model }),
+        __vfPersistToolExposureCheckpoint: (checkpoint: ToolExposureCheckpoint) => {
+          checkpointPersistedBeforeExecution = checkpoint.loadedToolNames.includes("get_release") &&
+            checkpoint.loadedToolNames.includes("get_native_status");
+        },
+      } as AgentConfig & RuntimeToolFilterConfig,
+    );
+
+    const response = await assistant.generate({ input: "Find a release" });
+
+    assertEquals(executionCount, selected ? 1 : 0);
+    assertEquals(response.toolCalls[0]?.status, selected ? "completed" : "error");
+    assertEquals(checkpointPersistedBeforeExecution, selected);
+  }
+});
+
+Deno.test("native Anthropic search selection authorizes a deferred legacy stream call", async () => {
+  let step = 0;
+  let executionCount = 0;
+  let checkpointPersistedBeforeExecution = false;
+  const model: ModelRuntime = {
+    provider: "anthropic",
+    modelId: "claude-opus-4-6",
+    async doGenerate() {
+      return { content: [{ type: "text", text: "unused" }] };
+    },
+    async doStream() {
+      step++;
+      if (step === 1) {
+        return {
+          stream: createRuntimeStream([
+            {
+              type: "provider-block",
+              provider: "anthropic",
+              block: {
+                type: "server_tool_use",
+                id: "search-1",
+                name: "tool_search_tool_regex",
+                input: { query: "release" },
+              },
+            },
+            {
+              type: "provider-block",
+              provider: "anthropic",
+              block: {
+                type: "tool_search_tool_result",
+                tool_use_id: "search-1",
+                content: {
+                  type: "tool_search_tool_search_result",
+                  tool_references: [{ type: "tool_reference", tool_name: "get_release" }],
+                },
+              },
+            },
+            {
+              type: "tool-call",
+              toolCallId: "release-1",
+              toolName: "get_release",
+              input: {},
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      }
+      return {
+        stream: createRuntimeStream([
+          { type: "text-delta", text: "done" },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      };
+    },
+  };
+  const assistant = agent(
+    {
+      id: "native-anthropic-selection-stream",
+      model: "anthropic/claude-opus-4-6",
+      system: "Use tools.",
+      skills: false,
+      tools: {
+        get_release: tool({
+          id: "get_release",
+          description: "Get the current release",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executionCount++;
+            assertEquals(checkpointPersistedBeforeExecution, true);
+            return { id: "rel-1" };
+          },
+        }),
+      },
+      maxSteps: 2,
+      resolveModelTransport: () => ({ model }),
+      __vfPersistToolExposureCheckpoint: (checkpoint: ToolExposureCheckpoint) => {
+        checkpointPersistedBeforeExecution = checkpoint.loadedToolNames.includes("get_release");
+      },
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
+
+  await (await assistant.stream({ input: "Find a release" })).toDataStreamResponse().text();
+
+  assertEquals(executionCount, 1);
+});
+
+Deno.test("provider-executed tools bypass local deferred exposure gating", async () => {
+  const model: ModelRuntime = {
+    provider: "anthropic",
+    modelId: "claude-opus-4-6",
+    async doGenerate() {
+      return {
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "web-search-1",
+            toolName: "web_search",
+            input: "{}",
+          },
+          {
+            type: "tool-result",
+            toolCallId: "web-search-1",
+            toolName: "web_search",
+            result: { results: ["release"] },
+            providerExecuted: true,
+          },
+        ],
+        finishReason: "tool-calls",
+      };
+    },
+    async doStream() {
+      return { stream: new ReadableStream() };
+    },
+  };
+  const assistant = agent({
+    id: "provider-executed-deferred-gate",
+    model: "anthropic/claude-opus-4-6",
+    system: "Search.",
+    skills: false,
+    providerTools: ["web_search"],
+    maxSteps: 1,
+    resolveModelTransport: () => ({ model }),
+  });
+
+  const response = await assistant.generate({ input: "Find a release" });
+
+  assertEquals(response.toolCalls[0]?.status, "completed");
+  assertEquals(response.toolCalls[0]?.result, { results: ["release"] });
+});
+
 Deno.test("veryfront-cloud Anthropic and OpenAI transports default to framework fallback", async () => {
   const anthropic = await observeDeferredTransport({
     modelId: "veryfront-cloud/anthropic/claude-opus-4-6",

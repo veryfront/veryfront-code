@@ -4,12 +4,206 @@ import {
   applyProviderReplayCheckpoint,
   applyProviderReplayCheckpoints,
   createProviderReplayCheckpointEvent,
+  getNativeToolSearchSelectedNamesBeforeCall,
   getProviderReplayMessageParts,
   parseProviderReplayCheckpoint,
   parseProviderReplayCheckpoints,
   resolveProviderReplayProvider,
   retainCompatibleProviderReplay,
 } from "./provider-replay.ts";
+
+Deno.test("native tool-search authority requires paired provider selection before exact call", () => {
+  const deferred = new Set(["get_release"]);
+  const openAIParts = [
+    {
+      type: "provider-block",
+      provider: "openai-responses",
+      block: {
+        type: "tool_search_call",
+        execution: "server",
+        call_id: "search-1",
+        status: "completed",
+      },
+    },
+    {
+      type: "provider-block",
+      provider: "openai-responses",
+      block: {
+        type: "tool_search_output",
+        execution: "server",
+        call_id: "search-1",
+        status: "completed",
+        tools: [{ type: "function", name: "get_release" }],
+      },
+    },
+    { type: "tool-call", toolCallId: "release-1", toolName: "get_release" },
+  ];
+  assertEquals(
+    getNativeToolSearchSelectedNamesBeforeCall({
+      provider: "openai-responses",
+      parts: openAIParts,
+      toolCallId: "release-1",
+      toolName: "get_release",
+      authorizedDeferredToolNames: deferred,
+    }),
+    new Set(["get_release"]),
+  );
+  assertEquals(
+    getNativeToolSearchSelectedNamesBeforeCall({
+      provider: "openai-responses",
+      parts: [...openAIParts].reverse(),
+      toolCallId: "release-1",
+      toolName: "get_release",
+      authorizedDeferredToolNames: deferred,
+    }),
+    new Set(),
+  );
+  assertEquals(
+    getNativeToolSearchSelectedNamesBeforeCall({
+      provider: "openai-responses",
+      parts: openAIParts,
+      toolCallId: "release-1",
+      toolName: "get_release",
+      authorizedDeferredToolNames: new Set(),
+    }),
+    new Set(),
+  );
+  for (
+    const invalidParts of [
+      [
+        openAIParts[0],
+        {
+          ...(openAIParts[1] as Record<string, unknown>),
+          provider: "anthropic",
+        },
+        openAIParts[2],
+      ],
+      [
+        openAIParts[0],
+        {
+          ...(openAIParts[1] as Record<string, unknown>),
+          block: {
+            ...((openAIParts[1] as { block: Record<string, unknown> }).block),
+            status: "failed",
+          },
+        },
+        openAIParts[2],
+      ],
+      [
+        openAIParts[0],
+        {
+          ...(openAIParts[1] as Record<string, unknown>),
+          block: {
+            ...((openAIParts[1] as { block: Record<string, unknown> }).block),
+            call_id: "other-search",
+          },
+        },
+        openAIParts[2],
+      ],
+      [
+        openAIParts[0],
+        openAIParts[1],
+        {
+          ...(openAIParts[0] as Record<string, unknown>),
+          block: {
+            ...((openAIParts[0] as { block: Record<string, unknown> }).block),
+            call_id: "search-2",
+          },
+        },
+        openAIParts[2],
+      ],
+    ]
+  ) {
+    assertEquals(
+      getNativeToolSearchSelectedNamesBeforeCall({
+        provider: "openai-responses",
+        parts: invalidParts,
+        toolCallId: "release-1",
+        toolName: "get_release",
+        authorizedDeferredToolNames: deferred,
+      }),
+      undefined,
+    );
+  }
+});
+
+Deno.test("Anthropic native tool-search authority requires matching search result references", () => {
+  const parts = [
+    {
+      type: "provider-block",
+      provider: "anthropic",
+      block: {
+        type: "server_tool_use",
+        id: "search-1",
+        name: "tool_search_tool_regex",
+        input: { query: "release" },
+      },
+    },
+    {
+      type: "provider-block",
+      provider: "anthropic",
+      block: {
+        type: "tool_search_tool_result",
+        tool_use_id: "search-1",
+        content: {
+          type: "tool_search_tool_search_result",
+          tool_references: [{ type: "tool_reference", tool_name: "get_release" }],
+        },
+      },
+    },
+    { type: "tool-call", toolCallId: "release-1" },
+  ];
+  assertEquals(
+    getNativeToolSearchSelectedNamesBeforeCall({
+      provider: "anthropic",
+      parts,
+      toolCallId: "release-1",
+      toolName: "get_release",
+      authorizedDeferredToolNames: new Set(["get_release"]),
+    }),
+    new Set(["get_release"]),
+  );
+  assertEquals(
+    getNativeToolSearchSelectedNamesBeforeCall({
+      provider: "anthropic",
+      parts: [
+        parts[0],
+        {
+          ...parts[1],
+          block: { ...(parts[1] as { block: object }).block, tool_use_id: "other-search" },
+        },
+        parts[2],
+      ],
+      toolCallId: "release-1",
+      toolName: "get_release",
+      authorizedDeferredToolNames: new Set(["get_release"]),
+    }),
+    undefined,
+  );
+  assertEquals(
+    getNativeToolSearchSelectedNamesBeforeCall({
+      provider: "anthropic",
+      parts: [
+        parts[0],
+        {
+          ...parts[1],
+          block: {
+            ...(parts[1] as { block: object }).block,
+            content: {
+              type: "tool_search_tool_result_error",
+              error_code: "invalid_pattern",
+            },
+          },
+        },
+        parts[2],
+      ],
+      toolCallId: "release-1",
+      toolName: "get_release",
+      authorizedDeferredToolNames: new Set(["get_release"]),
+    }),
+    undefined,
+  );
+});
 
 const anthropicBlocks = [
   {

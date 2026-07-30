@@ -47,6 +47,8 @@ export function decodeRuntimeStreamPart(
   }
 
   switch (typed.type) {
+    case "provider-block":
+      return [{ kind: "provider_block", block: typed }];
     case "text-delta":
       return [{
         kind: "protocol",
