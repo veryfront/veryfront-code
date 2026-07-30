@@ -115,7 +115,10 @@ function collectTestSources(dir: string): string {
     const p = `${dir}${e.name}`;
     if (e.isDirectory) {
       out += collectTestSources(`${p}/`);
-    } else if (e.isFile && e.name.endsWith(".test.tsx") && e.name !== "coverage.test.tsx") {
+    } else if (
+      e.isFile && (e.name.endsWith(".test.ts") || e.name.endsWith(".test.tsx")) &&
+      e.name !== "coverage.test.tsx"
+    ) {
       try {
         out += "\n" + Deno.readTextFileSync(p);
       } catch { /* unreadable → skip */ }

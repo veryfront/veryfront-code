@@ -50,3 +50,21 @@ Deno.test("theme module does not expose the removed variant utility", () => {
   const removedExport = ["c", "v", "a"].join("");
   assertEquals(removedExport in theme, false);
 });
+
+Deno.test("every chat cva variant resolves to classes", () => {
+  // message roles
+  for (const role of ["system", "user", "assistant"] as const) {
+    assert(theme.messageVariants({ role }).length > 0, `message role="${role}"`);
+  }
+  // chat button variants + sizes
+  for (const variant of ["primary", "ghost", "outline", "icon-ghost"] as const) {
+    assert(theme.chatButtonVariants({ variant }).length > 0, `button variant="${variant}"`);
+  }
+  for (const size of ["default", "icon-xs", "icon-sm", "icon-default", "icon-lg"] as const) {
+    assert(theme.chatButtonVariants({ size }).length > 0, `button size="${size}"`);
+  }
+  // chat container layouts
+  for (const variant of ["default", "embedded", "floating"] as const) {
+    assert(theme.chatContainerVariants({ variant }).length > 0, `container variant="${variant}"`);
+  }
+});
