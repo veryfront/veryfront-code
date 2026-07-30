@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors";
+import { FILE_NOT_FOUND } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import {
   buildGitHubResolveCacheKey,
@@ -158,13 +158,10 @@ export class GitHubStatOperations {
       indexSize: this.fileIndex.size,
     });
 
-    throw toError(
-      createError({
-        type: "file",
-        message: `File not found: ${normalizedPath}`,
-        context: { path: normalizedPath, operation: "read" },
-      }),
-    );
+    throw FILE_NOT_FOUND.create({
+      detail: `File not found: ${normalizedPath}`,
+      context: { path: normalizedPath, operation: "read" },
+    });
   }
 
   async exists(path: string): Promise<boolean> {
