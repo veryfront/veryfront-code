@@ -1,7 +1,7 @@
 ---
 title: "veryfront/provider"
 description: "Model provider registry and runtime resolution."
-order: 23
+order: 24
 ---
 
 ## Import
@@ -33,7 +33,7 @@ const model = resolveModel("veryfront-cloud/openai/gpt-5.4-nano");
 
 Register a custom model provider factory.
 
-**Returns:** `void`
+**Returns:** `ModelProviderRegistrationDisposer`
 
 ### `resolveModel(modelString)`
 
@@ -65,20 +65,20 @@ Clear model providers registered in the current project source scope.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `clearModelProviders` | Clear model providers registered in the current project source scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L381) |
-| `ensureModelReady` | Eagerly verify that the resolved model's runtime is available. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L366) |
+| `clearModelProviders` | Clear model providers registered in the current project source scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L379) |
+| `ensureModelReady` | Eagerly verify that the resolved model's runtime is available. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L361) |
 | `findVeryfrontCloudModel` | Find Veryfront Cloud model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L249) |
 | `findVeryfrontCloudModelByModelId` | Find Veryfront Cloud model by model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L261) |
 | `getCurrentVeryfrontCloudContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/context.ts#L31) |
-| `getRegisteredModelProviders` | Get provider names available in the current scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L348) |
+| `getRegisteredModelProviders` | Get provider names available in the current scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L349) |
 | `getVeryfrontCloudBootstrap` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/cloud/resolver.ts#L181) |
 | `getVeryfrontCloudProviderFromModelId` | Return Veryfront Cloud provider from model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L269) |
 | `groupVeryfrontCloudModelsByProvider` | Group Veryfront Cloud models by provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L455) |
-| `hasModelProvider` | Check whether a model provider is available in the current scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L334) |
+| `hasModelProvider` | Check whether a model provider is available in the current scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L335) |
 | `markCurrentVeryfrontCloudBillingGroupUsed` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/context.ts#L35) |
 | `normalizeVeryfrontCloudModelId` | Normalizes Veryfront Cloud model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L254) |
-| `registerModelProvider` | Register a custom model provider factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L111) |
-| `resolveModel` | Resolve a "provider/model" string to a framework-compatible model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L277) |
+| `registerModelProvider` | Register a custom model provider factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L109) |
+| `resolveModel` | Resolve a "provider/model" string to a framework-compatible model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L276) |
 | `resolveVeryfrontCloudGatewayModelId` | Resolves Veryfront Cloud gateway model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L320) |
 | `resolveVeryfrontCloudModelId` | Resolves Veryfront Cloud model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L294) |
 | `resolveVeryfrontCloudModelThinking` | Resolves Veryfront Cloud model thinking. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L346) |
@@ -92,9 +92,11 @@ Clear model providers registered in the current project source scope.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ModelProviderFactory` | Public API contract for model provider factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L33) |
-| `ModelRuntime` | Public API contract for model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L196) |
+| `ModelProviderFactory` | Public API contract for model provider factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L30) |
+| `ModelProviderRegistrationDisposer` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L31) |
+| `ModelRuntime` | Public API contract for model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L204) |
 | `ModelRuntimeCallOptions` | Canonical request contract passed to `ModelRuntime` generation hooks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L170) |
+| `ModelRuntimeCapabilities` | Explicit behavioral support advertised by a model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L196) |
 | `ModelRuntimePromptMessage` | Immutable prompt view accepted by model-runtime calls. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L113) |
 | `ModelRuntimeToolDefinition` | Canonical tool definition sent to a model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L138) |
 | `RuntimeAssistantContentPart` | Canonical assistant content accepted when invoking a model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L33) |
@@ -211,9 +213,10 @@ import "veryfront/provider/types";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `EmbeddingRuntime` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L206) |
-| `ModelRuntime` | Public API contract for model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L196) |
+| `EmbeddingRuntime` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L223) |
+| `ModelRuntime` | Public API contract for model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L204) |
 | `ModelRuntimeCallOptions` | Canonical request contract passed to `ModelRuntime` generation hooks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L170) |
+| `ModelRuntimeCapabilities` | Explicit behavioral support advertised by a model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L196) |
 | `ModelRuntimeGenerateResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L117) |
 | `ModelRuntimePromptMessage` | Immutable prompt view accepted by model-runtime calls. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L113) |
 | `ModelRuntimeStreamResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L125) |

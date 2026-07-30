@@ -1,7 +1,7 @@
 ---
 title: "veryfront/release-assets"
 description: "Content-addressed release asset build, schema, cache, and consumption contracts."
-order: 24
+order: 25
 ---
 
 ## Import

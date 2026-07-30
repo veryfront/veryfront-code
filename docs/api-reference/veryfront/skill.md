@@ -1,7 +1,7 @@
 ---
 title: "veryfront/skill"
 description: "Agent skills. Public API for the agent skills system. Skills are project-level capabilities defined as SKILL.md files using the Agent Skills metadata format and Veryfront's documented, fail-closed allowed-tools subset."
-order: 33
+order: 34
 ---
 
 ## Import

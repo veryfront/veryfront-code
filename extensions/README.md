@@ -80,6 +80,8 @@ the same contract.
 
 | Package                                           | Contract          | Description                              |
 | ------------------------------------------------- | ----------------- | ---------------------------------------- |
+| [`@veryfront/ext-blob-gcs`](./ext-blob-gcs)       | `BlobStorage`     | Google Cloud Storage object persistence  |
+| [`@veryfront/ext-blob-s3`](./ext-blob-s3)         | `BlobStorage`     | S3-compatible object persistence         |
 | [`@veryfront/ext-cache-redis`](./ext-cache-redis) | `TokenCacheStore` | Redis-backed token and cache persistence |
 | [`@veryfront/ext-db-sqlite`](./ext-db-sqlite)     | `SqliteStore`     | SQLite persistence                       |
 
@@ -122,8 +124,8 @@ root package.
 
 Install extension packages by the features a service executes. Do not install
 raw transitive dependencies such as `bash-tool`, `just-bash`, `jose`,
-`better-sqlite3`, `@kreuzberg/node`, `@mdx-js/mdx`, or `tailwindcss` directly
-to satisfy Veryfront runtime features.
+`better-sqlite3`, `@aws-sdk/client-s3`, `@kreuzberg/node`, `@mdx-js/mdx`, or
+`tailwindcss` directly to satisfy Veryfront runtime features.
 
 | Runtime or service role                     | Install these extension packages                                                                                             |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -131,6 +133,8 @@ to satisfy Veryfront runtime features.
 | Proxy or JWT-authenticated service          | `@veryfront/ext-auth-jwt`                                                                                                    |
 | Document upload or knowledge ingestion      | `@veryfront/ext-document-kreuzberg`                                                                                          |
 | Redis-backed cache or token store           | `@veryfront/ext-cache-redis`                                                                                                 |
+| S3-compatible blob persistence              | `@veryfront/ext-blob-s3`                                                                                                     |
+| Google Cloud Storage blob persistence       | `@veryfront/ext-blob-gcs`                                                                                                    |
 | SQLite-backed persistence                   | `@veryfront/ext-db-sqlite`                                                                                                   |
 | OpenTelemetry export or Node telemetry      | `@veryfront/ext-observability-opentelemetry`                                                                                 |
 | Sentry application error capture            | `@veryfront/ext-observability-sentry`                                                                                        |
@@ -157,6 +161,7 @@ level.
 | `SqliteStore`                | SQLite-backed persistence runs                  | Auto-enabled native service extension |
 | `SandboxShellToolsProvider`  | Sandbox shell tools are created                 | Auto-enabled core extension           |
 | `LLMProvider:*`              | A matching model provider is selected           | Auto-enabled core extension           |
+| `BlobStorage`                | S3 or GCS object persistence is configured      | Explicitly configured extension       |
 | `AuthProvider`               | Auth signing or verification is configured      | User-installed extension              |
 | `TokenCacheStore`            | Redis-backed token cache is configured          | User-installed extension              |
 | `EvalReportExporterRegistry` | Eval report exporters are registered            | Auto-enabled core extension           |
@@ -279,6 +284,8 @@ check for drift and to enforce the sensitive capability policies below.
 
 | Extension                         | Required capabilities                                  | Why it is sensitive                          |
 | --------------------------------- | ------------------------------------------------------ | -------------------------------------------- |
+| `ext-blob-gcs`                    | `net:outbound` to Google OAuth and Storage             | Obtains tokens and accesses configured blobs |
+| `ext-blob-s3`                     | `net:outbound`, declared AWS runtime `env:read` keys   | Accesses the explicitly configured endpoint  |
 | `ext-sandbox-shell-tools`         | `sandbox:execute` with `tools: ["bash"]`               | Exposes command execution in a sandbox       |
 | `ext-cache-redis`                 | `net:outbound`, `env:read` for `REDIS_*`               | Connects to external cache infrastructure    |
 | `ext-db-sqlite`                   | `fs:read`, `fs:write`                                  | Opens native SQLite databases                |

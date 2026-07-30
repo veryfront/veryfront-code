@@ -1,7 +1,7 @@
 ---
 title: "veryfront/markdown"
 description: "Server-rendered CommonMark and GitHub Flavored Markdown. Semantic Markdown is rendered synchronously during SSR. Fenced source stays readable while browser-only syntax highlighting and Mermaid rendering load. Raw HTML and unsafe link protocols are not emitted by default."
-order: 15
+order: 16
 ---
 
 ## Import

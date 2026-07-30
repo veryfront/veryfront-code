@@ -12,8 +12,8 @@ import {
   clearEmbeddingProviders,
   createUploadHandler,
   embedding,
+  hasEmbeddingProvider,
   loadUpload,
-  ragStore,
 } from "veryfront/embedding";
 ```
 
@@ -35,13 +35,14 @@ export const { POST, GET, DELETE } = createUploadHandler(store, {
 | Name | Description | Source |
 |------|-------------|--------|
 | `chunk` | Splits text into overlapping chunks for embedding. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/chunk.ts#L36) |
-| `clearEmbeddingProviders` | Clear embedding providers registered in the current project source scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L180) |
+| `clearEmbeddingProviders` | Clear embedding providers registered in the current project source scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L203) |
 | `createUploadHandler` | Creates HTTP route handlers for upload, listing, and deletion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L503) |
 | `embedding` | Creates an embedding facade. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/embedding.ts#L36) |
+| `hasEmbeddingProvider` | Whether an embedding provider is available in the current scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L189) |
 | `loadUpload` | Extracts embedding-ready text or Markdown from upload formats. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-loader.ts#L56) |
 | `ragStore` | Creates a persistent RAG store with lazy embedding and similarity search. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/rag-store.ts#L372) |
-| `registerEmbeddingProvider` | Register an embedding provider factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L30) |
-| `resolveEmbeddingModel` | Resolve a "provider/model" string to an embedding runtime instance. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L125) |
+| `registerEmbeddingProvider` | Register an embedding provider factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L45) |
+| `resolveEmbeddingModel` | Resolve a "provider/model" string to an embedding runtime instance. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L137) |
 | `similarity` | Compute cosine similarity without overflowing or underflowing finite vector magnitudes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/similarity.ts#L9) |
 | `vectorStore` | Creates an in-memory vector store with integrated embedding and similarity search. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/vector-store.ts#L55) |
 
@@ -53,6 +54,8 @@ export const { POST, GET, DELETE } = createUploadHandler(store, {
 | `Embedding` | Public API contract for embedding. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L22) |
 | `EmbeddingCallOptions` | Cancellation options accepted by embedding operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L17) |
 | `EmbeddingConfig` | Configuration used by embedding. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L2) |
+| `EmbeddingProviderFactory` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L9) |
+| `EmbeddingProviderRegistrationDisposer` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L10) |
 | `RagChunk` | Public API contract for rag chunk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L101) |
 | `RagDocumentMeta` | Public API contract for rag document meta. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L80) |
 | `RagEmbeddingFingerprint` | Provenance required to determine whether persisted document vectors are reusable. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L110) |

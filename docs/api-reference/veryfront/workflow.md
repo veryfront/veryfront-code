@@ -1,7 +1,7 @@
 ---
 title: "veryfront/workflow"
 description: "DAG-based agentic workflows with human-in-the-loop support."
-order: 41
+order: 42
 ---
 
 ## Import
@@ -211,6 +211,43 @@ Options accepted by parallel.
 ## Deep imports
 
 These import paths group focused functionality under this module. Each is a separate barrel; import only what you need.
+
+### `veryfront/workflow/blob`
+
+Provider-neutral blob storage contracts and built-in first-party storage.
+
+```ts
+import { assertSafeBlobId, isSafeBlobId, BlobStorageContractName } from "veryfront/workflow/blob";
+```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `BlobStorageContractName` | Extension contract name for an explicitly selected blob-storage implementation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/types.ts#L38) |
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `assertSafeBlobId` | Validate an identifier before any blob backend constructs a storage path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/blob-id.ts#L11) |
+| `isSafeBlobId` | Return whether a runtime value is a framework-safe blob identifier. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/blob-id.ts#L6) |
+
+#### Classes
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `LocalBlobStorage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/local-storage.ts#L12) |
+| `VeryfrontCloudBlobStorage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/veryfront-cloud-storage.ts#L184) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `BlobRef` | Blob Storage Types | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/types.ts#L7) |
+| `BlobStorage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/types.ts#L40) |
+| `StoreBlobOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/types.ts#L26) |
+| `VeryfrontCloudBlobStorageConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/veryfront-cloud-storage.ts#L76) |
 
 ### `veryfront/workflow/claude-code`
 

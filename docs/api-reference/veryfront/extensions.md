@@ -1,7 +1,7 @@
 ---
 title: "veryfront/extensions"
 description: "Extension authoring types and runtime helpers."
-order: 9
+order: 10
 ---
 
 ## Import
@@ -9,11 +9,11 @@ order: 9
 ```ts
 import {
   auditCapabilities,
+  createStudioCaptureBundleProvider,
   detectConflicts,
   discoverLocalExtensions,
   discoverPackageExtensions,
   discoverProjectExtensions,
-  formatCapabilities,
 } from "veryfront/extensions";
 ```
 
@@ -39,41 +39,46 @@ await loader.teardownAll();
 | Name | Description | Source |
 |------|-------------|--------|
 | `SandboxShellToolsProviderName` | Render sandbox shell tools provider name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L5) |
+| `StudioCaptureBundleProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L11) |
 
 ### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `auditCapabilities` | Log capabilities for a named extension at startup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L192) |
-| `detectConflicts` | Detect contract conflicts between resolved extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L258) |
-| `discoverLocalExtensions` | Find `*.extension.ts` files in the project root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L261) |
-| `discoverPackageExtensions` | Scan `node_modules` (including `@scoped` packages) for packages that declare veryfront extension metadata in their `package.json`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L180) |
-| `discoverProjectExtensions` | Discover project extensions living under `extensions/` in the project root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L236) |
-| `formatCapabilities` | Format capabilities as human-readable strings for logging. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L13) |
+| `auditCapabilities` | Log capabilities for a named extension at startup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L781) |
+| `createStudioCaptureBundleProvider` | Create an immutable provider suitable for extension contract registration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L118) |
+| `detectConflicts` | Detect contract conflicts between resolved extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L509) |
+| `discoverLocalExtensions` | Find `*.extension.ts` files in the project root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L436) |
+| `discoverPackageExtensions` | Scan `node_modules` (including `@scoped` packages) for packages that declare veryfront extension metadata in their `package.json`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L348) |
+| `discoverProjectExtensions` | Discover project extensions living under `extensions/` in the project root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L407) |
+| `formatCapabilities` | Format capabilities as human-readable strings for logging. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L36) |
 | `getRecommendation` | Return recommendation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/recommendations.ts#L29) |
 | `loadExtensionFactory` | Dynamically import an extension factory from `path` and resolve it. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/factory-loader.ts#L34) |
-| `mapToDenoPermissions` | Map capabilities to Deno CLI permission flags. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L150) |
-| `mergeExtensions` | Merge extensions from all four sources in priority order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L96) |
-| `orchestrateExtensions` | Run the full extension pipeline against a resolved project config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/orchestrate.ts#L116) |
-| `parsePackageMetadata` | Parse veryfront extension metadata from a package.json-like object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L61) |
+| `mapToDenoPermissions` | Map capabilities to Deno CLI permission flags. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L734) |
+| `mergeExtensions` | Merge extensions from all four sources in priority order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L169) |
+| `orchestrateExtensions` | Run the full extension pipeline against a resolved project config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/orchestrate.ts#L117) |
+| `parsePackageMetadata` | Parse veryfront extension metadata from a package.json-like object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L132) |
 | `resolve` | Resolve path segments to an absolute path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L14) |
+| `snapshotStudioCaptureBundleProvider` | Snapshot an untrusted extension contract without invoking accessors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L81) |
 | `tryResolve` | Try to resolve. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L30) |
-| `validateExtension` | Validate the shape of an extension object. Returns an array of issue descriptions (empty array = valid). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L130) |
+| `validateExtension` | Validate the shape of an extension object. Returns an array of issue descriptions (empty array = valid). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L353) |
+| `validateStudioCaptureBundle` | Validate the shared format and UTF-8 byte budget for every Studio bridge bundle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L55) |
 
 ### Classes
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ExtensionLoader` | Implement extension loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/loader.ts#L81) |
+| `ExtensionLoader` | Implement extension loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/loader.ts#L109) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
 | `Capability` | Declares a system capability an extension requires. Object-based for extensibility -- scoping fields vary by type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L11) |
-| `ConflictInfo` | Information about a contract conflict between extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L13) |
+| `ConflictInfo` | Information about a contract conflict between extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L29) |
 | `CreateSandboxShellToolsInput` | Input payload for create sandbox shell tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L38) |
 | `Extension` | Public API contract for extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L50) |
+| `ExtensionActivationMode` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L30) |
 | `ExtensionConfigEntry` | Entry shape for extension config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L65) |
 | `ExtensionContext` | Context for extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L27) |
 | `ExtensionContractMetadata` | Public API contract for extension contract metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L17) |
@@ -88,6 +93,7 @@ await loader.teardownAll();
 | `SandboxShellToolExecute` | Public API contract for sandbox shell tool execute. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L8) |
 | `SandboxShellToolSet` | Public API contract for sandbox shell tool set. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L27) |
 | `SandboxShellToolsProvider` | Public API contract for sandbox shell tools provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L47) |
+| `StudioCaptureBundleProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L16) |
 
 ### Constants
 
@@ -96,6 +102,7 @@ await loader.teardownAll();
 | `CIRCULAR_DEPENDENCY_ERROR` | Shared circular dependency error value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L28) |
 | `EXTENSION_CONFLICT_ERROR` | Shared extension conflict error value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L37) |
 | `EXTENSION_VALIDATION_ERROR` | Shared extension validation error value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L19) |
+| `MAX_STUDIO_CAPTURE_BUNDLE_BYTES` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L12) |
 | `MISSING_EXTENSION_ERROR` | Shared missing extension error value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L10) |
 
 ## Deep imports
@@ -378,19 +385,25 @@ import { createLLMProviderRegistry, LLMProviderRegistryName } from "veryfront/ex
 Observability category barrel: tracing and Node telemetry contracts.
 
 ```ts
-import { NodeTelemetryProviderName } from "veryfront/extensions/observability";
+import { ApplicationErrorReporterInitializerName, NodeTelemetryProviderName } from "veryfront/extensions/observability";
 ```
 
 #### Components
 
 | Name | Description | Source |
 |------|-------------|--------|
+| `ApplicationErrorReporterInitializerName` | Contract name used when an application composes a reporter through extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L39) |
 | `NodeTelemetryProviderName` | Contract interface for Node.js OpenTelemetry runtime bootstrap. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L9) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
+| `ApplicationErrorContext` | Correlation context attached to an unexpected application failure. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L2) |
+| `ApplicationErrorReporter` | Vendor-neutral application error capture and delivery contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L12) |
+| `ApplicationErrorReporterInitializationContext` | Runtime context passed to an explicitly selected reporter initializer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L18) |
+| `ApplicationErrorReporterInitializer` | Application-composition contract for an error-reporting implementation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L29) |
+| `ApplicationErrorReporterSession` | Reporter and cleanup ownership returned by an application-selected initializer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L23) |
 | `NodeTelemetryInitializeOptions` | Options accepted by node telemetry initialize. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L53) |
 | `NodeTelemetryInstrumentationConfig` | Configuration used by node telemetry instrumentation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L12) |
 | `NodeTelemetryLogger` | Public API contract for node telemetry logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L19) |
