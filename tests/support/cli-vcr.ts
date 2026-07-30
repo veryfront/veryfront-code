@@ -5,15 +5,15 @@
  * Record:  deno task test:vcr:record
  * Replay:  deno task test:vcr (default)
  *
- * @module cli/test-utils/vcr
+ * @module tests/support/cli-vcr
  *************************/
 
 import { load } from "#std/dotenv.ts";
-import { cliLogger } from "#cli/utils";
+import { cliLogger } from "../../cli/utils/index.ts";
 import { cwd } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
-import type { ApiClient } from "../shared/config.ts";
+import type { ApiClient } from "../../cli/shared/config.ts";
 
 // Load .env.local for credentials in record mode
 try {
@@ -72,7 +72,7 @@ export async function createVCRClient(
 ): Promise<{ client: ApiClient; save: () => Promise<void>; projectSlug: string }> {
   const fs = createFileSystem();
   const recording = env.vcr === "record";
-  const fixturesDir = new URL("../test-fixtures", import.meta.url).pathname;
+  const fixturesDir = new URL("../../cli/test-fixtures", import.meta.url).pathname;
   const cassettePath = `${fixturesDir}/${cassetteName}.json`;
 
   let cassette: VCRCassette = {
@@ -195,7 +195,7 @@ export async function initVCRTest(
   if (!env.projectSlug) throw new Error("VCR=record requires VERYFRONT_PROJECT_SLUG");
 
   // Dynamic import to avoid loading config module in playback mode
-  const { createApiClient, resolveConfig } = await import("../shared/config.ts");
+  const { createApiClient, resolveConfig } = await import("../../cli/shared/config.ts");
   const config = await resolveConfig(cwd());
   const realClient = createApiClient(config);
   const vcr = await createVCRClient(cassetteName, realClient, env.projectSlug, env);
