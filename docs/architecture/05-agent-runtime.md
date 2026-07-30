@@ -221,3 +221,27 @@ are available from the public `veryfront/skill` package subpath.
 - [`veryfront/tool`](../api-reference/veryfront/tool.md)
 - [`veryfront/prompt`](../api-reference/veryfront/prompt.md)
 - [`veryfront/resource`](../api-reference/veryfront/resource.md)
+
+## Stream Lifecycle ownership
+
+The active runtime path is `Provider Adapter -> Stream Lifecycle -> Live
+Adapter`. `processStream()` in `src/agent/runtime/chat-stream-handler.ts` is a
+compatibility Adapter over `runStreamLifecycle()`
+(`src/agent/streaming/lifecycle/runner.ts`); the rollout mode
+(`VF_STREAM_LIFECYCLE_MODE`: `legacy | shadow | active`, default `legacy`)
+selects the legacy reader, a read-only shadow comparison, or the lifecycle
+runner.
+
+Provider idle time accrues only while one provider read is pending: the
+first-progress, semantic-idle, tool-input-idle, and commit-grace budgets pause
+while a part is being reduced or while the consumer holds a yielded frame, and
+resume with their remaining duration. The absolute stream-attempt limit and
+external cancellation never pause and can settle the Stream Outcome while the
+consumer holds a frame. Tool-input status cadence is synthesized by the
+lifecycle phase scheduler; status telemetry cannot satisfy a provider read or
+extend any semantic deadline.
+
+Through Gate 4, hosted durable and AG-UI production still consume
+compatibility UI chunks. The version 2 projection Adapters exist and are
+tested but have no production caller until the Phase 5 Stream Delivery design
+adds a mixed lifecycle/runtime object channel and backend idempotency.

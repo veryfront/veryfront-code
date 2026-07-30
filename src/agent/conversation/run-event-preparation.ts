@@ -10,6 +10,8 @@ import {
   encodeConversationRunEvents,
 } from "./run-events.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
+import type { StreamLifecycleFrame } from "#veryfront/agent/streaming/lifecycle/index.ts";
+import { createLifecycleRunEventAdapter } from "./lifecycle-run-event-adapter.ts";
 
 function normalizeFinishReason(reason?: string): ChatFinishReason | undefined {
   switch (reason) {
@@ -77,4 +79,29 @@ export function prepareConversationRunExternalEvents(
   events: ConversationRunEvent[],
 ): ConversationRunEvent[] {
   return normalizeConversationRunEvents(events);
+}
+
+/**
+ * Pure version 2 preparation entry point for fixtures and the future Stream
+ * Delivery module. No production mirror calls this in Gate 4: wiring it into a
+ * hosted mirror before a source-tagged delivery contract exists would
+ * double-write lifecycle-owned UI chunks and lose local tool events that occur
+ * after handoff.
+ */
+export function prepareConversationRunLifecycleEvents(input: {
+  runId: string;
+  attemptId: string;
+  attemptIndex: number;
+  messageId: string;
+  frames: readonly StreamLifecycleFrame[];
+}): ConversationRunEvent[] {
+  const events: ConversationRunEvent[] = [];
+  const adapter = createLifecycleRunEventAdapter({
+    ...input,
+    onEvents: (batch) => events.push(...batch),
+  });
+  for (const frame of input.frames) adapter.handleFrame(frame);
+  adapter.flush();
+  adapter.dispose();
+  return events;
 }

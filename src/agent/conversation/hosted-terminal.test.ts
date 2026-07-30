@@ -22,7 +22,7 @@ const calls: RecordedCall[] = [];
 
 function installFetchMock() {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
     calls.push({
       input,
       init,
@@ -85,6 +85,7 @@ describe("agent/conversation-hosted-terminal", () => {
           latestExternalEventSequence: 0,
           waitingToolCallId: null,
           waitingToolName: null,
+          streamProtocolVersion: 2,
           status: "running",
         },
         fallbackModelId: "fallback-model",
@@ -163,6 +164,7 @@ describe("agent/conversation-hosted-terminal", () => {
           latestExternalEventSequence: 0,
           waitingToolCallId: null,
           waitingToolName: null,
+          streamProtocolVersion: 2,
           status: "running",
         },
         fallbackModelId: "fallback-model",

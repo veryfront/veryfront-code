@@ -9,6 +9,7 @@ import { createHttpInstruments } from "./http-instruments.ts";
 import { createMemoryInstruments } from "./memory-instruments.ts";
 import { createRenderInstruments } from "./render-instruments.ts";
 import { createRscInstruments } from "./rsc-instruments.ts";
+import { createStreamLifecycleInstruments } from "./stream-lifecycle-instruments.ts";
 
 const logger = serverLogger.component("metrics");
 
@@ -50,6 +51,16 @@ export function initializeInstruments(
     heapTotalGauge: null,
     heapPercentGauge: null,
     errorCounter: null,
+    streamLifecycleOutcomeCounter: null,
+    streamLifecycleDeadlineCounter: null,
+    streamLifecycleTelemetryCounter: null,
+    streamLifecycleRepairCounter: null,
+    streamLifecycleShadowDivergenceCounter: null,
+    streamLifecycleAttemptDuration: null,
+    streamLifecycleFirstProgressDuration: null,
+    streamLifecycleSemanticIdleDuration: null,
+    streamLifecycleToolInputDuration: null,
+    streamLifecycleToolExecutionDuration: null,
   };
 
   try {
@@ -63,6 +74,7 @@ export function initializeInstruments(
       ...createDataInstruments(meter, config),
       ...createMemoryInstruments(meter, config),
       ...createErrorInstruments(meter, config),
+      ...createStreamLifecycleInstruments(meter, config),
     };
   } catch (error) {
     logger.warn("Failed to initialize metric instruments", error);
