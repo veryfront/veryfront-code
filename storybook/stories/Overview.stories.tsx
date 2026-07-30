@@ -81,6 +81,7 @@ const UI: NavGridEntry[] = [
   { title: "NumberField", id: "ui-numberfield--docs" },
   { title: "Slider", id: "ui-slider--docs" },
   { title: "Accordion", id: "ui-accordion--docs" },
+  { title: "Combobox", id: "ui-combobox--docs" },
 ];
 
 function SectionLabel({ children }: { children: React.ReactNode }) {

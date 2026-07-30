@@ -209,6 +209,16 @@ export {
   type AccordionTriggerProps,
 } from "./accordion.tsx";
 export { AspectRatio, type AspectRatioProps } from "./aspect-ratio.tsx";
+export {
+  Combobox,
+  ComboboxContent,
+  type ComboboxContentProps,
+  ComboboxInput,
+  type ComboboxInputProps,
+  ComboboxItem,
+  type ComboboxItemProps,
+  type ComboboxProps,
+} from "./combobox.tsx";
 export { NumberField, type NumberFieldProps } from "./number-field.tsx";
 export { Separator, type SeparatorProps } from "./separator.tsx";
 export { Slider, type SliderProps } from "./slider.tsx";
