@@ -4,6 +4,7 @@ import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import { resolveEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { type SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import type { ToolExposureCheckpoint, ToolSearchAuthorization } from "./tool-exposure.ts";
+import { resolveToolLoading } from "./agent-definition.ts";
 
 export const SOURCE_INTEGRATION_POLICY_CONTEXT_KEY = "__vfSourceIntegrationPolicy";
 
@@ -42,7 +43,7 @@ export function resolveRuntimeToolLoading(
     return { mode: evalOverride, provenance: "eval-override" };
   }
   return {
-    mode: config.toolLoading === "eager" ? "eager" : "deferred",
+    mode: resolveToolLoading(config.toolLoading),
     provenance: "agent-config",
   };
 }

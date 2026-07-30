@@ -100,6 +100,7 @@ import {
 } from "#veryfront/integrations/source-policy.ts";
 import { prepareAgentRuntimeStep } from "./agent-runtime-step.ts";
 import { buildStreamedAssistantMessage } from "./streamed-assistant-message.ts";
+import { resolveToolLoading } from "./agent-definition.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -758,7 +759,10 @@ export class AgentRuntime {
 
   constructor(id: string, config: AgentConfig) {
     this.id = id;
-    this.config = config;
+    this.config = {
+      ...config,
+      toolLoading: resolveToolLoading(config.toolLoading),
+    };
 
     // Agents are stateless by default (see docs/guides/memory-and-streaming.md):
     // with no `memory` config, calls never share conversation history, so
@@ -1164,7 +1168,6 @@ export class AgentRuntime {
         ? {
           ...runConfig,
           tools: runtimeToolsConfig,
-          toolLoading: "eager",
           skills: undefined,
           providerTools: undefined,
           mcpServers: undefined,

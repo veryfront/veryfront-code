@@ -12,9 +12,17 @@ import type { ToolLoading } from "../types.ts";
 /** Default tool schema loading mode for programmatic and Markdown agents. */
 export const DEFAULT_TOOL_LOADING: ToolLoading = "deferred";
 
-/** Resolve an omitted tool schema loading mode to the framework default. */
-export function resolveToolLoading(value: ToolLoading | undefined): ToolLoading {
-  return value ?? DEFAULT_TOOL_LOADING;
+/** Resolve and validate the public tool schema loading mode. */
+export function resolveToolLoading(value: unknown): ToolLoading {
+  if (value === undefined) {
+    return DEFAULT_TOOL_LOADING;
+  }
+  if (value === "eager" || value === "deferred") {
+    return value;
+  }
+  throw CONFIG_INVALID.create({
+    detail: 'Agent config "toolLoading" must be "eager" or "deferred".',
+  });
 }
 
 /** Zod schema for get runtime agent thinking config. */

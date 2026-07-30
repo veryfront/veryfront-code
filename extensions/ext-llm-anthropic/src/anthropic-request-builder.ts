@@ -1,6 +1,7 @@
 import {
   readProviderOptions,
   stringifyJsonValue,
+  supportsAnthropicNativeToolSearchModel,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
 import type {
@@ -108,21 +109,9 @@ type AnthropicNativeToolSearchConfig = {
   variant: AnthropicNativeToolSearchVariant;
 };
 
-const ANTHROPIC_NATIVE_TOOL_SEARCH_MODEL_PREFIXES = [
-  "claude-opus-4-5",
-  "claude-opus-4-6",
-  "claude-opus-4-7",
-  "claude-opus-4-8",
-  "claude-sonnet-4-5",
-  "claude-sonnet-4-6",
-  "claude-haiku-4-5",
-] as const;
-
 /** Explicit compatibility gate for Anthropic's native tool-search tool. */
 export function supportsAnthropicNativeToolSearch(modelId: string): boolean {
-  return ANTHROPIC_NATIVE_TOOL_SEARCH_MODEL_PREFIXES.some((prefix) =>
-    modelId === prefix || modelId.startsWith(`${prefix}-`)
-  );
+  return supportsAnthropicNativeToolSearchModel(modelId);
 }
 
 function readAnthropicNativeToolSearchConfig(

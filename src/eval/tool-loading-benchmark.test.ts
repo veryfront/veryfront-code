@@ -7,6 +7,27 @@ import {
 } from "./tool-loading-benchmark.ts";
 import type { EvalToolLoadingBenchmarkRecord } from "./types.ts";
 
+interface LiveReleaseGateArtifact {
+  status: "passed" | "failed";
+  sourceArtifact: {
+    repository: string;
+    path: string;
+    sha256: string;
+  };
+  deterministicGate: {
+    status: "passed" | "failed";
+    passRate: number;
+    executedCaseCount: number;
+  };
+  comparisons: Array<{
+    prompt: "hi" | "Hello";
+    status: "passed" | "failed";
+    effectiveInputReduction: number;
+    eager: EvalToolLoadingBenchmarkRecord;
+    deferred: EvalToolLoadingBenchmarkRecord;
+  }>;
+}
+
 function benchmarkRecord(
   mode: "eager" | "deferred",
   overrides: Partial<EvalToolLoadingBenchmarkRecord> = {},
@@ -111,5 +132,34 @@ describe("eval/tool-loading-benchmark", () => {
     assertStringIncludes(markdown, "| Provider HTTP wire deferred metadata | 0 | 257 | +257 |");
     assertStringIncludes(markdown, "| Authorized searchable schemas | 260 | 260 | 0 |");
     assertStringIncludes(markdown, "`80.00%`");
+  });
+
+  it("keeps the checked-in live hi and Hello release evidence above every gate", async () => {
+    const artifact = JSON.parse(
+      await Deno.readTextFile(
+        new URL("../../tests/fixtures/eval/tool-loading-live-release-gate.json", import.meta.url),
+      ),
+    ) as LiveReleaseGateArtifact;
+
+    assertEquals(artifact.status, "passed");
+    assertEquals(artifact.sourceArtifact, {
+      repository: "veryfront-agent",
+      path: ".veryfront/evals/tool-loading/live/report.json",
+      sha256: "3d9db14c2da86ae7c2fa8aa72df4507926bcfd3d3472801fb17c0b9642da5a79",
+    });
+    assertEquals(artifact.deterministicGate, {
+      status: "passed",
+      passRate: 1,
+      executedCaseCount: 12,
+    });
+    assertEquals(artifact.comparisons.map(({ prompt }) => prompt), ["hi", "Hello"]);
+
+    for (const measured of artifact.comparisons) {
+      const comparison = compareToolLoadingBenchmark(measured.eager, measured.deferred);
+
+      assertEquals(comparison.status, measured.status);
+      assertEquals(comparison.effectiveInputReduction, measured.effectiveInputReduction);
+      assertEquals(comparison.assertions.every(({ status }) => status === "passed"), true);
+    }
   });
 });

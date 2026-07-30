@@ -2,6 +2,10 @@ import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import type { AgentRuntimeMessage } from "./message-adapter.ts";
 import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
 import type { Message, MessagePart } from "../types.ts";
+import {
+  supportsAnthropicNativeToolSearchModel,
+  supportsOpenAINativeToolSearchModel,
+} from "#veryfront/provider/shared/index.ts";
 
 export const AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT = "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT" as const;
 
@@ -48,26 +52,6 @@ type NativeToolSearchSelectionInput = {
   toolName: string;
   authorizedDeferredToolNames: ReadonlySet<string>;
 };
-
-const ANTHROPIC_NATIVE_TOOL_SEARCH_MODEL_PREFIXES = [
-  "claude-opus-4-5",
-  "claude-opus-4-6",
-  "claude-opus-4-7",
-  "claude-opus-4-8",
-  "claude-sonnet-4-5",
-  "claude-sonnet-4-6",
-  "claude-haiku-4-5",
-] as const;
-const OPENAI_NATIVE_TOOL_SEARCH_MODEL_IDS = [
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.4-pro",
-  "gpt-5.5",
-  "gpt-5.6",
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
-  "gpt-5.6-luna",
-] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -216,20 +200,15 @@ export function resolveProviderReplayProvider(
   const provider = parts[0];
   if (provider === "veryfront-cloud") return undefined;
   const modelId = parts.slice(1).join("/");
-  const openAIBaseModelId = modelId.replace(/-\d{4}-\d{2}-\d{2}$/, "");
   if (
     provider === "anthropic" &&
-    ANTHROPIC_NATIVE_TOOL_SEARCH_MODEL_PREFIXES.some((prefix) =>
-      modelId === prefix || modelId.startsWith(`${prefix}-`)
-    )
+    supportsAnthropicNativeToolSearchModel(modelId)
   ) {
     return "anthropic";
   }
   if (
     provider === "openai" &&
-    OPENAI_NATIVE_TOOL_SEARCH_MODEL_IDS.some((supportedModelId) =>
-      openAIBaseModelId === supportedModelId
-    )
+    supportsOpenAINativeToolSearchModel(modelId)
   ) {
     return "openai-responses";
   }

@@ -83,6 +83,21 @@ describe("agent factory", () => {
     assertEquals(eager.config.toolLoading, "eager");
   });
 
+  it("rejects invalid programmatic tool loading modes", () => {
+    for (const toolLoading of ["auto", "defered", "unknown"]) {
+      assertThrows(
+        () =>
+          agent({
+            id: `invalid-tool-loading-${toolLoading}`,
+            system: "Stay helpful.",
+            toolLoading,
+          } as unknown as AgentConfig),
+        Error,
+        "toolLoading",
+      );
+    }
+  });
+
   it("bootstraps schema validation before registering universal skill tools", () => {
     resetExtensionContracts();
 

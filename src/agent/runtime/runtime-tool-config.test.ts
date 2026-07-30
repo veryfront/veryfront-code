@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "../types.ts";
+import { AgentRuntime } from "./index.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
@@ -47,6 +48,21 @@ describe("agent/runtime-tool-config", () => {
         provenance: "host-operational-override",
       },
     );
+  });
+
+  it("rejects invalid agent-config tool loading modes", () => {
+    for (const toolLoading of ["auto", "defered", "unknown"]) {
+      assertThrows(
+        () => resolveRuntimeToolLoading(runtimeConfig({ toolLoading })),
+        Error,
+        "toolLoading",
+      );
+      assertThrows(
+        () => new AgentRuntime("invalid-tool-loading", runtimeConfig({ toolLoading })),
+        Error,
+        "toolLoading",
+      );
+    }
   });
 
   it("defaults trusted authoring search authorization closed", () => {
