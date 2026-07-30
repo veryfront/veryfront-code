@@ -58,6 +58,7 @@ import {
   createDeployProject,
   type DeployEvent,
   type DeployPlan,
+  type DeployProject,
   type DeployProjectOutcome,
   type DeployStepName,
 } from "../../shared/deployment/deploy-project.ts";
@@ -1111,14 +1112,28 @@ export async function waitForReleaseAssetManifest(
  * Create a release and deploy to an environment
  */
 export async function deployCommand(options: DeployOptions): Promise<DeployResult | null> {
-  if (isJsonMode() && !options.suppressJsonOutput) {
-    return deployCommandJson(options);
-  }
-
-  return deployCommandHuman(options);
+  return deployCommandWithProjectForTesting(options);
 }
 
-function createDeployRunner(options: DeployOptions) {
+export interface DeployCommandTestingSeams {
+  createDeployProject?: (options: DeployOptions) => DeployProject;
+}
+
+export async function deployCommandWithProjectForTesting(
+  options: DeployOptions,
+  seams: DeployCommandTestingSeams = {},
+): Promise<DeployResult | null> {
+  if (isJsonMode() && !options.suppressJsonOutput) {
+    return deployCommandJson(options, seams);
+  }
+
+  return deployCommandHuman(options, seams);
+}
+
+function createDeployRunner(options: DeployOptions, seams: DeployCommandTestingSeams) {
+  const fakeProject = seams.createDeployProject?.(options);
+  if (fakeProject) return fakeProject;
+
   return createDeployProject({
     polling: {
       assetManifestPollIntervalMs: options.assetManifestPollIntervalMs,
@@ -1201,7 +1216,10 @@ function progressDetailForBuildStep(stepName: DeployStepName, env: string): stri
   }
 }
 
-async function deployCommandHuman(options: DeployOptions): Promise<DeployResult | null> {
+async function deployCommandHuman(
+  options: DeployOptions,
+  seams: DeployCommandTestingSeams,
+): Promise<DeployResult | null> {
   const { env, dryRun, quiet = false } = options;
   const startedAt = Date.now();
   const verbose = isVerbose();
@@ -1216,7 +1234,7 @@ async function deployCommandHuman(options: DeployOptions): Promise<DeployResult 
   let warning: string | null = null;
   let outcome: DeployProjectOutcome;
   try {
-    outcome = await createDeployRunner(options).execute(toDeployRequest(options), {
+    outcome = await createDeployRunner(options, seams).execute(toDeployRequest(options), {
       onEvent(event) {
         if (event.kind === "warning") {
           warning = event.message;
@@ -1285,9 +1303,12 @@ async function deployCommandHuman(options: DeployOptions): Promise<DeployResult 
   return result;
 }
 
-async function deployCommandJson(options: DeployOptions): Promise<DeployResult | null> {
+async function deployCommandJson(
+  options: DeployOptions,
+  seams: DeployCommandTestingSeams,
+): Promise<DeployResult | null> {
   try {
-    const outcome = await createDeployRunner(options).execute(toDeployRequest(options), {
+    const outcome = await createDeployRunner(options, seams).execute(toDeployRequest(options), {
       onEvent(event) {
         if (event.kind === "warning") {
           streamJsonLine({

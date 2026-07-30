@@ -88,3 +88,61 @@ Result: passed.
 ## Concerns
 
 - The requested parity assertion did not produce RED before implementation. The full suite did produce a real RED on preserved `skipSourcePush` dry-run compatibility, and that RED drove the only shared-module change.
+
+## Review fix: seam-level regression
+
+Reviewer finding: the parity assertion was not a valid guard for the architectural seam because duplicated output-mode orchestration could still produce equal visible results.
+
+Fix:
+
+- Added `deployCommandWithProjectForTesting()` as an internal command-level seam in `cli/commands/deploy/command.ts`. It is not re-exported from `cli/commands/deploy/index.ts`.
+- Added `cli/commands/deploy/command.test.ts` coverage that injects a fake `DeployProject` into both human and JSON adapter shells.
+- The test proves the fake executor is invoked once per adapter, both adapters send the same `DeployProjectRequest`, JSON maps semantic `create-deployment` to public `deploy`, human and JSON render/return a sentinel `DeployProjectOutcome`, and adapter code performs no fetch-backed remote orchestration.
+
+Review-fix RED:
+
+```bash
+deno test --no-check --allow-all --filter="render human and JSON output from one injected deployment executor" cli/commands/deploy/command.test.ts
+```
+
+Observed failure before the seam existed:
+
+```text
+error: SyntaxError: The requested module './command.ts' does not provide an export named 'deployCommandWithProjectForTesting'
+```
+
+Review-fix GREEN:
+
+```bash
+deno test --no-check --allow-all --filter="deploy command adapters" cli/commands/deploy/command.test.ts
+```
+
+Result: passed, 1 test, 1 step, 0 failures.
+
+Review-fix verification:
+
+```bash
+deno fmt --check cli/shared/deployment cli/commands/deploy
+```
+
+Result: passed, 13 files checked.
+
+```bash
+deno check cli/shared/deployment/deploy-project.ts cli/commands/deploy/command.ts cli/commands/deploy/command.test.ts
+```
+
+Result: passed.
+
+```bash
+deno test --no-check --allow-all cli/shared/deployment/control-plane.test.ts cli/shared/deployment/deploy-project.test.ts cli/commands/deploy/command.test.ts cli/commands/deploy/command.integration.test.ts
+```
+
+Result: passed, 36 tests, 82 steps, 0 failures.
+
+```bash
+git diff --check
+```
+
+Result: passed.
+
+Review-fix concern: none remaining for the reviewed seam finding.
