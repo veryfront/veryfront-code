@@ -70,14 +70,14 @@ skills/<skill-id>/
 
 ## Frontmatter fields
 
-| Field           | Required | Description                                                                                                                 |
-| --------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `name`          | Yes      | Directory-matching identifier: 1-64 lowercase letters, digits, or single hyphens; no leading, trailing, or repeated hyphens |
-| `description`   | Yes      | Human-readable description (max 1024 characters)                                                                            |
-| `allowed-tools` | No       | Space-delimited tool IDs or prefix patterns (for example, `api:*`) the agent may use                                        |
-| `license`       | No       | License identifier or reference (max 256 characters)                                                                        |
-| `compatibility` | No       | Environment or product requirements (max 500 characters)                                                                    |
-| `metadata`      | No       | String-to-string metadata (max 64 entries)                                                                                  |
+| Field           | Required | Description                                                                                                            |
+| --------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `name`          | Yes      | Authored label. The directory supplies the runtime ID; new skills should use the same canonical 1-64-character ID here |
+| `description`   | Yes      | Human-readable description (max 1024 characters)                                                                       |
+| `allowed-tools` | No       | Space-delimited tool IDs or prefix patterns (for example, `api:*`) the agent may use                                   |
+| `license`       | No       | License identifier or reference (max 256 characters)                                                                   |
+| `compatibility` | No       | Environment or product requirements (max 500 characters)                                                               |
+| `metadata`      | No       | String-to-string metadata (max 64 entries)                                                                             |
 
 `allowed_tools` remains accepted as a compatibility alias. Use the canonical
 `allowed-tools` spelling in new skills.
@@ -92,9 +92,12 @@ skills/
   data-analysis/SKILL.md   → skill ID: "data-analysis"
 ```
 
-The `name` in each `SKILL.md` must exactly match its parent directory. Invalid
-or malformed YAML is reported as a discovery error; it is not partially
-reinterpreted.
+The parent directory is always the runtime skill ID. New skills should repeat
+that canonical ID in `name`. For compatibility, discovery retains a differing
+authored name only as `displayName`; it never changes lookup or authorization.
+The CLI validator rejects a different canonical-looking ID as a likely typo,
+while display-style labels remain supported. Invalid or malformed YAML is
+reported as a discovery error; it is not partially reinterpreted.
 
 `parseSkillFrontmatter` and `parseSkillFileFrontmatter` expose the same
 bounded, fail-closed parser. The explicitly named
@@ -163,9 +166,11 @@ export default agent({
 });
 ```
 
-Use `skills: ["code-review"]` to advertise only that skill. Use `skills: []`
-to advertise none. This changes the prompt catalog only. `load_skill` remains
-available and can load any visible skill by ID.
+Use `skills: ["code-review"]` to advertise and authorize only that skill. Use
+`skills: []` to select none; the runtime then omits skill-loading tools. Omitted
+`skills` and `skills: true` select every skill visible to the agent. Explicit
+entries resolve as the agent's own short names first, then exact visible IDs,
+and unresolved entries fail configuration rather than widening access.
 
 Expose the agent through an AG-UI route, then ask it to use the skill:
 

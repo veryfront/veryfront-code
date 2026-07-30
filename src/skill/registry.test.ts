@@ -158,6 +158,38 @@ describe("src/skill/registry", () => {
       );
     });
 
+    it("rejects relative roots at the registry boundary", () => {
+      assertThrows(
+        () =>
+          registerSkill("relative", {
+            id: "relative",
+            metadata: { name: "relative", description: "Relative root" },
+            rootPath: "skills/relative",
+          }),
+        TypeError,
+        "absolute path",
+      );
+      assertEquals(getSkill("relative"), undefined);
+    });
+
+    it("rejects non-printable programmatic metadata", () => {
+      assertThrows(
+        () =>
+          registerSkill("unsafe-metadata", {
+            id: "unsafe-metadata",
+            metadata: {
+              name: "unsafe-metadata",
+              description: "Unsafe metadata",
+              metadata: { key: "bad\u0000value" },
+            },
+            rootPath: "/test/skills/unsafe-metadata",
+          }),
+        TypeError,
+        "printable characters",
+      );
+      assertEquals(getSkill("unsafe-metadata"), undefined);
+    });
+
     it("should return undefined for missing skill", () => {
       assertEquals(getSkill("nonexistent"), undefined);
     });

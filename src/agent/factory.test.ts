@@ -194,8 +194,8 @@ describe("agent factory", () => {
   });
 
   it("enforces the skill allowlist for tools true registry execution", async () => {
-    let selectedReads = 0;
-    let excludedReads = 0;
+    let selectedBoundedReads = 0;
+    let excludedBoundedReads = 0;
     const selectedAdapter = createSkillTestAdapter({
       "/test/skills/selected/SKILL.md": `---
 name: selected
@@ -214,9 +214,9 @@ description: Excluded skill
       ...createSkill("selected", "Selected skill"),
       fsAdapter: {
         ...selectedAdapter,
-        async readFile(path) {
-          selectedReads++;
-          return await selectedAdapter.readFile(path);
+        async readFileBytesBounded(path, byteLimit) {
+          selectedBoundedReads++;
+          return await selectedAdapter.readFileBytesBounded!(path, byteLimit);
         },
       },
     });
@@ -224,9 +224,9 @@ description: Excluded skill
       ...createSkill("excluded", "Excluded skill"),
       fsAdapter: {
         ...excludedAdapter,
-        async readFile(path) {
-          excludedReads++;
-          return await excludedAdapter.readFile(path);
+        async readFileBytesBounded(path, byteLimit) {
+          excludedBoundedReads++;
+          return await excludedAdapter.readFileBytesBounded!(path, byteLimit);
         },
       },
     });
@@ -245,12 +245,13 @@ description: Excluded skill
 
     const selected = await runLoad("selected");
     assertEquals(selected.toolCalls[0]?.status, "completed");
-    assertEquals(selectedReads, 1);
+    // Strict adapter reads take one bounded snapshot plus one confirmation.
+    assertEquals(selectedBoundedReads, 2);
 
     const excluded = await runLoad("excluded");
     assertEquals(excluded.toolCalls[0]?.status, "error");
     assertStringIncludes(excluded.toolCalls[0]?.error ?? "", "not available to this agent");
-    assertEquals(excludedReads, 0);
+    assertEquals(excludedBoundedReads, 0);
   });
 
   it("does not let runtime state spoof tools true skill authorization", async () => {

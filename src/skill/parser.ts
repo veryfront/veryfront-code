@@ -484,7 +484,12 @@ function parseMetadata(
 
   const result: Record<string, string> = {};
   for (const [key, metadataValue] of entries) {
-    result[key] = String(metadataValue);
+    Object.defineProperty(result, key, {
+      configurable: true,
+      enumerable: true,
+      value: String(metadataValue),
+      writable: true,
+    });
   }
   return result;
 }
@@ -513,6 +518,11 @@ function parseStrictMetadata(
         `Skill metadata keys must be 1-${SKILL_METADATA_KEY_MAX_LENGTH} characters`,
       );
     }
+    if (!isWellFormedUtf16(k) || hasControlCharacters(k)) {
+      throw new TypeError(
+        `Skill metadata keys must be 1-${SKILL_METADATA_KEY_MAX_LENGTH} printable characters`,
+      );
+    }
     if (!("value" in descriptor) || typeof descriptor.value !== "string") {
       throw new TypeError("Skill metadata values must be strings");
     }
@@ -522,7 +532,20 @@ function parseStrictMetadata(
         `Skill metadata values must be at most ${SKILL_METADATA_VALUE_MAX_LENGTH} characters`,
       );
     }
-    result[k] = metadataValue;
+    if (!isWellFormedUtf16(metadataValue) || hasControlCharacters(metadataValue)) {
+      throw new TypeError(
+        `Skill metadata values must be at most ${SKILL_METADATA_VALUE_MAX_LENGTH} printable characters`,
+      );
+    }
+    // Assignment treats `__proto__` specially on ordinary objects and would
+    // silently drop an otherwise valid metadata key. Define an own data
+    // property so every admitted string key round-trips exactly.
+    Object.defineProperty(result, k, {
+      configurable: true,
+      enumerable: true,
+      value: metadataValue,
+      writable: true,
+    });
   }
   return result;
 }

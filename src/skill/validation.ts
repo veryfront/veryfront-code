@@ -1,4 +1,5 @@
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isAbsolute } from "#veryfront/compat/path";
 import { snapshotAllowedToolPatterns } from "./allowed-tools.ts";
 import { SKILL_ID_MAX_LENGTH, SKILL_ROOT_PATH_MAX_LENGTH } from "./limits.ts";
 import {
@@ -99,9 +100,19 @@ function normalizeStringMetadata(value: unknown): Record<string, string> | undef
         `Skill metadata keys must be 1-${SKILL_METADATA_KEY_MAX_LENGTH} characters`,
       );
     }
+    if (!isWellFormedUtf16(key) || hasControlCharacters(key)) {
+      throw new TypeError(
+        `Skill metadata keys must be 1-${SKILL_METADATA_KEY_MAX_LENGTH} printable characters`,
+      );
+    }
     if (descriptor.value.length > SKILL_METADATA_VALUE_MAX_LENGTH) {
       throw new RangeError(
         `Skill metadata values must be at most ${SKILL_METADATA_VALUE_MAX_LENGTH} characters`,
+      );
+    }
+    if (!isWellFormedUtf16(descriptor.value) || hasControlCharacters(descriptor.value)) {
+      throw new TypeError(
+        `Skill metadata values must be at most ${SKILL_METADATA_VALUE_MAX_LENGTH} printable characters`,
       );
     }
     Object.defineProperty(snapshot, key, {
@@ -189,6 +200,9 @@ export function normalizeSkillDefinition(id: string, value: Skill): Skill {
     "Skill rootPath",
     SKILL_ROOT_PATH_MAX_LENGTH,
   );
+  if (!isAbsolute(rootPath)) {
+    throw new TypeError("Skill rootPath must be an absolute path");
+  }
   const ownerAgentId = optionalBoundedIdentity(
     ownDataValue(value, "ownerAgentId"),
     "Skill ownerAgentId",

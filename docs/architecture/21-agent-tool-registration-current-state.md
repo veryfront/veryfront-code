@@ -92,22 +92,24 @@ allowlist, not an authorization policy. The same list also enables
 provider-native tools such as `web_search`, even though those tools are not MCP
 tools and are executed by the selected model provider.
 
-`load_skill` is exposed for every agent without the user manually adding it to
-`tools`. The `skills` field selects which visible skills appear in the system
-prompt, while an omitted selector advertises all visible skills.
+`load_skill` is exposed without the user manually adding it to `tools` whenever
+the skill selector is not explicit none. The `skills` field selects which
+visible skills appear in the system prompt and which IDs `load_skill` may
+resolve; an omitted selector authorizes all visible skills, while `[]` omits
+the skill-loading surface.
 
 - The classic `agent()` factory registers shared skill tools and merges
-  the skill platform tools into the agent's internal tools config using the old
-  hyphenated runtime spelling.
+  the skill platform tools into the agent's internal tools config using their
+  canonical `snake_case` runtime IDs.
 - The hosted runtime injects `load_skill` into its local host tool set and uses
   `load_skill` in hosted steering, eval, and child-agent paths. Its optional
   `file` input reads references with request-scoped project context. Hosted
   runs do not expose direct skill script execution.
 
-Public users can narrow the advertised catalog with `skills`; they do not add
-`load_skill` to `tools`. The factory currently implements the platform tools as
-an internal tools-config merge instead of a separate platform tool catalog
-entry.
+Public users narrow both the advertised and authorized catalog with `skills`;
+they do not add `load_skill` to `tools`. The factory currently implements the
+platform tools as an internal tools-config merge instead of a separate
+platform tool catalog entry.
 
 ### Tool classes
 

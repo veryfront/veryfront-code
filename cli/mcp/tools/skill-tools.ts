@@ -18,6 +18,7 @@ import {
   validateStrictSkillPath,
 } from "veryfront/skill";
 import { readSkillDocument } from "../../skills/read-skill-document.ts";
+import { assertSkillDirectoryIdentity } from "../../skills/validation.ts";
 import type { MCPTool } from "../tools.ts";
 import { directoryExists, formatError, getFs } from "./helpers.ts";
 
@@ -69,6 +70,7 @@ async function loadBundledSkill(
     const skillPath = await validateStrictSkillPath(directory, "SKILL.md", []);
     const content = await readSkillDocument(skillPath);
     const parsed = await parseSkillFileFrontmatter(content);
+    assertSkillDirectoryIdentity(parsed.frontmatter, entry.name);
     const metadata = validateSkillFileMetadata(parsed.frontmatter, entry.name);
     const references = (await listStrictSkillSubdir(directory, "references"))
       .filter((reference) => reference.endsWith(".md"));

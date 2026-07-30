@@ -5938,4 +5938,27 @@ No known unresolved critical or high-confidence Proxy production risk remains.
 The `proxy` unit is closed at 52 of 58 formal units; six units remain open or
 awaiting top-level revalidation.
 
+### Skill revalidation checkpoint (architectural cleanup pending)
+
+The current `skill` review hardened the registry and filesystem ingestion
+boundaries without claiming formal closure. Skill metadata now preserves every
+admitted own string key, including `__proto__`, and rejects control characters
+and malformed UTF-16. Registered roots must be absolute, the MCP loader applies
+the same directory-identity policy as the other CLI loaders, and the affected
+authorization tests and reference documentation describe the current runtime
+identity and selector behavior.
+
+Current reproducible evidence is green: the complete `src/skill` portfolio
+passes 38 suites with 226 nested steps, direct consumers pass 17 suites with 18
+steps, CLI consumers pass four suites with 38 steps, and typecheck, lint,
+formatting, documentation-contract, core-dependency, and module-boundary gates
+pass.
+
+Formal closure remains pending because core still contains an undeclared
+`npx --no-install tsx` execution path, missing cloud credentials can silently
+downgrade script execution to the local host, and legacy permissive helpers and
+execution-lifecycle policies require an explicit strict replacement. Those
+architectural changes are handled in a separate checkpoint so this safe input
+and identity hardening remains independently reviewable.
+
 Update this ledger in the same commit that closes or reopens an audit unit.

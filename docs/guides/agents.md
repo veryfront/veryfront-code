@@ -76,7 +76,9 @@ The directory name is the agent id. The flat `agents/{id}.md` form still works
 for agents that do not own skills or tools, and both layouts can coexist.
 If the directory includes a root `SKILL.md`, the agent id must also be a valid
 skill name: 1-64 lowercase letters, digits, or single hyphens. The
-`SKILL.md` frontmatter `name` must exactly match that directory.
+directory remains the runtime skill ID; new files should repeat it in
+frontmatter `name`, while a differing legacy display label never changes
+lookup or ownership.
 
 Colocated capabilities are registered with owner metadata and namespaced
 `{agentId}--{name}`. Ownership controls visibility everywhere: an agent only
@@ -95,9 +97,9 @@ tools: [fetch-paper] # own short names resolve first, then global tool ids
 Research the question and cite every claim.
 ```
 
-- Omit `skills` or use `skills: true` to advertise every skill visible to the
-  agent. Use `skills: []` to advertise none. `load_skill` remains available in
-  either case.
+- Omit `skills` or use `skills: true` to advertise and authorize every skill
+  visible to the agent. Use `skills: []` to select none; skill-loading tools
+  are then omitted.
 - `tools: true` - every tool visible to the agent.
 - `skills: [..]` / `tools: [..]` - each entry resolves as the agent's own
   short name first, then as a global id. A colocated short name that shadows a
@@ -230,9 +232,10 @@ export default agent({
 });
 ```
 
-Use `skills: ["incident-response", "repo-maintainer"]` to advertise only those
-skills. Use `skills: []` to advertise no skills. This selector does not remove
-`load_skill` or restrict which visible skills it can load by ID.
+Use `skills: ["incident-response", "repo-maintainer"]` to advertise and
+authorize only those skills. Use `skills: []` to select none and omit
+skill-loading tools. An explicit selector is an authorization boundary for
+`load_skill`, not just a prompt filter.
 
 Local and project runtimes also expose `load_skill_reference` and
 `execute_skill_script`. Hosted chat reads an advertised reference through

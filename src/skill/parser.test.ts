@@ -453,6 +453,19 @@ Body`),
         "x".repeat(501),
       );
     });
+
+    it("preserves metadata keys that overlap object prototype accessors", () => {
+      const metadata = Object.create(null) as Record<string, string>;
+      metadata.__proto__ = "legacy-value";
+
+      const result = validateSkillMetadata(
+        { description: "desc", metadata },
+        "test",
+      );
+
+      assertEquals(result.metadata?.__proto__, "legacy-value");
+      assertEquals(Object.hasOwn(result.metadata ?? {}, "__proto__"), true);
+    });
   });
 
   describe("validateSkillFileMetadata", () => {
@@ -545,6 +558,52 @@ Body`),
         "data property",
       );
       assertEquals(getterReads, 0);
+    });
+
+    it("round-trips every admitted string metadata key as own data", () => {
+      const metadata = Object.create(null) as Record<string, string>;
+      metadata.__proto__ = "strict-value";
+
+      const result = validateSkillFileMetadata(
+        {
+          name: "test",
+          description: "desc",
+          metadata,
+        },
+        "test",
+      );
+
+      assertEquals(result.metadata?.__proto__, "strict-value");
+      assertEquals(Object.hasOwn(result.metadata ?? {}, "__proto__"), true);
+    });
+
+    it("rejects non-printable metadata keys and values", () => {
+      assertThrows(
+        () =>
+          validateSkillFileMetadata(
+            {
+              name: "test",
+              description: "desc",
+              metadata: { "bad\nkey": "value" },
+            },
+            "test",
+          ),
+        TypeError,
+        "printable characters",
+      );
+      assertThrows(
+        () =>
+          validateSkillFileMetadata(
+            {
+              name: "test",
+              description: "desc",
+              metadata: { key: "bad\u0000value" },
+            },
+            "test",
+          ),
+        TypeError,
+        "printable characters",
+      );
     });
   });
 });
