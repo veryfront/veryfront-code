@@ -156,6 +156,14 @@ const expectedRuntimeExports = [
   "useModelSelector",
   "useStepIndicator",
   "useAttachmentsPanel",
+  // RFC 2980 canonical hook + context surface (additive).
+  "ChatInputContextProvider",
+  "mergeProps",
+  "useChatInput",
+  "useChatInputContext",
+  "useChatInputContextOptional",
+  "useChatScroll",
+  "useMessageBranches",
 ].sort();
 
 describe("chat/index.ts exports", () => {

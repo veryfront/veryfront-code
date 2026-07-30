@@ -85,6 +85,9 @@
         "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"bundler\",\n    \"strict\": true,\n    \"jsx\": \"react-jsx\",\n    \"skipLibCheck\": true,\n    \"esModuleInterop\": true,\n    \"paths\": {\n      \"@/*\": [\"./*\"]\n    }\n  },\n  \"include\": [\"**/*.ts\", \"**/*.tsx\"],\n  \"exclude\": [\"node_modules\"]\n}\n"
       }
     },
+    "saas": {
+      "files": {}
+    },
     "saas-starter": {
       "files": {
         "agents/assistant.ts": "import { agent } from \"veryfront/agent\";\n\nexport default agent({\n  id: \"assistant\",\n  name: \"SaaS Assistant\",\n  description: \"Answer product and customer questions.\",\n  system: \"You are a helpful AI assistant. Be concise and direct.\",\n  tools: true,\n  memory: { type: \"conversation\", maxMessages: 50 },\n  maxSteps: 10,\n  suggestions: {\n    suggestions: [\n      {\n        type: \"prompt\",\n        title: \"Summarize account\",\n        prompt: \"Summarize the latest account activity.\",\n      },\n      {\n        type: \"prompt\",\n        title: \"Find customers\",\n        prompt: \"Find customers who need attention.\",\n      },\n    ],\n  },\n});\n",
