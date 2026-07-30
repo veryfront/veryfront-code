@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    52 |      89.7% | Current formal closure evidence remains valid       |
+| Closed                         |    54 |      93.1% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     0 |       0.0% | No reviewed remediation or design work remains open |
-| Touched, revalidation required |     6 |      10.3% | Substantive recovered or current work exists        |
+| Touched, revalidation required |     4 |       6.9% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -45,6 +45,7 @@ stricter closure count.
 - `chat`
 - `client`
 - `config`
+- `data`
 - `discovery`
 - `embedding`
 - `errors`
@@ -80,6 +81,7 @@ stricter closure count.
 - `sandbox`
 - `schedule`
 - `schemas`
+- `security`
 - `studio`
 - `task`
 - `testing`
@@ -97,9 +99,7 @@ None.
 
 ### Touched, revalidation required
 
-- `data`
 - `react`
-- `security`
 - `server`
 - `skill`
 - `workflow`
@@ -127,7 +127,7 @@ The current closed review chain covers `agent`, `build`, `cache`, `channels`, `c
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
 `internal-agents`, `mcp`, `middleware`, `modules`, `observability`, `oauth`, `platform`, `provider`,
 `prompt`, `proxy`, `registry`, `release-assets`, `rendering`, `repositories`, `routing`, `runs`, `runtime`, `sandbox`, `schedule`,
-`schemas`, `studio`, `task`, `tool`, `transforms`, `trigger`, `types`, `webhook`, `resource`, `index.ts`, and
+`schemas`, `security`, `studio`, `task`, `tool`, `transforms`, `trigger`, `types`, `webhook`, `resource`, `index.ts`, and
 `version.ts`.
 The chain also covers `testing` after its portable assertions, BDD adapters,
 process-global test helpers, timing, documentation, and direct consumers were
@@ -236,6 +236,13 @@ revalidated.
 compatibility, browser import-map ownership, bounded memoization, public
 contracts, documentation, and direct consumers were remediated and
 revalidated.
+`security` is closed after its request-input, path, filesystem, CORS, response,
+configuration, worker-isolation, telemetry-redaction, and egress boundaries;
+runtime capability ownership; public surface; documentation; and direct
+consumers were remediated and revalidated. The narrow Platform, Routing,
+Repositories, Release Assets, and Server consumer changes passed their complete
+affected portfolios, so those previously closed units remain closed except for
+the already-open top-level Server revalidation.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
 unit. No unit now lacks a current authoritative-branch review delta; the next
@@ -4410,7 +4417,7 @@ the helper boundary.
 No known unresolved critical or high-confidence Testing production risk
 remains. The `testing` audit unit established the 34-of-58 closure checkpoint.
 
-### Data execution and cache closure checkpoint (breaking cache policy pending)
+### Data execution and cache closure checkpoint
 
 The `data` audit unit owns page-loader selection, request-time and static
 execution, static-path production, result control objects, execution admission,
@@ -4534,23 +4541,25 @@ Current reproducible focused evidence:
   cache, timeout, admission, and isolated-generation contracts without
   publishing internal worker controls as an application API.
 
-One production-policy decision remains open. Static-cache entries currently
-retain and return the hook's original object graph. A caller or the loader can
-mutate that graph after retained-size accounting, leaking state to later
-requests and making byte quotas advisory. Preserving shared reference identity
-is incompatible with isolation. The recommended contract is a framework-owned
-bounded snapshot, a fresh graph for every caller and cold single-flight waiter,
-and deterministic rejection of unsafe values. That is an observable
-object-identity and value-policy change, so it requires explicit breaking-change
-approval; deep-freezing, shallow copying, or remeasuring on reads would be
-incomplete fallbacks and are not accepted as closure.
+The cache-ownership decision is now implemented. Every static-data result is
+captured through one bounded, descriptor-safe traversal before dependency
+success or cache publication. Storage retains an immutable framework-owned
+graph and its exact byte charge; uncached callers, cold single-flight waiters,
+and cache hits each receive a fresh mutable graph. Unsupported values, Proxies,
+accessors, sparse or custom arrays, custom record prototypes, excessive depth,
+excessive node counts, and excessive retained bytes reject deterministically.
+Cycles and repeated references remain graph-correct within each detached copy.
+No deep-freeze, shallow-copy, or remeasurement compatibility path remains.
 
-Formal Data closure now requires only the cache-ownership decision and the
-resulting isolation/value-policy regressions. All non-breaking remediation and
-the final merged-source gates are complete. Until that decision is approved
-and implemented, `data` remains in `Touched, revalidation required`; the
-Data checkpoint itself adds no formal closure. This section records reviewed
-remediation and reproducible evidence, not premature certification.
+Current post-checkpoint revalidation passes all nine Data suites with 385 nested
+steps and the six directly affected Platform, Rendering, Utils, and integration
+suites with another 252 nested steps. All Data sources and tests typecheck; the
+unit passes formatting, lint, diff hygiene, and the repository's core dependency
+and architecture-boundary gates.
+
+No known unresolved critical or high-confidence Data production risk remains.
+The `data` unit is closed at 54 of 58 formal units; four units remain open or
+awaiting top-level revalidation.
 
 ### Root entrypoint closure checkpoint
 
@@ -5984,6 +5993,66 @@ Intentional compatibility boundaries remain explicit:
 No known unresolved critical or high-confidence Proxy production risk remains.
 The `proxy` unit is closed at 52 of 58 formal units; six units remain open or
 awaiting top-level revalidation.
+
+### Security closure checkpoint
+
+The `security` audit unit owns HTTP authentication and response policy, CORS
+and CSRF, request parsing and sanitization, path admission, secure filesystem
+operations, worker isolation and egress, runtime permission declarations, and
+the exact `veryfront/security` public surface. Its direct consumers include the
+Platform filesystem adapters, API module loading, development file handlers,
+release materialization, repositories, and production worker execution.
+
+The current findings are remediated:
+
+- path admission now distinguishes explicitly named lexical containment from
+  physical filesystem validation; absolute paths require an explicit opt-in,
+  missing targets resolve through their nearest existing ancestor, adapters
+  must prove symlink semantics, hostile option objects fail closed, and errors
+  do not disclose trusted roots;
+- `SecureFs` snapshots every required filesystem capability at construction,
+  validates mutation and watch options as own data, keeps temporary directories
+  inside the trust root, and exposes no policy-bypass or policy-mutation API;
+- request limits, parser options, and sanitized schema output are bounded,
+  deterministic JSON-like values; accessors, cycles, sparse arrays, custom
+  prototypes, non-finite numbers, and unsupported values fail before use;
+- synchronous CORS APIs reject asynchronous validators in their type contract
+  and at runtime, malformed policies scrub every policy-owned header, public
+  defaults are immutable, and unknown or malformed cache policies no longer
+  become permissive public-cache headers;
+- security configuration is captured through a bounded, cycle-rejecting,
+  own-data snapshot, so shared config mutation, hostile accessors, custom
+  prototypes, and failed transient inspection cannot alter a published request
+  policy;
+- worker pools retain one structural request admission per worker, use real
+  host heap pressure rather than unenforced memory claims, reject unknown host
+  options, remove unframed generation compatibility, and physically contain
+  missing module paths beneath symlinked parents;
+- duplicate config loaders, the unused in-core rate limiter, fake permission
+  and sandbox facades, misleading resource knobs, and their obsolete Platform
+  adapter namespace were removed instead of retained as compatibility shims;
+  and
+- dashboard, Markdown, snippet, API-loader, repository, and release consumers
+  use the truthful physical or lexical boundary appropriate to their backing
+  store, with explicit symlink-free capabilities in test adapters.
+
+Current reproducible evidence:
+
+- the complete `src/security` portfolio passes under `--trace-leaks` with zero
+  failures, including real worker isolation, egress, path, CORS, parsing, and
+  SecureFs regressions;
+- the complete Platform adapter portfolio passes 122 suites and 1,817 nested
+  steps, while the affected Server and Routing path consumers pass 11 suites
+  and 143 steps and the release executor passes two suites and 91 steps;
+- every Security source and test file typechecks, the core third-party,
+  dependency-boundary, and module-boundary audits pass, and `git diff --check`
+  is clean; and
+- generated API reference validation passes and all 769 documentation links
+  resolve.
+
+No known unresolved critical or high-confidence Security production risk
+remains. The `security` unit is closed at 53 of 58 formal units; five units
+remain open or awaiting top-level revalidation.
 
 ### Skill dependency-free parsing checkpoint (execution cleanup pending)
 
