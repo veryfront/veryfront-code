@@ -21,33 +21,38 @@ const STORIES_DIR = new URL("../../../../storybook/stories/chat/", import.meta.u
 const CHAT_UI_DOC = new URL("../../../../docs/guides/chat-ui.md", import.meta.url).pathname;
 const CHAT_HOOKS_DOC = new URL("../../../../docs/guides/chat-hooks.md", import.meta.url).pathname;
 
-/** The 25 spec components (RFC #2980). */
+/**
+ * The canonical standalone chat components (RFC #2980's v1 scope + the Storybook
+ * "final, renamed component set"). Each earns its own story + DocsPage.
+ *
+ * NOT listed here — per RFC #2980's own "scope cuts & relocations" these are
+ * sub-parts / relocations, still exported + tested but documented where they live,
+ * not as separate stories (so the manifest matches the Storybook target sidebar):
+ *   - `ChatRoot`, `ChatMessageList` — parts of the `Chat` compound (documented in Chat)
+ *   - `MessageActionBar` — thin alias of `Message.Actions` (canonical home: Message)
+ *   - `BranchPicker`, `InlineCitation` — parts of `Message` / `Sources`
+ *   - `ChatErrorBoundary` — RFC: "no chat-specific logic → move to veryfront/ui"
+ *   - `ChatAgentPicker` — RFC: veryfront-adapter piece (backend-coupled)
+ *   - `ChatThemeScope` — a theming wrapper (documented under theming)
+ *   - `AppShell` — the `veryfront/ui` primitive, re-exported (covered by the ui suite)
+ */
 const CHAT_COMPONENTS = [
   "Chat",
-  "ChatRoot",
   "ChatInput",
-  "ChatMessageList",
   "ChatEmptyState",
   "ChatSidebar",
   "ChatActions",
-  "ChatAgentPicker",
-  "ChatThemeScope",
-  "ChatErrorBoundary",
   "Message",
   "ToolCall",
   "Reasoning",
   "Sources",
   "StepIndicator",
-  "InlineCitation",
-  "BranchPicker",
-  "MessageActionBar",
   "AttachmentPill",
   "AttachmentsPanel",
   "AgentCard",
   "AgentPicker",
   "ModelSelector",
   "Markdown",
-  "AppShell",
 ];
 
 /** The spec hooks (RFC #2980). */
