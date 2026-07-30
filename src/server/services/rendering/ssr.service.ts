@@ -8,8 +8,7 @@ import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 import { serverLogger, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "../../handlers/request/ssr/etag-handler.ts";
 import { VeryfrontError } from "#veryfront/errors";
-import { isDataControlResult } from "#veryfront/data/helpers.ts";
-import type { DataResult } from "#veryfront/data/types.ts";
+import { findSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
 import {
   endRenderSession,
@@ -112,36 +111,6 @@ interface RedirectResultContext {
     destination?: unknown;
     permanent?: unknown;
   };
-}
-
-/**
- * Find a thrown `notFound()` / `redirect()` control result anywhere in the
- * error's `cause` chain or an `AggregateError`'s `errors`.
- *
- * `throw notFound()` is documented to work like `return notFound()`. The data
- * loaders already recognise a thrown branded result (server-data-fetcher.ts),
- * but a control result thrown from a page COMPONENT render surfaces here in the
- * SSR error handler instead, where, unrecognised, it became a 500. Matching the
- * brand lets it behave like the returned/loader form: a 404 (custom
- * `not-found.tsx`) or a redirect. The check is on the brand, never the shape.
- *
- * React can surface concurrent boundary failures wrapped in an `AggregateError`,
- * so the walk descends both `cause` and `errors`. A `seen` set keeps a
- * self-referential chain from looping.
- */
-function findThrownControlResult(error: unknown): DataResult | null {
-  const seen = new Set<unknown>();
-  const stack: unknown[] = [error];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current || typeof current !== "object" || seen.has(current)) continue;
-    if (isDataControlResult(current)) return current as DataResult;
-    seen.add(current);
-    stack.push((current as { cause?: unknown }).cause);
-    const aggregated = (current as { errors?: unknown }).errors;
-    if (Array.isArray(aggregated)) stack.push(...aggregated);
-  }
-  return null;
 }
 
 function extractRedirectLocation(
@@ -328,7 +297,7 @@ export class SSRService implements SSRServiceLike {
           try {
             await allReady;
           } catch (error) {
-            if (findThrownControlResult(error)) {
+            if (findSSRControlOutcome(error)) {
               return this.handleRenderError(error, ctx, slug, request, nonce);
             }
           }
@@ -389,17 +358,21 @@ export class SSRService implements SSRServiceLike {
     // as a thrown control result. Recognise the brand and behave like the loader
     // form: notFound to 404 (routed to the segment's custom not-found.tsx by the
     // handler), redirect to 301/302. Otherwise it falls through to a 500.
-    const control = findThrownControlResult(error);
-    if (control?.redirect) {
+    const control = findSSRControlOutcome(error);
+    if (control?.kind === "redirect") {
       logger.debug("SSR control-result redirect (thrown from component)", {
         slug,
-        destination: control.redirect.destination,
-        permanent: control.redirect.permanent,
+        destination: control.location,
+        permanent: control.permanent,
         projectSlug: ctx.projectSlug,
       });
-      return buildRedirectResult(control.redirect, errorObj, slug);
+      return buildRedirectResult(
+        { destination: control.location, permanent: control.permanent },
+        errorObj,
+        slug,
+      );
     }
-    if (control?.notFound) {
+    if (control?.kind === "not-found") {
       logger.debug("SSR control-result notFound (thrown from component)", { slug });
       return buildNotFoundResult(slug);
     }
