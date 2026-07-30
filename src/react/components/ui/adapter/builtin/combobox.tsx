@@ -39,6 +39,7 @@ function ComboboxRoot({
   defaultOpen,
   onOpenChange,
   defaultInputValue,
+  onInputValueChange,
 }: {
   children: React.ReactNode;
   value?: string;
@@ -48,6 +49,7 @@ function ComboboxRoot({
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   defaultInputValue?: string;
+  onInputValueChange?: (value: string) => void;
 }): React.ReactElement {
   const listboxId = React.useId();
   const anchorRef = React.useRef<HTMLInputElement | null>(null);
@@ -76,19 +78,21 @@ function ComboboxRoot({
 
   const setQuery = React.useCallback((next: string) => {
     setQueryState(next);
+    onInputValueChange?.(next);
     setActiveId(undefined);
     if (!isOpenControlled) setInternalOpen(true);
     onOpenChange?.(true);
-  }, [isOpenControlled, onOpenChange]);
+  }, [isOpenControlled, onOpenChange, onInputValueChange]);
 
   const select = React.useCallback((nextValue: string, text: string) => {
     if (!isValueControlled) setInternalValue(nextValue);
     onValueChange?.(nextValue);
     setQueryState(text);
+    onInputValueChange?.(text);
     setActiveId(undefined);
     if (!isOpenControlled) setInternalOpen(false);
     onOpenChange?.(false);
-  }, [isValueControlled, onValueChange, isOpenControlled, onOpenChange]);
+  }, [isValueControlled, onValueChange, isOpenControlled, onOpenChange, onInputValueChange]);
 
   const registerOption = React.useCallback((id: string, value: string, text: string) => {
     const existing = optionsRef.current.find((o) => o.id === id);

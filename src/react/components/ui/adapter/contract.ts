@@ -201,6 +201,9 @@ export interface ComboboxParts {
     defaultOpen?: boolean;
     onOpenChange?: (open: boolean) => void;
     defaultInputValue?: string;
+    /** Fires whenever the input text changes — typing OR filling from a selection.
+     * Autocomplete reads this to treat the free-typed text as the value. */
+    onInputValueChange?: (value: string) => void;
   }>;
   /** The `role="combobox"` text input; `aria-activedescendant`/`-controls` wired. */
   Input: React.FC<

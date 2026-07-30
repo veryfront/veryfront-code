@@ -210,6 +210,16 @@ export {
 } from "./accordion.tsx";
 export { AspectRatio, type AspectRatioProps } from "./aspect-ratio.tsx";
 export {
+  Autocomplete,
+  AutocompleteContent,
+  type AutocompleteContentProps,
+  AutocompleteInput,
+  type AutocompleteInputProps,
+  AutocompleteItem,
+  type AutocompleteItemProps,
+  type AutocompleteProps,
+} from "./autocomplete.tsx";
+export {
   HoverCard,
   HoverCardContent,
   type HoverCardContentProps,

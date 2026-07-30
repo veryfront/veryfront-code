@@ -82,6 +82,7 @@ const UI: NavGridEntry[] = [
   { title: "Slider", id: "ui-slider--docs" },
   { title: "Accordion", id: "ui-accordion--docs" },
   { title: "Combobox", id: "ui-combobox--docs" },
+  { title: "Autocomplete", id: "ui-autocomplete--docs" },
   { title: "ContextMenu", id: "ui-contextmenu--docs" },
   { title: "HoverCard", id: "ui-hovercard--docs" },
   { title: "Menubar", id: "ui-menubar--docs" },

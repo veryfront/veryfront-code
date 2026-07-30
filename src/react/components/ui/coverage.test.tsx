@@ -118,7 +118,7 @@ export const UI_COMPONENTS: UiComponent[] = [
     adapterKey: "combobox",
     status: "shipped",
   },
-  { name: "Autocomplete", kind: "overlay", interactive: true, status: "planned" },
+  { name: "Autocomplete", kind: "overlay", interactive: true, status: "shipped" },
   { name: "HoverCard", kind: "overlay", interactive: true, status: "shipped" },
   { name: "ContextMenu", kind: "overlay", interactive: true, status: "shipped" },
   { name: "Toast", kind: "overlay", interactive: true, status: "shipped" },
