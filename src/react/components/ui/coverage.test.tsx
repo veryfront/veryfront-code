@@ -94,7 +94,7 @@ export const UI_COMPONENTS: UiComponent[] = [
   { name: "ColorModeToggle", kind: "visual", interactive: false, status: "shipped" },
 
   // ---- PLANNED (gaps vs Base UI / Radix / shadcn) — RED until built ----
-  { name: "Separator", kind: "visual", interactive: false, status: "planned" },
+  { name: "Separator", kind: "visual", interactive: false, status: "shipped" },
   { name: "Toggle", kind: "form", interactive: false, status: "planned" },
   { name: "ToggleGroup", kind: "form", interactive: true, status: "planned" },
   { name: "Slider", kind: "form", interactive: true, status: "planned" },

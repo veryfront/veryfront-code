@@ -102,6 +102,7 @@ const expectedRuntimeExports = [
   "SelectSeparator",
   "SelectTrigger",
   "SelectValue",
+  "Separator",
   "Shimmer",
   "Skeleton",
   "Slot",

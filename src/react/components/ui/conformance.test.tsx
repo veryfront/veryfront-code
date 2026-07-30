@@ -53,6 +53,7 @@ import { Drawer, DrawerContent, DrawerTrigger } from "./drawer.tsx";
 import { Command, CommandItem, CommandList } from "./command.tsx";
 import { AppShell } from "./app-shell.tsx";
 import { ColorModeProvider, ColorModeToggle } from "./color-mode.tsx";
+import { Separator } from "./separator.tsx";
 
 // ---------------------------------------------------------------------------
 // jsdom harness — installs a fresh DOM per render and stubs the browser APIs
@@ -157,6 +158,7 @@ const LEAVES: LeafCase[] = [
   { name: "Textarea", render: (p) => <Textarea {...p} /> },
   { name: "Label", render: (p) => <Label {...p}>Name</Label> },
   { name: "Card", render: (p) => <Card {...p}>content</Card> },
+  { name: "Separator", render: (p) => <Separator {...p} /> },
 ];
 
 describe("veryfront/ui conformance — leaves (one node · ref · {...props} · className)", () => {

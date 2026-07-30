@@ -37,13 +37,13 @@ engine.
 
 ## The primitives
 
-| Category               | Components                                                                                                                                                  |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Layout / visual**    | `Button`, `IconButton`, `Card`, `Badge`, `Pill`, `Tag`, `Avatar`, `Alert`, `Status`, `List`, `Skeleton`, `Shimmer`, `ProgressBar`, `ScrollFade`, `FileType` |
-| **Form**               | `Input`, `Textarea`, `Label`, `Checkbox`, `Radio`, `Switch`                                                                                                 |
-| **Overlay / floating** | `Popover`, `Dialog`, `Drawer`, `DropdownMenu`, `Tooltip`, `Select`, `Command`                                                                               |
-| **Structure**          | `Tabs`, `Collapsible`, `AppShell`                                                                                                                           |
-| **Theming**            | `ColorModeProvider`, `ColorModeToggle`, `DesignTokenStyle`                                                                                                  |
+| Category               | Components                                                                                                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Layout / visual**    | `Button`, `IconButton`, `Card`, `Badge`, `Pill`, `Tag`, `Avatar`, `Alert`, `Status`, `List`, `Skeleton`, `Shimmer`, `ProgressBar`, `ScrollFade`, `FileType`, `Separator` |
+| **Form**               | `Input`, `Textarea`, `Label`, `Checkbox`, `Radio`, `Switch`                                                                                                              |
+| **Overlay / floating** | `Popover`, `Dialog`, `Drawer`, `DropdownMenu`, `Tooltip`, `Select`, `Command`                                                                                            |
+| **Structure**          | `Tabs`, `Collapsible`, `AppShell`                                                                                                                                        |
+| **Theming**            | `ColorModeProvider`, `ColorModeToggle`, `DesignTokenStyle`                                                                                                               |
 
 Each compound (e.g. `Dialog`) exposes its parts as named exports **and** as a
 namespace (`DialogTrigger` ≡ `Dialog.Trigger`) so both import styles work and the
