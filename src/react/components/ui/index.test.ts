@@ -117,6 +117,7 @@ const expectedRuntimeExports = [
   "TagGroup",
   "TagLink",
   "Textarea",
+  "Toggle",
   "Tooltip",
   "TooltipContent",
   "TooltipProvider",
