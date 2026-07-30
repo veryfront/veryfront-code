@@ -86,8 +86,8 @@ wrapInHTMLShell(
 ```
 
 `generateHTMLShellParts` accepts the same metadata and options, followed by
-optional params, props, Tailwind candidate content, and a prefetched project-CSS
-promise:
+optional params, props, a stylesheet candidate source, and a prefetched
+project-CSS promise:
 
 ```ts
 generateHTMLShellParts(
@@ -95,7 +95,7 @@ generateHTMLShellParts(
   options,
   params?,
   props?,
-  contentForTailwind?,
+  stylesheetCandidateSource?,
   projectCSSPromise?,
 ): Promise<{ start: string; end: string }>
 ```
@@ -143,6 +143,19 @@ The shell owns:
 The top-level metadata and options inputs must be ordinary data objects.
 Accessors, enumerable symbol keys, non-plain prototypes, failed reflective
 inspection, and objects beyond the field limit are rejected before assembly.
+
+### CSS provider boundary
+
+HTML extracts class-name candidates and coordinates CSS generation through the
+provider-neutral `CSSProcessor` contract. One captured generation session binds
+the processor's `cacheIdentity`, `defaultStylesheet`, compiler, and any selected
+`CSSOptimizationEngine` to the artifact and cache identity. The module does not
+import a vendor compiler, base stylesheet, or plugin loader.
+
+`options.globalCSS` carries the already selected project stylesheet. When it is
+absent, the registered processor's `defaultStylesheet` is used. Missing or
+malformed required contracts and compilation failures propagate to the owning
+server or build path; HTML does not emit an empty or vendor-specific fallback.
 
 ## HTML generation options
 

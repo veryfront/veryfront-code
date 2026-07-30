@@ -110,7 +110,7 @@ export interface PageDataResponse {
   releaseAssetModules?: Record<string, string>;
   /** Headings extracted from MDX for sidebar/TOC navigation */
   headings?: Array<{ id: string; text: string; level: number }>;
-  /** JIT-compiled Tailwind CSS for this page (for SPA navigation in prod mode) */
+  /** Processor-generated CSS for this page (for SPA navigation in production mode). */
   css?: string;
   /** Client action for the SPA CSS tag when no route CSS payload is sent. */
   cssAction?: "clear";

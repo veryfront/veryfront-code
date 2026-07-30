@@ -1,61 +1,12 @@
-export interface SharpMetadata {
-  width?: number;
-  height?: number;
-  format?: string;
-  size?: number;
-  space?: string;
-  channels?: number;
-  depth?: string;
-  density?: number;
-  chromaSubsampling?: string;
-  isProgressive?: boolean;
-  hasProfile?: boolean;
-  hasAlpha?: boolean;
-}
+import type { ImageOptimizationFormat } from "#veryfront/extensions/image/index.ts";
+export type {
+  ImageVariant,
+  OptimizedImageManifestRenderSession,
+  OptimizedImageManifestSnapshot,
+  OptimizedImageMetadata,
+} from "#veryfront/types";
 
-type SharpResizeFit = "cover" | "contain" | "fill" | "inside" | "outside";
-
-interface SharpResizeOptions {
-  fit?: SharpResizeFit;
-  withoutEnlargement?: boolean;
-}
-
-interface SharpWebpOptions {
-  quality?: number;
-}
-
-interface SharpAvifOptions {
-  quality?: number;
-}
-
-interface SharpJpegOptions {
-  quality?: number;
-  progressive?: boolean;
-}
-
-interface SharpPngOptions {
-  compressionLevel?: number;
-  adaptiveFiltering?: boolean;
-}
-
-export interface SharpInstance {
-  metadata(): Promise<SharpMetadata>;
-  clone(): SharpInstance;
-  resize(
-    width: number | null,
-    height?: number | null,
-    options?: SharpResizeOptions,
-  ): SharpInstance;
-  webp(options?: SharpWebpOptions): SharpInstance;
-  avif(options?: SharpAvifOptions): SharpInstance;
-  jpeg(options?: SharpJpegOptions): SharpInstance;
-  png(options?: SharpPngOptions): SharpInstance;
-  toBuffer(): Promise<Uint8Array>;
-}
-
-export type SharpConstructor = (input: Uint8Array) => SharpInstance;
-
-export type ImageFormat = "webp" | "avif" | "jpeg" | "png";
+export type ImageFormat = ImageOptimizationFormat;
 
 export interface ImageOptimizationOptions {
   enabled?: boolean;
@@ -67,24 +18,6 @@ export interface ImageOptimizationOptions {
   inputDir?: string;
   outputDir?: string;
   preserveOriginal?: boolean;
-}
-
-export interface OptimizedImageMetadata {
-  original: string;
-  /** Source file size in bytes. Optional for manifests produced before this field existed. */
-  originalSize?: number;
-  variants: ImageVariant[];
-  defaultFormat: string;
-  aspectRatio: number;
-}
-
-export interface ImageVariant {
-  format: ImageFormat;
-  size: number;
-  width: number;
-  height: number;
-  path: string;
-  fileSize: number;
 }
 
 export interface ImageOptimizationStats {

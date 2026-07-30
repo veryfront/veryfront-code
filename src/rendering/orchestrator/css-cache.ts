@@ -9,6 +9,7 @@
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { assertCSSPipelineIdentity } from "#veryfront/utils";
 
 /** Timeout for CSS generation SSR (shorter than full SSR since it's optional) */
 export const CSS_SSR_TIMEOUT_MS = 5_000;
@@ -18,7 +19,7 @@ export const PAGE_CSS_CACHE_MAX_SIZE = 200;
 
 /**
  * Per-page CSS cache to avoid redundant SSR for CSS generation.
- * Key: versioned JSON tuple of projectId, environment, slug, and contentVersion
+ * Key: versioned JSON tuple of project, environment, route, content, and CSS pipeline identity
  * Value: Generated CSS string
  * Uses LRU eviction so frequently-used pages' CSS is retained under cache pressure.
  */
@@ -42,19 +43,30 @@ export function getPageCssCacheKey(
   environment: string | undefined,
   slug: string,
   projectUpdatedAt: string | undefined,
+  cssPipelineIdentity: string,
 ): string {
   if (typeof projectId !== "string" || projectId.length === 0) {
     throw INVALID_ARGUMENT.create({
       detail: "Page CSS cache key requires project identity",
     });
   }
+  let capturedCSSPipelineIdentity: string;
+  try {
+    capturedCSSPipelineIdentity = assertCSSPipelineIdentity(cssPipelineIdentity);
+  } catch (cause) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Page CSS cache key requires a canonical CSS pipeline identity",
+      cause,
+    });
+  }
 
-  return `veryfront:page-css:v1:${
+  return `veryfront:page-css:v2:${
     JSON.stringify([
       projectId,
       environment ?? null,
       slug,
       projectUpdatedAt ?? null,
+      capturedCSSPipelineIdentity,
     ])
   }`;
 }

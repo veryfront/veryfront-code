@@ -39,7 +39,7 @@ if (!manifest) throw new Error("Invalid release asset manifest");
 | `clearReleaseAssetManifestCache` | Clear the cache and fetcher registry (tests / adapter teardown). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L546) |
 | `configureReleaseAssetManifestFetcher` | Register a single global fetcher (for tests / simple single-project setups). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L201) |
 | `contentTypeForExtension` | Resolve the content type for an extension, or null if not allowed. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L90) |
-| `createCompileProjectCss` | Build a `compileProjectCss` function bound to a specific release build. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L69) |
+| `createCompileProjectCss` | Build a `compileProjectCss` function bound to a specific release build. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L75) |
 | `getReadyManifestForRender` | Return a ready manifest for `releaseId` if one is cached, else null. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L268) |
 | `getReadyManifestForRenderAsync` | Await a ready manifest for `releaseId`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L321) |
 | `isAllowedReleaseAssetContentType` | True when the value is a valid allowlisted release asset content type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L99) |
@@ -59,9 +59,9 @@ if (!manifest) throw new Error("Invalid release asset manifest");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `CompileProjectCssOptions` | Configuration captured by a release-scoped CSS compiler. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L47) |
-| `CompileProjectCssResult` | Successful bounded CSS compilation output. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L41) |
-| `CompileProjectCssRuntimeOptions` | Per-build configuration resolved from the materialized release. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L55) |
+| `CompileProjectCssOptions` | Configuration captured by a release-scoped CSS compiler. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L52) |
+| `CompileProjectCssResult` | Successful bounded CSS compilation output. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L45) |
+| `CompileProjectCssRuntimeOptions` | Per-build configuration resolved from the materialized release. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L60) |
 | `PreparedReleaseAsset` | Prepared content-addressed asset bytes ready for upload. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/build-executor.ts#L265) |
 | `ReadyManifestReadOptions` | Controls revalidation behavior for awaited manifest reads. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L73) |
 | `ReleaseAssetBuildClient` | Subset of the API client used by the builder (eases testing). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/build-executor.ts#L209) |

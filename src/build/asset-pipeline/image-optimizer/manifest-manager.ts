@@ -15,6 +15,7 @@ import {
   MAX_IMAGE_MANIFEST_BYTES,
   SUPPORTED_FORMATS,
 } from "./constants.ts";
+import { MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS } from "#veryfront/extensions/image/index.ts";
 import type { ImageVariant, OptimizedImageMetadata } from "./types.ts";
 
 const supportedFormats = new Set<string>(SUPPORTED_FORMATS);
@@ -128,14 +129,25 @@ function isOptimizedImageMetadata(
   const metadata = value as Partial<OptimizedImageMetadata>;
   if (
     !isSafeImageManifestPath(metadata.original) ||
-    (metadata.originalSize !== undefined &&
-      (!Number.isSafeInteger(metadata.originalSize) ||
-        metadata.originalSize <= 0)) ||
+    typeof metadata.originalSize !== "number" ||
+    !Number.isSafeInteger(metadata.originalSize) ||
+    metadata.originalSize <= 0 ||
     !Array.isArray(metadata.variants) ||
     metadata.variants.length === 0 ||
     typeof metadata.defaultFormat !== "string" ||
     !supportedFormats.has(metadata.defaultFormat) ||
-    !isPositiveFinite(metadata.aspectRatio)
+    !isPositiveFinite(metadata.aspectRatio) ||
+    typeof metadata.engineIdentity !== "string" ||
+    metadata.engineIdentity.length === 0 ||
+    metadata.engineIdentity.length >
+      MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS ||
+    metadata.engineIdentity.trim() !== metadata.engineIdentity ||
+    metadata.engineIdentity.normalize("NFC") !== metadata.engineIdentity ||
+    /\p{Cc}/u.test(metadata.engineIdentity) ||
+    typeof metadata.quality !== "number" ||
+    !Number.isInteger(metadata.quality) ||
+    metadata.quality < 1 ||
+    metadata.quality > 100
   ) {
     return false;
   }
@@ -160,7 +172,8 @@ function isOptimizedImageMetadata(
       variant.height! <= 0 ||
       variant.height! > MAX_IMAGE_DIMENSION ||
       !Number.isSafeInteger(variant.fileSize) ||
-      variant.fileSize! <= 0
+      variant.fileSize! <= 0 ||
+      variant.quality !== metadata.quality
     ) {
       return false;
     }

@@ -2569,7 +2569,7 @@ async function runBuildInner(
           limit: MAX_CSS_CANDIDATES,
         });
       } else {
-        const stylesheetPath = releaseConfig.tailwind?.stylesheet ?? input.stylesheetPath;
+        const stylesheetPath = releaseConfig.styles?.stylesheet ?? input.stylesheetPath;
         const resolvedStylesheet = resolveProjectStylesheet(sourceByPath, stylesheetPath);
         const stylesheet = mergeModuleCssImports(sourceByPath, resolvedStylesheet);
         const stylesheetBytes = stylesheet ? textEncoder.encode(stylesheet).byteLength : 0;

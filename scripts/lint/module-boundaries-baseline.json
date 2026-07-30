@@ -2,9 +2,6 @@
   "broadBarrelImports": [
     "browser:src/react/components/LayoutComponent.tsx -> #veryfront/utils",
     "browser:src/react/components/ProviderComponent.tsx -> #veryfront/utils",
-    "browser:src/react/components/optimized-image/OptimizedImage.tsx -> #veryfront/utils",
-    "browser:src/react/components/optimized-image/SimpleOptimizedImage.tsx -> #veryfront/utils",
-    "browser:src/react/components/optimized-image/useOptimizedImage.ts -> #veryfront/utils",
     "browser:src/rendering/client/prefetch.ts -> #veryfront/utils",
     "browser:src/rendering/client/router.ts -> #veryfront/utils",
     "browser:src/rendering/client/state-bridge.ts -> #veryfront/utils",

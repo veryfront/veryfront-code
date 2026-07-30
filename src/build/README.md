@@ -14,11 +14,17 @@ The Build module owns:
 - public-asset copying, output manifests, redirects, service workers, and
   optional compression;
 - MDX compilation and directory watching;
-- standalone CSS, image, and Tailwind build utilities;
+- provider-neutral CSS orchestration plus standalone image build utilities;
 - embedded-runtime bundle generation.
 
 It does not own development serving, runtime request dispatch, deployment, or
 runtime adapter selection.
+
+CSS compilation, optimization, and purging implementations are outside this
+module. Build resolves `CSSProcessor`, `CSSOptimizationEngine`, and
+`CSSPurgingEngine` contracts supplied by explicitly composed extensions. It
+does not import vendor engines or substitute a local fallback when a requested
+contract is unavailable.
 
 ## Public package surface
 
@@ -122,7 +128,7 @@ portable output collisions, and mismatched manifest references fail closed.
 
 ```text
 src/build/
-├── asset-pipeline/       Standalone CSS, image, and Tailwind processors
+├── asset-pipeline/       Provider-neutral CSS and image orchestration
 ├── bundler/              Project-module resolution and code splitting
 ├── compiler/             MDX compilation and watching
 ├── embedded/             Embedded-runtime preset generation
@@ -130,7 +136,6 @@ src/build/
 ├── renderer/             Build-time MDX and script bundling services
 ├── utils/                Build-local utilities
 ├── index.ts              Public `veryfront/build` package surface
-├── binary-plugin-includes.ts
 └── vendor-cache.ts
 ```
 
@@ -144,6 +149,8 @@ The detailed production pipeline is documented in
 - Platform adapters provide host capabilities; Build owns build semantics.
 - Transforms own reusable source transformations.
 - Release Assets owns dependency-manifest parsing and validation.
+- Extensions own CSS compiler, optimizer, purger, base stylesheet, and plugin
+  implementations; Build owns their validated orchestration.
 - Server owns `BuildOptions` and `BuildStats` because the CLI and server share
   those contracts.
 

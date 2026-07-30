@@ -6,6 +6,9 @@
 
 export { type FileContext, VeryfrontApiClient } from "./client.ts";
 export {
+  assertStyleArtifactHash,
+  assertStyleArtifactResolutionTuple,
+  createStyleArtifactTuple,
   type EnsureStyleArtifactBuildInput,
   type FileDetail,
   type FileListResult,
@@ -13,7 +16,9 @@ export {
   type ListProjectsOptions,
   type ProjectStyleArtifactResolution,
   type ResolveStyleArtifactInput,
+  STYLE_ARTIFACT_CONTENT_TYPE,
   type StyleArtifactSelector,
+  type StyleArtifactTuple,
   type UpsertStyleArtifactInput,
   VeryfrontAPIOperations,
 } from "./operations.ts";

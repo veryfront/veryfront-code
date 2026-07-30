@@ -1,7 +1,7 @@
 /**
- * Tailwind CSS candidate extraction from source files.
+ * CSS processor candidate extraction from source files.
  *
- * Extracts class name candidates from source code for Tailwind CSS compilation.
+ * Extracts class-name candidates from source code for provider-owned CSS compilation.
  *
  * @module html/styles-builder/candidate-extractor
  */

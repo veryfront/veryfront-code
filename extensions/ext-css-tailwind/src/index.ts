@@ -1,51 +1,97 @@
-/**
- * ext-css-tailwind — CSSProcessor implementation backed by Tailwind CSS v4.
- *
- * Provides the `CSSProcessor` contract:
- *  - `compile(stylesheet, options)` — delegates to tailwindcss `compile()`
- *    and returns a compiler whose `build(candidates)` emits CSS for the
- *    class-name candidates discovered at render time.
- *
- * The extension also installs three `globalThis` shims on setup so that
- * Tailwind plugin bundles loaded at runtime from esm.sh can bind their
- * `tailwindcss/plugin`, `tailwindcss/defaultTheme`, and `tailwindcss/colors`
- * imports to the same tailwindcss copy this extension ships. Core's
- * `plugin-loader.ts` rewrites plugin bundle code to reference these shims
- * by name; without the shims installed, dynamic plugin loading fails.
- *
- * @module extensions/ext-css-tailwind
- */
+/** Tailwind CSS implementation of the provider-neutral CSSProcessor contract. */
 
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { ExtensionFactory } from "veryfront/extensions";
-import type { CSSCompileOptions, CSSCompiler, CSSProcessor } from "veryfront/extensions/css";
-
+import { type CSSCompiler, type CSSProcessor, CSSProcessorName } from "veryfront/extensions/css";
+import { IMPORT_RESOLUTION_ERROR } from "veryfront/errors";
 import { compile } from "tailwindcss";
-import plugin from "tailwindcss/plugin";
-import defaultTheme from "tailwindcss/defaultTheme";
-import colors from "tailwindcss/colors";
 import tailwindPackage from "tailwindcss/package.json" with { type: "json" };
+import extensionPackage from "../deno.json" with { type: "json" };
+import { loadPlugin } from "./plugin-loader.ts";
+import { TAILWIND_PLUGIN_POLICY_IDENTITY } from "./plugin-policy.ts";
 
-type ShimGlobal = Record<string, unknown>;
-
-function installTailwindPluginShims(): void {
-  const g = globalThis as ShimGlobal;
-  g.__tailwindPluginShim = { default: plugin, __esModule: true };
-  g.__tailwindDefaultThemeShim = { default: defaultTheme, __esModule: true };
-  g.__tailwindColorsShim = { default: colors, __esModule: true };
+const ENGINE_SEMANTICS_VERSION = "veryfront.css-tailwind.v4";
+export const TAILWIND_DEFAULT_STYLESHEET = `@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@custom-variant dark (&:is(.dark, [data-theme="dark"]) *, &:is(.dark, [data-theme="dark"]));`;
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-class TailwindCSSProcessor implements CSSProcessor {
-  readonly cacheIdentity = `tailwindcss@${tailwindPackage.version}`;
+function loadTailwindBaseStylesheet(): string {
+  const resolved = import.meta.resolve("tailwindcss/index.css");
+  try {
+    return readFileSync(new URL(resolved), "utf8");
+  } catch (cause) {
+    throw IMPORT_RESOLUTION_ERROR.create({
+      detail: `ext-css-tailwind could not read its pinned base stylesheet: ${resolved}`,
+      cause,
+    });
+  }
+}
 
-  async compile(stylesheet: string, options: CSSCompileOptions): Promise<CSSCompiler> {
+const tailwindBaseStylesheet = loadTailwindBaseStylesheet();
+
+function assertEmptyConfig(value: unknown): void {
+  if (value === undefined) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("ext-css-tailwind config must be an object");
+  }
+  let prototype: object | null;
+  let keys: PropertyKey[];
+  try {
+    prototype = Object.getPrototypeOf(value);
+    keys = Reflect.ownKeys(Object.getOwnPropertyDescriptors(value));
+  } catch (cause) {
+    throw new TypeError("ext-css-tailwind config could not be inspected", { cause });
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError("ext-css-tailwind config must not inherit configuration");
+  }
+  if (keys.length !== 0) {
+    throw new TypeError("ext-css-tailwind does not accept configuration properties");
+  }
+}
+
+export class TailwindCSSProcessor implements CSSProcessor {
+  readonly cacheIdentity: string;
+  readonly defaultStylesheet = TAILWIND_DEFAULT_STYLESHEET;
+
+  constructor() {
+    this.cacheIdentity = [
+      ENGINE_SEMANTICS_VERSION,
+      `ext-css-tailwind@${extensionPackage.version}`,
+      `tailwindcss@${tailwindPackage.version}`,
+      `base=${sha256(tailwindBaseStylesheet)}`,
+      `default=${sha256(this.defaultStylesheet)}`,
+      `plugins=${sha256(TAILWIND_PLUGIN_POLICY_IDENTITY)}`,
+    ].join(";");
+    Object.freeze(this);
+  }
+
+  async compile(stylesheet: string): Promise<CSSCompiler> {
     const native = await compile(stylesheet, {
-      base: options.base,
-      loadStylesheet: options.loadStylesheet,
-      loadModule: async (id: string) => {
-        const loaded = await options.loadModule(id);
-        // deno-lint-ignore no-explicit-any -- loaded plugin modules are opaque to the contract
-        return { module: loaded.module as any, base: loaded.base, path: loaded.path };
+      base: "/",
+      loadStylesheet: (id: string) => {
+        if (id !== "tailwindcss") {
+          throw IMPORT_RESOLUTION_ERROR.create({
+            detail: `ext-css-tailwind cannot resolve stylesheet import "${id}"`,
+          });
+        }
+        return Promise.resolve({
+          content: tailwindBaseStylesheet,
+          base: "/",
+          path: "/tailwindcss/index.css",
+        });
       },
+      loadModule: (id: string) =>
+        Promise.resolve({
+          // deno-lint-ignore no-explicit-any -- Tailwind's vendor API accepts opaque plugin modules.
+          module: loadPlugin(id) as any,
+          base: "/",
+          path: "/",
+        }),
     });
     return {
       build(candidates: string[]): string {
@@ -55,29 +101,18 @@ class TailwindCSSProcessor implements CSSProcessor {
   }
 }
 
-const extTailwind: ExtensionFactory = () => {
-  const impl = new TailwindCSSProcessor();
+const extTailwind: ExtensionFactory = (config) => {
+  assertEmptyConfig(config);
   return {
     name: "ext-css-tailwind",
-    version: "0.1.0",
-    contracts: {
-      provides: ["CSSProcessor"],
-    },
-    capabilities: [
-      { type: "net:outbound", hosts: ["esm.sh"] },
-    ],
+    version: extensionPackage.version,
+    contracts: { provides: [CSSProcessorName] },
+    capabilities: [{ type: "fs:read" }],
     setup(ctx) {
-      installTailwindPluginShims();
-      ctx.provide("CSSProcessor", impl);
-      ctx.logger.debug("[ext-css-tailwind] CSSProcessor registered");
-    },
-    teardown() {
-      // Shims stay installed — removing them could break in-flight plugin
-      // loads. The globalThis pollution is intentional and scoped to keys
-      // with `__tailwind` prefix.
+      ctx.provide(CSSProcessorName, new TailwindCSSProcessor());
+      ctx.logger.debug(`[ext-css-tailwind] ${CSSProcessorName} registered`);
     },
   };
 };
 
 export default extTailwind;
-export { TailwindCSSProcessor };

@@ -7,6 +7,7 @@ import {
   resolve,
 } from "#veryfront/compat/path/index.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
+import type { ImageOptimizationVariantRequest } from "#veryfront/extensions/image/index.ts";
 import {
   createFileSystem,
   type FileSystem,
@@ -19,31 +20,45 @@ import { DEFAULT_BUILD_CONCURRENCY, logger } from "#veryfront/utils";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import { isContainedBuildPath } from "../../bundler/project-module-resolver.ts";
 import { createBuildPublication } from "../../production-build/build/build-publication.ts";
-import { calculateRequiredAspectRatio, generateSrcSet } from "../../utils/asset-utils.ts";
+import {
+  calculateRequiredAspectRatio,
+  generateSrcSet,
+  getVariantPath,
+} from "../../utils/asset-utils.ts";
 import { hasControlCharacters } from "../../utils/string-validation.ts";
 import {
   DEFAULT_OPTIONS,
   MAX_IMAGE_DIMENSION,
+  MAX_IMAGE_INPUT_BYTES,
   MAX_IMAGE_OUTPUT_SIZES,
   SUPPORTED_FORMATS,
 } from "./constants.ts";
 import { findImages } from "./image-finder.ts";
-import { loadSharp } from "./sharp-loader.ts";
 import { isSafeImageManifestPath, writeManifest } from "./manifest-manager.ts";
-import { generateImageVariants } from "./variant-generator.ts";
+import {
+  acquireConfiguredImageOptimization,
+  type ImageOptimizationSession,
+} from "./optimization-engine.ts";
 import type {
   ImageFormat,
   ImageOptimizationOptions,
   ImageOptimizationStats,
+  ImageVariant,
   OptimizedImageMetadata,
-  SharpConstructor,
 } from "./types.ts";
 
 const supportedFormats = new Set<ImageFormat>(SUPPORTED_FORMATS);
 
 export interface ImageOptimizerDependencies {
   fs?: FileSystem;
-  loadSharp?: () => Promise<SharpConstructor>;
+  /** Explicitly supplied session for composition tests and internal builds. */
+  optimizationSession?: ImageOptimizationSession;
+  /** Physical boundary for an output tree outside projectDir. */
+  outputBoundary?: string;
+  /** Explicit public URL root used by generateSrcSet(). */
+  publicPath?: string;
+  /** Cancels current and subsequent engine operations. */
+  signal?: AbortSignal;
 }
 
 /** @internal — exported for testing */
@@ -99,6 +114,25 @@ function portablePath(path: string): string {
   return path.replaceAll("\\", "/");
 }
 
+function safePublicPath(value: string): void {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_PATH_LENGTH_CHARS ||
+    !value.startsWith("/") ||
+    value.endsWith("/") ||
+    value.includes("\\") ||
+    value.includes("?") ||
+    value.includes("#") ||
+    hasControlCharacters(value) ||
+    value.split("/").some((segment, index) =>
+      index > 0 && (segment === "" || segment.startsWith("."))
+    )
+  ) {
+    throw new TypeError("Image publicPath must be a safe absolute URL path");
+  }
+}
+
 function cloneMetadata(metadata: OptimizedImageMetadata): OptimizedImageMetadata {
   return {
     ...metadata,
@@ -116,11 +150,13 @@ function cloneManifest(
 
 export class ImageOptimizer {
   private options: Required<ImageOptimizationOptions>;
-  private sharp: SharpConstructor | null = null;
+  private optimizationSession: ImageOptimizationSession | null = null;
   private imageManifest = new Map<string, OptimizedImageMetadata>();
   private fs: FileSystem;
-  private loadSharpDependency: () => Promise<SharpConstructor>;
-  private outputUrlPath: string;
+  private readonly configuredSession?: ImageOptimizationSession;
+  private readonly signal?: AbortSignal;
+  private outputBoundary: string;
+  private outputUrlPath?: string;
 
   constructor(
     options: ImageOptimizationOptions = {},
@@ -148,19 +184,26 @@ export class ImageOptimizer {
         : options.preserveOriginal,
     };
     this.fs = dependencies.fs ?? createFileSystem();
-    this.loadSharpDependency = dependencies.loadSharp ?? loadSharp;
+    this.configuredSession = dependencies.optimizationSession;
+    this.signal = dependencies.signal;
+    this.outputBoundary = dependencies.outputBoundary ?? this.options.projectDir;
     this.validateConfiguration();
-    this.outputUrlPath = portablePath(
-      relative(this.options.projectDir, this.options.outputDir),
-    );
+    if (dependencies.publicPath !== undefined) {
+      safePublicPath(dependencies.publicPath);
+      this.outputUrlPath = dependencies.publicPath;
+    }
   }
 
   private validateConfiguration(): void {
     safeConfiguredPath(this.options.projectDir, "Image project directory");
     safeConfiguredPath(this.options.inputDir, "Image input directory");
     safeConfiguredPath(this.options.outputDir, "Image output directory");
+    safeConfiguredPath(this.outputBoundary, "Image output boundary");
     if (!isAbsolute(this.options.projectDir)) {
       throw new TypeError("Image project directory must be absolute");
+    }
+    if (!isAbsolute(this.outputBoundary)) {
+      throw new TypeError("Image output boundary must be absolute");
     }
     if (typeof this.options.enabled !== "boolean") {
       throw new TypeError("Image optimization enabled must be a boolean");
@@ -183,6 +226,7 @@ export class ImageOptimizer {
       throw new TypeError("Image formats must be a non-empty, unique supported list");
     }
     if (
+      this.options.sizes.length === 0 ||
       this.options.sizes.length > MAX_IMAGE_OUTPUT_SIZES ||
       new Set(this.options.sizes).size !== this.options.sizes.length ||
       this.options.sizes.some((size) =>
@@ -195,6 +239,7 @@ export class ImageOptimizer {
     }
 
     const projectDir = resolve(this.options.projectDir);
+    const outputBoundary = resolve(this.outputBoundary);
     const inputDir = isAbsolute(this.options.inputDir)
       ? resolve(this.options.inputDir)
       : resolve(projectDir, this.options.inputDir);
@@ -203,11 +248,13 @@ export class ImageOptimizer {
       : resolve(projectDir, this.options.outputDir);
     if (
       inputDir === projectDir ||
-      outputDir === projectDir ||
+      outputDir === outputBoundary ||
       !isContainedBuildPath(projectDir, inputDir) ||
-      !isContainedBuildPath(projectDir, outputDir)
+      !isContainedBuildPath(outputBoundary, outputDir)
     ) {
-      throw new TypeError("Image input and output directories must be inside the project");
+      throw new TypeError(
+        "Image input and output directories must remain inside their configured boundaries",
+      );
     }
     if (
       isContainedBuildPath(inputDir, outputDir) ||
@@ -219,6 +266,7 @@ export class ImageOptimizer {
     this.options.projectDir = projectDir;
     this.options.inputDir = inputDir;
     this.options.outputDir = outputDir;
+    this.outputBoundary = outputBoundary;
   }
 
   private async validateFilesystemBoundaries(): Promise<void> {
@@ -247,16 +295,20 @@ export class ImageOptimizer {
       }
     }
 
-    const [canonicalProject, canonicalInput, canonicalOutput] = await Promise.all([
-      realPath(this.options.projectDir),
-      realPath(this.options.inputDir),
-      canonicalTargetPath(this.options.outputDir),
-    ]);
+    const [canonicalProject, canonicalInput, canonicalOutputBoundary, canonicalOutput] =
+      await Promise.all([
+        realPath(this.options.projectDir),
+        realPath(this.options.inputDir),
+        canonicalTargetPath(this.outputBoundary),
+        canonicalTargetPath(this.options.outputDir),
+      ]);
     if (
       !isContainedBuildPath(canonicalProject, canonicalInput) ||
-      !isContainedBuildPath(canonicalProject, canonicalOutput)
+      !isContainedBuildPath(canonicalOutputBoundary, canonicalOutput)
     ) {
-      throw new TypeError("Image input and output must remain inside the physical project");
+      throw new TypeError(
+        "Image input and output must remain inside their physical boundaries",
+      );
     }
     if (
       isContainedBuildPath(canonicalInput, canonicalOutput) ||
@@ -274,14 +326,9 @@ export class ImageOptimizer {
           logger.info("Image optimization is disabled");
           return false;
         }
-        if (!this.sharp) {
-          const sharp = await this.loadSharpDependency();
-          if (typeof sharp !== "function") {
-            throw INITIALIZATION_ERROR.create({
-              detail: "Sharp loader did not return an image constructor",
-            });
-          }
-          this.sharp = sharp;
+        if (!this.optimizationSession) {
+          this.optimizationSession = this.configuredSession ??
+            acquireConfiguredImageOptimization();
         }
         return true;
       },
@@ -290,8 +337,19 @@ export class ImageOptimizer {
   }
 
   optimize(): Promise<Map<string, OptimizedImageMetadata>> {
+    return this.runOptimization(true);
+  }
+
+  /** Validate and encode every configured variant without publishing files. */
+  preview(): Promise<Map<string, OptimizedImageMetadata>> {
+    return this.runOptimization(false);
+  }
+
+  private runOptimization(
+    publishOutputs: boolean,
+  ): Promise<Map<string, OptimizedImageMetadata>> {
     return withSpan(
-      "build.asset.ImageOptimizer.optimize",
+      publishOutputs ? "build.asset.ImageOptimizer.optimize" : "build.asset.ImageOptimizer.preview",
       async () => {
         if (!this.options.enabled) return new Map();
         await this.validateFilesystemBoundaries();
@@ -312,23 +370,29 @@ export class ImageOptimizer {
         }
         const stagedManifest = new Map<string, OptimizedImageMetadata>();
         const outputOwners = new Map<string, string>();
-        const publication = await createBuildPublication(
-          this.options.outputDir,
-          false,
-          { fs: this.fs },
-        );
+        const publication = publishOutputs
+          ? await createBuildPublication(
+            this.options.outputDir,
+            false,
+            { fs: this.fs },
+          )
+          : undefined;
+        const generatedOutputDir = publication?.buildDir ?? this.options.outputDir;
 
         let failed = false;
         let failure: unknown;
         try {
-          await this.fs.mkdir(publication.buildDir, { recursive: true });
+          if (publication) {
+            await this.fs.mkdir(publication.buildDir, { recursive: true });
+          }
           for (const chunk of chunkArray(images, DEFAULT_BUILD_CONCURRENCY)) {
             const settledEntries = await Promise.allSettled(
               chunk.map((imagePath) =>
                 this.optimizeImage(
                   imagePath,
-                  publication.buildDir,
+                  generatedOutputDir,
                   outputOwners,
+                  publishOutputs,
                 )
               ),
             );
@@ -353,24 +417,28 @@ export class ImageOptimizer {
             }
           }
 
-          await writeManifest(stagedManifest, publication.buildDir, this.fs);
-          await publication.publish();
+          if (publication) {
+            await writeManifest(stagedManifest, publication.buildDir, this.fs);
+            await publication.publish();
+          }
           this.imageManifest = cloneManifest(stagedManifest);
         } catch (error) {
           failed = true;
           failure = error;
         }
 
-        try {
-          await publication.cleanup();
-        } catch (cleanupError) {
-          if (failed) {
-            throw new AggregateError(
-              [failure, cleanupError],
-              "Image optimization failed and staging cleanup also failed",
-            );
+        if (publication) {
+          try {
+            await publication.cleanup();
+          } catch (cleanupError) {
+            if (failed) {
+              throw new AggregateError(
+                [failure, cleanupError],
+                "Image optimization failed and staging cleanup also failed",
+              );
+            }
+            throw cleanupError;
           }
-          throw cleanupError;
         }
         if (failed) throw failure;
 
@@ -407,6 +475,7 @@ export class ImageOptimizer {
     imagePath: string,
     outputDir: string,
     outputOwners: Map<string, string>,
+    writeOutputs: boolean,
   ): Promise<[string, OptimizedImageMetadata]> {
     const relativePath = portablePath(
       relative(this.options.inputDir, imagePath),
@@ -418,10 +487,10 @@ export class ImageOptimizer {
     return withSpan(
       "build.asset.ImageOptimizer.optimizeImage",
       async () => {
-        const sharp = this.sharp;
-        if (!sharp) {
+        const optimizationSession = this.optimizationSession;
+        if (!optimizationSession) {
           throw INITIALIZATION_ERROR.create({
-            detail: "Sharp was not initialized",
+            detail: "Image optimization engine was not initialized",
           });
         }
         const defaultFormat = this.options.formats[0]!;
@@ -435,23 +504,54 @@ export class ImageOptimizer {
         if (!inputInfo.isFile || inputInfo.isSymlink) {
           throw new TypeError(`Image input must be a regular file: ${relativePath}`);
         }
-        const imageBuffer = await this.fs.readFile(imagePath);
-        if (imageBuffer.length === 0) {
-          throw new TypeError(`Image input is empty: ${relativePath}`);
+        if (
+          !Number.isSafeInteger(inputInfo.size) ||
+          inputInfo.size <= 0 ||
+          inputInfo.size > MAX_IMAGE_INPUT_BYTES
+        ) {
+          throw new TypeError(
+            `Image input must contain at most ${MAX_IMAGE_INPUT_BYTES} bytes: ${relativePath}`,
+          );
         }
-        const image = sharp(imageBuffer);
-        const metadata = await image.metadata();
-        const variants = await generateImageVariants(
-          sharp,
-          image,
-          relativePath,
-          metadata,
-          this.options.formats,
-          this.options.sizes,
-          this.options.quality,
-          outputDir,
-          this.fs,
+        const imageBuffer = await this.fs.readFile(imagePath);
+        if (imageBuffer.length !== inputInfo.size) {
+          throw new TypeError(`Image input changed while being read: ${relativePath}`);
+        }
+        const requests: ImageOptimizationVariantRequest[] = [];
+        const sizes = [...this.options.sizes].sort((left, right) => left - right);
+        for (const size of sizes) {
+          for (const format of this.options.formats) {
+            requests.push(Object.freeze({
+              format,
+              width: size,
+              quality: this.options.quality,
+            }));
+          }
+        }
+        const optimized = await optimizationSession.run(
+          imageBuffer,
+          Object.freeze(requests),
+          this.signal,
         );
+
+        const variants: ImageVariant[] = optimized.variants.map((variant) => {
+          const outputPath = getVariantPath(
+            outputDir,
+            relativePath,
+            variant.format,
+            variant.width,
+            this.options.quality,
+          );
+          return {
+            format: variant.format,
+            size: variant.width,
+            width: variant.width,
+            height: variant.height,
+            path: portablePath(relative(outputDir, outputPath)),
+            fileSize: variant.data.length,
+            quality: this.options.quality,
+          };
+        });
 
         for (const variant of variants) {
           this.registerOutput(
@@ -460,11 +560,22 @@ export class ImageOptimizer {
             `${relativePath} ${variant.width}px ${variant.format}`,
           );
         }
+        if (writeOutputs) {
+          for (let index = 0; index < variants.length; index++) {
+            const variant = variants[index]!;
+            const encoded = optimized.variants[index]!;
+            const outputPath = join(outputDir, variant.path);
+            await this.fs.mkdir(dirname(outputPath), { recursive: true });
+            await this.fs.writeFile(outputPath, encoded.data);
+          }
+        }
         if (this.options.preserveOriginal) {
           this.registerOutput(outputOwners, relativePath, `${relativePath} original`);
-          const originalOutput = join(outputDir, relativePath);
-          await this.fs.mkdir(dirname(originalOutput), { recursive: true });
-          await this.fs.writeFile(originalOutput, imageBuffer);
+          if (writeOutputs) {
+            const originalOutput = join(outputDir, relativePath);
+            await this.fs.mkdir(dirname(originalOutput), { recursive: true });
+            await this.fs.writeFile(originalOutput, imageBuffer);
+          }
         }
 
         return [
@@ -475,9 +586,11 @@ export class ImageOptimizer {
             variants,
             defaultFormat,
             aspectRatio: calculateRequiredAspectRatio(
-              metadata.width!,
-              metadata.height!,
+              optimized.sourceWidth,
+              optimized.sourceHeight,
             ),
+            engineIdentity: optimizationSession.cacheIdentity,
+            quality: this.options.quality,
           },
         ];
       },
@@ -493,6 +606,11 @@ export class ImageOptimizer {
   generateSrcSet(imagePath: string, format?: ImageFormat): string {
     const metadata = this.imageManifest.get(imagePath);
     if (!metadata) return "";
+    if (this.outputUrlPath === undefined) {
+      throw new TypeError(
+        "Image srcset generation requires an explicit publicPath",
+      );
+    }
     return generateSrcSet(imagePath, metadata, this.outputUrlPath, format);
   }
 

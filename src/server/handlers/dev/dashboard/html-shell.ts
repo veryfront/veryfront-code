@@ -1,23 +1,13 @@
+import { DEV_UI_STYLES } from "#veryfront/server/dev-ui/styles.generated.ts";
+
 export const DASHBOARD_SHELL_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Veryfront Dev</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['-apple-system', 'BlinkMacSystemFont', 'Inter', 'Segoe UI', 'sans-serif'],
-            mono: ['SF Mono', 'Monaco', 'Consolas', 'monospace'],
-          },
-        },
-      },
-    };
-  </script>
   <style>
+    ${DEV_UI_STYLES}
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 3px; }

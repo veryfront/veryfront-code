@@ -10,7 +10,6 @@ import { VERSION } from "#veryfront/utils/version.ts";
 import {
   CSSTYPE_VERSION,
   DEFAULT_REACT_VERSION,
-  TAILWIND_VERSION,
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 const JSONStringify = JSON.stringify;
@@ -51,7 +50,6 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
     studioEmbed: config.studioEmbed ?? false,
     dev: config.dev ?? false,
     csstype: CSSTYPE_VERSION,
-    tailwind: TAILWIND_VERSION,
   };
 
   return computeHash(JSONStringify(normalized));

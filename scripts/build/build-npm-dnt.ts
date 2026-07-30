@@ -27,6 +27,8 @@ import {
 import { buildExtensionPackages } from "./build-npm-extension-packages.ts";
 import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
 import {
+	assertRootArtifactExcludesCSSImplementations,
+	assertRootPackageExcludesCSSImplementations,
 	normalizeNpmPackageMetadata,
 	removeInternalNpmEntryPointExports,
 } from "./npm-package-metadata.ts";
@@ -388,7 +390,6 @@ await build({
 		// just-built auto-loaded extension versions to already exist in the registry.
 		pkg.dependencies["@veryfront/ext-bundler-esbuild"] = version;
 		pkg.dependencies["@veryfront/ext-content-mdx"] = version;
-		pkg.dependencies["@veryfront/ext-css-tailwind"] = version;
 		// ext-parser-babel provides the CodeParser contract that `veryfront serve`
 		// needs to vet client-page modules for /_veryfront/rsc/module hydration;
 		// without it the endpoint 404s and client pages render without hydrating.
@@ -397,6 +398,8 @@ await build({
 		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
 		addTypesExportEntries(pkg.exports);
 		normalizeNpmPackageMetadata(pkg);
+		assertRootPackageExcludesCSSImplementations(pkg);
+		await assertRootArtifactExcludesCSSImplementations("./npm/esm");
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
 
 		const writtenPkg = JSON.parse(await Deno.readTextFile(pkgPath));

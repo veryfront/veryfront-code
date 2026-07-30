@@ -1,7 +1,7 @@
 import "../../../_helpers/contract-init.ts";
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
-import { extractCandidates } from "../../../../src/html/styles-builder/tailwind-compiler.ts";
+import { extractCandidates } from "../../../../src/html/styles-builder/css-compiler.ts";
 import { assertExtractsClasses } from "./extract-candidates.test-helpers.ts";
 
 describe("extractCandidates", () => {

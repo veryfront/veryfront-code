@@ -84,16 +84,37 @@ describe("manifestDependencies", () => {
     });
   });
 
-  it("publishes the Tailwind extension's runtime dependency", async () => {
-    const manifest = JSON.parse(
-      await Deno.readTextFile(
-        new URL("../../extensions/ext-css-tailwind/deno.json", import.meta.url),
-      ),
-    ) as ExtensionManifest;
+  it("publishes CSS runtime dependencies only from their independent extensions", async () => {
+    const expectedDependencies = {
+      "ext-css-lightning": {
+        browserslist: "4.28.7",
+        lightningcss: "1.29.2",
+      },
+      "ext-css-purgecss": { purgecss: "8.0.0" },
+      "ext-css-tailwind": {
+        "@tailwindcss/forms": "0.5.11",
+        "@tailwindcss/typography": "0.5.19",
+        daisyui: "5.5.14",
+        "tailwind-scrollbar-hide": "2.0.0",
+        tailwindcss: "4.2.2",
+        "tailwindcss-animate": "1.0.7",
+      },
+    } as const;
 
-    const dependencies = manifestDependencies(manifest);
-    assertEquals(Object.keys(dependencies), ["tailwindcss"]);
-    assertEquals(typeof dependencies.tailwindcss, "string");
+    for (
+      const [extensionName, expected] of Object.entries(expectedDependencies)
+    ) {
+      const manifest = JSON.parse(
+        await Deno.readTextFile(
+          new URL(
+            `../../extensions/${extensionName}/deno.json`,
+            import.meta.url,
+          ),
+        ),
+      ) as ExtensionManifest;
+      const dependencies = manifestDependencies(manifest);
+      assertEquals(dependencies, expected);
+    }
   });
 });
 
@@ -104,6 +125,7 @@ describe("createExtensionPackageSpec", () => {
       exports: "./src/index.ts",
       veryfront: {
         extension: true,
+        activation: "explicit",
         contracts: { provides: ["SandboxShellToolsProvider"] },
         capabilities: [{ type: "sandbox:execute", tools: ["bash"] }],
       },

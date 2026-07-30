@@ -37,7 +37,7 @@ interface SourceFileProvider {
 
 /**
  * Scan project source files for CSS imports and return the resolved absolute
- * paths, deduplicated. Mirrors the file coverage of the Tailwind candidate
+ * paths, deduplicated. Mirrors the file coverage of the CSS candidate
  * scanner: the FS adapter's `getAllSourceFiles()` in proxy/remote mode, and a
  * recursive local walk otherwise.
  */

@@ -95,6 +95,21 @@
 | **`issues/`**        | Issue tracking integration                                             |
 | **`client/`**        | Client-side utilities                                                  |
 
+### CSS provider boundary
+
+Core owns provider-neutral CSS contracts and orchestration. Config selects an
+optional project stylesheet through `styles.stylesheet`; HTML, Server, and
+Build collect class-name candidates, capture extension identities, and cache
+the resulting artifacts. Core does not import a CSS compiler, optimizer,
+purger, base stylesheet, or plugin implementation.
+
+CSS implementations belong to explicitly composed extension packages:
+`@veryfront/ext-css-tailwind` provides `CSSProcessor`,
+`@veryfront/ext-css-lightning` provides `CSSOptimizationEngine`, and
+`@veryfront/ext-css-purgecss` provides `CSSPurgingEngine`. A feature that
+requires an unavailable contract fails at that boundary instead of selecting
+a vendor implementation or fallback in core.
+
 ---
 
 ## Module Details
@@ -328,7 +343,7 @@ Public rate limiting is owned by `middleware/`.
 **Directories**:
 
 - `hydration-script-builder/` - Client-side hydration scripts
-- `styles-builder/` - CSS/Tailwind compilation
+- `styles-builder/` - Provider-neutral CSS generation and artifact caching
 
 ---
 
@@ -456,7 +471,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 - MDX compilation to JSX
 - TypeScript to JavaScript transformation
-- CSS optimization (Tailwind)
+- CSS orchestration through extension-provided engines
 - Image optimization
 - Static site generation
 - Production bundling
@@ -699,7 +714,8 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 **Exports**: `#veryfront/extensions`
 
-- Extension contract definitions (AuthProvider, Bundler, CSSProcessor, etc.)
+- Extension contract definitions (`AuthProvider`, `Bundler`, `CSSProcessor`,
+  `CSSOptimizationEngine`, `CSSPurgingEngine`, etc.)
 - Extension factory loader and lifecycle orchestration
 - Capability validation and discovery
 - LLM provider registry bridge

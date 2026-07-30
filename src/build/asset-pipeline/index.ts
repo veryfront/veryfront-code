@@ -5,7 +5,6 @@
  */
 
 export type {
-  BrowserTargets,
   CriticalCSSResult,
   CSSBundle,
   CSSOptimizationOptions,
@@ -15,52 +14,37 @@ export type {
 export { CSSOptimizerService } from "./css-optimizer/index.ts";
 export { CacheManager, loadCSSManifest } from "./css-optimizer/index.ts";
 export { extractCriticalCSS } from "./css-optimizer/index.ts";
-export {
-  LightningCSSStrategy,
-  MinificationStrategy,
-  PurgeStrategy,
-} from "./css-optimizer/index.ts";
+export { MinificationStrategy, PurgeStrategy } from "./css-optimizer/index.ts";
 export { CSSUtils } from "./css-optimizer/index.ts";
 export { CSSOptimizer, optimizeCSS } from "./css-optimizer/index.ts";
 
 import { isAbsolute, resolve } from "#veryfront/compat/path/index.ts";
 import { getErrorMessage } from "#veryfront/errors";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import {
+  assertCSSOptimizationEngine,
+  assertCSSPurgingEngine,
+  CSSOptimizationEngineName,
+  CSSPurgingEngineName,
+} from "#veryfront/extensions/css/index.ts";
+import {
+  assertImageOptimizationEngine,
+  ImageOptimizationEngineName,
+} from "#veryfront/extensions/image/index.ts";
+import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
+import { acquireConfiguredCSSOptimization } from "./css-optimizer/optimization-engine.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { logger } from "#veryfront/utils";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import { isContainedBuildPath } from "../bundler/project-module-resolver.ts";
 import { hasControlCharacters } from "../utils/string-validation.ts";
-import {
-  DEFAULT_CSS_OPTIONS,
-  LIGHTNING_CSS_MODULE_SPECIFIER,
-  PURGE_CSS_MODULE_SPECIFIER,
-} from "./css-optimizer/constants.ts";
+import { DEFAULT_CSS_OPTIONS } from "./css-optimizer/constants.ts";
 import { type CSSOptimizationOptions, CSSOptimizer } from "./css-optimizer/index.ts";
-import {
-  DEFAULT_OPTIONS as DEFAULT_IMAGE_OPTIONS,
-  SHARP_MODULE_SPECIFIER,
-} from "./image-optimizer/constants.ts";
+import { DEFAULT_OPTIONS as DEFAULT_IMAGE_OPTIONS } from "./image-optimizer/constants.ts";
 import { type ImageOptimizationOptions, ImageOptimizer } from "./image-optimizer/index.ts";
-import {
-  processTailwindCSSInDirectory,
-  type TailwindProcessResult,
-} from "./tailwind-processor/index.ts";
-import {
-  DEFAULT_TAILWIND_OUTPUT_DIRECTORY,
-  DEFAULT_TAILWIND_SOURCE_DIRECTORY,
-} from "./tailwind-processor/constants.ts";
-
-export interface TailwindBatchOptions {
-  enabled?: boolean;
-  projectDir: string;
-  sourceDir?: string;
-  outputDir?: string;
-}
-
 export interface AssetPipelineOptions {
   images?: ImageOptimizationOptions;
   css?: CSSOptimizationOptions;
-  tailwind?: TailwindBatchOptions;
 }
 
 export interface AssetPipelineResult {
@@ -77,22 +61,20 @@ export interface AssetPipelineResult {
     savings: number;
     enabled: boolean;
   };
-  tailwind: {
-    processed: number;
-    utilities: number;
-    enabled: boolean;
-  };
   duration: number;
 }
 
 export interface AssetPipelineDependencyStatus {
-  sharp: boolean;
-  lightningCSS: boolean;
-  purgeCSS: boolean;
+  /** An image optimization engine is registered and its contract shape is valid. */
+  imageOptimizationEngineRegistered: boolean;
+  /** A CSS optimization engine is registered and its contract shape is valid. */
+  cssOptimizationEngineRegistered: boolean;
+  /** A provider-neutral CSS purging engine is registered and valid. */
+  cssPurgingEngineRegistered: boolean;
 }
 
 interface PlannedStageOutput {
-  stage: "images" | "css" | "tailwind";
+  stage: "images" | "css";
   path: string;
 }
 
@@ -117,7 +99,13 @@ function validateOptionsObject(
   ) {
     throw new TypeError("Asset pipeline options must be an object");
   }
-  for (const stage of ["images", "css", "tailwind"] as const) {
+  const unsupported = Object.keys(options).filter((key) => key !== "images" && key !== "css");
+  if (unsupported.length > 0) {
+    throw new TypeError(
+      `Asset pipeline contains unsupported stage ${JSON.stringify(unsupported[0])}`,
+    );
+  }
+  for (const stage of ["images", "css"] as const) {
     const value = (options as AssetPipelineOptions)[stage];
     if (
       value !== undefined &&
@@ -137,7 +125,6 @@ function validateOptionsObject(
       ["images.formats", (options as AssetPipelineOptions).images?.formats],
       ["images.sizes", (options as AssetPipelineOptions).images?.sizes],
       ["css.inputFiles", (options as AssetPipelineOptions).css?.inputFiles],
-      ["css.browsers", (options as AssetPipelineOptions).css?.browsers],
       ["css.purgeContent", (options as AssetPipelineOptions).css?.purgeContent],
       ["css.purgeSafelist", (options as AssetPipelineOptions).css?.purgeSafelist],
     ] as const
@@ -158,7 +145,6 @@ function snapshotOptions(options: AssetPipelineOptions): AssetPipelineOptions {
     css: options.css === undefined ? undefined : {
       ...options.css,
       inputFiles: options.css.inputFiles === undefined ? undefined : [...options.css.inputFiles],
-      browsers: options.css.browsers === undefined ? undefined : [...options.css.browsers],
       purgeContent: options.css.purgeContent === undefined
         ? undefined
         : [...options.css.purgeContent],
@@ -166,7 +152,6 @@ function snapshotOptions(options: AssetPipelineOptions): AssetPipelineOptions {
         ? undefined
         : [...options.css.purgeSafelist],
     },
-    tailwind: options.tailwind === undefined ? undefined : { ...options.tailwind },
   };
 }
 
@@ -240,22 +225,6 @@ function validateStageOutputSeparation(
       ),
     );
   }
-  if (isEnabled(options.tailwind)) {
-    const projectDir = resolveProjectDirectory(
-      options.tailwind.projectDir,
-      "Asset pipeline Tailwind projectDir",
-      false,
-    );
-    outputs.push(
-      planStageOutput(
-        "tailwind",
-        projectDir,
-        options.tailwind.outputDir,
-        DEFAULT_TAILWIND_OUTPUT_DIRECTORY,
-      ),
-    );
-  }
-
   for (const [index, first] of outputs.entries()) {
     for (const second of outputs.slice(index + 1)) {
       if (
@@ -283,14 +252,18 @@ export async function runAssetPipeline(
   const result: AssetPipelineResult = {
     images: { optimized: 0, variants: 0, totalSize: 0, enabled: false },
     css: { optimized: 0, originalSize: 0, minifiedSize: 0, savings: 0, enabled: false },
-    tailwind: { processed: 0, utilities: 0, enabled: false },
     duration: 0,
   };
 
+  const optimizationSession = isEnabled(configured.css)
+    ? acquireConfiguredCSSOptimization()
+    : undefined;
   const imageOptimizer = isEnabled(configured.images)
     ? new ImageOptimizer(configured.images)
     : null;
-  const cssOptimizer = isEnabled(configured.css) ? new CSSOptimizer(configured.css) : null;
+  const cssOptimizer = isEnabled(configured.css)
+    ? new CSSOptimizer(configured.css, undefined, { optimizationSession })
+    : null;
 
   // Resolve required runtime dependencies before any stage publishes output.
   const initialization = await Promise.allSettled([
@@ -306,37 +279,6 @@ export async function runAssetPipeline(
       initializationErrors,
       "Multiple asset-pipeline dependencies failed initialization",
     );
-  }
-
-  const tailwindOptions = configured.tailwind;
-  if (isEnabled(tailwindOptions)) {
-    const {
-      projectDir,
-      sourceDir = DEFAULT_TAILWIND_SOURCE_DIRECTORY,
-      outputDir = DEFAULT_TAILWIND_OUTPUT_DIRECTORY,
-    } = tailwindOptions;
-    safePath(projectDir, "Asset pipeline Tailwind projectDir");
-    const tailwindResults: TailwindProcessResult[] = await processTailwindCSSInDirectory(
-      projectDir,
-      sourceDir,
-      outputDir,
-    );
-    const totalUtilities = tailwindResults.reduce(
-      (sum, current) => sum + current.detectedUtilities,
-      0,
-    );
-    if (!Number.isSafeInteger(totalUtilities) || totalUtilities < 0) {
-      throw new TypeError("Tailwind processor returned invalid utility statistics");
-    }
-    result.tailwind = {
-      processed: tailwindResults.length,
-      utilities: totalUtilities,
-      enabled: true,
-    };
-    logger.info("Tailwind CSS processing complete", {
-      files: tailwindResults.length,
-      utilities: totalUtilities,
-    });
   }
 
   if (cssOptimizer) {
@@ -379,61 +321,58 @@ export async function runAssetPipeline(
     duration: `${result.duration}ms`,
     imagesEnabled: result.images.enabled,
     cssEnabled: result.css.enabled,
-    tailwindEnabled: result.tailwind.enabled,
   });
 
   return result;
 }
 
-async function probeDependency(
-  label: string,
-  load: () => Promise<unknown>,
-  validate: (module: unknown) => boolean,
-): Promise<boolean> {
-  try {
-    const module = await load();
-    if (!validate(module)) {
-      throw new TypeError(`${label} module has an invalid export shape`);
-    }
-    return true;
-  } catch (error) {
-    logger.debug(`${label} is unavailable`, {
-      error: getErrorMessage(error),
-    });
-    return false;
-  }
-}
-
 export async function checkAssetPipelineDependencies(): Promise<
   AssetPipelineDependencyStatus
 > {
-  const [sharp, lightningCSS, purgeCSS] = await Promise.all([
-    probeDependency(
-      "Sharp",
-      () => import(SHARP_MODULE_SPECIFIER),
-      (module) =>
-        typeof module === "object" &&
-        module !== null &&
-        typeof (module as { default?: unknown }).default === "function",
-    ),
-    probeDependency(
-      "Lightning CSS",
-      () => import(LIGHTNING_CSS_MODULE_SPECIFIER),
-      (module) =>
-        typeof module === "object" &&
-        module !== null &&
-        typeof (module as { transform?: unknown }).transform === "function",
-    ),
-    probeDependency(
-      "PurgeCSS",
-      () => import(PURGE_CSS_MODULE_SPECIFIER),
-      (module) =>
-        typeof module === "object" &&
-        module !== null &&
-        typeof (module as { PurgeCSS?: unknown }).PurgeCSS === "function",
-    ),
-  ]);
-  return { sharp, lightningCSS, purgeCSS };
+  const registeredImageEngine = tryResolve<unknown>(ImageOptimizationEngineName);
+  let imageOptimizationEngineRegistered = false;
+  if (registeredImageEngine !== undefined) {
+    try {
+      assertImageOptimizationEngine(registeredImageEngine);
+      imageOptimizationEngineRegistered = true;
+    } catch (error) {
+      logger.debug("Registered image optimization engine is invalid", {
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  const registeredEngine = tryResolve<unknown>(CSSOptimizationEngineName);
+  let cssOptimizationEngineRegistered = false;
+  if (registeredEngine !== undefined) {
+    try {
+      assertCSSOptimizationEngine(registeredEngine);
+      cssOptimizationEngineRegistered = true;
+    } catch (error) {
+      logger.debug("Registered CSS optimization engine is invalid", {
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  const registeredPurgingEngine = tryResolve<unknown>(CSSPurgingEngineName);
+  let cssPurgingEngineRegistered = false;
+  if (registeredPurgingEngine !== undefined) {
+    try {
+      assertCSSPurgingEngine(registeredPurgingEngine);
+      cssPurgingEngineRegistered = true;
+    } catch (error) {
+      logger.debug("Registered CSS purging engine is invalid", {
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  return {
+    imageOptimizationEngineRegistered,
+    cssOptimizationEngineRegistered,
+    cssPurgingEngineRegistered,
+  };
 }
 
 export async function getAssetPipelineStatus(): Promise<{
@@ -447,22 +386,30 @@ export async function getAssetPipelineStatus(): Promise<{
   const recommendations: string[] = [];
   const descriptors = [
     {
-      available: dependencies.sharp,
-      name: "Sharp",
-      capability: "Sharp image optimizer",
-      specifier: SHARP_MODULE_SPECIFIER,
+      available: dependencies.imageOptimizationEngineRegistered,
+      name: "Image optimization engine",
+      capability: "Image optimization engine",
+      recommendation: `Install and explicitly register ${
+        getRecommendation(ImageOptimizationEngineName) ??
+          "an ImageOptimizationEngine extension"
+      }`,
     },
     {
-      available: dependencies.lightningCSS,
-      name: "Lightning CSS",
-      capability: "Lightning CSS optimizer",
-      specifier: LIGHTNING_CSS_MODULE_SPECIFIER,
+      available: dependencies.cssOptimizationEngineRegistered,
+      name: "CSS optimization engine",
+      capability: "CSS optimization engine",
+      recommendation: `Install and explicitly register ${
+        getRecommendation(CSSOptimizationEngineName) ??
+          "a CSSOptimizationEngine extension"
+      }`,
     },
     {
-      available: dependencies.purgeCSS,
-      name: "PurgeCSS",
-      capability: "PurgeCSS optimizer",
-      specifier: PURGE_CSS_MODULE_SPECIFIER,
+      available: dependencies.cssPurgingEngineRegistered,
+      name: "CSS purging engine",
+      capability: "CSS purging engine",
+      recommendation: `Install and explicitly register ${
+        getRecommendation(CSSPurgingEngineName) ?? "a CSSPurgingEngine extension"
+      }`,
     },
   ];
 
@@ -471,9 +418,7 @@ export async function getAssetPipelineStatus(): Promise<{
       available.push(dependency.capability);
     } else {
       missing.push(dependency.name);
-      recommendations.push(
-        `Ensure ${dependency.specifier} is installed and recorded in deno.lock`,
-      );
+      recommendations.push(dependency.recommendation);
     }
   }
 

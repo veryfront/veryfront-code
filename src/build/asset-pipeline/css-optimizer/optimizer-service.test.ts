@@ -3,8 +3,9 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
+import { createTestCSSPurgingEngine } from "../../../../tests/_helpers/css-purging-engine.ts";
 import { CSSOptimizerService } from "./optimizer-service.ts";
-import { LightningCSSStrategy } from "./strategies/lightning-strategy.ts";
 
 async function withProject(
   callback: (projectDir: string) => Promise<void>,
@@ -31,7 +32,10 @@ async function createService(
       outputDir: ".veryfront/css",
       ...options,
     },
-    dependencies,
+    {
+      optimizationEngine: createTestCSSOptimizationEngine(),
+      ...dependencies,
+    },
   );
 }
 
@@ -47,7 +51,7 @@ describe("build/asset-pipeline/css-optimizer/optimizer-service", () => {
 
       const bundles = await service.optimize();
       const bundle = bundles.get("nested/main.css")!;
-      assertEquals(bundle.content.includes("/* comment */"), false);
+      assertEquals(bundle.content.includes("/* comment */"), true);
       assertEquals(bundle.content.includes("sourceMappingURL=main.min.css.map"), true);
       assertEquals(bundle.outputFile, ".veryfront/css/nested/main.min.css");
       assertEquals(
@@ -81,7 +85,14 @@ describe("build/asset-pipeline/css-optimizer/optimizer-service", () => {
       const outputDir = join(projectDir, ".veryfront/css");
       await Deno.mkdir(outputDir, { recursive: true });
       await Deno.writeTextFile(join(outputDir, "sentinel.txt"), "known good");
-      const service = await createService(projectDir);
+      const service = await createService(projectDir, {}, {
+        optimizationEngine: createTestCSSOptimizationEngine((request) => {
+          if (request.css.includes(".broken")) {
+            throw new Error("invalid CSS");
+          }
+          return { css: request.css };
+        }),
+      });
 
       await assertRejects(() => service.optimize());
       assertEquals(
@@ -122,7 +133,7 @@ describe("build/asset-pipeline/css-optimizer/optimizer-service", () => {
     });
   });
 
-  it("fails closed on empty input and missing compiler dependencies", async () => {
+  it("fails closed on empty input and optimization engine failures", async () => {
     await withProject(async (projectDir) => {
       const emptyService = await createService(projectDir);
       await assertRejects(
@@ -135,18 +146,19 @@ describe("build/asset-pipeline/css-optimizer/optimizer-service", () => {
         join(projectDir, "styles/main.css"),
         ".main { color: red; }",
       );
-      const missingDependency = new LightningCSSStrategy(() =>
-        Promise.reject(new Error("compiler unavailable"))
-      );
       const dependencyService = await createService(
         projectDir,
         {},
-        { lightningStrategy: missingDependency },
+        {
+          optimizationEngine: createTestCSSOptimizationEngine(() => {
+            throw new Error("compiler unavailable");
+          }),
+        },
       );
       await assertRejects(
         () => dependencyService.optimize(),
         Error,
-        "requires npm:lightningcss",
+        "compiler unavailable",
       );
     });
   });
@@ -162,10 +174,14 @@ describe("build/asset-pipeline/css-optimizer/optimizer-service", () => {
         join(projectDir, "styles/main.css"),
         ".used { color: green; } .unused { color: red; }",
       );
-      const service = await createService(projectDir, {
-        purge: true,
-        purgeContent: ["app/**/*.tsx"],
-      });
+      const service = await createService(
+        projectDir,
+        {
+          purge: true,
+          purgeContent: ["app/**/*.tsx"],
+        },
+        { purgingEngine: createTestCSSPurgingEngine() },
+      );
 
       const content = (await service.optimize()).get("main.css")!.content;
       assertEquals(content.includes(".used"), true);

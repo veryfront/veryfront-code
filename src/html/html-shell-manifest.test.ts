@@ -20,6 +20,7 @@ import {
 } from "#veryfront/release-assets/constants.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { installTestCSSOptimizationEngine } from "../../tests/_helpers/css-optimization-engine.ts";
 
 const PAGE_HASH = "a".repeat(64);
 const CHAT_HASH = "b".repeat(64);
@@ -50,7 +51,7 @@ function extractImportMap(html: string): Record<string, string> {
 
 function manifest(): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: "p",
     releaseId: "rel-1",
     releaseVersion: 1,
@@ -72,9 +73,15 @@ function manifest(): ReleaseAssetManifest {
 describe("html shell release asset manifest consumption", () => {
   const originalFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
   const originalDependencyFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
+  let restoreCSSOptimizationEngine: (() => void) | undefined;
 
-  beforeEach(() => clearReleaseAssetManifestCache());
+  beforeEach(() => {
+    clearReleaseAssetManifestCache();
+    restoreCSSOptimizationEngine = installTestCSSOptimizationEngine();
+  });
   afterEach(() => {
+    restoreCSSOptimizationEngine?.();
+    restoreCSSOptimizationEngine = undefined;
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalFlag ?? "");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalDependencyFlag ?? "");
     configureReleaseAssetManifestFetcher(undefined);
@@ -155,7 +162,8 @@ describe("html shell release asset manifest consumption", () => {
             contentHash: CSS_HASH,
             size: 10,
             contentType: "text/css",
-            styleProfileHash: "sp",
+            styleProfileHash: "c".repeat(64),
+            cssPipelineIdentity: "test-css-pipeline@1",
           }],
           routes: { "/": { modules: ["pages/index.tsx"], css: [CSS_HASH] } },
         },
@@ -180,7 +188,8 @@ describe("html shell release asset manifest consumption", () => {
             contentHash: cssHash,
             size: 10,
             contentType: "text/css",
-            styleProfileHash: "sp",
+            styleProfileHash: "c".repeat(64),
+            cssPipelineIdentity: "test-css-pipeline@1",
           }],
           routes: { "/": { modules: ["pages/index.tsx"], css: [cssHash] } },
         },
@@ -256,7 +265,8 @@ describe("html shell release asset manifest consumption", () => {
             contentHash: "f".repeat(64),
             size: 10,
             contentType: "text/css",
-            styleProfileHash: "sp",
+            styleProfileHash: "c".repeat(64),
+            cssPipelineIdentity: "test-css-pipeline@1",
           }],
           dependencies: {
             "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022": {

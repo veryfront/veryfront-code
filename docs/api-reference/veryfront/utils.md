@@ -10,10 +10,10 @@ order: 40
 import {
   __registerLogRecordEmitter,
   __registerTraceContextGetter,
+  assertCSSPipelineIdentity,
+  assertStyleProfileHash,
   base64urlEncode,
   base64urlEncodeBytes,
-  computeCodeHash,
-  computeHash,
 } from "veryfront/utils";
 ```
 
@@ -35,6 +35,8 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 |------|-------------|--------|
 | `__registerLogRecordEmitter` | Register a process-level structured log emitter, for example an OTel bridge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L240) |
 | `__registerTraceContextGetter` | Register the trace context getter. Called by the active observability adapter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L837) |
+| `assertCSSPipelineIdentity` | Validate and return an immutable string snapshot for cache or wire use. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L71) |
+| `assertStyleProfileHash` | Validate and return the canonical style-scope profile SHA-256 identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L90) |
 | `base64urlEncode` | Encode a UTF-8 string as unpadded base64url. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/base64url.ts#L59) |
 | `base64urlEncodeBytes` | Encode raw bytes as unpadded base64url. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/base64url.ts#L64) |
 | `computeCodeHash` | Compute code hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L66) |
@@ -56,8 +58,10 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `hasDenoRuntime` | Check whether Deno runtime is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L31) |
 | `hasNodeProcess` | Check whether node process is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L42) |
 | `isCompiledBinary` | Detect if the code is running in a compiled Deno binary | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/platform.ts#L11) |
+| `isCSSPipelineIdentity` | Whether a value is safe to compare, encode, and persist as a CSS pipeline identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L50) |
 | `isEnabled` | Check whether request performance timing is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L191) |
 | `isRSCEnabled` | Check whether RSC is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/feature-flags.ts#L4) |
+| `isStyleProfileHash` | Whether a value is the canonical style-scope profile SHA-256 identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L84) |
 | `isTruthyEnvValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/env.ts#L11) |
 | `isWithinDirectory` | Checks lexical containment after path normalization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/path-utils.ts#L28) |
 | `memoize` | Memoize synchronous results with bounded LRU retention. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L169) |
@@ -159,6 +163,8 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `IMAGE_OPTIMIZATION` | Shared image optimization value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/build.ts#L5) |
 | `logger` | Shared logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L931) |
 | `MAX_BATCH_SIZE` | ****** Batch limits ******* | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/limits.ts#L31) |
+| `MAX_CSS_PIPELINE_IDENTITY_CODE_UNITS` | Maximum UTF-16 code units accepted for one complete CSS pipeline identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L13) |
+| `MAX_CSS_PIPELINE_IDENTITY_UTF8_BYTES` | Maximum encoded UTF-8 bytes accepted for one complete CSS pipeline identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L16) |
 | `MAX_MEMO_CACHE_ENTRIES` | Highest explicit retained-result budget accepted by memoization helpers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L7) |
 | `MAX_MEMO_KEY_CHARACTERS` | Maximum character length of a retained memoization key. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L13) |
 | `MAX_MEMOIZE_INFLIGHT` | Highest explicit distinct in-flight key budget accepted by asynchronous memoization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L11) |

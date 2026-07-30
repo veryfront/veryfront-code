@@ -204,11 +204,6 @@ describe("configSchema", () => {
           },
         },
       },
-      tailwind: {
-        theme: {
-          extend: { spacing: { wide: "42rem" } },
-        },
-      },
     });
 
     assertEquals(config.theme?.colors?.brand, "#123456");
@@ -220,7 +215,42 @@ describe("configSchema", () => {
       config.ai?.providers?.custom?.providerSpecificOption,
       { mode: "strict" },
     );
-    assertEquals(config.tailwind?.theme?.extend?.spacing, { wide: "42rem" });
+  });
+
+  it("keeps stylesheet selection provider-neutral and rejects removed Tailwind policy", () => {
+    const config = validateVeryfrontConfig({
+      styles: { stylesheet: "styles/global.css" },
+    });
+    assertEquals(config.styles?.stylesheet, "styles/global.css");
+
+    assertThrows(
+      () => validateVeryfrontConfig({ tailwind: { stylesheet: "globals.css" } } as never),
+      Error,
+      "tailwind",
+    );
+    assertThrows(
+      () =>
+        validateVeryfrontConfig({
+          styles: { stylesheet: "globals.css", plugins: ["typography"] },
+        } as never),
+      Error,
+      "plugins",
+    );
+    for (
+      const stylesheet of [
+        "/globals.css",
+        "../globals.css",
+        "styles/../globals.css",
+        "styles\\globals.css",
+        "styles//globals.css",
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ styles: { stylesheet } }),
+        Error,
+        "canonical project-relative stylesheet path",
+      );
+    }
   });
 
   it("rejects empty configured authentication credentials", () => {

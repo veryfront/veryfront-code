@@ -1,12 +1,12 @@
 /**
- * Test: 002.8 Tailwind Compiler Isolation
+ * Test: 002.8 CSS Compiler Isolation
  *
  * Validates the fix for issue 002.8 from the architecture audit:
  * - Compiler cache uses LRU with per-stylesheet entries
- * - Plugin caches are scoped per-stylesheet to prevent pollution
+ * - Vendor plugin state remains encapsulated inside each compiler
  * - Different stylesheets get different compilers
  *
- * @see plans/architecture-audit/002.8-tailwind-compiler-state.md
+ * @see plans/architecture-audit/002.8-css-compiler-state.md
  */
 
 import "../../../src/html/styles-builder/__tests__/css-processor-setup.ts";
@@ -14,34 +14,33 @@ import "../../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
-  clearPluginCache,
-  generateTailwindCSS,
+  generateCSS,
   getCompilerCacheStats,
   invalidateCompiler,
-} from "../../../src/html/styles-builder/tailwind-compiler.ts";
+} from "../../../src/html/styles-builder/css-compiler.ts";
 
-describe("002.8 Tailwind Compiler Isolation", () => {
+describe("002.8 CSS Compiler Isolation", () => {
   beforeEach(() => {
     invalidateCompiler();
   });
 
   describe("Compiler Cache", () => {
-    it("should cache compilers by stylesheet hash", async () => {
+    it("should isolate compilers by exact candidate snapshot", async () => {
       const stylesheet = `@import "tailwindcss";`;
 
-      await generateTailwindCSS(stylesheet, ["mt-4"]);
+      await generateCSS(stylesheet, ["mt-4"]);
       assertEquals(getCompilerCacheStats().size, 1, "Should have 1 cached compiler");
 
-      await generateTailwindCSS(stylesheet, ["mt-8"]);
-      assertEquals(getCompilerCacheStats().size, 1, "Should still have 1 cached compiler");
+      await generateCSS(stylesheet, ["mt-8"]);
+      assertEquals(getCompilerCacheStats().size, 2, "Should have one compiler per snapshot");
     });
 
     it("should create separate compilers for different stylesheets", async () => {
       const stylesheetA = `@import "tailwindcss"; @theme { --color-primary: blue; }`;
       const stylesheetB = `@import "tailwindcss"; @theme { --color-primary: red; }`;
 
-      await generateTailwindCSS(stylesheetA, ["bg-primary"]);
-      await generateTailwindCSS(stylesheetB, ["bg-primary"]);
+      await generateCSS(stylesheetA, ["bg-primary"]);
+      await generateCSS(stylesheetB, ["bg-primary"]);
 
       assertEquals(getCompilerCacheStats().size, 2, "Should have 2 cached compilers");
     });
@@ -56,33 +55,10 @@ describe("002.8 Tailwind Compiler Isolation", () => {
       const { maxSize } = getCompilerCacheStats();
 
       for (let i = 0; i < maxSize + 2; i++) {
-        await generateTailwindCSS(`@import "tailwindcss"; /* variant ${i} */`, ["mt-4"]);
+        await generateCSS(`@import "tailwindcss"; /* variant ${i} */`, ["mt-4"]);
       }
 
       assertEquals(getCompilerCacheStats().size, maxSize, "Should not exceed max size");
-    });
-  });
-
-  describe("Plugin Cache Isolation", () => {
-    it("should have separate plugin caches per stylesheet", async () => {
-      await generateTailwindCSS(`@import "tailwindcss"; /* A */`, ["mt-4"]);
-      await generateTailwindCSS(`@import "tailwindcss"; /* B */`, ["mt-4"]);
-
-      const { entries } = getCompilerCacheStats();
-      assertEquals(entries.length, 2);
-
-      for (const { pluginCount } of entries) {
-        assert(pluginCount >= 0, "Should track plugin count");
-      }
-    });
-
-    it("clearPluginCache should clear from all compilers", async () => {
-      await generateTailwindCSS(`@import "tailwindcss"; /* A */`, ["mt-4"]);
-      await generateTailwindCSS(`@import "tailwindcss"; /* B */`, ["mt-4"]);
-
-      clearPluginCache();
-
-      assertEquals(getCompilerCacheStats().size, 2, "Compilers should remain cached");
     });
   });
 
@@ -96,12 +72,11 @@ describe("002.8 Tailwind Compiler Isolation", () => {
 
       const results = await Promise.all(
         stylesheets.map((stylesheet) =>
-          generateTailwindCSS(stylesheet, ["mt-4", "p-2", "text-sm"])
+          generateCSS(stylesheet, ["mt-4", "p-2", "text-sm"])
         ),
       );
 
-      for (const { css, error } of results) {
-        assert(!error, "Should not have errors");
+      for (const { css } of results) {
         assert(css.length > 0, "Should generate CSS");
       }
 
@@ -112,12 +87,10 @@ describe("002.8 Tailwind Compiler Isolation", () => {
       const stylesheet = `@import "tailwindcss"; /* shared */`;
 
       const results = await Promise.all(
-        Array.from({ length: 10 }, () => generateTailwindCSS(stylesheet, ["mt-4"])),
+        Array.from({ length: 10 }, () => generateCSS(stylesheet, ["mt-4"])),
       );
 
-      for (const { error } of results) {
-        assert(!error, "Should not have errors");
-      }
+      for (const { css } of results) assert(css.length > 0, "Should generate CSS");
 
       assertEquals(getCompilerCacheStats().size, 1, "Should reuse single compiler");
     });
@@ -125,8 +98,8 @@ describe("002.8 Tailwind Compiler Isolation", () => {
 
   describe("Invalidation", () => {
     it("invalidateCompiler should clear all cached compilers", async () => {
-      await generateTailwindCSS(`@import "tailwindcss"; /* 1 */`, ["mt-4"]);
-      await generateTailwindCSS(`@import "tailwindcss"; /* 2 */`, ["mt-4"]);
+      await generateCSS(`@import "tailwindcss"; /* 1 */`, ["mt-4"]);
+      await generateCSS(`@import "tailwindcss"; /* 2 */`, ["mt-4"]);
 
       assertEquals(getCompilerCacheStats().size, 2);
 

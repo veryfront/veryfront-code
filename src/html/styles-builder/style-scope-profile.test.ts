@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createStyleScopeProfile,
@@ -11,6 +11,17 @@ describe("styles-builder/style-scope-profile", () => {
   it("uses a full lowercase SHA-256 profile identity", () => {
     const profile = createStyleScopeProfile();
     assertEquals(profile.hash.match(/^[a-f0-9]{64}$/)?.[0], profile.hash);
+  });
+
+  it("rejects non-canonical configured stylesheet paths before hashing", () => {
+    assertThrows(
+      () =>
+        createStyleScopeProfile({
+          styles: { stylesheet: "styles/../globals.css" },
+        }),
+      TypeError,
+      "Stylesheet path",
+    );
   });
 
   it("ignores knowledge content by default for style scanning", () => {
@@ -43,7 +54,7 @@ describe("styles-builder/style-scope-profile", () => {
         app: "knowledge/app",
         components: ["knowledge/components"],
       },
-      tailwind: {
+      styles: {
         stylesheet: "knowledge/theme/globals.css",
       },
     });

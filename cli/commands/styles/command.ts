@@ -2,24 +2,36 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { getConfig } from "veryfront/config";
 import {
+  createStyleArtifactTuple,
   enhanceAdapterWithFS,
   getEnv,
   isExtendedFSAdapter,
+  type ProjectStyleArtifactResolution,
   runtime,
+  type StyleArtifactTuple,
   type VeryfrontApiClient,
 } from "veryfront/platform";
 import {
+  acquireCSSGenerationSession,
   buildPreparedCSSArtifactFromFiles,
   createStyleScopeProfile,
   resolveStyleContentVersion,
 } from "veryfront/rendering/styles";
+import { isCSSPipelineIdentity, isStyleProfileHash } from "veryfront/utils";
 import { cliLogger, exitProcess } from "#cli/utils";
 import type { StylesArgs } from "./handler.ts";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 
 const getStyleArtifactBuildConfigSchema = defineSchema((v) =>
   v.object({
-    style_profile_hash: v.string().min(1).optional(),
+    css_pipeline_identity: v.string().refine(
+      isCSSPipelineIdentity,
+      "CSS pipeline identity must be bounded, trimmed, NFC-normalized, and free of control characters",
+    ),
+    style_profile_hash: v.string().refine(
+      isStyleProfileHash,
+      "Style profile hash must be a full lowercase SHA-256 digest",
+    ),
     branch: v.string().min(1).optional(),
     environment_name: v.string().min(1).optional(),
     release_id: v.string().min(1).optional(),
@@ -40,14 +52,16 @@ const StyleArtifactBuildConfigSchema = lazySchema(getStyleArtifactBuildConfigSch
 type StyleArtifactBuildConfig = InferSchema<ReturnType<typeof getStyleArtifactBuildConfigSchema>>;
 
 interface StyleBuildContentContext {
+  sourceType: "branch" | "environment" | "release";
   branch?: string;
   environmentName?: string;
   releaseId?: string;
 }
 
-interface StyleArtifactBuildResult {
+export interface StyleArtifactBuildResult {
   kind: "style_artifact";
   status: "ready";
+  css_pipeline_identity: string;
   style_profile_hash: string;
   artifact_hash: string;
   asset_path: string;
@@ -70,6 +84,28 @@ type StyleArtifactSelector =
   }
   | { branch?: never; environmentName?: never; releaseId: string; type: "release"; value: string };
 
+export function createAcknowledgedStyleArtifactBuildResult(
+  tuple: StyleArtifactTuple,
+  selector: StyleArtifactSelector,
+  buildHash: string,
+  resolution: ProjectStyleArtifactResolution,
+): StyleArtifactBuildResult {
+  if (resolution.status !== "ready" || resolution.artifactHash !== buildHash) {
+    throw new Error("Control plane did not acknowledge the built style artifact");
+  }
+  return {
+    kind: "style_artifact",
+    status: "ready",
+    css_pipeline_identity: tuple.cssPipelineIdentity,
+    style_profile_hash: tuple.styleProfileHash,
+    artifact_hash: resolution.artifactHash,
+    asset_path: resolution.assetPath,
+    content_type: resolution.contentType,
+    etag: resolution.etag,
+    selector: { type: selector.type, value: selector.value },
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -86,7 +122,9 @@ export function normalizeStyleArtifactBuildConfigInput(parsed: unknown): unknown
   return parsed;
 }
 
-function parseStyleArtifactBuildConfig(rawConfig: string | undefined): StyleArtifactBuildConfig {
+export function parseStyleArtifactBuildConfig(
+  rawConfig: string | undefined,
+): StyleArtifactBuildConfig {
   if (!rawConfig) {
     throw new Error("Missing --config JSON");
   }
@@ -98,7 +136,17 @@ function parseStyleArtifactBuildConfig(rawConfig: string | undefined): StyleArti
     throw new Error("Invalid --config JSON");
   }
 
-  return StyleArtifactBuildConfigSchema.parse(normalizeStyleArtifactBuildConfigInput(parsed));
+  const config = StyleArtifactBuildConfigSchema.parse(
+    normalizeStyleArtifactBuildConfigInput(parsed),
+  );
+  createStyleArtifactTuple({
+    cssPipelineIdentity: config.css_pipeline_identity,
+    styleProfileHash: config.style_profile_hash,
+    ...(config.branch === undefined ? {} : { branch: config.branch }),
+    ...(config.environment_name === undefined ? {} : { environmentName: config.environment_name }),
+    ...(config.release_id === undefined ? {} : { releaseId: config.release_id }),
+  });
+  return config;
 }
 
 function resolveStyleArtifactSelector(
@@ -187,29 +235,46 @@ export function getUnderlyingVeryfrontClient(
 
 async function markStyleArtifactFailed(
   client: VeryfrontApiClient | null,
-  selector: StyleArtifactSelector,
-  styleProfileHash: string | null | undefined,
+  tuple: StyleArtifactTuple,
   error: string,
 ): Promise<void> {
-  if (!client || !styleProfileHash) return;
+  if (!client) return;
 
-  try {
-    await client.upsertStyleArtifact({
-      ...(selector.type === "branch" ? { branch: selector.branch } : {}),
-      ...(selector.type === "environment" ? { environmentName: selector.environmentName } : {}),
-      ...(selector.type === "release" ? { releaseId: selector.releaseId } : {}),
-      styleProfileHash,
-      status: "failed",
-      failureReason: error,
-    });
-  } catch (updateError) {
-    cliLogger.warn("Failed to mark style artifact as failed", updateError);
+  const resolution = await client.upsertStyleArtifact({
+    ...tuple,
+    status: "failed",
+    failureReason: error,
+  });
+  if (resolution.status !== "failed") {
+    throw new Error("Control plane did not acknowledge the failed style artifact result");
+  }
+}
+
+function assertSourceSelectorMatches(
+  selector: StyleArtifactSelector,
+  contentContext: StyleBuildContentContext | null,
+): void {
+  const matches = selector.type === "branch"
+    ? contentContext?.sourceType === "branch" && contentContext.branch === selector.branch
+    : selector.type === "environment"
+    ? contentContext?.sourceType === "environment" &&
+      contentContext.environmentName === selector.environmentName
+    : contentContext?.sourceType === "release" && contentContext.releaseId === selector.releaseId;
+  if (!matches) {
+    throw new Error("Resolved project source did not match the requested style artifact selector");
   }
 }
 
 export async function stylesCommand(options: StylesArgs): Promise<void> {
   const buildConfig = parseStyleArtifactBuildConfig(options.config);
   const selector = resolveStyleArtifactSelector(buildConfig);
+  const tuple = createStyleArtifactTuple({
+    cssPipelineIdentity: buildConfig.css_pipeline_identity,
+    styleProfileHash: buildConfig.style_profile_hash,
+    ...(selector.type === "branch" ? { branch: selector.branch } : {}),
+    ...(selector.type === "environment" ? { environmentName: selector.environmentName } : {}),
+    ...(selector.type === "release" ? { releaseId: selector.releaseId } : {}),
+  });
   const projectSlug = requireEnv("VERYFRONT_PROJECT_SLUG");
   const apiToken = requireEnv("VERYFRONT_API_TOKEN");
   const apiBaseUrl = requireEnv("VERYFRONT_API_BASE_URL");
@@ -236,20 +301,24 @@ export async function stylesCommand(options: StylesArgs): Promise<void> {
   );
 
   let client: VeryfrontApiClient | null = null;
-  let resolvedStyleProfileHash: string | null = buildConfig.style_profile_hash ?? null;
 
   try {
     const sourceAdapter = getUnderlyingVeryfrontClient(adapter);
     client = sourceAdapter.client;
+    assertSourceSelectorMatches(selector, sourceAdapter.contentContext);
     const cacheKey = projectId || projectSlug;
     const config = await getConfig(projectDir, adapter, { cacheKey });
     const styleProfile = createStyleScopeProfile(config);
-    resolvedStyleProfileHash = styleProfile.hash;
+    const generationSession = await acquireCSSGenerationSession(true);
 
-    if (buildConfig.style_profile_hash && styleProfile.hash !== buildConfig.style_profile_hash) {
+    if (tuple.cssPipelineIdentity !== generationSession.cacheIdentity) {
       const message =
-        `Style profile hash mismatch: expected ${buildConfig.style_profile_hash}, got ${styleProfile.hash}`;
-      await markStyleArtifactFailed(client, selector, buildConfig.style_profile_hash, message);
+        `CSS pipeline identity mismatch: expected ${tuple.cssPipelineIdentity}, got ${generationSession.cacheIdentity}`;
+      throw new Error(message);
+    }
+    if (styleProfile.hash !== tuple.styleProfileHash) {
+      const message =
+        `Style profile hash mismatch: expected ${tuple.styleProfileHash}, got ${styleProfile.hash}`;
       throw new Error(message);
     }
 
@@ -269,45 +338,37 @@ export async function stylesCommand(options: StylesArgs): Promise<void> {
       projectDir,
       files,
       styleProfile,
-      stylesheetPath: config?.tailwind?.stylesheet,
+      stylesheetPath: config?.styles?.stylesheet,
       minify: true,
       environment: "preview",
       buildMode: "production",
+      generationSession,
     });
 
     const resolution = await client.upsertStyleArtifact({
-      ...(selector.type === "branch" ? { branch: selector.branch } : {}),
-      ...(selector.type === "environment" ? { environmentName: selector.environmentName } : {}),
-      ...(selector.type === "release" ? { releaseId: selector.releaseId } : {}),
-      styleProfileHash: styleProfile.hash,
-      status: "ready",
+      ...tuple,
       artifactHash: build.hash,
     });
-
-    const result: StyleArtifactBuildResult = {
-      kind: "style_artifact",
-      status: "ready",
-      style_profile_hash: styleProfile.hash,
-      artifact_hash: build.hash,
-      asset_path: resolution.assetPath ?? `/_vf/css/${build.hash}.css`,
-      content_type: resolution.contentType ?? "text/css; charset=utf-8",
-      etag: resolution.etag ?? `"${build.hash}"`,
-      selector: {
-        type: selector.type,
-        value: selector.value,
-      },
-    };
+    const result = createAcknowledgedStyleArtifactBuildResult(
+      tuple,
+      selector,
+      build.hash,
+      resolution,
+    );
 
     await writeRunResultIfConfigured(result);
     cliLogger.info(`Built style artifact ${build.hash}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await markStyleArtifactFailed(
-      client,
-      selector,
-      resolvedStyleProfileHash ?? buildConfig.style_profile_hash,
-      message,
-    );
+    try {
+      await markStyleArtifactFailed(client, tuple, message);
+    } catch (reportError) {
+      cliLogger.error(message);
+      throw new AggregateError(
+        [error, reportError],
+        `${message}; failed to report style artifact failure`,
+      );
+    }
     cliLogger.error(message);
     exitProcess(1);
   } finally {

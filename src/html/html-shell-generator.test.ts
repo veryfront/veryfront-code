@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./styles-builder/__tests__/css-processor-setup.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assert,
   assertEquals,
@@ -19,8 +19,19 @@ import type { RenderMetadata } from "#veryfront/types";
 import type { HTMLGenerationOptions } from "./types.ts";
 import { getProdHydrationModulePath } from "./hydration-script-builder/prod-scripts.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { installTestCSSOptimizationEngine } from "../../tests/_helpers/css-optimization-engine.ts";
 
 describe("html-generation/html-shell-generator", () => {
+  let restoreCSSOptimizationEngine: (() => void) | undefined;
+
+  beforeEach(() => {
+    restoreCSSOptimizationEngine = installTestCSSOptimizationEngine();
+  });
+  afterEach(() => {
+    restoreCSSOptimizationEngine?.();
+    restoreCSSOptimizationEngine = undefined;
+  });
+
   const mockConfig = {
     dev: {
       components: [],
@@ -389,7 +400,7 @@ describe("html-generation/html-shell-generator", () => {
     it("omits malformed release-manifest URLs from modulepreload attributes", async () => {
       const hostileHash = 'hash"><script>alert(1)</script>';
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project",
         releaseId: "release",
         releaseVersion: 1,
@@ -431,17 +442,17 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
-    it("should include Tailwind CSS link in development mode", async () => {
+    it("should include the project stylesheet link in development mode", async () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",
         createMeta(),
         createOptions(),
       );
 
-      assertStringIncludes(result, 'id="vf-tailwind-css"');
+      assertStringIncludes(result, 'id="vf-project-css"');
       assertStringIncludes(
         result,
-        "<!-- Tailwind CSS: Server-side JIT compiled -->",
+        "<!-- Project stylesheet -->",
       );
       assert(!result.includes("cdn.jsdelivr.net/npm/@tailwindcss/browser@4"));
     });
@@ -463,7 +474,7 @@ describe("html-generation/html-shell-generator", () => {
       assert(!result.includes("cdn.jsdelivr.net/npm/@tailwindcss/browser@4"));
       assertStringIncludes(
         result,
-        "<!-- Tailwind CSS: Server-side JIT compiled -->",
+        "<!-- Project stylesheet -->",
       );
     });
 
@@ -495,7 +506,7 @@ describe("html-generation/html-shell-generator", () => {
     it("reports the exact release stylesheet artifact linked by the shell", async () => {
       const hash = "b".repeat(64);
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project",
         releaseId: "release",
         releaseVersion: 1,
@@ -509,7 +520,8 @@ describe("html-generation/html-shell-generator", () => {
           contentHash: hash,
           size: 1,
           contentType: "text/css",
-          styleProfileHash: null,
+          styleProfileHash: "c".repeat(64),
+          cssPipelineIdentity: "test-css-pipeline@1",
         }],
         routes: { "/": { modules: [], css: [hash] } },
         dependencies: {},
@@ -539,7 +551,7 @@ describe("html-generation/html-shell-generator", () => {
     it("owns an unused prefetched CSS rejection when release CSS is authoritative", async () => {
       const hash = "b".repeat(64);
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project",
         releaseId: "release",
         releaseVersion: 1,
@@ -553,7 +565,8 @@ describe("html-generation/html-shell-generator", () => {
           contentHash: hash,
           size: 1,
           contentType: "text/css",
-          styleProfileHash: null,
+          styleProfileHash: "c".repeat(64),
+          cssPipelineIdentity: "test-css-pipeline@1",
         }],
         routes: { "/": { modules: [], css: [hash] } },
         dependencies: {},
@@ -608,7 +621,7 @@ describe("html-generation/html-shell-generator", () => {
     it("rejects malformed release stylesheet identities before linking them", async () => {
       const hostileHash = 'x"><script>globalThis.pwned=1</script>';
       const manifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project",
         releaseId: "release",
         releaseVersion: 1,
@@ -622,7 +635,8 @@ describe("html-generation/html-shell-generator", () => {
           contentHash: hostileHash,
           size: 1,
           contentType: "text/css",
-          styleProfileHash: null,
+          styleProfileHash: "c".repeat(64),
+          cssPipelineIdentity: "test-css-pipeline@1",
         }],
         routes: { "/": { modules: [], css: [hostileHash] } },
         dependencies: {},
@@ -671,7 +685,7 @@ describe("html-generation/html-shell-generator", () => {
     });
 
     it("should not emit /_vf/css/.css when CSS hash is empty", async () => {
-      // Bug regression: when Tailwind compilation fails, cssHash is ""
+      // Bug regression: when CSS compilation fails, cssHash is ""
       // and the old code emitted <link href="/_vf/css/.css"> which 404s.
       // Trigger empty hash by using projectId "default" (skips CSS generation).
       const result = await wrapInHTMLShell(
@@ -691,7 +705,7 @@ describe("html-generation/html-shell-generator", () => {
       );
       assertStringIncludes(
         result,
-        "<!-- Tailwind CSS: Server-side JIT compiled -->",
+        "<!-- Project stylesheet -->",
       );
     });
 

@@ -3,7 +3,7 @@ import { initializeFileCacheBackend } from "#veryfront/platform/adapters/fs/cach
 import { initializeSSRDistributedCache } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
 import { initializeTransformCache } from "#veryfront/transforms/esm/transform-cache.ts";
 import { initializeHttpModuleDistributedCache } from "#veryfront/transforms/esm/http-cache-wrapper.ts";
-import { initializeProjectCSSCache } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { initializeProjectCSSCache } from "#veryfront/html/styles-builder/css-compiler.ts";
 
 /**
  * Default wiring of distributed-cache initializers, assembled at the server

@@ -8,6 +8,7 @@ export {
   buildPreparedCSSArtifactFromFiles,
   type PreparedCSSArtifactBuildResult,
 } from "../html/styles-builder/css-pregeneration.ts";
+export { acquireCSSGenerationSession } from "../html/styles-builder/css-compiler.ts";
 export {
   createStyleScopeProfile,
   type StyleScopeProfile,

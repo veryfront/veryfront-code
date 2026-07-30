@@ -132,7 +132,7 @@ async function waitForProductionPrewarm(renderer: Renderer): Promise<void> {
 
 function makeReadyManifest(): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: "proj-1",
     releaseId: "rel-1",
     releaseVersion: 1,

@@ -9,7 +9,7 @@ import {
   assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
@@ -36,6 +36,7 @@ import {
   createMockAdapter,
   createSingleChunkStream,
 } from "./html.test-helpers.ts";
+import { installTestCSSOptimizationEngine } from "../../../tests/_helpers/css-optimization-engine.ts";
 
 type Head = {
   metas: Array<{ name?: string; property?: string; content?: string }>;
@@ -85,7 +86,7 @@ function releaseManifestWithCSS(): ReleaseAssetManifest {
       contentHash: RELEASE_CSS_HASH,
       size: 1,
       contentType: "text/css",
-      styleProfileHash: null,
+      styleProfileHash: "c".repeat(64),
     }],
     routes: { "/": { modules: [], css: [RELEASE_CSS_HASH] } },
   };
@@ -94,8 +95,15 @@ function releaseManifestWithCSS(): ReleaseAssetManifest {
 describe("HTMLGenerator helpers", () => {
   const originalManifestFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
   const originalDependencyFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
+  let restoreCSSOptimizationEngine: (() => void) | undefined;
+
+  beforeEach(() => {
+    restoreCSSOptimizationEngine = installTestCSSOptimizationEngine();
+  });
 
   afterEach(() => {
+    restoreCSSOptimizationEngine?.();
+    restoreCSSOptimizationEngine = undefined;
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalDependencyFlag ?? "");
     configureReleaseAssetManifestFetcher(undefined);
@@ -716,7 +724,7 @@ describe("HTMLGenerator helpers", () => {
         options: { environment: "preview" },
       }));
 
-      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes('id="vf-project-css"'), true);
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
 
@@ -738,7 +746,7 @@ describe("HTMLGenerator helpers", () => {
       }));
 
       assertEquals(/<link rel="stylesheet" href="\/_vf\/css\/[^"]+\.css">/.test(html), true);
-      assertEquals(html.includes('id="vf-tailwind-css"'), false);
+      assertEquals(html.includes('id="vf-project-css"'), false);
     });
 
     it("owns a rejecting project CSS task when full-document import-map construction fails", async () => {
@@ -756,9 +764,8 @@ describe("HTMLGenerator helpers", () => {
         },
       });
       registerContract("CSSProcessor", {
-        get cacheIdentity(): string {
-          throw cssFailure;
-        },
+        cacheIdentity: "test-css-processor-import-map-failure@1",
+        defaultStylesheet: "",
         compile: () => Promise.reject(cssFailure),
       });
       invalidateCompiler();
@@ -804,9 +811,8 @@ describe("HTMLGenerator helpers", () => {
         event.preventDefault();
       };
       registerContract("CSSProcessor", {
-        get cacheIdentity(): string {
-          throw cssFailure;
-        },
+        cacheIdentity: "test-css-processor-authoritative-failure@1",
+        defaultStylesheet: "",
         compile: () => Promise.reject(cssFailure),
       });
       invalidateCompiler();
@@ -818,7 +824,7 @@ describe("HTMLGenerator helpers", () => {
             path.endsWith("/globals.css") ? ".promise-consumer { color: teal; }" : "",
         });
 
-        const rejection = await assertRejects(
+        await assertRejects(
           () =>
             generator.generateFullHTML(createHTMLContext({
               options: {
@@ -829,7 +835,6 @@ describe("HTMLGenerator helpers", () => {
           Error,
           cssFailure.message,
         );
-        assertStrictEquals(rejection, cssFailure);
         await new Promise((resolve) => setTimeout(resolve, 20));
 
         assertEquals(unhandledReasons, []);
@@ -1702,7 +1707,7 @@ describe("HTMLGenerator helpers", () => {
         true,
       );
       assertEquals(html.includes('data-theme="dark"'), true);
-      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes('id="vf-project-css"'), true);
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
     });
 
@@ -1735,7 +1740,7 @@ describe("HTMLGenerator helpers", () => {
       const html = await new Response(responseStream).text();
 
       assertEquals(/<link rel="stylesheet" href="\/_vf\/css\/[^"]+\.css">/.test(html), true);
-      assertEquals(html.includes('id="vf-tailwind-css"'), false);
+      assertEquals(html.includes('id="vf-project-css"'), false);
       assertEquals(html.includes("/_veryfront/rsc/client.js"), true);
       assertEquals(html.includes("/_veryfront/hydration-runtime.js"), false);
       assertEquals(html.includes("/_veryfront/hydrate.js"), false);

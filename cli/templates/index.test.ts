@@ -165,8 +165,26 @@ describe("cli/templates", () => {
       "4.5.2",
     );
     assertEquals(templateConfigs["docs-agent"]?.firstPartyExtensions, [
+      "@veryfront/ext-css-tailwind",
       "@veryfront/ext-document-kreuzberg",
     ]);
+  });
+
+  it("explicitly composes the CSS processor used by every starter", async () => {
+    for (const templateName of STARTER_TEMPLATE_NAMES) {
+      assertEquals(
+        templateConfigs[templateName]?.firstPartyExtensions?.includes(
+          "@veryfront/ext-css-tailwind",
+        ),
+        true,
+        `${templateName} must install its explicitly activated CSS processor`,
+      );
+      const config = await Deno.readTextFile(
+        new URL(`./files/${templateName}/veryfront.config.ts`, import.meta.url),
+      );
+      assertEquals(config.includes('from "@veryfront/ext-css-tailwind"'), true);
+      assertEquals(config.includes("extensions: [extTailwind()]"), true);
+    }
   });
 
   it("ships a Tailwind entry stylesheet for styled starter templates", async () => {

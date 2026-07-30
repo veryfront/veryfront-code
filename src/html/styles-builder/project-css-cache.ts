@@ -9,7 +9,7 @@
  */
 
 import { type CacheBackend, CacheBackends } from "#veryfront/cache/backend.ts";
-import { serverLogger as logger } from "#veryfront/utils";
+import { assertCSSPipelineIdentity, serverLogger as logger } from "#veryfront/utils";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import {
   assertCSSContentIdentity,
@@ -21,12 +21,11 @@ import {
 import {
   evaluateProjectCSSLocalCacheState,
   parseProjectCSSCacheEntry,
-  resolveStylesheet,
-} from "./tailwind-compiler-utils.ts";
-import { cacheCSSAsync, DEFAULT_STYLESHEET } from "./css-hash-cache.ts";
+} from "./css-compiler-utils.ts";
+import { cacheCSSAsync } from "./css-hash-cache.ts";
 
 const projectCssCacheLog = logger.component("project-css-cache");
-const tailwindLog = logger.component("tailwind");
+const cssCacheLog = logger.component("project-css-cache");
 
 // ============================================================================
 // Types
@@ -52,7 +51,7 @@ interface ProjectCSSRequestContext {
 }
 
 interface ProjectCSSProfile {
-  compilerIdentity: string;
+  cssPipelineIdentity: string;
   minify?: boolean;
   environment?: string;
   buildMode?: "development" | "production";
@@ -65,7 +64,7 @@ interface ProjectCSSProfile {
 const PROJECT_CSS_CACHE_TTL_SECONDS = 24 * 3600;
 const PROJECT_CSS_LOCAL_FALLBACK_MAX = 50;
 const PROJECT_CSS_LOCAL_TTL_MS = PROJECT_CSS_CACHE_TTL_SECONDS * 1000;
-const PROJECT_CSS_CACHE_SCHEMA = "v3";
+const PROJECT_CSS_CACHE_SCHEMA = "v4";
 
 // ============================================================================
 // State
@@ -128,18 +127,21 @@ export function isProjectCSSCacheDistributed(): boolean {
 
 export function createProjectCSSRequestContext(
   projectSlug: string,
-  stylesheet: string | undefined,
+  stylesheet: string,
   candidates: Set<string>,
   profile: ProjectCSSProfile,
 ): ProjectCSSRequestContext {
-  const resolvedStylesheet = resolveStylesheet(stylesheet, DEFAULT_STYLESHEET);
-  const stylesheetHash = hashString(resolvedStylesheet);
+  const cssPipelineIdentity = assertCSSPipelineIdentity(profile.cssPipelineIdentity);
+  if (typeof stylesheet !== "string") {
+    throw new TypeError("Project CSS request context requires a resolved stylesheet");
+  }
+  const stylesheetHash = hashString(stylesheet);
   const candidatesHash = hashCandidates(candidates);
   const environment = profile.environment ?? "preview";
   const profileHash = hashString(
     JSON.stringify({
       cacheSchema: PROJECT_CSS_CACHE_SCHEMA,
-      compilerIdentity: profile.compilerIdentity,
+      cssPipelineIdentity,
       minify: profile.minify ?? false,
       buildMode: profile.buildMode ?? "production",
       environment,
@@ -148,7 +150,7 @@ export function createProjectCSSRequestContext(
 
   return {
     projectSlug,
-    stylesheet: resolvedStylesheet,
+    stylesheet,
     candidatesHash,
     profileHash,
     environment,
@@ -216,7 +218,7 @@ export async function tryGetProjectCSSFromLocalFallback(
     return undefined;
   }
 
-  tailwindLog.debug("Project CSS cache hit (local)", {
+  cssCacheLog.debug("Project CSS cache hit (local)", {
     projectSlug: context.projectSlug,
     hash: localCached.hash,
   });
@@ -237,21 +239,21 @@ export async function tryGetProjectCSSFromDistributedCache(
 
     const entry = parseProjectCSSCacheEntry(raw);
     if (!entry) {
-      tailwindLog.debug("Project CSS cache entry was malformed", {
+      cssCacheLog.debug("Project CSS cache entry was malformed", {
         cacheKey: context.cacheKey,
       });
       return undefined;
     }
 
     if (!isValidProjectCSSCacheEntry(entry)) {
-      tailwindLog.warn("Rejected project CSS cache entry with mismatched identity", {
+      cssCacheLog.warn("Rejected project CSS cache entry with mismatched identity", {
         cacheKey: context.cacheKey,
       });
       return undefined;
     }
 
     if (entry.candidatesHash !== context.candidatesHash) {
-      tailwindLog.debug("Project CSS cache miss (candidates changed)", {
+      cssCacheLog.debug("Project CSS cache miss (candidates changed)", {
         projectSlug: context.projectSlug,
         cachedCandidatesHash: entry.candidatesHash,
         currentCandidatesHash: context.candidatesHash,
@@ -259,7 +261,7 @@ export async function tryGetProjectCSSFromDistributedCache(
       return undefined;
     }
 
-    tailwindLog.debug("Project CSS cache hit (distributed)", {
+    cssCacheLog.debug("Project CSS cache hit (distributed)", {
       projectSlug: context.projectSlug,
       hash: entry.hash,
     });
@@ -268,7 +270,7 @@ export async function tryGetProjectCSSFromDistributedCache(
     await cacheProjectCSSEntryByHash(entry, candidates, context.stylesheet);
     return { css: entry.css, hash: entry.hash, fromCache: true };
   } catch (error) {
-    tailwindLog.debug("Failed to read from project CSS cache", {
+    cssCacheLog.debug("Failed to read from project CSS cache", {
       cacheKey: context.cacheKey,
       error,
     });
@@ -293,7 +295,7 @@ export async function storeProjectCSS(
   if (projectCSSBackend) {
     projectCSSBackend.set(context.cacheKey, JSON.stringify(entry), PROJECT_CSS_CACHE_TTL_SECONDS)
       .catch((error) => {
-        tailwindLog.debug("Failed to store in project CSS cache", {
+        cssCacheLog.debug("Failed to store in project CSS cache", {
           cacheKey: context.cacheKey,
           error,
         });
@@ -324,7 +326,7 @@ export function isProjectCSSInitialized(): boolean {
  */
 export function invalidateProjectCSS(projectSlug: string): void {
   void invalidateProjectCSSAsync(projectSlug).catch((error) => {
-    tailwindLog.debug("Failed to invalidate project CSS cache", { projectSlug, error });
+    cssCacheLog.debug("Failed to invalidate project CSS cache", { projectSlug, error });
   });
 }
 
@@ -342,5 +344,5 @@ export async function invalidateProjectCSSAsync(projectSlug: string): Promise<vo
   if (!projectCSSBackend?.delByPattern) return;
 
   const deleted = await projectCSSBackend.delByPattern(`${projectSlug}:*`);
-  tailwindLog.debug("Cleared project CSS cache", { projectSlug, deleted });
+  cssCacheLog.debug("Cleared project CSS cache", { projectSlug, deleted });
 }

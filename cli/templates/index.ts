@@ -44,13 +44,42 @@ export {
   validateFeatures,
 } from "./feature-loader.ts";
 
+const CSS_PROCESSOR_EXTENSION = "@veryfront/ext-css-tailwind";
+
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
+  "minimal": {
+    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+  },
+  "ai-agent": {
+    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+  },
   "docs-agent": {
-    firstPartyExtensions: ["@veryfront/ext-document-kreuzberg"],
+    firstPartyExtensions: [
+      CSS_PROCESSOR_EXTENSION,
+      "@veryfront/ext-document-kreuzberg",
+    ],
     npmDependencies: {
       "@kreuzberg/node": "^4.4.2",
       "@kreuzberg/wasm": "4.5.2",
     },
+  },
+  "multi-agent-system": {
+    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+  },
+  "agentic-workflow": {
+    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+  },
+  "coding-agent": {
+    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+  },
+  "saas-starter": {
+    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+  },
+  "pages-router": {
+    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+  },
+  "app-router": {
+    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
   },
 };
 

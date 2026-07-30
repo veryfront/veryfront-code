@@ -91,6 +91,22 @@ export type {
 } from "./sandbox/index.ts";
 export { SandboxShellToolsProviderName } from "./sandbox/index.ts";
 
+// Image optimization
+export type {
+  ImageOptimizationEngine,
+  ImageOptimizationFormat,
+  ImageOptimizationRequest,
+  ImageOptimizationResult,
+  ImageOptimizationVariantRequest,
+  ImageOptimizationVariantResult,
+} from "./image/index.ts";
+export {
+  assertImageOptimizationEngine,
+  captureImageOptimizationEngine,
+  ImageOptimizationEngineName,
+  MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS,
+} from "./image/index.ts";
+
 // Studio browser capabilities
 export {
   createStudioCaptureBundleProvider,

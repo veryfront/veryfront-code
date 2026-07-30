@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_CSS_PIPELINE_IDENTITY_CODE_UNITS } from "#veryfront/utils";
 import {
   __pageCssCacheForTests,
   cachePageCss,
@@ -11,6 +12,8 @@ import {
 } from "./css-cache.ts";
 
 describe("css-cache", () => {
+  const pipelineIdentity = "css-pipeline@test";
+
   describe("constants", () => {
     it("has reasonable timeout", () => {
       assertEquals(CSS_SSR_TIMEOUT_MS, 5000);
@@ -23,10 +26,16 @@ describe("css-cache", () => {
 
   describe("getPageCssCacheKey", () => {
     it("creates key with all parts", () => {
-      const key = getPageCssCacheKey("proj-123", "production", "/home", "2024-01-01");
+      const key = getPageCssCacheKey(
+        "proj-123",
+        "production",
+        "/home",
+        "2024-01-01",
+        pipelineIdentity,
+      );
       assertEquals(
         key,
-        'veryfront:page-css:v1:["proj-123","production","/home","2024-01-01"]',
+        'veryfront:page-css:v2:["proj-123","production","/home","2024-01-01","css-pipeline@test"]',
       );
     });
 
@@ -38,6 +47,7 @@ describe("css-cache", () => {
             undefined,
             "/page",
             undefined,
+            pipelineIdentity,
           ),
         Error,
         "project identity",
@@ -45,15 +55,57 @@ describe("css-cache", () => {
     });
 
     it("preserves absent optional identity instead of inventing shared defaults", () => {
-      const key = getPageCssCacheKey("proj", undefined, "/about", "v1");
-      assertEquals(key, 'veryfront:page-css:v1:["proj",null,"/about","v1"]');
+      const key = getPageCssCacheKey(
+        "proj",
+        undefined,
+        "/about",
+        "v1",
+        pipelineIdentity,
+      );
+      assertEquals(
+        key,
+        'veryfront:page-css:v2:["proj",null,"/about","v1","css-pipeline@test"]',
+      );
     });
 
     it("does not alias delimiter-bearing route and version components", () => {
-      const left = getPageCssCacheKey("proj", "preview", "/a:b", "c");
-      const right = getPageCssCacheKey("proj", "preview", "/a", "b:c");
+      const left = getPageCssCacheKey(
+        "proj",
+        "preview",
+        "/a:b",
+        "c",
+        pipelineIdentity,
+      );
+      const right = getPageCssCacheKey(
+        "proj",
+        "preview",
+        "/a",
+        "b:c",
+        pipelineIdentity,
+      );
 
       assertNotEquals(left, right);
+    });
+
+    it("partitions otherwise identical pages by CSS pipeline identity", () => {
+      const first = getPageCssCacheKey("proj", "production", "/", "v1", "pipeline@1");
+      const second = getPageCssCacheKey("proj", "production", "/", "v1", "pipeline@2");
+      assertNotEquals(first, second);
+    });
+
+    it("rejects oversized and control-bearing pipeline identities", () => {
+      for (
+        const identity of [
+          "pipeline\nidentity",
+          "x".repeat(MAX_CSS_PIPELINE_IDENTITY_CODE_UNITS + 1),
+        ]
+      ) {
+        assertThrows(
+          () => getPageCssCacheKey("proj", "production", "/", "v1", identity),
+          Error,
+          "canonical CSS pipeline identity",
+        );
+      }
     });
   });
 

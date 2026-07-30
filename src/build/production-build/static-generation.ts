@@ -17,17 +17,17 @@ import { loadClientStyles } from "./asset-generation.ts";
 import { buildImportMap } from "#veryfront/html/utils.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import {
+  acquireCSSGenerationSession,
   cacheCSSAsync,
   extractCandidatesFromFiles,
-  generateTailwindCSS,
+  generateCSS,
   hashCSS,
 } from "#veryfront/html/styles-builder/index.ts";
-import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cache.ts";
 import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 import { createSecureFs } from "#veryfront/security";
 import { COMPILATION_ERROR, SSG_GENERATION_ERROR } from "#veryfront/errors";
-import { collectTailwindSourceFiles } from "../asset-pipeline/tailwind-processor/source-collector.ts";
+import { collectCSSCandidateSourceFiles } from "../../html/styles-builder/css-source-collector.ts";
 import { getRouteOutputPath } from "./output-paths.ts";
 
 export interface PageRenderResult {
@@ -64,7 +64,7 @@ export interface SSGOptions {
   /** React version for import map generation */
   reactVersion?: string;
   releaseAssetManifest?: ReleaseAssetManifest | null;
-  /** Build output trees that must not be scanned as Tailwind source input. */
+  /** Build output trees that must not be scanned as CSS candidate source input. */
   ignoredSourceDirs?: string[];
 }
 
@@ -134,11 +134,11 @@ async function readOptionalFile(
 async function prepareAppRouteStylesheet(
   options: SSGOptions,
 ): Promise<string | undefined> {
-  const stylesheetPath = options.config.tailwind?.stylesheet ?? "globals.css";
+  const stylesheetPath = options.config.styles?.stylesheet ?? "globals.css";
   const resolvedStylesheetPath = resolveProjectSourcePath(
     stylesheetPath,
     options.projectDir,
-    "Tailwind stylesheet",
+    "CSS stylesheet",
   );
   const secureFs = createSecureFs({
     baseDir: options.projectDir,
@@ -153,7 +153,7 @@ async function prepareAppRouteStylesheet(
     (path) => secureFs.readFile(path),
     resolvedStylesheetPath,
   );
-  const sourceFiles = await collectTailwindSourceFiles({
+  const sourceFiles = await collectCSSCandidateSourceFiles({
     adapter: options.adapter,
     projectDir: options.projectDir,
     patterns: ["**/*"],
@@ -163,27 +163,23 @@ async function prepareAppRouteStylesheet(
     projectDir: options.projectDir,
   });
   for (const candidate of FRAMEWORK_CANDIDATES) candidates.add(candidate);
+  const cssPipeline = await acquireCSSGenerationSession(true);
+  const resolvedStylesheet = stylesheet ?? cssPipeline.compilationSession.defaultStylesheet;
 
-  const generated = await generateTailwindCSS(stylesheet, candidates, {
+  const generated = await generateCSS(resolvedStylesheet, candidates, {
     minify: true,
     environment: "production",
     buildMode: "production",
     projectSlug: options.projectDir,
-  });
+  }, { generationSession: cssPipeline });
 
-  if (generated.error) {
-    throw COMPILATION_ERROR.create({
-      detail: `App Router Tailwind compilation failed: ${generated.error}`,
-    });
-  }
   if (candidates.size > 0 && generated.css.trim().length === 0) {
     throw COMPILATION_ERROR.create({
-      detail: "App Router Tailwind compilation returned empty CSS for non-empty candidates",
+      detail: "App Router CSS compilation returned empty CSS for non-empty candidates",
     });
   }
 
   const hash = hashCSS(generated.css);
-  if (!hash) return undefined;
 
   if (!options.dryRun) {
     const cssPath = join(options.outputDir, "_vf/css", `${hash}.css`);
@@ -191,7 +187,7 @@ async function prepareAppRouteStylesheet(
     await options.adapter.fs.writeFile(cssPath, generated.css);
     await cacheCSSAsync(generated.css, hash, {
       candidates,
-      stylesheet: stylesheet ?? DEFAULT_STYLESHEET,
+      stylesheet: resolvedStylesheet,
     });
   }
 

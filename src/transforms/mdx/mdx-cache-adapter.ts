@@ -433,7 +433,7 @@ export class MDXCacheAdapter {
         reactVersion: this.reactVersion,
         importMap: options.config.resolve?.importMap ?? null,
         moduleServerUrl: options.config.dev?.moduleServerUrl ?? null,
-        tailwind: options.config.tailwind ?? null,
+        styles: options.config.styles ?? null,
         experimental: options.config.experimental ?? null,
       });
     } catch (error) {

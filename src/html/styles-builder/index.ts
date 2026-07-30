@@ -6,16 +6,22 @@
 
 export { getDevStyles } from "./dev-styles.ts";
 export {
+  acquireCSSGenerationSession,
   cacheCSSAsync,
   clearCSSCache,
   extractCandidates,
   extractCandidatesFromFiles,
   formatCSSError,
-  generateTailwindCSS,
+  generateCSS,
   getCSSByHash,
   getProjectCSS,
   hashCSS,
   invalidateCompiler,
   invalidateProjectCSS,
-} from "./tailwind-compiler.ts";
-export type { CSSErrorInfo, GenerateOptions, TailwindResult } from "./tailwind-compiler.ts";
+} from "./css-compiler.ts";
+export type {
+  CSSErrorInfo,
+  CSSGenerationOptions,
+  CSSGenerationResult,
+  CSSGenerationSession,
+} from "./css-compiler.ts";

@@ -5,7 +5,6 @@
 
 import { parseArgs } from "#std/flags";
 import { fromFileUrl, isAbsolute, join } from "#std/path.ts";
-import { getBinaryPluginBundleIncludes } from "../../src/build/binary-plugin-includes.ts";
 
 const PROJECT_ROOT = fromFileUrl(new URL("../..", import.meta.url));
 export const DEFAULT_INCLUDES = [
@@ -17,7 +16,6 @@ export const DEFAULT_INCLUDES = [
   "extensions/ext-auth-jwt/src/index.ts",
   "extensions/ext-bundler-esbuild/src/index.ts",
   "extensions/ext-content-mdx/src/index.ts",
-  "extensions/ext-css-tailwind/src/index.ts",
   "extensions/ext-db-sqlite/src/index.ts",
   "extensions/ext-document-kreuzberg/src/index.ts",
   "extensions/ext-eval-report-http/src/index.ts",
@@ -49,13 +47,7 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
     "--unstable-worker-options",
   ];
 
-  for (
-    const include of [
-      ...DEFAULT_INCLUDES,
-      ...getBinaryPluginBundleIncludes(),
-      ...options.extraIncludes,
-    ]
-  ) {
+  for (const include of [...DEFAULT_INCLUDES, ...options.extraIncludes]) {
     args.push("--include", include);
   }
 

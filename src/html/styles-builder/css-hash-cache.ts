@@ -2,7 +2,7 @@
  * CSS hash-based distributed cache.
  *
  * Manages CSS caching by content hash, supporting both local in-memory
- * and distributed (API/Redis) backends. Provides unified cache entries
+ * and provider-neutral shared backends. Provides unified cache entries
  * that store CSS alongside its generation inputs for JIT regeneration.
  *
  * @module html/styles-builder/css-hash-cache
@@ -17,13 +17,9 @@ import { serverLogger } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { assertCSSContentIdentity, hashCSS, isCSSContentHash } from "./css-identity.ts";
-import {
-  buildCSSCacheEntry,
-  parseCSSCacheEntry,
-  resolveStylesheet,
-} from "./tailwind-compiler-utils.ts";
+import { buildCSSCacheEntry, parseCSSCacheEntry, resolveStylesheet } from "./css-compiler-utils.ts";
 
-const logger = serverLogger.component("tailwind");
+const logger = serverLogger.component("css-cache");
 
 // ============================================================================
 // Types
@@ -53,9 +49,7 @@ interface CSSInputsCacheEntry {
 // Constants
 // ============================================================================
 
-export const DEFAULT_STYLESHEET = `@import "tailwindcss";
-@plugin "@tailwindcss/typography";
-@custom-variant dark (&:is(.dark, [data-theme="dark"]) *, &:is(.dark, [data-theme="dark"]));`;
+const LEGACY_EMPTY_STYLESHEET = "";
 
 // CSS cache TTL: 24 hours (API maximum) for content-addressed immutable resources.
 const CSS_CACHE_TTL_SECONDS = 24 * 3600;
@@ -146,8 +140,8 @@ const cssCacheOptions: DistributedCacheInitOptions = {
   },
   keyPrefix: "css",
   localFallbackSize: LOCAL_CACHE_MAX_SIZE,
-  initializedLog: "[tailwind] CSS cache initialized",
-  initFailureLog: "[tailwind] Failed to initialize distributed CSS cache, using memory",
+  initializedLog: "CSS cache initialized",
+  initFailureLog: "Failed to initialize distributed CSS cache, using memory",
 };
 
 function getCssCache(): Promise<CacheBackend> {
@@ -182,8 +176,8 @@ const cssInputsCacheOptions: DistributedCacheInitOptions = {
   },
   keyPrefix: "css-inputs",
   localFallbackSize: LOCAL_CSS_INPUTS_CACHE_MAX,
-  initializedLog: "[tailwind] CSS inputs cache initialized",
-  initFailureLog: "[tailwind] Failed to initialize CSS inputs cache, using memory",
+  initializedLog: "CSS inputs cache initialized",
+  initFailureLog: "Failed to initialize CSS inputs cache, using memory",
 };
 
 function getCssInputsCache(): Promise<CacheBackend> {
@@ -234,7 +228,7 @@ export async function cacheCSSAsync(
 ): Promise<string> {
   const resolvedHash = hashCSS(css);
   if (hash !== undefined) assertCSSContentIdentity(css, hash);
-  const entry: CSSCacheEntry = buildCSSCacheEntry(css, inputs, DEFAULT_STYLESHEET);
+  const entry: CSSCacheEntry = buildCSSCacheEntry(css, inputs, LEGACY_EMPTY_STYLESHEET);
 
   storeInLocalCache(resolvedHash, entry);
 
@@ -290,7 +284,7 @@ export async function getCSSByHashAsync(hash: string): Promise<string | undefine
         const raw = await cache.get(getVersionedCacheKey(hash));
         if (!raw) return undefined;
 
-        const entry = parseCSSCacheEntry(raw, DEFAULT_STYLESHEET);
+        const entry = parseCSSCacheEntry(raw, LEGACY_EMPTY_STYLESHEET);
         if (!isCSSCacheEntryForHash(entry, hash)) {
           logger.warn("Rejected CSS cache entry with mismatched content identity", { hash });
           return undefined;
@@ -327,7 +321,7 @@ export async function cacheCSSInputsAsync(
 
   const entry: CSSInputsCacheEntry = {
     candidates: Array.isArray(inputs.candidates) ? inputs.candidates : [...inputs.candidates],
-    stylesheet: resolveStylesheet(inputs.stylesheet, DEFAULT_STYLESHEET),
+    stylesheet: resolveStylesheet(inputs.stylesheet, LEGACY_EMPTY_STYLESHEET),
   };
 
   storeInLocalCssInputsCache(hash, entry);
@@ -369,7 +363,7 @@ async function getCSSCacheEntry(hash: string): Promise<CSSCacheEntry | undefined
     const raw = await cache.get(getVersionedCacheKey(hash));
     if (!raw) return undefined;
 
-    const entry = parseCSSCacheEntry(raw, DEFAULT_STYLESHEET);
+    const entry = parseCSSCacheEntry(raw, LEGACY_EMPTY_STYLESHEET);
     if (!isCSSCacheEntryForHash(entry, hash)) return undefined;
     storeInLocalCache(hash, entry);
     return entry;

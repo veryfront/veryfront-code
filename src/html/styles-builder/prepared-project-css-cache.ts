@@ -1,8 +1,6 @@
 import { type CacheBackend, createCacheBackend } from "#veryfront/cache/backend.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
-import { serverLogger } from "#veryfront/utils";
-import { DEFAULT_STYLESHEET } from "./css-hash-cache.ts";
-import { resolveStylesheet } from "./tailwind-compiler-utils.ts";
+import { assertCSSPipelineIdentity, assertStyleProfileHash, serverLogger } from "#veryfront/utils";
 import { assertCSSContentIdentity, hashCSS, hashString, isCSSContentHash } from "./css-identity.ts";
 
 const logger = serverLogger.component("prepared-project-css-cache");
@@ -17,7 +15,7 @@ interface PreparedProjectCSSLocalEntry extends PreparedProjectCSSCacheEntry {
 }
 
 interface PreparedProjectCSSProfile {
-  compilerIdentity: string;
+  cssPipelineIdentity: string;
   minify?: boolean;
   environment?: string;
   buildMode?: "development" | "production";
@@ -37,7 +35,7 @@ export interface PreparedProjectCSSRequestContext {
 const PREPARED_PROJECT_CSS_CACHE_TTL_SECONDS = 24 * 3600;
 const PREPARED_PROJECT_CSS_LOCAL_MAX = 50;
 const PREPARED_PROJECT_CSS_LOCAL_TTL_MS = PREPARED_PROJECT_CSS_CACHE_TTL_SECONDS * 1000;
-const PREPARED_PROJECT_CSS_CACHE_SCHEMA = "v2";
+const PREPARED_PROJECT_CSS_CACHE_SCHEMA = "v3";
 
 let preparedProjectCSSBackend: CacheBackend | null = null;
 let preparedProjectCSSInitialized = false;
@@ -110,22 +108,23 @@ export async function initializePreparedProjectCSSCache(): Promise<boolean> {
 export function createPreparedProjectCSSContext(
   projectSlug: string,
   projectVersion: string,
-  stylesheet: string | undefined,
+  stylesheet: string,
   styleProfileHash: string,
   profile: PreparedProjectCSSProfile,
 ): PreparedProjectCSSRequestContext {
-  if (!isCSSContentHash(styleProfileHash)) {
-    throw new TypeError("Style profile hash must be a full lowercase SHA-256 digest");
+  const capturedStyleProfileHash = assertStyleProfileHash(styleProfileHash);
+  const cssPipelineIdentity = assertCSSPipelineIdentity(profile.cssPipelineIdentity);
+  if (typeof stylesheet !== "string") {
+    throw new TypeError("Prepared CSS request context requires a resolved stylesheet");
   }
 
-  const resolvedStylesheet = resolveStylesheet(stylesheet, DEFAULT_STYLESHEET);
-  const stylesheetHash = hashString(resolvedStylesheet);
+  const stylesheetHash = hashString(stylesheet);
   const projectVersionHash = hashString(projectVersion);
   const environment = profile.environment ?? "preview";
   const profileHash = hashString(
     JSON.stringify({
       cacheSchema: PREPARED_PROJECT_CSS_CACHE_SCHEMA,
-      compilerIdentity: profile.compilerIdentity,
+      cssPipelineIdentity,
       minify: profile.minify ?? false,
       buildMode: profile.buildMode ?? "production",
       environment,
@@ -135,13 +134,13 @@ export function createPreparedProjectCSSContext(
   return {
     projectSlug,
     projectVersion,
-    stylesheet: resolvedStylesheet,
+    stylesheet,
     stylesheetHash,
-    styleProfileHash,
+    styleProfileHash: capturedStyleProfileHash,
     environment,
     profileHash,
     cacheKey:
-      `${projectSlug}:${environment}:prepared:${PREPARED_PROJECT_CSS_CACHE_SCHEMA}:${projectVersionHash}:${stylesheetHash}:${styleProfileHash}:${profileHash}`,
+      `${projectSlug}:${environment}:prepared:${PREPARED_PROJECT_CSS_CACHE_SCHEMA}:${projectVersionHash}:${stylesheetHash}:${capturedStyleProfileHash}:${profileHash}`,
   };
 }
 

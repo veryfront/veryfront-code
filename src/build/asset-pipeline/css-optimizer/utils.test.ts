@@ -8,17 +8,15 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join, resolve } from "#veryfront/compat/path";
 import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { ensureDir } from "#veryfront/compat/std/fs.ts";
+import { validateCSSSourceMap } from "./optimization-engine.ts";
 import {
-  basicMinify,
   calculateSavings,
   extractSelectors,
   findCSSFiles,
   getOutputPath,
   globFiles,
   matchPattern,
-  parseBrowserTargets,
   shouldKeepSelector,
-  validateCSSSourceMap,
 } from "./utils.ts";
 
 const TEST_DIR = "./.veryfront/test-css-utils";
@@ -167,33 +165,6 @@ describe("CSS Optimizer Utils", () => {
     });
   });
 
-  describe("basicMinify", () => {
-    it("removes comments", () => {
-      const css = "/* Comment */ .button { color: red; }";
-      const minified = basicMinify(css);
-
-      assertEquals(minified.includes("/*"), false);
-    });
-
-    it("removes whitespace", () => {
-      const css = ".button   {   color:   red;   }";
-      const minified = basicMinify(css);
-
-      assertEquals(minified, ".button{color:red}");
-    });
-
-    it("removes semicolons before braces", () => {
-      const css = ".button { color: red; }";
-      const minified = basicMinify(css);
-
-      assertEquals(minified, ".button{color:red}");
-    });
-
-    it("rejects malformed CSS instead of applying regex rewrites", () => {
-      assertThrows(() => basicMinify("@media ( { .x { color: red }"));
-    });
-  });
-
   describe("calculateSavings", () => {
     it("calculates percentage savings correctly", () => {
       assertEquals(calculateSavings(1000, 500), 50);
@@ -277,27 +248,6 @@ describe("CSS Optimizer Utils", () => {
       } finally {
         await Deno.remove(baseDir, { recursive: true });
       }
-    });
-  });
-
-  describe("parseBrowserTargets", () => {
-    it("converts real Browserslist queries", () => {
-      const targets = parseBrowserTargets(["ie 11"]);
-      assertEquals(typeof targets?.ie, "number");
-    });
-
-    it("rejects empty browser query lists", () => {
-      assertThrows(() => parseBrowserTargets([]), TypeError, "bounded");
-      assertThrows(
-        () => parseBrowserTargets(null as unknown as string[]),
-        TypeError,
-        "queries or a target object",
-      );
-      assertThrows(
-        () => parseBrowserTargets(new Array<string>(1)),
-        TypeError,
-        "bounded",
-      );
     });
   });
 

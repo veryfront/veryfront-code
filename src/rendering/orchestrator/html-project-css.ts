@@ -12,6 +12,7 @@ import type {
 import { rendererLogger } from "#veryfront/utils";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { getProjectCandidates } from "./css-candidate-manifest.ts";
+import { getRenderCSSGenerationSession } from "./css-generation-session.ts";
 import type { HTMLGenerationContext } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-project-css");
@@ -90,6 +91,7 @@ export function startProjectCSSPreparation(
   if (!projectScope || projectScope === "default") return undefined;
 
   const getProjectCss = deps.getProjectCSS ?? getProjectCSS;
+  const generationSession = getRenderCSSGenerationSession(context.options);
   return getProjectCss(
     projectScope,
     htmlOptions.globalCSS,
@@ -99,6 +101,7 @@ export function startProjectCSSPreparation(
       environment: htmlOptions.environment,
       buildMode: htmlOptions.mode as "development" | "production",
     },
+    { generationSession },
   );
 }
 
@@ -129,7 +132,8 @@ export function startPreparedCSSWarmup(
   const createStyleProfile = deps.createStyleScopeProfile ?? createStyleScopeProfile;
   const warmPreparedCss = deps.warmPreparedCSSArtifactFromFiles ?? warmPreparedCSSArtifactFromFiles;
   const styleProfile = createStyleProfile(config.config);
-  const stylesheetPath = config.config?.tailwind?.stylesheet;
+  const stylesheetPath = config.config?.styles?.stylesheet;
+  const generationSession = getRenderCSSGenerationSession(context.options);
 
   Promise.resolve(fsAdapter.getAllSourceFiles())
     .then((files) =>
@@ -143,6 +147,7 @@ export function startPreparedCSSWarmup(
         minify: true,
         environment: "preview",
         buildMode: "production",
+        generationSession,
       })
     )
     .catch((error) => {

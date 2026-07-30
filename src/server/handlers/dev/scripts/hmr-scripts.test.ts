@@ -6,10 +6,10 @@ import { getHMRScript } from "./hmr-scripts.ts";
 describe("server/handlers/dev/scripts/hmr-scripts", () => {
   it("atomically swaps the preview stylesheet when a hashed asset is ready", () => {
     const script = getHMRScript(3000);
-    assertStringIncludes(script, "async function swapTailwindStylesheet(nextHref)");
-    assertStringIncludes(script, "pending.setAttribute('data-vf-tailwind-pending', 'true');");
-    assertStringIncludes(script, "pending.removeAttribute('data-vf-tailwind-pending');");
-    assertStringIncludes(script, "pending.id = 'vf-tailwind-css';");
+    assertStringIncludes(script, "async function swapProjectStylesheet(nextHref)");
+    assertStringIncludes(script, "pending.setAttribute('data-vf-stylesheet-pending', 'true');");
+    assertStringIncludes(script, "pending.removeAttribute('data-vf-stylesheet-pending');");
+    assertStringIncludes(script, "pending.id = 'vf-project-css';");
     assertStringIncludes(script, "current.remove();");
   });
 
@@ -39,11 +39,11 @@ describe("server/handlers/dev/scripts/hmr-scripts", () => {
     const script = getHMRScript(3000);
     assertStringIncludes(script, "dlog('[HMR] Reloading page:', reason);");
     assertStringIncludes(script, "dlog('[HMR] Updating JS module:', path);");
-    assertStringIncludes(script, "dlog('[HMR] Tailwind CSS refreshed');");
+    assertStringIncludes(script, "dlog('[HMR] Project stylesheet refreshed');");
     assertEquals(script.includes("console.warn('[HMR] Reloading page:'"), false);
     assertEquals(script.includes("console.log('[HMR] Reloading page:'"), false);
     assertEquals(script.includes("console.log('[HMR] Updating JS module:'"), false);
-    assertEquals(script.includes("console.log('[HMR] Tailwind CSS refreshed'"), false);
+    assertEquals(script.includes("console.log('[HMR] Project stylesheet refreshed'"), false);
   });
 
   it("targets Studio notifications at a validated parent origin", () => {

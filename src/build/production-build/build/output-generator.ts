@@ -30,6 +30,7 @@ import { generateManifest, generateRedirects } from "../manifest.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { compressBuildOutputs } from "../compression.ts";
+import { optimizeProductionImages } from "../image-optimization.ts";
 
 export interface OutputGeneratorOptions {
   adapter: RuntimeAdapter;
@@ -168,8 +169,15 @@ export async function generateAllOutputs(options: OutputGeneratorOptions): Promi
   }
 
   const assetStats = await copyAssets(adapter, projectDir, outputDir, dryRun);
-  stats.assets = assetStats.assets;
+  const imageStats = await optimizeProductionImages({
+    projectDir,
+    outputDir,
+    config,
+    dryRun,
+  });
+  stats.assets = assetStats.assets + imageStats.stats.totalVariants;
   stats.totalSize += assetStats.totalSize;
+  stats.totalSize += imageStats.stats.totalSize;
 
   await generateManifestAndServiceWorker(options);
   await generateRedirectsFile(adapter, outputDir, dryRun);

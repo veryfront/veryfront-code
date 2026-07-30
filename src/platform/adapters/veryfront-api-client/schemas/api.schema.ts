@@ -190,17 +190,50 @@ export const getLookupDomainResponseSchema = defineSchema((v) =>
   })
 );
 
+const styleArtifactTupleFields = (v: SchemaValidator) => ({
+  css_pipeline_identity: v.string(),
+  style_profile_hash: v.string(),
+  branch: v.string().optional(),
+  environment_name: v.string().optional(),
+  release_id: v.string().optional(),
+});
+
+/**
+ * The style-artifact control plane is a discriminated protocol, not a bag of
+ * optional fields. Canonical value and exact-tuple validation happens in the
+ * API operations layer after this structural parse.
+ */
 export const getStyleArtifactResolveResponseSchema = defineSchema((v) =>
-  v.object({
-    status: v.enum(["ready", "missing", "building", "failed"] as const),
-    artifact_hash: v.string().optional(),
-    asset_path: v.string().optional(),
-    etag: v.string().optional(),
-    content_type: v.string().optional(),
-    build_run_id: v.string().optional(),
-    failure_reason: v.string().optional(),
-    updated_at: v.string().optional(),
-  })
+  v.union([
+    v.object({
+      status: v.literal("ready"),
+      ...styleArtifactTupleFields(v),
+      artifact_hash: v.string(),
+      asset_path: v.string(),
+      etag: v.string(),
+      content_type: v.string(),
+      build_run_id: v.string().optional(),
+      updated_at: v.string().optional(),
+    }),
+    v.object({
+      status: v.literal("missing"),
+      ...styleArtifactTupleFields(v),
+      updated_at: v.string().optional(),
+    }),
+    v.object({
+      status: v.literal("building"),
+      ...styleArtifactTupleFields(v),
+      build_run_id: v.string(),
+      updated_at: v.string().optional(),
+    }),
+    v.object({
+      status: v.literal("failed"),
+      ...styleArtifactTupleFields(v),
+      build_run_id: v.string().optional(),
+      failure_reason: v.string(),
+      updated_at: v.string().optional(),
+    }),
+  ])
 );
 
 export const getReleaseAssetManifestBuildResponseSchema = defineSchema((v) =>
@@ -379,12 +412,18 @@ export const API_ENDPOINTS = {
     method: "GET" as const,
     path: "/projects/{projectRef}/style-artifacts/current",
     description:
-      "Resolve metadata for the latest ready style artifact for a branch, environment, or release selector",
+      "Resolve style artifact state for one exact selector, profile, and CSS pipeline tuple",
   },
   ensureStyleArtifactBuild: {
     method: "POST" as const,
     path: "/projects/{projectRef}/style-artifacts/current/builds",
     description:
-      "Ensure a background style artifact build exists for a branch, environment, or release selector",
+      "Ensure a background style artifact build exists for one exact selector, profile, and CSS pipeline tuple",
+  },
+  upsertStyleArtifact: {
+    method: "PUT" as const,
+    path: "/projects/{projectRef}/style-artifacts/current",
+    description:
+      "Record an exact style artifact result for one selector, profile, and CSS pipeline tuple",
   },
 } as const;

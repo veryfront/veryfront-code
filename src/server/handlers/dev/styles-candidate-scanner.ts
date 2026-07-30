@@ -1,14 +1,14 @@
 /**
  * Styles Candidate Scanner
  *
- * Extracts Tailwind CSS candidate class names from project source files.
+ * Extracts CSS processor candidate class names from project source files.
  * Supports two strategies: FS adapter with getAllSourceFiles() for remote/proxy
  * mode, and local filesystem scanning as fallback for local development.
  *
  * @module server/handlers/dev/styles-candidate-scanner
  */
 
-import { extractCandidates } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { extractCandidates } from "#veryfront/html/styles-builder/css-compiler.ts";
 import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import {
   createStyleScopeProfile,
@@ -38,7 +38,7 @@ interface SourceFileProvider {
 }
 
 /**
- * Extract Tailwind CSS candidate class names from all project source files.
+ * Extract CSS processor candidate class names from all project source files.
  *
  * Tries the FS adapter's `getAllSourceFiles()` first (available in proxy/remote
  * mode). Falls back to recursive local directory scanning when no adapter or
@@ -95,7 +95,7 @@ export async function extractProjectCandidates(ctx: HandlerContext): Promise<Set
 }
 
 /**
- * Fallback: scan local files for Tailwind candidates when no FS adapter is available.
+ * Scan local files for CSS candidates when no filesystem adapter is available.
  * Used in local development mode where projects are read directly from disk.
  */
 async function scanLocalFiles(projectDir: string, ctx: HandlerContext): Promise<Set<string>> {

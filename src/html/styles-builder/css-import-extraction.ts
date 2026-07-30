@@ -11,7 +11,7 @@
  * the dev/preview /_vf_styles/styles.css route and the release-asset build
  * executor.
  *
- * Extraction is intentionally text-based (like Tailwind candidate scanning):
+ * Extraction is intentionally text-based, like CSS candidate scanning:
  * it must stay cheap enough to run on every stylesheet compile and must not
  * depend on bundler/parser extensions being registered. Unresolvable or
  * unreadable specifiers are skipped downstream, so over-matching is harmless.

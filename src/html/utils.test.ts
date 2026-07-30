@@ -221,7 +221,7 @@ describe("html-generation/utils", () => {
         ]),
       );
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,
@@ -269,7 +269,7 @@ describe("html-generation/utils", () => {
         ]),
       );
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,
@@ -303,7 +303,7 @@ describe("html-generation/utils", () => {
       const headHash = "a".repeat(64);
       const workflowHash = "b".repeat(64);
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,
@@ -348,7 +348,7 @@ describe("html-generation/utils", () => {
 
     it("versions local module-server import-map aliases in release manifest context", async () => {
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,

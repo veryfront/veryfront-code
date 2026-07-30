@@ -96,4 +96,9 @@ export type {
 } from "./adapters/runtime/cloudflare/index.ts";
 
 // Adapters: API client
-export { VeryfrontApiClient } from "./adapters/veryfront-api-client/index.ts";
+export {
+  createStyleArtifactTuple,
+  type ProjectStyleArtifactResolution,
+  type StyleArtifactTuple,
+  VeryfrontApiClient,
+} from "./adapters/veryfront-api-client/index.ts";

@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
+import { isStyleProfileHash } from "#veryfront/utils/css-artifact-identity.ts";
 
 const CANDIDATE_IDENTITY_SCHEMA = "veryfront.css-candidates.v1";
-
-/** The only CSS content identity accepted by cache and asset boundaries. */
-const CSS_CONTENT_HASH_PATTERN = /^[a-f0-9]{64}$/;
 
 /** Canonical URL shape for immutable, content-addressed runtime CSS. */
 const CSS_ASSET_PATH_PATTERN = /^\/_vf\/css\/([a-f0-9]{64})\.css$/;
@@ -28,7 +26,7 @@ export function hashCandidates(candidates: Set<string>): string {
 }
 
 export function isCSSContentHash(value: unknown): value is string {
-  return typeof value === "string" && CSS_CONTENT_HASH_PATTERN.test(value);
+  return isStyleProfileHash(value);
 }
 
 export function extractCSSAssetHash(pathname: string): string | undefined {

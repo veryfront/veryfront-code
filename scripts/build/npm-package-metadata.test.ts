@@ -1,10 +1,17 @@
-import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {
   BROWSER_SAFE_CLIENT_MODULES,
   BROWSER_SAFE_EXPORTS,
 } from "./browser-safe-exports.mjs";
 import {
+  assertRootArtifactExcludesCSSImplementations,
+  assertRootPackageExcludesCSSImplementations,
   deriveExtensionDependencyOwnership,
   type ExtensionDependencyOwnership,
   loadExtensionDependencyOwnership,
@@ -12,6 +19,8 @@ import {
   NpmPackageOwnershipError,
   removeInternalNpmEntryPointExports,
   repositoryExtensionDependencyOwnership,
+  ROOT_CSS_EXTENSION_PACKAGES,
+  ROOT_CSS_EXTENSION_SOURCE_DIRECTORIES,
 } from "./npm-package-metadata.ts";
 import {
   type ExtensionManifest,
@@ -116,6 +125,81 @@ Deno.test("root npm build metadata does not inject extension implementation depe
       `${packageName} belongs to a @veryfront/ext-* package, not root veryfront`,
     );
   }
+
+  for (const packageName of ROOT_CSS_EXTENSION_PACKAGES) {
+    assertEquals(
+      source.includes(`pkg.dependencies["${packageName}"]`),
+      false,
+      `${packageName} must remain independently installed and activated`,
+    );
+  }
+  assertStringIncludes(
+    source,
+    "assertRootPackageExcludesCSSImplementations(pkg)",
+  );
+  assertStringIncludes(
+    source,
+    'await assertRootArtifactExcludesCSSImplementations("./npm/esm")',
+  );
+});
+
+Deno.test("root npm metadata rejects direct, aliased, and bundled CSS extensions", () => {
+  for (const packageName of ROOT_CSS_EXTENSION_PACKAGES) {
+    assertThrows(
+      () =>
+        assertRootPackageExcludesCSSImplementations({
+          dependencies: { [packageName]: "1.0.0" },
+        }),
+      NpmPackageOwnershipError,
+      packageName,
+    );
+  }
+
+  assertThrows(
+    () =>
+      assertRootPackageExcludesCSSImplementations({
+        optionalDependencies: {
+          "css-compiler": "npm:@veryfront/ext-css-lightning@1.0.0",
+        },
+      }),
+    NpmPackageOwnershipError,
+    "@veryfront/ext-css-lightning",
+  );
+  assertThrows(
+    () =>
+      assertRootPackageExcludesCSSImplementations({
+        bundledDependencies: ["@veryfront/ext-css-purgecss"],
+      }),
+    NpmPackageOwnershipError,
+    "@veryfront/ext-css-purgecss",
+  );
+
+  assertRootPackageExcludesCSSImplementations({
+    dependencies: { "@veryfront/ext-content-mdx": "1.0.0" },
+  });
+});
+
+Deno.test("root npm artifact rejects bundled CSS extension source directories", async () => {
+  const output = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(`${output}/extensions/ext-content-mdx`, {
+      recursive: true,
+    });
+    await assertRootArtifactExcludesCSSImplementations(output);
+
+    for (const sourceDirectory of ROOT_CSS_EXTENSION_SOURCE_DIRECTORIES) {
+      const path = `${output}/extensions/${sourceDirectory}`;
+      await Deno.mkdir(path, { recursive: true });
+      await assertRejects(
+        () => assertRootArtifactExcludesCSSImplementations(output),
+        NpmPackageOwnershipError,
+        sourceDirectory,
+      );
+      await Deno.remove(path, { recursive: true });
+    }
+  } finally {
+    await Deno.remove(output, { recursive: true });
+  }
 });
 
 Deno.test("root npm CLI package declares auto-loaded first-party extensions after local install", async () => {
@@ -127,7 +211,6 @@ Deno.test("root npm CLI package declares auto-loaded first-party extensions afte
     const packageName of [
       "@veryfront/ext-bundler-esbuild",
       "@veryfront/ext-content-mdx",
-      "@veryfront/ext-css-tailwind",
       "@veryfront/ext-parser-babel",
     ]
   ) {
@@ -532,6 +615,13 @@ describe("extension dependency ownership", () => {
           exports: { "./feature": "./src/feature.ts" },
         },
       ],
+      [
+        "an unknown extension activation mode",
+        {
+          ...extensionManifest("@veryfront/ext-alpha"),
+          veryfront: { extension: true, activation: "sometimes" },
+        },
+      ],
     ] as const
   ) {
     it(`rejects ${description}`, () => {
@@ -787,7 +877,6 @@ describe("npm supply-chain policy", () => {
     const autoLoadedExtensions = [
       "ext-bundler-esbuild",
       "ext-content-mdx",
-      "ext-css-tailwind",
       "ext-parser-babel",
     ];
 
@@ -835,6 +924,26 @@ describe("npm supply-chain policy", () => {
     assertStringIncludes(source, "*/@babel/traverse");
   });
 
+  it("generates CSS extensions separately without installing them into root smoke", async () => {
+    const source = await Deno.readTextFile("scripts/test/npm-install-smoke.sh");
+
+    for (const extensionName of ROOT_CSS_EXTENSION_SOURCE_DIRECTORIES) {
+      assertStringIncludes(
+        source,
+        `npm/extensions/${extensionName}`,
+      );
+      assertEquals(
+        source.includes(`veryfront-${extensionName}-*.tgz`),
+        false,
+        `${extensionName} must not be installed as part of the root package smoke`,
+      );
+    }
+    assertStringIncludes(
+      source,
+      "root install excludes independently published CSS implementations",
+    );
+  });
+
   it("loads CLI command handlers after global routing decisions", async () => {
     const source = await Deno.readTextFile("cli/router.ts");
 
@@ -855,7 +964,7 @@ describe("npm supply-chain policy", () => {
       "cli/commands/knowledge/parser.ts",
       "src/agent/hosted/veryfront-cloud-agent-service.ts",
       "src/agent/service/auth.ts",
-      "src/html/styles-builder/tailwind-compiler-cache.ts",
+      "src/html/styles-builder/css-compiler-cache.ts",
       "src/internal-agents/run-stream.ts",
       "src/proxy/main.ts",
       "src/testing/init.ts",
@@ -1122,9 +1231,21 @@ describe("npm generated integration artifacts", () => {
       source,
       'await Deno.copyFile("./NOTICE", "./npm/NOTICE");',
     );
-    assertStringIncludes(
-      source,
-      'pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];',
-    );
+    const filesAssignment =
+      source.match(/pkg\.files\s*=\s*\[([\s\S]*?)\];/)?.[1] ?? "";
+    for (
+      const publishedPath of [
+        "esm",
+        "script",
+        "bin",
+        "assets",
+        "tsconfig.json",
+        "LICENSE",
+        "NOTICE",
+        "README.md",
+      ]
+    ) {
+      assertStringIncludes(filesAssignment, `"${publishedPath}"`);
+    }
   });
 });

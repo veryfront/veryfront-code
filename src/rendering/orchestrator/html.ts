@@ -725,7 +725,7 @@ export class HTMLGenerator {
     context: HTMLGenerationContext,
     mergedFrontmatter: MDXFrontmatter,
   ): Promise<HTMLGenerationOptions> {
-    const stylesheetPath = this.config.config?.tailwind?.stylesheet || "globals.css";
+    const stylesheetPath = this.config.config?.styles?.stylesheet || "globals.css";
     const [appComponentPathOrNull, globalCSS] = await Promise.all([
       profilePhase("html.resolve_app_path", () => this.resolveAppPath()),
       profilePhase("html.load_global_css", () => this.loadProjectFile(stylesheetPath)),
@@ -834,7 +834,7 @@ export class HTMLGenerator {
 
   /**
    * Load CSS files imported by components and merge with the global stylesheet.
-   * Deduplicates against the configured Tailwind stylesheet path to avoid
+   * Deduplicates against the configured project stylesheet path to avoid
    * double-loading globals.css when it's both auto-discovered and explicitly imported.
    */
   private async mergeImportedCSS(

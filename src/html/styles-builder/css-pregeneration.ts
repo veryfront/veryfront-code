@@ -8,12 +8,19 @@
 
 import { serverLogger } from "#veryfront/utils";
 import { join } from "#veryfront/compat/path/index.ts";
-import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isAbsolute } from "#veryfront/compat/path/resolution.ts";
 import {
+  createFileSystem,
+  type FileSystem,
+  isNotFoundError,
+} from "#veryfront/platform/compat/fs.ts";
+import {
+  acquireCSSGenerationSession,
+  type CSSGenerationSession,
   extractCandidatesFromFiles,
-  getCSSCompilationCacheIdentity,
   getProjectCSS,
-} from "./tailwind-compiler.ts";
+  isCSSGenerationSession,
+} from "./css-compiler.ts";
 import {
   createPreparedProjectCSSContext,
   storePreparedProjectCSS,
@@ -24,10 +31,20 @@ import {
   shouldTraverseStyleDirectory,
   type StyleScopeProfile,
 } from "./style-scope-profile.ts";
+import {
+  assertCanonicalStylesheetPath,
+  DEFAULT_PROJECT_STYLESHEET_PATHS,
+  resolveProjectStylesheetPath,
+  sourceFileMatchesStylesheetPath,
+} from "./stylesheet-path.ts";
+import { hasControlCharacters } from "../../build/utils/string-validation.ts";
 
 const logger = serverLogger.component("css-pregeneration");
 const inFlightPreparedCSSBuilds = new Map<string, Promise<void>>();
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
+const MAX_SOURCE_TREE_DEPTH = 64;
+const MAX_SOURCE_TREE_ENTRIES = 100_000;
+const MAX_SOURCE_CONTENT_BYTES = 64 * 1024 * 1024;
 
 interface CSSPregenerationOptions {
   /** Project slug for cache keying */
@@ -50,6 +67,8 @@ interface CSSPregenerationOptions {
   environment?: string;
   /** Build mode recorded in the prepared artifact profile */
   buildMode?: "development" | "production";
+  /** Internal compiler/optimizer pair captured with the prepared identity. */
+  generationSession?: CSSGenerationSession;
 }
 
 export interface PreparedCSSArtifactBuildResult {
@@ -64,6 +83,22 @@ interface LocalProjectSourceFilesOptions {
   projectDir: string;
   styleProfile: StyleScopeProfile;
   fs?: FileSystem;
+}
+
+async function resolveCSSGenerationSession(
+  minify: boolean,
+  session?: CSSGenerationSession,
+): Promise<CSSGenerationSession> {
+  const resolved = session ?? await acquireCSSGenerationSession(minify);
+  if (!isCSSGenerationSession(resolved)) {
+    throw new TypeError("Prepared CSS generation session was not acquired by core");
+  }
+  if (resolved.minify !== minify) {
+    throw new TypeError(
+      "Prepared CSS generation session minification mode does not match",
+    );
+  }
+  return resolved;
 }
 
 export async function buildPreparedCSSArtifactFromFiles(
@@ -82,24 +117,40 @@ export async function buildPreparedCSSArtifactFromFiles(
     buildMode = "production",
   } = options;
 
-  const resolvedStylesheet = stylesheet ?? findStylesheetFromFiles(files, stylesheetPath);
+  const discoveredStylesheet = stylesheet ??
+    findStylesheetFromFiles(files, stylesheetPath, projectDir);
+  if (stylesheetPath !== undefined && discoveredStylesheet === undefined) {
+    throw new TypeError(
+      `Configured stylesheet ${JSON.stringify(stylesheetPath)} was not available in project source`,
+    );
+  }
   const candidates = extractCandidatesFromFiles(files, {
     projectDir,
     styleProfile,
   });
-  const compilerIdentity = await getCSSCompilationCacheIdentity();
+  const session = await resolveCSSGenerationSession(
+    minify,
+    options.generationSession,
+  );
+  const resolvedStylesheet = discoveredStylesheet ??
+    session.compilationSession.defaultStylesheet;
 
   const result = await getProjectCSS(projectSlug, resolvedStylesheet, candidates, {
     minify,
     environment,
     buildMode,
-  });
+  }, { generationSession: session });
   const context = createPreparedProjectCSSContext(
     projectSlug,
     projectVersion,
     resolvedStylesheet,
     styleProfile.hash,
-    { compilerIdentity, minify, environment, buildMode },
+    {
+      cssPipelineIdentity: session.cacheIdentity,
+      minify,
+      environment,
+      buildMode,
+    },
   );
 
   await storePreparedProjectCSS(context, { css: result.css, hash: result.hash });
@@ -116,44 +167,104 @@ export async function buildPreparedCSSArtifactFromFiles(
 export async function collectLocalProjectSourceFiles(
   options: LocalProjectSourceFilesOptions,
 ): Promise<Array<{ path: string; content?: string }>> {
+  if (!isAbsolute(options.projectDir)) {
+    throw new TypeError("CSS source project directory must be absolute");
+  }
   const fs = options.fs ?? createFileSystem();
   const files: Array<{ path: string; content?: string }> = [];
+  const encoder = new TextEncoder();
+  let visitedEntries = 0;
+  let sourceBytes = 0;
 
-  const scanDir = async (directoryPath: string): Promise<void> => {
-    let entries: AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
-    try {
-      entries = fs.readDir(directoryPath);
-    } catch {
-      return;
+  const scanDir = async (directoryPath: string, depth: number): Promise<void> => {
+    if (depth > MAX_SOURCE_TREE_DEPTH) {
+      throw new TypeError(
+        `CSS source tree exceeds ${MAX_SOURCE_TREE_DEPTH} directory levels`,
+      );
     }
 
-    for await (const entry of entries) {
+    const entries = [];
+    for await (const entry of fs.readDir(directoryPath)) {
+      visitedEntries++;
+      if (visitedEntries > MAX_SOURCE_TREE_ENTRIES) {
+        throw new TypeError(
+          `CSS source tree exceeds ${MAX_SOURCE_TREE_ENTRIES} entries`,
+        );
+      }
+      entries.push(entry);
+    }
+    entries.sort((left, right) => left.name === right.name ? 0 : left.name < right.name ? -1 : 1);
+
+    for (const entry of entries) {
+      if (
+        entry.name.length === 0 ||
+        entry.name === "." ||
+        entry.name === ".." ||
+        entry.name.includes("/") ||
+        entry.name.includes("\\") ||
+        hasControlCharacters(entry.name)
+      ) {
+        throw new TypeError("CSS source directory returned an invalid entry name");
+      }
       const fullPath = join(directoryPath, entry.name);
+
+      if (entry.isSymlink) continue;
 
       if (entry.isDirectory) {
         if (shouldTraverseStyleDirectory(options.styleProfile, fullPath, options.projectDir)) {
-          await scanDir(fullPath);
+          await scanDir(fullPath, depth + 1);
         }
         continue;
       }
 
       if (!entry.isFile) continue;
       if (!shouldIncludeStylePath(options.styleProfile, fullPath, options.projectDir)) continue;
-      if (!SOURCE_EXTENSIONS.some((extension) => entry.name.endsWith(extension))) continue;
-
-      try {
-        files.push({
-          path: fullPath,
-          content: await fs.readTextFile(fullPath),
-        });
-      } catch {
-        // ignore unreadable files during warmup
+      if (!SOURCE_EXTENSIONS.some((extension) => entry.name.toLowerCase().endsWith(extension))) {
+        continue;
       }
+
+      if (fs.lstat && (await fs.lstat(fullPath)).isSymlink) continue;
+      const info = await fs.stat(fullPath);
+      if (!Number.isSafeInteger(info.size) || info.size < 0) {
+        throw new TypeError(`CSS source file has an invalid size: ${entry.name}`);
+      }
+      if (info.size > MAX_SOURCE_CONTENT_BYTES - sourceBytes) {
+        throw new TypeError(
+          `CSS source content exceeds ${MAX_SOURCE_CONTENT_BYTES} bytes`,
+        );
+      }
+      const content = await fs.readTextFile(fullPath);
+      const contentBytes = encoder.encode(content).byteLength;
+      if (contentBytes > MAX_SOURCE_CONTENT_BYTES - sourceBytes) {
+        throw new TypeError(
+          `CSS source content exceeds ${MAX_SOURCE_CONTENT_BYTES} bytes`,
+        );
+      }
+      sourceBytes += contentBytes;
+      files.push({ path: fullPath, content });
     }
   };
 
-  await scanDir(options.projectDir);
+  await scanDir(options.projectDir, 0);
   return files;
+}
+
+async function assertNoStylesheetSymlink(
+  fs: FileSystem,
+  projectDir: string,
+  relativePath: string,
+): Promise<void> {
+  if (!fs.lstat) return;
+
+  let candidate = projectDir;
+  for (const segment of relativePath.split("/")) {
+    candidate = join(candidate, segment);
+    if ((await fs.lstat(candidate)).isSymlink) {
+      throw new TypeError(
+        `Stylesheet path cannot traverse a symbolic link: ${JSON.stringify(relativePath)}`,
+      );
+    }
+  }
 }
 
 export async function readLocalProjectStylesheet(
@@ -161,21 +272,20 @@ export async function readLocalProjectStylesheet(
   stylesheetPath?: string,
   fs: FileSystem = createFileSystem(),
 ): Promise<string | undefined> {
-  const candidatePaths = stylesheetPath ? [stylesheetPath.replace(/^\/+/, "")] : [
-    "globals.css",
-    "global.css",
-    "styles/globals.css",
-    "app/globals.css",
-    "src/globals.css",
-    "src/styles/globals.css",
-  ];
+  if (stylesheetPath !== undefined) {
+    const canonicalPath = assertCanonicalStylesheetPath(stylesheetPath);
+    const absolutePath = resolveProjectStylesheetPath(projectDir, canonicalPath);
+    await assertNoStylesheetSymlink(fs, projectDir, canonicalPath);
+    return await fs.readTextFile(absolutePath);
+  }
 
-  for (const relativePath of candidatePaths) {
-    const absolutePath = join(projectDir, relativePath);
+  for (const relativePath of DEFAULT_PROJECT_STYLESHEET_PATHS) {
+    const absolutePath = resolveProjectStylesheetPath(projectDir, relativePath);
     try {
+      await assertNoStylesheetSymlink(fs, projectDir, relativePath);
       return await fs.readTextFile(absolutePath);
-    } catch {
-      // keep searching
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
     }
   }
 
@@ -189,17 +299,29 @@ export async function readLocalProjectStylesheet(
 export async function warmPreparedCSSArtifactFromFiles(
   options: CSSPregenerationOptions,
 ): Promise<boolean> {
-  const stylesheet = options.stylesheet ??
-    findStylesheetFromFiles(options.files, options.stylesheetPath);
-  const compilerIdentity = await getCSSCompilationCacheIdentity();
+  const discoveredStylesheet = options.stylesheet ??
+    findStylesheetFromFiles(options.files, options.stylesheetPath, options.projectDir);
+  if (options.stylesheetPath !== undefined && discoveredStylesheet === undefined) {
+    throw new TypeError(
+      `Configured stylesheet ${
+        JSON.stringify(options.stylesheetPath)
+      } was not available in project source`,
+    );
+  }
+  const minify = options.minify ?? true;
+  const session = await resolveCSSGenerationSession(
+    minify,
+    options.generationSession,
+  );
+  const stylesheet = discoveredStylesheet ?? session.compilationSession.defaultStylesheet;
   const context = createPreparedProjectCSSContext(
     options.projectSlug,
     options.projectVersion,
     stylesheet,
     options.styleProfile.hash,
     {
-      compilerIdentity,
-      minify: options.minify ?? true,
+      cssPipelineIdentity: session.cacheIdentity,
+      minify,
       environment: options.environment ?? "preview",
       buildMode: options.buildMode ?? "production",
     },
@@ -211,6 +333,7 @@ export async function warmPreparedCSSArtifactFromFiles(
   const task = buildPreparedCSSArtifactFromFiles({
     ...options,
     stylesheet,
+    generationSession: session,
   }).then(() => {
     logger.debug("Warm prepared CSS complete", {
       projectSlug: options.projectSlug,
@@ -235,7 +358,7 @@ export async function warmPreparedCSSArtifactFromFiles(
 /**
  * Pre-generate and cache CSS from file list.
  *
- * This extracts Tailwind candidates from source files and generates CSS,
+ * This extracts stylesheet candidates from source files and generates CSS,
  * storing it in the distributed cache for later retrieval during SSR.
  *
  * Should be called after files are fetched but before SSR starts.
@@ -294,16 +417,27 @@ export async function pregenerateCSSFromFiles(
 export function findStylesheetFromFiles(
   files: Array<{ path: string; content?: string }>,
   stylesheetPath?: string,
+  projectDir?: string,
 ): string | undefined {
-  if (stylesheetPath) {
-    const normalized = stylesheetPath.replace(/^\/+/, "");
-    const file = files.find(
-      (f) => f.content && (f.path === normalized || f.path.endsWith(`/${normalized}`)),
+  if (stylesheetPath !== undefined) {
+    const canonicalPath = assertCanonicalStylesheetPath(stylesheetPath);
+    const matches = files.filter((file) =>
+      typeof file.content === "string" &&
+      sourceFileMatchesStylesheetPath(file.path, canonicalPath, {
+        allowRelativePrefix: true,
+      })
     );
-    if (file?.content) return file.content;
+    if (matches.length > 1) {
+      throw new TypeError(
+        `Configured stylesheet ${
+          JSON.stringify(canonicalPath)
+        } matched multiple project source files`,
+      );
+    }
+    return matches[0]?.content;
   }
 
-  return findGlobalStylesheet(files);
+  return findGlobalStylesheet(files, projectDir);
 }
 
 /**
@@ -319,19 +453,21 @@ export function findStylesheetFromFiles(
  */
 export function findGlobalStylesheet(
   files: Array<{ path: string; content?: string }>,
+  projectDir?: string,
 ): string | undefined {
-  const stylesheetPatterns = [
-    /globals\.css$/,
-    /global\.css$/,
-    /styles\/globals\.css$/,
-    /app\/globals\.css$/,
-    /src\/globals\.css$/,
-    /src\/styles\/globals\.css$/,
-  ];
-
-  for (const pattern of stylesheetPatterns) {
-    const file = files.find((f) => f.content && pattern.test(f.path));
-    if (file?.content) return file.content;
+  for (const path of DEFAULT_PROJECT_STYLESHEET_PATHS) {
+    const matches = files.filter((file) =>
+      typeof file.content === "string" &&
+      (file.path === path ||
+        (projectDir !== undefined &&
+          sourceFileMatchesStylesheetPath(file.path, path, { projectDir })))
+    );
+    if (matches.length > 1) {
+      throw new TypeError(
+        `Conventional stylesheet ${JSON.stringify(path)} matched multiple project source files`,
+      );
+    }
+    if (matches.length === 1) return matches[0]?.content;
   }
 
   return undefined;

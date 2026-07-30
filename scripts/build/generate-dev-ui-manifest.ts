@@ -25,6 +25,7 @@ async function collectSortedFiles(root: string): Promise<Array<{ path: string }>
 			exts: [".tsx", ".ts"],
 		})
 	) {
+		if (file.path.endsWith("/styles.generated.ts")) continue;
 		files.push(file);
 	}
 	return files.sort((a, b) => relative(root, a.path).localeCompare(relative(root, b.path)));

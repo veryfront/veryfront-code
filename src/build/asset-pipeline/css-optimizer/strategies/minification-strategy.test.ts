@@ -1,11 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createTestCSSOptimizationEngine } from "../../../../../tests/_helpers/css-optimization-engine.ts";
 import { MinificationStrategy } from "./minification-strategy.ts";
 
 describe("build/asset-pipeline/css-optimizer/strategies/minification-strategy", () => {
   describe("MinificationStrategy", () => {
-    const strategy = new MinificationStrategy();
+    const strategy = new MinificationStrategy(
+      createTestCSSOptimizationEngine(() => ({ css: "optimized" })),
+    );
 
     it("should have correct name and priority", () => {
       assertEquals(strategy.name, "basic-minification");
@@ -28,20 +31,19 @@ describe("build/asset-pipeline/css-optimizer/strategies/minification-strategy", 
     });
 
     describe("process", () => {
-      it("should minify CSS content", async () => {
+      it("should return engine output", async () => {
         const input = `body {
   color: red;
   background: blue;
 }`;
         const result = await strategy.process(input, "test.css", {});
-        assertEquals(typeof result.code, "string");
-        assertEquals(result.code.length <= input.length, true);
+        assertEquals(result.code, "optimized");
         assertEquals(result.sourceMap, undefined);
       });
 
       it("should return a resolved promise", async () => {
         const result = await strategy.process("a { b: c; }", "file.css", {});
-        assertEquals(typeof result.code, "string");
+        assertEquals(result.code, "optimized");
       });
     });
   });

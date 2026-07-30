@@ -34,7 +34,7 @@ describe("server style callbacks", () => {
   it("uses source-bound hosted config without re-entering the multi-project loader", async () => {
     const hostedConfig: VeryfrontConfig = {
       directories: { components: ["tenant-ui"] },
-      tailwind: { stylesheet: "styles/tenant.css" },
+      styles: { stylesheet: "styles/tenant.css" },
     };
     let loaderCalls = 0;
     let buildOptions: BuildOptions | undefined;

@@ -1,0 +1,23 @@
+{
+  "name": "@veryfront/ext-css-purgecss",
+  "version": "0.1.0",
+  "exports": "./src/index.ts",
+  "veryfront": {
+    "extension": true,
+    "activation": "explicit",
+    "contracts": {
+      "provides": ["CSSPurgingEngine"]
+    },
+    "capabilities": []
+  },
+  "imports": {
+    "purgecss": "npm:purgecss@8.0.0",
+    "@std/assert": "jsr:@std/assert@1.0.19",
+    "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
+    "veryfront/extensions": "../../src/extensions/types.ts",
+    "veryfront/extensions/css": "../../src/extensions/css/index.ts"
+  },
+  "tasks": {
+    "test": "deno test --no-check src/"
+  }
+}

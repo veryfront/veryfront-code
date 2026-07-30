@@ -153,7 +153,7 @@ async function prewarmLocalProductionCSSArtifacts(
         projectDir,
         styleProfile,
       });
-      const stylesheet = await readLocalProjectStylesheet(projectDir, config?.tailwind?.stylesheet);
+      const stylesheet = await readLocalProjectStylesheet(projectDir, config?.styles?.stylesheet);
 
       const result = await buildPreparedCSSArtifactFromFiles({
         projectSlug,
@@ -162,7 +162,7 @@ async function prewarmLocalProductionCSSArtifacts(
         files,
         styleProfile,
         stylesheet,
-        stylesheetPath: config?.tailwind?.stylesheet,
+        stylesheetPath: config?.styles?.stylesheet,
         minify: true,
         environment: "preview",
         buildMode: "production",

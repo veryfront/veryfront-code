@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import {
   assertEquals,
   assertExists,
@@ -28,6 +29,12 @@ import {
 } from "./project-run-execute.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import { acquireCSSGenerationSession } from "#veryfront/html/styles-builder/css-compiler.ts";
+import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
+import {
+  createTestCSSOptimizationEngine,
+  withTestCSSOptimizationEngine,
+} from "../../../../tests/_helpers/css-optimization-engine.ts";
 
 const encoder = new TextEncoder();
 
@@ -237,6 +244,7 @@ function createStyleArtifactCtx(
   options: {
     files: Array<{ path: string; content?: string }>;
     stylesheet?: string;
+    stylesheetReadError?: Error;
     stylesheetPath?: string;
     contentContext?: {
       sourceType: "branch" | "environment" | "release";
@@ -266,7 +274,7 @@ function createStyleArtifactCtx(
   };
 
   ctx.projectDir = "/unrelated-runtime-dir";
-  ctx.config = { tailwind: { stylesheet: stylesheetPath } };
+  ctx.config = { styles: { stylesheet: stylesheetPath } };
   ctx.environmentName = "Preview";
   ctx.adapter = ({
     ...ctx.adapter,
@@ -274,15 +282,20 @@ function createStyleArtifactCtx(
       getUnderlyingAdapter: () => underlyingAdapter,
       async readFile(path: string) {
         readCalls.push(path);
-        if (path === stylesheetPath && options.stylesheet !== undefined) {
-          return options.stylesheet;
+        if (path === stylesheetPath) {
+          if (options.stylesheetReadError) throw options.stylesheetReadError;
+          if (options.stylesheet !== undefined) return options.stylesheet;
         }
-        throw new Error(`Missing test file: ${path}`);
+        throw Object.assign(new Error(`Missing test file: ${path}`), { code: "ENOENT" });
       },
     },
   } as unknown) as HandlerContext["adapter"];
 
   return { ctx, readCalls, sourceFileCalls };
+}
+
+function testStyleProfileHash(stylesheetPath = "src/styles.css"): string {
+  return createStyleScopeProfile({ styles: { stylesheet: stylesheetPath } }).hash;
 }
 
 function createStyleArtifactFetchRecorder(): {
@@ -310,10 +323,18 @@ function createStyleArtifactFetchRecorder(): {
           new Response(
             JSON.stringify({
               status: body.status === "failed" ? "failed" : "ready",
+              css_pipeline_identity: body.css_pipeline_identity,
+              style_profile_hash: body.style_profile_hash,
+              ...(typeof body.branch === "string" ? { branch: body.branch } : {}),
+              ...(typeof body.environment_name === "string"
+                ? { environment_name: body.environment_name }
+                : {}),
+              ...(typeof body.release_id === "string" ? { release_id: body.release_id } : {}),
               ...(artifactHash ? { artifact_hash: artifactHash } : {}),
               asset_path: artifactHash ? `/_vf/css/${artifactHash}.css` : undefined,
-              content_type: "text/css; charset=utf-8",
+              content_type: artifactHash ? "text/css; charset=utf-8" : undefined,
               etag: artifactHash ? `"${artifactHash}"` : undefined,
+              build_run_id: body.build_run_id,
               failure_reason: body.failure_reason,
               updated_at: "2026-07-08T00:00:00.000Z",
             }),
@@ -596,47 +617,119 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   });
 
   it("builds style artifacts from adapter source files and adapter stylesheet reads", async () => {
-    const body = {
-      runId: "run_style_artifact_adapter_source",
-      kind: "task",
-      target: "task:style-artifact-build",
-      projectId: "proj-1",
-      config: { environment_name: "Preview" },
-    };
-    const { request, publicKeyPem } = await signedRequest(
-      "/api/control-plane/runs/run_style_artifact_adapter_source/execute",
-      body,
-      { "x-token": "test-token" },
-    );
-    const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
-      files: [{
-        path: "pages/index.tsx",
-        content:
-          'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
-      }],
-      stylesheet: "@tailwind utilities; .from-css { color: red; }",
-      stylesheetPath: "src/styles.css",
+    await withTestCSSOptimizationEngine(createTestCSSOptimizationEngine(), async () => {
+      const cssPipelineIdentity = (await acquireCSSGenerationSession(true)).cacheIdentity;
+      const styleProfileHash = testStyleProfileHash();
+      const body = {
+        runId: "run_style_artifact_adapter_source",
+        kind: "task",
+        target: "task:style-artifact-build",
+        projectId: "proj-1",
+        config: {
+          environment_name: "Preview",
+          css_pipeline_identity: cssPipelineIdentity,
+          style_profile_hash: styleProfileHash,
+        },
+      };
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_style_artifact_adapter_source/execute",
+        body,
+        { "x-token": "test-token" },
+      );
+      const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+        files: [{
+          path: "pages/index.tsx",
+          content:
+            'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+        }],
+        stylesheet: "@tailwind utilities; .from-css { color: red; }",
+        stylesheetPath: "src/styles.css",
+      });
+      const recorder = createStyleArtifactFetchRecorder();
+
+      const result = await withMockFetch(
+        recorder.fetch,
+        async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const json = await result.response.json();
+      assertEquals(json.success, true);
+      assertEquals(json.result.css_pipeline_identity, cssPipelineIdentity);
+      assertEquals(json.result.style_profile_hash, styleProfileHash);
+      assertEquals(json.result.selector, { type: "environment", value: "Preview" });
+      assertEquals(json.result.kind, "style_artifact");
+      assertEquals(sourceFileCalls.count, 1);
+      assertEquals(readCalls, ["src/styles.css"]);
+      assertEquals(recorder.upserts.length, 1);
+      assertEquals(recorder.upserts[0]?.environment_name, "Preview");
+      assertEquals(recorder.upserts[0]?.css_pipeline_identity, cssPipelineIdentity);
+      assertEquals(recorder.upserts[0]?.status, "ready");
+      assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
     });
-    const recorder = createStyleArtifactFetchRecorder();
+  });
 
-    const result = await withMockFetch(
-      recorder.fetch,
-      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
-    );
+  it("propagates operational adapter stylesheet failures without generating fallback CSS", async () => {
+    await withTestCSSOptimizationEngine(createTestCSSOptimizationEngine(), async () => {
+      const cssPipelineIdentity = (await acquireCSSGenerationSession(true)).cacheIdentity;
+      const styleProfileHash = testStyleProfileHash();
+      const body = {
+        runId: "run_style_artifact_stylesheet_failure",
+        kind: "task",
+        target: "task:style-artifact-build",
+        projectId: "proj-1",
+        config: {
+          environment_name: "Preview",
+          css_pipeline_identity: cssPipelineIdentity,
+          style_profile_hash: styleProfileHash,
+        },
+      };
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_style_artifact_stylesheet_failure/execute",
+        body,
+        { "x-token": "test-token" },
+      );
+      const stylesheetReadError = Object.assign(
+        new Error("stylesheet backend unavailable"),
+        { code: "EIO" },
+      );
+      const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+        files: [{
+          path: "pages/index.tsx",
+          content: 'export default function Page() { return <main className="px-4">Hi</main>; }',
+        }],
+        stylesheetReadError,
+        stylesheetPath: "src/styles.css",
+      });
+      const recorder = createStyleArtifactFetchRecorder();
 
-    assertExists(result.response);
-    assertEquals(result.response.status, 200);
-    const json = await result.response.json();
-    assertEquals(json.success, true);
-    assertEquals(sourceFileCalls.count, 1);
-    assertEquals(readCalls, ["src/styles.css"]);
-    assertEquals(recorder.upserts.length, 1);
-    assertEquals(recorder.upserts[0]?.environment_name, "Preview");
-    assertEquals(recorder.upserts[0]?.status, "ready");
-    assertEquals(typeof recorder.upserts[0]?.artifact_hash, "string");
+      const result = await withMockFetch(
+        recorder.fetch,
+        async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const json = await result.response.json();
+      assertEquals(json.success, false);
+      assertStringIncludes(json.error, "stylesheet backend unavailable");
+      assertEquals(json.result.css_pipeline_identity, cssPipelineIdentity);
+      assertEquals(json.result.style_profile_hash, styleProfileHash);
+      assertEquals(json.result.selector, { type: "environment", value: "Preview" });
+      assertEquals(sourceFileCalls.count, 1);
+      assertEquals(readCalls, ["src/styles.css"]);
+      assertEquals(recorder.upserts.length, 1);
+      assertEquals(recorder.upserts[0]?.status, "failed");
+      assertStringIncludes(
+        String(recorder.upserts[0]?.failure_reason),
+        "stylesheet backend unavailable",
+      );
+    });
   });
 
   it("rejects mismatched style profile hashes before scanning source files", async () => {
+    const queuedStyleProfileHash = "b".repeat(64);
     const body = {
       runId: "run_style_artifact_hash_mismatch",
       kind: "task",
@@ -644,7 +737,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       projectId: "proj-1",
       config: {
         environment_name: "Preview",
-        style_profile_hash: "queued-profile-hash",
+        css_pipeline_identity: "queued-css-pipeline-identity",
+        style_profile_hash: queuedStyleProfileHash,
       },
     };
     const { request, publicKeyPem } = await signedRequest(
@@ -671,14 +765,181 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const json = await result.response.json();
     assertEquals(json.success, false);
     assertStringIncludes(json.error, "Style profile hash mismatch");
+    assertEquals(json.result.css_pipeline_identity, "queued-css-pipeline-identity");
+    assertEquals(json.result.style_profile_hash, queuedStyleProfileHash);
+    assertEquals(json.result.selector, { type: "environment", value: "Preview" });
     assertEquals(sourceFileCalls.count, 0);
     assertEquals(recorder.upserts.length, 1);
-    assertEquals(recorder.upserts[0]?.style_profile_hash, "queued-profile-hash");
+    assertEquals(
+      recorder.upserts[0]?.css_pipeline_identity,
+      "queued-css-pipeline-identity",
+    );
+    assertEquals(recorder.upserts[0]?.style_profile_hash, queuedStyleProfileHash);
     assertEquals(recorder.upserts[0]?.status, "failed");
     assertStringIncludes(
       String(recorder.upserts[0]?.failure_reason),
       "Style profile hash mismatch",
     );
+  });
+
+  it("rejects non-canonical CSS pipeline identities before scanning or API writes", async () => {
+    const body = {
+      runId: "run_style_artifact_invalid_pipeline_identity",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: {
+        environment_name: "Preview",
+        css_pipeline_identity: "queued\npipeline",
+        style_profile_hash: testStyleProfileHash(),
+      },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_invalid_pipeline_identity/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{
+        path: "pages/index.tsx",
+        content: 'export default function Page() { return <main className="px-4">Hi</main>; }',
+      }],
+      stylesheet: "@tailwind utilities;",
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    const json = await result.response.json();
+    assertEquals(json.success, false);
+    assertStringIncludes(json.error, "without control characters");
+    assertEquals(sourceFileCalls.count, 0);
+    assertEquals(recorder.upserts.length, 0);
+  });
+
+  it("requires the queued style profile identity before scanning or API writes", async () => {
+    const body = {
+      runId: "run_style_artifact_missing_profile",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: {
+        environment_name: "Preview",
+        css_pipeline_identity: "pipeline@1",
+      },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_artifact_missing_profile/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const { ctx, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+      files: [{ path: "pages/index.tsx", content: "export default () => null;" }],
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+    );
+    const json = await result.response!.json();
+
+    assertEquals(json.success, false);
+    assertStringIncludes(json.error, "requires CSS pipeline and style profile identities");
+    assertEquals(sourceFileCalls.count, 0);
+    assertEquals(recorder.upserts.length, 0);
+  });
+
+  it("rejects source adapters that resolve a different selector before scanning", async () => {
+    await withTestCSSOptimizationEngine(createTestCSSOptimizationEngine(), async () => {
+      const cssPipelineIdentity = (await acquireCSSGenerationSession(true)).cacheIdentity;
+      const body = {
+        runId: "run_style_artifact_source_mismatch",
+        kind: "task",
+        target: "task:style-artifact-build",
+        projectId: "proj-1",
+        config: {
+          branch: "main",
+          css_pipeline_identity: cssPipelineIdentity,
+          style_profile_hash: testStyleProfileHash(),
+        },
+      };
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_style_artifact_source_mismatch/execute",
+        body,
+        { "x-token": "test-token" },
+      );
+      const { ctx, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+        files: [{ path: "pages/index.tsx", content: "export default () => null;" }],
+      });
+      const recorder = createStyleArtifactFetchRecorder();
+
+      const result = await withMockFetch(
+        recorder.fetch,
+        async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+      );
+      const json = await result.response!.json();
+
+      assertEquals(json.success, false);
+      assertStringIncludes(json.error, "did not match the requested style artifact selector");
+      assertEquals(json.result.css_pipeline_identity, cssPipelineIdentity);
+      assertEquals(json.result.style_profile_hash, testStyleProfileHash());
+      assertEquals(json.result.selector, { type: "branch", value: "main" });
+      assertEquals(sourceFileCalls.count, 0);
+      assertEquals(recorder.upserts.length, 1);
+      assertEquals(recorder.upserts[0]?.status, "failed");
+      assertEquals(recorder.upserts[0]?.branch, "main");
+    });
+  });
+
+  it("rejects stale CSS pipeline build identities before scanning source files", async () => {
+    await withTestCSSOptimizationEngine(createTestCSSOptimizationEngine(), async () => {
+      const activeIdentity = (await acquireCSSGenerationSession(true)).cacheIdentity;
+      const staleIdentity = `${activeIdentity}:stale`;
+      const body = {
+        runId: "run_style_artifact_pipeline_mismatch",
+        kind: "task",
+        target: "task:style-artifact-build",
+        projectId: "proj-1",
+        config: {
+          environment_name: "Preview",
+          css_pipeline_identity: staleIdentity,
+          style_profile_hash: testStyleProfileHash(),
+        },
+      };
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_style_artifact_pipeline_mismatch/execute",
+        body,
+        { "x-token": "test-token" },
+      );
+      const { ctx, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
+        files: [{
+          path: "pages/index.tsx",
+          content: 'export default function Page() { return <main className="px-4">Hi</main>; }',
+        }],
+        stylesheet: "@tailwind utilities;",
+      });
+      const recorder = createStyleArtifactFetchRecorder();
+
+      const result = await withMockFetch(
+        recorder.fetch,
+        async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const json = await result.response.json();
+      assertEquals(json.success, false);
+      assertStringIncludes(json.error, "CSS pipeline identity mismatch");
+      assertEquals(sourceFileCalls.count, 0);
+      assertEquals(recorder.upserts.length, 1);
+      assertEquals(recorder.upserts[0]?.css_pipeline_identity, staleIdentity);
+      assertEquals(recorder.upserts[0]?.status, "failed");
+    });
   });
 
   it("runs a discovered workflow with the canonical run id and input", async () => {

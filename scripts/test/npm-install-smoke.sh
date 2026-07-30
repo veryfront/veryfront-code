@@ -3,13 +3,15 @@
 #
 # Verifies, against the real `deno task build:npm` artifacts installed into a
 # throwaway npm project, that:
-#   1. a `veryfront` install with co-published required packages runs the CLI
+#   1. the root `veryfront` package contains no CSS implementation while its
+#      independently published CSS extension packages are generated
+#   2. a `veryfront` install with co-published required packages runs the CLI
 #      and activates the parser extension under Node
-#   2. the parser-only/evaluator worker transport and model-runtime streaming
+#   3. the parser-only/evaluator worker transport and model-runtime streaming
 #      run under Node 18 without unsupported Web Streams APIs
-#   3. loading a missing extension fails naming the installable package
-#   4. installing @veryfront/ext-auth-jwt makes the extension load
-#   5. a broken transitive dependency surfaces the real error, not a
+#   4. loading a missing extension fails naming the installable package
+#   5. installing @veryfront/ext-auth-jwt makes the extension load
+#   6. a broken transitive dependency surfaces the real error, not a
 #      misleading "extension not installed" skip
 #
 # Requires: `deno task build:npm` output in ./npm, node + npm on PATH.
@@ -27,6 +29,8 @@ fail() {
 [ -d "$ROOT_DIR/npm" ] || fail "npm build output missing; run 'deno task build:npm' first"
 [ -d "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" ] || fail "ext-bundler-esbuild package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-content-mdx" ] || fail "ext-content-mdx package output missing"
+[ -d "$ROOT_DIR/npm/extensions/ext-css-lightning" ] || fail "ext-css-lightning package output missing"
+[ -d "$ROOT_DIR/npm/extensions/ext-css-purgecss" ] || fail "ext-css-purgecss package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-css-tailwind" ] || fail "ext-css-tailwind package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-parser-babel" ] || fail "ext-parser-babel package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-auth-jwt" ] || fail "ext-auth-jwt package output missing"
@@ -34,15 +38,35 @@ fail() {
 (cd "$ROOT_DIR/npm" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-content-mdx" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-css-tailwind" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-parser-babel" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-auth-jwt" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 
 cd "$WORKDIR"
 npm init -y >/dev/null 2>&1
-npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-css-tailwind-*.tgz ./veryfront-ext-parser-babel-*.tgz
+npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-parser-babel-*.tgz
 
-echo "== 1. root install: CLI and parser extension run under Node"
+echo "== 1. root install excludes independently published CSS implementations"
+node -e "
+const p = require('./node_modules/veryfront/package.json');
+const forbidden = [
+  '@veryfront/ext-css-lightning',
+  '@veryfront/ext-css-purgecss',
+  '@veryfront/ext-css-tailwind',
+];
+for (const section of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+  for (const name of forbidden) {
+    if (Object.hasOwn(p[section] ?? {}, name)) {
+      throw new Error(section + ' pulls CSS implementation ' + name + ' into root');
+    }
+  }
+}
+" || fail "root package metadata includes a CSS extension"
+for css_extension in ext-css-lightning ext-css-purgecss ext-css-tailwind; do
+  [ ! -e "node_modules/veryfront/esm/extensions/$css_extension" ] ||
+    fail "root package bundles CSS implementation source: $css_extension"
+done
+
+echo "== 2. root install: CLI and parser extension run under Node"
 node node_modules/veryfront/bin/veryfront.js --version | grep -q "Veryfront CLI" ||
   fail "CLI --version failed on root install"
 node node_modules/veryfront/bin/veryfront.js schema --json >/dev/null ||
@@ -109,7 +133,7 @@ if (ast?.type !== 'File') throw new Error('TSX parse failed');
 await extension.teardown?.();
 " || fail "root optional builtin did not register a working CodeParser"
 
-echo "== 2. parser-only evaluator worker transport runs under Node 18"
+echo "== 3. parser-only evaluator worker transport runs under Node 18"
 [ "$(node --version)" = "v18.18.0" ] ||
   fail "pinned Node 18.18.0 runtime is unavailable"
 PARSER_ONLY_ENTRY="$(node -e "
@@ -373,7 +397,7 @@ for package_dir in "${FULL_BABEL_DIRS[@]}"; do
     mv "$package_dir.smoke-removed" "$package_dir"
 done
 
-echo "== 3. root install: missing extension failure names the installable package"
+echo "== 4. root install: missing extension failure names the installable package"
 set +e
 MISSING_OUTPUT="$(node -e "
 import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then(async (m) => {
@@ -387,7 +411,7 @@ set -e
 echo "$MISSING_OUTPUT" | grep -q "install @veryfront/ext-auth-jwt alongside veryfront" ||
   fail "missing-extension error lacks the install hint: $MISSING_OUTPUT"
 
-echo "== 4. with @veryfront/ext-auth-jwt installed: extension loads"
+echo "== 5. with @veryfront/ext-auth-jwt installed: extension loads"
 npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-ext-auth-jwt-*.tgz
 node -e "
 import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then(async (m) => {
@@ -396,7 +420,7 @@ import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then
 });
 " || fail "ext-auth-jwt did not load after installing @veryfront/ext-auth-jwt"
 
-echo "== 5. broken transitive dependency surfaces the real error"
+echo "== 6. broken transitive dependency surfaces the real error"
 mv node_modules/jose node_modules/jose.smoke-removed
 set +e
 BROKEN_OUTPUT="$(node -e "

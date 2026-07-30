@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildRouteManifestKey,
@@ -7,6 +7,14 @@ import {
   getProjectContentVersion,
   startProjectCSSPreparation,
 } from "./html-project-css.ts";
+import { CSS_GENERATION_SESSION } from "./css-generation-session.ts";
+import { acquireCSSGenerationSession } from "#veryfront/html/styles-builder/css-compiler.ts";
+import { type CSSProcessor, CSSProcessorName } from "#veryfront/extensions/css/index.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  createTestCSSOptimizationEngine,
+  withTestCSSOptimizationEngine,
+} from "../../../tests/_helpers/css-optimization-engine.ts";
 
 describe("rendering/orchestrator/html-project-css", () => {
   describe("buildRouteManifestKey", () => {
@@ -88,6 +96,59 @@ describe("rendering/orchestrator/html-project-css", () => {
 
       assertEquals(result, undefined);
       assertEquals(called, false);
+    });
+
+    it("passes the render-captured CSS session through project generation", async () => {
+      const previousProcessor = tryResolve<CSSProcessor>(CSSProcessorName);
+      unregister(CSSProcessorName);
+      register(CSSProcessorName, {
+        cacheIdentity: "test-render-css-processor@1",
+        defaultStylesheet: "",
+        compile: () => Promise.resolve({ build: () => "" }),
+      });
+      try {
+        await withTestCSSOptimizationEngine(
+          createTestCSSOptimizationEngine(),
+          async () => {
+            const generationSession = await acquireCSSGenerationSession(true);
+            let receivedSession: unknown;
+            const result = startProjectCSSPreparation(
+              {
+                slug: "docs",
+                options: { [CSS_GENERATION_SESSION]: generationSession },
+              } as any,
+              {
+                environment: "production",
+                isLocalProject: false,
+                projectSlug: "demo",
+                globalCSS: "body{}",
+                projectClasses: new Set(["prose"]),
+                mode: "production",
+              } as any,
+              {
+                getProjectCSS: (
+                  _scope,
+                  _stylesheet,
+                  _candidates,
+                  _options,
+                  dependencies,
+                ) => {
+                  receivedSession = dependencies?.generationSession;
+                  return Promise.resolve({ css: "", hash: "abc123", fromCache: false });
+                },
+              },
+            );
+
+            await result;
+            assertStrictEquals(receivedSession, generationSession);
+          },
+        );
+      } finally {
+        unregister(CSSProcessorName);
+        if (previousProcessor !== undefined) {
+          register(CSSProcessorName, previousProcessor);
+        }
+      }
     });
   });
 

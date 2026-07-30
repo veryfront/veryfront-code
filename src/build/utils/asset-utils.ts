@@ -1,6 +1,6 @@
 /****
  * Consolidated asset utility functions for build pipeline
- * Merges CSS, Image, and Tailwind processor utilities
+ * Shared CSS and image asset utilities.
  */
 
 import { basename, dirname, extname, join } from "#veryfront/compat/path/index.ts";
@@ -101,10 +101,12 @@ export function getVariantPath(
   relPath: string,
   format: ImageFormat,
   size: number,
+  quality?: number,
 ): string {
   const dir = dirname(relPath);
   const name = basename(relPath, extname(relPath));
-  return join(outputDir, dir, `${name}-${size}w.${format}`);
+  const qualitySuffix = quality === undefined ? "" : `-q${quality}`;
+  return join(outputDir, dir, `${name}-${size}w${qualitySuffix}.${format}`);
 }
 
 export function generateSrcSet(

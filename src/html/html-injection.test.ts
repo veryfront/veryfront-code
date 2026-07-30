@@ -22,7 +22,7 @@ const ABOUT_HASH = "c".repeat(64);
 
 function releaseManifest(): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: "project-id",
     releaseId: "release-id",
     releaseVersion: 1,
@@ -569,7 +569,7 @@ describe("html/html-injection", () => {
         },
       );
 
-      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes('id="vf-project-css"'), true);
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
 
@@ -587,7 +587,7 @@ describe("html/html-injection", () => {
         },
       );
 
-      assertEquals(html.includes('id="vf-tailwind-css"'), true);
+      assertEquals(html.includes('id="vf-project-css"'), true);
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
 
@@ -656,7 +656,7 @@ describe("html/html-injection", () => {
       const projectStylesheetIndex = html.indexOf(
         `<link rel="stylesheet" href="${canonicalHref}">`,
       );
-      const previewStylesheetIndex = html.indexOf('id="vf-tailwind-css"');
+      const previewStylesheetIndex = html.indexOf('id="vf-project-css"');
       const structuralHeadCloseIndex = html.lastIndexOf("</head>");
 
       assertEquals(authoredTailEnd >= authoredTail.length, true);

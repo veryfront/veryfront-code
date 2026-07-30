@@ -79,11 +79,6 @@ export const OPTIONAL_BUILTIN_EXTENSIONS = Object.freeze(
       sourceDirectory: "ext-content-mdx",
     },
     {
-      name: "ext-css-tailwind",
-      origin: "veryfront/ext-css-tailwind",
-      sourceDirectory: "ext-css-tailwind",
-    },
-    {
       name: "ext-document-kreuzberg",
       origin: "veryfront/ext-document-kreuzberg",
       sourceDirectory: "ext-document-kreuzberg",

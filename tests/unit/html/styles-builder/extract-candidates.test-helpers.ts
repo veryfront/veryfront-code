@@ -1,6 +1,6 @@
 import "../../../_helpers/contract-init.ts";
 import { assertEquals } from "#std/assert";
-import { extractCandidates } from "../../../../src/html/styles-builder/tailwind-compiler.ts";
+import { extractCandidates } from "../../../../src/html/styles-builder/css-compiler.ts";
 
 export function assertExtractsClasses(content: string, expectedClasses: string[]): void {
   const result = extractCandidates(content);

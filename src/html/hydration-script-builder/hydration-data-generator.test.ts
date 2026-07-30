@@ -159,7 +159,7 @@ describe("hydration-data-generator", () => {
 
     it("includes release asset module URLs for hydration when a manifest is provided", () => {
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,
@@ -213,7 +213,7 @@ describe("hydration-data-generator", () => {
 
     it("includes App Router release asset module URLs for hydration", () => {
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,
@@ -395,7 +395,7 @@ describe("hydration-data-generator", () => {
     it("preserves every generated hydration contract field through schema parsing", () => {
       const contentHash = "e".repeat(64);
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,

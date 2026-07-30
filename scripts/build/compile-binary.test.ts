@@ -1,6 +1,20 @@
 import { assertEquals } from "#std/assert";
 import { createCompileArgs, DEFAULT_INCLUDES } from "./compile-binary.ts";
 
+Deno.test("compiled CLI does not implicitly embed CSS extensions or remote plugin bundles", () => {
+  const args = createCompileArgs({
+    entrypoint: "cli/main.ts",
+    extraIncludes: [],
+    output: "/tmp/veryfront",
+  });
+
+  assertEquals(
+    args.some((value) => value.includes("extensions/ext-css-")),
+    false,
+  );
+  assertEquals(args.some((value) => /^https?:\/\//.test(value)), false);
+});
+
 Deno.test("compiled CLI does not implicitly embed Redis extensions", () => {
   const args = createCompileArgs({
     entrypoint: "cli/main.ts",
@@ -9,9 +23,7 @@ Deno.test("compiled CLI does not implicitly embed Redis extensions", () => {
   });
 
   assertEquals(
-    args.some((value) =>
-      value.includes("ext-cache-redis") || value.includes("ext-redis")
-    ),
+    args.some((value) => value.includes("ext-cache-redis") || value.includes("ext-redis")),
     false,
   );
 });

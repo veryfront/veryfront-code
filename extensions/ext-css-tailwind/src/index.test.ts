@@ -1,76 +1,86 @@
-/**
- * ext-css-tailwind extension tests.
- *
- * @module extensions/ext-css-tailwind/test
- */
-
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-
+import { createHash } from "node:crypto";
 import tailwindPackage from "tailwindcss/package.json" with { type: "json" };
-import factory, { TailwindCSSProcessor } from "./index.ts";
+import extensionPackage from "../deno.json" with { type: "json" };
+import factory, { TAILWIND_DEFAULT_STYLESHEET, TailwindCSSProcessor } from "./index.ts";
+import { TAILWIND_PLUGIN_POLICY_IDENTITY } from "./plugin-policy.ts";
 
-const noopLogger = {
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-};
+const noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
-describe("ext-css-tailwind factory", () => {
-  it("produces an Extension with name ext-css-tailwind", () => {
-    const ext = factory();
-    assertEquals(ext.name, "ext-css-tailwind");
-    assertEquals(ext.version, "0.1.0");
-    assertEquals(ext.contracts?.provides, ["CSSProcessor"]);
-    assertEquals(ext.capabilities, [{ type: "net:outbound", hosts: ["esm.sh"] }]);
-  });
-});
-
-describe("ext-css-tailwind CSSProcessor", () => {
-  it("derives its cache identity from the installed Tailwind compiler", () => {
-    const processor = new TailwindCSSProcessor();
-
-    assertEquals(processor.cacheIdentity, `tailwindcss@${tailwindPackage.version}`);
+describe("ext-css-tailwind", () => {
+  it("aligns package, factory, contract, and capability metadata", () => {
+    const extension = factory();
+    assertEquals(extensionPackage.veryfront.activation, "explicit");
+    assertEquals(extension.name, "ext-css-tailwind");
+    assertEquals(extension.version, extensionPackage.version);
+    assertEquals(extension.contracts?.provides, ["CSSProcessor"]);
+    assertEquals(extension.capabilities, [{ type: "fs:read" }]);
   });
 
-  it("registers CSSProcessor on setup", async () => {
+  it("binds cache identity to extension, compiler, base CSS, and plugin policy", () => {
+    const identity = new TailwindCSSProcessor().cacheIdentity;
+    assertEquals(new TailwindCSSProcessor().defaultStylesheet, TAILWIND_DEFAULT_STYLESHEET);
+    assertStringIncludes(identity, `ext-css-tailwind@${extensionPackage.version}`);
+    assertStringIncludes(identity, `tailwindcss@${tailwindPackage.version}`);
+    assertStringIncludes(identity, "base=");
+    assertStringIncludes(
+      identity,
+      `plugins=${
+        createHash("sha256").update(TAILWIND_PLUGIN_POLICY_IDENTITY, "utf8").digest("hex")
+      }`,
+    );
+    assertEquals(identity.includes("https://"), false);
+  });
+
+  it("registers a processor without persistent plugin globals", async () => {
     const provided = new Map<string, unknown>();
-    const ctx = {
+    const global = globalThis as Record<string, unknown>;
+    delete global.__tailwindPluginShim;
+    delete global.__tailwindDefaultThemeShim;
+    delete global.__tailwindColorsShim;
+    await factory().setup?.({
       config: {},
       logger: noopLogger,
-      provide: (name: string, impl: unknown) => provided.set(name, impl),
+      provide: (name, implementation) => provided.set(name, implementation),
       get: () => undefined,
-      resolve: () => {
-        throw new Error("resolve not used in setup");
+      require: () => {
+        throw new Error("not used");
       },
-    };
-    const ext = factory();
-    await ext.setup?.(ctx as never);
-    assertEquals(provided.has("CSSProcessor"), true);
-    await ext.teardown?.();
+    });
+    assertEquals(provided.get("CSSProcessor") instanceof TailwindCSSProcessor, true);
+    assertEquals(global.__tailwindPluginShim, undefined);
+    assertEquals(global.__tailwindDefaultThemeShim, undefined);
+    assertEquals(global.__tailwindColorsShim, undefined);
   });
 
-  it("installs tailwindcss plugin shims on globalThis after setup", async () => {
-    const g = globalThis as Record<string, unknown>;
-    delete g.__tailwindPluginShim;
-    delete g.__tailwindDefaultThemeShim;
-    delete g.__tailwindColorsShim;
+  it("compiles using its local base stylesheet without network fallback", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = (() => {
+      fetchCalls++;
+      return Promise.reject(new Error("base compilation must not fetch"));
+    }) as typeof fetch;
+    try {
+      const compiler = await new TailwindCSSProcessor().compile('@import "tailwindcss";');
+      const css = compiler.build(["text-red-500"]);
+      assertEquals(css.includes(".text-red-500"), true);
+      assertEquals(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 
-    const ctx = {
-      config: {},
-      logger: noopLogger,
-      provide: () => {},
-      get: () => undefined,
-      resolve: () => {
-        throw new Error("resolve not used in setup");
-      },
-    };
-    const ext = factory();
-    await ext.setup?.(ctx as never);
-
-    assertEquals(typeof g.__tailwindPluginShim, "object");
-    assertEquals(typeof g.__tailwindDefaultThemeShim, "object");
-    assertEquals(typeof g.__tailwindColorsShim, "object");
+  it("rejects unknown stylesheet imports and inherited factory config", async () => {
+    await assertRejects(
+      () => new TailwindCSSProcessor().compile('@import "unknown-css-package";'),
+      Error,
+      "cannot resolve stylesheet import",
+    );
+    assertThrows(
+      () => factory(Object.create({ option: true })),
+      TypeError,
+      "must not inherit",
+    );
   });
 });

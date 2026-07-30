@@ -1,9 +1,23 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { type CSSPurgingEngine, CSSPurgingEngineName } from "#veryfront/extensions/css/index.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import { createTestCSSPurgingEngine } from "../../../../../tests/_helpers/css-purging-engine.ts";
 import { PurgeStrategy } from "./purge-strategy.ts";
 
 describe("build/asset-pipeline/css-optimizer/strategies/purge-strategy", () => {
+  let previous: CSSPurgingEngine | undefined;
+  beforeEach(() => {
+    previous = tryResolve<CSSPurgingEngine>(CSSPurgingEngineName);
+    unregister(CSSPurgingEngineName);
+    register(CSSPurgingEngineName, createTestCSSPurgingEngine());
+  });
+  afterEach(() => {
+    unregister(CSSPurgingEngineName);
+    if (previous !== undefined) register(CSSPurgingEngineName, previous);
+  });
+
   describe("PurgeStrategy", () => {
     it("should have correct name and priority", () => {
       const strategy = new PurgeStrategy();
@@ -119,6 +133,17 @@ describe("build/asset-pipeline/css-optimizer/strategies/purge-strategy", () => {
           () => strategy.process(".x {}", "test.css", {}),
           TypeError,
           "requires non-empty",
+        );
+      });
+
+      it("fails clearly when no CSS purging extension is registered", async () => {
+        unregister(CSSPurgingEngineName);
+        const strategy = new PurgeStrategy();
+        strategy.getUsedSelectors().add(".used");
+        await assertRejects(
+          () => strategy.process(".used {}", "test.css", {}),
+          Error,
+          'Missing extension for contract "CSSPurgingEngine"',
         );
       });
 

@@ -8,6 +8,7 @@ import {
   resolve,
 } from "#veryfront/compat/path/index.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
+import type { CSSOptimizationEngine, CSSPurgingEngine } from "#veryfront/extensions/css/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSecureFs, type SecureFs } from "#veryfront/security/secure-fs.ts";
@@ -19,8 +20,6 @@ import { hasControlCharacters } from "../../utils/string-validation.ts";
 import {
   CSS_MANIFEST_FILENAME,
   DEFAULT_CSS_OPTIONS,
-  MAX_CSS_BROWSER_QUERIES,
-  MAX_CSS_BROWSER_QUERY_CHARACTERS,
   MAX_CSS_FILE_BYTES,
   MAX_CSS_FILES,
   MAX_CSS_OUTPUT_FILE_BYTES,
@@ -30,7 +29,13 @@ import {
   MAX_CSS_TOTAL_OUTPUT_BYTES,
 } from "./constants.ts";
 import { CacheManager } from "./css-bundle-cache.ts";
-import { LightningCSSStrategy } from "./strategies/lightning-strategy.ts";
+import {
+  acquireConfiguredCSSOptimization,
+  createCSSOptimizationSession,
+  type CSSOptimizationSession,
+  validateCSSSourceMap,
+} from "./optimization-engine.ts";
+import type { CSSPurgingSession } from "./purging-engine.ts";
 import { type PurgeContentSource, PurgeStrategy } from "./strategies/purge-strategy.ts";
 import type { CSSBundle, CSSOptimizationOptions, CSSOptimizerStats } from "./types/index.ts";
 import {
@@ -39,7 +44,6 @@ import {
   getOutputPath,
   globFiles,
   isSafeCSSRelativePath,
-  validateCSSSourceMap,
 } from "./utils.ts";
 
 const encoder = new TextEncoder();
@@ -52,9 +56,17 @@ interface PlannedCSSFile {
 }
 
 export interface CSSOptimizerServiceDependencies {
-  lightningStrategy?: LightningCSSStrategy;
+  optimizationEngine?: CSSOptimizationEngine;
+  optimizationSession?: CSSOptimizationSession;
+  purgingEngine?: CSSPurgingEngine;
+  purgingSession?: CSSPurgingSession;
   purgeStrategy?: PurgeStrategy;
 }
+
+type ResolvedCSSOptimizationOptions = Omit<
+  Required<CSSOptimizationOptions>,
+  "autoprefixer" | "browsers"
+>;
 
 function portablePath(path: string): string {
   return path.replaceAll("\\", "/");
@@ -108,9 +120,9 @@ function assertStringList(
 }
 
 export class CSSOptimizerService {
-  private options: Required<CSSOptimizationOptions>;
+  private options: ResolvedCSSOptimizationOptions;
   private cacheManager = new CacheManager();
-  private readonly lightningStrategy: LightningCSSStrategy;
+  private optimizationSession: CSSOptimizationSession | undefined;
   private readonly purgeStrategy: PurgeStrategy;
   private readonly adapter: RuntimeAdapter;
   private readonly secureFs: SecureFs;
@@ -137,15 +149,6 @@ export class CSSOptimizerService {
       throw new TypeError("CSS optimizer dependencies must be an object");
     }
     if (
-      dependencies.lightningStrategy !== undefined &&
-      (typeof dependencies.lightningStrategy !== "object" ||
-        dependencies.lightningStrategy === null ||
-        typeof dependencies.lightningStrategy.init !== "function" ||
-        typeof dependencies.lightningStrategy.process !== "function")
-    ) {
-      throw new TypeError("CSS Lightning strategy dependency is invalid");
-    }
-    if (
       dependencies.purgeStrategy !== undefined &&
       (typeof dependencies.purgeStrategy !== "object" ||
         dependencies.purgeStrategy === null ||
@@ -154,6 +157,38 @@ export class CSSOptimizerService {
         typeof dependencies.purgeStrategy.clearCache !== "function")
     ) {
       throw new TypeError("CSS purge strategy dependency is invalid");
+    }
+    if (
+      dependencies.optimizationEngine !== undefined &&
+      dependencies.optimizationSession !== undefined
+    ) {
+      throw new TypeError(
+        "CSS optimizer accepts either an optimization engine or a captured session, not both",
+      );
+    }
+    if (
+      dependencies.purgingEngine !== undefined &&
+      dependencies.purgingSession !== undefined
+    ) {
+      throw new TypeError(
+        "CSS optimizer accepts either a purging engine or a captured session, not both",
+      );
+    }
+    if (
+      dependencies.purgeStrategy !== undefined &&
+      (dependencies.purgingEngine !== undefined || dependencies.purgingSession !== undefined)
+    ) {
+      throw new TypeError(
+        "CSS optimizer accepts either a purge strategy or purging engine dependency, not both",
+      );
+    }
+    if (
+      Object.hasOwn(options, "autoprefixer") ||
+      Object.hasOwn(options, "browsers")
+    ) {
+      throw new TypeError(
+        "CSS autoprefixer/browsers options moved to the optimization extension; configure extCSSLightning({ browserQueries })",
+      );
     }
     requireSafeConfiguredPath(baseDir, "CSS project directory");
     if (!isAbsolute(baseDir)) {
@@ -176,7 +211,6 @@ export class CSSOptimizerService {
       const [name, value] of [
         ["enabled", options.enabled],
         ["minify", options.minify],
-        ["autoprefixer", options.autoprefixer],
         ["purge", options.purge],
         ["criticalCSS", options.criticalCSS],
         ["sourceMap", options.sourceMap],
@@ -188,9 +222,6 @@ export class CSSOptimizerService {
     }
     if (options.inputFiles !== undefined && !Array.isArray(options.inputFiles)) {
       throw new TypeError("CSS inputFiles must be an array");
-    }
-    if (options.browsers !== undefined && !Array.isArray(options.browsers)) {
-      throw new TypeError("CSS browsers must be an array");
     }
     if (
       options.purgeContent !== undefined &&
@@ -209,9 +240,6 @@ export class CSSOptimizerService {
       projectDir: this.baseDir,
       enabled: options.enabled === undefined ? DEFAULT_CSS_OPTIONS.enabled : options.enabled,
       minify: options.minify === undefined ? DEFAULT_CSS_OPTIONS.minify : options.minify,
-      autoprefixer: options.autoprefixer === undefined
-        ? DEFAULT_CSS_OPTIONS.autoprefixer
-        : options.autoprefixer,
       purge: options.purge === undefined ? DEFAULT_CSS_OPTIONS.purge : options.purge,
       criticalCSS: options.criticalCSS === undefined
         ? DEFAULT_CSS_OPTIONS.criticalCSS
@@ -223,9 +251,6 @@ export class CSSOptimizerService {
       outputDir: options.outputDir === undefined
         ? DEFAULT_CSS_OPTIONS.outputDir
         : options.outputDir,
-      browsers: options.browsers === undefined
-        ? [...DEFAULT_CSS_OPTIONS.browsers]
-        : [...options.browsers],
       purgeContent: options.purgeContent === undefined
         ? [...DEFAULT_CSS_OPTIONS.purgeContent]
         : [...options.purgeContent],
@@ -245,12 +270,16 @@ export class CSSOptimizerService {
       throwOnError: true,
       validationOptions: { followSymlinks: false },
     });
-    this.lightningStrategy = dependencies.lightningStrategy ??
-      new LightningCSSStrategy();
+    this.optimizationSession = dependencies.optimizationSession ??
+      (dependencies.optimizationEngine === undefined
+        ? undefined
+        : createCSSOptimizationSession(dependencies.optimizationEngine));
     this.purgeStrategy = dependencies.purgeStrategy ??
       new PurgeStrategy({
         baseDir: this.baseDir,
         collectContent: (patterns) => this.collectPurgeContent(patterns),
+        purgingEngine: dependencies.purgingEngine,
+        purgingSession: dependencies.purgingSession,
       });
   }
 
@@ -261,13 +290,6 @@ export class CSSOptimizerService {
       this.options.inputFiles,
       "CSS inputFiles",
       MAX_CSS_FILES,
-    );
-    assertStringList(
-      this.options.browsers,
-      "CSS browsers",
-      MAX_CSS_BROWSER_QUERIES,
-      MAX_CSS_BROWSER_QUERY_CHARACTERS,
-      false,
     );
     assertStringList(
       this.options.purgeContent,
@@ -334,7 +356,7 @@ export class CSSOptimizerService {
       logger.info("CSS optimization is disabled");
       return false;
     }
-    await this.lightningStrategy.init();
+    this.optimizationSession ??= acquireConfiguredCSSOptimization();
     return true;
   }
 
@@ -380,7 +402,6 @@ export class CSSOptimizerService {
           outputDir: this.options.outputDir,
           files: plans.length,
           minify: this.options.minify,
-          autoprefixer: this.options.autoprefixer,
           purge: this.options.purge,
         });
 
@@ -666,12 +687,18 @@ export class CSSOptimizerService {
         this.options,
       )).code
       : content;
-    const result = await this.lightningStrategy.process(
-      purged,
-      logicalPath,
-      this.options,
-    );
-    return { optimized: result.code, sourceMap: result.sourceMap };
+    if (!this.optimizationSession) {
+      throw INITIALIZATION_ERROR.create({
+        detail: "CSS optimization engine was not initialized",
+      });
+    }
+    const result = this.optimizationSession.run({
+      css: purged,
+      sourcePath: logicalPath,
+      minify: this.options.minify,
+      sourceMap: this.options.sourceMap,
+    });
+    return { optimized: result.css, sourceMap: result.sourceMap };
   }
 
   private async collectPurgeContent(
@@ -740,11 +767,10 @@ export class CSSOptimizerService {
     return this.cacheManager.getStats();
   }
 
-  getOptions(): Required<CSSOptimizationOptions> {
+  getOptions(): ResolvedCSSOptimizationOptions {
     return {
       ...this.options,
       inputFiles: [...this.options.inputFiles],
-      browsers: [...this.options.browsers],
       purgeContent: [...this.options.purgeContent],
       purgeSafelist: [...this.options.purgeSafelist],
     };
@@ -754,7 +780,20 @@ export class CSSOptimizerService {
     return this.cacheManager;
   }
 
+  getOptimizationSession(): CSSOptimizationSession {
+    if (!this.optimizationSession) {
+      throw INITIALIZATION_ERROR.create({
+        detail: "CSS optimization engine was not initialized",
+      });
+    }
+    return this.optimizationSession;
+  }
+
   getPurgeStrategy(): PurgeStrategy {
     return this.purgeStrategy;
+  }
+
+  getPurgingSession(): CSSPurgingSession {
+    return this.purgeStrategy.getPurgingSession();
   }
 }

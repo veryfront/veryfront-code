@@ -1,12 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import type { CSSOptimizationEngine } from "#veryfront/extensions/css/index.ts";
+import { CSSOptimizationEngineName } from "#veryfront/extensions/css/index.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import { FakeTime } from "#std/testing/time";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
 import type { RenderOptions } from "./types.ts";
 import { markBuildFailure } from "./module-loader/build-failure.ts";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
 import { cacheCSSAsync, hashCSS } from "#veryfront/html/styles-builder/index.ts";
+import { acquireCSSGenerationSession } from "#veryfront/html/styles-builder/css-compiler.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
@@ -39,8 +44,14 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { DataFetcher } from "#veryfront/data/index.ts";
 import { WorkerExecutionScopeOwner } from "../worker-execution-scope.ts";
 import { TimeoutError } from "../utils/stream-utils.ts";
+import {
+  createTestCSSOptimizationEngine,
+  withTestCSSOptimizationEngine,
+} from "../../../tests/_helpers/css-optimization-engine.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
+const PAGE_CSS_PIPELINE_IDENTITY = (await acquireCSSGenerationSession(false))
+  .cacheIdentity;
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -136,7 +147,13 @@ function createPipeline(
 }
 
 function primeCssCache(slug: string, projectId: string): void {
-  const cssKey = getPageCssCacheKey(projectId, undefined, slug, undefined);
+  const cssKey = getPageCssCacheKey(
+    projectId,
+    undefined,
+    slug,
+    undefined,
+    PAGE_CSS_PIPELINE_IDENTITY,
+  );
   cachePageCss(cssKey, "/* cached css */");
 }
 
@@ -156,7 +173,7 @@ function releaseManifestWithCss(releaseId = "rel-css"): ReleaseAssetManifest {
       contentHash: RELEASE_CSS_HASH,
       size: 10,
       contentType: "text/css",
-      styleProfileHash: "style-profile",
+      styleProfileHash: "c".repeat(64),
     }],
     routes: { "/behavior-release-css": { modules: [], css: [RELEASE_CSS_HASH] } },
     dependencies: {},
@@ -166,8 +183,24 @@ function releaseManifestWithCss(releaseId = "rel-css"): ReleaseAssetManifest {
 
 describe("RenderPipeline behavior", () => {
   const originalManifestFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
+  let previousCSSOptimizationEngine: CSSOptimizationEngine | undefined;
+
+  beforeEach(() => {
+    previousCSSOptimizationEngine = tryResolve<CSSOptimizationEngine>(
+      CSSOptimizationEngineName,
+    );
+    register(
+      CSSOptimizationEngineName,
+      createTestCSSOptimizationEngine(),
+    );
+  });
 
   afterEach(() => {
+    unregister(CSSOptimizationEngineName);
+    if (previousCSSOptimizationEngine !== undefined) {
+      register(CSSOptimizationEngineName, previousCSSOptimizationEngine);
+    }
+    previousCSSOptimizationEngine = undefined;
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
     Deno.env.delete("VERYFRONT_ENABLE_SERVER_TIMING");
     resetRequestProfiles();
@@ -233,16 +266,20 @@ describe("RenderPipeline behavior", () => {
     });
 
     const pending = pipeline.getStaticPaths("blog/[slug]");
+    let safetyTimeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
       const observed = await Promise.race([
         pending.then(
           () => undefined,
           (error: unknown) => error,
         ),
-        new Promise<string>((resolve) => setTimeout(() => resolve("safety timeout"), 100)),
+        new Promise<string>((resolve) => {
+          safetyTimeoutId = setTimeout(() => resolve("safety timeout"), 100);
+        }),
       ]);
       assertEquals(observed instanceof TimeoutError, true);
     } finally {
+      if (safetyTimeoutId !== undefined) clearTimeout(safetyTimeoutId);
       gate.resolve({
         paths: [{ params: { slug: "late" } }],
         fallback: false,
@@ -656,20 +693,33 @@ describe("RenderPipeline behavior", () => {
   it("does not treat a repeated transform milestone as continuing progress", async () => {
     using time = new FakeTime();
     const pipeline = createPipeline("/project/pages/repeating-graph.tsx");
+    let observedSignal: AbortSignal | undefined;
     let markStarted!: () => void;
     const started = new Promise<void>((resolve) => markStarted = resolve);
     (pipeline as any).loadModule = (
       _path: string,
-      config: { onProgress?: (event: { phase: string; filePath: string }) => void },
+      config: {
+        onProgress?: (event: { phase: string; filePath: string }) => void;
+        signal?: AbortSignal;
+      },
     ) => {
+      observedSignal = config.signal;
       markStarted();
-      return new Promise<Record<string, unknown>>(() => {
-        setInterval(() => {
+      return new Promise<Record<string, unknown>>((_, reject) => {
+        const intervalId = setInterval(() => {
           config.onProgress?.({
             phase: "framework:module-transformed",
             filePath: "/framework/repeating.js",
           });
         }, 5_000);
+        config.signal?.addEventListener(
+          "abort",
+          () => {
+            clearInterval(intervalId);
+            reject(config.signal?.reason);
+          },
+          { once: true },
+        );
       });
     };
 
@@ -686,6 +736,7 @@ describe("RenderPipeline behavior", () => {
     await time.tickAsync(45_000);
 
     assertEquals((await rejected as Error & { timeoutKind?: string }).timeoutKind, "idle");
+    assertEquals(observedSignal?.aborted, true);
   });
 
   it("cancels module loading when the owning render is aborted", async () => {
@@ -744,6 +795,42 @@ describe("RenderPipeline behavior", () => {
 
     assertEquals(checks, [{ slug: "", cacheKey: "index" }]);
     assertEquals(persists, [{ slug: "", cacheKey: "index" }]);
+  });
+
+  it("partitions render-result cache lookups by the captured CSS pipeline", async () => {
+    const cacheKeys: string[] = [];
+    const pipeline = createPipeline("/project/pages/cache-css-identity.mdx", {
+      cacheCoordinator: {
+        checkCache: async (slug, cacheKey) => {
+          cacheKeys.push(cacheKey ?? slug);
+          return {
+            depAwareSlug: slug,
+            moduleCacheKey: cacheKey ?? slug,
+            cacheStatus: "miss",
+            lookupDurationMs: 0,
+          };
+        },
+        persistResult: async () => {},
+      },
+    } as Partial<RenderPipelineConfig>);
+    const render = (cacheIdentity: string) =>
+      withTestCSSOptimizationEngine(
+        createTestCSSOptimizationEngine(undefined, cacheIdentity),
+        () =>
+          pipeline.renderPage("/cache-css-identity", {
+            delivery: "string",
+            environment: "production",
+            releaseAssetManifest: null,
+          }),
+      );
+
+    await render("render-css-engine@1");
+    await render("render-css-engine@2");
+
+    assertEquals(cacheKeys.length, 2);
+    assertEquals(cacheKeys[0] !== cacheKeys[1], true);
+    assertEquals(cacheKeys[0]?.includes("render-css-engine@1"), true);
+    assertEquals(cacheKeys[1]?.includes("render-css-engine@2"), true);
   });
 
   it("renderPage preserves active SSR transforms during development cache freshness clears", async () => {
@@ -1305,11 +1392,23 @@ describe("RenderPipeline behavior", () => {
       return { getStaticData: () => ({ props: {} }) };
     };
     cachePageCss(
-      getPageCssCacheKey(projectA, undefined, slug, sourceA),
+      getPageCssCacheKey(
+        projectA,
+        undefined,
+        slug,
+        sourceA,
+        PAGE_CSS_PIPELINE_IDENTITY,
+      ),
       "/* cached css A */",
     );
     cachePageCss(
-      getPageCssCacheKey(projectB, undefined, slug, sourceB),
+      getPageCssCacheKey(
+        projectB,
+        undefined,
+        slug,
+        sourceB,
+        PAGE_CSS_PIPELINE_IDENTITY,
+      ),
       "/* cached css B */",
     );
     const options = {
@@ -2114,7 +2213,13 @@ describe("RenderPipeline behavior", () => {
     const pipeline = createPipeline("/project/pages/behavior-build-version.tsx");
     primeCssCache(slug, projectId);
     cachePageCss(
-      getPageCssCacheKey(projectId, undefined, slug, projectUpdated),
+      getPageCssCacheKey(
+        projectId,
+        undefined,
+        slug,
+        projectUpdated,
+        PAGE_CSS_PIPELINE_IDENTITY,
+      ),
       "/* cached css */",
     );
 
@@ -2580,7 +2685,13 @@ describe("RenderPipeline behavior", () => {
     const projectId = "proj-release-css-cold-snapshot";
     const releaseId = "rel-css-cold-snapshot";
     const pipeline = createPipeline("/project/pages/behavior-release-css-cold-snapshot.tsx");
-    const cssKey = getPageCssCacheKey(projectId, "production", slug, undefined);
+    const cssKey = getPageCssCacheKey(
+      projectId,
+      "production",
+      slug,
+      undefined,
+      PAGE_CSS_PIPELINE_IDENTITY,
+    );
     cachePageCss(cssKey, '.dark\\:block{&:is(.dark,[data-theme="dark"])*{display:block}}');
     let fetchCalls = 0;
     let renderCalls = 0;
@@ -2623,7 +2734,13 @@ describe("RenderPipeline behavior", () => {
     const releaseId = "rel-derived-css-snapshot";
     const contentSourceId = `release-${releaseId}`;
     const pipeline = createPipeline("/project/pages/behavior-derived-release-css-snapshot.tsx");
-    const cssKey = getPageCssCacheKey(projectId, "production", slug, contentSourceId);
+    const cssKey = getPageCssCacheKey(
+      projectId,
+      "production",
+      slug,
+      contentSourceId,
+      PAGE_CSS_PIPELINE_IDENTITY,
+    );
     cachePageCss(cssKey, ".stale-derived-release-css{display:block}");
     let fetchCalls = 0;
     let renderCalls = 0;

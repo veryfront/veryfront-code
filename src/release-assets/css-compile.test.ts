@@ -1,15 +1,43 @@
 import "#veryfront/schemas/_test-setup.ts";
 // Activates the @veryfront/ext-css-tailwind CSSProcessor so the pure
-// `generateTailwindCSS` compile path resolves a real compiler.
+// `generateCSS` compile path resolves a real compiler.
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 
-import { assert, assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  createTestCSSOptimizationEngine,
+  installTestCSSOptimizationEngine,
+} from "../../tests/_helpers/css-optimization-engine.ts";
+import {
+  isCSSPipelineIdentity,
+  isStyleProfileHash,
+} from "#veryfront/utils/css-artifact-identity.ts";
+import { acquireCSSGenerationSession } from "#veryfront/html/styles-builder/css-compiler.ts";
 import { createCompileProjectCss } from "./css-compile.ts";
 
 describe("release-assets/css-compile", () => {
-  it("compiles tailwind candidates into a text/css string with a styleProfileHash", async () => {
+  let restoreCSSOptimizationEngine: (() => void) | undefined;
+
+  beforeEach(() => {
+    restoreCSSOptimizationEngine = installTestCSSOptimizationEngine();
+  });
+
+  afterEach(() => {
+    restoreCSSOptimizationEngine?.();
+    restoreCSSOptimizationEngine = undefined;
+  });
+
+  it("returns the canonical profile and exact pipeline identities used for compilation", async () => {
     const compile = createCompileProjectCss({ projectScope: "css-compile-test" });
+    const expectedPipelineIdentity = (await acquireCSSGenerationSession(true)).cacheIdentity;
 
     const candidates = new Set(["p-4", "text-red-500", "flex"]);
     const result = await compile(candidates, '@import "tailwindcss";');
@@ -21,8 +49,10 @@ describe("release-assets/css-compile", () => {
       result.css.includes("padding") || result.css.includes(".p-4"),
       "expected the p-4 utility to be present in the compiled CSS",
     );
-    // styleProfileHash is derived from the style-scope profile (string, never throws).
-    assertEquals(typeof result.styleProfileHash, "string");
+    assert(isStyleProfileHash(result.styleProfileHash));
+    assert(isCSSPipelineIdentity(result.cssPipelineIdentity));
+    assertEquals(result.cssPipelineIdentity, expectedPipelineIdentity);
+    assertStringIncludes(result.cssPipelineIdentity, "test-css-optimization-engine@1");
   });
 
   it("returns null only when there are no candidates AND no stylesheet", async () => {
@@ -42,26 +72,23 @@ describe("release-assets/css-compile", () => {
     assert(result.css.length > 0, "stylesheet-only compile produced CSS");
   });
 
-  it("returns null (keeps the CSS gap) when the compiler throws — never propagates", async () => {
-    // A candidate set that is non-empty but a stylesheet that triggers a
-    // compile error still resolves to null rather than throwing. We simulate a
-    // hostile stylesheet; whatever the compiler does, the contract is: no throw.
+  it("propagates compiler failures instead of publishing a CSS gap", async () => {
     const compile = createCompileProjectCss({ projectScope: "css-compile-fail" });
     const candidates = new Set(["p-4"]);
-
-    let threw = false;
-    let result: Awaited<ReturnType<typeof compile>> = null;
+    const restoreFailingEngine = installTestCSSOptimizationEngine(
+      createTestCSSOptimizationEngine(() => {
+        throw new Error("release CSS optimization failed");
+      }, "test-failing-css-optimization-engine@1"),
+    );
     try {
-      // An unterminated at-rule / malformed stylesheet. The compiler reports an
-      // error (result.error) → createCompileProjectCss maps it to null.
-      result = await compile(candidates, "@import ");
-    } catch {
-      threw = true;
+      await assertRejects(
+        () => compile(candidates, '@import "tailwindcss";'),
+        Error,
+        "release CSS optimization failed",
+      );
+    } finally {
+      restoreFailingEngine();
     }
-    assertEquals(threw, false, "compileProjectCss must never throw");
-    // Either an empty/error compile (null) or a degraded-but-valid compile is
-    // acceptable; the load-bearing guarantee is that it did not throw.
-    assert(result === null || typeof result.css === "string");
   });
 
   it("rejects invalid project scopes at configuration time", () => {
@@ -69,10 +96,14 @@ describe("release-assets/css-compile", () => {
     assertThrows(() => createCompileProjectCss(null as never));
   });
 
-  it("returns null for malformed candidate input", async () => {
+  it("rejects malformed candidate input", async () => {
     const compile = createCompileProjectCss({ projectScope: "project-1" });
     const candidates = new Set<string>(["text-red-500", "bad\u0000candidate"]);
 
-    assertEquals(await compile(candidates, undefined), null);
+    await assertRejects(
+      () => compile(candidates, undefined),
+      TypeError,
+      "candidate is invalid",
+    );
   });
 });

@@ -8,6 +8,7 @@ export type ExtensionManifest = {
   exports: string | Record<string, string>;
   veryfront?: {
     extension?: boolean;
+    activation?: "auto" | "explicit";
     contracts?: {
       provides?: string[];
       requires?: string[];

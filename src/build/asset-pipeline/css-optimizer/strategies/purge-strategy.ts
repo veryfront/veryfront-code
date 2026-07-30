@@ -1,5 +1,5 @@
 import { extname, resolve } from "#veryfront/compat/path/index.ts";
-import { DEPENDENCY_MISSING } from "#veryfront/errors";
+import type { CSSPurgingEngine } from "#veryfront/extensions/css/index.ts";
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { logger } from "#veryfront/utils";
@@ -14,7 +14,6 @@ import {
   MAX_CSS_SELECTOR_TOKEN_CHARACTERS,
   MAX_CSS_SELECTOR_TOKENS,
   MAX_CSS_TOTAL_BYTES,
-  PURGE_CSS_MODULE_SPECIFIER,
 } from "../constants.ts";
 import type {
   CSSOptimizationOptions,
@@ -22,22 +21,11 @@ import type {
   CSSProcessingResult,
 } from "../types/index.ts";
 import { extractSelectors, globFiles } from "../utils.ts";
-
-interface PurgeCSSResult {
-  css: string;
-}
-
-interface PurgeCSSInstance {
-  purge(options: {
-    content: Array<{ raw: string; extension: string }>;
-    css: Array<{ raw: string }>;
-    safelist?: string[];
-  }): Promise<PurgeCSSResult[]>;
-}
-
-interface PurgeCSSModule {
-  PurgeCSS: new () => PurgeCSSInstance;
-}
+import {
+  acquireConfiguredCSSPurging,
+  createCSSPurgingSession,
+  type CSSPurgingSession,
+} from "../purging-engine.ts";
 
 export interface PurgeContentSource {
   path: string;
@@ -45,7 +33,6 @@ export interface PurgeContentSource {
   extension: string;
 }
 
-type PurgeCSSLoader = () => Promise<PurgeCSSModule>;
 type ContentCollector = (
   patterns: string[],
 ) => Promise<PurgeContentSource[]>;
@@ -54,11 +41,8 @@ export interface PurgeStrategyDependencies {
   baseDir?: string;
   fs?: FileSystem;
   collectContent?: ContentCollector;
-  loadPurgeCSS?: PurgeCSSLoader;
-}
-
-function defaultPurgeCSSLoader(): Promise<PurgeCSSModule> {
-  return import(PURGE_CSS_MODULE_SPECIFIER);
+  purgingEngine?: CSSPurgingEngine;
+  purgingSession?: CSSPurgingSession;
 }
 
 function selectorToken(selector: string): string {
@@ -166,10 +150,9 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
   private readonly baseDir: string;
   private readonly fs: FileSystem;
   private readonly collectContentDependency: ContentCollector;
-  private readonly loadPurgeCSSDependency: PurgeCSSLoader;
   private readonly usedSelectors = new Set<string>();
   private contentSources: PurgeContentSource[] = [];
-  private purgeCSSModule: Promise<PurgeCSSModule> | null = null;
+  private purgingSession: CSSPurgingSession | undefined;
 
   constructor(dependencies: PurgeStrategyDependencies = {}) {
     if (
@@ -186,17 +169,21 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
       throw new TypeError("Purge content collector must be a function");
     }
     if (
-      dependencies.loadPurgeCSS !== undefined &&
-      typeof dependencies.loadPurgeCSS !== "function"
+      dependencies.purgingEngine !== undefined &&
+      dependencies.purgingSession !== undefined
     ) {
-      throw new TypeError("PurgeCSS loader must be a function");
+      throw new TypeError(
+        "Purge strategy accepts either a purging engine or a captured session, not both",
+      );
     }
     this.baseDir = resolve(dependencies.baseDir ?? cwd());
     this.fs = dependencies.fs ?? createFileSystem();
     this.collectContentDependency = dependencies.collectContent ??
       ((patterns) => this.collectContent(patterns));
-    this.loadPurgeCSSDependency = dependencies.loadPurgeCSS ??
-      defaultPurgeCSSLoader;
+    this.purgingSession = dependencies.purgingSession ??
+      (dependencies.purgingEngine === undefined
+        ? undefined
+        : createCSSPurgingSession(dependencies.purgingEngine));
   }
 
   canProcess(options: CSSOptimizationOptions): boolean {
@@ -293,7 +280,7 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
       throw new TypeError("CSS purgeSafelist contains an unsafe selector token");
     }
 
-    const module = await this.loadPurgeCSS();
+    const session = this.getPurgingSession();
     const selectorTokens = validateSelectorEvidence(this.usedSelectors);
     const safelist = [
       ...new Set([
@@ -301,7 +288,7 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
         ...(this.contentSources.length === 0 ? selectorTokens : []),
       ]),
     ];
-    const results = await new module.PurgeCSS().purge({
+    const result = await session.run({
       content: this.contentSources.length > 0
         ? this.contentSources.map(({ raw, extension }) => ({
           raw,
@@ -311,21 +298,14 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
           raw: selectorTokens.join(" "),
           extension: "html",
         }],
-      css: [{ raw: content }],
+      css: content,
       safelist,
+      includeRejectedCSS: false,
     });
-    if (
-      results.length !== 1 ||
-      typeof results[0]?.css !== "string"
-    ) {
-      throw new TypeError("PurgeCSS returned an invalid result");
+    if (encoder.encode(result.css).length > MAX_CSS_OUTPUT_FILE_BYTES) {
+      throw new TypeError(`CSS purge output exceeds ${MAX_CSS_OUTPUT_FILE_BYTES} bytes`);
     }
-    if (encoder.encode(results[0].css).length > MAX_CSS_OUTPUT_FILE_BYTES) {
-      throw new TypeError(
-        `PurgeCSS output exceeds ${MAX_CSS_OUTPUT_FILE_BYTES} bytes`,
-      );
-    }
-    return { code: results[0].css, sourceMap: undefined };
+    return { code: result.css, sourceMap: undefined };
   }
 
   getUsedSelectors(): Set<string> {
@@ -337,27 +317,8 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
     this.contentSources = [];
   }
 
-  private async loadPurgeCSS(): Promise<PurgeCSSModule> {
-    const pending = this.purgeCSSModule ??= (async () => {
-      try {
-        const module = await this.loadPurgeCSSDependency();
-        if (!module || typeof module.PurgeCSS !== "function") {
-          throw new TypeError("PurgeCSS module did not export PurgeCSS");
-        }
-        return module;
-      } catch (error) {
-        throw DEPENDENCY_MISSING.create({
-          detail: `CSS purging requires ${PURGE_CSS_MODULE_SPECIFIER}`,
-          cause: error,
-        });
-      }
-    })();
-    try {
-      return await pending;
-    } catch (error) {
-      if (this.purgeCSSModule === pending) this.purgeCSSModule = null;
-      throw error;
-    }
+  getPurgingSession(): CSSPurgingSession {
+    return this.purgingSession ??= acquireConfiguredCSSPurging();
   }
 
   private async collectContent(

@@ -9,7 +9,8 @@ export const stylesHelp: CommandHelp = {
   options: [
     {
       flag: "--config <json>",
-      description: "JSON build config with exactly one selector and an optional style_profile_hash",
+      description:
+        "JSON build config with css_pipeline_identity, style_profile_hash, and exactly one branch, environment_name, or release_id selector",
     },
     {
       flag: "--debug",
@@ -17,7 +18,7 @@ export const stylesHelp: CommandHelp = {
     },
   ],
   examples: [
-    'veryfront styles build-artifact --config \'{"branch":"main"}\'',
-    'veryfront styles build-artifact --config \'{"style_profile_hash":"profile-1","environment_name":"Production"}\'',
+    'veryfront styles build-artifact --config \'{"css_pipeline_identity":"[\\"veryfront.css-pipeline.v1\\",\\"compiler@1\\",\\"optimizer@1\\"]","style_profile_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","branch":"main"}\'',
+    'veryfront styles build-artifact --config \'{"css_pipeline_identity":"[\\"veryfront.css-pipeline.v1\\",\\"compiler@1\\",\\"optimizer@1\\"]","style_profile_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","environment_name":"Production"}\'',
   ],
 };

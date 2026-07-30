@@ -3,7 +3,7 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import {
   getCSSByHashAsync,
   regenerateCSSByHash,
-} from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+} from "#veryfront/html/styles-builder/css-compiler.ts";
 import { HTTP_OK, PRIORITY_HIGH } from "#veryfront/utils/constants/index.ts";
 import {
   extractCacheKeyContext,

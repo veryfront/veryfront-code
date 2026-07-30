@@ -1,11 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { ensureDir } from "#veryfront/compat/std/fs.ts";
-import { LightningCSSStrategy, MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
+import { MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
 import type { CSSOptimizationOptions } from "./types/index.ts";
+import { createTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
+import { createTestCSSPurgingEngine } from "../../../../tests/_helpers/css-purging-engine.ts";
+import { type CSSPurgingEngine, CSSPurgingEngineName } from "#veryfront/extensions/css/index.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 
 const TEST_DIR = "./.veryfront/test-strategies";
 
@@ -35,48 +39,43 @@ const TEST_CSS = `
 }
 `;
 
+let previousPurgingEngine: CSSPurgingEngine | undefined;
+beforeEach(() => {
+  previousPurgingEngine = tryResolve<CSSPurgingEngine>(CSSPurgingEngineName);
+  unregister(CSSPurgingEngineName);
+  register(CSSPurgingEngineName, createTestCSSPurgingEngine());
+});
+afterEach(() => {
+  unregister(CSSPurgingEngineName);
+  if (previousPurgingEngine !== undefined) {
+    register(CSSPurgingEngineName, previousPurgingEngine);
+  }
+});
+
 describe("MinificationStrategy", () => {
   it("canProcess returns true when enabled and minify is true", () => {
-    const strategy = new MinificationStrategy();
+    const strategy = new MinificationStrategy(createTestCSSOptimizationEngine());
 
     assertEquals(strategy.canProcess({ enabled: true, minify: true }), true);
     assertEquals(strategy.canProcess({ enabled: false }), false);
     assertEquals(strategy.canProcess({ enabled: true, minify: false }), false);
   });
 
-  it("process removes comments", async () => {
-    const strategy = new MinificationStrategy();
+  it("process delegates a parser-backed minification request", async () => {
+    const strategy = new MinificationStrategy(
+      createTestCSSOptimizationEngine((request) => {
+        assertEquals(request.sourcePath, "test.css");
+        assertEquals(request.minify, true);
+        assertEquals(request.sourceMap, false);
+        return { css: ".button{color:blue}" };
+      }),
+    );
     const options: CSSOptimizationOptions = { enabled: true, minify: true };
 
     const result = await strategy.process(TEST_CSS, "test.css", options);
 
-    assertEquals(result.code.includes("/*"), false);
+    assertEquals(result.code, ".button{color:blue}");
     assertEquals(result.sourceMap, undefined);
-  });
-
-  it("process removes whitespace", async () => {
-    const strategy = new MinificationStrategy();
-    const options: CSSOptimizationOptions = { enabled: true, minify: true };
-
-    const css = ".button   {   color:   red;   }";
-    const result = await strategy.process(css, "test.css", options);
-
-    assertEquals(result.code, ".button{color:red}");
-  });
-});
-
-describe("LightningCSSStrategy", () => {
-  it("canProcess returns false when not initialized", () => {
-    const strategy = new LightningCSSStrategy();
-
-    assertEquals(strategy.canProcess({ enabled: true }), false);
-  });
-
-  it("init attempts to load", async () => {
-    const strategy = new LightningCSSStrategy();
-    const success = await strategy.init();
-
-    assertEquals(typeof success, "boolean");
   });
 });
 
@@ -155,14 +154,11 @@ describe("PurgeStrategy", () => {
   });
 });
 
-describe("Legacy strategy metadata", () => {
+describe("Strategy metadata", () => {
   it("keeps priority values stable for direct strategy consumers", () => {
-    const lightning = new LightningCSSStrategy();
-    const minification = new MinificationStrategy();
+    const minification = new MinificationStrategy(createTestCSSOptimizationEngine());
     const purge = new PurgeStrategy();
 
-    assertEquals(lightning.priority > purge.priority, true);
-    assertEquals(lightning.priority > minification.priority, true);
     assertEquals(purge.priority > minification.priority, true);
   });
 });

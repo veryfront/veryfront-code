@@ -250,6 +250,7 @@ describe("schemas", () => {
         "lookupDomain",
         "resolveStyleArtifact",
         "ensureStyleArtifactBuild",
+        "upsertStyleArtifact",
       ] as const;
 
       for (const key of expectedKeys) {
@@ -269,13 +270,14 @@ describe("schemas", () => {
 
     it("should use supported HTTP methods for all endpoints", () => {
       for (const endpoint of Object.values(API_ENDPOINTS)) {
-        assertEquals(["GET", "POST"].includes(endpoint.method), true);
+        assertEquals(["GET", "POST", "PUT"].includes(endpoint.method), true);
       }
     });
 
     it("should use the expected methods for style artifact endpoints", () => {
       assertEquals(API_ENDPOINTS.resolveStyleArtifact.method, "GET");
       assertEquals(API_ENDPOINTS.ensureStyleArtifactBuild.method, "POST");
+      assertEquals(API_ENDPOINTS.upsertStyleArtifact.method, "PUT");
     });
 
     it("should have paths starting with /", () => {

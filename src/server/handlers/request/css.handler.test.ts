@@ -8,7 +8,7 @@ import {
   cacheCSSAsync,
   clearCSSCache,
   hashCSS,
-} from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+} from "#veryfront/html/styles-builder/css-compiler.ts";
 
 function createMockAdapter(files: Record<string, string> = {}): RuntimeAdapter {
   return {

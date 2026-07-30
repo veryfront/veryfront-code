@@ -1,4 +1,8 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import {
+  assertCSSPipelineIdentity,
+  assertStyleProfileHash,
+  logger as baseLogger,
+} from "#veryfront/utils";
 import {
   createCanonicalVeryfrontApiTransport,
   type TransportRequestInit,
@@ -85,39 +89,221 @@ export interface GetFileOptions {
   expectedMissing?: boolean;
 }
 
-export interface StyleArtifactSelector {
-  branch?: string;
-  environmentName?: string;
-  releaseId?: string;
+export const STYLE_ARTIFACT_CONTENT_TYPE = "text/css; charset=utf-8";
+export const MAX_STYLE_ARTIFACT_SELECTOR_CODE_UNITS = 256;
+
+const STYLE_ARTIFACT_HASH_PATTERN = /^[a-f0-9]{64}$/;
+const STYLE_ARTIFACT_SELECTOR_CONTROL_PATTERN = /[\p{Cc}\p{Cs}]/u;
+const STYLE_ARTIFACT_SELECTOR_KEYS = ["branch", "environmentName", "releaseId"] as const;
+const ReflectApply = Reflect.apply;
+const RegExpPrototypeTest = RegExp.prototype.test;
+const StringPrototypeNormalize = String.prototype.normalize;
+const StringPrototypeTrim = String.prototype.trim;
+
+export type StyleArtifactSelector =
+  | Readonly<{ branch: string; environmentName?: never; releaseId?: never }>
+  | Readonly<{ branch?: never; environmentName: string; releaseId?: never }>
+  | Readonly<{ branch?: never; environmentName?: never; releaseId: string }>;
+
+/** Immutable cache/control-plane identity for exactly one source selector. */
+export type StyleArtifactTuple =
+  & Readonly<{
+    /** Versioned identity of every compiler/optimizer input capable of changing CSS output. */
+    cssPipelineIdentity: string;
+    styleProfileHash: string;
+  }>
+  & StyleArtifactSelector;
+
+export type ResolveStyleArtifactInput = StyleArtifactTuple;
+
+export type EnsureStyleArtifactBuildInput =
+  & StyleArtifactTuple
+  & Readonly<{
+    force?: boolean;
+  }>;
+
+export type UpsertStyleArtifactInput =
+  & StyleArtifactTuple
+  & (
+    | Readonly<{
+      status?: "ready";
+      artifactHash: string;
+      assetPath?: string;
+      contentType?: string;
+      etag?: string;
+      buildRunId?: string;
+      failureReason?: never;
+    }>
+    | Readonly<{
+      status: "building";
+      artifactHash?: never;
+      assetPath?: never;
+      contentType?: never;
+      etag?: never;
+      buildRunId: string;
+      failureReason?: never;
+    }>
+    | Readonly<{
+      status: "failed";
+      artifactHash?: never;
+      assetPath?: never;
+      contentType?: never;
+      etag?: never;
+      buildRunId?: string;
+      failureReason: string;
+    }>
+  );
+
+type StyleArtifactResolutionTuple = StyleArtifactTuple & Readonly<{ updatedAt?: string }>;
+
+export type ProjectStyleArtifactResolution =
+  | (
+    & StyleArtifactResolutionTuple
+    & Readonly<{
+      status: "ready";
+      artifactHash: string;
+      assetPath: string;
+      etag: string;
+      contentType: typeof STYLE_ARTIFACT_CONTENT_TYPE;
+      buildRunId?: string;
+    }>
+  )
+  | (StyleArtifactResolutionTuple & Readonly<{ status: "missing" }>)
+  | (
+    & StyleArtifactResolutionTuple
+    & Readonly<{
+      status: "building";
+      buildRunId: string;
+    }>
+  )
+  | (
+    & StyleArtifactResolutionTuple
+    & Readonly<{
+      status: "failed";
+      buildRunId?: string;
+      failureReason: string;
+    }>
+  );
+
+function styleArtifactProtocolError(detail: string, cause?: unknown): VeryfrontError {
+  return API_CLIENT_ERROR.create({ detail, cause, status: 502 });
 }
 
-export interface ResolveStyleArtifactInput extends StyleArtifactSelector {
-  styleProfileHash: string;
+function readOwnDataProperty(input: unknown, key: string, required: boolean): unknown {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new TypeError("Style artifact input must be an object");
+  }
+
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(input, key);
+  } catch (cause) {
+    throw new TypeError(`Style artifact ${key} could not be inspected`, { cause });
+  }
+  if (descriptor === undefined) {
+    if (!required) return undefined;
+    throw new TypeError(`Style artifact ${key} must be an own data property`);
+  }
+  if (!("value" in descriptor)) {
+    throw new TypeError(`Style artifact ${key} must be an own data property`);
+  }
+  return descriptor.value;
 }
 
-export interface EnsureStyleArtifactBuildInput extends ResolveStyleArtifactInput {
-  force?: boolean;
+function assertCanonicalStyleArtifactSelector(value: unknown, label: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_STYLE_ARTIFACT_SELECTOR_CODE_UNITS ||
+    ReflectApply(StringPrototypeTrim, value, []) !== value ||
+    ReflectApply(StringPrototypeNormalize, value, ["NFC"]) !== value ||
+    ReflectApply(RegExpPrototypeTest, STYLE_ARTIFACT_SELECTOR_CONTROL_PATTERN, [value]) === true
+  ) {
+    throw new TypeError(
+      `${label} must be a non-empty, trimmed, NFC-normalized string without control characters and no larger than ${MAX_STYLE_ARTIFACT_SELECTOR_CODE_UNITS} code units`,
+    );
+  }
+  return value;
 }
 
-export interface UpsertStyleArtifactInput extends ResolveStyleArtifactInput {
-  status?: "building" | "ready" | "failed";
-  artifactHash?: string;
-  assetPath?: string;
-  contentType?: string;
-  etag?: string;
-  buildRunId?: string;
-  failureReason?: string;
+export function assertStyleArtifactHash(value: unknown, label = "Style artifact hash"): string {
+  if (
+    typeof value !== "string" ||
+    ReflectApply(RegExpPrototypeTest, STYLE_ARTIFACT_HASH_PATTERN, [value]) !== true
+  ) {
+    throw new TypeError(`${label} must be a full lowercase SHA-256 digest`);
+  }
+  return value;
 }
 
-export interface ProjectStyleArtifactResolution {
-  status: "ready" | "missing" | "building" | "failed";
-  artifactHash?: string;
-  assetPath?: string;
-  etag?: string;
-  contentType?: string;
-  buildRunId?: string;
-  failureReason?: string;
-  updatedAt?: string;
+/** Snapshot and validate the complete control-plane tuple without invoking accessors. */
+export function createStyleArtifactTuple(input: unknown): StyleArtifactTuple {
+  const cssPipelineIdentity = assertCSSPipelineIdentity(
+    readOwnDataProperty(input, "cssPipelineIdentity", true),
+  );
+  const styleProfileHash = assertStyleProfileHash(
+    readOwnDataProperty(input, "styleProfileHash", true),
+  );
+  const selectors = STYLE_ARTIFACT_SELECTOR_KEYS.flatMap((key) => {
+    const value = readOwnDataProperty(input, key, false);
+    return value === undefined ? [] : [[key, value] as const];
+  });
+
+  if (selectors.length !== 1) {
+    throw new TypeError("Exactly one of branch, environmentName, or releaseId is required");
+  }
+
+  const selected = selectors[0];
+  if (!selected) {
+    throw new TypeError("Exactly one of branch, environmentName, or releaseId is required");
+  }
+  const [key, rawValue] = selected;
+  const value = assertCanonicalStyleArtifactSelector(rawValue, `Style artifact ${key}`);
+  if (key === "branch") {
+    return Object.freeze({ cssPipelineIdentity, styleProfileHash, branch: value });
+  }
+  if (key === "environmentName") {
+    return Object.freeze({ cssPipelineIdentity, styleProfileHash, environmentName: value });
+  }
+  return Object.freeze({ cssPipelineIdentity, styleProfileHash, releaseId: value });
+}
+
+function selectorEntry(tuple: StyleArtifactTuple): readonly [string, string] {
+  if (tuple.branch !== undefined) return ["branch", tuple.branch];
+  if (tuple.environmentName !== undefined) return ["environmentName", tuple.environmentName];
+  return ["releaseId", tuple.releaseId];
+}
+
+/** Validate the control plane's complete exact echo before accepting a result. */
+export function assertStyleArtifactResolutionTuple(
+  resolution: unknown,
+  expectedInput: unknown,
+): StyleArtifactTuple {
+  let expected: StyleArtifactTuple;
+  let actual: StyleArtifactTuple;
+  try {
+    expected = createStyleArtifactTuple(expectedInput);
+    actual = createStyleArtifactTuple(resolution);
+  } catch (cause) {
+    throw styleArtifactProtocolError(
+      "Veryfront API returned an invalid style artifact tuple",
+      cause,
+    );
+  }
+
+  const [expectedKey, expectedValue] = selectorEntry(expected);
+  const [actualKey, actualValue] = selectorEntry(actual);
+  if (
+    actual.cssPipelineIdentity !== expected.cssPipelineIdentity ||
+    actual.styleProfileHash !== expected.styleProfileHash ||
+    actualKey !== expectedKey ||
+    actualValue !== expectedValue
+  ) {
+    throw styleArtifactProtocolError(
+      "Veryfront API style artifact response tuple did not match the request",
+    );
+  }
+  return actual;
 }
 
 function buildListParams(options: ListFilesOptions): URLSearchParams {
@@ -167,30 +353,199 @@ function mapProjectFile<T extends ProjectFile>(file: T): ProjectFile {
   };
 }
 
-function buildStyleArtifactParams(input: ResolveStyleArtifactInput): URLSearchParams {
+function buildStyleArtifactParams(
+  tuple: StyleArtifactTuple,
+): URLSearchParams {
   const params = new URLSearchParams({
-    style_profile_hash: input.styleProfileHash,
+    css_pipeline_identity: tuple.cssPipelineIdentity,
+    style_profile_hash: tuple.styleProfileHash,
   });
 
-  if (input.branch) params.set("branch", input.branch);
-  if (input.environmentName) params.set("environment_name", input.environmentName);
-  if (input.releaseId) params.set("release_id", input.releaseId);
+  if (tuple.branch !== undefined) params.set("branch", tuple.branch);
+  if (tuple.environmentName !== undefined) params.set("environment_name", tuple.environmentName);
+  if (tuple.releaseId !== undefined) params.set("release_id", tuple.releaseId);
 
   return params;
 }
 
-function mapStyleArtifactResolution(raw: unknown): ProjectStyleArtifactResolution {
-  const response = getStyleArtifactResolveResponseSchema().parse(raw);
-  return {
-    status: response.status,
-    artifactHash: response.artifact_hash,
-    assetPath: response.asset_path,
-    etag: response.etag,
-    contentType: response.content_type,
-    buildRunId: response.build_run_id,
-    failureReason: response.failure_reason,
-    updatedAt: response.updated_at,
+function serializeStyleArtifactTuple(tuple: StyleArtifactTuple): Record<string, string> {
+  const wire: Record<string, string> = {
+    css_pipeline_identity: tuple.cssPipelineIdentity,
+    style_profile_hash: tuple.styleProfileHash,
   };
+  if (tuple.branch !== undefined) wire.branch = tuple.branch;
+  if (tuple.environmentName !== undefined) wire.environment_name = tuple.environmentName;
+  if (tuple.releaseId !== undefined) wire.release_id = tuple.releaseId;
+  return wire;
+}
+
+function responseTuple(response: {
+  css_pipeline_identity: string;
+  style_profile_hash: string;
+  branch?: string;
+  environment_name?: string;
+  release_id?: string;
+}): StyleArtifactTuple {
+  return createStyleArtifactTuple({
+    cssPipelineIdentity: response.css_pipeline_identity,
+    styleProfileHash: response.style_profile_hash,
+    ...(response.branch === undefined ? {} : { branch: response.branch }),
+    ...(response.environment_name === undefined
+      ? {}
+      : { environmentName: response.environment_name }),
+    ...(response.release_id === undefined ? {} : { releaseId: response.release_id }),
+  });
+}
+
+const STYLE_ARTIFACT_RESPONSE_COMMON_KEYS = new Set([
+  "status",
+  "css_pipeline_identity",
+  "style_profile_hash",
+  "branch",
+  "environment_name",
+  "release_id",
+  "updated_at",
+]);
+
+function assertExactStyleArtifactResponseShape(raw: unknown): void {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw styleArtifactProtocolError("Veryfront API returned an invalid style artifact response");
+  }
+  let status: unknown;
+  let keys: PropertyKey[];
+  try {
+    status = readOwnDataProperty(raw, "status", true);
+    keys = Reflect.ownKeys(raw);
+  } catch (cause) {
+    throw styleArtifactProtocolError(
+      "Veryfront API style artifact response could not be inspected",
+      cause,
+    );
+  }
+  const statusKeys = status === "ready"
+    ? ["artifact_hash", "asset_path", "etag", "content_type", "build_run_id"]
+    : status === "building"
+    ? ["build_run_id"]
+    : status === "failed"
+    ? ["build_run_id", "failure_reason"]
+    : status === "missing"
+    ? []
+    : null;
+  if (statusKeys === null) {
+    throw styleArtifactProtocolError("Veryfront API returned an invalid style artifact status");
+  }
+  const allowed = new Set([...STYLE_ARTIFACT_RESPONSE_COMMON_KEYS, ...statusKeys]);
+  if (keys.some((key) => typeof key !== "string" || !allowed.has(key))) {
+    throw styleArtifactProtocolError(
+      `Veryfront API returned fields that are invalid for style artifact status ${status}`,
+    );
+  }
+}
+
+function assertCanonicalReadyArtifact(response: {
+  artifact_hash: string;
+  asset_path: string;
+  content_type: string;
+  etag: string;
+}): string {
+  const hash = assertStyleArtifactHash(response.artifact_hash);
+  const expectedPath = `/_vf/css/${hash}.css`;
+  if (response.asset_path !== expectedPath) {
+    throw new TypeError(`Style artifact path must be ${expectedPath}`);
+  }
+  if (response.content_type !== STYLE_ARTIFACT_CONTENT_TYPE) {
+    throw new TypeError(`Style artifact content type must be ${STYLE_ARTIFACT_CONTENT_TYPE}`);
+  }
+  if (response.etag !== `"${hash}"`) {
+    throw new TypeError(`Style artifact ETag must quote the artifact hash`);
+  }
+  return hash;
+}
+
+function mapStyleArtifactResolution(
+  raw: unknown,
+  expectedTuple: StyleArtifactTuple,
+  expectedStatus?: "ready" | "building" | "failed",
+  expectedArtifactHash?: string,
+): ProjectStyleArtifactResolution {
+  assertExactStyleArtifactResponseShape(raw);
+  let response;
+  try {
+    response = getStyleArtifactResolveResponseSchema().parse(raw);
+  } catch (cause) {
+    throw styleArtifactProtocolError(
+      "Veryfront API returned an invalid style artifact resolution",
+      cause,
+    );
+  }
+  let tuple: StyleArtifactTuple;
+  try {
+    tuple = responseTuple(response);
+  } catch (cause) {
+    throw styleArtifactProtocolError("Veryfront API returned a non-canonical style tuple", cause);
+  }
+  assertStyleArtifactResolutionTuple(tuple, expectedTuple);
+  if (expectedStatus !== undefined && response.status !== expectedStatus) {
+    throw styleArtifactProtocolError(
+      `Veryfront API PUT response status ${response.status} did not acknowledge requested status ${expectedStatus}`,
+    );
+  }
+
+  const common = {
+    ...tuple,
+    ...(response.updated_at === undefined ? {} : { updatedAt: response.updated_at }),
+  };
+  try {
+    if (response.status === "ready") {
+      const artifactHash = assertCanonicalReadyArtifact(response);
+      if (expectedArtifactHash !== undefined && artifactHash !== expectedArtifactHash) {
+        throw new TypeError("PUT response artifact hash did not match the requested artifact hash");
+      }
+      return Object.freeze({
+        ...common,
+        status: "ready" as const,
+        artifactHash,
+        assetPath: response.asset_path,
+        contentType: STYLE_ARTIFACT_CONTENT_TYPE,
+        etag: response.etag,
+        ...(response.build_run_id === undefined ? {} : {
+          buildRunId: assertCanonicalStyleArtifactSelector(
+            response.build_run_id,
+            "Style artifact build run id",
+          ),
+        }),
+      });
+    }
+    if (response.status === "building") {
+      const buildRunId = assertCanonicalStyleArtifactSelector(
+        response.build_run_id,
+        "Style artifact build run id",
+      );
+      return Object.freeze({ ...common, status: "building" as const, buildRunId });
+    }
+    if (response.status === "failed") {
+      if (response.failure_reason.length === 0) {
+        throw new TypeError("Style artifact failure reason must not be empty");
+      }
+      return Object.freeze({
+        ...common,
+        status: "failed" as const,
+        failureReason: response.failure_reason,
+        ...(response.build_run_id === undefined ? {} : {
+          buildRunId: assertCanonicalStyleArtifactSelector(
+            response.build_run_id,
+            "Style artifact build run id",
+          ),
+        }),
+      });
+    }
+    return Object.freeze({ ...common, status: "missing" as const });
+  } catch (cause) {
+    throw styleArtifactProtocolError(
+      `Veryfront API returned invalid ${response.status} style artifact metadata`,
+      cause,
+    );
+  }
 }
 
 function normalizeLookupDomain(
@@ -628,31 +983,34 @@ export class VeryfrontAPIOperations {
     projectRef: string,
     input: ResolveStyleArtifactInput,
   ): Promise<ProjectStyleArtifactResolution> {
-    const params = buildStyleArtifactParams(input);
+    const tuple = createStyleArtifactTuple(input);
+    const params = buildStyleArtifactParams(tuple);
     const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current?${params}`;
     logger.debug("resolveStyleArtifact", {
       projectRef,
-      branch: input.branch,
-      environmentName: input.environmentName,
-      releaseId: input.releaseId,
-      styleProfileHash: input.styleProfileHash,
+      ...tuple,
     });
 
-    return mapStyleArtifactResolution(await this.request(url));
+    return mapStyleArtifactResolution(
+      await this.request(url),
+      tuple,
+    );
   }
 
   async ensureStyleArtifactBuild(
     projectRef: string,
     input: EnsureStyleArtifactBuildInput,
   ): Promise<ProjectStyleArtifactResolution> {
+    const tuple = createStyleArtifactTuple(input);
+    const force = readOwnDataProperty(input, "force", false);
+    if (force !== undefined && typeof force !== "boolean") {
+      throw new TypeError("Style artifact force must be a boolean");
+    }
     const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current/builds`;
     logger.debug("ensureStyleArtifactBuild", {
       projectRef,
-      branch: input.branch,
-      environmentName: input.environmentName,
-      releaseId: input.releaseId,
-      styleProfileHash: input.styleProfileHash,
-      force: input.force ?? false,
+      ...tuple,
+      force: force ?? false,
     });
 
     return mapStyleArtifactResolution(
@@ -662,13 +1020,11 @@ export class VeryfrontAPIOperations {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          style_profile_hash: input.styleProfileHash,
-          branch: input.branch,
-          environment_name: input.environmentName,
-          release_id: input.releaseId,
-          force: input.force ?? false,
+          ...serializeStyleArtifactTuple(tuple),
+          force: force ?? false,
         }),
       }),
+      tuple,
     );
   }
 
@@ -676,15 +1032,71 @@ export class VeryfrontAPIOperations {
     projectRef: string,
     input: UpsertStyleArtifactInput,
   ): Promise<ProjectStyleArtifactResolution> {
+    const tuple = createStyleArtifactTuple(input);
+    const status = readOwnDataProperty(input, "status", false) ?? "ready";
+    if (status !== "ready" && status !== "building" && status !== "failed") {
+      throw new TypeError("Style artifact status must be ready, building, or failed");
+    }
+
+    let expectedArtifactHash: string | undefined;
+    let statusFields: Record<string, string>;
+    if (status === "ready") {
+      expectedArtifactHash = assertStyleArtifactHash(
+        readOwnDataProperty(input, "artifactHash", true),
+      );
+      const canonical = {
+        assetPath: `/_vf/css/${expectedArtifactHash}.css`,
+        contentType: STYLE_ARTIFACT_CONTENT_TYPE,
+        etag: `"${expectedArtifactHash}"`,
+      };
+      for (const key of ["assetPath", "contentType", "etag"] as const) {
+        const supplied = readOwnDataProperty(input, key, false);
+        if (supplied !== undefined && supplied !== canonical[key]) {
+          throw new TypeError(`Style artifact ${key} must be ${canonical[key]}`);
+        }
+      }
+      const buildRunId = readOwnDataProperty(input, "buildRunId", false);
+      statusFields = {
+        artifact_hash: expectedArtifactHash,
+        asset_path: canonical.assetPath,
+        content_type: canonical.contentType,
+        etag: canonical.etag,
+        ...(buildRunId === undefined ? {} : {
+          build_run_id: assertCanonicalStyleArtifactSelector(
+            buildRunId,
+            "Style artifact build run id",
+          ),
+        }),
+      };
+    } else if (status === "building") {
+      statusFields = {
+        build_run_id: assertCanonicalStyleArtifactSelector(
+          readOwnDataProperty(input, "buildRunId", true),
+          "Style artifact build run id",
+        ),
+      };
+    } else {
+      const failureReason = readOwnDataProperty(input, "failureReason", true);
+      if (typeof failureReason !== "string" || failureReason.length === 0) {
+        throw new TypeError("Style artifact failure reason must not be empty");
+      }
+      const buildRunId = readOwnDataProperty(input, "buildRunId", false);
+      statusFields = {
+        failure_reason: failureReason,
+        ...(buildRunId === undefined ? {} : {
+          build_run_id: assertCanonicalStyleArtifactSelector(
+            buildRunId,
+            "Style artifact build run id",
+          ),
+        }),
+      };
+    }
     const url = `/projects/${encodeURIComponent(projectRef)}/style-artifacts/current`;
     logger.debug("upsertStyleArtifact", {
       projectRef,
-      branch: input.branch,
-      environmentName: input.environmentName,
-      releaseId: input.releaseId,
-      styleProfileHash: input.styleProfileHash,
-      status: input.status ?? "ready",
-      artifactHash: input.artifactHash,
+      ...tuple,
+      status,
+      artifactHash: expectedArtifactHash,
     });
 
     return mapStyleArtifactResolution(
@@ -694,19 +1106,14 @@ export class VeryfrontAPIOperations {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          style_profile_hash: input.styleProfileHash,
-          branch: input.branch,
-          environment_name: input.environmentName,
-          release_id: input.releaseId,
-          status: input.status ?? "ready",
-          artifact_hash: input.artifactHash,
-          asset_path: input.assetPath,
-          content_type: input.contentType,
-          etag: input.etag,
-          build_run_id: input.buildRunId,
-          failure_reason: input.failureReason,
+          ...serializeStyleArtifactTuple(tuple),
+          status,
+          ...statusFields,
         }),
       }),
+      tuple,
+      status,
+      expectedArtifactHash,
     );
   }
 

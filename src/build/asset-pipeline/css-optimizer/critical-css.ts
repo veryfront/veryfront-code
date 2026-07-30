@@ -1,4 +1,3 @@
-import { DEPENDENCY_MISSING } from "#veryfront/errors";
 import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { logger } from "#veryfront/utils";
@@ -10,58 +9,26 @@ import {
   MAX_CSS_PURGE_SAFELIST_ENTRIES,
   MAX_CSS_SELECTOR_TOKEN_CHARACTERS,
   MAX_CSS_TOTAL_OUTPUT_BYTES,
-  PURGE_CSS_MODULE_SPECIFIER,
 } from "./constants.ts";
 import type { CriticalCSSResult, CSSOptimizationOptions } from "./types/index.ts";
-import { basicMinify } from "./utils.ts";
-
-interface CriticalPurgeResult {
-  css: string;
-  rejectedCss?: string;
-}
-
-interface CriticalPurgeCSSModule {
-  PurgeCSS: new () => {
-    purge(options: {
-      content: Array<{ raw: string; extension: string }>;
-      css: Array<{ raw: string }>;
-      rejectedCss: true;
-      safelist?: string[];
-    }): Promise<CriticalPurgeResult[]>;
-  };
-}
+import {
+  acquireConfiguredCSSOptimization,
+  type CSSOptimizationSession,
+} from "./optimization-engine.ts";
+import { acquireConfiguredCSSPurging, type CSSPurgingSession } from "./purging-engine.ts";
 
 const encoder = new TextEncoder();
-let purgeCSSModule: Promise<CriticalPurgeCSSModule> | null = null;
 
 function safelistToken(value: string): string {
   return value.startsWith(".") || value.startsWith("#") ? value.slice(1) : value;
-}
-
-async function loadPurgeCSS(): Promise<CriticalPurgeCSSModule> {
-  const pending = purgeCSSModule ??= import(PURGE_CSS_MODULE_SPECIFIER).then(
-    (module) => {
-      if (!module || typeof module.PurgeCSS !== "function") {
-        throw new TypeError("PurgeCSS module did not export PurgeCSS");
-      }
-      return module;
-    },
-  );
-  try {
-    return await pending;
-  } catch (error) {
-    if (purgeCSSModule === pending) purgeCSSModule = null;
-    throw DEPENDENCY_MISSING.create({
-      detail: `Critical CSS extraction requires ${PURGE_CSS_MODULE_SPECIFIER}`,
-      cause: error,
-    });
-  }
 }
 
 export function extractCriticalCSS(
   cssPath: string,
   htmlContent: string,
   options: CSSOptimizationOptions,
+  session?: CSSOptimizationSession,
+  purgingSession?: CSSPurgingSession,
 ): Promise<CriticalCSSResult> {
   if (
     typeof options !== "object" ||
@@ -82,6 +49,10 @@ export function extractCriticalCSS(
     throw new TypeError("Critical CSS minify must be a boolean");
   }
   const shouldMinify = options.minify ?? true;
+  const optimizationSession = shouldMinify
+    ? session ?? acquireConfiguredCSSOptimization()
+    : undefined;
+  const resolvedPurgingSession = purgingSession ?? acquireConfiguredCSSPurging();
 
   return withSpan(
     "build.asset.extractCriticalCSS",
@@ -159,25 +130,27 @@ export function extractCriticalCSS(
         );
       }
 
-      const module = await loadPurgeCSS();
-      const results = await new module.PurgeCSS().purge({
+      const result = await resolvedPurgingSession.run({
         content: [{ raw: htmlContent, extension: "html" }],
-        css: [{ raw: css }],
-        rejectedCss: true,
+        css,
+        includeRejectedCSS: true,
         safelist: safelistTokens,
       });
-      const result = results[0];
-      if (
-        results.length !== 1 ||
-        !result ||
-        typeof result.css !== "string" ||
-        typeof result.rejectedCss !== "string"
-      ) {
-        throw new TypeError("PurgeCSS returned an invalid critical CSS result");
+      if (result.rejectedCSS === undefined) {
+        throw new TypeError("CSS purging engine omitted rejected CSS");
       }
 
-      const critical = shouldMinify ? basicMinify(result.css) : result.css;
-      const remaining = shouldMinify ? basicMinify(result.rejectedCss) : result.rejectedCss;
+      const optimizePart = (css: string, sourcePath: string): string => {
+        if (!optimizationSession) return css;
+        return optimizationSession.run({
+          css,
+          sourcePath,
+          minify: true,
+          sourceMap: false,
+        }).css;
+      };
+      const critical = optimizePart(result.css, "critical.css");
+      const remaining = optimizePart(result.rejectedCSS, "remaining.css");
       const criticalSize = encoder.encode(critical).length;
       const remainingSize = encoder.encode(remaining).length;
       if (

@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { createStyleScopeProfile } from "./style-scope-profile.ts";
 import {
@@ -95,13 +96,13 @@ describe("styles-builder/css-pregeneration", () => {
       );
     });
 
-    it("should skip files with empty content", () => {
+    it("treats an empty conventional stylesheet as present", () => {
       assertEquals(
         findGlobalStylesheet([
           { path: "globals.css", content: "" },
           { path: "global.css", content: "not empty" },
         ]),
-        "not empty",
+        "",
       );
     });
 
@@ -112,7 +113,7 @@ describe("styles-builder/css-pregeneration", () => {
     it("should not match files that end with globals.css but have different prefix", () => {
       assertEquals(
         findGlobalStylesheet([{ path: "my-globals.css", content: "should not match" }]),
-        "should not match",
+        undefined,
       );
     });
   });
@@ -131,23 +132,39 @@ describe("styles-builder/css-pregeneration", () => {
       );
     });
 
-    it("should strip leading slashes from stylesheetPath", () => {
-      assertEquals(
-        findStylesheetFromFiles(
-          [{ path: "styles/custom.css", content: "custom css" }],
-          "/styles/custom.css",
-        ),
-        "custom css",
+    it("rejects absolute configured stylesheet paths", () => {
+      assertThrows(
+        () =>
+          findStylesheetFromFiles(
+            [{ path: "styles/custom.css", content: "custom css" }],
+            "/styles/custom.css",
+          ),
+        TypeError,
+        "Stylesheet path",
       );
     });
 
-    it("should strip multiple leading slashes", () => {
+    it("rejects traversal and non-canonical configured stylesheet paths", () => {
+      for (const path of ["../custom.css", "styles/../custom.css", "styles//custom.css"]) {
+        assertThrows(
+          () =>
+            findStylesheetFromFiles(
+              [{ path: "styles/custom.css", content: "custom css" }],
+              path,
+            ),
+          TypeError,
+          "Stylesheet path",
+        );
+      }
+    });
+
+    it("returns an explicitly configured empty stylesheet", () => {
       assertEquals(
         findStylesheetFromFiles(
-          [{ path: "styles/custom.css", content: "custom css" }],
-          "///styles/custom.css",
+          [{ path: "styles/custom.css", content: "" }],
+          "styles/custom.css",
         ),
-        "custom css",
+        "",
       );
     });
 
@@ -161,13 +178,13 @@ describe("styles-builder/css-pregeneration", () => {
       );
     });
 
-    it("should fallback to findGlobalStylesheet when stylesheetPath not found", () => {
+    it("does not substitute a conventional stylesheet when the configured path is absent", () => {
       assertEquals(
         findStylesheetFromFiles(
           [{ path: "globals.css", content: "fallback globals" }],
           "nonexistent.css",
         ),
-        "fallback globals",
+        undefined,
       );
     });
 
@@ -195,7 +212,7 @@ describe("styles-builder/css-pregeneration", () => {
       );
     });
 
-    it("should skip file without content even when path matches", () => {
+    it("does not substitute a conventional stylesheet when configured content is unavailable", () => {
       assertEquals(
         findStylesheetFromFiles(
           [
@@ -204,7 +221,22 @@ describe("styles-builder/css-pregeneration", () => {
           ],
           "styles/custom.css",
         ),
-        "fallback",
+        undefined,
+      );
+    });
+
+    it("rejects ambiguous configured stylesheet source keys", () => {
+      assertThrows(
+        () =>
+          findStylesheetFromFiles(
+            [
+              { path: "styles/custom.css", content: "first" },
+              { path: "project/styles/custom.css", content: "second" },
+            ],
+            "styles/custom.css",
+          ),
+        TypeError,
+        "matched multiple",
       );
     });
   });
@@ -263,6 +295,102 @@ describe("styles-builder/css-pregeneration", () => {
         );
       } finally {
         await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("fails when the configured stylesheet is absent instead of reading globals.css", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+
+      try {
+        await writeTextFile(join(projectDir, "globals.css"), ".globals { color: blue; }");
+        await assertRejects(
+          () => readLocalProjectStylesheet(projectDir, "styles/missing.css"),
+          Deno.errors.NotFound,
+        );
+      } finally {
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("propagates source file read failures", async () => {
+      const readFailure = Object.assign(new Error("source read failed"), { code: "EIO" });
+      const fs = {
+        readDir: () =>
+          (async function* () {
+            yield {
+              name: "page.tsx",
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+            };
+          })(),
+        stat: () =>
+          Promise.resolve({
+            size: 10,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: null,
+          }),
+        readTextFile: () => Promise.reject(readFailure),
+      } as unknown as FileSystem;
+
+      const error = await assertRejects(() =>
+        collectLocalProjectSourceFiles({
+          projectDir: "/project",
+          styleProfile: createStyleScopeProfile(),
+          fs,
+        })
+      );
+      assertEquals(error, readFailure);
+    });
+
+    it("propagates operational default stylesheet read failures", async () => {
+      const readFailure = Object.assign(new Error("stylesheet read failed"), { code: "EIO" });
+      const fs = {
+        readTextFile: () => Promise.reject(readFailure),
+      } as unknown as FileSystem;
+
+      const error = await assertRejects(() =>
+        readLocalProjectStylesheet("/project", undefined, fs)
+      );
+      assertEquals(error, readFailure);
+    });
+
+    it("rejects configured stylesheet traversal before filesystem access", async () => {
+      let reads = 0;
+      const fs = {
+        readTextFile: () => {
+          reads++;
+          return Promise.resolve("unexpected");
+        },
+      } as unknown as FileSystem;
+
+      await assertRejects(
+        () => readLocalProjectStylesheet("/project", "../outside.css", fs),
+        TypeError,
+        "Stylesheet path",
+      );
+      assertEquals(reads, 0);
+    });
+
+    it("rejects configured stylesheet symlinks", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+      const outsideDir = await Deno.makeTempDir({ prefix: "vf-css-outside-" });
+
+      try {
+        const outsidePath = join(outsideDir, "outside.css");
+        await writeTextFile(outsidePath, ".outside {}");
+        await Deno.symlink(outsidePath, join(projectDir, "globals.css"));
+
+        await assertRejects(
+          () => readLocalProjectStylesheet(projectDir, "globals.css"),
+          TypeError,
+          "symbolic link",
+        );
+      } finally {
+        await remove(projectDir, { recursive: true });
+        await remove(outsideDir, { recursive: true });
       }
     });
   });

@@ -24,10 +24,13 @@ describe("manifest-manager", () => {
                 height: 200,
                 path: "logo-400.webp",
                 fileSize: 1234,
+                quality: 80,
               },
             ],
             defaultFormat: "webp",
             aspectRatio: 2,
+            engineIdentity: "test-image-engine@1",
+            quality: 80,
           },
         ],
       ]);
@@ -88,7 +91,7 @@ describe("manifest-manager", () => {
     }
   });
 
-  it("loads legacy entries without originalSize", async () => {
+  it("rejects legacy entries missing production identity fields", async () => {
     const tmpDir = await makeTempDir();
     try {
       await Deno.writeTextFile(
@@ -110,8 +113,11 @@ describe("manifest-manager", () => {
         }),
       );
 
-      const loaded = await loadManifest(tmpDir);
-      assertEquals(loaded.get("logo.png")?.originalSize, undefined);
+      await assertRejects(
+        () => loadManifest(tmpDir),
+        TypeError,
+        "malformed",
+      );
     } finally {
       await Deno.remove(tmpDir, { recursive: true });
     }

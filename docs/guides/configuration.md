@@ -126,6 +126,40 @@ defineConfig({
 });
 ```
 
+### Stylesheet
+
+Select a project-relative global stylesheet with the provider-neutral
+`styles.stylesheet` field:
+
+```ts
+defineConfig({
+  styles: {
+    stylesheet: "styles/global.css",
+  },
+});
+```
+
+When this field is omitted, Veryfront uses the conventional `globals.css` when
+present. CSS compilation requires an explicitly composed `CSSProcessor`
+extension. For example, `@veryfront/ext-css-tailwind` owns its compiler, base
+stylesheet, and plugin policy; core does not import those dependencies or
+provide a vendor fallback.
+
+The former `tailwind.stylesheet` field has been removed. Rename only the
+stylesheet selection:
+
+```ts
+// Before
+defineConfig({ tailwind: { stylesheet: "styles/global.css" } });
+
+// After
+defineConfig({ styles: { stylesheet: "styles/global.css" } });
+```
+
+Provider-specific `tailwind.plugins`, `tailwind.theme`, and
+`tailwind.customCSS` settings are not accepted by the current schema. Configure
+supported provider behavior through the selected extension instead.
+
 ### React version
 
 ```ts
@@ -363,7 +397,6 @@ behavior for:
 - `observability.tracing` and `observability.metrics`
 - `fs.local.baseDir` and `fs.memory`
 - `ai.work` and `ai.mcp`
-- `tailwind.plugins`, `tailwind.theme.extend`, and `tailwind.customCSS`
 - `openapi.mcp`
 
 The complete validated config is available to project extensions and

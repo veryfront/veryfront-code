@@ -4,6 +4,8 @@ type PackageJson = {
   private?: boolean;
   files?: string[];
   dependencies?: Record<string, string>;
+  bundledDependencies?: string[];
+  bundleDependencies?: string[] | boolean;
   optionalDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
@@ -12,6 +14,7 @@ type PackageJson = {
   exports?: Record<string, unknown>;
 };
 
+import { join } from "#std/path";
 import { isPathContained } from "../lib/path-containment.ts";
 import { parseNpmImport } from "./npm-dependency-sources.ts";
 
@@ -20,6 +23,20 @@ const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_MANIFEST_IMPORTS = 4_096;
 const MAX_ID_LENGTH = 1_024;
 const FIRST_PARTY_EXTENSION_PREFIX = "@veryfront/ext-";
+export const ROOT_CSS_EXTENSION_PACKAGES = Object.freeze(
+  [
+    "@veryfront/ext-css-lightning",
+    "@veryfront/ext-css-purgecss",
+    "@veryfront/ext-css-tailwind",
+  ] as const,
+);
+export const ROOT_CSS_EXTENSION_SOURCE_DIRECTORIES = Object.freeze(
+  [
+    "ext-css-lightning",
+    "ext-css-purgecss",
+    "ext-css-tailwind",
+  ] as const,
+);
 const EXACT_NPM_VERSION_PATTERN =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*)|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:(?:0|[1-9]\d*)|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const PACKAGE_PART_PATTERN = /^[a-z0-9](?:[a-z0-9._~-]*[a-z0-9])?$/;
@@ -87,6 +104,85 @@ export function normalizeNpmPackageMetadata(
   pinAutomaticDependencyRanges(pkg);
 
   return pkg;
+}
+
+/**
+ * Fail if the generated root package can install a CSS implementation.
+ * CSS implementations are independently published extensions and must be
+ * selected explicitly by the application that composes the framework.
+ */
+export function assertRootPackageExcludesCSSImplementations(
+  pkg: PackageJson,
+): void {
+  const packages = Object.create(null) as Record<
+    string,
+    readonly ExtensionDependencyOwner[]
+  >;
+  for (const dependencyName of ROOT_CSS_EXTENSION_PACKAGES) {
+    Object.defineProperty(packages, dependencyName, {
+      value: Object.freeze([{
+        extensionName: dependencyName,
+        manifestPath: `extensions/${
+          dependencyName.slice("@veryfront/".length)
+        }/deno.json`,
+        version: "independently-published",
+      }]),
+      enumerable: true,
+      writable: false,
+      configurable: false,
+    });
+  }
+  assertNoRootExtensionDependencyCollision(
+    pkg,
+    Object.freeze({ packages: Object.freeze(packages) }),
+  );
+
+  for (
+    const section of ["bundledDependencies", "bundleDependencies"] as const
+  ) {
+    const value = pkg[section];
+    if (value === undefined || typeof value === "boolean") continue;
+    const dependencies = snapshotArray(
+      value,
+      `package.json.${section}`,
+      MAX_WORKSPACE_ENTRIES,
+      "invalid-generated-package-metadata",
+    );
+    for (let index = 0; index < dependencies.length; index += 1) {
+      const dependencyName = canonicalString(
+        dependencies[index],
+        `package.json.${section}[${index}]`,
+        "invalid-generated-package-metadata",
+      );
+      if (ROOT_CSS_EXTENSION_PACKAGES.some((name) => name === dependencyName)) {
+        throw ownershipError(
+          "root-extension-dependency-collision",
+          `package.json.${section}`,
+          `${dependencyName} is an independently-published CSS extension`,
+        );
+      }
+    }
+  }
+}
+
+/** Fail if dnt copied a CSS extension implementation into the root artifact. */
+export async function assertRootArtifactExcludesCSSImplementations(
+  rootEsmDirectory: string,
+): Promise<void> {
+  for (const sourceDirectory of ROOT_CSS_EXTENSION_SOURCE_DIRECTORIES) {
+    const path = join(rootEsmDirectory, "extensions", sourceDirectory);
+    try {
+      await Deno.lstat(path);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) continue;
+      throw error;
+    }
+    throw ownershipError(
+      "root-extension-dependency-collision",
+      path,
+      `${sourceDirectory} implementation source was bundled into the root package`,
+    );
+  }
 }
 
 /** Return the validated dependency inventory for this repository checkout. */
@@ -267,6 +363,17 @@ export function deriveExtensionDependencyOwnership(
       );
     }
     if (extensionFlag !== true) continue;
+    const activation = veryfront.activation;
+    if (
+      activation !== undefined && activation !== "auto" &&
+      activation !== "explicit"
+    ) {
+      throw ownershipError(
+        "invalid-extension-manifest",
+        `${source.manifestPath}.veryfront.activation`,
+        'activation must be either "auto" or "explicit"',
+      );
+    }
     extensionCount += 1;
 
     const extensionName = packageName(

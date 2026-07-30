@@ -48,6 +48,7 @@ import {
   MAX_PROJECT_DISCOVERY_DIRECTORIES,
 } from "#veryfront/utils/discovery-path-policy.ts";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
+import { isCanonicalProjectRelativePath } from "#veryfront/utils/project-relative-path.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
 const MAX_CSRF_EXCLUDE_PATH_COUNT = 64;
@@ -594,6 +595,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                     IMAGE_OPTIMIZATION.MAX_DIMENSION,
                   ),
                 )
+                .min(1)
                 .max(IMAGE_OPTIMIZATION.MAX_OUTPUT_SIZES)
                 .refine(
                   (sizes) => new Set(sizes).size === sizes.length,
@@ -914,23 +916,19 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
         .partial()
         .strict()
         .optional(),
-      tailwind: v
+      /** Provider-neutral stylesheet selection for CSS processor extensions. */
+      styles: v
         .object({
           /** Path to the global stylesheet (default: "globals.css") */
-          stylesheet: v.string().optional(),
-          /** Enable built-in Tailwind CDN plugins (forms, typography, aspect-ratio, container-queries) */
-          plugins: v.array(v.enum(["forms", "typography", "aspect-ratio", "container-queries"]))
+          stylesheet: v
+            .string()
+            .min(1)
+            .max(MAX_PATH_LENGTH_CHARS)
+            .refine(
+              isCanonicalProjectRelativePath,
+              "Expected a canonical project-relative stylesheet path",
+            )
             .optional(),
-          /** Extend the Tailwind theme (merged with veryfront defaults) */
-          theme: v
-            .object({
-              extend: v.record(v.string(), v.unknown()).optional(),
-            })
-            .partial()
-            .strict()
-            .optional(),
-          /** Custom CSS content to add (for @layer, @apply directives, etc.) */
-          customCSS: v.string().optional(),
         })
         .partial()
         .strict()

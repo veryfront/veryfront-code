@@ -1,6 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   generateBlurDataURL,
   getAspectRatioPadding,
@@ -10,12 +11,53 @@ import {
   SimpleOptimizedImage,
   useOptimizedImage,
 } from "#veryfront/components";
+import type { OptimizedImageMetadata } from "#veryfront/build/asset-pipeline/image-optimizer/types.ts";
+
+function metadataFor(src: string): OptimizedImageMetadata {
+  const original = src.replace(/^\/+/, "");
+  const base = original.replace(/\.[^.]+$/, "");
+  return {
+    original,
+    originalSize: 100,
+    defaultFormat: "jpeg",
+    aspectRatio: 16 / 9,
+    engineIdentity: "test-image-engine@1",
+    quality: 80,
+    variants: ["avif", "webp", "jpeg"].flatMap((format) =>
+      [320, 640].map((width) => ({
+        format: format as "avif" | "webp" | "jpeg",
+        size: width,
+        width,
+        height: Math.round(width * 9 / 16),
+        path: `${base}-${width}w-q80.${format}`,
+        fileSize: width,
+        quality: 80,
+      }))
+    ),
+  };
+}
+
+function renderOptimizedImageHook(
+  src: string,
+  metadata: OptimizedImageMetadata,
+  options?: Parameters<typeof useOptimizedImage>[2],
+): ReturnType<typeof useOptimizedImage> {
+  let result: ReturnType<typeof useOptimizedImage> | undefined;
+  function Probe(): null {
+    result = useOptimizedImage(src, metadata, options);
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Probe));
+  if (result === undefined) throw new Error("Optimized image hook did not render");
+  return result;
+}
 
 describe("OptimizedImage", () => {
   describe("basic props", () => {
     it("should create element with correct props", () => {
       const props = {
         src: "/images/hero.jpg",
+        metadata: metadataFor("/images/hero.jpg"),
         alt: "Hero image",
         width: 1920,
         height: 1080,
@@ -36,6 +78,7 @@ describe("OptimizedImage", () => {
     it("should accept custom formats and quality", () => {
       const props = {
         src: "/images/photo.jpg",
+        metadata: metadataFor("/images/photo.jpg"),
         alt: "Photo",
         formats: ["avif", "webp", "jpeg"] as const,
         quality: 85,
@@ -53,6 +96,7 @@ describe("OptimizedImage", () => {
     it("should support priority loading", () => {
       const props = {
         src: "/images/hero.jpg",
+        metadata: metadataFor("/images/hero.jpg"),
         alt: "Hero",
         priority: true,
       };
@@ -66,6 +110,7 @@ describe("OptimizedImage", () => {
     it("should support lazy loading", () => {
       const props = {
         src: "/images/below-fold.jpg",
+        metadata: metadataFor("/images/below-fold.jpg"),
         alt: "Below fold",
         loading: "lazy" as const,
       };
@@ -83,6 +128,7 @@ describe("OptimizedImage", () => {
 
       const props = {
         src: "/images/photo.jpg",
+        metadata: metadataFor("/images/photo.jpg"),
         alt: "Photo",
         placeholder: "blur" as const,
         blurDataURL,
@@ -104,6 +150,7 @@ describe("OptimizedImage", () => {
 
       const props = {
         src: "/images/test.jpg",
+        metadata: metadataFor("/images/test.jpg"),
         alt: "Test",
         onLoad,
         onError,
@@ -123,6 +170,7 @@ describe("OptimizedImage", () => {
     it("should accept custom sizes attribute", () => {
       const props = {
         src: "/images/test.jpg",
+        metadata: metadataFor("/images/test.jpg"),
         alt: "Test",
         sizes: "(max-width: 768px) 100vw, 50vw",
       };
@@ -140,6 +188,7 @@ describe("OptimizedImage", () => {
 
       const props = {
         src: "/images/test.jpg",
+        metadata: metadataFor("/images/test.jpg"),
         alt: "Test",
         className: "custom-image",
         style,
@@ -158,6 +207,7 @@ describe("SimpleOptimizedImage", () => {
   it("should create element with correct props", () => {
     const props = {
       src: "/images/simple.jpg",
+      metadata: metadataFor("/images/simple.jpg"),
       alt: "Simple image",
       format: "webp" as const,
       quality: 80,
@@ -177,6 +227,7 @@ describe("OptimizedBackgroundImage", () => {
   it("should create element with correct props", () => {
     const props = {
       src: "/images/background.jpg",
+      metadata: metadataFor("/images/background.jpg"),
       format: "webp" as const,
       quality: 80,
       children: React.createElement("h1", {}, "Title"),
@@ -192,7 +243,10 @@ describe("OptimizedBackgroundImage", () => {
 
 describe("useOptimizedImage", () => {
   it("should return sources and fallback", () => {
-    const { sources, fallback } = useOptimizedImage("/images/test.jpg");
+    const { sources, fallback } = renderOptimizedImageHook(
+      "/images/test.jpg",
+      metadataFor("/images/test.jpg"),
+    );
 
     assertExists(sources);
     assertExists(fallback);
@@ -201,10 +255,14 @@ describe("useOptimizedImage", () => {
   });
 
   it("should accept custom options", () => {
-    const { sources } = useOptimizedImage("/images/test.jpg", {
-      formats: ["webp", "jpeg"],
-      quality: 90,
-    });
+    const { sources } = renderOptimizedImageHook(
+      "/images/test.jpg",
+      metadataFor("/images/test.jpg"),
+      {
+        formats: ["webp", "jpeg"],
+        quality: 80,
+      },
+    );
 
     assertExists(sources);
     assertEquals(sources.length, 2);

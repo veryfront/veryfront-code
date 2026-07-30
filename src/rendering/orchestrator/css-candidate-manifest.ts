@@ -1,10 +1,10 @@
-import { extractCandidates } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { extractCandidates } from "#veryfront/html/styles-builder/css-compiler.ts";
 import {
   filterFilesForStyleScope,
   type StyleScopeProfile,
 } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { getRouteModulePaths } from "#veryfront/modules/manifest/route-module-manifest.ts";
-import { rendererLogger } from "#veryfront/utils";
+import { assertStyleProfileHash, rendererLogger } from "#veryfront/utils";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 
 interface SourceFileLike {
@@ -100,7 +100,11 @@ function buildManifestCacheKey(
   projectVersion: string,
   styleProfileHash?: string,
 ): string {
-  return JSON.stringify([projectScope, projectVersion, styleProfileHash ?? null]);
+  return JSON.stringify([
+    projectScope,
+    projectVersion,
+    styleProfileHash === undefined ? null : assertStyleProfileHash(styleProfileHash),
+  ]);
 }
 
 function buildRouteCacheKey(manifestKey: string, routeKey: string): string {
@@ -234,7 +238,7 @@ function addCandidatesForPath(
 }
 
 /**
- * Resolve route-scoped Tailwind candidates from a precomputed per-project manifest.
+ * Resolve route-scoped CSS candidates from a precomputed per-project manifest.
  */
 export function getRouteCandidates(options: RouteCandidateOptions): Set<string> {
   const manifestKey = buildManifestCacheKey(
@@ -290,7 +294,7 @@ export function getRouteCandidates(options: RouteCandidateOptions): Set<string> 
 }
 
 /**
- * Resolve full-project Tailwind candidates from a precomputed per-project manifest.
+ * Resolve full-project CSS candidates from a precomputed per-project manifest.
  */
 export function getProjectCandidates(options: ProjectCandidateOptions): Set<string> {
   const manifest = getOrBuildManifest(options);

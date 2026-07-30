@@ -1,7 +1,7 @@
 /**
  * Styles CSS Handler
  *
- * Serves Tailwind CSS compiled from user's stylesheet + all project source files.
+ * Serves provider-generated CSS compiled from the project stylesheet and source candidates.
  * Extracts candidates from ALL source files to ensure HMR includes new classes.
  */
 
@@ -9,14 +9,14 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import {
+  acquireCSSGenerationSession,
+  type CSSGenerationSession,
   formatCSSError,
   getCSSByHashAsync,
-  getCSSCompilationCacheIdentity,
   getProjectCSS,
-  regenerateCSSByHash,
-} from "#veryfront/html/styles-builder/tailwind-compiler.ts";
-import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cache.ts";
+} from "#veryfront/html/styles-builder/css-compiler.ts";
 import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import {
   createPreparedProjectCSSContext,
@@ -27,20 +27,27 @@ import {
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
-import type {
-  EnsureStyleArtifactBuildInput,
-  ResolveStyleArtifactInput,
-  VeryfrontApiClient,
+import {
+  API_CLIENT_ERROR,
+  assertStyleArtifactResolutionTuple,
+  createStyleArtifactTuple,
+  type EnsureStyleArtifactBuildInput,
+  type ProjectStyleArtifactResolution,
+  type StyleArtifactSelector,
+  type StyleArtifactTuple,
+  type VeryfrontApiClient,
 } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
 import { extractProjectCssImports } from "./styles-css-import-scanner.ts";
 import { mergeImportedCSS } from "#veryfront/rendering/orchestrator/html-imported-css.ts";
 import { profilePhase } from "#veryfront/observability";
+import { COMPILATION_ERROR } from "#veryfront/errors";
+import { isVeryfrontErrorInstance } from "#veryfront/errors/types.ts";
 
 const logger = serverLogger.component("styles-css-handler");
 
 type GeneratedStylesResult = Awaited<ReturnType<typeof getProjectCSS>>;
-type StyleArtifactSelectorContext = Omit<ResolveStyleArtifactInput, "styleProfileHash">;
+type StyleArtifactSelectorContext = StyleArtifactSelector;
 
 export class StylesCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -59,51 +66,40 @@ export class StylesCSSHandler extends BaseHandler {
         const projectScope = ctx.projectSlug ?? ctx.projectDir;
         const styleProfile = createStyleScopeProfile(ctx.config);
         const contentContext = this.getContentContext(ctx);
-        let rawCss: string;
-        try {
-          rawCss = await profilePhase("css.load_stylesheet", () => this.loadStylesheet(ctx));
-        } catch (error) {
-          logger.error("Failed to load stylesheet", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-          rawCss = DEFAULT_STYLESHEET;
-        }
+        const cssPipeline = await this.captureCSSPipeline();
+        let rawCss = await profilePhase("css.load_stylesheet", () => this.loadStylesheet(ctx)) ??
+          cssPipeline.compilationSession.defaultStylesheet;
         // Production SSR merges CSS imported by modules (`import "./styles.css"`
         // in a layout) into the page stylesheet during module loading. This
         // route has no module-loading pass, so discover those imports from the
         // project sources and merge them here. Runs before the prepared-CSS
         // context is created so cache keys reflect the merged stylesheet.
-        try {
-          const cssImports = await profilePhase(
-            "css.scan_css_imports",
-            () => extractProjectCssImports(ctx),
+        const cssImports = await profilePhase(
+          "css.scan_css_imports",
+          () => extractProjectCssImports(ctx),
+        );
+        if (cssImports.length > 0) {
+          const merged = await profilePhase(
+            "css.merge_imported_css",
+            () =>
+              mergeImportedCSS({
+                fs: ctx.adapter.fs,
+                logger,
+                projectDir: ctx.projectDir,
+                globalCSS: rawCss,
+                cssImports,
+                stylesheetPath: ctx.config?.styles?.stylesheet ?? "globals.css",
+              }),
           );
-          if (cssImports.length > 0) {
-            const merged = await profilePhase(
-              "css.merge_imported_css",
-              () =>
-                mergeImportedCSS({
-                  fs: ctx.adapter.fs,
-                  logger,
-                  projectDir: ctx.projectDir,
-                  globalCSS: rawCss,
-                  cssImports,
-                  stylesheetPath: ctx.config?.tailwind?.stylesheet ?? "globals.css",
-                }),
-            );
-            if (merged) rawCss = merged;
-          }
-        } catch (error) {
-          logger.error("Failed to merge module CSS imports", {
-            error: error instanceof Error ? error.message : String(error),
-          });
+          if (merged) rawCss = merged;
         }
-        const preparedContext = await this.createPreparedCSSContext(
+        const preparedContext = this.createPreparedCSSContext(
           projectScope,
           rawCss,
           styleProfile.hash,
           contentContext,
           ctx,
+          cssPipeline.cacheIdentity,
         );
 
         if (preparedContext) {
@@ -133,6 +129,7 @@ export class StylesCSSHandler extends BaseHandler {
               projectScope,
               styleProfile.hash,
               contentContext,
+              cssPipeline.cacheIdentity,
               preparedContext,
             ),
         );
@@ -148,59 +145,27 @@ export class StylesCSSHandler extends BaseHandler {
           );
         }
 
-        let candidates: Set<string>;
-        try {
-          candidates = await profilePhase(
-            "css.extract_candidates",
-            () => extractProjectCandidates(ctx),
-          );
-        } catch (error) {
-          logger.error("Failed to extract candidates", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-          candidates = new Set<string>();
-        }
+        const candidates = await profilePhase(
+          "css.extract_candidates",
+          () => extractProjectCandidates(ctx),
+        );
         let result: GeneratedStylesResult;
         try {
           result = await profilePhase(
             "css.generate_stylesheet",
-            () => this.generateStylesheet(ctx, rawCss, candidates),
+            () => this.generateStylesheet(ctx, rawCss, candidates, cssPipeline),
           );
         } catch (error) {
           const formatted = formatCSSError(error instanceof Error ? error : String(error));
-          logger.error("Tailwind error", {
+          logger.error("CSS compilation error", {
             error: formatted.message,
             suggestion: formatted.suggestion,
           });
 
-          const errorMessage =
-            `${formatted.title}: ${formatted.message}\nSuggestion: ${formatted.suggestion}`;
-          const errorCSS = `/*
-  ╔══════════════════════════════════════════════════════════════╗
-  ║  TAILWIND CSS COMPILATION ERROR                               ║
-  ╠══════════════════════════════════════════════════════════════╣
-  ║  ${errorMessage.replace(/\n/g, "\n  ║  ")}
-  ╚══════════════════════════════════════════════════════════════╝
-*/
-
-body::before {
-  content: "CSS Error: ${errorMessage.replace(/"/g, '\\"').replace(/\n/g, " ")}";
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  padding: 16px;
-  background: #dc2626;
-  color: white;
-  font-family: monospace;
-  font-size: 14px;
-  z-index: 99999;
-  white-space: pre-wrap;
-}
-`;
-          return this.respond(
-            responseBuilder.withContentType("text/css; charset=utf-8", errorCSS, HTTP_OK),
-          );
+          throw COMPILATION_ERROR.create({
+            detail: `${formatted.title}: ${formatted.message}. ${formatted.suggestion}`,
+            cause: error,
+          });
         }
 
         if (!result.css && candidates.size > 0) {
@@ -234,6 +199,7 @@ body::before {
             styleProfile.hash,
             contentContext,
             result.hash,
+            cssPipeline.cacheIdentity,
           );
         }
 
@@ -242,24 +208,29 @@ body::before {
         );
       });
     } catch (error) {
-      // Ensure the handler never throws — an uncaught error causes the route registry
-      // to skip this handler silently and fall through to the 404 handler.
-      logger.error("Unhandled error in CSS handler", {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+      const failure = isVeryfrontErrorInstance(error) ? error : COMPILATION_ERROR.create({
+        detail: "CSS generation failed",
+        cause: error,
+      });
+      logger.error("CSS request failed", {
+        error: failure.message,
+        slug: failure.slug,
+        status: failure.status,
+        stack: failure.stack,
       });
       const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
-      const errorCSS = `/* StylesCSSHandler error: ${
-        (error instanceof Error ? error.message : String(error)).replace(/\*\//g, "")
-      } */`;
       return this.respond(
-        responseBuilder.withContentType("text/css; charset=utf-8", errorCSS, HTTP_OK),
+        responseBuilder.withContentType(
+          "application/problem+json; charset=utf-8",
+          JSON.stringify(failure.toRFC9457()),
+          failure.status,
+        ),
       );
     }
   }
 
-  private async loadStylesheet(ctx: HandlerContext): Promise<string> {
-    const configuredPath = ctx.config?.tailwind?.stylesheet;
+  private async loadStylesheet(ctx: HandlerContext): Promise<string | undefined> {
+    const configuredPath = ctx.config?.styles?.stylesheet;
 
     if (configuredPath) {
       const filePath = joinPath(ctx.projectDir, configuredPath);
@@ -269,10 +240,10 @@ body::before {
     const globalsPath = joinPath(ctx.projectDir, "globals.css");
     try {
       return await ctx.adapter.fs.readFile(globalsPath);
-    } catch (_) {
-      /* expected: globals.css may not exist */
-      logger.debug("No stylesheet found, using default");
-      return DEFAULT_STYLESHEET;
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      logger.debug("No stylesheet found, using processor default");
+      return undefined;
     }
   }
 
@@ -280,6 +251,7 @@ body::before {
     ctx: HandlerContext,
     rawCss: string,
     candidates: Set<string>,
+    cssPipeline: CSSGenerationSession,
   ): Promise<GeneratedStylesResult> {
     const projectScope = ctx.projectSlug ?? ctx.projectDir;
 
@@ -287,7 +259,13 @@ body::before {
       minify: true,
       environment: "preview",
       buildMode: "production",
+    }, {
+      generationSession: cssPipeline,
     });
+  }
+
+  private captureCSSPipeline(): Promise<CSSGenerationSession> {
+    return acquireCSSGenerationSession(true);
   }
 
   private getContentContext(ctx: HandlerContext): ResolvedContentContext | null {
@@ -312,15 +290,15 @@ body::before {
     return typeof fsAdapter.getClient === "function" ? fsAdapter.getClient() : null;
   }
 
-  private async createPreparedCSSContext(
+  private createPreparedCSSContext(
     projectScope: string | undefined,
     rawCss: string,
     styleProfileHash: string,
     contentContext: ResolvedContentContext | null,
     ctx: HandlerContext,
+    cssPipelineIdentity: string,
   ) {
     if (!projectScope) return undefined;
-    const compilerIdentity = await getCSSCompilationCacheIdentity();
 
     return createPreparedProjectCSSContext(
       projectScope,
@@ -332,7 +310,7 @@ body::before {
       rawCss,
       styleProfileHash,
       {
-        compilerIdentity,
+        cssPipelineIdentity,
         minify: true,
         environment: "preview",
         buildMode: "production",
@@ -388,60 +366,74 @@ body::before {
     projectScope: string | undefined,
     styleProfileHash: string,
     contentContext: ResolvedContentContext | null,
+    cssPipelineIdentity: string,
     preparedContext?: PreparedProjectCSSRequestContext,
   ): Promise<{ css: string; hash: string } | undefined> {
-    if (!projectScope) return undefined;
+    if (!projectScope) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Style artifact lookup requires a project scope",
+        status: 502,
+      });
+    }
+    if (this.isBranchRemoteArtifactOptOut(contentContext, ctx)) return undefined;
 
-    const selector = this.resolveRemoteStyleArtifactSelector(contentContext, ctx);
-    if (!selector) return undefined;
+    const selector = this.resolveStyleArtifactSelector(contentContext, ctx);
+    if (!selector) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Style artifact lookup requires an exact source selector",
+        status: 502,
+      });
+    }
 
     const client = this.getVeryfrontApiClient(ctx);
-    if (!client) return undefined;
-
-    try {
-      const resolved = await client.resolveStyleArtifact({
-        ...selector,
-        styleProfileHash,
+    if (!client) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Style artifact lookup requires a Veryfront API client",
+        status: 502,
       });
+    }
 
-      if (resolved.status !== "ready" || !resolved.artifactHash) {
-        if (resolved.status !== "building") {
-          await this.ensureRemotePreparedCSSBuild(client, selector, styleProfileHash);
-        }
-        return undefined;
-      }
+    const tuple = createStyleArtifactTuple({
+      ...selector,
+      cssPipelineIdentity,
+      styleProfileHash,
+    });
+    let resolved = await client.resolveStyleArtifact(tuple);
+    assertStyleArtifactResolutionTuple(resolved, tuple);
 
-      const css = await this.getPreparedCSSByHash(resolved.artifactHash, projectScope);
-      if (!css) return undefined;
+    if (resolved.status === "missing") {
+      resolved = await this.ensureRemotePreparedCSSBuild(client, tuple);
+    }
+    if (resolved.status === "missing" || resolved.status === "building") return undefined;
+    if (resolved.status === "failed") {
+      throw API_CLIENT_ERROR.create({
+        detail: `Style artifact build failed: ${resolved.failureReason}`,
+        status: 502,
+      });
+    }
 
-      if (preparedContext) {
-        await storePreparedProjectCSS(preparedContext, {
-          css,
-          hash: resolved.artifactHash,
-        });
-      }
+    const css = await this.getPreparedCSSByHash(resolved.artifactHash);
+    if (css === undefined) {
+      throw API_CLIENT_ERROR.create({
+        detail: `Ready style artifact ${resolved.artifactHash} was unavailable`,
+        status: 502,
+      });
+    }
 
-      return {
+    if (preparedContext) {
+      await storePreparedProjectCSS(preparedContext, {
         css,
         hash: resolved.artifactHash,
-      };
-    } catch (error) {
-      logger.debug("Failed to resolve prepared CSS via style artifact metadata", {
-        projectScope,
-        styleProfileHash,
-        error: error instanceof Error ? error.message : String(error),
       });
-      return undefined;
     }
+
+    return { css, hash: resolved.artifactHash };
   }
 
   private async getPreparedCSSByHash(
     cssHash: string,
-    projectScope: string,
   ): Promise<string | undefined> {
-    const cached = await getCSSByHashAsync(cssHash);
-    if (cached) return cached;
-    return regenerateCSSByHash(cssHash, projectScope);
+    return await getCSSByHashAsync(cssHash);
   }
 
   private async registerPreparedCSSArtifact(
@@ -449,65 +441,58 @@ body::before {
     styleProfileHash: string,
     contentContext: ResolvedContentContext | null,
     cssHash: string,
+    cssPipelineIdentity: string,
   ): Promise<void> {
-    const selector = this.resolveRemoteStyleArtifactSelector(contentContext, ctx);
-    if (!selector) return;
+    if (this.isBranchRemoteArtifactOptOut(contentContext, ctx)) return;
+    const selector = this.resolveStyleArtifactSelector(contentContext, ctx);
+    if (!selector) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Style artifact registration requires an exact source selector",
+        status: 502,
+      });
+    }
 
     const client = this.getVeryfrontApiClient(ctx);
-    if (!client) return;
-
-    try {
-      await client.upsertStyleArtifact({
-        ...selector,
-        styleProfileHash,
-        artifactHash: cssHash,
+    if (!client) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Style artifact registration requires a Veryfront API client",
+        status: 502,
       });
-    } catch (error) {
-      logger.debug("Failed to register prepared CSS artifact", {
-        cssHash,
-        styleProfileHash,
-        error: error instanceof Error ? error.message : String(error),
+    }
+    const tuple = createStyleArtifactTuple({
+      ...selector,
+      cssPipelineIdentity,
+      styleProfileHash,
+    });
+    const registered = await client.upsertStyleArtifact({ ...tuple, artifactHash: cssHash });
+    assertStyleArtifactResolutionTuple(registered, tuple);
+    if (registered.status !== "ready" || registered.artifactHash !== cssHash) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Style artifact registration did not acknowledge the requested artifact",
+        status: 502,
       });
     }
   }
 
-  private resolveRemoteStyleArtifactSelector(
+  private isBranchRemoteArtifactOptOut(
     contentContext: ResolvedContentContext | null,
     ctx: HandlerContext,
-  ): StyleArtifactSelectorContext | null {
+  ): boolean {
     // Branch content changes in-place, but the remote style-artifact selector
     // has no content-version dimension. Treat any branch context as a terminal
     // remote-artifact opt-out so a stale branch artifact cannot be reused after
     // a push or registered for later consumers.
-    if (contentContext?.sourceType === "branch" || ctx.parsedDomain?.branch) return null;
-
-    return this.resolveStyleArtifactSelector(contentContext, ctx);
-  }
-
-  private shouldEnsureRemoteStyleArtifactBuild(selector: StyleArtifactSelectorContext): boolean {
-    return Boolean(selector.environmentName || selector.releaseId);
+    return contentContext?.sourceType === "branch" || Boolean(ctx.parsedDomain?.branch);
   }
 
   private async ensureRemotePreparedCSSBuild(
     client: VeryfrontApiClient,
-    selector: StyleArtifactSelectorContext,
-    styleProfileHash: string,
-  ): Promise<void> {
-    if (!this.shouldEnsureRemoteStyleArtifactBuild(selector)) return;
-
-    try {
-      await client.ensureStyleArtifactBuild(
-        {
-          ...selector,
-          styleProfileHash,
-        } satisfies EnsureStyleArtifactBuildInput,
-      );
-    } catch (error) {
-      logger.debug("Failed to ensure remote prepared CSS build", {
-        selector,
-        styleProfileHash,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    tuple: StyleArtifactTuple,
+  ): Promise<ProjectStyleArtifactResolution> {
+    const resolution = await client.ensureStyleArtifactBuild(
+      tuple satisfies EnsureStyleArtifactBuildInput,
+    );
+    assertStyleArtifactResolutionTuple(resolution, tuple);
+    return resolution;
   }
 }

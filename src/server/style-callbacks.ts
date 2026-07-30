@@ -19,7 +19,7 @@ import {
   invalidatePreparedProjectCSSAsync,
 } from "#veryfront/html/styles-builder/prepared-project-css-cache.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
-import { invalidateProjectCSSAsync } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { invalidateProjectCSSAsync } from "#veryfront/html/styles-builder/css-compiler.ts";
 
 const styleCallbackLog = logger.component("server-style-callbacks");
 
@@ -58,10 +58,10 @@ async function pregenerateProjectStyles(
   const config = context.config
     ? context.config as VeryfrontConfig
     : await dependencies.loadConfig(projectDir, context);
-  const stylesheetPath = config.tailwind?.stylesheet;
+  const stylesheetPath = config.styles?.stylesheet;
   const styleProfile = createStyleScopeProfile(config);
 
-  const stylesheet = findStylesheetFromFiles(files, stylesheetPath);
+  const stylesheet = findStylesheetFromFiles(files, stylesheetPath, projectDir);
   const projectVersion = resolveStyleContentVersion(contentContext, {
     branch: contentContext?.branch ?? null,
     releaseId: contentContext?.releaseId ?? null,

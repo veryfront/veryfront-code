@@ -1,43 +1,24 @@
 /**
- * Contract interface for CSS processing engines (Tailwind-style compile
- * pipelines).
+ * Contract interface for class-candidate CSS processing engines.
  *
- * Default implementation: `@veryfront/ext-css-tailwind`
+ * Implementations are supplied by explicit extensions such as
+ * `@veryfront/ext-css-tailwind`.
  *
- * The contract mirrors the Tailwind v4 `compile()` surface: a stateful
+ * The contract exposes a provider-neutral compile surface: a stateful
  * compiler is constructed once per stylesheet and emits CSS output for the
  * set of class-name candidates discovered at render time. Core scans the
  * rendered HTML for candidates and calls `CSSCompiler.build(candidates)`
  * on each request; the compiler accumulates state across calls, so exact
  * candidate-snapshot isolation is the caller's responsibility (see
- * `tailwind-compiler-cache.ts`).
+ * `css-compiler-cache.ts`).
  *
  * @module extensions/css/css-processor
  */
 
-/** A loaded stylesheet body with the base path used to resolve relative imports. */
-export interface CSSStylesheetSource {
-  content: string;
-  base: string;
-  path: string;
-}
-
-/** A loaded module (Tailwind plugin). `module` is the plugin's default export. */
-export interface CSSModuleSource {
-  module: unknown;
-  base: string;
-  path: string;
-}
-
-/** Options passed to {@link CSSProcessor.compile}. */
-export interface CSSCompileOptions {
-  /** Base path used to resolve relative `@import` specifiers. */
-  base: string;
-  /** Resolver invoked when the compiler encounters an `@import` it doesn't recognize. */
-  loadStylesheet(id: string): Promise<CSSStylesheetSource>;
-  /** Resolver invoked for `@plugin` directives. */
-  loadModule(id: string): Promise<CSSModuleSource>;
-}
+/** Registry name used for the CSS compiler extension contract. */
+export const CSSProcessorName = "CSSProcessor" as const;
+export const MAX_CSS_PROCESSOR_IDENTITY_CHARACTERS = 512;
+export const MAX_CSS_PROCESSOR_DEFAULT_STYLESHEET_CHARACTERS = 1024 * 1024;
 
 /** Stateful compiler returned by {@link CSSProcessor.compile}. */
 export interface CSSCompiler {
@@ -52,12 +33,18 @@ export interface CSSCompiler {
 /**
  * CSSProcessor contract interface.
  *
- * Implementations wire a utility-class compiler (Tailwind, UnoCSS, etc.) so
+ * Implementations wire a class-candidate CSS compiler so
  * core's styles-builder can emit per-request CSS without importing the
  * underlying engine directly.
  */
 export interface CSSProcessor {
   /** Stable identity for every processor/compiler input that can change emitted CSS. */
   readonly cacheIdentity: string;
-  compile(stylesheet: string, options: CSSCompileOptions): Promise<CSSCompiler>;
+  /** Provider-owned stylesheet used when an application does not supply one. */
+  readonly defaultStylesheet: string;
+  /**
+   * Compile a stylesheet. Implementations own all vendor imports, base
+   * stylesheets, module resolution, and plugin loading behind this operation.
+   */
+  compile(stylesheet: string): Promise<CSSCompiler>;
 }

@@ -1,13 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import {
   assertEquals,
   assertExists,
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { buildAppRoutes, buildPagesRoutes } from "./static-generation.ts";
-import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/css-compiler.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontRenderer } from "#veryfront/rendering/orchestrator/ssr.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -23,6 +24,7 @@ import {
   __setServerModuleLoaderForTests,
   resetReactCache,
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+import { installTestCSSOptimizationEngine } from "../../../tests/_helpers/css-optimization-engine.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   const files = new Map<string, string>();
@@ -89,8 +91,15 @@ describe(
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     const originalFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
+    let restoreOptimizationEngine: (() => void) | undefined;
+
+    beforeEach(() => {
+      restoreOptimizationEngine = installTestCSSOptimizationEngine();
+    });
 
     afterEach(() => {
+      restoreOptimizationEngine?.();
+      restoreOptimizationEngine = undefined;
       setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalFlag ?? "");
       resetReactCache();
       __setServerModuleLoaderForTests(null);
@@ -308,7 +317,7 @@ describe(
               outputDir: "/tmp/output",
               renderer: createMockRenderer(),
               config: {
-                tailwind: { stylesheet: "../secret.css" },
+                styles: { stylesheet: "../secret.css" },
               } as VeryfrontConfig,
               enablePrefetch: false,
               chunkManifest: null,

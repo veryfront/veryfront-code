@@ -1,4 +1,5 @@
 import type { VeryfrontConfig } from "#veryfront/config";
+import { assertCanonicalStylesheetPath } from "./stylesheet-path.ts";
 import { hashString } from "./css-identity.ts";
 
 const DEFAULT_IGNORED_ROOTS = [
@@ -78,10 +79,13 @@ export function createStyleScopeProfile(config?: VeryfrontConfig): StyleScopePro
     addNormalizedPath(protectedRoots, path);
   }
 
+  const stylesheetPath = config?.styles?.stylesheet === undefined
+    ? undefined
+    : assertCanonicalStylesheetPath(config.styles.stylesheet);
   const explicitPaths = [
     typeof config?.layout === "string" ? config.layout : undefined,
     typeof config?.app === "string" ? config.app : undefined,
-    config?.tailwind?.stylesheet,
+    stylesheetPath,
   ];
 
   for (const path of explicitPaths) {

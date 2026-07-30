@@ -255,7 +255,7 @@ export async function generateHTMLShellParts(
   options: HTMLGenerationOptions,
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
-  contentForTailwind?: string,
+  stylesheetCandidateSource?: string,
   projectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<{ start: string; end: string }> {
   const { start, end } = await generateHTMLShellPartsWithStylesheetArtifact(
@@ -263,7 +263,7 @@ export async function generateHTMLShellParts(
     options,
     params,
     props,
-    contentForTailwind,
+    stylesheetCandidateSource,
     projectCSSPromise,
   );
   return { start, end };
@@ -274,7 +274,7 @@ export async function generateHTMLShellPartsWithStylesheetArtifact(
   options: HTMLGenerationOptions,
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
-  contentForTailwind?: string,
+  stylesheetCandidateSource?: string,
   projectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<HTMLShellPartsWithStylesheetArtifact> {
   const projectCSSObservation = projectCSSPromise
@@ -285,7 +285,7 @@ export async function generateHTMLShellPartsWithStylesheetArtifact(
     options,
     params,
     props,
-    contentForTailwind,
+    stylesheetCandidateSource,
     projectCSSObservation,
   );
 }
@@ -295,7 +295,7 @@ async function generateHTMLShellPartsWithObservedStylesheetArtifact(
   options: HTMLGenerationOptions,
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
-  contentForTailwind?: string,
+  stylesheetCandidateSource?: string,
   projectCSSObservation?: ProjectCSSObservation,
 ): Promise<HTMLShellPartsWithStylesheetArtifact> {
   const safeMeta = snapshotShellInput(meta, "HTML shell metadata");
@@ -308,12 +308,12 @@ async function generateHTMLShellPartsWithObservedStylesheetArtifact(
         safeOptions,
         params,
         props,
-        contentForTailwind,
+        stylesheetCandidateSource,
         projectCSSObservation,
       ),
     {
       "html.slug": safeMeta.slug || "",
-      "html.has_content": !!contentForTailwind,
+      "html.has_stylesheet_candidate_source": !!stylesheetCandidateSource,
       "html.mode": safeOptions.mode || "production",
       "html.is_local_project": safeOptions.isLocalProject ?? false,
     },
@@ -325,7 +325,7 @@ async function generateHTMLShellPartsImpl(
   options: HTMLGenerationOptions,
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
-  contentForTailwind?: string,
+  stylesheetCandidateSource?: string,
   prefetchedProjectCSSObservation?: ProjectCSSObservation,
 ): Promise<HTMLShellPartsWithStylesheetArtifact> {
   const stylesheetContent = options.globalCSS;
@@ -336,8 +336,8 @@ async function generateHTMLShellPartsImpl(
 
   // Use projectClasses (extracted from ALL source files) + current page as fallback
   const candidates = new Set<string>(options.projectClasses ?? []);
-  if (contentForTailwind) {
-    for (const cls of extractCandidates(contentForTailwind)) candidates.add(cls);
+  if (stylesheetCandidateSource) {
+    for (const candidate of extractCandidates(stylesheetCandidateSource)) candidates.add(candidate);
   }
 
   const projectSlug = resolveProjectCSSScope(options, meta.slug);
@@ -485,14 +485,14 @@ async function generateHTMLShellPartsImpl(
 </script>`
     : "";
 
-  let tailwindCSSBlock = "";
+  let projectStylesheetBlock = "";
   let stylesheet: LinkedStylesheetArtifact | undefined;
   // Manifest-consumed CSS: when a ready release asset manifest carries a
   // compiled CSS entry, serve it from the immutable asset path (no renderer
   // involvement). Per-entry fallback: no manifest CSS → existing JIT link.
   if (manifestCssEntry) {
     const stylesheetHref = releaseAssetUrl(manifestCssEntry.contentHash, "css");
-    tailwindCSSBlock = `<link rel="stylesheet" href="${stylesheetHref}">`;
+    projectStylesheetBlock = `<link rel="stylesheet" href="${stylesheetHref}">`;
     stylesheet = { kind: "release", hash: manifestCssEntry.contentHash };
   } else if (useProductionCSS) {
     const projectCSS = projectCSSObservation
@@ -502,12 +502,12 @@ async function generateHTMLShellPartsImpl(
       )
       : null;
     if (projectCSS?.hash) {
-      tailwindCSSBlock = `<link rel="stylesheet" href="/_vf/css/${projectCSS.hash}.css">`;
+      projectStylesheetBlock = `<link rel="stylesheet" href="/_vf/css/${projectCSS.hash}.css">`;
       stylesheet = { kind: "project", hash: projectCSS.hash, css: projectCSS.css };
     } else {
       // CSS generation failed — log error prominently and omit link to avoid /_vf/css/.css 404
       serverLogger.error(
-        "[HTML] Tailwind CSS hash is empty — CSS link omitted. CSS generation likely failed.",
+        "[HTML] Project CSS hash is empty — CSS link omitted. CSS generation likely failed.",
         {
           projectSlug,
           environment: options.environment,
@@ -516,7 +516,7 @@ async function generateHTMLShellPartsImpl(
     }
   } else {
     // Dev/preview: use link tag for HMR cache-busting
-    tailwindCSSBlock = getPreviewStylesheetLink();
+    projectStylesheetBlock = getPreviewStylesheetLink();
   }
 
   // Markdown styles: .md files with prose !== false get GitHub markdown CSS
@@ -548,8 +548,8 @@ async function generateHTMLShellPartsImpl(
   ${criticalDepsPreload}
   ${prodHydrationModulePreload}
 
-  <!-- Tailwind CSS: Server-side JIT compiled -->
-  ${tailwindCSSBlock}
+  <!-- Project stylesheet -->
+  ${projectStylesheetBlock}
   ${markdownPreviewStyles}
 
   ${linkTags}

@@ -14,7 +14,7 @@
  * @module rendering/orchestrator/pipeline
  */
 
-import { rendererLogger as logger } from "#veryfront/utils";
+import { assertCSSPipelineIdentity, rendererLogger as logger } from "#veryfront/utils";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
 import { profilePhase, SpanNames } from "#veryfront/observability";
@@ -63,7 +63,11 @@ import {
   withTimeout,
   withTimeoutThrow,
 } from "../utils/stream-utils.ts";
-import { extractCandidates, generateTailwindCSS } from "#veryfront/html/styles-builder/index.ts";
+import { extractCandidates, generateCSS } from "#veryfront/html/styles-builder/index.ts";
+import {
+  acquireCSSGenerationSession,
+  type CSSGenerationSession,
+} from "#veryfront/html/styles-builder/css-compiler.ts";
 import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
@@ -89,6 +93,11 @@ import {
 
 // Extracted modules
 import { EMPTY_LAYOUT_RESULT, isDotPath } from "./path-helpers.ts";
+import {
+  CSS_GENERATION_SESSION,
+  getRenderCSSGenerationSession,
+  type RenderOptionsWithCSSGenerationSession,
+} from "./css-generation-session.ts";
 import {
   cachePageCss,
   CSS_SSR_TIMEOUT_MS,
@@ -187,7 +196,7 @@ interface PipelineRequestIdentity {
 const PRE_RESOLVED_DATA = Symbol("veryfront.preResolvedData");
 const PIPELINE_REQUEST_IDENTITY = Symbol("veryfront.pipelineRequestIdentity");
 
-type InternalRenderOptions = RenderOptions & {
+type InternalRenderOptions = RenderOptionsWithCSSGenerationSession & {
   [PRE_RESOLVED_DATA]?: DataResolutionResult;
   [PIPELINE_REQUEST_IDENTITY]?: Readonly<PipelineRequestIdentity>;
   [RENDER_OPTIONS_SNAPSHOT]?: true;
@@ -197,6 +206,7 @@ function stripInternalRenderOptions(options: InternalRenderOptions): RenderOptio
   const {
     [PRE_RESOLVED_DATA]: _preResolvedData,
     [PIPELINE_REQUEST_IDENTITY]: _requestIdentity,
+    [CSS_GENERATION_SESSION]: _cssGenerationSession,
     [RENDER_OPTIONS_SNAPSHOT]: _optionsSnapshot,
     ...publicOptions
   } = options;
@@ -854,7 +864,14 @@ export class RenderPipeline {
     const requestProjectSlug = options?.projectSlug ?? requestIdentity.projectId;
     const projectSlug = requestProjectSlug ?? "unknown";
     const projectId = requestIdentity.projectId;
-    const cacheKey = this.buildCacheKey(slug, options);
+    const cssGenerationSession = await this.resolveRenderCSSGenerationSession(
+      options,
+    );
+    const cacheKey = this.buildCacheKey(
+      slug,
+      options,
+      cssGenerationSession?.cacheIdentity,
+    );
 
     let cacheResult: Awaited<ReturnType<typeof this.config.cacheCoordinator.checkCache>> | null =
       null;
@@ -1045,9 +1062,15 @@ export class RenderPipeline {
               const hydrationOptions = layoutDataMap.size > 0
                 ? { ...mergedOptions, layoutProps: serializedLayoutProps }
                 : mergedOptions;
-              const renderOptions = clientPageIsland
+              const hydrationRenderOptions = clientPageIsland
                 ? { ...hydrationOptions, clientPageIsland }
                 : hydrationOptions;
+              const renderOptions: InternalRenderOptions | undefined = cssGenerationSession
+                ? {
+                  ...(hydrationRenderOptions ?? {}),
+                  [CSS_GENERATION_SESSION]: cssGenerationSession,
+                }
+                : hydrationRenderOptions;
 
               const mergedFrontmatter = toMDXFrontmatter({
                 ...toMDXFrontmatter(pageInfo.entity.frontmatter),
@@ -1115,7 +1138,7 @@ export class RenderPipeline {
                             cssImports: collectedCSSImports,
                             options: renderOptions,
                           },
-                          renderOptions,
+                          hydrationRenderOptions,
                         ),
                         SSR_RENDER_TIMEOUT_MS,
                         `SSR rendering for ${slug}`,
@@ -1468,11 +1491,17 @@ export class RenderPipeline {
       return { css: undefined, cssAction: "clear", cssError: undefined };
     }
 
+    const shouldMinify = options?.environment === "production" &&
+      this.config.isLocalProject !== true;
+    const cssGenerationSession = getRenderCSSGenerationSession(options) ??
+      await acquireCSSGenerationSession(shouldMinify);
+
     const cssCacheKey = getPageCssCacheKey(
       identity.projectId,
       options?.environment,
       slug,
       projectUpdatedAt ?? identity.contentSourceId,
+      cssGenerationSession.cacheIdentity,
     );
 
     const cachedCss = getCachedPageCss(cssCacheKey);
@@ -1490,6 +1519,7 @@ export class RenderPipeline {
         releaseAssetManifest,
         [PRE_RESOLVED_DATA]: dataResolution,
         [PIPELINE_REQUEST_IDENTITY]: identity,
+        [CSS_GENERATION_SESSION]: cssGenerationSession,
       };
 
       const renderResult = await profilePhase(
@@ -1517,7 +1547,13 @@ export class RenderPipeline {
       } else if (renderResult.html) {
         css = await profilePhase(
           "page_data.css.generate_from_html",
-          () => this.generatePageCssFromHtml(slug, renderResult.html, options),
+          () =>
+            this.generatePageCssFromHtml(
+              slug,
+              renderResult.html,
+              options,
+              cssGenerationSession,
+            ),
         );
       }
 
@@ -1544,11 +1580,13 @@ export class RenderPipeline {
     slug: string,
     html: string,
     options: RenderOptions | undefined,
+    generationSession: CSSGenerationSession,
   ): Promise<string | undefined> {
     const candidates = extractCandidates(html);
-    const generatedCss = (await generateTailwindCSS(undefined, candidates, {
+    const generatedCss = (await generateCSS(undefined, candidates, {
       projectSlug: options?.projectSlug,
-    })).css;
+      minify: generationSession.minify,
+    }, { generationSession })).css;
 
     resolvePageDataLog.debug("Fell back to HTML candidate CSS generation", {
       slug,
@@ -1560,19 +1598,51 @@ export class RenderPipeline {
   }
 
   /**
-   * Build a cache key that is safe for multi-tenant + query-param aware caching.
-   * Returns null when request contains sensitive headers (Authorization/Cookie) and
-   * no explicit cacheKey override was provided, to avoid leaking personalized HTML.
-   *
-   * Query param handling uses config.queryParamOptions for filtering (utm_*, gclid, etc.).
+   * Reuse an internal session or capture the pipeline before any render-cache lookup.
    */
-  private buildCacheKey(slug: string, options?: RenderOptions): string | null {
-    if (options?.cacheKey) return options.cacheKey;
-    const req = options?.request;
-    if (req) {
-      if (requestHasCacheSensitiveState(req)) return null;
+  private async resolveRenderCSSGenerationSession(
+    options: RenderOptions | undefined,
+  ): Promise<CSSGenerationSession | undefined> {
+    const inherited = getRenderCSSGenerationSession(options);
+    if (inherited) return inherited;
+    if (
+      this.config.isLocalProject === true ||
+      options?.environment !== "production" ||
+      (options?.releaseAssetManifest?.css?.length ?? 0) > 0
+    ) {
+      return undefined;
     }
+    return await acquireCSSGenerationSession(true);
+  }
 
-    return buildQueryAwareCacheKey(slug, options?.url, this.config.queryParamOptions);
+  /**
+   * Build a tenant/query-safe key, partitioned by CSS output semantics when used.
+   * Returns null for cache-sensitive requests without an explicit override.
+   */
+  private buildCacheKey(
+    slug: string,
+    options?: RenderOptions,
+    cssPipelineIdentity?: string,
+  ): string | null {
+    let baseKey: string;
+    if (options?.cacheKey) {
+      baseKey = options.cacheKey;
+    } else {
+      const req = options?.request;
+      if (req) {
+        if (requestHasCacheSensitiveState(req)) return null;
+      }
+
+      baseKey = buildQueryAwareCacheKey(
+        slug,
+        options?.url,
+        this.config.queryParamOptions,
+      );
+    }
+    return cssPipelineIdentity === undefined
+      ? baseKey
+      : `veryfront:render-css:v1:${
+        JSON.stringify([baseKey, assertCSSPipelineIdentity(cssPipelineIdentity)])
+      }`;
   }
 }
