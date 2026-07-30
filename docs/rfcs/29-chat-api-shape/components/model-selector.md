@@ -51,7 +51,8 @@ What the preset actually renders today (classes abbreviated to layout-relevant o
 
 ```html
 <span data-vf-popper-anchor class="relative inline-block">
-  <!-- .Root - positioning-anchor exception -->
+  <!-- today's ui popover anchor wrapper - deleted once ui anchors to the
+       trigger ref (settled; the ui fix is a chat-v1 prerequisite) -->
   <button
     aria-haspopup="dialog"
     aria-expanded
@@ -120,16 +121,16 @@ Notes for the reviewer:
 
 Changed: `renderItem` and root-level `className` are deleted, `onChange` is renamed `onValueChange` (callback convention, matching `AgentPicker.Root`), and `models` moves from required-on-root to leaf-first (liftable) config.
 
-The compound's scoped context (selection, open state, disabled) + the popover root. **Layout: no in-flow layout of its own except the sanctioned `<span data-vf-popper-anchor>` wrapper while the shared `ui` popover requires it.** The wrapper is non-semantic and receives no public styling API.
+The compound's scoped context (selection, open state, disabled) + the popover root. **Layout: renders no node of its own - the popper anchors to the trigger ref (settled; the `ui` trigger-ref anchoring fix is a chat-v1 prerequisite).** Today's `ui` popover still renders a wrapper `<span>`; it is deleted with that fix and is not part of this contract.
 
-| Prop                         | Type                                 | Default | Description                                                                                                                                    |
-| ---------------------------- | ------------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `value`                      | `string`                             | -       | Selected `"provider/model"` value; `undefined` = agent default (resolves to the first model for display)                                       |
-| `onValueChange` _(required)_ | `(model: string) => void`            | -       | Called with the chosen value (selection also closes the popover). _Renamed from today's `onChange`_                                            |
-| `disabled`                   | `boolean`                            | -       | Blocks opening; dims the trigger                                                                                                               |
-| `models`                     | `ModelOption[]`                      | -       | _Liftable_ config - see below. `ModelOption = { value, label, provider?, description?, badge? }`                                               |
-| `children`                   | `ReactNode`                          | -       | Omit for the default preset; pass to recompose                                                                                                 |
-| + native _(proposed)_        | `HTMLAttributes` · `asChild` · `ref` | -       | Applied to the anchor wrapper only while the positioning-anchor exception is active; otherwise to the root-owned nodeless trigger-ref surface. |
+| Prop                         | Type                                 | Default | Description                                                                                              |
+| ---------------------------- | ------------------------------------ | ------- | -------------------------------------------------------------------------------------------------------- |
+| `value`                      | `string`                             | -       | Selected `"provider/model"` value; `undefined` = agent default (resolves to the first model for display) |
+| `onValueChange` _(required)_ | `(model: string) => void`            | -       | Called with the chosen value (selection also closes the popover). _Renamed from today's `onChange`_      |
+| `disabled`                   | `boolean`                            | -       | Blocks opening; dims the trigger                                                                         |
+| `models`                     | `ModelOption[]`                      | -       | _Liftable_ config - see below. `ModelOption = { value, label, provider?, description?, badge? }`         |
+| `children`                   | `ReactNode`                          | -       | Omit for the default preset; pass to recompose                                                           |
+| + native _(proposed)_        | `HTMLAttributes` · `asChild` · `ref` | -       | Applied to the root-owned nodeless trigger-ref surface (no anchor wrapper - settled).                    |
 
 **Removed (proposed):** `renderItem` (render-prop ban - compose `.Item` children or map options yourself), Root-level `className` (today it styles the _trigger_; class the `.Trigger` itself).
 
@@ -284,6 +285,6 @@ function MyModelMenu() {
 
 ## Related
 
-- [`AgentPicker`](./agent-picker.md) - same anatomy plus `.Create` / `.Manage` (and the shared positioning-anchor exception)
+- [`AgentPicker`](./agent-picker.md) - same anatomy plus `.Create` / `.Manage` (and the same trigger-ref anchoring)
 - [`useModelSelector`](../hooks/use-model-selector.md)
 - `ChatInput.Model` - the composer's model trigger (`models` on the leaf, `data-open`)

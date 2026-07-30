@@ -259,7 +259,7 @@ One `<button>`, `aria-label="Voice input"`, `aria-pressed` while listening. Defa
 
 _Changed: `models` config moves here from the Root; `asChild` + native attrs open up (today `className` only) and `data-open` is added._
 
-The model-selector **trigger** - one `<button>` (today it renders the `ModelSelector` component in `variant="icon"`; the popover uses the positioning-anchor exception while `ui` requires it). Default content: the selected model's icon/label. **Renders `null` when no models are configured** - today the null-render also requires `onModelChange` (`chat-composer.tsx:223` guards `!models || models.length === 0 || !onModelChange`); the proposal drops that requirement, since selection routes through the chat session's `setModel` from context. Disabled while streaming.
+The model-selector **trigger** - one `<button>` (today it renders the `ModelSelector` component in `variant="icon"`; the popover anchors via the trigger ref once the `ui` prerequisite lands - settled). Default content: the selected model's icon/label. **Renders `null` when no models are configured** - today the null-render also requires `onModelChange` (`chat-composer.tsx:223` guards `!models || models.length === 0 || !onModelChange`); the proposal drops that requirement, since selection routes through the chat session's `setModel` from context. Disabled while streaming.
 
 **Layout:** in-flow flex child (the trigger); the open list is a popper/portal, not part of the toolbar's flow.
 

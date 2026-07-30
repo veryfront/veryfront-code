@@ -15,7 +15,7 @@ import { AgentPicker, AgentPickerItem, type AgentPickerItemProps } from "veryfro
 
 ## Parts index
 
-- [`.Root`](#agentpickerroot---changed) - `changed`: `inputStyle`/`invalid`/`isLoading`/`className` removed; uses the positioning-anchor exception while `ui` requires a wrapper
+- [`.Root`](#agentpickerroot---changed) - `changed`: `inputStyle`/`invalid`/`isLoading`/`className` removed; no anchor wrapper - `ui` trigger-ref anchoring is a chat-v1 prerequisite (settled)
 - [`.Trigger`](#agentpickertrigger---changed) - `changed`: `inputStyle`/`invalid`/`icon` removed; `data-open` proposed
 - [`.Content`](#agentpickercontent---changed) - `changed`: Command shell `<div>` collapses to one node
 - [`.Search`](#agentpickersearch---changed) - `changed`: one `<input>` node; search icon/clear affordances are removed from the public default
@@ -50,7 +50,8 @@ What the preset actually renders today (classes abbreviated to layout-relevant o
 
 ```html
 <span data-vf-popper-anchor class="relative inline-block">
-  <!-- .Root - positioning-anchor exception -->
+  <!-- today's ui popover anchor wrapper - deleted once ui anchors to the
+       trigger ref (settled; the ui fix is a chat-v1 prerequisite) -->
   <button
     aria-haspopup="dialog"
     aria-expanded
@@ -122,22 +123,22 @@ Notes for the reviewer:
 
 ### `AgentPicker.Root` - `changed`
 
-The compound's scoped context (selection, open state, options) + the popover root. **Layout: renders no in-flow layout of its own except the sanctioned `<span data-vf-popper-anchor>` wrapper while the shared `ui` popover requires it.** The wrapper is non-semantic and receives no public styling API.
+The compound's scoped context (selection, open state, options) + the popover root. **Layout: renders no node of its own - the popper anchors to the trigger ref (settled; the `ui` trigger-ref anchoring fix is a chat-v1 prerequisite).** Today's `ui` popover still renders a wrapper `<span>`; it is deleted with that fix and is not part of this contract.
 
-| Prop                    | Type                                 | Default | Description                                                                                                                                    |
-| ----------------------- | ------------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agents` _(required)_   | `AgentOption[]`                      | -       | Options for the default (top) group. `AgentOption = { id, name, description?, avatarUrl?, disabled? }` (`avatarSrc` is deprecated)             |
-| `value`                 | `string`                             | -       | Selected agent id (controlled)                                                                                                                 |
-| `onValueChange`         | `(id: string) => void`               | -       | Called with the chosen agent id (selection also closes the popover)                                                                            |
-| `sections`              | `AgentPickerSection[]`               | `[]`    | Extra labelled groups below the default group: `{ label?, agents }`                                                                            |
-| `onCreate` / `onManage` | `() => void`                         | -       | Enable the `.Create` / `.Manage` rows (they null-render otherwise)                                                                             |
-| `onOpenChange`          | `(open: boolean) => void`            | -       | Notified whenever the popover opens or closes                                                                                                  |
-| `children`              | `ReactNode`                          | -       | Omit for the default preset; pass to recompose                                                                                                 |
-| + native _(proposed)_   | `HTMLAttributes` · `asChild` · `ref` | -       | Applied to the anchor wrapper only while the positioning-anchor exception is active; otherwise to the root-owned nodeless trigger-ref surface. |
+| Prop                    | Type                                 | Default | Description                                                                                                                        |
+| ----------------------- | ------------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `agents` _(required)_   | `AgentOption[]`                      | -       | Options for the default (top) group. `AgentOption = { id, name, description?, avatarUrl?, disabled? }` (`avatarSrc` is deprecated) |
+| `value`                 | `string`                             | -       | Selected agent id (controlled)                                                                                                     |
+| `onValueChange`         | `(id: string) => void`               | -       | Called with the chosen agent id (selection also closes the popover)                                                                |
+| `sections`              | `AgentPickerSection[]`               | `[]`    | Extra labelled groups below the default group: `{ label?, agents }`                                                                |
+| `onCreate` / `onManage` | `() => void`                         | -       | Enable the `.Create` / `.Manage` rows (they null-render otherwise)                                                                 |
+| `onOpenChange`          | `(open: boolean) => void`            | -       | Notified whenever the popover opens or closes                                                                                      |
+| `children`              | `ReactNode`                          | -       | Omit for the default preset; pass to recompose                                                                                     |
+| + native _(proposed)_   | `HTMLAttributes` · `asChild` · `ref` | -       | Applied to the root-owned nodeless trigger-ref surface (no anchor wrapper - settled).                                              |
 
 **Removed (proposed):** `inputStyle` (style `.Trigger` directly - `className`/`asChild`), `invalid` (→ `data-invalid` on `.Search`), `isLoading` (→ `data-loading` on `.List`), and Root-level `className` (today it silently styles the _trigger_ - an alias the node contract bans; class the `.Trigger` itself).
 
-**Positioning-anchor exception:** today `Popover` renders a wrapper `<span>` as the positioning anchor - same as `veryfront/ui`'s `DropdownMenu`. The RFC sanctions a narrow `data-vf-popper-anchor` wrapper for popper roots until `ui` can anchor directly to the trigger ref.
+**Popper anchoring (settled):** today `Popover` renders a wrapper `<span>` as the positioning anchor - same as `veryfront/ui`'s `DropdownMenu`. The RFC does not sanction the wrapper: `ui` gains trigger-ref anchoring as a chat-v1 prerequisite, and every popper root on this surface ships one node per part.
 
 ### `AgentPicker.Trigger` - `changed`
 

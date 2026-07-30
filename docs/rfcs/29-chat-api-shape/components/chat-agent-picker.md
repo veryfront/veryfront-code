@@ -79,7 +79,7 @@ The whole preset - one component, no sub-parts. **Layout: whatever `AgentPicker`
 | `minAgents`             | `number`                             | `2`     | Minimum agent count before it renders - with one agent there is nothing to switch to; set `1` to always show once an agent exists |
 | `enabled`               | `boolean`                            | `true`  | `false` skips the fetch and renders nothing                                                                                       |
 | `onCreate` / `onManage` | `() => void`                         | -       | Forwarded to `AgentPicker` - enables its `.Create` / `.Manage` rows                                                               |
-| + native _(proposed)_   | `HTMLAttributes` · `asChild` · `ref` | -       | Pending the popper-anchor decision (the preset's outer node is `AgentPicker.Root`'s)                                              |
+| + native _(proposed)_   | `HTMLAttributes` · `asChild` · `ref` | -       | Settled - no anchor wrapper; native props route per `AgentPicker.Root`'s trigger-ref surface                                      |
 
 **Removed (proposed):** `className` (today it aliases the trigger's class through two layers - the node contract bans the indirection; eject to the composition and class `AgentPicker.Trigger` directly). Boolean state props from the underlying surface (`selected` / `isLoading` / `invalid`) become `data-*`; `inputStyle` is deleted (see [`AgentPicker`](./agent-picker.md)).
 
@@ -163,5 +163,5 @@ function MyPickerList() {
 
 ## Related
 
-- [`AgentPicker`](./agent-picker.md) - the compound this preset composes (parts, DOM, positioning-anchor exception)
+- [`AgentPicker`](./agent-picker.md) - the compound this preset composes (parts, DOM, popper anchoring)
 - [`useAgentPicker`](../hooks/use-agent-picker.md) · [`useAgents`](../hooks/use-agents.md)

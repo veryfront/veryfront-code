@@ -313,7 +313,7 @@ assistant-ui viewport):
   `.Content`. One conversation type: `Conversation` (no `ConversationSummary`).
   Optional context hooks return `null` (never `undefined`), library-wide.
   `Message.Tokens` popover trim is settled: it becomes a display-only `<span>`
-  (breakdown popover falls under the positioning-anchor exception). `formatSize` joins the
+  (a future breakdown popover anchors via the trigger ref). `formatSize` joins the
   public helpers. The canonical DOM-delta ledger is the docs pages' `changed`/
   `new` badges - rule 10's inline list is illustrative, not exhaustive.
 
@@ -598,7 +598,7 @@ generics) - blocks only state what's specific to them.
   | `.Root`           | `<form>`             | `data-status` `data-dragging` `data-compact` | submit = fold attachments → guard while uploading → send → clear (#2974) |
   | `.Field`          | `<textarea>`         | -                                            | IME-guarded Enter, `submitMode`, paste-to-attach                         |
   | `.Attach`         | `<button>`           | -                                            | opens file picker                                                        |
-  | `.Model`          | `<button>` (trigger) | `data-open`                                  | `models={…}` on the leaf; popper uses the positioning-anchor exception   |
+  | `.Model`          | `<button>` (trigger) | `data-open`                                  | `models={…}` on the leaf; popper anchors via the trigger ref             |
   | `.Voice`          | `<button>`           | `data-listening`                             | transcript folds into value via the hook                                 |
   | `.Submit`         | `<button>`           | `data-status`                                | canonical morphing Send↔Stop                                             |
   | `.Send` / `.Stop` | `<button>`           | -                                            | null-render when off-state                                               |
@@ -803,7 +803,7 @@ generics) - blocks only state what's specific to them.
 
 ### Agents & models
 
-- **`AgentPicker`** - `.Root` (provider; popper uses the positioning-anchor exception) · `.Trigger
+- **`AgentPicker`** - `.Root` (provider; popper anchors via the trigger ref) · `.Trigger
   <button>` (`data-open`) · `.Content <div>` · `.Search <input>` · `.List <ul>`
   · `.Item <button>` (`data-active`, `data-invalid` kept) · `.Create <button>` ·
   `.Manage <button>`. Boolean props `selected`/`isLoading`/`invalid` →
@@ -1113,12 +1113,12 @@ the migration ledger for the breaking release.
   `content-visibility` compatible - so it can land additively without reshaping
   the API.
 
-## Resolved positioning-anchor exception
+## Resolved popper anchoring
 
-- **Popper anchor wrapper**: until `veryfront/ui` supports trigger-ref
-  anchoring for all floating surfaces, popover/dropdown roots may emit one
-  `data-vf-popper-anchor` wrapper `<span>` for positioning only. The wrapper is
-  non-semantic, receives no public styling API, and is the only sanctioned
-  exception to the one-node part contract. `ChatInput.Model`, `AgentPicker`,
-  `ModelSelector`, and `ChatActions` use this exception where their current
-  `ui` primitive still requires an anchor wrapper.
+- **Popper anchor wrapper** (settled): fixed in `veryfront/ui`, not sanctioned
+  here. `ui`'s floating surfaces (`DropdownMenu`, `Popover`) anchor to the
+  trigger element's ref instead of rendering a wrapper `<span>`; that `ui`
+  change is a prerequisite for the chat v1 implementation. Every popper root
+  on this surface (`ChatInput.Model`, `AgentPicker`, `ModelSelector`,
+  `ChatActions`, `InlineCitation`) ships one node per part, and the one-node
+  contract has no sanctioned exceptions.

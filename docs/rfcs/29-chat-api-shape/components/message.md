@@ -416,7 +416,7 @@ One `<div>` container: ‹ previous · `2/3` count · next ›. **Renders `null`
 
 ### `Message.Tokens` - `changed`
 
-One display-only `<span>` **(settled)**. Today it renders a Popover pair - a trigger `<button>` showing the compact total (`726`, `79.8k`; hover-revealed like the actions, pinned visible while open) that opens a breakdown card (Model · Input · Output · Total, from `metadata.usage`: `inputTokens` / `outputTokens` / `reasoningTokens`). **Renders `null` on user turns and when total tokens are 0** (no usage metadata). The popover trim is settled: the leaf becomes a plain usage `<span>`; a future breakdown popover must use the positioning-anchor exception.
+One display-only `<span>` **(settled)**. Today it renders a Popover pair - a trigger `<button>` showing the compact total (`726`, `79.8k`; hover-revealed like the actions, pinned visible while open) that opens a breakdown card (Model · Input · Output · Total, from `metadata.usage`: `inputTokens` / `outputTokens` / `reasoningTokens`). **Renders `null` on user turns and when total tokens are 0** (no usage metadata). The popover trim is settled: the leaf becomes a plain usage `<span>`; a future breakdown popover anchors via the trigger ref (no wrapper).
 
 **Layout:** in-flow trigger revealed by opacity on `group/msg` hover (stays visible while its popover is open); the popover panel is positioned by the Popover primitive relative to the trigger.
 

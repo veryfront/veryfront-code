@@ -44,7 +44,8 @@ What the preset actually renders today (classes abbreviated to layout-relevant o
 
 ```html
 <span data-vf-popper-anchor class="relative inline-block">
-  <!-- .Root - positioning-anchor exception -->
+  <!-- today's ui dropdown anchor wrapper - deleted once ui anchors to the
+       trigger ref (settled; the ui fix is a chat-v1 prerequisite) -->
   <button
     aria-haspopup="menu"
     aria-expanded
@@ -101,7 +102,7 @@ Notes for the reviewer:
 
 **Changed:** the `trigger` render prop and the Root-level `className` alias are removed - compose `.Trigger` children and class `.Content` directly.
 
-The scoped context provider + dropdown root. **Layout: no in-flow layout of its own except the sanctioned `<span data-vf-popper-anchor>` wrapper while the shared `ui` dropdown requires it.** The wrapper is non-semantic and receives no public styling API.
+The scoped context provider + dropdown root. **Layout: renders no node of its own - the popper anchors to the trigger ref (settled; the `ui` trigger-ref anchoring fix is a chat-v1 prerequisite).** Today's `ui` dropdown still renders a wrapper `<span>`; it is deleted with that fix and is not part of this contract.
 
 | Prop                                    | Type                                     | Default                    | Description                                                                                                                                                                |
 | --------------------------------------- | ---------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -111,7 +112,7 @@ The scoped context provider + dropdown root. **Layout: no in-flow layout of its 
 | `settings`                              | `ChatActionsSettings`                    | -                          | Enables the Settings submenu: `{ autoSubmit, autoFixErrors, onAutoSubmitChange, onAutoFixErrorsChange }` (hidden when omitted)                                             |
 | `open` / `defaultOpen` / `onOpenChange` | `boolean` / `boolean` / `(open) => void` | -                          | Controlled / uncontrolled menu state                                                                                                                                       |
 | `children`                              | `ReactNode`                              | -                          | Omit for the preset; pass to recompose                                                                                                                                     |
-| + native _(proposed)_                   | `HTMLAttributes` · `asChild` · `ref`     | -                          | Applied to the anchor wrapper only while the positioning-anchor exception is active; otherwise to the root-owned nodeless trigger-ref surface.                             |
+| + native _(proposed)_                   | `HTMLAttributes` · `asChild` · `ref`     | -                          | Applied to the root-owned nodeless trigger-ref surface (no anchor wrapper - settled).                                                                                      |
 
 **Removed (proposed):** `trigger?: ReactNode` - compose `.Trigger` children instead (composition, not render-prop config); Root-level `className` (today it styles the _menu surface_ - class `.Content` directly).
 
@@ -259,4 +260,4 @@ function MyActionsMenu() {
 - `exportAsMarkdown` / `downloadMarkdown` - transcript export helpers
 - `useChat` - `setMessages` for clear
 - `ChatInput.Export` - the composer's one-click export button
-- [`AgentPicker`](./agent-picker.md) - shares the positioning-anchor exception
+- [`AgentPicker`](./agent-picker.md) - same trigger-ref anchoring
