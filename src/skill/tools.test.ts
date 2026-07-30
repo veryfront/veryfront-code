@@ -335,6 +335,33 @@ Hidden work.`,
     assertEquals(hiddenError.message.includes("allowed-skill"), false);
   });
 
+  it("load_skill detaches selector callback failures before a root is assigned", async () => {
+    const root = "/project/skills/my-skill";
+    const adapter = createSkillTestAdapter({
+      [`${root}/SKILL.md`]: "---\nname: my-skill\ndescription: Test\n---\nBody",
+    });
+    registerSkill("my-skill", createTestSkill(adapter));
+    const original = new Error("Selector failed", {
+      cause: new Error(`${root}/private`),
+    });
+    const tool = createLoadSkillTool({
+      resolveAllowedSkillIds() {
+        throw original;
+      },
+    });
+
+    let failure: unknown;
+    try {
+      await tool.execute({ skillId: "my-skill" });
+    } catch (error) {
+      failure = error;
+    }
+
+    assertEquals(failure instanceof Error, true);
+    assertEquals(failure === original, false);
+    assertEquals(failure instanceof Error ? failure.cause : undefined, undefined);
+  });
+
   it("load_skill should omit prompt notes for unavailable file tools", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/SKILL.md": `---
@@ -972,6 +999,109 @@ Do work.`,
 
     assertEquals(message.includes(root), false);
     assertEquals(message.includes("<skill-root>/scripts"), true);
+  });
+
+  it("execute_skill_script removes nested error state that contains its root", async () => {
+    const root = "/project/skills/my-skill";
+    const scriptPath = `${root}/scripts/run.sh`;
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo run" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    const original = new Error("Runner failed", {
+      cause: new Error(`Private source: ${root}/scripts/run.sh`),
+    });
+    Object.defineProperty(original, "diagnostic", {
+      enumerable: true,
+      value: `${root}/internal`,
+    });
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        execute() {
+          throw original;
+        },
+      },
+    });
+
+    let failure: unknown;
+    try {
+      await tool.execute({ skillId: "my-skill", script: "scripts/run.sh" });
+    } catch (error) {
+      failure = error;
+    }
+
+    assertEquals(failure instanceof Error, true);
+    assertEquals(failure === original, false);
+    assertEquals(failure instanceof Error ? failure.message : "", "Runner failed");
+    assertEquals(failure instanceof Error ? failure.cause : undefined, undefined);
+    assertEquals(
+      failure instanceof Error && Object.hasOwn(failure, "diagnostic"),
+      false,
+    );
+  });
+
+  it("execute_skill_script redacts roots before diagnostic truncation", async () => {
+    const root = "/private/workspaces/customer/skills/writer";
+    const scriptPath = `${root}/scripts/run.sh`;
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo run" });
+    registerSkill("writer", {
+      id: "writer",
+      metadata: { name: "writer", description: "Writes" },
+      rootPath: root,
+      fsAdapter: adapter,
+    });
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        execute() {
+          throw new Error(`${"x".repeat(2_000)}${root}/secret`);
+        },
+      },
+    });
+
+    let message = "";
+    try {
+      await tool.execute({ skillId: "writer", script: "scripts/run.sh" });
+    } catch (error) {
+      message = error instanceof Error ? error.message : "";
+    }
+
+    assertEquals(message.includes(root), false);
+    assertEquals(message.includes("/private/workspaces/customer/skill"), false);
+    assertEquals(message.includes("<skill-root>/secret"), true);
+  });
+
+  it("execute_skill_script sanitizes hostile thrown objects without invoking accessors", async () => {
+    const root = "/project/skills/my-skill";
+    const scriptPath = `${root}/scripts/run.sh`;
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo run" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    let accessorReads = 0;
+    const hostile = Object.create(Error.prototype);
+    for (const property of ["message", "name", "cause"] as const) {
+      Object.defineProperty(hostile, property, {
+        get() {
+          accessorReads += 1;
+          throw new Error(`Accessor exposed ${root}`);
+        },
+      });
+    }
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        execute() {
+          throw hostile;
+        },
+      },
+    });
+
+    let failure: unknown;
+    try {
+      await tool.execute({ skillId: "my-skill", script: "scripts/run.sh" });
+    } catch (error) {
+      failure = error;
+    }
+
+    assertEquals(accessorReads, 0);
+    assertEquals(failure instanceof Error, true);
+    assertEquals(failure === hostile, false);
+    assertEquals(failure instanceof Error ? failure.message : "", "Skill operation failed");
   });
 
   it("execute_skill_script settles when cancellation interrupts filesystem preflight", async () => {

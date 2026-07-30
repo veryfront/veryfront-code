@@ -7,6 +7,7 @@ import type {
 import { isNativeFileSystemAdapter } from "#veryfront/platform/adapters/native-file-system-provenance.ts";
 import { SKILL_ROOT_PATH_MAX_LENGTH, SKILL_TEXT_FILE_MAX_BYTES } from "./limits.ts";
 import type { SkillOperationBudget } from "./operation-budget.ts";
+import { sanitizeSkillBoundaryFailure } from "./error-boundary.ts";
 import { validateStrictSkillPath } from "./path-safety.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "./string-safety.ts";
 
@@ -720,12 +721,6 @@ export async function readValidatedSkillTextFile(
     ) {
       throw error;
     }
-    if (!(error instanceof Error) || !error.message.includes(skillRoot)) {
-      throw error;
-    }
-    const message = error.message.replaceAll(skillRoot, "<skill-root>");
-    if (error instanceof TypeError) throw new TypeError(message);
-    if (error instanceof RangeError) throw new RangeError(message);
-    throw new Error(message);
+    throw sanitizeSkillBoundaryFailure(error, skillRoot);
   }
 }

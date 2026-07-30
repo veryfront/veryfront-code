@@ -47,6 +47,7 @@ import {
 } from "./limits.ts";
 import { readValidatedSkillTextFile } from "./bounded-text-file.ts";
 import { createSkillOperationBudget, SkillOperationTimeoutError } from "./operation-budget.ts";
+import { sanitizeSkillBoundaryFailure } from "./error-boundary.ts";
 
 type SkillFileKind = "reference" | "script";
 type SkillSelectorToolOptions = {
@@ -54,20 +55,6 @@ type SkillSelectorToolOptions = {
 };
 
 const UTF8_ENCODER = new TextEncoder();
-
-function redactSkillRoot(text: string, skillRoot: string): string {
-  const roots = [
-    ...new Set([
-      skillRoot,
-      skillRoot.replaceAll("\\", "/"),
-      skillRoot.replaceAll("/", "\\"),
-    ]),
-  ].filter((root) => root.length > 0).sort((left, right) => right.length - left.length);
-  return roots.reduce(
-    (redacted, root) => redacted.replaceAll(root, "<skill-root>"),
-    text,
-  );
-}
 
 function sanitizeSkillToolFailure(
   error: unknown,
@@ -81,24 +68,7 @@ function sanitizeSkillToolFailure(
   ) {
     return error;
   }
-  if (!skillRoot) return error;
-  if (typeof error === "string") {
-    const message = redactSkillRoot(error, skillRoot);
-    return message === error ? error : new Error(message);
-  }
-  if (!(error instanceof Error)) return error;
-  const message = redactSkillRoot(error.message, skillRoot);
-  if (message === error.message) return error;
-
-  const sanitized = error instanceof TypeError
-    ? new TypeError(message)
-    : error instanceof RangeError
-    ? new RangeError(message)
-    : error instanceof DOMException
-    ? new DOMException(message, error.name)
-    : new Error(message);
-  if (!(sanitized instanceof DOMException)) sanitized.name = error.name;
-  return sanitized;
+  return sanitizeSkillBoundaryFailure(error, skillRoot ?? "");
 }
 
 function scriptArgsFitByteBudget(value: readonly string[] | undefined): boolean {

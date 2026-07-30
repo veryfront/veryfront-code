@@ -443,6 +443,31 @@ Deno.test("readValidatedSkillTextFile redacts the absolute skill root from diagn
   }
 });
 
+Deno.test("readValidatedSkillTextFile detaches root-bearing nested diagnostics", async () => {
+  const root = "/private/workspaces/customer/skills/writer";
+  const original = new Error("Storage failed", {
+    cause: new Error(`Private source: ${root}/SKILL.md`),
+  });
+  const adapter = {
+    ...createSkillTestAdapter({}),
+    async exists() {
+      throw original;
+    },
+  };
+
+  let failure: unknown;
+  try {
+    await readValidatedSkillTextFile(root, "SKILL.md", [], adapter);
+  } catch (error) {
+    failure = error;
+  }
+
+  assertEquals(failure instanceof Error, true);
+  assertEquals(failure === original, false);
+  assertEquals(failure instanceof Error ? failure.message : "", "Storage failed");
+  assertEquals(failure instanceof Error ? failure.cause : undefined, undefined);
+});
+
 Deno.test("readValidatedSkillTextFile honors a shared cancellation budget", async () => {
   const root = "/project/skills/writer";
   const adapter = {
