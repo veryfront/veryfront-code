@@ -189,25 +189,24 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
       if (!lifecycleFailures.includes(error)) lifecycleFailures.push(error);
     };
 
-    const setup = Promise.all(
-      pathArray.map((path) =>
-        this.setupWatcher(path, {
-          recursive,
-          closed: () => closed,
-          signal,
-          eventQueue,
-          getResolver: () => resolver,
-          setResolver,
-          watchers,
-          trackTask,
-          onError: (error, watchPath) => {
-            this.logger.error(`File watcher error for ${watchPath}`, { error });
-            watcherFailure ??= error;
-            closeWatcherGeneration();
-          },
-        })
-      ),
-    ).then(() => undefined).catch((error) => {
+    const setupTasks = pathArray.map((path) =>
+      this.setupWatcher(path, {
+        recursive,
+        closed: () => closed,
+        signal,
+        eventQueue,
+        getResolver: () => resolver,
+        setResolver,
+        watchers,
+        trackTask,
+        onError: (error, watchPath) => {
+          this.logger.error(`File watcher error for ${watchPath}`, { error });
+          watcherFailure ??= error;
+          closeWatcherGeneration();
+        },
+      })
+    );
+    const setup = Promise.all(setupTasks).then(() => undefined).catch((error) => {
       closeWatcherGeneration();
       throw error;
     });
@@ -252,6 +251,14 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
       const [setupResult] = await Promise.allSettled([setup, closedSignal]);
       if (setupResult.status === "rejected") {
         recordLifecycleFailure(setupResult.reason);
+      }
+
+      // ready remains fail-fast, but lifecycle completion must join every
+      // root acquisition. Promise.all(setupTasks) can reject while a sibling
+      // lstat/readdir is still in flight.
+      const setupTaskResults = await Promise.allSettled(setupTasks);
+      for (const result of setupTaskResults) {
+        if (result.status === "rejected") recordLifecycleFailure(result.reason);
       }
 
       while (pendingTasks.size > 0) {

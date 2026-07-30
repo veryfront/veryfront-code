@@ -177,4 +177,33 @@ describe("NodeCompatibleFileSystemAdapter", () => {
     // did not close, while retaining the original failures for the caller.
     assertEquals([firstCloseCalls, secondCloseCalls], [2, 2]);
   });
+
+  it("does not finish while a sibling watch root is still being acquired", async () => {
+    const acquisitionFailure = new Error("first root failed");
+    const siblingSetup = Promise.withResolvers<void>();
+
+    class PartiallyFailingAdapter extends NodeCompatibleFileSystemAdapter {
+      protected override setupWatcher(path: string): Promise<void> {
+        return path === "/failed-root" ? Promise.reject(acquisitionFailure) : siblingSetup.promise;
+      }
+    }
+
+    const watcher = new PartiallyFailingAdapter().watch(
+      ["/failed-root", "/gated-root"],
+      { recursive: false },
+    );
+    let doneSettled = false;
+    const done = watcher.done!.finally(() => {
+      doneSettled = true;
+    });
+    void done.catch(() => undefined);
+
+    await assertRejects(() => watcher.ready!, Error, acquisitionFailure.message);
+    await Promise.resolve();
+    assertEquals(doneSettled, false);
+
+    siblingSetup.resolve();
+    await assertRejects(() => done, Error, acquisitionFailure.message);
+    assertEquals(doneSettled, true);
+  });
 });
