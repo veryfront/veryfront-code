@@ -6537,6 +6537,13 @@
           "jsr:@std/testing@1.0.17"
         ]
       },
+      "extensions/ext-llm-transformers": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:@huggingface/transformers@4.2.0"
+        ]
+      },
       "extensions/ext-observability-opentelemetry": {
         "dependencies": [
           "jsr:@std/assert@1.0.19",
