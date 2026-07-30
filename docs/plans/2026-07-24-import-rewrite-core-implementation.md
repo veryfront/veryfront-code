@@ -54,7 +54,6 @@
 ### Task 1: Add baseline parity and golden coverage
 
 **Files:**
-
 - Create: `src/transforms/import-rewriter/core.test.ts`
 - Modify: `src/transforms/esm/import-rewriter.test.ts`
 - Modify: `src/modules/server/ssr-import-rewriter.test.ts`
@@ -62,7 +61,6 @@
 - Modify: `src/routing/api/module-loader/external-import-rewriter.test.ts`
 
 **Interfaces:**
-
 - Consumes: current public rewrite functions.
 - Produces: exact-output or exact-invariant tests that must pass before refactor code moves.
 
@@ -75,17 +73,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import {
-  applySSRImportRewrites,
-  applySSRImportRewritesAsync,
-} from "#veryfront/modules/server/ssr-import-rewriter.ts";
+import { applySSRImportRewrites, applySSRImportRewritesAsync } from "#veryfront/modules/server/ssr-import-rewriter.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "#veryfront/discovery/import-rewriter.ts";
 import { addHMRTimestamps, rewriteBareImports } from "#veryfront/transforms/esm/import-rewriter.ts";
 import { TAILWIND_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
-import {
-  stripJsonImportAttributes,
-  upgradeImportAssertions,
-} from "#veryfront/transforms/esm/import-attributes.ts";
+import { stripJsonImportAttributes, upgradeImportAssertions } from "#veryfront/transforms/esm/import-attributes.ts";
 import {
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
@@ -104,10 +96,7 @@ describe("import rewrite compatibility golden tests", () => {
       `import data from "./a.json" with { type: "json" };`,
     );
     assertEquals(
-      await stripJsonImportAttributes(
-        `import data from "./a.mjs" with { type: "json" };`,
-        () => true,
-      ),
+      await stripJsonImportAttributes(`import data from "./a.mjs" with { type: "json" };`, () => true),
       `import data from "./a.mjs";`,
     );
   });
@@ -262,7 +251,6 @@ git commit -m "Protect import rewrite semantics before consolidation" \
 ### Task 2: Extract lexer-bounded edit primitives
 
 **Files:**
-
 - Create: `src/transforms/import-rewriter/import-edit.ts`
 - Modify: `src/transforms/import-rewriter/parse-cache.ts`
 - Modify: `src/transforms/esm/import-attributes.ts`
@@ -270,7 +258,6 @@ git commit -m "Protect import rewrite semantics before consolidation" \
 - Test: `src/transforms/esm/import-attributes.test.ts`
 
 **Interfaces:**
-
 - Consumes: current `parseAllImports`, `applyRewrites`, `replaceSpecifiers`, `upgradeImportAssertions`, and `stripJsonImportAttributes`.
 - Produces: one private edit Module with current `parse-cache.ts` exports preserved as shims.
 
@@ -283,8 +270,7 @@ import { applyImportEdits, parseImportEdits } from "./import-edit.ts";
 
 describe("import edit core", () => {
   it("edits specifiers while preserving HTTP strings and attributes", async () => {
-    const code =
-      `const u = "https://example.com/a";\nimport m from "./a.json" with { type: "json" };\n`;
+    const code = `const u = "https://example.com/a";\nimport m from "./a.json" with { type: "json" };\n`;
     const parsed = await parseImportEdits(code);
     const out = applyImportEdits(parsed, new Map([[0, { specifier: "./b.json" }]]));
     assertEquals(
@@ -385,7 +371,6 @@ git commit -m "Concentrate import edit mechanics behind one private Module" \
 ### Task 3: Extract package resolution helpers
 
 **Files:**
-
 - Create: `src/transforms/import-rewriter/package-resolution.ts`
 - Modify: `src/discovery/import-rewriter.ts`
 - Modify: `src/routing/api/module-loader/external-import-rewriter.ts`
@@ -395,7 +380,6 @@ git commit -m "Concentrate import edit mechanics behind one private Module" \
 - Test: `src/routing/api/module-loader/loader-helpers.test.ts`
 
 **Interfaces:**
-
 - Consumes: current discovery package helpers and route loader export-entry helpers.
 - Produces: reusable private helpers for discovery and route Adapters.
 
@@ -462,10 +446,7 @@ Extract the current discovery helpers:
 Add containment:
 
 ```ts
-export function resolveContainedPackagePath(
-  packagePath: string,
-  entryPoint: string,
-): string | null {
+export function resolveContainedPackagePath(packagePath: string, entryPoint: string): string | null {
   const resolved = pathHelper.resolve(packagePath, entryPoint);
   const packagePathPrefix = packagePath.endsWith(pathHelper.SEPARATOR)
     ? packagePath
@@ -526,7 +507,6 @@ git commit -m "Make package resolution local to the import rewrite Module" \
 ### Task 4: Introduce core orchestration and transform Adapter
 
 **Files:**
-
 - Create: `src/transforms/import-rewriter/core.ts`
 - Modify: `src/transforms/import-rewriter/unified-rewriter.ts`
 - Modify: `src/transforms/esm/import-rewriter.ts`
@@ -536,7 +516,6 @@ git commit -m "Make package resolution local to the import rewrite Module" \
 - Test: `src/transforms/esm/import-rewriter.test.ts`
 
 **Interfaces:**
-
 - Consumes: `ImportRewriteStrategy`, `RewriteContext`, and existing ESM transform functions.
 - Produces: private core runner used by the transform entrypoints.
 
@@ -596,12 +575,7 @@ Create `src/transforms/import-rewriter/core.ts`:
 
 ```ts
 import { applyImportEdits, parseImportEdits } from "./import-edit.ts";
-import type {
-  ImportRewriteStrategy,
-  ImportSpecifierInfo,
-  RewriteContext,
-  RewriteResult,
-} from "./types.ts";
+import type { ImportSpecifierInfo, ImportRewriteStrategy, RewriteContext, RewriteResult } from "./types.ts";
 
 export interface TransformCoreInput {
   code: string;
@@ -684,7 +658,6 @@ git commit -m "Route transform rewriting through the private import core" \
 ### Task 5: Add SSR Adapter behind current entrypoints
 
 **Files:**
-
 - Create: `src/transforms/import-rewriter/ssr-adapter.ts`
 - Modify: `src/modules/server/ssr-import-rewriter.ts`
 - Test: `src/transforms/import-rewriter/core.test.ts`
@@ -693,7 +666,6 @@ git commit -m "Route transform rewriting through the private import core" \
 - Test: `src/modules/server/module-batch-handler.test.ts`
 
 **Interfaces:**
-
 - Consumes: current `SSRImportRewriteTarget` and existing non-exported `SSRRewriteOptions` shape.
 - Produces: private SSR Adapter functions, with module server entrypoints unchanged.
 
@@ -770,9 +742,9 @@ Replace `src/modules/server/ssr-import-rewriter.ts` with:
 ```ts
 export type { SSRImportRewriteTarget } from "#veryfront/transforms/import-rewriter/ssr-adapter.ts";
 export {
-  resolveSSRImportTargetModulePathCompat as resolveSSRImportTargetModulePath,
   rewriteSSRImportsCompat as applySSRImportRewrites,
   rewriteSSRImportsCompatAsync as applySSRImportRewritesAsync,
+  resolveSSRImportTargetModulePathCompat as resolveSSRImportTargetModulePath,
   stripSSRModuleJsExtensionCompat as stripSSRModuleJsExtension,
 } from "#veryfront/transforms/import-rewriter/ssr-adapter.ts";
 ```
@@ -809,7 +781,6 @@ git commit -m "Hide SSR import rewrite quirks behind a compatibility Adapter" \
 ### Task 6: Add route and discovery Adapter helpers
 
 **Files:**
-
 - Create: `src/transforms/import-rewriter/route-adapter.ts`
 - Modify: `src/discovery/import-rewriter.ts`
 - Modify: `src/routing/api/module-loader/external-import-rewriter.ts`
@@ -820,7 +791,6 @@ git commit -m "Hide SSR import rewrite quirks behind a compatibility Adapter" \
 - Test: `src/routing/api/module-loader/loader.test.ts`
 
 **Interfaces:**
-
 - Consumes: current discovery and route-loading functions.
 - Produces: shared private route/discovery helpers with public shims unchanged.
 
@@ -941,7 +911,6 @@ git commit -m "Unify route import rewrite mechanics without changing loaders" \
 ### Task 7: Delete duplicate private logic and verify compatibility
 
 **Files:**
-
 - Modify: `src/transforms/import-rewriter/parse-cache.ts`
 - Modify: `src/transforms/import-rewriter/unified-rewriter.ts`
 - Modify: `src/transforms/esm/import-rewriter.ts`
@@ -952,7 +921,6 @@ git commit -m "Unify route import rewrite mechanics without changing loaders" \
 - Modify: `src/transforms/import-rewriter/index.ts` only if internal aliases require it.
 
 **Interfaces:**
-
 - Consumes: all previous tasks.
 - Produces: final cleanup with duplicate private classification, edit, and package-resolution logic removed.
 
