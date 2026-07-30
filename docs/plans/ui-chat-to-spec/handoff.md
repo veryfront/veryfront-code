@@ -40,7 +40,7 @@ which is the live "what's left" (every red row is a todo; goal = fully green). E
 
 **Open PRs (in progress):**
 
-- Framework: **veryfront/veryfront-code#3185**, branch `feat/ui-chat-to-spec`. **Currently RED — it conflicts with `main`** (see "Merge situation" below). Commit further framework work on this branch and push.
+- Framework: **veryfront/veryfront-code#3185**, branch `feat/ui-chat-to-spec`. **Reconciled with `main`** (merged `origin/main` on 2026-07-30 — #3176/#3056 adapter-layer conflicts resolved; adapter conformance + freeze + blackbox all green). Commit further framework work on this branch and push; re-merge `origin/main` periodically to stay current.
 - Harness: **mattboon/veryfront-router-testing#8**, branch `feat/chat-adoption-demos`.
 - Spec PRs: **veryfront/veryfront-code#3090** (ui adapters, merged) · **#2980** (chat API shape, open).
 
@@ -323,9 +323,11 @@ DENO_TESTING=1 VF_DISABLE_LRU_INTERVAL=1 NODE_ENV=production LOG_FORMAT=text \
   src/react/components/ui/coverage.test.tsx src/react/components/chat/coverage.test.tsx
 ```
 
-1. **Rebase gate.** If PR #3185 is red / conflicts with `main`: `git fetch origin
-   main`, reconcile the adapter layer onto `main`'s #3176/#3056 primitives, get it
-   green. Do this before any feature work.
+1. **Stay-current gate.** Branch is reconciled with `main` (merged 2026-07-30). Keep
+   it current: `git fetch origin main` and `git merge origin/main` if it has moved;
+   resolve any adapter-layer conflicts (keep both sides' behaviour — see the merge
+   commit for the pattern) and confirm adapter conformance + freeze tests stay green
+   before feature work.
 2. **Pick ONE red row** from the coverage suite — the highest-leverage failing
    assertion (finish Base UI 5/5 first, then go area by area). No separate matrix to
    consult or maintain. **To add new scope, add a red row** to the manifest array in
