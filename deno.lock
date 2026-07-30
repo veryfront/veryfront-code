@@ -205,8 +205,7 @@
       "dependencies": [
         "@ai-sdk/provider",
         "@ai-sdk/provider-utils@4.0.40_zod@3.25.76",
-        "@vercel/oidc",
-        "zod@3.25.76"
+        "@vercel/oidc"
       ]
     },
     "@ai-sdk/gateway@3.0.157_zod@4.3.6": {
@@ -223,8 +222,7 @@
       "dependencies": [
         "@ai-sdk/provider",
         "@standard-schema/spec",
-        "eventsource-parser",
-        "zod@3.25.76"
+        "eventsource-parser"
       ]
     },
     "@ai-sdk/provider-utils@4.0.40_zod@4.3.6": {
@@ -2000,8 +1998,7 @@
         "@ai-sdk/gateway@3.0.157_zod@3.25.76",
         "@ai-sdk/provider",
         "@ai-sdk/provider-utils@4.0.40_zod@3.25.76",
-        "@opentelemetry/api",
-        "zod@3.25.76"
+        "@opentelemetry/api"
       ]
     },
     "ai@6.0.235_zod@4.3.6": {
@@ -6438,11 +6435,6 @@
       "jsr:@std/yaml@1.1.0"
     ],
     "members": {
-      "browser/studio-bridge": {
-        "dependencies": [
-          "npm:html2canvas-pro@2.0.0"
-        ]
-      },
       "extensions/ext-auth-jwt": {
         "dependencies": [
           "jsr:@std/assert@1.0.19",
@@ -6610,6 +6602,13 @@
           "npm:ajv-formats@3.0.1",
           "npm:ajv@8.18.0",
           "npm:zod@4.3.6"
+        ]
+      },
+      "extensions/ext-studio-capture-html2canvas": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:html2canvas-pro@2.0.0"
         ]
       }
     }
