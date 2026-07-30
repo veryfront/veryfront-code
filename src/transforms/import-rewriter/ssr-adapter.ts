@@ -5,6 +5,10 @@ import {
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
+import {
+  applyImportEdits,
+  parseImportEdits,
+} from "#veryfront/transforms/import-rewriter/import-edit.ts";
 
 type CacheBuster = number | string;
 
@@ -67,10 +71,8 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
   if (specifier.startsWith("npm:")) return isDeno;
 
   if (
-    specifier.startsWith("http://") ||
-    specifier.startsWith("https://") ||
-    specifier.startsWith("file://") ||
-    specifier.startsWith("node:")
+    /^(?:https?|file|node):/i.test(specifier) ||
+    specifier.startsWith("//")
   ) {
     return true;
   }
@@ -113,7 +115,7 @@ function resolveReactForRuntime(specifier: string, version?: string): string | n
 function rewriteBareImports(code: string, version?: string): string {
   const v = version ?? DEFAULT_REACT_VERSION;
 
-  return code.replace(/from\s+["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
+  return code.replace(/from\s*["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
     const bareSpecifier = specifier.startsWith("npm:") ? specifier.slice(4) : specifier;
 
     const reactUrl = resolveReactForRuntime(bareSpecifier, v);
@@ -207,24 +209,52 @@ function buildScopedParams(options: SSRRewriteOptions): string {
   return `${projectParam}${branchParam}`;
 }
 
+const ALIAS_IMPORT_PATTERNS = [
+  /(\bfrom\s+)["']@\/([^"']+)["']/g,
+  /(\bimport\s+)["']@\/([^"']+)["']/g,
+  /(\bimport\s*\(\s*)["']@\/([^"']+)["']/g,
+];
+
+const RELATIVE_IMPORT_PATTERNS = [
+  /(\bfrom\s+)["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
+  /(\bimport\s+)["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
+  /(\bimport\s*\(\s*)["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
+];
+
 function rewritePathAliases(code: string, options: SSRRewriteOptions): string {
   const scopedParams = buildScopedParams(options);
+  let result = code;
 
-  return code.replace(/from\s+["']@\/([^"']+)["']/g, (_match, path: string) => {
-    const { target, prefix } = buildAliasRewrite(path, options);
-    const cacheBuster = getCacheBusterSync(target, options);
-    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
-  });
+  for (const pattern of ALIAS_IMPORT_PATTERNS) {
+    result = result.replace(
+      pattern,
+      (_match, prefix: string, path: string) => {
+        const { target, prefix: rewrittenPrefix } = buildAliasRewrite(path, options);
+        const cacheBuster = getCacheBusterSync(target, options);
+        return `${prefix}"${rewrittenPrefix}${scopedParams}&v=${cacheBuster}"`;
+      },
+    );
+  }
+
+  return result;
 }
 
 function rewriteRelativeImports(code: string, options: SSRRewriteOptions): string {
   const scopedParams = buildScopedParams(options);
+  let result = code;
 
-  return code.replace(/from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g, (_match, path: string) => {
-    const { target, prefix } = buildRelativeRewrite(path);
-    const cacheBuster = getCacheBusterSync(target, options);
-    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
-  });
+  for (const pattern of RELATIVE_IMPORT_PATTERNS) {
+    result = result.replace(
+      pattern,
+      (_match, prefix: string, path: string) => {
+        const { target, prefix: rewrittenPrefix } = buildRelativeRewrite(path);
+        const cacheBuster = getCacheBusterSync(target, options);
+        return `${prefix}"${rewrittenPrefix}${scopedParams}&v=${cacheBuster}"`;
+      },
+    );
+  }
+
+  return result;
 }
 
 export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions = {}): string {
@@ -234,49 +264,31 @@ export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions
   return result;
 }
 
-async function replaceAsync(
+async function rewriteInternalModuleImportsAsync(
   code: string,
-  pattern: RegExp,
-  replacer: (match: RegExpExecArray) => Promise<string>,
+  options: SSRRewriteOptions,
 ): Promise<string> {
-  const chunks: string[] = [];
-  let lastIndex = 0;
-  pattern.lastIndex = 0;
+  const parsed = await parseImportEdits(code);
+  const rewrites = new Map<number, { specifier: string }>();
+  const scopedParams = buildScopedParams(options);
 
-  for (let match = pattern.exec(code); match; match = pattern.exec(code)) {
-    chunks.push(code.slice(lastIndex, match.index));
-    chunks.push(await replacer(match));
-    lastIndex = match.index + match[0].length;
+  for (let index = 0; index < parsed.imports.length; index++) {
+    const imported = parsed.imports[index]!;
+    const specifier = imported.specifier;
+    const rewrite = specifier.startsWith("@/")
+      ? buildAliasRewrite(specifier.slice(2), options)
+      : /^(?:\.\.?\/|\/)[^?#]+\.js$/.test(specifier)
+      ? buildRelativeRewrite(specifier)
+      : null;
+    if (!rewrite) continue;
+
+    const cacheBuster = await getCacheBusterAsync(rewrite.target, options);
+    rewrites.set(index, {
+      specifier: `${rewrite.prefix}${scopedParams}&v=${cacheBuster}`,
+    });
   }
 
-  chunks.push(code.slice(lastIndex));
-  return chunks.join("");
-}
-
-async function rewritePathAliasesAsync(
-  code: string,
-  options: SSRRewriteOptions,
-): Promise<string> {
-  const scopedParams = buildScopedParams(options);
-  return await replaceAsync(code, /from\s+["']@\/([^"']+)["']/g, async (match) => {
-    const path = match[1] ?? "";
-    const { target, prefix } = buildAliasRewrite(path, options);
-    const cacheBuster = await getCacheBusterAsync(target, options);
-    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
-  });
-}
-
-async function rewriteRelativeImportsAsync(
-  code: string,
-  options: SSRRewriteOptions,
-): Promise<string> {
-  const scopedParams = buildScopedParams(options);
-  return await replaceAsync(code, /from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g, async (match) => {
-    const path = match[1] ?? "";
-    const { target, prefix } = buildRelativeRewrite(path);
-    const cacheBuster = await getCacheBusterAsync(target, options);
-    return `from "${prefix}${scopedParams}&v=${cacheBuster}"`;
-  });
+  return rewrites.size === 0 ? code : applyImportEdits(parsed, rewrites);
 }
 
 export async function rewriteSSRImportsCompatAsync(
@@ -284,7 +296,6 @@ export async function rewriteSSRImportsCompatAsync(
   options: SSRRewriteOptions = {},
 ): Promise<string> {
   let result = rewriteBareImports(code, options.reactVersion);
-  result = await rewritePathAliasesAsync(result, options);
-  result = await rewriteRelativeImportsAsync(result, options);
+  result = await rewriteInternalModuleImportsAsync(result, options);
   return result;
 }
