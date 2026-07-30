@@ -44,6 +44,9 @@ import { ExclusiveProcessOwner } from "./process-ownership.ts";
 import { HMRHandler } from "./handlers/preview/hmr.handler.ts";
 import { ServerStartupCleanupError } from "./startup-cleanup-error.ts";
 import { snapshotStudioCaptureBundleProvider } from "#veryfront/extensions/studio/index.ts";
+import { snapshotDevUiAssetProvider } from "#veryfront/extensions/dev-ui";
+import { snapshotNodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
+import { inheritRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -295,6 +298,14 @@ function snapshotSuppliedBootstrap(bootstrap: BootstrapResult): BootstrapResult 
   const studioCaptureProvider = suppliedStudioCaptureProvider === undefined
     ? undefined
     : snapshotStudioCaptureBundleProvider(suppliedStudioCaptureProvider);
+  const suppliedDevUiAssetProvider = bootstrap.devUiAssetProvider;
+  const devUiAssetProvider = suppliedDevUiAssetProvider === undefined
+    ? undefined
+    : snapshotDevUiAssetProvider(suppliedDevUiAssetProvider);
+  const suppliedNodeWebSocketServerProvider = bootstrap.nodeWebSocketServerProvider;
+  const nodeWebSocketServerProvider = suppliedNodeWebSocketServerProvider === undefined
+    ? undefined
+    : snapshotNodeWebSocketServerProvider(suppliedNodeWebSocketServerProvider);
   const adapter = bootstrap.adapter;
   const config = bootstrap.config;
   const usingFSAdapter = bootstrap.usingFSAdapter;
@@ -309,6 +320,8 @@ function snapshotSuppliedBootstrap(bootstrap: BootstrapResult): BootstrapResult 
     ...(fsAdapterType !== undefined ? { fsAdapterType } : {}),
     extensionLoader,
     ...(studioCaptureProvider !== undefined ? { studioCaptureProvider } : {}),
+    ...(devUiAssetProvider !== undefined ? { devUiAssetProvider } : {}),
+    ...(nodeWebSocketServerProvider !== undefined ? { nodeWebSocketServerProvider } : {}),
     ...(dispose !== undefined ? { dispose: () => dispose.call(bootstrap) } : {}),
   });
 }
@@ -558,6 +571,7 @@ async function startProductionServerWithAuthorization(
           localProjects,
           projectEnvFetch,
           studioCaptureProvider: bootstrap.studioCaptureProvider,
+          devUiAssetProvider: bootstrap.devUiAssetProvider,
         });
         activeRuntimeHandler = baseHandler;
         runtimeHandlerDisposed = false;
@@ -572,7 +586,9 @@ async function startProductionServerWithAuthorization(
             async (req: Request) => {
               const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
               if (isWebSocketUpgrade) return coreHandler(req);
-              return coreHandler(await requestInterceptor(req));
+              return coreHandler(
+                inheritRequestPeerProvenance(req, await requestInterceptor(req)),
+              );
             },
             { ready: coreHandler.ready },
           )
@@ -584,6 +600,7 @@ async function startProductionServerWithAuthorization(
           port,
           hostname: bindAddress, // Deno uses "hostname" for bind address
           signal,
+          nodeWebSocketServerProvider: bootstrap.nodeWebSocketServerProvider,
           onListen: (params) => {
             listeningPort = params.port;
             installSSRPort(params.port);

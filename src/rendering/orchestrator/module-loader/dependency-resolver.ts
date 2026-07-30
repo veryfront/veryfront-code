@@ -36,7 +36,7 @@ export type ResolvedModuleDependency = {
   relativePath: string;
   depFilePath: string | null;
   isLocalLib: boolean;
-  /** True when discovered inside `import("…")` rather than a static import. */
+  /** True when discovered inside `import("./module.ts")` rather than a static import. */
   isDynamic: boolean;
 };
 

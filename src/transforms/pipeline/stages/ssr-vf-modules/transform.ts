@@ -742,7 +742,7 @@ export async function resolveAndTransformVeryfrontImport(
  * Drop `with { type: "json" }` from imports that now point at a JavaScript
  * module.
  *
- * A framework import of a `.json` file (`#veryfront/server/dev-ui/manifest.json`)
+ * A framework import of a `.json` file (for example, generated metadata)
  * is resolved by transforming the JSON into a cached `.mjs` that default-exports
  * the data. The attribute on the importer describes the *original* target, so
  * leaving it in place makes the runtime reject the rewritten import with

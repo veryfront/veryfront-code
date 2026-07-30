@@ -1,4 +1,5 @@
 import { walk } from "#std/fs";
+import { collectSourceDependencies } from "./source-import-collector.ts";
 
 export interface CoreDependencyIssue {
   specifier: string;
@@ -17,6 +18,7 @@ export interface RootNpmSpecifierLiteralIssue {
 }
 
 const CORE_THIRD_PARTY_IMPORT_ALLOWLIST = new Set<string>();
+const CORE_SOURCE_ROOT_URL = new URL("file:///veryfront-repository/");
 
 function isThirdPartyImportTarget(target: string): boolean {
   if (target.startsWith("./") || target.startsWith("../")) return false;
@@ -44,6 +46,21 @@ function normalizePath(path: string): string {
   return path.replaceAll("\\", "/").replace(/^\.\//, "");
 }
 
+function bypassesFirstPartyExtensionPackageBoundary(
+  sourcePath: string,
+  specifier: string,
+): boolean {
+  if (!specifier.startsWith("./") && !specifier.startsWith("../")) {
+    return false;
+  }
+  const sourceUrl = new URL(sourcePath, CORE_SOURCE_ROOT_URL);
+  const targetUrl = new URL(specifier, sourceUrl);
+  const target = targetUrl.pathname.startsWith(CORE_SOURCE_ROOT_URL.pathname)
+    ? targetUrl.pathname.slice(CORE_SOURCE_ROOT_URL.pathname.length)
+    : "";
+  return target === "extensions" || target.startsWith("extensions/");
+}
+
 export function shouldCheckCoreSourceImportPath(path: string): boolean {
   const normalized = normalizePath(path);
   if (!normalized.startsWith("src/") && !normalized.startsWith("cli/")) {
@@ -51,7 +68,9 @@ export function shouldCheckCoreSourceImportPath(path: string): boolean {
   }
   if (normalized.startsWith("cli/templates/")) return false;
   if (
-    normalized.includes("/__fixtures__/") || normalized.includes("/fixtures/")
+    normalized.includes("/__fixtures__/") ||
+    normalized.includes("/fixtures/") ||
+    normalized.includes("/__tests__/")
   ) return false;
   if (normalized.endsWith("/_test-setup.ts")) return false;
   if (/\.(?:test|integration|e2e|bench)\.[cm]?[tj]sx?$/.test(normalized)) {
@@ -81,31 +100,6 @@ function isAllowedCoreSourceSpecifier(
   const mappedTarget = importMapTargetForSpecifier(importMap, specifier);
   if (mappedTarget && !isThirdPartyImportTarget(mappedTarget)) return true;
   return allowedSpecifiers.has(specifier);
-}
-
-const STATIC_IMPORT_EXPORT_START_RE = /^\s*(?:import|export)\b/;
-const FROM_SPECIFIER_RE = /\bfrom\s+["']([^"']+)["']/;
-const SIDE_EFFECT_IMPORT_RE = /^\s*import\s+["']([^"']+)["']/;
-const DYNAMIC_IMPORT_RE = /(^|[^"'`])\bimport\s*\(\s*["']([^"']+)["']\s*\)/;
-
-function readImportExportStatement(
-  lines: string[],
-  startIndex: number,
-): string {
-  let statement = lines[startIndex];
-  for (let i = startIndex + 1; i < lines.length; i++) {
-    if (statement.includes(";")) break;
-    statement += `\n${lines[i]}`;
-    if (
-      FROM_SPECIFIER_RE.test(statement) || SIDE_EFFECT_IMPORT_RE.test(statement)
-    ) break;
-  }
-  return statement;
-}
-
-function extractStaticSpecifier(statement: string): string | undefined {
-  return FROM_SPECIFIER_RE.exec(statement)?.[1] ??
-    SIDE_EFFECT_IMPORT_RE.exec(statement)?.[1];
 }
 
 export function findCoreThirdPartyImports(
@@ -186,31 +180,23 @@ export function findCoreThirdPartySourceImports(
     const path = normalizePath(file.path);
     if (!shouldCheckCoreSourceImportPath(path)) continue;
 
-    const lines = file.content.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (STATIC_IMPORT_EXPORT_START_RE.test(line)) {
-        const specifier = extractStaticSpecifier(
-          readImportExportStatement(lines, i),
-        );
-        if (
-          specifier &&
-          !isAllowedCoreSourceSpecifier(specifier, allowedSpecifiers, importMap)
-        ) {
-          issues.push({ path, line: i + 1, specifier });
-        }
-      }
-
-      const dynamicSpecifier = DYNAMIC_IMPORT_RE.exec(line)?.[2];
+    for (
+      const dependency of collectSourceDependencies({
+        path,
+        content: file.content,
+      })
+    ) {
+      const specifier = dependency.specifier;
       if (
-        dynamicSpecifier &&
-        !isAllowedCoreSourceSpecifier(
-          dynamicSpecifier,
-          allowedSpecifiers,
-          importMap,
-        )
+        specifier &&
+        (bypassesFirstPartyExtensionPackageBoundary(path, specifier) ||
+          !isAllowedCoreSourceSpecifier(
+            specifier,
+            allowedSpecifiers,
+            importMap,
+          ))
       ) {
-        issues.push({ path, line: i + 1, specifier: dynamicSpecifier });
+        issues.push({ path, line: dependency.line, specifier });
       }
     }
   }
@@ -218,7 +204,7 @@ export function findCoreThirdPartySourceImports(
   return issues;
 }
 
-async function readCoreSourceFiles(): Promise<
+export async function readCoreSourceFiles(): Promise<
   Array<{ path: string; content: string }>
 > {
   const files: Array<{ path: string; content: string }> = [];
@@ -230,7 +216,7 @@ async function readCoreSourceFiles(): Promise<
         /\bnode_modules\b/,
         /\bdist\b/,
         /\bcoverage\b/,
-        /^\.\.?(?:\/|$)/,
+        /^\.\.(?:\/|$)/,
         /^\.\/\.git(?:\/|$)/,
         /^\.\/\.omx(?:\/|$)/,
         /^\.\/\.worktrees(?:\/|$)/,

@@ -154,6 +154,28 @@ describe("createBuiltinExtensions", () => {
     );
   });
 
+  it("loads the offline Dev UI provider through the deferred extension boundary", async () => {
+    const devUiExtension = await loadOptionalBuiltin("ext-dev-ui-react");
+
+    assertEquals(
+      devUiExtension.contracts?.provides?.includes("DevUiAssetProvider"),
+      true,
+    );
+    assertEquals(devUiExtension.capabilities, []);
+  });
+
+  it("loads Skill YAML parsing through the deferred extension boundary", async () => {
+    const skillYamlExtension = await loadOptionalBuiltin("ext-yaml");
+
+    assertEquals(
+      skillYamlExtension.contracts?.provides?.includes(
+        "SkillDocumentParserProvider",
+      ),
+      true,
+    );
+    assertEquals(skillYamlExtension.capabilities, []);
+  });
+
   it("keeps optional candidates deferred until the loader selects them", () => {
     const authCandidate = createBuiltinExtensions().find((entry) =>
       entry.extension.name === "ext-auth-jwt"
@@ -161,6 +183,15 @@ describe("createBuiltinExtensions", () => {
 
     assert(authCandidate);
     assert(getDeferredExtensionState(authCandidate));
+  });
+
+  it("never auto-loads the explicit Node WebSocket implementation", async () => {
+    const source = await Deno.readTextFile(new URL("./builtin-extensions.ts", import.meta.url));
+    assertEquals(source.includes("ext-node-websocket-ws"), false);
+    assertEquals(
+      OPTIONAL_BUILTIN_EXTENSIONS.some((definition) => definition.name === "ext-node-websocket-ws"),
+      false,
+    );
   });
 
   it("captures optional definitions before deferred loading", async () => {

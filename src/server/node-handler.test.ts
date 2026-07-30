@@ -1,6 +1,15 @@
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { EventEmitter } from "node:events";
+import { createServer, request as nodeRequest } from "node:http";
+import { networkInterfaces } from "node:os";
 import { toNodeHandler } from "./node-handler.ts";
+import { DevDashboardHandler } from "./handlers/dev/dashboard/index.ts";
+import type { HandlerContext } from "./handlers/types.ts";
+import { DASHBOARD_SESSION_PATH } from "#veryfront/extensions/dev-ui/protocol";
+import {
+  getRequestPeerProvenance,
+  isRequestFromLoopbackPeer,
+} from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 class FakeRes extends EventEmitter {
   statusCode?: number;
@@ -60,13 +69,37 @@ function createFakeRes(): FakeRes {
 }
 
 function createFakeReq(
-  init: { method?: string; url?: string; headers?: Record<string, string | string[] | undefined> },
+  init: {
+    method?: string;
+    url?: string;
+    headers?: Record<string, string | string[] | undefined>;
+    remoteAddress?: string;
+  },
 ): import("node:http").IncomingMessage {
   return Object.assign(new EventEmitter(), {
     method: init.method ?? "GET",
     url: init.url ?? "/",
     headers: { host: "localhost", ...(init.headers ?? {}) },
+    socket: { remoteAddress: init.remoteAddress ?? "127.0.0.1" },
   }) as unknown as import("node:http").IncomingMessage;
+}
+
+function localDashboardContext(): HandlerContext {
+  return {
+    projectDir: "/project",
+    securityConfig: null,
+    cspUserHeader: null,
+    isLocalProject: true,
+  } as HandlerContext;
+}
+
+function firstNonLoopbackIpv4Address(): string | undefined {
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const address of addresses ?? []) {
+      if (address.family === "IPv4" && !address.internal) return address.address;
+    }
+  }
+  return undefined;
 }
 
 function collectSetCookies(res: FakeRes): string[] {
@@ -176,6 +209,100 @@ Deno.test("toNodeHandler passes array-valued request headers through to the Requ
 
   // A collapsed-to-first-element bug would yield only "one".
   assertEquals(seen, "one, two");
+});
+
+Deno.test("toNodeHandler records the native socket peer before dispatch", async () => {
+  let provenance: ReturnType<typeof getRequestPeerProvenance>;
+  const nodeHandler = toNodeHandler((request) => {
+    provenance = getRequestPeerProvenance(request);
+    return new Response("ok");
+  });
+  const res = createFakeRes();
+
+  await nodeHandler(
+    createFakeReq({ remoteAddress: "192.168.1.25" }),
+    res as unknown as import("node:http").ServerResponse,
+  );
+
+  assertEquals(provenance, {
+    runtime: "node",
+    transport: "tcp",
+    hostname: "192.168.1.25",
+  });
+});
+
+Deno.test("toNodeHandler denies dashboard session minting for a forged local Host", async () => {
+  const dashboard = new DevDashboardHandler();
+  const nodeHandler = toNodeHandler(async (request) => {
+    return (await dashboard.handle(request, localDashboardContext())).response ??
+      new Response("Not Found", { status: 404 });
+  });
+  const res = createFakeRes();
+
+  await nodeHandler(
+    createFakeReq({
+      url: DASHBOARD_SESSION_PATH,
+      headers: { host: "localhost:3000" },
+      remoteAddress: "203.0.113.8",
+    }),
+    res as unknown as import("node:http").ServerResponse,
+  );
+
+  assertEquals(res.statusCode, 403);
+  assertEquals(collectSetCookies(res), []);
+});
+
+Deno.test("a real Node listener denies forged local Host traffic from a LAN peer", async () => {
+  const lanAddress = firstNonLoopbackIpv4Address();
+  if (lanAddress === undefined) return;
+
+  const dashboard = new DevDashboardHandler();
+  let observedPeer: string | undefined;
+  let observedLoopback: boolean | undefined;
+  const server = createServer(
+    toNodeHandler(async (request) => {
+      observedPeer = getRequestPeerProvenance(request)?.hostname;
+      observedLoopback = isRequestFromLoopbackPeer(request);
+      return (await dashboard.handle(request, localDashboardContext())).response ??
+        new Response("Not Found", { status: 404 });
+    }),
+  );
+  await new Promise<void>((resolve) => server.listen(0, "0.0.0.0", resolve));
+
+  try {
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected a TCP listener address");
+    }
+    const result = await new Promise<{ status: number; setCookie: string[] }>((resolve, reject) => {
+      const request = nodeRequest({
+        hostname: lanAddress,
+        port: address.port,
+        path: DASHBOARD_SESSION_PATH,
+        headers: { host: `localhost:${address.port}` },
+      }, (response) => {
+        response.resume();
+        response.once("end", () => {
+          const rawCookie = response.headers["set-cookie"];
+          resolve({
+            status: response.statusCode ?? 0,
+            setCookie: rawCookie ?? [],
+          });
+        });
+      });
+      request.once("error", reject);
+      request.end();
+    });
+
+    assertEquals(observedPeer === lanAddress || observedPeer === `::ffff:${lanAddress}`, true);
+    assertEquals(observedLoopback, false);
+    assertEquals(result.status, 403);
+    assertEquals(result.setCookie, []);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
 });
 
 Deno.test("toNodeHandler aborts the Web request when the Node client disconnects", async () => {

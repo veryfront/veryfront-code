@@ -13,7 +13,8 @@
     },
     "capabilities": [],
     "npm": {
-      "runtimeVersionFromManifest": true
+      "runtimeVersionFromManifest": true,
+      "runtimeDependencies": []
     }
   },
   "imports": {

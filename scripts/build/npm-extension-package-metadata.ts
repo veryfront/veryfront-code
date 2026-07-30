@@ -17,6 +17,10 @@ export type ExtensionManifest = {
     npm?: {
       publish?: boolean;
       runtimeVersionFromManifest?: boolean;
+      /** Npm packages required by emitted runtime files; defaults to every npm import. */
+      runtimeDependencies?: readonly string[];
+      /** Veryfront peer imports reached by emitted runtime entrypoints; defaults to every one. */
+      runtimePeerImports?: readonly string[];
     };
   };
   imports?: Record<string, string>;
@@ -92,6 +96,44 @@ export function manifestDependencies(
     dependencies[parsed.name] = parsed.version;
   }
 
+  const selected = manifest.veryfront?.npm?.runtimeDependencies;
+  if (selected === undefined) return sortDependencyRecord(dependencies);
+  if (!Array.isArray(selected)) {
+    throw new TypeError("veryfront.npm.runtimeDependencies must be an array");
+  }
+
+  const selectedNames = new Set<string>();
+  for (let index = 0; index < selected.length; index += 1) {
+    const dependencyName = selected[index];
+    if (
+      typeof dependencyName !== "string" ||
+      !Object.hasOwn(dependencies, dependencyName)
+    ) {
+      throw new TypeError(
+        `veryfront.npm.runtimeDependencies[${index}] must name an npm package declared by imports: ${
+          String(dependencyName)
+        }`,
+      );
+    }
+    if (selectedNames.has(dependencyName)) {
+      throw new TypeError(
+        `veryfront.npm.runtimeDependencies contains duplicate package ${dependencyName}`,
+      );
+    }
+    selectedNames.add(dependencyName);
+  }
+
+  return sortDependencyRecord(Object.fromEntries(
+    [...selectedNames].map((dependencyName) => [
+      dependencyName,
+      dependencies[dependencyName]!,
+    ]),
+  ));
+}
+
+function sortDependencyRecord(
+  dependencies: Readonly<Record<string, string>>,
+): Record<string, string> {
   return Object.fromEntries(
     Object.entries(dependencies).toSorted(([left], [right]) =>
       left.localeCompare(right)
@@ -163,8 +205,8 @@ export function createExtensionPackageSpec(input: {
       `${input.manifestPath} must declare veryfront.extension: true`,
     );
   }
-  const runtimeVersionFromManifest =
-    input.manifest.veryfront.npm?.runtimeVersionFromManifest;
+  const runtimeVersionFromManifest = input.manifest.veryfront.npm
+    ?.runtimeVersionFromManifest;
   if (
     runtimeVersionFromManifest !== undefined &&
     typeof runtimeVersionFromManifest !== "boolean"
@@ -509,24 +551,65 @@ function createVeryfrontDntMappings(input: {
 }): Record<string, NpmPackageMapping> {
   const exportSubpaths = new Set(Object.keys(input.rootConfig.exports ?? {}));
   const mappings: Record<string, NpmPackageMapping> = {};
+  const selectedRuntimeImports = runtimePeerImports(input.manifest);
 
   for (
     const [specifier, target] of Object.entries(input.manifest.imports ?? {})
   ) {
-    if (!specifier.startsWith("veryfront/")) continue;
-
-    const exportSubpath = `./${specifier.slice("veryfront/".length)}`;
+    if (selectedRuntimeImports !== undefined && !selectedRuntimeImports.has(specifier)) {
+      continue;
+    }
+    const exportSubpath = specifier === "veryfront"
+      ? "."
+      : specifier.startsWith("veryfront/")
+      ? `./${specifier.slice("veryfront/".length)}`
+      : undefined;
+    if (exportSubpath === undefined) continue;
     if (!exportSubpaths.has(exportSubpath)) continue;
 
     const resolvedTarget = resolveManifestTarget(input.manifestDir, target);
     mappings[toFileUrl(join(input.rootDir, resolvedTarget)).href] = {
       name: "veryfront",
       version: `^${input.version}`,
-      subPath: exportSubpath.slice(2),
+      ...(exportSubpath === "." ? {} : { subPath: exportSubpath.slice(2) }),
     };
   }
 
   return mappings;
+}
+
+function runtimePeerImports(
+  manifest: ExtensionManifest,
+): ReadonlySet<string> | undefined {
+  const selected = manifest.veryfront?.npm?.runtimePeerImports;
+  if (selected === undefined) return undefined;
+  if (!Array.isArray(selected)) {
+    throw new TypeError("veryfront.npm.runtimePeerImports must be an array");
+  }
+
+  const imports = manifest.imports ?? {};
+  const selectedImports = new Set<string>();
+  for (let index = 0; index < selected.length; index += 1) {
+    const specifier = selected[index];
+    if (
+      typeof specifier !== "string" ||
+      (specifier !== "veryfront" && !specifier.startsWith("veryfront/")) ||
+      !Object.hasOwn(imports, specifier)
+    ) {
+      throw new TypeError(
+        `veryfront.npm.runtimePeerImports[${index}] must name a Veryfront import declared by imports: ${
+          String(specifier)
+        }`,
+      );
+    }
+    if (selectedImports.has(specifier)) {
+      throw new TypeError(
+        `veryfront.npm.runtimePeerImports contains duplicate import ${specifier}`,
+      );
+    }
+    selectedImports.add(specifier);
+  }
+  return selectedImports;
 }
 
 function resolveManifestTarget(manifestDir: string, target: string): string {

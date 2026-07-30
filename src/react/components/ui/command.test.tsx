@@ -155,6 +155,7 @@ describe("Command", () => {
         beta.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
       });
       await waitFor(() => input.getAttribute("aria-activedescendant") === beta.id);
+      await waitFor(() => scrollCalls === 1);
       assertEquals(scrollCalls, 1);
       flushSync(() => {
         disabled.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));

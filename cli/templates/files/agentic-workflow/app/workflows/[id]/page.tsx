@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { usePageContext } from "veryfront/context";
-import { useWorkflow } from "veryfront/workflow";
+import { useWorkflow } from "veryfront/workflow/react";
 
 const STEP_ICONS: Record<string, string> = {
   completed: "\u2713",

@@ -7,35 +7,59 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool } from "#veryfront/tool";
-import { executeAgent } from "./agent.ts";
+import { isAbsolute, resolve } from "veryfront/platform/path";
+import { executeAgent, MAX_CLAUDE_CODE_AGENT_TURNS } from "./agent.ts";
 import type { ClaudeCodeMode, ClaudeCodeResult } from "./types.ts";
 
-const getClaudeCodeInputSchema = defineSchema((v) =>
-  v.object({
-    task: v.string().describe("The task for the Claude Code agent to perform"),
-    mode: v
-      .enum(["code", "analysis", "custom"])
-      .optional()
-      .default("code")
-      .describe("Tool mode: code (read-write), analysis (read-only), custom (user-specified)"),
-    maxTurns: v
-      .number()
-      .max(100)
-      .optional()
-      .default(20)
-      .describe("Maximum agentic loop turns"),
-    files: v
-      .array(v.string())
-      .optional()
-      .describe("Specific files to focus on"),
-    context: v
-      .record(v.string(), v.unknown())
-      .optional()
-      .describe("Additional context to include in the prompt"),
-  })
-);
+const getClaudeCodeInputSchema = (defaultMode: ClaudeCodeMode = "analysis") =>
+  defineSchema((v) =>
+    v.object({
+      task: v.string().min(1).describe("The task for the Claude Code agent to perform"),
+      mode: v
+        .enum(["code", "analysis", "custom"])
+        .optional()
+        .default(defaultMode)
+        .describe("Tool mode: code (read-write), analysis (read-only), custom (user-specified)"),
+      maxTurns: v
+        .number()
+        .int()
+        .positive()
+        .max(MAX_CLAUDE_CODE_AGENT_TURNS)
+        .optional()
+        .default(20)
+        .describe("Maximum agentic loop turns"),
+      files: v
+        .array(v.string())
+        .optional()
+        .describe("Specific files to focus on"),
+      context: v
+        .record(v.string(), v.unknown())
+        .optional()
+        .describe("Additional context to include in the prompt"),
+    })
+  );
 
-type ClaudeCodeInput = InferSchema<ReturnType<typeof getClaudeCodeInputSchema>>;
+type ClaudeCodeInput = InferSchema<
+  ReturnType<ReturnType<typeof getClaudeCodeInputSchema>>
+>;
+
+const CLAUDE_CODE_INPUT_SCHEMA_JSON: NonNullable<
+  Tool<ClaudeCodeInput, ClaudeCodeResult>["inputSchemaJson"]
+> = {
+  type: "object",
+  properties: {
+    task: { type: "string", description: "The task for the agent" },
+    mode: {
+      type: "string",
+      enum: ["code", "analysis", "custom"],
+      default: "analysis",
+    },
+    maxTurns: { type: "number", default: 20 },
+    files: { type: "array", items: { type: "string" } },
+    context: { type: "object" },
+  },
+  required: ["task"],
+};
 
 /**
  * Build the full prompt from input
@@ -52,6 +76,44 @@ function buildPrompt(input: ClaudeCodeInput): string {
   }
 
   return prompt;
+}
+
+async function executeToolAgent(
+  task: string,
+  config: Parameters<typeof executeAgent>[1],
+): Promise<ClaudeCodeResult> {
+  const result = await executeAgent(task, config);
+  if (!result.success) {
+    throw new Error(`Claude Code agent execution failed: ${result.error}`);
+  }
+  return result;
+}
+
+function admittedWorkingDirectory(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string" || value.length === 0 || value !== value.trim() ||
+    value.includes("\0") || !isAbsolute(value) || resolve(value) !== value
+  ) {
+    throw new TypeError(
+      "Claude Code tool working directory must be an explicit canonical absolute path",
+    );
+  }
+  return value;
+}
+
+function resolveToolWorkingDirectory(
+  mode: ClaudeCodeMode,
+  configuredCwd: string | undefined,
+  contextCwd: unknown,
+): string | undefined {
+  const cwd = configuredCwd ?? admittedWorkingDirectory(contextCwd);
+  if (mode !== "analysis" && cwd === undefined) {
+    throw new TypeError(
+      "Writable Claude Code tool execution requires an explicit absolute working directory",
+    );
+  }
+  return cwd;
 }
 
 /**
@@ -81,28 +143,16 @@ export const claudeCodeTool: Tool<ClaudeCodeInput, ClaudeCodeResult> = {
   type: "function",
   description: "Run a Claude Code agent for complex coding tasks. " +
     "Supports file editing, bash commands, and iterative problem-solving.",
-  inputSchema: getClaudeCodeInputSchema() as unknown as Schema<ClaudeCodeInput>,
-  inputSchemaJson: {
-    type: "object",
-    properties: {
-      task: { type: "string", description: "The task for the agent" },
-      mode: {
-        type: "string",
-        enum: ["code", "analysis", "custom"],
-        default: "code",
-      },
-      maxTurns: { type: "number", default: 20 },
-      files: { type: "array", items: { type: "string" } },
-      context: { type: "object" },
-    },
-    required: ["task"],
-  },
+  inputSchema: getClaudeCodeInputSchema()() as unknown as Schema<ClaudeCodeInput>,
+  inputSchemaJson: CLAUDE_CODE_INPUT_SCHEMA_JSON,
 
-  execute: async (input, _context) => {
-    return executeAgent(buildPrompt(input), {
-      mode: input.mode as ClaudeCodeMode,
+  execute: async (input, context) => {
+    const mode = input.mode as ClaudeCodeMode;
+    return executeToolAgent(buildPrompt(input), {
+      mode,
       maxTurns: input.maxTurns,
-      debug: true,
+      cwd: resolveToolWorkingDirectory(mode, undefined, context?.cwd),
+      abortSignal: context?.abortSignal,
     });
   },
 };
@@ -117,25 +167,83 @@ export function createClaudeCodeTool(
     defaultMode?: ClaudeCodeMode;
     defaultMaxTurns?: number;
     system?: string;
+    /** Host-admitted absolute working directory used for provider file operations. */
+    cwd?: string;
   } = {},
 ): Tool<ClaudeCodeInput, ClaudeCodeResult> {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("Claude Code tool options must be an object");
+  }
+  if (options.id !== undefined && options.id.trim().length === 0) {
+    throw new TypeError("Claude Code tool id must be a non-empty string");
+  }
+  if (
+    options.description !== undefined &&
+    options.description.trim().length === 0
+  ) {
+    throw new TypeError("Claude Code tool description must be a non-empty string");
+  }
+  if (
+    options.defaultMode !== undefined &&
+    !(["analysis", "code", "custom"] as const).includes(options.defaultMode)
+  ) {
+    throw new TypeError("Claude Code tool defaultMode must be analysis, code, or custom");
+  }
+  if (
+    options.defaultMaxTurns !== undefined &&
+    (!Number.isSafeInteger(options.defaultMaxTurns) ||
+      options.defaultMaxTurns < 1 ||
+      options.defaultMaxTurns > MAX_CLAUDE_CODE_AGENT_TURNS)
+  ) {
+    throw new RangeError(
+      `Claude Code tool defaultMaxTurns must be between 1 and ${MAX_CLAUDE_CODE_AGENT_TURNS}`,
+    );
+  }
+  if (options.system !== undefined && options.system.trim().length === 0) {
+    throw new TypeError("Claude Code tool system prompt must be a non-empty string");
+  }
+  const configuredCwd = admittedWorkingDirectory(options.cwd);
+
+  const id = options.id ?? claudeCodeTool.id;
+  const description = options.description ?? claudeCodeTool.description;
+  const defaultMode = options.defaultMode ?? "analysis";
+  const defaultMaxTurns = options.defaultMaxTurns ?? 20;
+  const systemPrompt = options.system;
+
   return {
     ...claudeCodeTool,
-    id: options.id || claudeCodeTool.id,
-    description: options.description || claudeCodeTool.description,
+    id,
+    description,
+    inputSchema: getClaudeCodeInputSchema(defaultMode)() as unknown as Schema<ClaudeCodeInput>,
+    inputSchemaJson: {
+      ...CLAUDE_CODE_INPUT_SCHEMA_JSON,
+      properties: {
+        ...CLAUDE_CODE_INPUT_SCHEMA_JSON.properties,
+        mode: {
+          type: "string",
+          enum: ["code", "analysis", "custom"],
+          default: defaultMode,
+        },
+      },
+    },
 
-    execute: (input, _context) => {
+    execute: (input, context) => {
       const mergedInput: ClaudeCodeInput = {
         ...input,
-        mode: input.mode || options.defaultMode || "code",
-        maxTurns: input.maxTurns || options.defaultMaxTurns || 20,
+        mode: input.mode ?? defaultMode,
+        maxTurns: input.maxTurns ?? defaultMaxTurns,
       };
 
-      return executeAgent(buildPrompt(mergedInput), {
+      return executeToolAgent(buildPrompt(mergedInput), {
         mode: mergedInput.mode as ClaudeCodeMode,
         maxTurns: mergedInput.maxTurns,
-        systemPrompt: options.system,
-        debug: true,
+        systemPrompt,
+        cwd: resolveToolWorkingDirectory(
+          mergedInput.mode as ClaudeCodeMode,
+          configuredCwd,
+          context?.cwd,
+        ),
+        abortSignal: context?.abortSignal,
       });
     },
   };

@@ -23,11 +23,9 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
   const chat = `${base}/chat/index.js${ssr}`;
   const mdx = `${base}/mdx/index.js${ssr}`;
 
-  // Map veryfront/workflow to the React hooks submodule for SSR.
-  // The full workflow/index.ts imports heavy server-side code (executor, backends, DAG)
-  // that fails to transform and produces unresolved relative imports. SSR only needs
-  // the React hooks (useWorkflowStart, useWorkflowList, useWorkflow, useApproval).
-  const workflowReact = `${base}/workflow/react/index.js${ssr}`;
+  // React-bound workflow hooks are an explicit integration entry point. The
+  // dependency-free workflow core is intentionally not browser-mapped.
+  const workflowReact = `${base}/react/workflow/index.js${ssr}`;
 
   // veryfront/react is a barrel that re-exports all browser-side modules.
   const react = `${base}/react/public.js${ssr}`;
@@ -41,7 +39,7 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
     "veryfront/markdown": markdown,
     "veryfront/chat": chat,
     "veryfront/mdx": mdx,
-    "veryfront/workflow": workflowReact,
+    "veryfront/workflow/react": workflowReact,
     "veryfront/react/head": head,
     "veryfront/react/router": router,
     "veryfront/react/context": context,

@@ -21,6 +21,7 @@ import {
   textResponse,
 } from "../sandbox/sandbox.test-helpers.ts";
 import { detectRuntime, getSkillScriptExecutor, LocalScriptExecutor } from "./executor.ts";
+import { SKILL_SCRIPT_ENV_KEY_REGEX } from "./limits.ts";
 
 function withInheritedArrayIndexSetter<T>(
   index: number,
@@ -612,6 +613,111 @@ describe("src/skill/executor", () => {
         },
       });
       assertEquals(envResult.exitCode, 0);
+    });
+
+    it("keeps direct environment-name validation independent of public regex and prototype mutation", async () => {
+      const executor = new LocalScriptExecutor();
+      const controller = new AbortController();
+      controller.abort();
+      const originalSource = SKILL_SCRIPT_ENV_KEY_REGEX.source;
+      const originalTest = Object.getOwnPropertyDescriptor(RegExp.prototype, "test");
+      let hookCalls = 0;
+
+      try {
+        SKILL_SCRIPT_ENV_KEY_REGEX.compile(".*");
+        Object.defineProperty(RegExp.prototype, "test", {
+          configurable: true,
+          value() {
+            hookCalls += 1;
+            return true;
+          },
+          writable: true,
+        });
+        await assertRejects(
+          () =>
+            executor.execute({
+              scriptPath: "echo",
+              env: { "BAD=KEY": "value" },
+              abortSignal: controller.signal,
+            }),
+          Error,
+          "Invalid environment variable name",
+        );
+      } finally {
+        if (originalTest) Object.defineProperty(RegExp.prototype, "test", originalTest);
+        SKILL_SCRIPT_ENV_KEY_REGEX.compile(originalSource);
+      }
+
+      assertEquals(hookCalls, 0);
+    });
+
+    it("rejects accessor input fields despite inherited descriptor pollution", async () => {
+      const originalValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      const controller = new AbortController();
+      controller.abort();
+      let getterCalls = 0;
+      const input = Object.defineProperties({}, {
+        scriptPath: {
+          enumerable: true,
+          get() {
+            getterCalls += 1;
+            return "do-not-read";
+          },
+        },
+        abortSignal: { enumerable: true, value: controller.signal },
+      });
+
+      try {
+        Object.defineProperty(Object.prototype, "value", {
+          configurable: true,
+          value: "echo",
+          writable: true,
+        });
+        await assertRejects(
+          () => new LocalScriptExecutor().execute(input as never),
+          TypeError,
+          "data property",
+        );
+      } finally {
+        if (originalValue) {
+          Object.defineProperty(Object.prototype, "value", originalValue);
+        } else {
+          Reflect.deleteProperty(Object.prototype, "value");
+        }
+      }
+
+      assertEquals(getterCalls, 0);
+    });
+
+    it("rejects proxied environment records without invoking traps", async () => {
+      let trapCalls = 0;
+      const env = new Proxy(
+        { SAFE: "value" },
+        {
+          ownKeys(target) {
+            trapCalls += 1;
+            return Reflect.ownKeys(target);
+          },
+          getOwnPropertyDescriptor(target, key) {
+            trapCalls += 1;
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        },
+      );
+      const controller = new AbortController();
+      controller.abort();
+
+      await assertRejects(
+        () =>
+          new LocalScriptExecutor().execute({
+            scriptPath: "echo",
+            env,
+            abortSignal: controller.signal,
+          }),
+        TypeError,
+        "must not be a proxy",
+      );
+      assertEquals(trapCalls, 0);
     });
   });
 

@@ -1,4 +1,4 @@
-import { getEnv } from "veryfront/platform";
+import { getEnv } from "veryfront";
 import { MAX_TIMER_DELAY_MS } from "veryfront/utils";
 
 const MAX_REDIS_URL_CODE_UNITS = 4_096;

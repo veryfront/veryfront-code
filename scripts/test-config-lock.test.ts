@@ -59,6 +59,14 @@ Deno.test("script tooling uses an isolated lockfile", async () => {
       "test:scripts must type-check the framework candidate import graph",
     );
   }
+  if (
+    !scriptsTask.includes("deno task check:scripts:rsc-prebundle") ||
+    !scriptsTask.includes("scripts/build/prebundle-rsc-scripts.test.ts")
+  ) {
+    throw new Error(
+      "test:scripts must type-check and run the RSC browser-boundary regression suite",
+    );
+  }
 
   const frameworkCandidateCheck =
     rootConfig.tasks?.["check:scripts:framework-candidates"] ?? "";
@@ -74,6 +82,20 @@ Deno.test("script tooling uses an isolated lockfile", async () => {
   ) {
     throw new Error(
       "framework candidate scripts must type-check against the frozen scripts configuration",
+    );
+  }
+
+  const rscPrebundleCheck = rootConfig.tasks?.["check:scripts:rsc-prebundle"] ??
+    "";
+  if (
+    !rscPrebundleCheck.includes("--config=scripts/test.deno.json") ||
+    !rscPrebundleCheck.includes("--frozen") ||
+    !rscPrebundleCheck.includes("scripts/build/prebundle-rsc-import-map.ts") ||
+    !rscPrebundleCheck.includes("scripts/build/prebundle-rsc-scripts.ts") ||
+    !rscPrebundleCheck.includes("scripts/build/prebundle-rsc-scripts.test.ts")
+  ) {
+    throw new Error(
+      "RSC prebundle scripts must type-check against the frozen scripts configuration",
     );
   }
 
@@ -133,7 +155,7 @@ Deno.test("strict audit and extension checks use isolated frozen least-privilege
   assertEquals(permissionFlags(strict), ["--allow-read", "--allow-write"]);
   assertEquals(
     config.tasks["lint:core-deps"],
-    "deno run --allow-read scripts/lint/audit-core-deps.ts",
+    "deno run --config=scripts/test.deno.json --frozen --allow-read scripts/lint/audit-core-deps.ts",
   );
 
   const extensions = config.tasks["typecheck:extensions"] ?? "";

@@ -7,6 +7,7 @@ import { clearConfigCache } from "#veryfront/config";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
+import { createMockAdapter as createPlatformMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import {
   __registerLogRecordEmitter,
   __resetLoggerConfigForTests,
@@ -27,6 +28,7 @@ import { runWithProjectEnv } from "../project-env/storage.ts";
 import { requestTracker } from "./request-tracker.ts";
 import { installTestCSSOptimizationEngine } from "../../../tests/_helpers/css-optimization-engine.ts";
 import { installTestCSSProcessor } from "../../../tests/_helpers/css-processor.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 const encoder = new TextEncoder();
 
@@ -94,13 +96,15 @@ function createMockAdapter(
   environment: Readonly<Record<string, string>> = {},
   id: RuntimeId = "memory",
 ): RuntimeAdapter {
+  const completeFileSystem = createPlatformMockAdapter().fs;
   return {
     id,
     name: "test",
     capabilities: {},
     fs: {
+      ...completeFileSystem,
       exists: () => Promise.resolve(false),
-    } as unknown as RuntimeAdapter["fs"],
+    },
     env: {
       get: (key: string) => environment[key],
       set: () => {},
@@ -172,9 +176,15 @@ function createProxyModeHandler(
 async function getLocalProjectSlugs(
   handler: ReturnType<typeof createVeryfrontHandler>,
 ): Promise<string[]> {
-  const response = await handler(
-    new Request("http://veryfront.me/_vf/api/projects"),
-  );
+  const request = new Request("http://veryfront.me/_vf/api/projects", {
+    headers: { host: "veryfront.me" },
+  });
+  recordRequestPeerFromTransport(request, {
+    runtime: "node",
+    transport: "tcp",
+    hostname: "127.0.0.1",
+  });
+  const response = await handler(request);
   assertEquals(response.status, 200);
   const body = await response.json() as {
     data: Array<{ slug: string }>;
@@ -196,11 +206,17 @@ function createProxySecurityAdapter(
   environment: Readonly<Record<string, string>> = {},
   onRunWithContext?: (options: ProxyRunWithContextOptions) => void,
 ): RuntimeAdapter {
+  const completeFileSystem = createPlatformMockAdapter().fs;
   const configPaths = new Set([
     "/veryfront.config.ts",
     ...(localProjectPath ? [`${localProjectPath}/veryfront.config.ts`] : []),
   ]);
   const fs = {
+    ...completeFileSystem,
+    // Keep the writable capability as an enumerable, receiver-safe data
+    // property so SecureFs can snapshot and invoke this test adapter exactly
+    // like a production adapter.
+    writeFile: completeFileSystem.writeFile.bind(completeFileSystem),
     getUnderlyingAdapter: () => fs,
     getAdapterType: () => "MultiProjectFSAdapter",
     isVeryfrontAdapter: () => true,
@@ -410,25 +426,38 @@ describe("server/runtime-handler/index", () => {
     });
     await handler.ready;
 
-    const requests = [
+    const unavailableDevelopmentRequests = [
       new Request("http://localhost/_vf_debug/context"),
       new Request("http://localhost/_dev/api/files"),
       new Request("http://localhost/_debug/memory"),
       new Request("http://localhost/_veryfront/fs/mod.ts"),
       new Request("http://localhost/_metrics"),
-      new Request("http://localhost/_veryfront/log", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ level: "info", message: "must not be accepted" }),
-      }),
       new Request("http://localhost/_ws"),
       new Request("http://localhost/README.md"),
     ];
 
-    for (const request of requests) {
+    for (const request of unavailableDevelopmentRequests) {
       const response = await handler(request);
       assertEquals(response.status, 404, `${request.method} ${new URL(request.url).pathname}`);
       await response.body?.cancel();
+    }
+
+    const marker = "production profile must not accept this client log";
+    const { entries, restore } = captureDebugLogs();
+    try {
+      const response = await handler(
+        new Request("http://localhost/_veryfront/log", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ level: "info", message: marker }),
+        }),
+      );
+      assertEquals(response.status, 403);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals(await response.text(), "Forbidden – invalid or missing CSRF token");
+      assertEquals(entries.some((entry) => entry.message.includes(marker)), false);
+    } finally {
+      restore();
     }
   });
 

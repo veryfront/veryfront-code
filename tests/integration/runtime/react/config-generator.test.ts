@@ -194,12 +194,44 @@ describe("React Config Generator", () => {
       });
     });
 
-    it("handles malformed deno.json", async () => {
+    it("rejects malformed deno.json instead of reporting no React version", async () => {
       await withTestContext("detect-malformed", async (context: TestContext) => {
         await writeTextFile(`${context.projectDir}/deno.json`, "invalid json {");
 
-        const detected = await detectReactVersionFromConfig(context.projectDir);
-        assertEquals(detected, null);
+        await assertRejects(
+          () => detectReactVersionFromConfig(context.projectDir),
+          SyntaxError,
+        );
+      });
+    });
+
+    it("rejects invalid config shapes instead of silently treating them as absent", async () => {
+      await withTestContext("detect-invalid-shape", async (context: TestContext) => {
+        await writeDenoJson(context.projectDir, { imports: { react: 19 } });
+
+        await assertRejects(
+          () => detectReactVersionFromConfig(context.projectDir),
+          TypeError,
+          "imports must be an object with string values",
+        );
+      });
+    });
+
+    it("does not infer a version from unrelated package or query text", async () => {
+      await withTestContext("detect-near-miss", async (context: TestContext) => {
+        for (
+          const react of [
+            "https://esm.sh/not-react@18.2.0",
+            "https://example.com/pkg?dependency=react@19",
+            "npm:react-dom@18.2.0",
+          ]
+        ) {
+          await writeDenoJson(context.projectDir, { imports: { react } });
+          assertEquals(
+            await detectReactVersionFromConfig(context.projectDir),
+            null,
+          );
+        }
       });
     });
   });

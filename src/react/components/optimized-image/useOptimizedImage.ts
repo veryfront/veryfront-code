@@ -1,7 +1,4 @@
-import type {
-  ImageFormat,
-  OptimizedImageMetadata,
-} from "#veryfront/build/asset-pipeline/image-optimizer/types.ts";
+import type { OptimizedImageFormat as ImageFormat, OptimizedImageMetadata } from "#veryfront/types";
 import { useOptimizedImageMetadata as useManifestMetadata } from "../../runtime/core.ts";
 import {
   assertImageQuality,

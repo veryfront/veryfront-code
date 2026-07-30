@@ -166,6 +166,7 @@ describe("cli/templates", () => {
     );
     assertEquals(templateConfigs["docs-agent"]?.firstPartyExtensions, [
       "@veryfront/ext-css-tailwind",
+      "@veryfront/ext-node-websocket-ws",
       "@veryfront/ext-document-kreuzberg",
     ]);
   });
@@ -183,7 +184,33 @@ describe("cli/templates", () => {
         new URL(`./files/${templateName}/veryfront.config.ts`, import.meta.url),
       );
       assertEquals(config.includes('from "@veryfront/ext-css-tailwind"'), true);
-      assertEquals(config.includes("extensions: [extTailwind()]"), true);
+      assertEquals(
+        config.includes("extensions: [extTailwind(), extNodeWebSocketWs()]"),
+        true,
+      );
+    }
+  });
+
+  it("explicitly composes the Node WebSocket transport used by starter HMR", async () => {
+    for (const templateName of STARTER_TEMPLATE_NAMES) {
+      assertEquals(
+        templateConfigs[templateName]?.firstPartyExtensions?.includes(
+          "@veryfront/ext-node-websocket-ws",
+        ),
+        true,
+        `${templateName} must install its explicit Node WebSocket transport`,
+      );
+      const config = await Deno.readTextFile(
+        new URL(`./files/${templateName}/veryfront.config.ts`, import.meta.url),
+      );
+      assertEquals(
+        config.includes('from "@veryfront/ext-node-websocket-ws"'),
+        true,
+      );
+      assertEquals(
+        config.includes("extensions: [extTailwind(), extNodeWebSocketWs()]"),
+        true,
+      );
     }
   });
 

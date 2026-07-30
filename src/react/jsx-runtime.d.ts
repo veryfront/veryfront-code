@@ -1,7 +1,7 @@
-/// <reference types="@types/react" />
+type ReactIntrinsicElements = import("react").JSX.IntrinsicElements;
 
 declare namespace JSX {
-  interface IntrinsicElements extends React.JSX.IntrinsicElements {}
+  interface IntrinsicElements extends ReactIntrinsicElements {}
 }
 
 declare module "react/jsx-runtime" {

@@ -1,6 +1,12 @@
-import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {
+  buildExtensionPackages,
   createDntExtensionEntryPoints,
   removeUnusedBundledRootSource,
   synchronizeEmittedExtensionManifestVersion,
@@ -88,6 +94,45 @@ describe("manifestDependencies", () => {
     });
   });
 
+  it("publishes only the explicitly selected runtime dependencies", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-generated-runtime",
+      exports: "./src/index.ts",
+      veryfront: {
+        extension: true,
+        npm: { runtimeDependencies: ["package-runtime"] },
+      },
+      imports: {
+        runtime: "npm:package-runtime@1.2.3",
+        bundled: "npm:package-build-only@4.5.6",
+      },
+    };
+
+    assertEquals(manifestDependencies(manifest), {
+      "package-runtime": "1.2.3",
+    });
+  });
+
+  it("rejects runtime dependency selections that are not backed by manifest imports", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-invalid-runtime-selection",
+      exports: "./src/index.ts",
+      veryfront: {
+        extension: true,
+        npm: { runtimeDependencies: ["package-missing"] },
+      },
+      imports: {
+        bundled: "npm:package-build-only@4.5.6",
+      },
+    };
+
+    assertThrows(
+      () => manifestDependencies(manifest),
+      TypeError,
+      "package-missing",
+    );
+  });
+
   it("publishes CSS runtime dependencies only from their independent extensions", async () => {
     const expectedDependencies = {
       "ext-css-lightning": {
@@ -146,12 +191,8 @@ describe("createExtensionPackageSpec", () => {
         path: "extensions/ext-react-ssr/src/worker-renderer.ts",
       },
     ]);
-    const extensionDependencies = {
-      react: "19.2.4",
-      "react-dom": "19.2.4",
-    };
-    assertEquals(spec.manifestDependencies, extensionDependencies);
-    assertEquals(spec.packageJson.dependencies, extensionDependencies);
+    assertEquals(spec.manifestDependencies, {});
+    assertEquals(spec.packageJson.dependencies, {});
     assertEquals(spec.packageJson.veryfront, manifest.veryfront);
 
     const runtimeSource = await Deno.readTextFile(
@@ -410,6 +451,70 @@ describe("createExtensionPackageSpec", () => {
       false,
     );
   });
+
+  it("externalizes the public Veryfront root entrypoint", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-runtime-env",
+      exports: "./src/index.ts",
+      veryfront: { extension: true },
+      imports: {
+        veryfront: "../../src/index.ts",
+      },
+    };
+
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-runtime-env/deno.json",
+      manifest,
+      rootConfig: {
+        ...rootConfig,
+        exports: { ".": "./src/index.ts", ...rootConfig.exports },
+      },
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    assertEquals(Object.values(spec.dntMappings), [
+      { name: "veryfront", version: "^0.1.985" },
+    ]);
+  });
+
+  it("excludes build-only Veryfront imports from runtime peer mappings", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-generated-browser-bundle",
+      exports: "./src/index.ts",
+      veryfront: {
+        extension: true,
+        npm: {
+          runtimeDependencies: [],
+          runtimePeerImports: ["veryfront/extensions"],
+        },
+      },
+      imports: {
+        "veryfront/extensions": "../../src/extensions/index.ts",
+        "veryfront/studio/bridge": "../../src/studio/bridge/index.ts",
+      },
+    };
+
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-generated-browser-bundle/deno.json",
+      manifest,
+      rootConfig: {
+        ...rootConfig,
+        exports: {
+          ...rootConfig.exports,
+          "./studio/bridge": "./src/studio/bridge/index.ts",
+        },
+      },
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    assertEquals(Object.values(spec.dntMappings), [
+      { name: "veryfront", version: "^0.1.985", subPath: "extensions" },
+    ]);
+  });
 });
 
 describe("normalizeExtensionEntryPoints", () => {
@@ -576,7 +681,106 @@ describe("removeUnusedBundledRootSource", () => {
 
       await removeUnusedBundledRootSource(outDir);
 
-      assertEquals((await Deno.stat(`${outDir}/esm/src/index.js`)).isFile, true);
+      assertEquals(
+        (await Deno.stat(`${outDir}/esm/src/index.js`)).isFile,
+        true,
+      );
+    } finally {
+      await Deno.remove(outDir, { recursive: true });
+    }
+  });
+});
+
+describe("manifest-backed extension package builds", () => {
+  it("preserves the Tailwind and Dev UI entrypoints beside their synchronized manifests", async () => {
+    const repositoryRoot = Deno.cwd();
+    const repositoryConfig = JSON.parse(
+      await Deno.readTextFile(`${repositoryRoot}/deno.json`),
+    );
+    const outDir = await Deno.makeTempDir({
+      dir: repositoryRoot,
+      prefix: "vf-manifest-backed-extensions-",
+    });
+    const extensionNames = [
+      "ext-css-tailwind",
+      "ext-dev-ui-react",
+    ] as const;
+
+    try {
+      for (const extensionName of extensionNames) {
+        const sourceManifest = JSON.parse(
+          await Deno.readTextFile(
+            `${repositoryRoot}/extensions/${extensionName}/deno.json`,
+          ),
+        );
+        assertEquals(
+          sourceManifest.veryfront?.npm?.runtimeVersionFromManifest,
+          true,
+        );
+      }
+
+      await buildExtensionPackages({
+        rootDir: repositoryRoot,
+        outDir,
+        rootConfig: {
+          ...repositoryConfig,
+          workspace: extensionNames.map((name) => `./extensions/${name}`),
+        },
+        version: repositoryConfig.version,
+        license: repositoryConfig.license,
+      });
+
+      for (const extensionName of extensionNames) {
+        const packageDir = `${outDir}/${extensionName}`;
+        const packageJson = JSON.parse(
+          await Deno.readTextFile(`${packageDir}/package.json`),
+        );
+        const rootExport = packageJson.exports?.["."];
+        const importTarget = typeof rootExport === "string"
+          ? rootExport
+          : rootExport?.import;
+        const typesTarget =
+          typeof rootExport === "object" && rootExport !== null
+            ? rootExport.types
+            : undefined;
+
+        assert(
+          typeof importTarget === "string" && importTarget.startsWith("./"),
+          `${extensionName} must publish a concrete root import target`,
+        );
+        assert(
+          typeof typesTarget === "string" && typesTarget.startsWith("./"),
+          `${extensionName} must publish a concrete root types target`,
+        );
+        assertEquals(
+          (await Deno.stat(`${packageDir}/${importTarget.slice(2)}`)).isFile,
+          true,
+        );
+        assertEquals(
+          (await Deno.stat(`${packageDir}/${typesTarget.slice(2)}`)).isFile,
+          true,
+        );
+        const entrySource = await Deno.readTextFile(
+          `${packageDir}/${importTarget.slice(2)}`,
+        );
+        assertStringIncludes(entrySource, 'from "../deno.js"');
+        assertStringIncludes(entrySource, "version: extensionPackage.version");
+
+        const runtimeManifest = await Deno.readTextFile(
+          `${packageDir}/esm/deno.js`,
+        );
+        assertStringIncludes(
+          runtimeManifest,
+          `"version": ${JSON.stringify(repositoryConfig.version)}`,
+        );
+      }
+
+      assertEquals(
+        (await Deno.stat(
+          `${outDir}/ext-dev-ui-react/esm/src/dev-ui-bundle.generated.js`,
+        )).isFile,
+        true,
+      );
     } finally {
       await Deno.remove(outDir, { recursive: true });
     }

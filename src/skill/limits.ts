@@ -5,6 +5,10 @@
  * cannot drift into enforcing different budgets.
  */
 
+const apply = Reflect.apply;
+const NativeRegExp = RegExp;
+const regExpExec = RegExp.prototype.exec;
+
 export const SKILL_ID_MAX_LENGTH = 256;
 export const SKILL_ROOT_PATH_MAX_LENGTH = 4_096;
 export const SKILL_RELATIVE_PATH_MAX_LENGTH = 1_024;
@@ -29,6 +33,7 @@ export const SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES = 1_000;
 
 export const SKILL_SCRIPT_DEFAULT_TIMEOUT_MS = 60_000;
 export const SKILL_SCRIPT_MAX_TIMEOUT_MS = 300_000;
+/** Combined UTF-8 byte ceiling for stdout and stderr returned by a skill tool. */
 export const SKILL_SCRIPT_MAX_OUTPUT_BYTES = 1_048_576;
 export const SKILL_SCRIPT_MAX_CONTENT_BYTES = 1_048_576;
 export const SKILL_SCRIPT_MAX_ARGS = 64;
@@ -38,4 +43,22 @@ export const SKILL_SCRIPT_MAX_ENV_ENTRIES = 64;
 export const SKILL_SCRIPT_MAX_ENV_KEY_LENGTH = 128;
 export const SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH = 8_192;
 export const SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL = 65_536;
-export const SKILL_SCRIPT_ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+const SKILL_SCRIPT_ENV_KEY_PATTERN_SOURCE = "^[A-Za-z_][A-Za-z0-9_]*$";
+const INTERNAL_SKILL_SCRIPT_ENV_KEY_REGEX = new NativeRegExp(
+  SKILL_SCRIPT_ENV_KEY_PATTERN_SOURCE,
+);
+
+/**
+ * Public inspection matcher for skill-script environment names.
+ * Mutating this compatibility value does not alter admission decisions.
+ */
+export const SKILL_SCRIPT_ENV_KEY_REGEX = new NativeRegExp(
+  SKILL_SCRIPT_ENV_KEY_PATTERN_SOURCE,
+);
+
+/** Framework-owned skill-script environment-name admission check. */
+export function isValidSkillScriptEnvironmentKey(value: unknown): value is string {
+  return typeof value === "string" &&
+    apply(regExpExec, INTERNAL_SKILL_SCRIPT_ENV_KEY_REGEX, [value]) !== null;
+}

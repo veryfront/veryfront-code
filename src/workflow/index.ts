@@ -120,28 +120,6 @@ export { createWorkflowClient, WorkflowClient } from "./api/index.ts";
 export type { WorkflowBackendOwnership, WorkflowClientConfig } from "./api/index.ts";
 
 // =============================================================================
-// React Hooks (re-exported for convenience)
-// Note: For tree-shaking, prefer importing from 'veryfront/workflow/react'
-// =============================================================================
-export {
-  useApproval,
-  useWorkflow,
-  useWorkflowList,
-  useWorkflowStart,
-} from "#veryfront/workflow/react";
-
-export type {
-  UseApprovalOptions,
-  UseApprovalResult,
-  UseWorkflowListOptions,
-  UseWorkflowListResult,
-  UseWorkflowOptions,
-  UseWorkflowResult,
-  UseWorkflowStartOptions,
-  UseWorkflowStartResult,
-} from "#veryfront/workflow/react";
-
-// =============================================================================
 // Executor
 // =============================================================================
 export {

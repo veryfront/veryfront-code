@@ -2,9 +2,14 @@ import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseChatUploadResponse, useUpload, type UseUploadResult } from "./use-upload.ts";
+import {
+  createUploadId,
+  parseChatUploadResponse,
+  useUpload,
+  type UseUploadResult,
+} from "./use-upload.ts";
 
 class PendingXMLHttpRequest {
   static instances: PendingXMLHttpRequest[] = [];
@@ -163,6 +168,29 @@ function installDom(): {
 }
 
 describe("useUpload", () => {
+  it("uses Web Crypto instead of a collision-prone local counter", () => {
+    assertEquals(
+      createUploadId({
+        getRandomValues(array) {
+          if (array) {
+            new Uint8Array(
+              array.buffer,
+              array.byteOffset,
+              array.byteLength,
+            ).fill(0);
+          }
+          return array;
+        },
+      }),
+      "upload-00000000-0000-4000-8000-000000000000",
+    );
+    assertThrows(
+      () => createUploadId(null),
+      Error,
+      "File uploads require crypto.randomUUID() or crypto.getRandomValues()",
+    );
+  });
+
   it("bounds durable response bytes rather than UTF-16 code units", () => {
     const oversizedUnicode = JSON.stringify({
       url: "/uploads/report.txt",

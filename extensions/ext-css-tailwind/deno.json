@@ -8,6 +8,9 @@
     "contracts": {
       "provides": ["CSSProcessor"]
     },
+    "npm": {
+      "runtimeVersionFromManifest": true
+    },
     "capabilities": [{ "type": "fs:read" }]
   },
   "imports": {

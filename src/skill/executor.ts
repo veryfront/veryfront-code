@@ -18,11 +18,12 @@ import {
 } from "#veryfront/platform/compat/fs.ts";
 import { dirname, extname, isAbsolute, relative, resolve } from "#veryfront/compat/path";
 import { createError, toError } from "#veryfront/errors";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import type { SkillScriptExecutor, SkillScriptExecutorInput, SkillScriptResult } from "./types.ts";
 import {
+  isValidSkillScriptEnvironmentKey,
   SKILL_ROOT_PATH_MAX_LENGTH,
   SKILL_SCRIPT_DEFAULT_TIMEOUT_MS,
-  SKILL_SCRIPT_ENV_KEY_REGEX,
   SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL,
   SKILL_SCRIPT_MAX_ARG_LENGTH,
   SKILL_SCRIPT_MAX_ARGS,
@@ -36,7 +37,15 @@ import {
 } from "./limits.ts";
 import { readBoundedSkillTextFile } from "./bounded-text-file.ts";
 import { isWellFormedUtf16 } from "./string-safety.ts";
+const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
 const defineOwnProperty = Object.defineProperty;
+const freeze = Object.freeze;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+const ownKeys = Reflect.ownKeys;
+const stringIncludes = String.prototype.includes;
 const TIMEOUT_EXIT_CODE = 124;
 const OUTPUT_LIMIT_EXIT_CODE = 125;
 const ABORT_EXIT_CODE = 130;
@@ -48,6 +57,10 @@ const SANDBOX_CLEANUP_TIMEOUT_SECONDS = 5;
 const SANDBOX_CLEANUP_MAX_OUTPUT_BYTES = 65_536;
 
 type TerminationSentinel = typeof ABORT_SENTINEL | typeof TIMEOUT_SENTINEL;
+
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return apply(hasOwnProperty, object, [key]) as boolean;
+}
 
 function appendOwnArrayElement<T>(values: T[], value: T): void {
   defineOwnProperty(values, values.length, {
@@ -65,7 +78,7 @@ interface ExecutionBudget {
 
 function createExecutionBudget(timeoutMs: number): ExecutionBudget {
   const deadline = performance.now() + timeoutMs;
-  return Object.freeze({
+  return freeze({
     timeoutMs,
     remainingMs: () => Math.max(0, Math.ceil(deadline - performance.now())),
   });
@@ -189,13 +202,13 @@ interface NormalizedSkillScriptExecutorInput {
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === "object" && !arrayIsArray(value);
 }
 
 function ownDataValue(record: Record<string, unknown>, key: string): unknown {
-  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  const descriptor = getOwnPropertyDescriptor(record, key);
   if (!descriptor) return undefined;
-  if (!("value" in descriptor)) {
+  if (!hasOwn(descriptor, "value")) {
     throw new TypeError(`Skill script field "${key}" must be a data property`);
   }
   return descriptor.value;
@@ -210,7 +223,7 @@ function requireBoundedString(
   if (typeof value !== "string" || (!allowEmpty && value.length === 0)) {
     throw new TypeError(`${field} must be ${allowEmpty ? "a" : "a non-empty"} string`);
   }
-  if (!isWellFormedUtf16(value) || value.includes("\0")) {
+  if (!isWellFormedUtf16(value) || apply(stringIncludes, value, ["\0"])) {
     throw new TypeError(`${field} must be valid text without NUL characters`);
   }
   if (value.length > maxLength) {
@@ -245,8 +258,11 @@ function normalizeScriptArgs(
   enforceToolLimits: boolean,
 ): readonly string[] {
   if (value === undefined) return [];
-  if (!Array.isArray(value)) {
+  if (!arrayIsArray(value)) {
     throw new TypeError("Skill script args must be an array");
+  }
+  if (isProxyWithoutHooks(value)) {
+    throw new TypeError("Skill script args must not be a proxy");
   }
   if (enforceToolLimits && value.length > SKILL_SCRIPT_MAX_ARGS) {
     throw new RangeError(`Skill script args accepts at most ${SKILL_SCRIPT_MAX_ARGS} entries`);
@@ -255,8 +271,8 @@ function normalizeScriptArgs(
   const args: string[] = [];
   let totalBytes = 0;
   for (let index = 0; index < value.length; index++) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, index);
-    if (!descriptor || !("value" in descriptor)) {
+    const descriptor = getOwnPropertyDescriptor(value, index);
+    if (!descriptor || !hasOwn(descriptor, "value")) {
       throw new TypeError(`Skill script arg ${index} must be a data property`);
     }
     const arg = requireBoundedString(
@@ -275,7 +291,7 @@ function normalizeScriptArgs(
     }
     appendOwnArrayElement(args, arg);
   }
-  return Object.freeze(args);
+  return freeze(args);
 }
 
 function normalizeScriptEnv(
@@ -286,9 +302,22 @@ function normalizeScriptEnv(
   if (!isObjectRecord(value)) {
     throw new TypeError("Skill script env must be an object");
   }
+  if (isProxyWithoutHooks(value)) {
+    throw new TypeError("Skill script env must not be a proxy");
+  }
 
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const entries = Object.entries(descriptors).filter(([, descriptor]) => descriptor.enumerable);
+  const descriptors = getOwnPropertyDescriptors(value);
+  const entries: Array<readonly [string, PropertyDescriptor]> = [];
+  const descriptorKeys = ownKeys(descriptors);
+  for (let index = 0; index < descriptorKeys.length; index += 1) {
+    const key = descriptorKeys[index]!;
+    const descriptor = descriptors[key as keyof typeof descriptors];
+    if (!descriptor?.enumerable) continue;
+    if (typeof key !== "string") {
+      throw new TypeError("Skill script env keys must be strings");
+    }
+    appendOwnArrayElement(entries, [key, descriptor] as const);
+  }
   if (enforceToolLimits && entries.length > SKILL_SCRIPT_MAX_ENV_ENTRIES) {
     throw new RangeError(
       `Skill script env accepts at most ${SKILL_SCRIPT_MAX_ENV_ENTRIES} entries`,
@@ -297,11 +326,14 @@ function normalizeScriptEnv(
 
   const env: Record<string, string> = {};
   let totalBytes = 0;
-  for (const [key, descriptor] of entries) {
-    if (!("value" in descriptor)) {
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]!;
+    const key = entry[0];
+    const descriptor = entry[1];
+    if (!hasOwn(descriptor, "value")) {
       throw new TypeError(`Skill script env "${key}" must be a data property`);
     }
-    if (!SKILL_SCRIPT_ENV_KEY_REGEX.test(key)) {
+    if (!isValidSkillScriptEnvironmentKey(key)) {
       throw toError(
         createError({
           type: "agent",
@@ -328,14 +360,14 @@ function normalizeScriptEnv(
         `Skill script environment must total at most ${SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL} bytes`,
       );
     }
-    Object.defineProperty(env, key, {
+    defineOwnProperty(env, key, {
       configurable: false,
       enumerable: true,
       value: envValue,
       writable: false,
     });
   }
-  return Object.freeze(env);
+  return freeze(env);
 }
 
 function normalizeExecutorInput(
@@ -343,6 +375,9 @@ function normalizeExecutorInput(
 ): NormalizedSkillScriptExecutorInput {
   if (!isObjectRecord(input)) {
     throw new TypeError("Skill script executor input must be an object");
+  }
+  if (isProxyWithoutHooks(input)) {
+    throw new TypeError("Skill script executor input must not be a proxy");
   }
 
   const rawValidatedSourceRoot = ownDataValue(input, "validatedSourceRoot");
@@ -376,7 +411,7 @@ function normalizeExecutorInput(
   }
   const env = normalizeScriptEnv(ownDataValue(input, "env"), enforceToolLimits);
 
-  return Object.freeze({
+  return freeze({
     scriptPath,
     ...(scriptContent === undefined ? {} : { scriptContent }),
     args: normalizeScriptArgs(ownDataValue(input, "args"), enforceToolLimits),
@@ -397,7 +432,7 @@ function createSandboxScriptLocation(scriptPath: string): SandboxScriptLocation 
   const ext = extname(scriptPath) || ".sh";
   const suffix = crypto.randomUUID().slice(0, 8);
   const workingDirectory = `/tmp/veryfront-skill-script-${Date.now()}-${suffix}`;
-  return Object.freeze({
+  return freeze({
     workingDirectory,
     scriptPath: `${workingDirectory}/script${ext}`,
   });
@@ -615,7 +650,7 @@ async function captureValidatedLocalScriptContext(
     getPathIdentity(canonicalScriptPath),
   ]);
 
-  return Object.freeze({
+  return freeze({
     lexicalRoot,
     lexicalScriptDirectory,
     lexicalScriptPath,
@@ -698,7 +733,7 @@ async function prepareValidatedLocalScript(
     throw new Error("Skill script content changed while preparing execution");
   }
   await assertValidatedLocalScriptContextUnchanged(context);
-  return Object.freeze({
+  return freeze({
     scriptPath: context.lexicalScriptPath,
     scriptContent: normalized.scriptContent ?? currentContent,
   });
@@ -886,8 +921,8 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         return terminationResult(contentSettlement, budget.timeoutMs);
       }
       cloudInput = typeof contentSettlement === "string"
-        ? Object.freeze({ ...normalized, scriptContent: contentSettlement })
-        : Object.freeze({
+        ? freeze({ ...normalized, scriptContent: contentSettlement })
+        : freeze({
           ...normalized,
           scriptPath: contentSettlement.scriptPath,
           scriptContent: contentSettlement.scriptContent,

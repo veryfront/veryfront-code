@@ -256,7 +256,7 @@ export function findStaticImportFromSpans(
 }
 
 /**
- * Find `import("…")` expressions with a literal specifier.
+ * Find `import("./module.ts")` expressions with a literal specifier.
  *
  * The returned span covers the quoted specifier itself (quotes included), not
  * the surrounding `import(...)`, so a replacement is a bare quoted string.

@@ -2,11 +2,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  createDenoServer,
   createDenoServerWithRuntime,
   type DenoNativeHttpServer,
   DenoServer,
   type DenoServeRuntime,
 } from "./http-server.ts";
+import { getRequestPeerProvenance, isRequestFromLoopbackPeer } from "../shared/request-peer.ts";
+import { isTrustedLocalControlRequest } from "#veryfront/security/http/local-control-request.ts";
 
 class FakeNativeServer implements DenoNativeHttpServer {
   readonly shutdownCalls: number[] = [];
@@ -54,6 +57,73 @@ function createRuntime(nativeServer: FakeNativeServer): {
 }
 
 describe("Deno HTTP server lifecycle", () => {
+  it("admits a real Deno loopback listener request with native peer provenance", async () => {
+    const server = await createDenoServer((request) =>
+      new Response(null, {
+        status: isTrustedLocalControlRequest(request, { proxyTopologyTrusted: false }) ? 204 : 403,
+      }), {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.addr.port}/_dev`);
+      assertEquals(response.status, 204);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("records the native TCP peer before dispatching the request", async () => {
+    const native = new FakeNativeServer();
+    const fake = createRuntime(native);
+    let observed:
+      | { provenance: ReturnType<typeof getRequestPeerProvenance>; loopback: boolean }
+      | undefined;
+    await createDenoServerWithRuntime(fake.runtime, (request) => {
+      observed = {
+        provenance: getRequestPeerProvenance(request),
+        loopback: isRequestFromLoopbackPeer(request),
+      };
+      return new Response(null, {
+        status: isTrustedLocalControlRequest(request, { proxyTopologyTrusted: false }) ? 204 : 403,
+      });
+    });
+    const request = new Request("http://localhost/_dev", {
+      headers: { host: "localhost" },
+    });
+
+    const response = await fake.getOptions().handler(request, {
+      remoteAddr: {
+        transport: "tcp",
+        hostname: "192.168.1.25",
+        port: 52_000,
+      },
+    });
+
+    assertEquals(observed, {
+      provenance: {
+        runtime: "deno",
+        transport: "tcp",
+        hostname: "192.168.1.25",
+      },
+      loopback: false,
+    });
+    assertEquals(response.status, 403);
+
+    const localRequest = new Request("http://localhost/_dev", {
+      headers: { host: "localhost" },
+    });
+    const localResponse = await fake.getOptions().handler(localRequest, {
+      remoteAddr: {
+        transport: "tcp",
+        hostname: "::ffff:127.0.0.1",
+        port: 52_001,
+      },
+    });
+    assertEquals(localResponse.status, 204);
+  });
+
   it("reports the native bound address and forwards the portable handler", async () => {
     const native = new FakeNativeServer({
       hostname: "::1",

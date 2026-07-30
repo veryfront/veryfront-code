@@ -240,7 +240,7 @@ describe(
           "_veryfront/react/components/Head.js",
           "_veryfront/react/context/index.js",
           "_veryfront/agent/react/index.js",
-          "_veryfront/workflow/react/index.js",
+          "_veryfront/react/workflow/index.js",
         ];
 
         for (const modulePath of modulePaths) {

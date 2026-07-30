@@ -73,15 +73,16 @@ describe("modules/import-map/default-import-map", () => {
       assertEquals(imports["veryfront/fonts"], imports["veryfront/react/fonts"]);
     });
 
-    it("should map veryfront/workflow to React hooks submodule for SSR", () => {
+    it("should map the explicit workflow React integration for SSR", () => {
       const imports = getImports();
 
-      const workflowUrl = imports["veryfront/workflow"];
-      assertExists(workflowUrl, "should have 'veryfront/workflow' mapping");
+      const workflowUrl = imports["veryfront/workflow/react"];
+      assertExists(workflowUrl, "should have 'veryfront/workflow/react' mapping");
       assert(
-        workflowUrl.includes("/_vf_modules/_veryfront/workflow/react/"),
-        `Expected workflow to map to React hooks submodule, got: ${workflowUrl}`,
+        workflowUrl.includes("/_vf_modules/_veryfront/react/workflow/"),
+        `Expected explicit workflow React integration, got: ${workflowUrl}`,
       );
+      assertEquals(imports["veryfront/workflow"], undefined);
       assert(workflowUrl.includes("?ssr=true"), `Expected ssr=true param but got: ${workflowUrl}`);
     });
 

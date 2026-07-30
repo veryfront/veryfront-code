@@ -8,7 +8,7 @@ import {
   skillRegistry,
   skillRegistryInternal,
 } from "./registry.ts";
-import type { Skill } from "./types.ts";
+import { type Skill, SKILL_PROVIDER_SAFE_ID_REGEX } from "./types.ts";
 
 function withInheritedArrayIndexSetter<T>(
   index: number,
@@ -310,6 +310,100 @@ describe("src/skill/registry", () => {
       assertEquals(setterCalls, 0);
       assertEquals(result.internal, ["visible"]);
       assertEquals(result.public, ["visible"]);
+    });
+
+    it("keeps owned short-name admission independent of public regex and prototype mutation", () => {
+      const originalSource = SKILL_PROVIDER_SAFE_ID_REGEX.source;
+      const originalTest = Object.getOwnPropertyDescriptor(RegExp.prototype, "test");
+      let failure: unknown;
+
+      try {
+        SKILL_PROVIDER_SAFE_ID_REGEX.compile(".*");
+        Object.defineProperty(RegExp.prototype, "test", {
+          configurable: true,
+          value: () => true,
+          writable: true,
+        });
+        try {
+          registerSkill(
+            "agent--bad",
+            createScopedTestSkill({
+              id: "agent--bad",
+              ownerAgentId: "agent",
+              shortName: "bad/name",
+            }),
+          );
+        } catch (error) {
+          failure = error;
+        }
+      } finally {
+        if (originalTest) Object.defineProperty(RegExp.prototype, "test", originalTest);
+        SKILL_PROVIDER_SAFE_ID_REGEX.compile(originalSource);
+      }
+
+      assertEquals(failure instanceof TypeError, true);
+      assertEquals(skillRegistryInternal.get("agent--bad"), undefined);
+    });
+
+    it("rejects accessor metadata fields despite inherited descriptor pollution", () => {
+      const originalValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      let getterCalls = 0;
+      let failure: unknown;
+      const metadata = Object.defineProperties({}, {
+        name: {
+          enumerable: true,
+          get() {
+            getterCalls += 1;
+            return "do-not-read";
+          },
+        },
+        description: { enumerable: true, value: "Description" },
+      });
+
+      try {
+        Object.defineProperty(Object.prototype, "value", {
+          configurable: true,
+          value: "owned",
+          writable: true,
+        });
+        try {
+          registerSkill("owned", {
+            id: "owned",
+            metadata: metadata as never,
+            rootPath: "/test/skills/owned",
+          });
+        } catch (error) {
+          failure = error;
+        }
+      } finally {
+        if (originalValue) {
+          Object.defineProperty(Object.prototype, "value", originalValue);
+        } else {
+          Reflect.deleteProperty(Object.prototype, "value");
+        }
+      }
+
+      assertEquals(failure instanceof TypeError, true);
+      assertEquals(getterCalls, 0);
+      assertEquals(skillRegistryInternal.get("owned"), undefined);
+    });
+
+    it("rejects proxied skill definitions without invoking traps", () => {
+      let trapCalls = 0;
+      const proxied = new Proxy(createTestSkill("proxied"), {
+        getOwnPropertyDescriptor(target, key) {
+          trapCalls += 1;
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+
+      assertThrows(
+        () => registerSkill("proxied", proxied),
+        TypeError,
+        "must not be a proxy",
+      );
+      assertEquals(trapCalls, 0);
+      assertEquals(skillRegistryInternal.get("proxied"), undefined);
     });
   });
 

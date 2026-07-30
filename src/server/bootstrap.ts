@@ -29,6 +29,16 @@ import {
   StudioCaptureBundleProviderName,
 } from "#veryfront/extensions/studio/index.ts";
 import {
+  type DevUiAssetProvider,
+  DevUiAssetProviderName,
+  snapshotDevUiAssetProvider,
+} from "#veryfront/extensions/dev-ui";
+import {
+  type NodeWebSocketServerProvider,
+  NodeWebSocketServerProviderName,
+  snapshotNodeWebSocketServerProvider,
+} from "#veryfront/extensions/websocket";
+import {
   type GlobalTelemetryAPIInstallation,
   installGlobalTelemetryAPI,
 } from "#veryfront/observability/tracing/api-shim.ts";
@@ -70,6 +80,20 @@ const bootstrapProdLog = logger.component("bootstrap-prod");
 const bootstrapOwnership = new ExclusiveProcessOwner("Veryfront bootstrap");
 
 type ResourceDisposer = () => void | Promise<void>;
+type BootstrapProfile = "development" | "production";
+const DEVELOPMENT_ONLY_DEV_UI_EXTENSION = "ext-dev-ui-react";
+
+/** @internal Compose builtins for the startup-selected handler profile. */
+export function createBuiltinExtensionsForBootstrap(
+  profile: BootstrapProfile,
+): ReturnType<typeof createBuiltinExtensions> {
+  const builtins = createBuiltinExtensions();
+  return profile === "development"
+    ? builtins
+    : builtins.filter((candidate) =>
+      candidate.extension.name !== DEVELOPMENT_ONLY_DEV_UI_EXTENSION
+    );
+}
 
 /**
  * Select the configuration used after an FS-adapter reload.
@@ -128,6 +152,12 @@ export interface BootstrapResult {
 
   /** Immutable Studio capture bundle selected by this extension generation. */
   studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
+
+  /** Immutable local development UI bundle selected by this extension generation. */
+  devUiAssetProvider?: Readonly<DevUiAssetProvider>;
+
+  /** Immutable Node WebSocket implementation selected by this extension generation. */
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
 
   /**
    * Dispose all bootstrap-owned resources. The caller exclusively owns this
@@ -429,6 +459,8 @@ export function createRetryableDisposer(
 interface FinalizedExtensionBootstrap {
   readonly dispose: () => Promise<void>;
   readonly studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
+  readonly devUiAssetProvider?: Readonly<DevUiAssetProvider>;
+  readonly nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
 }
 
 /** @internal Snapshot the optional Studio browser capability before publishing a generation. */
@@ -439,6 +471,22 @@ export function resolveStudioCaptureProviderForBootstrap():
   return captureProvider === undefined
     ? undefined
     : snapshotStudioCaptureBundleProvider(captureProvider);
+}
+
+/** @internal Snapshot local Dev UI assets before publishing a generation. */
+export function resolveDevUiAssetProviderForBootstrap():
+  | Readonly<DevUiAssetProvider>
+  | undefined {
+  const provider = tryResolve<unknown>(DevUiAssetProviderName);
+  return provider === undefined ? undefined : snapshotDevUiAssetProvider(provider);
+}
+
+/** @internal Snapshot the explicit Node WebSocket implementation for this generation. */
+export function resolveNodeWebSocketServerProviderForBootstrap():
+  | Readonly<NodeWebSocketServerProvider>
+  | undefined {
+  const provider = tryResolve<unknown>(NodeWebSocketServerProviderName);
+  return provider === undefined ? undefined : snapshotNodeWebSocketServerProvider(provider);
 }
 
 async function finalizeExtensionBootstrap(
@@ -452,6 +500,8 @@ async function finalizeExtensionBootstrap(
     tracingShimInstallation = wireTracingShim();
     assertRequiredContracts();
     const studioCaptureProvider = resolveStudioCaptureProviderForBootstrap();
+    const devUiAssetProvider = resolveDevUiAssetProviderForBootstrap();
+    const nodeWebSocketServerProvider = resolveNodeWebSocketServerProviderForBootstrap();
     return Object.freeze({
       dispose: combineDispose(
         extensionLoader,
@@ -461,6 +511,8 @@ async function finalizeExtensionBootstrap(
         releaseBootstrapOwnership,
       ),
       ...(studioCaptureProvider === undefined ? {} : { studioCaptureProvider }),
+      ...(devUiAssetProvider === undefined ? {} : { devUiAssetProvider }),
+      ...(nodeWebSocketServerProvider === undefined ? {} : { nodeWebSocketServerProvider }),
     });
   } catch (error) {
     const retryCleanup = combineDispose(
@@ -595,6 +647,7 @@ function logEnvConfig(): void {
 export async function bootstrap(
   projectDir: string,
   adapter: RuntimeAdapter,
+  profile: BootstrapProfile = "development",
 ): Promise<BootstrapResult> {
   const releaseBootstrapOwnership = bootstrapOwnership.acquire();
   let fileLog: FileLogHandle | null = null;
@@ -632,7 +685,7 @@ export async function bootstrap(
         config,
         logger: bootstrapLog,
         primeContracts: createBootstrapPrimeContracts(),
-        builtinExtensions: createBuiltinExtensions(),
+        builtinExtensions: createBuiltinExtensionsForBootstrap(profile),
         setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
         beforeActivate: clearActiveTracingShimForExtensionTransition,
       });
@@ -652,6 +705,12 @@ export async function bootstrap(
         ...(finalized.studioCaptureProvider === undefined
           ? {}
           : { studioCaptureProvider: finalized.studioCaptureProvider }),
+        ...(finalized.devUiAssetProvider === undefined
+          ? {}
+          : { devUiAssetProvider: finalized.devUiAssetProvider }),
+        ...(finalized.nodeWebSocketServerProvider === undefined
+          ? {}
+          : { nodeWebSocketServerProvider: finalized.nodeWebSocketServerProvider }),
         dispose: finalized.dispose,
       };
     }
@@ -710,7 +769,7 @@ export async function bootstrap(
         config,
         logger: bootstrapLog,
         primeContracts: createBootstrapPrimeContracts(),
-        builtinExtensions: createBuiltinExtensions(),
+        builtinExtensions: createBuiltinExtensionsForBootstrap(profile),
         setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
         beforeActivate: clearActiveTracingShimForExtensionTransition,
       });
@@ -730,6 +789,12 @@ export async function bootstrap(
         ...(finalized.studioCaptureProvider === undefined
           ? {}
           : { studioCaptureProvider: finalized.studioCaptureProvider }),
+        ...(finalized.devUiAssetProvider === undefined
+          ? {}
+          : { devUiAssetProvider: finalized.devUiAssetProvider }),
+        ...(finalized.nodeWebSocketServerProvider === undefined
+          ? {}
+          : { nodeWebSocketServerProvider: finalized.nodeWebSocketServerProvider }),
         dispose: finalized.dispose,
       };
     }
@@ -778,7 +843,7 @@ export async function bootstrap(
           config,
           logger: bootstrapLog,
           primeContracts: createBootstrapPrimeContracts(),
-          builtinExtensions: createBuiltinExtensions(),
+          builtinExtensions: createBuiltinExtensionsForBootstrap(profile),
           setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
           beforeActivate: clearActiveTracingShimForExtensionTransition,
         }),
@@ -802,6 +867,12 @@ export async function bootstrap(
       ...(finalized.studioCaptureProvider === undefined
         ? {}
         : { studioCaptureProvider: finalized.studioCaptureProvider }),
+      ...(finalized.devUiAssetProvider === undefined
+        ? {}
+        : { devUiAssetProvider: finalized.devUiAssetProvider }),
+      ...(finalized.nodeWebSocketServerProvider === undefined
+        ? {}
+        : { nodeWebSocketServerProvider: finalized.nodeWebSocketServerProvider }),
       dispose: finalized.dispose,
     };
   } catch (err) {
@@ -832,7 +903,7 @@ export async function bootstrapDev(
 ): Promise<BootstrapResult> {
   bootstrapDevLog.debug("Starting development mode initialization");
 
-  const result = await bootstrap(projectDir, adapter);
+  const result = await bootstrap(projectDir, adapter, "development");
 
   if (result.usingFSAdapter) {
     bootstrapDevLog.debug("FSAdapter active", {
@@ -865,7 +936,7 @@ async function bootstrapProdWithValidation(
   await ensureEnvLoaded(projectDir, adapter);
 
   try {
-    const result = await bootstrap(projectDir, adapter);
+    const result = await bootstrap(projectDir, adapter, "production");
 
     if (result.usingFSAdapter) {
       bootstrapProdLog.debug("FSAdapter initialized", {

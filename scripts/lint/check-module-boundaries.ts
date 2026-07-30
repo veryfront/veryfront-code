@@ -38,7 +38,7 @@ const BROWSER_PREFIXES = [
   "src/react/runtime/",
   "src/rendering/client/",
   "src/routing/client/",
-  "src/workflow/react/",
+  "src/react/workflow/",
 ] as const;
 
 const BROWSER_FILES = new Set(["src/react/index.ts"]);

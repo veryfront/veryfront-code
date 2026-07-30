@@ -392,7 +392,7 @@ export interface MessageContentProps {
   className?: string;
   /** Swap the code block used in the answer markdown (forwarded to `Markdown`). */
   codeBlock?: (props: CodeBlockProps) => React.ReactNode;
-  /** Override markdown element renderers (merged over the built-in defaults). */
+  /** Element overrides forwarded to the installed rich-Markdown renderer. */
   markdownComponents?: Components;
   /**
    * Compose the body yourself. Receives each grouped part in order; return a

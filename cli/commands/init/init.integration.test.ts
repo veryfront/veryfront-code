@@ -505,6 +505,10 @@ describe("init command integration", () => {
         pkg.dependencies["@veryfront/ext-document-kreuzberg"],
         pkg.dependencies.veryfront,
       );
+      assertEquals(
+        pkg.dependencies["@veryfront/ext-node-websocket-ws"],
+        pkg.dependencies.veryfront,
+      );
     });
 
     it("does not write a partial package.json for quiet docs-agent projects", async () => {

@@ -9,6 +9,7 @@ import {
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { StudioCaptureBundleProvider } from "#veryfront/extensions/studio/index.ts";
+import type { DevUiAssetProvider } from "#veryfront/extensions/dev-ui";
 import { clearConfigCache } from "#veryfront/config";
 import { ErrorOverlay, parseErrorLocation } from "./error-overlay/index.ts";
 import {
@@ -37,6 +38,7 @@ type RuntimeRequestHandlerFactory = () => Promise<RuntimeRequestHandler>;
 interface RequestHandlerDependencies {
   runtimeHandlerFactory?: RuntimeRequestHandlerFactory;
   studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
+  devUiAssetProvider?: Readonly<DevUiAssetProvider>;
 }
 interface LeasedRuntimeHandler {
   handler: RuntimeRequestHandler;
@@ -64,6 +66,7 @@ export class RequestHandler {
   private disposePromise?: Promise<void>;
   private readonly runtimeHandlerFactory?: RuntimeRequestHandlerFactory;
   private readonly studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
+  private readonly devUiAssetProvider?: Readonly<DevUiAssetProvider>;
 
   constructor(
     projectDir: string,
@@ -110,6 +113,7 @@ export class RequestHandler {
       this.localProjects = localProjectsOrDependencies as Record<string, string> | undefined;
       this.runtimeHandlerFactory = legacyDependencies.runtimeHandlerFactory;
       this.studioCaptureProvider = legacyDependencies.studioCaptureProvider;
+      this.devUiAssetProvider = legacyDependencies.devUiAssetProvider;
       return;
     }
 
@@ -121,6 +125,8 @@ export class RequestHandler {
       ?.runtimeHandlerFactory;
     this.studioCaptureProvider = (localProjectsOrDependencies as RequestHandlerDependencies)
       ?.studioCaptureProvider;
+    this.devUiAssetProvider = (localProjectsOrDependencies as RequestHandlerDependencies)
+      ?.devUiAssetProvider;
   }
 
   async handleRequest(req: Request): Promise<Response> {
@@ -331,6 +337,7 @@ export class RequestHandler {
       defaultProjectId: this.defaultProjectId,
       localProjects: this.localProjects,
       studioCaptureProvider: this.studioCaptureProvider,
+      devUiAssetProvider: this.devUiAssetProvider,
     });
   }
 

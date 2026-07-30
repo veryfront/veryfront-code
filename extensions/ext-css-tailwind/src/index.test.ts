@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import tailwindPackage from "tailwindcss/package.json" with { type: "json" };
 import extensionPackage from "../deno.json" with { type: "json" };
 import factory, { TAILWIND_DEFAULT_STYLESHEET, TailwindCSSProcessor } from "./index.ts";
+import { exactTailwindVersion } from "./manifest-dependency.ts";
 import { TAILWIND_PLUGIN_POLICY_IDENTITY } from "./plugin-policy.ts";
 
 const noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
@@ -22,6 +23,10 @@ describe("ext-css-tailwind", () => {
     const identity = new TailwindCSSProcessor().cacheIdentity;
     assertEquals(new TailwindCSSProcessor().defaultStylesheet, TAILWIND_DEFAULT_STYLESHEET);
     assertStringIncludes(identity, `ext-css-tailwind@${extensionPackage.version}`);
+    assertEquals(
+      exactTailwindVersion(extensionPackage.imports.tailwindcss),
+      tailwindPackage.version,
+    );
     assertStringIncludes(identity, `tailwindcss@${tailwindPackage.version}`);
     assertStringIncludes(identity, "base=");
     assertStringIncludes(
@@ -31,6 +36,23 @@ describe("ext-css-tailwind", () => {
       }`,
     );
     assertEquals(identity.includes("https://"), false);
+  });
+
+  it("rejects an unpinned or structurally different Tailwind manifest import", () => {
+    for (
+      const specifier of [
+        undefined,
+        "tailwindcss@4.2.2",
+        "npm:other-package@4.2.2",
+        "npm:tailwindcss@^4.2.2",
+        "npm:tailwindcss@4.2",
+        "npm:tailwindcss@04.2.2",
+        "npm:tailwindcss@4.2.2-01",
+        "npm:tailwindcss@4.2.2/index.css",
+      ]
+    ) {
+      assertThrows(() => exactTailwindVersion(specifier), TypeError);
+    }
   });
 
   it("registers a processor without persistent plugin globals", async () => {

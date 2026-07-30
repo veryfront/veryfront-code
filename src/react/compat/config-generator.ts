@@ -133,27 +133,22 @@ export async function detectReactVersionFromConfig(
   const configPath = join(projectDir, "deno.json");
 
   try {
-    const config = JSON.parse(await fs.readTextFile(configPath)) as {
-      imports?: { react?: string };
-    };
-
-    const reactImport = config.imports?.react;
+    const parsed: unknown = JSON.parse(await fs.readTextFile(configPath));
+    if (!isRecord(parsed)) {
+      throw new TypeError(`React config at ${configPath} must contain a JSON object`);
+    }
+    const reactImport = getImportMap(
+      parsed.imports,
+      `React config at ${configPath}`,
+    ).react;
     if (!reactImport) return null;
 
-    for (const [version, versionConfig] of Object.entries(REACT_CONFIGS)) {
-      if (reactImport.includes(`@${versionConfig.exact}`)) {
-        return version as ReactVersion;
-      }
-    }
-
-    if (reactImport.includes("@17")) return "17";
-    if (reactImport.includes("@18")) return "18";
-    if (reactImport.includes("@19")) return "19";
-
-    return null;
+    const match = /(?:^|[/:])react@(\d+)(?=$|[.\-+/?#&:])/u.exec(reactImport);
+    const major = match?.[1];
+    return major === "17" || major === "18" || major === "19" ? major : null;
   } catch (error) {
-    logger.error("Failed to detect React version from config", error);
-    return null;
+    if (isNotFoundError(error)) return null;
+    throw error;
   }
 }
 

@@ -1,8 +1,10 @@
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isAbsolute } from "#veryfront/compat/path";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { snapshotAllowedToolPatterns } from "./allowed-tools.ts";
 import { SKILL_ID_MAX_LENGTH, SKILL_ROOT_PATH_MAX_LENGTH } from "./limits.ts";
 import {
+  isValidProviderSafeSkillId,
   type Skill,
   SKILL_COMPATIBILITY_MAX_LENGTH,
   SKILL_DESCRIPTION_MAX_LENGTH,
@@ -10,22 +12,35 @@ import {
   SKILL_METADATA_KEY_MAX_LENGTH,
   SKILL_METADATA_MAX_ENTRIES,
   SKILL_METADATA_VALUE_MAX_LENGTH,
-  SKILL_PROVIDER_SAFE_ID_REGEX,
   type SkillMetadata,
 } from "./types.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "./string-safety.ts";
 
+const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const defineProperty = Object.defineProperty;
+const freeze = Object.freeze;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+const ownKeys = Reflect.ownKeys;
+
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return apply(hasOwnProperty, object, [key]) as boolean;
+}
+
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === "object" && !arrayIsArray(value) &&
+    !isProxyWithoutHooks(value);
 }
 
 function ownDataValue(
   record: Record<string, unknown>,
   key: string,
 ): unknown {
-  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  const descriptor = getOwnPropertyDescriptor(record, key);
   if (!descriptor) return undefined;
-  if (!("value" in descriptor)) {
+  if (!hasOwn(descriptor, "value")) {
     throw new TypeError(`Skill field "${key}" must be a data property`);
   }
   return descriptor.value;
@@ -83,16 +98,34 @@ function normalizeStringMetadata(value: unknown): Record<string, string> | undef
   if (!isObjectRecord(value)) {
     throw new TypeError("Skill metadata.metadata must be an object");
   }
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const entries = Object.entries(descriptors).filter(([, descriptor]) => descriptor.enumerable);
+  const descriptors = getOwnPropertyDescriptors(value);
+  const entries: Array<readonly [string, PropertyDescriptor]> = [];
+  const descriptorKeys = ownKeys(descriptors);
+  for (let index = 0; index < descriptorKeys.length; index += 1) {
+    const key = descriptorKeys[index]!;
+    const descriptor = descriptors[key as keyof typeof descriptors];
+    if (!descriptor?.enumerable) continue;
+    if (typeof key !== "string") {
+      throw new TypeError("Skill metadata keys must be strings");
+    }
+    defineProperty(entries, entries.length, {
+      configurable: true,
+      enumerable: true,
+      value: [key, descriptor] as const,
+      writable: true,
+    });
+  }
   if (entries.length > SKILL_METADATA_MAX_ENTRIES) {
     throw new RangeError(`Skill metadata accepts at most ${SKILL_METADATA_MAX_ENTRIES} entries`);
   }
   if (entries.length === 0) return undefined;
 
   const snapshot: Record<string, string> = {};
-  for (const [key, descriptor] of entries) {
-    if (!("value" in descriptor) || typeof descriptor.value !== "string") {
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]!;
+    const key = entry[0];
+    const descriptor = entry[1];
+    if (!hasOwn(descriptor, "value") || typeof descriptor.value !== "string") {
       throw new TypeError("Skill metadata values must be strings");
     }
     if (key.length === 0 || key.length > SKILL_METADATA_KEY_MAX_LENGTH) {
@@ -115,14 +148,14 @@ function normalizeStringMetadata(value: unknown): Record<string, string> | undef
         `Skill metadata values must be at most ${SKILL_METADATA_VALUE_MAX_LENGTH} printable characters`,
       );
     }
-    Object.defineProperty(snapshot, key, {
+    defineProperty(snapshot, key, {
       configurable: false,
       enumerable: true,
       value: descriptor.value,
       writable: false,
     });
   }
-  return Object.freeze(snapshot);
+  return freeze(snapshot);
 }
 
 function normalizeSkillMetadata(value: unknown): SkillMetadata {
@@ -148,7 +181,7 @@ function normalizeSkillMetadata(value: unknown): SkillMetadata {
     SKILL_ID_MAX_LENGTH,
   );
   const rawAllowedTools = ownDataValue(value, "allowedTools");
-  if (rawAllowedTools !== undefined && !Array.isArray(rawAllowedTools)) {
+  if (rawAllowedTools !== undefined && !arrayIsArray(rawAllowedTools)) {
     throw new TypeError("Skill metadata allowedTools must be an array");
   }
   const allowedTools = rawAllowedTools === undefined
@@ -166,7 +199,7 @@ function normalizeSkillMetadata(value: unknown): SkillMetadata {
   );
   const metadata = normalizeStringMetadata(ownDataValue(value, "metadata"));
 
-  return Object.freeze({
+  return freeze({
     name,
     ...(displayName === undefined ? {} : { displayName }),
     description,
@@ -185,6 +218,9 @@ function normalizeSkillMetadata(value: unknown): SkillMetadata {
 export function normalizeSkillDefinition(id: string, value: Skill): Skill {
   const registryId = requireBoundedIdentity(id, "Skill registry id", SKILL_ID_MAX_LENGTH);
   if (!isObjectRecord(value)) {
+    if (isProxyWithoutHooks(value)) {
+      throw new TypeError("Skill definition must not be a proxy");
+    }
     throw new TypeError("Skill definition must be an object");
   }
 
@@ -216,7 +252,7 @@ export function normalizeSkillDefinition(id: string, value: Skill): Skill {
   if (ownerAgentId === undefined && shortName !== undefined) {
     throw new TypeError("Skill shortName requires ownerAgentId");
   }
-  if (shortName !== undefined && !SKILL_PROVIDER_SAFE_ID_REGEX.test(shortName)) {
+  if (shortName !== undefined && !isValidProviderSafeSkillId(shortName)) {
     throw new TypeError(`Skill shortName "${shortName}" is not a valid skill name`);
   }
 
@@ -225,7 +261,7 @@ export function normalizeSkillDefinition(id: string, value: Skill): Skill {
     throw new TypeError("Skill fsAdapter must be an object");
   }
 
-  return Object.freeze({
+  return freeze({
     id: registryId,
     metadata,
     rootPath,

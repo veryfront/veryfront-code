@@ -119,18 +119,36 @@ function isImage(file: File): boolean {
   return file.type.startsWith("image/");
 }
 
-let uploadCounter = 0;
-function nextId(): string {
-  uploadCounter += 1;
-  // `crypto.randomUUID()` is preferred for global uniqueness across tabs/sessions.
-  // The counter fallback guarantees uniqueness within the current session when
-  // the Crypto API is unavailable (e.g. insecure contexts or old environments).
-  // The counter increment runs unconditionally so the fallback branch is always
-  // deterministic and never produces duplicate IDs within a session.
-  const rand = typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : String(uploadCounter);
-  return `upload-${rand}`;
+type UploadCrypto = Partial<Pick<Crypto, "getRandomValues" | "randomUUID">>;
+
+/** Create a collision-resistant local attachment id from Web Crypto. */
+export function createUploadId(
+  cryptoProvider: UploadCrypto | null | undefined = globalThis.crypto,
+): string {
+  if (typeof cryptoProvider?.randomUUID === "function") {
+    const id = cryptoProvider.randomUUID();
+    if (typeof id !== "string" || id.length === 0) {
+      throw new TypeError("crypto.randomUUID() returned an invalid upload identifier");
+    }
+    return `upload-${id}`;
+  }
+
+  if (typeof cryptoProvider?.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    cryptoProvider.getRandomValues(bytes);
+    // RFC 4122 version 4 / variant bits make the fallback interoperable with
+    // UUID tooling while retaining 122 bits of Web Crypto entropy.
+    bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+    bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `upload-${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${
+      hex.slice(16, 20)
+    }-${hex.slice(20)}`;
+  }
+
+  throw new Error(
+    "File uploads require crypto.randomUUID() or crypto.getRandomValues() for collision-resistant attachment identifiers",
+  );
 }
 
 function stableHeadersKey(headers: Record<string, string> | undefined): string {
@@ -352,7 +370,7 @@ export function useUpload(
       const entries: Tracked[] = list.map((file) => ({
         file,
         info: {
-          id: nextId(),
+          id: createUploadId(),
           name: file.name,
           type: file.type,
           size: file.size,

@@ -1,10 +1,7 @@
 /**
- * Popover — BASIC fork of @radix-ui/react-popover with the same API shape
- * (Root / Trigger / Content + Title / Body / Footer / Actions section parts).
- * Classes are ported 1:1 from Studio's `Popover` (tokens remapped to
- * veryfront's `[var(--token)]` vocabulary). Anchored below the trigger;
- * dismisses on outside-click and `Escape`. A11y work tracked in
- * anchored-surface.tsx.
+ * Dependency-free anchored popover with the Studio part API used by Veryfront.
+ * It provides stable trigger/content ARIA wiring, initial focus, trigger focus
+ * restoration, collision-aware positioning, and outside/Escape dismissal.
  *
  * @module react/components/ui/popover
  */
@@ -32,7 +29,9 @@ export function Popover(props: PopoverProps): React.ReactElement {
 
 /** Trigger — toggles the popover. `asChild` merges onto the child element. */
 export function PopoverTrigger(
-  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+  props:
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
 ): React.ReactElement {
   return <_Trigger {...props} haspopup="dialog" />;
 }
@@ -52,10 +51,11 @@ export function PopoverContent({
 }: PopoverContentProps): React.ReactElement | null {
   return (
     <_Content
+      {...props}
       role="dialog"
       align={align}
+      initialFocus
       className={cn("min-w-[220px]", className)}
-      {...props}
     >
       {children}
     </_Content>

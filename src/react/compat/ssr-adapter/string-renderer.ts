@@ -101,6 +101,7 @@ export async function renderToStringAdapter(
   if (canUseReadableStream) {
     const timeoutMs = getSSRAdapterTimeoutMs();
     const deadline = createRenderDeadline(timeoutMs);
+    const reportedErrors = new Set<unknown>();
     try {
       const setupPromise = withSpan(
         SpanNames.SSR_REACT_RENDER_TO_STREAM,
@@ -113,6 +114,7 @@ export async function renderToStringAdapter(
             nonce: options.nonce,
             onError: (error: unknown) => {
               if (deadline.signal.aborted) return;
+              reportedErrors.add(error);
               logger.error("SSR renderToReadableStream error", error);
               notifyErrorObserver(options.onError, error);
             },
@@ -144,7 +146,9 @@ export async function renderToStringAdapter(
         deadline.promise,
       ]);
     } catch (error) {
-      logger.warn("SSR renderToReadableStream failed, falling back to renderToString", error);
+      logger.error("SSR renderToReadableStream failed", error);
+      if (!reportedErrors.has(error)) notifyErrorObserver(options.onError, error);
+      throw error;
     } finally {
       deadline.dispose();
     }

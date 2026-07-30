@@ -42,7 +42,7 @@ order: 1
 | [`veryfront/schemas`](./veryfront/schemas.md) | Validation schemas. |
 | [`veryfront/security`](./veryfront/security.md) | Security layer - input validation with size limits, CORS configuration, CSP and security headers, path traversal prevention, and secure filesystem access. |
 | [`veryfront/server`](./veryfront/server.md) | Server runtime helpers. |
-| [`veryfront/skill`](./veryfront/skill.md) | Agent skills. Public API for the agent skills system. Skills are project-level capabilities defined as SKILL.md files using the Agent Skills metadata format and Veryfront's documented, fail-closed allowed-tools subset. |
+| [`veryfront/skill`](./veryfront/skill.md) | Agent skills. Public API for the agent skills system. Skills are project-level capabilities defined as SKILL.md files using the Agent Skills metadata format and Veryfront's documented, fail-closed allowed-tools subset. YAML decoding is supplied by the `SkillDocumentParserProvider` extension contract. The CLI composes `@veryfront/ext-yaml` automatically; standalone parser calls pass a provider explicitly or use an active registration. |
 | [`veryfront/task`](./veryfront/task.md) | Source-defined tasks for Veryfront projects. |
 | [`veryfront/testing`](./veryfront/testing.md) | Test utilities. |
 | [`veryfront/tool`](./veryfront/tool.md) | Tool definitions and execution. |

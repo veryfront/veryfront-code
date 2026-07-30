@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { OptimizedImageMetadata } from "#veryfront/build/asset-pipeline/image-optimizer/types.ts";
+import type { OptimizedImageMetadata } from "#veryfront/types";
 import {
   assertImageQuality,
   generateSrcSet,
@@ -83,6 +83,11 @@ describe("optimized-image helpers", () => {
       () => assertImageQuality(metadata, 80),
       TypeError,
       "manifest quality is 73",
+    );
+    assertThrows(
+      () => getOptimizedPath("/images/photo.jpg", metadata, "webp", Number.NaN),
+      TypeError,
+      "width must be a positive finite number",
     );
   });
 

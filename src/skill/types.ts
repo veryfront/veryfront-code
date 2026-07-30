@@ -10,23 +10,63 @@
 
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
-// ── Constants ───────────────────────────────────────────────────────────
-
 const apply = Reflect.apply;
 const NativeRegExp = RegExp;
 const regExpExec = RegExp.prototype.exec;
 
-/** Historical public skill-name matcher. */
-export const SKILL_NAME_REGEX = /^[a-z0-9][a-z0-9-]{0,63}$/;
+// ── Constants ───────────────────────────────────────────────────────────
+
+const SKILL_NAME_PATTERN_SOURCE = "^[a-z0-9][a-z0-9-]{0,63}$";
+const SKILL_STRICT_NAME_PATTERN_SOURCE = "^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$";
+const SKILL_PROVIDER_SAFE_ID_PATTERN_SOURCE = "^[A-Za-z0-9_-]{1,64}$";
+const INTERNAL_SKILL_NAME_REGEX = new NativeRegExp(SKILL_NAME_PATTERN_SOURCE);
+const INTERNAL_SKILL_STRICT_NAME_REGEX = new NativeRegExp(
+  SKILL_STRICT_NAME_PATTERN_SOURCE,
+);
+const INTERNAL_SKILL_PROVIDER_SAFE_ID_REGEX = new NativeRegExp(
+  SKILL_PROVIDER_SAFE_ID_PATTERN_SOURCE,
+);
+
+/**
+ * Historical public skill-name inspection matcher.
+ * Mutating this compatibility value does not alter framework admission.
+ */
+export const SKILL_NAME_REGEX = new NativeRegExp(SKILL_NAME_PATTERN_SOURCE);
 
 /**
  * Strict filesystem skill-name matcher: 1-64 lowercase alphanumeric
  * characters or single hyphens, without leading or trailing hyphens.
+ * Mutating this compatibility value does not alter framework admission.
  */
-export const SKILL_STRICT_NAME_REGEX = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const SKILL_STRICT_NAME_REGEX = new NativeRegExp(
+  SKILL_STRICT_NAME_PATTERN_SOURCE,
+);
 
-/** Provider-safe owned skill id: sanitized namespace + short name, max 64 chars */
-export const SKILL_PROVIDER_SAFE_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+/**
+ * Provider-safe owned skill-id inspection matcher, max 64 characters.
+ * Mutating this compatibility value does not alter framework admission.
+ */
+export const SKILL_PROVIDER_SAFE_ID_REGEX = new NativeRegExp(
+  SKILL_PROVIDER_SAFE_ID_PATTERN_SOURCE,
+);
+
+/** Framework-owned historical skill-name grammar check. */
+export function isValidSkillName(value: unknown): value is string {
+  return typeof value === "string" &&
+    apply(regExpExec, INTERNAL_SKILL_NAME_REGEX, [value]) !== null;
+}
+
+/** Framework-owned strict filesystem skill-name grammar check. */
+export function isValidStrictSkillName(value: unknown): value is string {
+  return typeof value === "string" &&
+    apply(regExpExec, INTERNAL_SKILL_STRICT_NAME_REGEX, [value]) !== null;
+}
+
+/** Framework-owned provider-safe owned skill-id grammar check. */
+export function isValidProviderSafeSkillId(value: unknown): value is string {
+  return typeof value === "string" &&
+    apply(regExpExec, INTERNAL_SKILL_PROVIDER_SAFE_ID_REGEX, [value]) !== null;
+}
 
 const SKILL_ALLOWED_TOOL_PATTERN_SOURCE =
   "^[A-Za-z][A-Za-z0-9._-]*(:[A-Za-z][A-Za-z0-9._-]*)*(:\\*)?$";
@@ -153,7 +193,13 @@ export interface Skill {
   shortName?: string;
 }
 
-/** Result from executing a skill script */
+/**
+ * Result from executing a skill script.
+ *
+ * Executor implementations return a plain object with exactly these own,
+ * enumerable data properties. Skill tools detach and freeze the result and
+ * enforce their combined stdout/stderr byte budget before returning it.
+ */
 export interface SkillScriptResult {
   stdout: string;
   stderr: string;
@@ -192,7 +238,12 @@ export interface SkillScriptExecutorInput {
   abortSignal?: AbortSignal;
 }
 
-/** Script executor interface */
+/**
+ * Script executor interface.
+ *
+ * Implementations honor `timeoutMs` and cooperative `abortSignal` settlement,
+ * and return a `SkillScriptResult` that satisfies the boundary contract above.
+ */
 export interface SkillScriptExecutor {
   execute(input: SkillScriptExecutorInput): Promise<SkillScriptResult>;
 }

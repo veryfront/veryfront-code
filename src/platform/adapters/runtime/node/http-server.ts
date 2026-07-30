@@ -13,6 +13,7 @@ import {
   type NodeWebSocketServerOptions,
   snapshotNodeWebSocketServerProvider,
 } from "#veryfront/extensions/websocket";
+import { recordRequestPeerFromTransport } from "../shared/request-peer.ts";
 
 const pendingWebSocketUpgrades = new Map<
   string,
@@ -478,6 +479,13 @@ export function createNodeRequestListener(
       if (body) requestInit.duplex = "half";
 
       const request = new Request(url.toString(), requestInit);
+      if (typeof _req.socket.remoteAddress === "string") {
+        recordRequestPeerFromTransport(request, {
+          runtime: "node",
+          transport: "tcp",
+          hostname: _req.socket.remoteAddress,
+        });
+      }
       const response = await handler(request);
 
       if (requestAbort.signal.aborted || _res.destroyed) return;
@@ -707,13 +715,19 @@ async function createNodeServerInternal(
         }
         headersRecord[NODE_WEBSOCKET_UPGRADE_ID_HEADER] = requestId;
 
-        const response = await handler(
-          new Request(url.toString(), {
-            method: request.method ?? "GET",
-            headers: headersRecord,
-            signal: requestAbort.signal,
-          }),
-        );
+        const webRequest = new Request(url.toString(), {
+          method: request.method ?? "GET",
+          headers: headersRecord,
+          signal: requestAbort.signal,
+        });
+        if (typeof request.socket.remoteAddress === "string") {
+          recordRequestPeerFromTransport(webRequest, {
+            runtime: "node",
+            transport: "tcp",
+            hostname: request.socket.remoteAddress,
+          });
+        }
+        const response = await handler(webRequest);
 
         if (upgradesDisposed || !isWebSocketUpgradeResponse(response)) {
           failUpgrade(

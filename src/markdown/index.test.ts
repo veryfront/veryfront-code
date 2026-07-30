@@ -5,7 +5,11 @@ import * as markdownModule from "./index.ts";
 import * as publicMarkdownModule from "veryfront/markdown";
 import * as markdownComponentModule from "#veryfront/react/components/chat/markdown.tsx";
 
-const expectedRuntimeExports = ["Markdown"];
+const expectedRuntimeExports = [
+  "Markdown",
+  "MarkdownRendererCapabilityError",
+  "MarkdownRendererProvider",
+];
 
 describe("markdown/index.ts exports", () => {
   it("preserves the runtime export surface for veryfront/markdown", () => {
@@ -14,6 +18,10 @@ describe("markdown/index.ts exports", () => {
 
   it("keeps the Markdown re-export wired to the source component module", () => {
     assertStrictEquals(markdownModule.Markdown, markdownComponentModule.Markdown);
+    assertStrictEquals(
+      markdownModule.MarkdownRendererProvider,
+      markdownComponentModule.MarkdownRendererProvider,
+    );
   });
 
   it("keeps the documented veryfront/markdown entrypoint aligned with the barrel module", () => {

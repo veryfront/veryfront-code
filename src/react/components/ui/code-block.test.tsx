@@ -1,10 +1,23 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStrictEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { CodeBlock, useClipboard } from "./code-block.tsx";
+import {
+  CodeBlock,
+  CodeBlockRendererProvider,
+  type CodeDiagramRendererProps,
+  type CodeSyntaxRendererProps,
+  useClipboard,
+} from "./code-block.tsx";
 
 function installDom(
   dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>'),
@@ -48,6 +61,75 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
   flushSync(() => {});
 }
+
+describe("CodeBlock renderer boundary", () => {
+  it("renders escaped plain source without extension capabilities", () => {
+    const html = renderToString(
+      <CodeBlock code='<script>alert("x")</script>' language="mermaid" />,
+    );
+
+    assertStringIncludes(html, 'data-vf-code-renderer="plain"');
+    assertStringIncludes(html, 'class="language-mermaid"');
+    assertStringIncludes(html, "&lt;script&gt;");
+    assertEquals(html.includes("<script>"), false);
+    assertEquals(html.includes('data-vf-code-renderer="extension"'), false);
+  });
+
+  it("selects injected syntax and diagram renderers explicitly", () => {
+    function SyntaxRenderer({ code, language, mode }: CodeSyntaxRendererProps) {
+      return <pre data-syntax={`${language}:${mode}`}>{code}</pre>;
+    }
+    function DiagramRenderer({ code, language, mode }: CodeDiagramRendererProps) {
+      return <figure data-diagram={`${language}:${mode}`}>{code}</figure>;
+    }
+
+    const syntaxHtml = renderToString(
+      <CodeBlock
+        code="const value = 1"
+        language="ts"
+        mode="dark"
+        renderers={{ syntax: SyntaxRenderer }}
+      />,
+    );
+    const diagramHtml = renderToString(
+      <CodeBlockRendererProvider renderers={{ diagram: DiagramRenderer }}>
+        <CodeBlock code="graph TD" language="mermaid" mode="light" />
+      </CodeBlockRendererProvider>,
+    );
+
+    assertStringIncludes(syntaxHtml, 'data-vf-code-renderer="extension"');
+    assertStringIncludes(syntaxHtml, 'data-syntax="ts:dark"');
+    assertStringIncludes(diagramHtml, 'data-diagram="mermaid:light"');
+  });
+
+  it("allows a component to select plain source over an inherited renderer", () => {
+    function SyntaxRenderer(): React.ReactElement {
+      return <strong>rich</strong>;
+    }
+    const html = renderToString(
+      <CodeBlockRendererProvider renderers={{ syntax: SyntaxRenderer }}>
+        <CodeBlock code="plain" renderers={{ syntax: null }} />
+      </CodeBlockRendererProvider>,
+    );
+
+    assertStringIncludes(html, 'data-vf-code-renderer="plain"');
+    assertEquals(html.includes("<strong>rich</strong>"), false);
+  });
+
+  it("does not replace an extension renderer failure with plain source", () => {
+    function BrokenRenderer(): React.ReactElement {
+      throw new Error("syntax extension failed");
+    }
+    assertThrows(
+      () =>
+        renderToString(
+          <CodeBlock code="source" renderers={{ syntax: BrokenRenderer }} />,
+        ),
+      Error,
+      "syntax extension failed",
+    );
+  });
+});
 
 describe("CodeBlock clipboard integration", () => {
   it("passes a real click event to a custom-header onCopy interceptor", async () => {

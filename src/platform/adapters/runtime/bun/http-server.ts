@@ -9,6 +9,7 @@ import {
 import { DEFAULT_PORT } from "../../../compat/constants.ts";
 import { INITIALIZATION_ERROR, NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import { serverLogger } from "#veryfront/utils";
+import { recordRequestPeerFromTransport } from "../shared/request-peer.ts";
 
 type BunRequestHandler = (
   request: Request,
@@ -109,6 +110,22 @@ export async function createBunServerWithRuntime(
     websocket: bunWebSocketHandler,
     fetch: async (request, server) => {
       try {
+        let address: string | undefined;
+        try {
+          address = server.requestIP?.(request)?.address;
+        } catch (error) {
+          serverLogger.warn(
+            "Bun request peer lookup failed; local-control routes will reject the request",
+            { error },
+          );
+        }
+        if (typeof address === "string") {
+          recordRequestPeerFromTransport(request, {
+            runtime: "bun",
+            transport: "tcp",
+            hostname: address,
+          });
+        }
         const result = await dispatchBunRequest(request, server, handler);
         if (result.upgradeError) {
           serverLogger.error("Bun WebSocket request failed after upgrade", {

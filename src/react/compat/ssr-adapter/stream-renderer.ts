@@ -121,16 +121,7 @@ async function renderToReadableStreamImpl(
 
     logger.error("SSR_ERROR renderToReadableStream failed", { durationMs }, error);
     notifyObserver("onError", options.onError, error as Error);
-
-    try {
-      if (debug) logger.info("SSR trying string rendering fallback");
-      const html = await renderToStringAdapter(element, options);
-      if (debug) logger.info("SSR string fallback succeeded", { htmlLength: html.length });
-      return { html };
-    } catch (fallbackError) {
-      logger.error("SSR_ERROR string rendering fallback also failed", fallbackError);
-      throw fallbackError;
-    }
+    throw error;
   }
 }
 
@@ -244,21 +235,12 @@ function renderToPipeableStreamImpl(
     }
   });
 
-  return promise.catch(async (error) => {
+  return promise.catch((error) => {
     const durationMs = Math.round(performance.now() - start);
 
     if (!timedOut) logger.error("SSR_ERROR renderToPipeableStream failed", { durationMs }, error);
     notifyObserver("onError", options.onError, error as Error);
-
-    if (timedOut) throw error;
-
-    try {
-      const html = await renderToStringAdapter(element, options);
-      return { html };
-    } catch (fallbackError) {
-      logger.error("SSR_ERROR string rendering fallback also failed", fallbackError);
-      throw fallbackError;
-    }
+    throw error;
   });
 }
 

@@ -268,7 +268,7 @@ export function GET() {
 
         assertEquals(response.headers.get("X-Content-Type-Options"), "nosniff");
         assertEquals(response.headers.get("X-Frame-Options"), null);
-        assertEquals(response.headers.get("X-XSS-Protection"), "1; mode=block");
+        assertEquals(response.headers.get("X-XSS-Protection"), "0");
         assertEquals(response.headers.get("Strict-Transport-Security"), null);
         assertEquals(response.headers.get("Cross-Origin-Resource-Policy"), "same-origin");
         assertEquals(response.headers.get("X-Project-Security-Marker"), "preserved");

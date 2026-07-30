@@ -17,10 +17,10 @@ export interface CodeBlockProps {
  * Render rich code block.
  *
  * @deprecated Use the shared `CodeBlock` primitive (`ui/code-block.tsx`)
- * instead — it does real shiki syntax highlighting, an icon-only copy button
- * with tooltip, a file-type/language label, collapsible + mermaid support. This
- * plain `<pre>` fork (no highlighting) is kept only for back-compat and will be
- * removed. `Markdown` already renders fenced blocks through `CodeBlock`.
+ * instead. It provides the maintained copy/collapse surface and accepts
+ * extension-owned syntax and diagram renderers without putting third-party
+ * implementations in core. This older plain `<pre>` fork is retained only for
+ * compatibility and will be removed.
  */
 export function RichCodeBlock(
   { language, code, inline, className, ref }: CodeBlockProps,

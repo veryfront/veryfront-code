@@ -7,5 +7,15 @@
  * import { PageContextProvider, usePageContext } from "veryfront/context";
  * ```
  */
-export { PageContextProvider, usePageContext } from "../runtime/core.ts";
-export type { MdxHeading, PageContextProviderProps, PageContextValue } from "../runtime/core.ts";
+export {
+  ImageManifestProvider,
+  PageContextProvider,
+  useOptimizedImageMetadata,
+  usePageContext,
+} from "../runtime/core.ts";
+export type {
+  ImageManifestProviderProps,
+  MdxHeading,
+  PageContextProviderProps,
+  PageContextValue,
+} from "../runtime/core.ts";

@@ -2,6 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MiddlewareContext } from "./context.ts";
+import {
+  getRequestPeerProvenance,
+  isRequestFromLoopbackPeer,
+  recordRequestPeerFromTransport,
+} from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 function createCtx(
   env: Record<string, unknown> = {},
@@ -31,6 +36,45 @@ describe("MiddlewareContext", () => {
 
       ctx.request = secondReplacement;
       assertEquals(ctx.req, secondReplacement);
+    });
+
+    it("should preserve transport provenance through both request replacement aliases", () => {
+      const original = new Request("https://example.com/original");
+      recordRequestPeerFromTransport(original, {
+        runtime: "node",
+        transport: "tcp",
+        hostname: "127.0.0.2",
+      });
+      const ctx = new MiddlewareContext(original);
+      const firstReplacement = new Request("https://example.com/first");
+      recordRequestPeerFromTransport(firstReplacement, {
+        runtime: "node",
+        transport: "tcp",
+        hostname: "203.0.113.8",
+      });
+
+      ctx.req = firstReplacement;
+      assertEquals(isRequestFromLoopbackPeer(ctx.request), true);
+      assertEquals(getRequestPeerProvenance(ctx.request)?.hostname, "127.0.0.2");
+
+      ctx.request = new Request("https://example.com/second");
+      assertEquals(isRequestFromLoopbackPeer(ctx.req), true);
+      assertEquals(getRequestPeerProvenance(ctx.req)?.hostname, "127.0.0.2");
+    });
+
+    it("should not let a replacement invent authority when the original has none", () => {
+      const ctx = createCtx();
+      const replacement = new Request("https://example.com/replacement");
+      recordRequestPeerFromTransport(replacement, {
+        runtime: "node",
+        transport: "tcp",
+        hostname: "127.0.0.1",
+      });
+
+      ctx.request = replacement;
+
+      assertEquals(getRequestPeerProvenance(ctx.req), undefined);
+      assertEquals(isRequestFromLoopbackPeer(ctx.req), false);
     });
 
     it("should reject invalid request replacements without corrupting the context", () => {

@@ -29,6 +29,10 @@ import {
 } from "#veryfront/rendering/ssr-globals/context.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { MAX_STUDIO_CAPTURE_BUNDLE_BYTES } from "#veryfront/extensions/studio/index.ts";
+import type {
+  NodeWebSocketServer,
+  NodeWebSocketServerProvider,
+} from "#veryfront/extensions/websocket";
 
 afterAll(() => stopEsbuild());
 
@@ -193,6 +197,58 @@ describe("startProductionServer() lifecycle", () => {
     try {
       await handle.ready;
       assertEquals(suppliedProvider.browserBundle, invalidReplacementBundle);
+    } finally {
+      await handle.stop();
+    }
+  });
+
+  it("pins a supplied Node WebSocket provider before asynchronous startup", async () => {
+    const originalServer = {} as NodeWebSocketServer;
+    const suppliedProvider = {
+      createServer: () => originalServer,
+    };
+    const baseBootstrap = createBootstrapResult(() => {});
+    const bootstrap: BootstrapResult = {
+      adapter: baseBootstrap.adapter,
+      get config() {
+        // Provider capture must finish before startup reads any remaining
+        // caller-owned bootstrap fields.
+        suppliedProvider.createServer = () => {
+          throw new Error("mutated provider must not run");
+        };
+        return baseBootstrap.config;
+      },
+      usingFSAdapter: baseBootstrap.usingFSAdapter,
+      extensionLoader: baseBootstrap.extensionLoader,
+      dispose: baseBootstrap.dispose,
+      nodeWebSocketServerProvider: suppliedProvider,
+    };
+    let receivedProvider: Readonly<NodeWebSocketServerProvider> | undefined;
+    bootstrap.adapter.serve = (_handler, options) => {
+      receivedProvider = options.nodeWebSocketServerProvider;
+      options.onListen?.({ hostname: "127.0.0.1", port: 4_321 });
+      return Promise.resolve({
+        addr: { hostname: "127.0.0.1", port: 4_321 },
+        stop: () => Promise.resolve(),
+      });
+    };
+
+    const handle = await startLocalCliProxyProductionServer({
+      projectDir: "/project",
+      port: 4_321,
+      bootstrapResult: bootstrap,
+    });
+    try {
+      await handle.ready;
+      assertEquals(receivedProvider === suppliedProvider, false);
+      assertEquals(Object.isFrozen(receivedProvider), true);
+      assertStrictEquals(
+        receivedProvider?.createServer({
+          noServer: true,
+          handleProtocols: () => false,
+        }),
+        originalServer,
+      );
     } finally {
       await handle.stop();
     }

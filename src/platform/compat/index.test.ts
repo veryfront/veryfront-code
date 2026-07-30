@@ -31,9 +31,4 @@ describe("compat/index.ts exports", () => {
     assertExists(typeof isBun === "boolean");
     assertExists(typeof isCloudflare === "boolean");
   });
-
-  it("should export opaque import functions", async () => {
-    const { importClaudeAgentSDK } = await import("./index.ts");
-    assertExists(importClaudeAgentSDK);
-  });
 });

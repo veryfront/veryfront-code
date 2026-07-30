@@ -14,26 +14,28 @@ import { tool } from "#veryfront/tool/factory.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { basename } from "#veryfront/compat/path";
 import { createError, toError } from "#veryfront/errors";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { skillRegistryInternal } from "./registry.ts";
 import { parseSkillFileFrontmatter, validateSkillFileMetadata } from "./parser.ts";
 import { listStrictSkillSubdir } from "./path-safety.ts";
 import { getSkillScriptExecutor } from "./executor.ts";
 import type { Skill, SkillContent, SkillScriptExecutor } from "./types.ts";
 import {
+  isValidProviderSafeSkillId,
+  isValidSkillName,
   SKILL_ASSETS_DIR,
   SKILL_MD_FILENAME,
-  SKILL_NAME_REGEX,
-  SKILL_PROVIDER_SAFE_ID_REGEX,
   SKILL_READABLE_DIRS,
   SKILL_REFERENCES_DIR,
   SKILL_RESOURCES_DIR,
   SKILL_SCRIPTS_DIR,
 } from "./types.ts";
 import {
+  isValidSkillScriptEnvironmentKey,
   SKILL_ID_MAX_LENGTH,
   SKILL_RELATIVE_PATH_MAX_LENGTH,
+  SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
   SKILL_SCRIPT_DEFAULT_TIMEOUT_MS,
-  SKILL_SCRIPT_ENV_KEY_REGEX,
   SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL,
   SKILL_SCRIPT_MAX_ARG_LENGTH,
   SKILL_SCRIPT_MAX_ARGS,
@@ -42,12 +44,14 @@ import {
   SKILL_SCRIPT_MAX_ENV_KEY_LENGTH,
   SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH,
   SKILL_SCRIPT_MAX_TIMEOUT_MS,
+  SKILL_SUBDIR_MAX_ENTRIES,
   SKILL_TEXT_FILE_MAX_BYTES,
   SKILL_VISIBLE_ERROR_MAX_IDS,
 } from "./limits.ts";
 import { readValidatedSkillTextFile } from "./bounded-text-file.ts";
 import { createSkillOperationBudget, SkillOperationTimeoutError } from "./operation-budget.ts";
 import { sanitizeSkillBoundaryFailure } from "./error-boundary.ts";
+import { snapshotSkillScriptResult } from "./script-result.ts";
 
 type SkillFileKind = "reference" | "script";
 type SkillSelectorToolOptions = {
@@ -55,6 +59,53 @@ type SkillSelectorToolOptions = {
 };
 
 const UTF8_ENCODER = new TextEncoder();
+const apply = Reflect.apply;
+const arrayIncludes = Array.prototype.includes;
+const arrayIsArray = Array.isArray;
+const defineOwnProperty = Object.defineProperty;
+const freeze = Object.freeze;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+const stringIncludes = String.prototype.includes;
+const EMPTY_STRING_ALLOWLIST = freeze([] as string[]);
+
+function hasOwn(object: object, key: PropertyKey): boolean {
+  return apply(hasOwnProperty, object, [key]) as boolean;
+}
+
+function appendOwnArrayElement<T>(values: T[], value: T): void {
+  defineOwnProperty(values, values.length, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function snapshotStringAllowlist(value: unknown, maxEntries: number): readonly string[] {
+  if (!arrayIsArray(value) || isProxyWithoutHooks(value) || value.length > maxEntries) {
+    return EMPTY_STRING_ALLOWLIST;
+  }
+
+  const snapshot: string[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = getOwnPropertyDescriptor(value, index);
+    if (
+      descriptor === undefined ||
+      descriptor.enumerable !== true ||
+      !hasOwn(descriptor, "value") ||
+      typeof descriptor.value !== "string"
+    ) {
+      return EMPTY_STRING_ALLOWLIST;
+    }
+    appendOwnArrayElement(snapshot, descriptor.value);
+  }
+  return freeze(snapshot);
+}
+
+function containsExactString(values: readonly string[], candidate: string): boolean {
+  return apply(arrayIncludes, values, [candidate]) as boolean;
+}
 
 function sanitizeSkillToolFailure(
   error: unknown,
@@ -124,9 +175,12 @@ const getExecuteSkillScriptInputSchema = defineSchema((v) =>
       .describe("Arguments to pass to the script"),
     env: v
       .record(
-        v.string().min(1).max(SKILL_SCRIPT_MAX_ENV_KEY_LENGTH).regex(
-          SKILL_SCRIPT_ENV_KEY_REGEX,
-          "Environment variable names must contain only letters, digits, and underscores and must not start with a digit",
+        v.string().min(1).max(SKILL_SCRIPT_MAX_ENV_KEY_LENGTH).refine(
+          isValidSkillScriptEnvironmentKey,
+          {
+            message:
+              "Environment variable names must contain only letters, digits, and underscores and must not start with a digit",
+          },
         ),
         v.string().max(SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH),
       )
@@ -182,7 +236,7 @@ function resolveVisibleSkillOrThrow(
   }
 
   if (!isUnresolvedSkillSelectorValid(skillId)) {
-    const expectation = skillId.includes("--")
+    const expectation = apply(stringIncludes, skillId, ["--"])
       ? "must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters"
       : "must be lowercase alphanumeric with hyphens, 1-64 characters";
     throw toError(
@@ -208,11 +262,12 @@ function resolveVisibleSkillOrThrow(
 }
 
 function isUnresolvedSkillSelectorValid(skillId: string): boolean {
-  if (SKILL_NAME_REGEX.test(skillId)) {
+  if (isValidSkillName(skillId)) {
     return true;
   }
 
-  return skillId.includes("--") && SKILL_PROVIDER_SAFE_ID_REGEX.test(skillId);
+  return apply(stringIncludes, skillId, ["--"]) as boolean &&
+    isValidProviderSafeSkillId(skillId);
 }
 
 function createSkillUnavailableError(): Error {
@@ -230,24 +285,25 @@ function getSelectorAllowedSkillIds(
 ): readonly string[] | undefined {
   const resolved = options.resolveAllowedSkillIds?.(context);
   if (resolved !== undefined) {
-    return Array.isArray(resolved) && resolved.every((entry) => typeof entry === "string")
-      ? resolved
-      : [];
+    return snapshotStringAllowlist(
+      resolved,
+      SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
+    );
   }
 
   const contextAllowed = context?.allowedSkillIds;
   if (contextAllowed === undefined) return undefined;
-  return Array.isArray(contextAllowed) &&
-      contextAllowed.every((entry): entry is string => typeof entry === "string")
-    ? contextAllowed
-    : [];
+  return snapshotStringAllowlist(
+    contextAllowed,
+    SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
+  );
 }
 
 function assertSkillAllowedBySelector(
   skill: Skill,
   allowedSkillIds: readonly string[] | undefined,
 ): void {
-  if (allowedSkillIds === undefined || allowedSkillIds.includes(skill.id)) {
+  if (allowedSkillIds === undefined || containsExactString(allowedSkillIds, skill.id)) {
     return;
   }
 
@@ -298,7 +354,8 @@ function assertActiveSkillFileAvailable(
   const advertised = input.kind === "reference"
     ? availability.references ?? []
     : availability.scripts ?? [];
-  if (!advertised.includes(input.path)) {
+  const advertisedSnapshot = snapshotStringAllowlist(advertised, SKILL_SUBDIR_MAX_ENTRIES);
+  if (!containsExactString(advertisedSnapshot, input.path)) {
     throw toError(
       createError({
         type: "agent",
@@ -497,7 +554,7 @@ export function createExecuteSkillScriptTool(
           budget.throwIfTerminated();
 
           const executor = options.executor ?? getSkillScriptExecutor();
-          return await executor.execute({
+          const result = await executor.execute({
             scriptPath: scriptFile.path,
             scriptContent: scriptFile.content,
             args: input.args,
@@ -507,6 +564,7 @@ export function createExecuteSkillScriptTool(
             timeoutMs: budget.remainingMs() ?? timeoutMs,
             abortSignal: context?.abortSignal,
           });
+          return snapshotSkillScriptResult(result);
         });
       } catch (error) {
         if (context?.abortSignal?.aborted) {

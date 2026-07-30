@@ -17,7 +17,7 @@
  * client/SSR page code legitimately calls. The import rewriter redirects
  * `veryfront` to this module for the `browser` and `ssr` targets (see
  * `src/transforms/import-rewriter/strategies/veryfront-strategy.ts`), the same
- * mechanism `veryfront/workflow` already uses.
+ * mechanism used by explicit browser integration entry points.
  *
  * This is a build-only entry point, not a public package subpath. Keep the
  * exports below in sync with `src/index.ts`, including everything

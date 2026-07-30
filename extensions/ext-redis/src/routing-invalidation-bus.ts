@@ -1,5 +1,5 @@
 import { createClient } from "redis";
-import { getEnv } from "veryfront/platform";
+import { getEnv } from "veryfront";
 import { getErrorMessage } from "veryfront/errors";
 import { base64urlEncodeBytes } from "veryfront/utils";
 import {

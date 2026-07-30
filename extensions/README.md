@@ -256,6 +256,14 @@ extension under `npm/extensions/`. The generated package keeps public
 `veryfront/*` imports as peer imports and keeps feature-specific implementation
 dependencies inside the extension package.
 
+When an extension generates and embeds browser or worker code, its build-time
+imports need not become package-runtime dependencies. Declare
+`veryfront.npm.runtimeDependencies` as the exact npm package-name allowlist and
+`veryfront.npm.runtimePeerImports` as the exact `veryfront` or `veryfront/*`
+specifier allowlist reached from the published runtime entrypoints. Both fields
+default to all matching manifest imports when omitted; selected entries must
+also exist in `imports`. The npm build rejects undeclared emitted imports.
+
 Run `deno task sbom:all --output-dir dist/dependency-sboms` from the repository
 root to generate one SBOM per extension plus aggregate, core, CLI, and React
 boundary views. Use `dependencies-by-manifest.json` in that output to inspect

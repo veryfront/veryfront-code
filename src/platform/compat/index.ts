@@ -86,8 +86,8 @@ export {
 // Compat: dynamic import helper (hides specifiers from static analysis / deno compile)
 export { dynamicImport } from "./dynamic-import.ts";
 
-// Compat: dynamic imports for optional deps (opaque) and platform-split deps (kreuzberg)
-export { importClaudeAgentSDK, importKreuzberg } from "./opaque-deps.ts";
+// Compat: extension-provided platform-split document extraction
+export { importKreuzberg } from "./opaque-deps.ts";
 
 // Compat: path
 export {

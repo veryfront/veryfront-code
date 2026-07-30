@@ -12,6 +12,7 @@ import type { Skill } from "./types.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSkillTestAdapter } from "./testing.ts";
 import { LocalScriptExecutor } from "./executor.ts";
+import { SKILL_SCRIPT_ENV_KEY_REGEX, SKILL_SCRIPT_MAX_OUTPUT_BYTES } from "./limits.ts";
 
 type Settlement<T> =
   | { kind: "fulfilled"; value: T }
@@ -361,6 +362,44 @@ Hidden work.`,
     assertEquals(failure instanceof Error, true);
     assertEquals(failure === original, false);
     assertEquals(failure instanceof Error ? failure.cause : undefined, undefined);
+  });
+
+  it("load_skill fails closed on a proxied selector allowlist without invoking traps", async () => {
+    let readCount = 0;
+    let trapCalls = 0;
+    const root = "/project/skills/my-skill";
+    const adapter = createSkillTestAdapter({
+      [`${root}/SKILL.md`]: "---\nname: my-skill\ndescription: Test\n---\nBody",
+    });
+    const countingAdapter: FileSystemAdapter = {
+      ...adapter,
+      async readFile(path) {
+        readCount += 1;
+        return await adapter.readFile(path);
+      },
+    };
+    const allowlist = new Proxy(["my-skill"], {
+      get(target, key, receiver) {
+        trapCalls += 1;
+        return Reflect.get(target, key, receiver);
+      },
+      getOwnPropertyDescriptor(target, key) {
+        trapCalls += 1;
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    registerSkill("my-skill", createTestSkill(countingAdapter));
+    const tool = createLoadSkillTool({
+      resolveAllowedSkillIds: () => allowlist,
+    });
+
+    await assertRejects(
+      () => tool.execute({ skillId: "my-skill" }),
+      Error,
+      "not available",
+    );
+    assertEquals(trapCalls, 0);
+    assertEquals(readCount, 0);
   });
 
   it("load_skill should omit prompt notes for unavailable file tools", async () => {
@@ -877,6 +916,92 @@ Do work.`,
     }
   });
 
+  it("keeps active-skill script authorization independent of Array prototype hooks", async () => {
+    const scriptPath = "/project/skills/my-skill/scripts/hidden.sh";
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo hidden" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    let executorCalled = false;
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        async execute() {
+          executorCalled = true;
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+      },
+    });
+    const originalIncludes = Object.getOwnPropertyDescriptor(Array.prototype, "includes");
+
+    try {
+      Object.defineProperty(Array.prototype, "includes", {
+        configurable: true,
+        value: () => true,
+        writable: true,
+      });
+      await assertRejects(
+        () =>
+          tool.execute({
+            skillId: "my-skill",
+            script: "scripts/hidden.sh",
+          }, {
+            activeSkillId: "my-skill",
+            activeSkillToolAvailability: {
+              hasActiveSkill: true,
+              references: [],
+              scripts: ["scripts/run.sh"],
+            },
+          }),
+        Error,
+        "advertised",
+      );
+    } finally {
+      if (originalIncludes) {
+        Object.defineProperty(Array.prototype, "includes", originalIncludes);
+      }
+    }
+
+    assertEquals(executorCalled, false);
+  });
+
+  it("keeps selector authorization independent of Array prototype hooks", async () => {
+    const scriptPath = "/project/skills/my-skill/scripts/run.sh";
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo run" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    let executorCalled = false;
+    const tool = createExecuteSkillScriptTool({
+      resolveAllowedSkillIds: () => ["other-skill"],
+      executor: {
+        async execute() {
+          executorCalled = true;
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+      },
+    });
+    const originalIncludes = Object.getOwnPropertyDescriptor(Array.prototype, "includes");
+
+    try {
+      Object.defineProperty(Array.prototype, "includes", {
+        configurable: true,
+        value: () => true,
+        writable: true,
+      });
+      await assertRejects(
+        () =>
+          tool.execute({
+            skillId: "my-skill",
+            script: "scripts/run.sh",
+          }),
+        Error,
+        "not available",
+      );
+    } finally {
+      if (originalIncludes) {
+        Object.defineProperty(Array.prototype, "includes", originalIncludes);
+      }
+    }
+
+    assertEquals(executorCalled, false);
+  });
+
   it("execute_skill_script bounds argument and environment cardinality at its schema", async () => {
     const tool = createExecuteSkillScriptTool();
     await assertRejects(
@@ -953,6 +1078,117 @@ Do work.`,
       "Environment variable",
     );
     assertEquals(executorCalled, false);
+  });
+
+  it("keeps environment-name authorization independent of public regex and prototype mutation", async () => {
+    const scriptPath = "/project/skills/my-skill/scripts/run.sh";
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo run" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    let executorCalled = false;
+    let failure: unknown;
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        async execute() {
+          executorCalled = true;
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+      },
+    });
+    const originalSource = SKILL_SCRIPT_ENV_KEY_REGEX.source;
+    const originalTest = Object.getOwnPropertyDescriptor(RegExp.prototype, "test");
+
+    try {
+      SKILL_SCRIPT_ENV_KEY_REGEX.compile(".*");
+      Object.defineProperty(RegExp.prototype, "test", {
+        configurable: true,
+        value: () => true,
+        writable: true,
+      });
+      try {
+        await tool.execute({
+          skillId: "my-skill",
+          script: "scripts/run.sh",
+          env: { "BAD=KEY": "value" },
+        });
+      } catch (error) {
+        failure = error;
+      }
+    } finally {
+      if (originalTest) Object.defineProperty(RegExp.prototype, "test", originalTest);
+      SKILL_SCRIPT_ENV_KEY_REGEX.compile(originalSource);
+    }
+
+    assert(failure instanceof Error);
+    assertEquals(executorCalled, false);
+  });
+
+  it("rejects untrusted custom-executor result shapes without invoking accessors", async () => {
+    const scriptPath = "/project/skills/my-skill/scripts/run.sh";
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo run" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    let getterCalls = 0;
+    const hostileResult = Object.defineProperties({}, {
+      stdout: {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          return "leak";
+        },
+      },
+      stderr: { enumerable: true, value: "" },
+      exitCode: { enumerable: true, value: 0 },
+    });
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        async execute() {
+          return hostileResult as never;
+        },
+      },
+    });
+
+    await assertRejects(
+      () => tool.execute({ skillId: "my-skill", script: "scripts/run.sh" }),
+      TypeError,
+      "data properties",
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("bounds and detaches custom-executor results before returning them", async () => {
+    const scriptPath = "/project/skills/my-skill/scripts/run.sh";
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo run" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    const oversizedTool = createExecuteSkillScriptTool({
+      executor: {
+        async execute() {
+          return {
+            stdout: "x".repeat(SKILL_SCRIPT_MAX_OUTPUT_BYTES + 1),
+            stderr: "",
+            exitCode: 0,
+          };
+        },
+      },
+    });
+
+    await assertRejects(
+      () => oversizedTool.execute({ skillId: "my-skill", script: "scripts/run.sh" }),
+      RangeError,
+      "output",
+    );
+
+    const sourceResult = { stdout: "ok", stderr: "", exitCode: 0 };
+    const detachedTool = createExecuteSkillScriptTool({
+      executor: { execute: () => Promise.resolve(sourceResult) },
+    });
+    const result = await detachedTool.execute({
+      skillId: "my-skill",
+      script: "scripts/run.sh",
+    });
+    sourceResult.stdout = "mutated";
+    sourceResult.exitCode = 99;
+
+    assertEquals(result, { stdout: "ok", stderr: "", exitCode: 0 });
+    assertEquals(Object.isFrozen(result), true);
   });
 
   it("execute_skill_script propagates request cancellation to the executor", async () => {

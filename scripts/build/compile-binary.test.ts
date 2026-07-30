@@ -23,7 +23,22 @@ Deno.test("compiled CLI does not implicitly embed Redis extensions", () => {
   });
 
   assertEquals(
-    args.some((value) => value.includes("ext-cache-redis") || value.includes("ext-redis")),
+    args.some((value) =>
+      value.includes("ext-cache-redis") || value.includes("ext-redis")
+    ),
+    false,
+  );
+});
+
+Deno.test("compiled CLI does not implicitly embed the explicit Node WebSocket extension", () => {
+  const args = createCompileArgs({
+    entrypoint: "cli/main.ts",
+    extraIncludes: [],
+    output: "/tmp/veryfront",
+  });
+
+  assertEquals(
+    args.some((value) => value.includes("ext-node-websocket-ws")),
     false,
   );
 });

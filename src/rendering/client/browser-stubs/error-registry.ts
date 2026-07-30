@@ -20,3 +20,7 @@ function createBrowserError(name: string, fallbackMessage: string) {
 
 export const NETWORK_ERROR = createBrowserError("NetworkError", "Network request failed");
 export const SECURITY_VIOLATION = createBrowserError("SecurityViolation", "Security violation");
+export const INPUT_VALIDATION_FAILED = createBrowserError(
+  "InputValidationFailed",
+  "Input validation failed",
+);

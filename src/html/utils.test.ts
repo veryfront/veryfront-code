@@ -145,8 +145,8 @@ describe("html-generation/utils", () => {
       const imports = JSON.parse(result).imports as Record<string, string>;
 
       assertEquals(
-        imports["veryfront/workflow"],
-        "/_vf_modules/_veryfront/workflow/react/index.js",
+        imports["veryfront/workflow/react"],
+        "/_vf_modules/_veryfront/react/workflow/index.js",
       );
     });
 
@@ -159,7 +159,7 @@ describe("html-generation/utils", () => {
       assertEquals(imports["veryfront/chat"], "/_veryfront/lib/chat.js");
       assertEquals(imports["veryfront/markdown"], "/_veryfront/lib/markdown.js");
       assertEquals(imports["veryfront/mdx"], "/_veryfront/lib/mdx.js");
-      assertEquals(imports["veryfront/workflow"], "/_veryfront/lib/workflow.js");
+      assertEquals(imports["veryfront/workflow/react"], "/_veryfront/lib/workflow.js");
     });
 
     it("should map non-default CDN providers to published npm ESM files", async () => {
@@ -171,7 +171,10 @@ describe("html-generation/utils", () => {
       assertStringIncludes(imports["veryfront/chat"]!, "/esm/src/chat/index.js");
       assertStringIncludes(imports["veryfront/markdown"]!, "/esm/src/markdown/index.js");
       assertStringIncludes(imports["veryfront/mdx"]!, "/esm/src/mdx/index.js");
-      assertStringIncludes(imports["veryfront/workflow"]!, "/esm/src/workflow/react/index.js");
+      assertStringIncludes(
+        imports["veryfront/workflow/react"]!,
+        "/esm/src/react/workflow/index.js",
+      );
 
       // Core runtime utilities must ALWAYS resolve locally, even under a
       // non-default CDN provider — they must share the same React context module
@@ -408,7 +411,7 @@ describe("html-generation/utils", () => {
             size: 10,
             contentType: "text/javascript",
           },
-          "veryfront/workflow": {
+          "veryfront/workflow/react": {
             contentHash: workflowHash,
             size: 10,
             contentType: "text/javascript",
@@ -424,7 +427,7 @@ describe("html-generation/utils", () => {
 
       assertEquals(imports["veryfront/head"], `/_vf/assets/${headHash}.js`);
       assertEquals(imports["veryfront/react/head"], `/_vf/assets/${headHash}.js`);
-      assertEquals(imports["veryfront/workflow"], `/_vf/assets/${workflowHash}.js`);
+      assertEquals(imports["veryfront/workflow/react"], `/_vf/assets/${workflowHash}.js`);
     });
 
     it("versions local module-server import-map aliases in release manifest context", async () => {

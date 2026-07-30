@@ -29,10 +29,48 @@ import {
   type TestServer,
   withServer,
 } from "../setup/index.ts";
+import {
+  DASHBOARD_CSRF_COOKIE_NAME,
+  DASHBOARD_CSRF_HEADER_NAME,
+  DASHBOARD_CSRF_TOKEN_PATTERN,
+} from "#veryfront/extensions/dev-ui/protocol";
 
 interface JsonRequestInit extends Omit<RequestInit, "body" | "headers"> {
   body?: unknown;
   headers?: HeadersInit;
+}
+
+interface DashboardTestSession {
+  cookie: string;
+  csrfToken: string;
+}
+
+const dashboardSessions = new WeakMap<TestServer, Promise<DashboardTestSession>>();
+
+function getDashboardTestSession(server: TestServer): Promise<DashboardTestSession> {
+  const existing = dashboardSessions.get(server);
+  if (existing) return existing;
+
+  const pending = loadDashboardTestSession(server);
+  dashboardSessions.set(server, pending);
+  void pending.catch(() => dashboardSessions.delete(server));
+  return pending;
+}
+
+async function loadDashboardTestSession(server: TestServer): Promise<DashboardTestSession> {
+  const response = await fetch(`http://127.0.0.1:${server.port}/_dev`);
+  try {
+    assertEquals(response.status, 200);
+    const cookie = response.headers.get("set-cookie")?.split(";", 1)[0]?.trim() ?? "";
+    const separator = cookie.indexOf("=");
+    const name = separator === -1 ? "" : cookie.slice(0, separator);
+    const csrfToken = separator === -1 ? "" : cookie.slice(separator + 1);
+    assertEquals(name, DASHBOARD_CSRF_COOKIE_NAME);
+    assert(DASHBOARD_CSRF_TOKEN_PATTERN.test(csrfToken));
+    return { cookie, csrfToken };
+  } finally {
+    await response.body?.cancel().catch(() => {});
+  }
 }
 
 async function writeProjectFiles(projectDir: string, files: Record<string, string>): Promise<void> {
@@ -75,6 +113,12 @@ async function postJson<T = unknown>(
   const { body, headers, ...rest } = init;
   const finalHeaders = new Headers(headers);
   finalHeaders.set("Content-Type", "application/json");
+  finalHeaders.set("Origin", `http://127.0.0.1:${server.port}`);
+  if (path.startsWith("/_dev/api/")) {
+    const session = await getDashboardTestSession(server);
+    finalHeaders.set("Cookie", session.cookie);
+    finalHeaders.set(DASHBOARD_CSRF_HEADER_NAME, session.csrfToken);
+  }
 
   const response = await fetch(`http://127.0.0.1:${server.port}${path}`, {
     ...rest,

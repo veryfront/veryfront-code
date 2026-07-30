@@ -1,5 +1,6 @@
 import type { Context, ExecutionContext } from "./types.ts";
 import { HTTP_REDIRECT_FOUND } from "#veryfront/utils";
+import { inheritRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 /** Context for middleware. */
 export class MiddlewareContext implements Context {
@@ -25,7 +26,10 @@ export class MiddlewareContext implements Context {
   }
 
   set req(request: Request) {
-    this.currentRequest = this.requireRequest(request);
+    this.currentRequest = inheritRequestPeerProvenance(
+      this.currentRequest,
+      this.requireRequest(request),
+    );
   }
 
   get request(): Request {
@@ -33,7 +37,10 @@ export class MiddlewareContext implements Context {
   }
 
   set request(request: Request) {
-    this.currentRequest = this.requireRequest(request);
+    this.currentRequest = inheritRequestPeerProvenance(
+      this.currentRequest,
+      this.requireRequest(request),
+    );
   }
 
   json(object: unknown, init?: ResponseInit): Response {

@@ -6,7 +6,7 @@
 #   1. the root `veryfront` package contains no CSS implementation while its
 #      independently published CSS extension packages are generated
 #   2. a `veryfront` install with co-published required packages runs the CLI
-#      and activates the parser extension under Node
+#      and activates the parser and offline Dev UI extensions under Node
 #   3. the parser-only/evaluator worker transport and model-runtime streaming
 #      run under Node 18 without unsupported Web Streams APIs
 #   4. loading a missing extension fails naming the installable package
@@ -29,23 +29,33 @@ fail() {
 [ -d "$ROOT_DIR/npm" ] || fail "npm build output missing; run 'deno task build:npm' first"
 [ -d "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" ] || fail "ext-bundler-esbuild package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-content-mdx" ] || fail "ext-content-mdx package output missing"
+[ -d "$ROOT_DIR/npm/extensions/ext-dev-ui-react" ] || fail "ext-dev-ui-react package output missing"
+[ -d "$ROOT_DIR/npm/extensions/ext-llm-anthropic" ] || fail "ext-llm-anthropic package output missing"
+[ -d "$ROOT_DIR/npm/extensions/ext-llm-google" ] || fail "ext-llm-google package output missing"
+[ -d "$ROOT_DIR/npm/extensions/ext-llm-openai" ] || fail "ext-llm-openai package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-css-lightning" ] || fail "ext-css-lightning package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-css-purgecss" ] || fail "ext-css-purgecss package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-css-tailwind" ] || fail "ext-css-tailwind package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-parser-babel" ] || fail "ext-parser-babel package output missing"
+[ -d "$ROOT_DIR/npm/extensions/ext-schema-zod" ] || fail "ext-schema-zod package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-yaml" ] || fail "ext-yaml package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-auth-jwt" ] || fail "ext-auth-jwt package output missing"
 
 (cd "$ROOT_DIR/npm" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-content-mdx" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+(cd "$ROOT_DIR/npm/extensions/ext-dev-ui-react" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+(cd "$ROOT_DIR/npm/extensions/ext-llm-anthropic" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+(cd "$ROOT_DIR/npm/extensions/ext-llm-google" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+(cd "$ROOT_DIR/npm/extensions/ext-llm-openai" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-parser-babel" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+(cd "$ROOT_DIR/npm/extensions/ext-schema-zod" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-yaml" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-auth-jwt" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 
 cd "$WORKDIR"
 npm init -y >/dev/null 2>&1
-npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-parser-babel-*.tgz ./veryfront-ext-yaml-*.tgz
+npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-dev-ui-react-*.tgz ./veryfront-ext-llm-anthropic-*.tgz ./veryfront-ext-llm-google-*.tgz ./veryfront-ext-llm-openai-*.tgz ./veryfront-ext-parser-babel-*.tgz ./veryfront-ext-schema-zod-*.tgz ./veryfront-ext-yaml-*.tgz
 
 echo "== 1. root install excludes independently published CSS implementations"
 node -e "
@@ -76,6 +86,11 @@ node node_modules/veryfront/bin/veryfront.js schema --json >/dev/null ||
 node -e "
 const p = require('./node_modules/veryfront/package.json');
 if (p.dependencies?.['@veryfront/ext-parser-babel'] !== p.version) process.exit(1);
+if (p.dependencies?.['@veryfront/ext-dev-ui-react'] !== p.version) process.exit(1);
+if (p.dependencies?.['@veryfront/ext-llm-anthropic'] !== p.version) process.exit(1);
+if (p.dependencies?.['@veryfront/ext-llm-google'] !== p.version) process.exit(1);
+if (p.dependencies?.['@veryfront/ext-llm-openai'] !== p.version) process.exit(1);
+if (p.dependencies?.['@veryfront/ext-schema-zod'] !== p.version) process.exit(1);
 if (p.dependencies?.['@veryfront/ext-yaml'] !== p.version) process.exit(1);
 " || fail "root package does not pin its auto-loaded extensions to its version"
 mkdir -p skill-smoke
@@ -146,6 +161,48 @@ const ast = await codeParser.parse({
 if (ast?.type !== 'File') throw new Error('TSX parse failed');
 await extension.teardown?.();
 " || fail "root optional builtin did not register a working CodeParser"
+node --input-type=module -e "
+const m = await import('./node_modules/veryfront/esm/src/extensions/builtin-extensions.js');
+const deferredModule = await import(
+  './node_modules/veryfront/esm/src/extensions/deferred-extension.js'
+);
+const resolved = m.createBuiltinExtensions().find(
+  (candidate) => candidate.extension.name === 'ext-dev-ui-react',
+);
+if (!resolved) throw new Error('Dev UI builtin candidate is missing');
+const deferred = deferredModule.getDeferredExtensionState(resolved);
+if (!deferred) throw new Error('Dev UI extension was not deferred');
+const logger = { debug() {}, info() {}, warn() {}, error() {} };
+const extension = await deferred.load(logger);
+if (!extension) throw new Error('Dev UI extension did not load');
+let devUiAssetProvider;
+await extension.setup({
+  get() {},
+  require() { throw new Error('unexpected contract requirement'); },
+  provide(name, impl) {
+    if (name === 'DevUiAssetProvider') devUiAssetProvider = impl;
+  },
+  config: {},
+  logger,
+});
+if (!devUiAssetProvider) {
+  throw new Error('DevUiAssetProvider was not registered');
+}
+const bundle = devUiAssetProvider.browserBundle;
+if (
+  typeof bundle !== 'string' ||
+  !bundle.includes('data-veryfront-dev-ui-styles') ||
+  !bundle.includes('.bg-vf-bg')
+) {
+  throw new Error('DevUiAssetProvider does not contain the offline JS/CSS artifact');
+}
+if (
+  /\\b(?:react(?:-jsx-runtime)?|react-dom(?:-client)?|scheduler)\\.development\\.js\\b/i.test(bundle)
+) {
+  throw new Error('Dev UI artifact contains a React development build');
+}
+await extension.teardown?.();
+" || fail "root optional builtin did not register the offline DevUiAssetProvider"
 
 echo "== 3. parser-only evaluator worker transport runs under Node 18"
 [ "$(node --version)" = "v18.18.0" ] ||

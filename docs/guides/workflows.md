@@ -262,6 +262,7 @@ export default workflow({
     step("draft", { agent: "writer" }),
     waitForApproval("editor-review", {
       message: "Please review the draft before publishing.",
+      approvers: ["editor@example.com"],
       timeout: "24h",
     }),
     step("publish", { tool: "publisher" }),
@@ -269,7 +270,7 @@ export default workflow({
 });
 ```
 
-The workflow pauses at `waitForApproval` and resumes when an approver responds. If the timeout expires, the workflow fails.
+The workflow pauses at `waitForApproval` and resumes when an approver responds. If the timeout expires, the workflow fails. The approval endpoint must derive the approver identity from its authenticated request context; never trust an identity sent by browser code. If `approvers` is omitted, that authenticated host boundary is the entire authorization policy.
 
 ### Wait for events
 
@@ -305,7 +306,6 @@ export default workflow({
     })
   )(),
   timeout: "30m",
-  retry: { maxAttempts: 3, backoff: "exponential" },
   steps: ({ input }) => [
     step("research", {
       agent: "researcher",
@@ -317,6 +317,11 @@ export default workflow({
   onComplete: (result) => console.log("Done:", result),
 });
 ```
+
+`onComplete` and `onError` are post-persistence observers. They are awaited and
+their failures are logged, but they cannot rewrite an already durable
+`completed` or `failed` run. Put required business side effects in idempotent
+workflow steps (or an outbox), not in lifecycle observers.
 
 ## Verify it worked
 

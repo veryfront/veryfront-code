@@ -17,6 +17,7 @@ export const DEFAULT_INCLUDES = [
   "extensions/ext-bundler-esbuild/src/index.ts",
   "extensions/ext-content-mdx/src/index.ts",
   "extensions/ext-db-sqlite/src/index.ts",
+  "extensions/ext-dev-ui-react/src/index.ts",
   "extensions/ext-document-kreuzberg/src/index.ts",
   "extensions/ext-eval-report-http/src/index.ts",
   "extensions/ext-eval-report-mlflow/src/index.ts",

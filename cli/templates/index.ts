@@ -45,17 +45,22 @@ export {
 } from "./feature-loader.ts";
 
 const CSS_PROCESSOR_EXTENSION = "@veryfront/ext-css-tailwind";
+const NODE_WEBSOCKET_EXTENSION = "@veryfront/ext-node-websocket-ws";
+const STANDARD_FIRST_PARTY_EXTENSIONS = [
+  CSS_PROCESSOR_EXTENSION,
+  NODE_WEBSOCKET_EXTENSION,
+];
 
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
   "minimal": {
-    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+    firstPartyExtensions: [...STANDARD_FIRST_PARTY_EXTENSIONS],
   },
   "ai-agent": {
-    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+    firstPartyExtensions: [...STANDARD_FIRST_PARTY_EXTENSIONS],
   },
   "docs-agent": {
     firstPartyExtensions: [
-      CSS_PROCESSOR_EXTENSION,
+      ...STANDARD_FIRST_PARTY_EXTENSIONS,
       "@veryfront/ext-document-kreuzberg",
     ],
     npmDependencies: {
@@ -64,22 +69,22 @@ export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
     },
   },
   "multi-agent-system": {
-    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+    firstPartyExtensions: [...STANDARD_FIRST_PARTY_EXTENSIONS],
   },
   "agentic-workflow": {
-    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+    firstPartyExtensions: [...STANDARD_FIRST_PARTY_EXTENSIONS],
   },
   "coding-agent": {
-    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+    firstPartyExtensions: [...STANDARD_FIRST_PARTY_EXTENSIONS],
   },
   "saas-starter": {
-    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+    firstPartyExtensions: [...STANDARD_FIRST_PARTY_EXTENSIONS],
   },
   "pages-router": {
-    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+    firstPartyExtensions: [...STANDARD_FIRST_PARTY_EXTENSIONS],
   },
   "app-router": {
-    firstPartyExtensions: [CSS_PROCESSOR_EXTENSION],
+    firstPartyExtensions: [...STANDARD_FIRST_PARTY_EXTENSIONS],
   },
 };
 

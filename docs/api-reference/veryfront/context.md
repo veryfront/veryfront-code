@@ -7,7 +7,12 @@ order: 6
 ## Import
 
 ```ts
-import { usePageContext, PageContextProvider } from "veryfront/context";
+import {
+  usePageContext,
+  PageContextProvider,
+  useOptimizedImageMetadata,
+  ImageManifestProvider,
+} from "veryfront/context";
 ```
 
 ## Examples
@@ -22,18 +27,21 @@ import { PageContextProvider, usePageContext } from "veryfront/context";
 
 | Name | Description | Source |
 |------|-------------|--------|
+| `ImageManifestProvider` | Provide one immutable build manifest to an individual render or hydration tree. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L554) |
 | `PageContextProvider` | Provides page context to route and MDX descendants. Page-authored fields (`frontmatter`, `slug`, `headings`) come from the `pageContext` prop; the location fields (`path`, `query`, `params`) are derived from the router so they stay reactive and there is a single source of truth - `usePageContext()` exposes the same `query`/`pathname` as `useRouter()`. When rendered outside a `RouterProvider` (no live router) it falls back to the seed's own location. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L482) |
 
 ### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
+| `useOptimizedImageMetadata` | Resolve exact generated metadata and fail closed when the render has no matching entry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L570) |
 | `usePageContext` | Reads the current page context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L506) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
+| `ImageManifestProviderProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L128) |
 | `MdxHeading` | Heading metadata extracted from MDX content. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L69) |
 | `PageContextProviderProps` | Props accepted by `<PageContextProvider>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L116) |
 | `PageContextValue` | Page context exposed to route and MDX components. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L79) |

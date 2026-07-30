@@ -1,8 +1,10 @@
 /**
  * Claude Agent SDK Integration
  *
- * Provides Claude Code agentic capabilities within Veryfront workflows.
- * Uses your local Claude Code installation — no separate API key needed.
+ * Provides provider-neutral Claude Code capabilities within Veryfront
+ * workflows. Agent execution requires an implementation of the
+ * `ClaudeCodeAgentRuntime` extension contract, such as
+ * `@veryfront/ext-claude-code-agent`.
  *
  * @example
  * ```typescript
@@ -27,6 +29,11 @@
 // Agent
 export { createAgent, executeAgent } from "./agent.ts";
 export type { AgentConfig } from "./agent.ts";
+export { MAX_CLAUDE_CODE_AGENT_TURNS } from "./agent.ts";
+
+// Extension runtime contract
+export { ClaudeCodeAgentRuntimeName } from "./runtime-contract.ts";
+export type { ClaudeCodeAgentExecutionConfig, ClaudeCodeAgentRuntime } from "./runtime-contract.ts";
 
 // Tools
 export {
@@ -59,13 +66,21 @@ export {
 export type { WebSocketPublisherConfig } from "./websocket-publisher.ts";
 
 // Workspace Sync (for cloud deployments with API-backed file operations)
-export { createWorkspaceSync, withWorkspace, WorkspaceSync } from "./workspace-sync.ts";
+export {
+  createWorkspaceSync,
+  withWorkspace,
+  WorkspaceSync,
+  WorkspaceUploadAbortError,
+} from "./workspace-sync.ts";
 
 export type {
   FileChange,
   UploadResult,
   WorkspaceConfig,
+  WorkspaceFileSource,
+  WorkspacePersistenceContext,
   WorkspaceSyncResult,
+  WorkspaceUploadPartialResult,
 } from "./workspace-sync.ts";
 
 // Types

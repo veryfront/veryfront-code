@@ -5,6 +5,10 @@
   "veryfront": {
     "extension": true,
     "activation": "explicit",
+    "npm": {
+      "runtimeDependencies": [],
+      "runtimePeerImports": ["veryfront/extensions"]
+    },
     "contracts": {
       "provides": ["StudioCaptureBundleProvider"]
     },

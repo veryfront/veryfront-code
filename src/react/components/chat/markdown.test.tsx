@@ -1,27 +1,100 @@
+import * as React from "react";
 import { renderToString } from "react-dom/server";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { type CodeBlockProps, Markdown } from "./markdown.tsx";
+import {
+  type CodeBlockProps,
+  Markdown,
+  MarkdownRendererCapabilityError,
+  type MarkdownRendererProps,
+  MarkdownRendererProvider,
+} from "./markdown.tsx";
+
+function TestRenderer({
+  source,
+  components,
+  renderCodeBlock,
+}: MarkdownRendererProps): React.ReactElement {
+  const Heading = components?.h1;
+  const fence = /^```([^\n]*)\n([\s\S]*?)\n```$/u.exec(source);
+  if (fence && renderCodeBlock) {
+    return (
+      <>{renderCodeBlock({ language: fence[1] || undefined, code: fence[2]!, inline: false })}</>
+    );
+  }
+  if (Heading && source.startsWith("# ")) {
+    return <Heading>{source.slice(2)}</Heading>;
+  }
+  return <article data-source={source}>rich output</article>;
+}
 
 describe("Markdown", () => {
-  it("renders Markdown and GFM semantics during server rendering", () => {
+  it("renders escaped source explicitly when no rich renderer is installed", () => {
+    const source = '# Heading\n\n<script>alert("raw")</script>\n\n[unsafe](javascript:run())';
+    const html = renderToString(<Markdown>{source}</Markdown>);
+
+    assertStringIncludes(html, 'data-vf-markdown-renderer="plain"');
+    assertStringIncludes(html, 'aria-label="Markdown source"');
+    assertStringIncludes(html, "# Heading");
+    assertStringIncludes(html, "&lt;script&gt;");
+    assertStringIncludes(html, "javascript:run()");
+    assertEquals(html.includes("<script>"), false);
+    assertEquals(html.includes("href="), false);
+    assertEquals(html.includes("<h1>"), false);
+  });
+
+  it("selects a per-instance rich renderer and forwards its exact source", () => {
     const html = renderToString(
-      <Markdown>
-        {"# Heading\n\n**bold** and ~~removed~~\n\n| A | B |\n| - | - |\n| 1 | 2 |"}
+      <Markdown renderer={TestRenderer}># Result</Markdown>,
+    );
+
+    assertStringIncludes(html, 'data-vf-markdown-renderer="extension"');
+    assertStringIncludes(html, 'data-source="# Result"');
+    assertStringIncludes(html, ">rich output</article>");
+  });
+
+  it("selects a provider renderer for nested chat surfaces", () => {
+    const html = renderToString(
+      <MarkdownRendererProvider renderer={TestRenderer}>
+        <Markdown>provider source</Markdown>
+      </MarkdownRendererProvider>,
+    );
+
+    assertStringIncludes(html, 'data-source="provider source"');
+  });
+
+  it("allows a nested surface to explicitly select plain source", () => {
+    const html = renderToString(
+      <MarkdownRendererProvider renderer={TestRenderer}>
+        <Markdown renderer={null}># Plain</Markdown>
+      </MarkdownRendererProvider>,
+    );
+
+    assertStringIncludes(html, 'data-vf-markdown-renderer="plain"');
+    assertEquals(html.includes("<article"), false);
+  });
+
+  it("forwards framework-neutral component overrides to the injected renderer", () => {
+    const html = renderToString(
+      <Markdown
+        renderer={TestRenderer}
+        components={{
+          h1: ({ children }) => <h1 data-renderer="consumer">{children}</h1>,
+        }}
+      >
+        # Custom
       </Markdown>,
     );
 
-    assertStringIncludes(html, "<h1>Heading</h1>");
-    assertStringIncludes(html, "<strong>bold</strong>");
-    assertStringIncludes(html, "<del>removed</del>");
-    assertStringIncludes(html, "<table");
-    assertStringIncludes(html, "<td");
+    assertStringIncludes(html, 'data-renderer="consumer"');
+    assertStringIncludes(html, ">Custom</h1>");
   });
 
-  it("passes the complete fenced-code language identifier to custom renderers", () => {
+  it("forwards fenced-code rendering only through the explicit capability", () => {
     let received: CodeBlockProps | undefined;
     const html = renderToString(
       <Markdown
+        renderer={TestRenderer}
         renderCodeBlock={(props) => {
           received = props;
           return (
@@ -43,73 +116,46 @@ describe("Markdown", () => {
     assertStringIncludes(html, 'data-language="c++"');
   });
 
-  it("preserves fenced-code whitespace in the default server-rendered code surface", () => {
-    const html = renderToString(
-      <Markdown>
-        {"```text\n  indented\n\n```"}
-      </Markdown>,
+  it("fails closed when rich-renderer options would otherwise be ignored", () => {
+    const error = assertThrows(
+      () =>
+        renderToString(
+          <Markdown renderCodeBlock={() => null}>```text\nsource\n```</Markdown>,
+        ),
+      MarkdownRendererCapabilityError,
+      "require an injected rich renderer",
     );
-
-    assertStringIncludes(html, "<code");
-    assertStringIncludes(html, "  indented\n");
+    assertEquals(error.code, "VF_REACT_MARKDOWN_RENDERER_REQUIRED");
   });
 
-  it("keeps Mermaid source readable during server rendering", () => {
-    const html = renderToString(
-      <Markdown>
-        {"```mermaid\ngraph TD\n  A --> B\n```"}
-      </Markdown>,
-    );
+  it("rejects removed parser options instead of silently ignoring them", () => {
+    const legacyProps = {
+      children: "source",
+      remarkPlugins: [],
+    } as unknown as React.ComponentProps<typeof Markdown>;
 
-    assertStringIncludes(html, "graph TD");
-    assertStringIncludes(html, "A --&gt; B");
+    assertThrows(
+      () => renderToString(React.createElement(Markdown, legacyProps)),
+      TypeError,
+      "Unsupported Markdown prop: remarkPlugins",
+    );
   });
 
-  it("honors consumer component overrides during server rendering", () => {
-    const html = renderToString(
-      <Markdown
-        components={{
-          h2: ({ children }) => <h2 data-renderer="consumer">{children}</h2>,
-        }}
-      >
-        {"## Custom"}
-      </Markdown>,
-    );
+  it("does not replace a rich-renderer failure with plain output", () => {
+    function BrokenRenderer(): React.ReactElement {
+      throw new Error("extension render failed");
+    }
 
-    assertStringIncludes(html, 'data-renderer="consumer"');
-    assertStringIncludes(html, ">Custom</h2>");
+    assertThrows(
+      () => renderToString(<Markdown renderer={BrokenRenderer}>source</Markdown>),
+      Error,
+      "extension render failed",
+    );
   });
 
-  it("preserves the readonly plugin-list contract", () => {
-    const plugins = Object.freeze([]);
+  it("keeps long source within the chat column", () => {
     const html = renderToString(
-      <Markdown
-        remarkPlugins={plugins}
-        rehypePlugins={plugins}
-      >
-        {"**content**"}
-      </Markdown>,
-    );
-
-    assertStringIncludes(html, "<strong>content</strong>");
-  });
-
-  it("does not emit raw HTML or unsafe link protocols by default", () => {
-    const html = renderToString(
-      <Markdown>
-        {'<script>alert("raw")</script>\n\n[unsafe](javascript:alert("url"))'}
-      </Markdown>,
-    );
-
-    assertEquals(html.includes("<script"), false);
-    assertEquals(html.includes("javascript:"), false);
-  });
-
-  it("keeps long source links within the chat column", () => {
-    const html = renderToString(
-      <Markdown>
-        {"long-source-link-without-natural-break-points"}
-      </Markdown>,
+      <Markdown>long-source-link-without-natural-break-points</Markdown>,
     );
 
     assertStringIncludes(html, "min-w-0");

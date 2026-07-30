@@ -62,21 +62,49 @@ veryfront dev
 
 If the extension factory throws during setup, the dev server reports the setup error. For local extensions, edit the extension source and save `veryfront.config.ts` to force reload during development.
 
+## Enable Node.js WebSocket upgrades
+
+Node.js WebSocket upgrades require the explicit `ws` transport extension. Add
+the package:
+
+```bash
+deno add npm:@veryfront/ext-node-websocket-ws
+```
+
+Then enable it in `veryfront.config.ts`:
+
+```ts
+import { defineConfig } from "veryfront";
+import extNodeWebSocketWs from "@veryfront/ext-node-websocket-ws";
+
+export default defineConfig({
+  extensions: [extNodeWebSocketWs()],
+});
+```
+
+Restart the server after changing the configuration. If you use
+`createHandler()` with an external Node HTTP server, call
+`handler.upgrade(server)` only after the handler is ready. Veryfront does not
+auto-load a WebSocket implementation: when the extension is absent, normal
+HTTP serving remains available and an attempted Node WebSocket upgrade fails
+closed with a diagnostic naming `@veryfront/ext-node-websocket-ws`.
+
 ## First-party extension areas
 
-| Area          | Example package                              | Contract family   |
-| ------------- | -------------------------------------------- | ----------------- |
-| Auth          | `@veryfront/ext-auth-jwt`                    | `AuthProvider`    |
-| Proxy cache   | `@veryfront/ext-cache-redis`                 | `TokenCacheStore` |
-| Distributed infrastructure | `@veryfront/ext-redis`           | `DistributedRuntimeProvider` |
-| Content       | `@veryfront/ext-content-mdx`                 | content parsing   |
-| CSS           | `@veryfront/ext-css-tailwind`                | CSS processing    |
-| Database      | `@veryfront/ext-db-sqlite`                   | database access   |
-| LLM           | `@veryfront/ext-llm-openai`                  | model providers   |
-| Observability | `@veryfront/ext-observability-opentelemetry` | telemetry         |
-| Parser        | `@veryfront/ext-parser-babel`                | parsing           |
-| Sandbox       | `@veryfront/ext-sandbox-shell-tools`         | sandbox tools     |
-| Schema        | `@veryfront/ext-schema-zod`                  | schema validation |
+| Area                       | Example package                              | Contract family               |
+| -------------------------- | -------------------------------------------- | ----------------------------- |
+| Auth                       | `@veryfront/ext-auth-jwt`                    | `AuthProvider`                |
+| Proxy cache                | `@veryfront/ext-cache-redis`                 | `TokenCacheStore`             |
+| Distributed infrastructure | `@veryfront/ext-redis`                       | `DistributedRuntimeProvider`  |
+| Content                    | `@veryfront/ext-content-mdx`                 | content parsing               |
+| CSS                        | `@veryfront/ext-css-tailwind`                | CSS processing                |
+| Database                   | `@veryfront/ext-db-sqlite`                   | database access               |
+| LLM                        | `@veryfront/ext-llm-openai`                  | model providers               |
+| Node.js WebSocket          | `@veryfront/ext-node-websocket-ws`           | `NodeWebSocketServerProvider` |
+| Observability              | `@veryfront/ext-observability-opentelemetry` | telemetry                     |
+| Parser                     | `@veryfront/ext-parser-babel`                | parsing                       |
+| Sandbox                    | `@veryfront/ext-sandbox-shell-tools`         | sandbox tools                 |
+| Schema                     | `@veryfront/ext-schema-zod`                  | schema validation             |
 
 Veryfront applies explicit disable directives and higher-priority project
 overrides before importing optional first-party built-ins. A package that is

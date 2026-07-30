@@ -37,6 +37,9 @@ export type {
 } from "./types.ts";
 
 export {
+  isValidProviderSafeSkillId,
+  isValidSkillName,
+  isValidStrictSkillName,
   SKILL_ALLOWED_TOOL_PATTERN_REGEX,
   SKILL_ASSETS_DIR,
   SKILL_DESCRIPTION_MAX_LENGTH,
@@ -51,6 +54,7 @@ export {
 } from "./types.ts";
 export {
   SKILL_RELATIVE_PATH_MAX_LENGTH,
+  SKILL_SCRIPT_MAX_OUTPUT_BYTES,
   SKILL_SUBDIR_MAX_ENTRIES,
   SKILL_TEXT_FILE_MAX_BYTES,
 } from "./limits.ts";
@@ -94,6 +98,7 @@ export {
 
 // Executor
 export { getSkillScriptExecutor } from "./executor.ts";
+export { snapshotSkillScriptResult } from "./script-result.ts";
 
 // Prompt
 export {

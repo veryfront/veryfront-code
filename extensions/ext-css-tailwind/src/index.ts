@@ -6,12 +6,13 @@ import type { ExtensionFactory } from "veryfront/extensions";
 import { type CSSCompiler, type CSSProcessor, CSSProcessorName } from "veryfront/extensions/css";
 import { IMPORT_RESOLUTION_ERROR } from "veryfront/errors";
 import { compile } from "tailwindcss";
-import tailwindPackage from "tailwindcss/package.json" with { type: "json" };
 import extensionPackage from "../deno.json" with { type: "json" };
+import { exactTailwindVersion } from "./manifest-dependency.ts";
 import { loadPlugin } from "./plugin-loader.ts";
 import { TAILWIND_PLUGIN_POLICY_IDENTITY } from "./plugin-policy.ts";
 
 const ENGINE_SEMANTICS_VERSION = "veryfront.css-tailwind.v4";
+const tailwindVersion = exactTailwindVersion(extensionPackage.imports.tailwindcss);
 export const TAILWIND_DEFAULT_STYLESHEET = `@import "tailwindcss";
 @plugin "@tailwindcss/typography";
 @custom-variant dark (&:is(.dark, [data-theme="dark"]) *, &:is(.dark, [data-theme="dark"]));`;
@@ -62,7 +63,7 @@ export class TailwindCSSProcessor implements CSSProcessor {
     this.cacheIdentity = [
       ENGINE_SEMANTICS_VERSION,
       `ext-css-tailwind@${extensionPackage.version}`,
-      `tailwindcss@${tailwindPackage.version}`,
+      `tailwindcss@${tailwindVersion}`,
       `base=${sha256(tailwindBaseStylesheet)}`,
       `default=${sha256(this.defaultStylesheet)}`,
       `plugins=${sha256(TAILWIND_PLUGIN_POLICY_IDENTITY)}`,

@@ -29,6 +29,9 @@ const recommendations = new Map<string, string>([
   ["SqliteStore", "@veryfront/ext-db-sqlite"],
   ["SandboxShellToolsProvider", "@veryfront/ext-sandbox-shell-tools"],
   ["IsolatedSsrRendererProvider", "@veryfront/ext-react-ssr"],
+  ["ClaudeCodeAgentRuntime", "@veryfront/ext-claude-code-agent"],
+  ["DevUiAssetProvider", "@veryfront/ext-dev-ui-react"],
+  ["NodeWebSocketServerProvider", "@veryfront/ext-node-websocket-ws"],
 ]);
 
 /** Return recommendation. */

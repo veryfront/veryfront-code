@@ -155,6 +155,19 @@ async function readGuide(filename: string): Promise<string> {
   throw new Error(`Guide not found: ${filename}`);
 }
 
+function fencedTypeScriptAfterHeading(document: string, heading: string): string {
+  const headingStart = document.indexOf(heading);
+  assert(headingStart >= 0, `Missing documentation heading: ${heading}`);
+
+  const openingFence = document.indexOf("```typescript\n", headingStart);
+  assert(openingFence >= 0, `Missing TypeScript example after: ${heading}`);
+  const codeStart = openingFence + "```typescript\n".length;
+  const closingFence = document.indexOf("\n```", codeStart);
+  assert(closingFence >= 0, `Unclosed TypeScript example after: ${heading}`);
+
+  return document.slice(codeStart, closingFence);
+}
+
 async function guideFilesWithCodeFences(): Promise<string[]> {
   const names: string[] = [];
   for (const dir of GUIDE_DIRS) {
@@ -354,7 +367,7 @@ describe("Guide: chat-ui.md", () => {
     assertEquals(element.type, ChatRoot);
   });
 
-  it("server-renders the documented standalone Markdown surface", async () => {
+  it("server-renders the documented dependency-free Markdown surface", async () => {
     const guide = await readGuide("chat-ui.md");
     const html = renderToString(
       React.createElement(
@@ -364,9 +377,12 @@ describe("Guide: chat-ui.md", () => {
       ),
     );
 
-    assertStringIncludes(html, "<h1>Result</h1>");
-    assertStringIncludes(html, "<table");
+    assertStringIncludes(html, 'data-vf-markdown-renderer="plain"');
+    assertStringIncludes(html, "# Result");
+    assertEquals(html.includes("<h1>"), false);
+    assertEquals(html.includes("<table"), false);
     assertStringIncludes(guide, 'import { Markdown } from "veryfront/markdown"');
+    assertStringIncludes(guide, "MarkdownRendererProvider");
     assertStringIncludes(guide, "renderCodeBlock");
   });
 });
@@ -435,15 +451,19 @@ describe("Guide: chat-hooks.md", () => {
     );
     assertStringIncludes(
       normalizedGuide,
-      `${formatKiB(CONVERSATION_STORAGE_LIMITS.maxIdentifierBytes)} per identifier or storage-key component and ${
+      `${
+        formatKiB(CONVERSATION_STORAGE_LIMITS.maxIdentifierBytes)
+      } per identifier or storage-key component and ${
         formatKiB(CONVERSATION_STORAGE_LIMITS.maxTitleBytes)
       } per title`,
     );
     assertStringIncludes(
       normalizedGuide,
-      `${formatMiB(CONVERSATION_STORAGE_LIMITS.maxJsonStringBytes)} per JSON string, nesting depth ${
-        formatCount(CONVERSATION_STORAGE_LIMITS.maxJsonDepth)
-      }, ${formatCount(CONVERSATION_STORAGE_LIMITS.maxJsonNodes)} JSON nodes, and ${
+      `${
+        formatMiB(CONVERSATION_STORAGE_LIMITS.maxJsonStringBytes)
+      } per JSON string, nesting depth ${formatCount(CONVERSATION_STORAGE_LIMITS.maxJsonDepth)}, ${
+        formatCount(CONVERSATION_STORAGE_LIMITS.maxJsonNodes)
+      } JSON nodes, and ${
         formatCount(CONVERSATION_STORAGE_LIMITS.maxContainerEntries)
       } entries per object or array`,
     );
@@ -1091,12 +1111,125 @@ describe("Guide: workflows-advanced.md", () => {
         'times("generate"',
         'map("process"',
         "blobStorage",
-        'import { useWorkflow, useWorkflowStart } from "veryfront/workflow"',
+        'import { useWorkflow, useWorkflowStart } from "veryfront/workflow/react"',
         "useWorkflowStart({",
         "useWorkflow({ runId })",
       ]
     ) {
       assertStringIncludes(guide, snippet);
+    }
+  });
+});
+
+describe("Workflow README: runtime reference", () => {
+  it("type-checks the documented custom executor adapter", async () => {
+    const readme = await Deno.readTextFile("src/workflow/README.md");
+    const example = fencedTypeScriptAfterHeading(readme, "#### Custom executor reference");
+    const examplePath = await Deno.makeTempFile({
+      prefix: "veryfront-workflow-executor-example-",
+      suffix: ".ts",
+    });
+
+    try {
+      await Deno.writeTextFile(examplePath, example);
+      const result = await new Deno.Command(Deno.execPath(), {
+        args: ["check", "--no-lock", "--config", "deno.json", examplePath],
+        cwd: Deno.cwd(),
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const diagnostics = new TextDecoder().decode(result.stderr);
+
+      assert(result.success, `Custom executor example failed to type-check:\n${diagnostics}`);
+    } finally {
+      await Deno.remove(examplePath);
+    }
+  });
+
+  it("documents the exact handoff and cleanup contract", async () => {
+    const readme = await Deno.readTextFile("src/workflow/README.md");
+
+    for (
+      const contract of [
+        'from "veryfront/workflow/worker"',
+        "returns exactly that ID",
+        "does not wait for entrypoint readiness",
+        "config.lockAcquisition.duration",
+        "config.lockAcquisition.timeout",
+        "config.lockAcquisition.retryInterval",
+        "cannot be overridden",
+        "Is idempotent and resolves only after the execution can no longer perform workflow work",
+        "resolves only after every owned execution can no longer perform workflow work",
+      ]
+    ) {
+      assertStringIncludes(readme, contract);
+    }
+  });
+
+  it("documents client readiness, ownership, and approval lookup migration", async () => {
+    const readme = await Deno.readTextFile("src/workflow/README.md");
+
+    for (
+      const contract of [
+        "First persistence operation",
+        "Failed readiness",
+        'backendOwnership: "borrowed"',
+        "await client.initialize()",
+        "getApproval(runId, approvalId)",
+        "getPendingApproval(runId, approvalId)",
+        "there is no compatibility",
+      ]
+    ) {
+      assertStringIncludes(readme, contract);
+    }
+  });
+
+  it("documents managed and low-level entrypoint ownership", async () => {
+    const readme = await Deno.readTextFile("src/workflow/README.md");
+
+    for (
+      const contract of [
+        "WorkflowRunEntrypoint",
+        "createWorkflowRunEntrypoint()",
+        "createDynamicWorkflowRunEntrypoint()",
+        "Concurrent or later invocations fail closed",
+        "entrypoint.destroy()",
+        "AggregateError",
+        "runWorkflowRun()",
+        "runDynamicWorkflowRun()",
+        "pre-initialized backend",
+      ]
+    ) {
+      assertStringIncludes(readme, contract);
+    }
+  });
+
+  it("keeps the architecture and Redis lifecycle references aligned", async () => {
+    const architecture = await Deno.readTextFile(
+      "docs/architecture/08-workflow-runtime.md",
+    );
+    const redis = await Deno.readTextFile("extensions/ext-redis/README.md");
+
+    for (
+      const contract of [
+        "Client readiness and backend ownership",
+        "Managed entrypoint ownership",
+        "AggregateError",
+        '"borrowed"',
+      ]
+    ) {
+      assertStringIncludes(architecture, contract);
+    }
+
+    for (
+      const contract of [
+        "connectTimeoutMs: 5_000",
+        "new RedisBackend",
+        'backendOwnership: "borrowed"',
+        "provider factory",
+      ]
+    ) {
+      assertStringIncludes(redis, contract);
     }
   });
 });

@@ -1,6 +1,6 @@
 /**
  * Textarea — ported 1:1 from Veryfront Studio, semantic classes remapped to
- * veryfront's `[var(--token)]` vocabulary. Private to the chat module.
+ * veryfront's `[var(--token)]` vocabulary.
  *
  * @module react/components/ui/textarea
  */
@@ -17,8 +17,7 @@ const textareaVariants = cva(
     "disabled:cursor-not-allowed disabled:opacity-50",
     "resize-none",
     "rounded-md bg-[var(--input-bg)] border border-[var(--background)] dark:border-transparent",
-    // veryfront has no --status-error token yet; fall back to --destructive.
-    "data-[invalid=true]:border-[var(--destructive)]",
+    "data-[invalid=true]:border-[var(--status-error)]",
   ],
   {
     variants: {

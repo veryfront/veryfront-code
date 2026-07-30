@@ -4,10 +4,8 @@ import {
   ERROR_REGISTRY,
   type ErrorCategory,
   type ErrorSlug,
-  getErrorMessage,
-  REQUEST_ERROR,
 } from "#veryfront/errors";
-import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
+import { isToolVisibleTo, type ToolExecutionContext, toolRegistry } from "#veryfront/tool";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
@@ -15,7 +13,13 @@ import {
   getRegisteredModelProviders,
   hasModelProvider,
 } from "#veryfront/provider/model-registry.ts";
-import { WorkflowClient } from "#veryfront/workflow";
+import { WorkflowClient, type WorkflowHandle } from "#veryfront/workflow";
+import type { NodeState, WorkflowContext, WorkflowDefinition } from "#veryfront/workflow/types.ts";
+import {
+  getPrimaryAbortReason,
+  isAbortCleanupError,
+  runAbortableOperation,
+} from "#veryfront/workflow/executor/abortable-operation.ts";
 import { workflowRegistry } from "#veryfront/workflow/registry.ts";
 import { getErrorCollector, getLogBuffer, metrics } from "#veryfront/observability";
 import {
@@ -26,8 +30,9 @@ import {
 import { TransformStage } from "#veryfront/transforms/pipeline/types.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { validatePath } from "#veryfront/security";
+import { isRequestBodyTooLargeError, readBodyWithLimit, validatePath } from "#veryfront/security";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
@@ -37,10 +42,144 @@ import {
 } from "#veryfront/resource/errors.ts";
 import { ReloadNotifier } from "../../../reload-notifier.ts";
 import type { HandlerContext } from "../../types.ts";
-import { errorResponse, jsonResponse } from "../http-helpers.ts";
+import {
+  errorResponse as createErrorResponse,
+  jsonResponse as createJsonResponse,
+} from "../http-helpers.ts";
+import {
+  DASHBOARD_ACCESS_DENIED_MESSAGE,
+  hasValidDashboardMutationSession,
+  isTrustedDashboardRequest,
+} from "./access-policy.ts";
 
-const WORKFLOW_EXECUTION_TIMEOUT_MS = 30_000;
+export const WORKFLOW_EXECUTION_TIMEOUT_MS = 30_000;
+export const TOOL_EXECUTION_TIMEOUT_MS = 30_000;
+export const RESOURCE_READ_TIMEOUT_MS = 30_000;
+export const PROMPT_RENDER_TIMEOUT_MS = 30_000;
+export const MAX_DASHBOARD_API_BODY_BYTES = 1024 * 1024;
+export const MAX_DASHBOARD_REGISTRY_ENTRIES = 2_000;
+// Each relationship becomes at least one key/value node in the JSON payload.
+// Keep expansion comfortably below the shared 100,000-node JSON response cap.
+export const MAX_DASHBOARD_AGENT_TOOL_RELATIONSHIPS = 50_000;
+export const MAX_DASHBOARD_DIRECTORY_ENTRIES = 2_000;
+export const MAX_DASHBOARD_DIRECTORY_NAME_BYTES = 4 * 1024;
+export const MAX_DASHBOARD_DIRECTORY_TOTAL_NAME_BYTES = 512 * 1024;
+export const MAX_DASHBOARD_FILE_CONTENT_BYTES = 1024 * 1024;
 const dashboardApiLogger = serverLogger.component("dashboard-api");
+const dashboardTextEncoder = new TextEncoder();
+const dashboardTextDecoder = new TextDecoder("utf-8", { fatal: true });
+
+function withDashboardNoStore(response: Response): Response {
+  response.headers.set("Cache-Control", "no-store");
+  return response;
+}
+
+function errorResponse(message: string, status = 500): Response {
+  return withDashboardNoStore(createErrorResponse(message, status));
+}
+
+function jsonResponse(data: unknown, status = 200): Response {
+  return withDashboardNoStore(createJsonResponse(data, status));
+}
+
+function boundedJsonResponse(
+  data: unknown,
+  invalidOutputMessage: string,
+  status = 200,
+): Response {
+  const snapshot = snapshotBoundedJsonValue(data);
+  return snapshot.success
+    ? jsonResponse(snapshot.value, status)
+    : errorResponse(invalidOutputMessage, 500);
+}
+
+function getDashboardErrorType(error: unknown): string {
+  try {
+    if (error instanceof Error) {
+      const name = error.name;
+      return typeof name === "string" && /^[A-Za-z0-9_.-]{1,128}$/.test(name) ? name : "Error";
+    }
+  } catch {
+    return "Unknown";
+  }
+  return typeof error;
+}
+
+function logDashboardFailure(
+  message: string,
+  error: unknown,
+  metadata: Record<string, string | number | boolean | null | undefined> = {},
+): void {
+  dashboardApiLogger.warn(message, {
+    ...metadata,
+    errorType: getDashboardErrorType(error),
+  });
+}
+
+function isDashboardTimeoutError(error: unknown): boolean {
+  try {
+    const reason = isAbortCleanupError(error) ? getPrimaryAbortReason(error) : error;
+    return reason instanceof DOMException && reason.name === "TimeoutError";
+  } catch {
+    return false;
+  }
+}
+
+function isProductionDashboardContext(ctx: HandlerContext): boolean {
+  return ctx.resolvedEnvironment === undefined
+    ? ctx.requestContext?.mode === "production"
+    : ctx.resolvedEnvironment === "production";
+}
+
+function createDashboardToolContext(
+  abortSignal: AbortSignal,
+  ctx: HandlerContext,
+): ToolExecutionContext {
+  const productionMode = isProductionDashboardContext(ctx);
+  const requestContext = ctx.requestContext;
+  const hasProjectBoundToken = requestContext?.tokenProvenance === "project-bound" &&
+    requestContext.token.length > 0;
+  const authToken = hasProjectBoundToken ? requestContext.token : undefined;
+  return {
+    abortSignal,
+    projectId: ctx.projectId ?? ctx.enriched?.projectId,
+    projectSlug: ctx.projectSlug?.trim() || requestContext?.slug.trim() ||
+      ctx.enriched?.projectSlug,
+    productionMode,
+    releaseId: productionMode ? (ctx.releaseId ?? ctx.enriched?.releaseId ?? null) : null,
+    branch: productionMode ? null : (requestContext?.branch ?? ctx.enriched?.branch ?? null),
+    environmentName: ctx.environmentName ?? ctx.enriched?.environmentName ?? null,
+    ...(authToken === undefined ? {} : { authToken }),
+  };
+}
+
+function runWithDashboardProjectContext<T>(
+  ctx: HandlerContext,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const projectSlug = ctx.projectSlug?.trim() || ctx.requestContext?.slug.trim() ||
+    ctx.enriched?.projectSlug.trim();
+  const requestContext = ctx.requestContext;
+  if (!projectSlug) return operation();
+
+  const productionMode = isProductionDashboardContext(ctx);
+  const hasProjectBoundToken = requestContext?.tokenProvenance === "project-bound" &&
+    requestContext.token.length > 0;
+  const token = hasProjectBoundToken ? requestContext.token : "";
+  return runWithRequestContext(
+    {
+      projectSlug,
+      projectId: ctx.projectId ?? ctx.enriched?.projectId,
+      token,
+      tokenProvenance: hasProjectBoundToken ? "project-bound" : "untrusted",
+      productionMode,
+      releaseId: productionMode ? (ctx.releaseId ?? ctx.enriched?.releaseId ?? null) : null,
+      branch: productionMode ? null : (requestContext?.branch ?? ctx.enriched?.branch ?? null),
+      environmentName: ctx.environmentName ?? ctx.enriched?.environmentName ?? null,
+    },
+    operation,
+  );
+}
 
 /**
  * Validate a relative path against the project directory.
@@ -91,6 +230,12 @@ type DashboardApiRouteHandler = (
   req: Request,
   ctx: HandlerContext,
 ) => Promise<Response> | Response;
+type DashboardJsonObject = Record<string, unknown>;
+type DashboardApiPostHandler = (
+  req: Request,
+  body: DashboardJsonObject,
+  ctx: HandlerContext,
+) => Promise<Response> | Response;
 
 const GET_DASHBOARD_API_ROUTES: Record<string, DashboardApiRouteHandler> = {
   "/_dev/api/stats": () => handleStats(),
@@ -112,21 +257,107 @@ const GET_DASHBOARD_API_ROUTES: Record<string, DashboardApiRouteHandler> = {
   "/_dev/api/live-logs": (req) => handleLiveLogs(req),
 };
 
-const POST_DASHBOARD_API_ROUTES: Record<string, DashboardApiRouteHandler> = {
-  "/_dev/api/hmr-trigger": (req, ctx) => handleHmrTrigger(req, ctx),
-  "/_dev/api/execute-tool": (req) => handleExecuteTool(req),
-  "/_dev/api/read-resource": (req) => handleReadResource(req),
-  "/_dev/api/render-prompt": (req) => handleRenderPrompt(req),
-  "/_dev/api/start-workflow": (req) => handleStartWorkflow(req),
+const POST_DASHBOARD_API_ROUTES: Record<string, DashboardApiPostHandler> = {
+  "/_dev/api/hmr-trigger": (_req, body, ctx) => handleHmrTrigger(body, ctx),
+  "/_dev/api/execute-tool": (req, body, ctx) => handleExecuteTool(req, body, ctx),
+  "/_dev/api/read-resource": (req, body) => handleReadResource(req, body),
+  "/_dev/api/render-prompt": (req, body) => handleRenderPrompt(req, body),
+  "/_dev/api/start-workflow": (req, body, ctx) => handleStartWorkflow(req, body, ctx),
 };
 
-function getDashboardRouteHandler(
-  method: string,
-  pathname: string,
-): DashboardApiRouteHandler | undefined {
-  if (method === "GET") return GET_DASHBOARD_API_ROUTES[pathname];
-  if (method === "POST") return POST_DASHBOARD_API_ROUTES[pathname];
-  return undefined;
+function validateDashboardPostCaller(req: Request): Response | null {
+  const requestUrl = new URL(req.url);
+  const rawOrigin = req.headers.get("origin");
+  if (!rawOrigin || rawOrigin === "null") {
+    return errorResponse("Dashboard request origin is not trusted", 403);
+  }
+  let origin: URL;
+  try {
+    origin = new URL(rawOrigin);
+  } catch {
+    return errorResponse("Dashboard request origin is not trusted", 403);
+  }
+  if (
+    rawOrigin !== origin.origin ||
+    (origin.protocol !== "http:" && origin.protocol !== "https:") ||
+    origin.origin !== requestUrl.origin
+  ) {
+    return errorResponse("Dashboard request origin is not trusted", 403);
+  }
+
+  const fetchSite = req.headers.get("sec-fetch-site");
+  if (fetchSite !== null && fetchSite !== "same-origin") {
+    return errorResponse("Dashboard request origin is not trusted", 403);
+  }
+  if (req.headers.get("sec-fetch-mode") === "no-cors") {
+    return errorResponse("Dashboard request mode is not trusted", 403);
+  }
+  if (!hasValidDashboardMutationSession(req)) {
+    return errorResponse("Dashboard mutation session is invalid", 403);
+  }
+  if (req.headers.get("content-type")?.trim().toLowerCase() !== "application/json") {
+    return errorResponse("Dashboard POST requests require application/json", 415);
+  }
+  return null;
+}
+
+function cancelDashboardBody(
+  body: ReadableStream<Uint8Array> | ReadableStreamDefaultReader<Uint8Array> | null,
+  reason: Error,
+): void {
+  if (!body) return;
+  try {
+    void body.cancel(reason).catch(() => {});
+  } catch {
+    // The response still fails closed when a malformed local stream cannot be cancelled.
+  }
+}
+
+async function readDashboardJsonObject(
+  req: Request,
+): Promise<
+  | { success: true; body: DashboardJsonObject }
+  | { success: false; response: Response }
+> {
+  let text: string;
+  try {
+    text = await readBodyWithLimit(req, MAX_DASHBOARD_API_BODY_BYTES);
+  } catch (error) {
+    return {
+      success: false,
+      response: isRequestBodyTooLargeError(error)
+        ? errorResponse("Dashboard request body is too large", 413)
+        : errorResponse(
+          req.signal.aborted
+            ? "Dashboard request body was aborted"
+            : "Dashboard request body could not be read",
+          400,
+        ),
+    };
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return {
+      success: false,
+      response: errorResponse("Dashboard request body must be valid JSON", 400),
+    };
+  }
+  const snapshot = snapshotBoundedJsonValue(value);
+  if (
+    !snapshot.success ||
+    snapshot.value === null ||
+    typeof snapshot.value !== "object" ||
+    Array.isArray(snapshot.value)
+  ) {
+    return {
+      success: false,
+      response: errorResponse("Dashboard request body must be a bounded JSON object", 400),
+    };
+  }
+  return { success: true, body: snapshot.value as DashboardJsonObject };
 }
 
 export function getDashboardApiRoutePaths(method: DashboardApiMethod): string[] {
@@ -134,17 +365,40 @@ export function getDashboardApiRoutePaths(method: DashboardApiMethod): string[] 
   return Object.keys(routes).sort();
 }
 
-export function handleDashboardAPI(
+export async function handleDashboardAPI(
   req: Request,
   ctx: HandlerContext,
-): Promise<Response | null> | Response | null {
+): Promise<Response | null> {
   if (!ctx.isLocalProject) return errorResponse("Unauthorized", 401);
+  if (!isTrustedDashboardRequest(req)) {
+    cancelDashboardBody(req.body, new Error("Dashboard request host rejected"));
+    return errorResponse(DASHBOARD_ACCESS_DENIED_MESSAGE, 403);
+  }
 
   const { pathname } = new URL(req.url);
-  const handler = getDashboardRouteHandler(req.method, pathname);
-  if (!handler) return null;
+  try {
+    if (req.method === "GET") {
+      const handler = GET_DASHBOARD_API_ROUTES[pathname];
+      return handler ? await handler(req, ctx) : null;
+    }
+    if (req.method !== "POST") return null;
 
-  return handler(req, ctx);
+    const handler = POST_DASHBOARD_API_ROUTES[pathname];
+    if (!handler) return null;
+
+    const callerError = validateDashboardPostCaller(req);
+    if (callerError) {
+      cancelDashboardBody(req.body, new Error("Dashboard POST request rejected"));
+      return callerError;
+    }
+    const parsed = await readDashboardJsonObject(req);
+    if (!parsed.success) return parsed.response;
+
+    return await handler(req, parsed.body, ctx);
+  } catch (error) {
+    logDashboardFailure("Dashboard API request failed", error);
+    return errorResponse("Dashboard request could not be completed", 500);
+  }
 }
 
 function handleStats(): Response {
@@ -164,6 +418,9 @@ function handleStats(): Response {
 
 function handleListTools(): Response {
   const { tools } = getMCPRegistry();
+  if (tools.size > MAX_DASHBOARD_REGISTRY_ENTRIES) {
+    return errorResponse("Tool registry exceeds the dashboard listing limit", 500);
+  }
   const list = Array.from(tools.entries()).map(([id, t]) => ({
     id,
     type: t.type,
@@ -171,34 +428,59 @@ function handleListTools(): Response {
     schema: t.inputSchemaJson ?? null,
     mcp: t.mcp ?? { enabled: true },
   }));
-  return jsonResponse({ tools: list, count: list.length });
+  return boundedJsonResponse(
+    { tools: list, count: list.length },
+    "Tool registry contains data that cannot be displayed",
+  );
 }
 
 function handleListResources(): Response {
   const { resources } = getMCPRegistry();
+  if (resources.size > MAX_DASHBOARD_REGISTRY_ENTRIES) {
+    return errorResponse("Resource registry exceeds the dashboard listing limit", 500);
+  }
   const list = Array.from(resources.entries()).map(([id, r]) => ({
     id,
     pattern: r.pattern,
     description: r.description,
     mcp: r.mcp ?? { enabled: true },
   }));
-  return jsonResponse({ resources: list, count: list.length });
+  return boundedJsonResponse(
+    { resources: list, count: list.length },
+    "Resource registry contains data that cannot be displayed",
+  );
 }
 
 function handleListPrompts(): Response {
   const { prompts } = getMCPRegistry();
+  if (prompts.size > MAX_DASHBOARD_REGISTRY_ENTRIES) {
+    return errorResponse("Prompt registry exceeds the dashboard listing limit", 500);
+  }
   const list = Array.from(prompts.entries()).map(([id, p]) => ({
     id,
     description: p.description,
     suggestion: p.suggestion,
   }));
-  return jsonResponse({ prompts: list, count: list.length });
+  return boundedJsonResponse(
+    { prompts: list, count: list.length },
+    "Prompt registry contains data that cannot be displayed",
+  );
 }
 
 function handleListAgents(): Response {
-  const allTools = Array.from(toolRegistry.getAll().entries());
+  const registeredTools = toolRegistry.getAll();
+  const allAgents = agentRegistry.getAll();
+  if (
+    registeredTools.size > MAX_DASHBOARD_REGISTRY_ENTRIES ||
+    allAgents.size > MAX_DASHBOARD_REGISTRY_ENTRIES
+  ) {
+    return errorResponse("Agent registry exceeds the dashboard listing limit", 500);
+  }
+  const allTools = Array.from(registeredTools.entries());
 
-  const list = Array.from(agentRegistry.getAll().entries()).map(([id, agent]) => {
+  let toolRelationshipCount = 0;
+  const list: Record<string, unknown>[] = [];
+  for (const [id, agent] of allAgents.entries()) {
     const cfg = agent.config as unknown as Record<string, unknown>;
 
     let system: string | null = null;
@@ -208,16 +490,19 @@ function handleListAgents(): Response {
     let tools: Record<string, boolean> = {};
     if (cfg.tools === true) {
       // Owner-aware: list only tools this agent can actually resolve.
-      tools = Object.fromEntries(
-        allTools
-          .filter(([, registryTool]) => isToolVisibleTo(registryTool, { agentId: id }))
-          .map(([tid]) => [tid, true]),
+      const visibleTools = allTools.filter(([, registryTool]) =>
+        isToolVisibleTo(registryTool, { agentId: id })
       );
+      toolRelationshipCount += visibleTools.length;
+      if (toolRelationshipCount > MAX_DASHBOARD_AGENT_TOOL_RELATIONSHIPS) {
+        return errorResponse("Agent registry exceeds the dashboard relationship limit", 500);
+      }
+      tools = Object.fromEntries(visibleTools.map(([tid]) => [tid, true]));
     } else if (typeof cfg.tools === "object" && cfg.tools !== null) {
       tools = cfg.tools as Record<string, boolean>;
     }
 
-    return {
+    list.push({
       id,
       description: (cfg.description as string) || `Model: ${agent.config.model}`,
       model: agent.config.model,
@@ -226,41 +511,99 @@ function handleListAgents(): Response {
       memory: cfg.memory ?? null,
       streaming: cfg.streaming ?? false,
       maxSteps: cfg.maxSteps ?? null,
-    };
-  });
+    });
+  }
 
-  return jsonResponse({ agents: list, count: list.length });
+  return boundedJsonResponse(
+    { agents: list, count: list.length },
+    "Agent registry contains data that cannot be displayed",
+  );
 }
 
 function handleListWorkflows(): Response {
-  const workflows = workflowRegistry.getAllAsArray();
+  const registeredWorkflows = workflowRegistry.getAll();
+  if (registeredWorkflows.size > MAX_DASHBOARD_REGISTRY_ENTRIES) {
+    return errorResponse("Workflow registry exceeds the dashboard listing limit", 500);
+  }
+  const workflows = Array.from(registeredWorkflows.values());
   const stats = workflowRegistry.getStats();
-  return jsonResponse({
-    workflows,
-    count: workflows.length,
-    stats,
-    timestamp: new Date().toISOString(),
-  });
+  return boundedJsonResponse(
+    {
+      workflows,
+      count: workflows.length,
+      stats,
+      timestamp: new Date().toISOString(),
+    },
+    "Workflow registry contains data that cannot be displayed",
+  );
 }
 
-async function handleExecuteTool(req: Request): Promise<Response> {
-  try {
-    const { toolId, args } = (await req.json()) as { toolId?: string; args?: unknown };
-    if (!toolId) return errorResponse("toolId is required", 400);
-    if (!toolRegistry.get(toolId)) return errorResponse(`Tool not found: ${toolId}`, 404);
+async function handleExecuteTool(
+  req: Request,
+  body: DashboardJsonObject,
+  ctx: HandlerContext,
+): Promise<Response> {
+  const { toolId, args } = body;
+  if (typeof toolId !== "string" || toolId.length === 0) {
+    return errorResponse("toolId is required", 400);
+  }
+  if (args !== undefined && (args === null || typeof args !== "object" || Array.isArray(args))) {
+    return errorResponse("args must be an object", 400);
+  }
 
-    const startTime = Date.now();
-    const result = await executeTool(toolId, (args as Record<string, unknown>) ?? {});
-    return jsonResponse({ success: true, toolId, result, duration: Date.now() - startTime });
+  const executionContext = createDashboardToolContext(req.signal, ctx);
+  const registeredTool = toolRegistry.get(toolId);
+  if (!registeredTool || !isToolVisibleTo(registeredTool, executionContext)) {
+    return errorResponse(`Tool not found: ${toolId}`, 404);
+  }
+  if (req.signal.aborted) return errorResponse("Tool execution was cancelled", 408);
+
+  const startTime = Date.now();
+  const timeoutReason = new DOMException(
+    "Dashboard tool execution timed out",
+    "TimeoutError",
+  );
+  try {
+    const result = await runAbortableOperation(
+      (abortSignal) =>
+        registeredTool.execute(
+          (args as Record<string, unknown> | undefined) ?? {},
+          { ...executionContext, abortSignal },
+        ),
+      {
+        label: `Dashboard tool "${toolId}" execution`,
+        parentSignal: req.signal,
+        timeout: {
+          milliseconds: TOOL_EXECUTION_TIMEOUT_MS,
+          reason: timeoutReason,
+        },
+        cancellationGracePeriod: 0,
+      },
+    );
+    if (req.signal.aborted) return errorResponse("Tool execution was cancelled", 408);
+    return boundedJsonResponse(
+      { success: true, toolId, result, duration: Date.now() - startTime },
+      `Tool "${toolId}" returned data that is not bounded JSON`,
+    );
   } catch (error) {
-    return errorResponse(getErrorMessage(error));
+    if (req.signal.aborted) return errorResponse("Tool execution was cancelled", 408);
+    if (isDashboardTimeoutError(error)) {
+      return errorResponse(`Tool "${toolId}" execution timed out`, 408);
+    }
+    logDashboardFailure("Dashboard tool execution failed", error, { tool: toolId });
+    return errorResponse(`Tool "${toolId}" could not be executed`, 500);
   }
 }
 
-async function handleReadResource(req: Request): Promise<Response> {
+async function handleReadResource(
+  req: Request,
+  body: DashboardJsonObject,
+): Promise<Response> {
   try {
-    const { uri } = (await req.json()) as { uri?: string };
-    if (!uri) return errorResponse("uri is required", 400);
+    const { uri } = body;
+    if (typeof uri !== "string" || uri.length === 0) {
+      return errorResponse("uri is required", 400);
+    }
 
     let resource: ReturnType<typeof resourceRegistry.findByPattern>;
     try {
@@ -270,7 +613,7 @@ async function handleReadResource(req: Request): Promise<Response> {
         return errorResponse(error.message, 400);
       }
       dashboardApiLogger.warn("Resource URI lookup failed", {
-        errorType: error instanceof Error ? error.name : typeof error,
+        errorType: getDashboardErrorType(error),
       });
       return errorResponse("Resource URI could not be resolved", 500);
     }
@@ -285,14 +628,26 @@ async function handleReadResource(req: Request): Promise<Response> {
       }
       dashboardApiLogger.warn("Resource URI resolution failed", {
         resource: resource.id,
-        errorType: error instanceof Error ? error.name : typeof error,
+        errorType: getDashboardErrorType(error),
       });
       return errorResponse(`Resource "${resource.id}" could not be resolved`, 500);
     }
     const startTime = Date.now();
+    const timeoutReason = new DOMException("Dashboard resource read timed out", "TimeoutError");
     let data: unknown;
     try {
-      data = await resource.load(params);
+      data = await runAbortableOperation(
+        (abortSignal) => resource.load(params, { abortSignal, uri }),
+        {
+          label: `Dashboard resource "${resource.id}" read`,
+          parentSignal: req.signal,
+          timeout: {
+            milliseconds: RESOURCE_READ_TIMEOUT_MS,
+            reason: timeoutReason,
+          },
+          cancellationGracePeriod: 0,
+        },
+      );
     } catch (error) {
       if (error instanceof ResourceParamsValidationError) {
         return errorResponse(
@@ -300,12 +655,17 @@ async function handleReadResource(req: Request): Promise<Response> {
           400,
         );
       }
+      if (req.signal.aborted) return errorResponse("Resource read was cancelled", 408);
+      if (isDashboardTimeoutError(error)) {
+        return errorResponse(`Resource "${resource.id}" read timed out`, 408);
+      }
       dashboardApiLogger.warn("Resource loading failed", {
         resource: resource.id,
-        errorType: error instanceof Error ? error.name : typeof error,
+        errorType: getDashboardErrorType(error),
       });
       return errorResponse(`Resource "${resource.id}" could not be loaded`, 500);
     }
+    if (req.signal.aborted) return errorResponse("Resource read was cancelled", 408);
     const snapshot = snapshotBoundedJsonValue(data);
     if (!snapshot.success) {
       return errorResponse(
@@ -314,26 +674,34 @@ async function handleReadResource(req: Request): Promise<Response> {
       );
     }
 
-    return jsonResponse({
-      success: true,
-      uri,
-      resourceId: resource.id,
-      data: snapshot.value,
-      duration: Date.now() - startTime,
-    });
+    return boundedJsonResponse(
+      {
+        success: true,
+        uri,
+        resourceId: resource.id,
+        data: snapshot.value,
+        duration: Date.now() - startTime,
+      },
+      `Resource "${resource.id}" returned data that is not bounded JSON`,
+    );
   } catch (error) {
-    return errorResponse(getErrorMessage(error));
+    if (req.signal.aborted) return errorResponse("Resource read was cancelled", 408);
+    logDashboardFailure("Dashboard resource read failed", error);
+    return errorResponse("Resource could not be read", 500);
   }
 }
 
-async function handleRenderPrompt(req: Request): Promise<Response> {
+async function handleRenderPrompt(
+  req: Request,
+  body: DashboardJsonObject,
+): Promise<Response> {
   try {
-    const { promptId, variables } = (await req.json()) as {
-      promptId?: string;
-      variables?: Record<string, unknown>;
-    };
-    if (!promptId) return errorResponse("promptId is required", 400);
-    if (!promptRegistry.has(promptId)) {
+    const { promptId, variables } = body;
+    if (typeof promptId !== "string" || promptId.length === 0) {
+      return errorResponse("promptId is required", 400);
+    }
+    const registeredPrompt = promptRegistry.get(promptId);
+    if (!registeredPrompt) {
       return errorResponse(`Prompt not found: ${promptId}`, 404);
     }
     if (
@@ -343,102 +711,308 @@ async function handleRenderPrompt(req: Request): Promise<Response> {
       return errorResponse("variables must be an object", 400);
     }
 
-    const vars = variables ?? {};
+    const vars = (variables ?? {}) as Record<string, unknown>;
+    if (req.signal.aborted) return errorResponse("Prompt rendering was cancelled", 408);
+    const deadline = Date.now() + PROMPT_RENDER_TIMEOUT_MS;
+    const timeoutReason = new DOMException("Dashboard prompt rendering timed out", "TimeoutError");
     let content: string;
     try {
-      content = await promptRegistry.getContent(promptId, vars);
+      content = await runAbortableOperation(
+        (abortSignal) => registeredPrompt.getContent(vars, { abortSignal, deadline }),
+        {
+          label: `Dashboard prompt "${promptId}" rendering`,
+          parentSignal: req.signal,
+          timeout: {
+            milliseconds: PROMPT_RENDER_TIMEOUT_MS,
+            reason: timeoutReason,
+          },
+          cancellationGracePeriod: 0,
+        },
+      );
     } catch (error) {
+      if (req.signal.aborted) return errorResponse("Prompt rendering was cancelled", 408);
+      if (isDashboardTimeoutError(error)) {
+        return errorResponse(`Prompt "${promptId}" rendering timed out`, 408);
+      }
       dashboardApiLogger.warn("Prompt rendering failed", {
         prompt: promptId,
-        errorType: error instanceof Error ? error.name : typeof error,
+        errorType: getDashboardErrorType(error),
       });
       return errorResponse(`Prompt "${promptId}" could not be rendered`, 500);
     }
+    if (req.signal.aborted) return errorResponse("Prompt rendering was cancelled", 408);
 
-    return jsonResponse({ success: true, promptId, content, variablesUsed: vars });
+    return boundedJsonResponse(
+      { success: true, promptId, content, variablesUsed: vars },
+      `Prompt "${promptId}" returned content that is not bounded JSON`,
+    );
   } catch (error) {
-    return errorResponse(getErrorMessage(error));
+    if (req.signal.aborted) return errorResponse("Prompt rendering was cancelled", 408);
+    logDashboardFailure("Dashboard prompt rendering failed", error);
+    return errorResponse("Prompt could not be rendered", 500);
   }
 }
 
-// Singleton workflow client for dev tools
-let devWorkflowClient: WorkflowClient | null = null;
+type DashboardWorkflowCancellationKind = "request" | "timeout";
 
-function getDevWorkflowClient(): WorkflowClient {
-  if (devWorkflowClient) return devWorkflowClient;
+interface DashboardWorkflowWaitScope {
+  readonly signal: AbortSignal;
+  cancellationKind(): DashboardWorkflowCancellationKind | null;
+  cleanup(): void;
+}
 
-  devWorkflowClient = new WorkflowClient({
-    debug: true,
+function createDashboardWorkflowWaitScope(requestSignal: AbortSignal): DashboardWorkflowWaitScope {
+  const controller = new AbortController();
+  let cancellationKind: DashboardWorkflowCancellationKind | null = null;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  const abortFromRequest = () => {
+    if (cancellationKind !== null) return;
+    cancellationKind = "request";
+    controller.abort(new DOMException("Dashboard request aborted", "AbortError"));
+  };
+
+  if (requestSignal.aborted) abortFromRequest();
+  else requestSignal.addEventListener("abort", abortFromRequest, { once: true });
+
+  if (cancellationKind === null) {
+    timeoutId = setTimeout(() => {
+      if (cancellationKind !== null) return;
+      cancellationKind = "timeout";
+      controller.abort(new DOMException("Dashboard workflow timed out", "TimeoutError"));
+    }, WORKFLOW_EXECUTION_TIMEOUT_MS);
+  }
+
+  return {
+    signal: controller.signal,
+    cancellationKind: () => cancellationKind,
+    cleanup: () => {
+      requestSignal.removeEventListener("abort", abortFromRequest);
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    },
+  };
+}
+
+function createDashboardWorkflowNodeStates(
+  nodeStates: Readonly<Record<string, NodeState>>,
+): Record<string, unknown> {
+  const dashboardNodeStates: Record<string, unknown> = Object.create(null);
+  for (const [nodeId, state] of Object.entries(nodeStates)) {
+    dashboardNodeStates[nodeId] = {
+      nodeId: state.nodeId,
+      status: state.status,
+      attempt: state.attempt,
+      ...(state.input === undefined ? {} : { input: state.input }),
+      ...(state.output === undefined ? {} : { output: state.output }),
+      ...(state.error === undefined ? {} : { error: "Workflow node failed" }),
+      ...(state.startedAt instanceof Date ? { startedAt: state.startedAt.toISOString() } : {}),
+      ...(state.completedAt instanceof Date
+        ? { completedAt: state.completedAt.toISOString() }
+        : {}),
+    };
+  }
+  return dashboardNodeStates;
+}
+
+function createDashboardWorkflowDefinition(
+  definition: WorkflowDefinition,
+  signal: AbortSignal,
+): WorkflowDefinition {
+  const onComplete = definition.onComplete;
+  const onError = definition.onError;
+  return Object.freeze({
+    ...definition,
+    ...(onComplete === undefined ? {} : {
+      onComplete: (result: unknown, context: WorkflowContext) =>
+        runAbortableOperation(
+          () => onComplete(result, context),
+          {
+            label: `Dashboard workflow "${definition.id}" completion hook`,
+            parentSignal: signal,
+            cancellationGracePeriod: 0,
+          },
+        ),
+    }),
+    ...(onError === undefined ? {} : {
+      onError: (error: Error, context: WorkflowContext) =>
+        runAbortableOperation(
+          () => onError(error, context),
+          {
+            label: `Dashboard workflow "${definition.id}" failure hook`,
+            parentSignal: signal,
+            cancellationGracePeriod: 0,
+          },
+        ),
+    }),
+  });
+}
+
+async function cancelAndSettleDashboardWorkflow(
+  handle: WorkflowHandle,
+  workflowId: string,
+): Promise<void> {
+  const [statusOutcome] = await Promise.allSettled([handle.status()]);
+  const shouldCancel = statusOutcome?.status === "rejected" ||
+    statusOutcome?.value.status === "pending" ||
+    statusOutcome?.value.status === "running" ||
+    statusOutcome?.value.status === "waiting";
+  if (shouldCancel) {
+    const [cancelOutcome] = await Promise.allSettled([handle.cancel()]);
+    if (cancelOutcome?.status === "rejected") {
+      logDashboardFailure("Dashboard workflow cancellation failed", cancelOutcome.reason, {
+        workflow: workflowId,
+      });
+    }
+  }
+  await Promise.allSettled([handle.settled()]);
+}
+
+function createDashboardWorkflowClient(ctx: HandlerContext): WorkflowClient {
+  // Capture the request-visible collaborators before workflow execution enters
+  // its own tenant scope. This prevents registry mutations or a scope switch
+  // from changing the definitions admitted for this request.
+  const tools = new Map(toolRegistry.getAll());
+  const agents = new Map(agentRegistry.getAll());
+  return new WorkflowClient({
+    debug: ctx.debug ?? false,
     executor: {
       stepExecutor: {
-        // Provide registries so workflows can resolve agents and tools
-        toolRegistry,
-        agentRegistry,
+        toolRegistry: Object.freeze({
+          get: (id: string) => tools.get(id),
+          list: () => Array.from(tools.keys()),
+        }),
+        agentRegistry: Object.freeze({
+          get: (id: string) => agents.get(id),
+          list: () => Array.from(agents.keys()),
+        }),
       },
     },
   });
-
-  for (const id of workflowRegistry.getAllIds()) {
-    const definition = workflowRegistry.getDefinition(id);
-    if (definition) devWorkflowClient.register(definition);
-  }
-
-  return devWorkflowClient;
 }
 
-async function handleStartWorkflow(req: Request): Promise<Response> {
+async function handleStartWorkflow(
+  req: Request,
+  body: DashboardJsonObject,
+  ctx: HandlerContext,
+): Promise<Response> {
+  const { workflowId, input } = body;
+  if (typeof workflowId !== "string" || workflowId.length === 0) {
+    return errorResponse("workflowId is required", 400);
+  }
+  if (
+    input !== undefined &&
+    (input === null || typeof input !== "object" || Array.isArray(input))
+  ) {
+    return errorResponse("input must be an object", 400);
+  }
+
+  const definition = workflowRegistry.getDefinition(workflowId);
+  if (!definition) return errorResponse(`Workflow not found: ${workflowId}`, 404);
+  if (req.signal.aborted) return errorResponse("Workflow execution was cancelled", 408);
+
+  let client: WorkflowClient;
   try {
-    const { workflowId, input } = (await req.json()) as { workflowId?: string; input?: unknown };
-    if (!workflowId) return errorResponse("workflowId is required", 400);
-    if (!workflowRegistry.has(workflowId)) {
-      return errorResponse(`Workflow not found: ${workflowId}`, 404);
-    }
-
-    const client = getDevWorkflowClient();
-    const startTime = Date.now();
-    const handle = await client.start(workflowId, (input as Record<string, unknown>) ?? {});
-
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let result: unknown;
-    try {
-      result = await Promise.race([
-        handle.result(),
-        new Promise((_, reject) => {
-          timeoutId = setTimeout(
-            () => reject(REQUEST_ERROR.create({ detail: "Workflow execution timed out (30s)" })),
-            WORKFLOW_EXECUTION_TIMEOUT_MS,
-          );
-        }),
-      ]);
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    const run = await client.getRun(handle.runId);
-
-    return jsonResponse({
-      success: true,
-      workflowId,
-      runId: handle.runId,
-      status: run?.status ?? "completed",
-      result,
-      duration: Date.now() - startTime,
-      nodeStates: run?.nodeStates ?? {},
-    });
+    client = createDashboardWorkflowClient(ctx);
   } catch (error) {
-    const message = getErrorMessage(error);
-    if (message.includes("timed out")) {
-      return jsonResponse(
+    logDashboardFailure("Dashboard workflow client creation failed", error, {
+      workflow: workflowId,
+    });
+    return errorResponse(`Workflow "${workflowId}" could not be started`, 500);
+  }
+
+  const waitScope = createDashboardWorkflowWaitScope(req.signal);
+  const startTime = Date.now();
+  let handle: WorkflowHandle | undefined;
+  let response = errorResponse(`Workflow "${workflowId}" could not be completed`, 500);
+  let teardownFailed = false;
+
+  try {
+    client.register(createDashboardWorkflowDefinition(definition, waitScope.signal));
+    handle = await runWithDashboardProjectContext(
+      ctx,
+      () => client.start(workflowId, (input as Record<string, unknown>) ?? {}),
+    );
+    await runAbortableOperation(
+      () => handle!.settled(),
+      {
+        label: `Dashboard workflow "${workflowId}" settlement`,
+        parentSignal: waitScope.signal,
+        cancellationGracePeriod: 0,
+      },
+    );
+    waitScope.signal.throwIfAborted();
+    let run = await client.getRun(handle.runId);
+    waitScope.signal.throwIfAborted();
+    if (!run) throw new Error("Workflow run disappeared before response serialization");
+    if (run.status === "pending" || run.status === "running" || run.status === "waiting") {
+      await handle.result(waitScope.signal);
+      waitScope.signal.throwIfAborted();
+      run = await client.getRun(handle.runId);
+      waitScope.signal.throwIfAborted();
+      if (!run) throw new Error("Workflow run disappeared before response serialization");
+    }
+    if (run.status !== "completed") {
+      throw new Error("Workflow did not complete successfully");
+    }
+
+    response = boundedJsonResponse(
+      {
+        success: true,
+        workflowId,
+        runId: handle.runId,
+        status: run.status,
+        result: run.output,
+        duration: Date.now() - startTime,
+        nodeStates: createDashboardWorkflowNodeStates(run.nodeStates),
+      },
+      `Workflow "${workflowId}" returned data that is not bounded JSON`,
+    );
+  } catch (error) {
+    const cancellationKind = waitScope.cancellationKind();
+    if (cancellationKind !== null) {
+      if (handle) await cancelAndSettleDashboardWorkflow(handle, workflowId);
+      response = jsonResponse(
         {
           success: false,
-          error: message,
-          hint: "Workflow is still running. Check logs or use a shorter workflow for testing.",
+          error: cancellationKind === "timeout"
+            ? "Workflow execution timed out and was cancelled"
+            : "Workflow execution was cancelled",
         },
         408,
       );
+    } else {
+      if (handle) await Promise.allSettled([handle.settled()]);
+      logDashboardFailure("Dashboard workflow execution failed", error, {
+        workflow: workflowId,
+      });
+      response = errorResponse(`Workflow "${workflowId}" could not be completed`, 500);
     }
-    return errorResponse(message);
+  } finally {
+    try {
+      await client.destroy();
+    } catch (error) {
+      teardownFailed = true;
+      logDashboardFailure("Dashboard workflow client teardown failed", error, {
+        workflow: workflowId,
+      });
+    } finally {
+      waitScope.cleanup();
+    }
   }
+
+  if (teardownFailed) {
+    return errorResponse("Workflow execution resources could not be released", 500);
+  }
+  const finalCancellationKind = waitScope.cancellationKind();
+  return finalCancellationKind === null ? response : jsonResponse(
+    {
+      success: false,
+      error: finalCancellationKind === "timeout"
+        ? "Workflow execution timed out and was cancelled"
+        : "Workflow execution was cancelled",
+    },
+    408,
+  );
 }
 
 function handleListHandlers(ctx: HandlerContext): Response {
@@ -464,7 +1038,8 @@ function handleGetMetrics(): Response {
   try {
     return jsonResponse({ counters: metrics.snapshot(), timestamp: new Date().toISOString() });
   } catch (error) {
-    return errorResponse(getErrorMessage(error));
+    logDashboardFailure("Dashboard metrics snapshot failed", error);
+    return errorResponse("Metrics could not be read", 500);
   }
 }
 
@@ -486,7 +1061,17 @@ async function handleListFiles(req: Request, ctx: HandlerContext): Promise<Respo
 
   try {
     const files: Array<{ name: string; type: "file" | "directory"; path: string }> = [];
+    let totalNameBytes = 0;
     for await (const entry of adapter.fs.readDir(fullPath)) {
+      const nameBytes = dashboardTextEncoder.encode(entry.name).byteLength;
+      totalNameBytes += nameBytes;
+      if (
+        files.length >= MAX_DASHBOARD_DIRECTORY_ENTRIES ||
+        nameBytes > MAX_DASHBOARD_DIRECTORY_NAME_BYTES ||
+        totalNameBytes > MAX_DASHBOARD_DIRECTORY_TOTAL_NAME_BYTES
+      ) {
+        return errorResponse("Directory listing exceeds the dashboard display limit", 413);
+      }
       files.push({
         name: entry.name,
         type: entry.isDirectory ? "directory" : "file",
@@ -500,12 +1085,10 @@ async function handleListFiles(req: Request, ctx: HandlerContext): Promise<Respo
 
     return jsonResponse({ files, path: relativePath, projectDir, count: files.length });
   } catch (error) {
-    return jsonResponse({
-      files: [],
-      path: relativePath,
-      projectDir,
-      error: getErrorMessage(error),
+    dashboardApiLogger.error("Failed to read dashboard directory", {
+      errorType: getDashboardErrorType(error),
     });
+    return errorResponse("Directory could not be read", 500);
   }
 }
 
@@ -520,17 +1103,36 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
   const canonical = await validateRelativePath(relativePath, projectDir, adapter);
   if (canonical === null) return errorResponse("Invalid path", 400);
 
-  try {
-    const content = await adapter.fs.readFile(canonical);
-    const extension = relativePath.split(".").pop() ?? "";
+  const extension = relativePath.split(".").pop() ?? "";
+  if (!TEXT_EXTENSIONS.has(extension.toLowerCase())) {
+    return jsonResponse({
+      path: relativePath,
+      extension,
+      isBinary: true,
+      message: "Binary file - cannot display contents",
+    });
+  }
 
-    if (!TEXT_EXTENSIONS.has(extension.toLowerCase())) {
-      return jsonResponse({
-        path: relativePath,
-        extension,
-        isBinary: true,
-        message: "Binary file - cannot display contents",
-      });
+  const readFileBytesBounded = adapter.fs.readFileBytesBounded;
+  if (typeof readFileBytesBounded !== "function") {
+    return errorResponse("Bounded file reads are not supported by this adapter", 501);
+  }
+
+  try {
+    const bytes = await readFileBytesBounded.call(
+      adapter.fs,
+      canonical,
+      MAX_DASHBOARD_FILE_CONTENT_BYTES + 1,
+    );
+    if (bytes.byteLength > MAX_DASHBOARD_FILE_CONTENT_BYTES) {
+      return errorResponse("File exceeds the dashboard display limit", 413);
+    }
+
+    let content: string;
+    try {
+      content = dashboardTextDecoder.decode(bytes);
+    } catch {
+      return errorResponse("File is not valid UTF-8 text", 422);
     }
 
     return jsonResponse({
@@ -538,10 +1140,13 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
       extension,
       content,
       lines: content.split("\n").length,
-      size: content.length,
+      size: bytes.byteLength,
     });
   } catch (error) {
-    return jsonResponse({ path: relativePath, error: getErrorMessage(error) });
+    dashboardApiLogger.error("Failed to read dashboard file", {
+      errorType: getDashboardErrorType(error),
+    });
+    return errorResponse("File could not be read", 500);
   }
 }
 
@@ -703,10 +1308,16 @@ function handleLiveLogs(req: Request): Response {
   });
 }
 
-async function handleHmrTrigger(req: Request, ctx: HandlerContext): Promise<Response> {
+async function handleHmrTrigger(
+  body: DashboardJsonObject,
+  ctx: HandlerContext,
+): Promise<Response> {
   try {
-    const body = (await req.json().catch(() => ({}))) as { path?: string };
-    const changedPaths = body.path ? [body.path] : undefined;
+    const path = body.path;
+    if (path !== undefined && (typeof path !== "string" || path.length === 0)) {
+      return errorResponse("path must be a non-empty string", 400);
+    }
+    const changedPaths = typeof path === "string" ? [path] : undefined;
 
     const listenerCount = ReloadNotifier.getListenerCount();
     if (listenerCount === 0) {
@@ -738,7 +1349,8 @@ async function handleHmrTrigger(req: Request, ctx: HandlerContext): Promise<Resp
       metrics: ReloadNotifier.getMetrics(),
     });
   } catch (error) {
-    return errorResponse(getErrorMessage(error));
+    logDashboardFailure("Dashboard HMR trigger failed", error);
+    return errorResponse("HMR reload could not be triggered", 500);
   }
 }
 

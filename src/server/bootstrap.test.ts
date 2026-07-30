@@ -32,6 +32,16 @@ import {
   type StudioCaptureBundleProvider,
   StudioCaptureBundleProviderName,
 } from "#veryfront/extensions/studio/index.ts";
+import {
+  type DevUiAssetProvider,
+  DevUiAssetProviderName,
+  MAX_DEV_UI_BUNDLE_BYTES,
+} from "#veryfront/extensions/dev-ui";
+import {
+  type NodeWebSocketServer,
+  type NodeWebSocketServerProvider,
+  NodeWebSocketServerProviderName,
+} from "#veryfront/extensions/websocket";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import {
@@ -43,11 +53,14 @@ import { __resetLogRecordEmitterForTests, logger } from "#veryfront/utils/logger
 import type { TracingExporter } from "veryfront/extensions/observability";
 import {
   bootstrap,
+  createBuiltinExtensionsForBootstrap,
   createRetryableDisposer,
   createStartupFailureCleanup,
   ensureEnvLoaded,
   orchestrateOrDisposeFS,
   replaceLifecycleResource,
+  resolveDevUiAssetProviderForBootstrap,
+  resolveNodeWebSocketServerProviderForBootstrap,
   resolveStudioCaptureProviderForBootstrap,
   selectReloadedConfig,
   validateProductionEnvironment,
@@ -301,6 +314,22 @@ describe("bootstrap() ownership", () => {
   });
 });
 
+describe("bootstrap extension profiles", () => {
+  it("keeps the Dev UI deferred builtin out of production composition", () => {
+    const developmentNames = createBuiltinExtensionsForBootstrap("development")
+      .map((candidate) => candidate.extension.name);
+    const productionNames = createBuiltinExtensionsForBootstrap("production")
+      .map((candidate) => candidate.extension.name);
+
+    assertEquals(developmentNames.includes("ext-dev-ui-react"), true);
+    assertEquals(productionNames.includes("ext-dev-ui-react"), false);
+    assertEquals(
+      productionNames,
+      developmentNames.filter((name) => name !== "ext-dev-ui-react"),
+    );
+  });
+});
+
 describe("Studio capture bootstrap contract", () => {
   it("rejects an oversized multibyte bundle before publishing a generation", () => {
     const previous = tryResolve<StudioCaptureBundleProvider>(
@@ -319,6 +348,59 @@ describe("Studio capture bootstrap contract", () => {
     } finally {
       if (previous === undefined) unregister(StudioCaptureBundleProviderName);
       else register(StudioCaptureBundleProviderName, previous);
+    }
+  });
+});
+
+describe("Dev UI bootstrap contract", () => {
+  it("snapshots the extension bundle and enforces its UTF-8 byte limit", () => {
+    const previous = tryResolve<DevUiAssetProvider>(DevUiAssetProviderName);
+    const source = { browserBundle: "globalThis.__devUi = 'captured';" };
+    register(DevUiAssetProviderName, source);
+
+    try {
+      const captured = resolveDevUiAssetProviderForBootstrap();
+      source.browserBundle = "mutated";
+      assertEquals(captured?.browserBundle, "globalThis.__devUi = 'captured';");
+      assertEquals(Object.isFrozen(captured), true);
+
+      register(DevUiAssetProviderName, {
+        browserBundle: "é".repeat(MAX_DEV_UI_BUNDLE_BYTES / 2) + "a",
+      });
+      assertThrows(
+        resolveDevUiAssetProviderForBootstrap,
+        RangeError,
+        `${MAX_DEV_UI_BUNDLE_BYTES}-byte limit`,
+      );
+    } finally {
+      if (previous === undefined) unregister(DevUiAssetProviderName);
+      else register(DevUiAssetProviderName, previous);
+    }
+  });
+});
+
+describe("Node WebSocket bootstrap contract", () => {
+  it("captures the explicitly registered provider generation", () => {
+    const previous = tryResolve<NodeWebSocketServerProvider>(
+      NodeWebSocketServerProviderName,
+    );
+    const originalServer = {} as NodeWebSocketServer;
+    const source = { createServer: () => originalServer };
+    register(NodeWebSocketServerProviderName, source);
+
+    try {
+      const captured = resolveNodeWebSocketServerProviderForBootstrap();
+      source.createServer = () => {
+        throw new Error("mutated provider must not run");
+      };
+      assertStrictEquals(
+        captured?.createServer({ noServer: true, handleProtocols: () => false }),
+        originalServer,
+      );
+      assertEquals(Object.isFrozen(captured), true);
+    } finally {
+      if (previous === undefined) unregister(NodeWebSocketServerProviderName);
+      else register(NodeWebSocketServerProviderName, previous);
     }
   });
 });

@@ -90,6 +90,13 @@ describe("server/services/static/static-file.service", () => {
       assertEquals(service.isAssetRequest("/_veryfront/chunk.js"), true);
     });
 
+    it("accepts generated image variants under /_vf/assets/images", () => {
+      assertEquals(
+        service.isAssetRequest("/_vf/assets/images/hero-640w-q80.webp"),
+        true,
+      );
+    });
+
     it("returns false for .md files", () => {
       assertEquals(service.isAssetRequest("/readme.md"), false);
     });

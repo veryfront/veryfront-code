@@ -56,15 +56,15 @@ describe("VeryfrontStrategy", () => {
   });
 
   describe("lightweight barrel overrides", () => {
-    it("should redirect veryfront/workflow to React-only submodule for SSR", () => {
+    it("should resolve the explicit workflow React integration for SSR", () => {
       const result = strategy.rewrite(
-        makeInfo("veryfront/workflow"),
+        makeInfo("veryfront/workflow/react"),
         makeCtx({ target: "ssr" }),
       );
       assert(result.specifier !== null, "specifier should not be null");
       assert(
-        result.specifier!.includes("/workflow/react/index.js"),
-        `Expected workflow/react/index.js in SSR, got: ${result.specifier}`,
+        result.specifier!.includes("/react/workflow/index.js"),
+        `Expected react/workflow/index.js in SSR, got: ${result.specifier}`,
       );
       assert(
         result.specifier!.includes("?ssr=true"),
@@ -72,15 +72,15 @@ describe("VeryfrontStrategy", () => {
       );
     });
 
-    it("should redirect veryfront/workflow to React-only submodule for browser hydration", () => {
+    it("should resolve the explicit workflow React integration for browser hydration", () => {
       const result = strategy.rewrite(
-        makeInfo("veryfront/workflow"),
+        makeInfo("veryfront/workflow/react"),
         makeCtx({ target: "browser" }),
       );
       assert(result.specifier !== null, "specifier should not be null");
       assert(
-        result.specifier!.includes("/workflow/react/index.js"),
-        `Expected workflow/react/index.js in browser, got: ${result.specifier}`,
+        result.specifier!.includes("/react/workflow/index.js"),
+        `Expected react/workflow/index.js in browser, got: ${result.specifier}`,
       );
     });
 

@@ -20,13 +20,10 @@ import {
 /**
  * Module overrides for framework barrels that are too broad for a target.
  *
- * Some modules re-export React hooks alongside heavy server-side code
- * (executors, backends, DAGs) that fails to transform or run in the SSR and
- * browser pipelines. Redirect exact imports to lightweight target-safe
- * submodules for those targets.
+ * Some broad modules pull server-only code into browser pipelines. Redirect
+ * only where the package intentionally publishes a target-specific root.
  */
 const CLIENT_SAFE_MODULE_OVERRIDES: Record<string, string> = {
-  "veryfront/workflow": "/_vf_modules/_veryfront/workflow/react/index.js",
   // The root barrel re-exports the server bootstrap surface from
   // `#veryfront/server`, which transitively pulls `server/production-server.ts`
   // (module top-level await cannot transform to the es2020 browser target,

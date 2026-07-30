@@ -49,11 +49,11 @@ describe("rewriteVeryfrontImports", () => {
   });
 
   it("uses the unified veryfront strategy for SSR-only module overrides", () => {
-    const code = `import { useWorkflow } from "veryfront/workflow";\n`;
+    const code = `import { useWorkflow } from "veryfront/workflow/react";\n`;
 
     assertEquals(
       rewriteVeryfrontImports(code),
-      `import { useWorkflow } from "/_vf_modules/_veryfront/workflow/react/index.js?ssr=true";\n`,
+      `import { useWorkflow } from "/_vf_modules/_veryfront/react/workflow/index.js?ssr=true";\n`,
     );
   });
 });

@@ -200,6 +200,35 @@ export async function assertRootArtifactExcludesCSSImplementations(
   }
 }
 
+/** Fail if dnt copied any independently published extension implementation into core. */
+export async function assertRootArtifactExcludesExtensionImplementations(
+  rootEsmDirectory: string,
+): Promise<void> {
+  const implementationRoot = join(rootEsmDirectory, "extensions");
+  let entries: Deno.DirEntry[] = [];
+  try {
+    for await (const entry of Deno.readDir(implementationRoot)) {
+      entries.push(entry);
+    }
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return;
+    throw error;
+  }
+
+  entries = entries.toSorted((left, right) =>
+    compareOrdinal(left.name, right.name)
+  );
+  const implementation = entries.find((entry) => entry.name.startsWith("ext-"));
+  if (!implementation) return;
+
+  const path = join(implementationRoot, implementation.name);
+  throw ownershipError(
+    "root-extension-dependency-collision",
+    path,
+    `${implementation.name} implementation source was bundled into the root package`,
+  );
+}
+
 /** Return the validated dependency inventory for this repository checkout. */
 export function repositoryExtensionDependencyOwnership(): ExtensionDependencyOwnership {
   repositoryOwnership ??= loadExtensionDependencyOwnership(
@@ -389,6 +418,42 @@ export function deriveExtensionDependencyOwnership(
         'activation must be either "auto" or "explicit"',
       );
     }
+    let runtimeDependencies: ReadonlySet<string> | undefined;
+    const npmValue = veryfront.npm;
+    if (npmValue !== undefined) {
+      const npm = snapshotRecord(
+        npmValue,
+        `${source.manifestPath}.veryfront.npm`,
+        "invalid-extension-manifest",
+      );
+      if (npm.runtimeDependencies !== undefined) {
+        const selected = snapshotArray(
+          npm.runtimeDependencies,
+          `${source.manifestPath}.veryfront.npm.runtimeDependencies`,
+          MAX_MANIFEST_IMPORTS,
+          "invalid-extension-manifest",
+        );
+        const selectedNames = new Set<string>();
+        for (let index = 0; index < selected.length; index += 1) {
+          const location =
+            `${source.manifestPath}.veryfront.npm.runtimeDependencies[${index}]`;
+          const dependencyName = packageName(
+            selected[index],
+            location,
+            "invalid-extension-manifest",
+          );
+          if (selectedNames.has(dependencyName)) {
+            throw ownershipError(
+              "invalid-extension-manifest",
+              location,
+              `runtime dependency ${dependencyName} is listed more than once`,
+            );
+          }
+          selectedNames.add(dependencyName);
+        }
+        runtimeDependencies = selectedNames;
+      }
+    }
     extensionCount += 1;
 
     const extensionName = packageName(
@@ -481,12 +546,27 @@ export function deriveExtensionDependencyOwnership(
       manifestDependencies.set(dependencyName, parsed.version);
     }
 
+    if (runtimeDependencies !== undefined) {
+      for (const dependencyName of runtimeDependencies) {
+        if (manifestDependencies.has(dependencyName)) continue;
+        throw ownershipError(
+          "invalid-extension-manifest",
+          `${source.manifestPath}.veryfront.npm.runtimeDependencies`,
+          `runtime dependency ${dependencyName} is not backed by an exact npm import`,
+        );
+      }
+    }
+
     for (
       const [dependencyName, version] of [...manifestDependencies].sort((
         [left],
         [right],
       ) => compareOrdinal(left, right))
     ) {
+      if (
+        runtimeDependencies !== undefined &&
+        !runtimeDependencies.has(dependencyName)
+      ) continue;
       const packageOwners = owners.get(dependencyName) ?? [];
       packageOwners.push(Object.freeze({
         extensionName,

@@ -1,11 +1,7 @@
 /**
- * Collapsible — BASIC fork of @radix-ui/react-collapsible with the same API
- * (Collapsible / CollapsibleTrigger / CollapsibleContent). Controlled or
- * uncontrolled open state; content unmounts when closed.
- *
- * TODO(a11y): id-wired `aria-controls`, height transition
- * (`--radix-collapsible-content-height`), `hidden` instead of unmount for
- * find-in-page. Private to the chat module.
+ * Dependency-free collapsible disclosure with controlled or uncontrolled
+ * state, stable ARIA control wiring, and content retained as `hidden` while
+ * closed so hydration and stateful descendants remain deterministic.
  *
  * @module react/components/ui/collapsible
  */
@@ -14,8 +10,17 @@ import { Slot } from "./slot.tsx";
 import { useDisclosure } from "./disclosure.ts";
 
 const CollapsibleContext = React.createContext<
-  { open: boolean; toggle: () => void; disabled?: boolean } | null
+  {
+    open: boolean;
+    toggle: () => void;
+    contentId: string;
+    disabled?: boolean;
+  } | null
 >(null);
+
+function stableDomId(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]/g, "");
+}
 
 /** Props accepted by `<Collapsible>`. */
 export interface CollapsibleProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange"> {
@@ -39,9 +44,12 @@ export function Collapsible({
 }: CollapsibleProps): React.ReactElement {
   const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
   const toggle = React.useCallback(() => setOpen(!isOpen), [isOpen, setOpen]);
+  const contentId = `vf-collapsible-${stableDomId(React.useId())}-content`;
   return (
-    <div ref={ref} data-state={isOpen ? "open" : "closed"} {...props}>
-      <CollapsibleContext.Provider value={{ open: isOpen, toggle, disabled }}>
+    <div {...props} ref={ref} data-state={isOpen ? "open" : "closed"}>
+      <CollapsibleContext.Provider
+        value={{ open: isOpen, toggle, contentId, disabled }}
+      >
         {children}
       </CollapsibleContext.Provider>
     </div>
@@ -51,28 +59,38 @@ export function Collapsible({
 /** Props accepted by `<CollapsibleTrigger>`. */
 export interface CollapsibleTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   asChild?: boolean;
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** Toggles the collapsible. `asChild` merges onto the child element. */
 export function CollapsibleTrigger({
   asChild,
   onClick,
+  disabled,
+  ref,
   children,
   ...props
 }: CollapsibleTriggerProps): React.ReactElement {
   const ctx = React.useContext(CollapsibleContext);
+  if (!ctx) {
+    throw new Error("CollapsibleTrigger must be used within <Collapsible>");
+  }
   const Comp = asChild ? Slot : "button";
+  const isDisabled = Boolean(ctx.disabled || disabled);
   return (
     <Comp
+      {...props}
       {...(asChild ? {} : { type: "button" as const })}
-      aria-expanded={ctx?.open}
-      data-state={ctx?.open ? "open" : "closed"}
-      disabled={ctx?.disabled}
+      ref={ref}
+      aria-expanded={ctx.open}
+      aria-controls={ctx.contentId}
+      aria-disabled={asChild && isDisabled ? true : undefined}
+      data-state={ctx.open ? "open" : "closed"}
+      disabled={asChild ? undefined : isDisabled}
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
         onClick?.(e);
-        ctx?.toggle();
+        if (!e.defaultPrevented && !isDisabled) ctx.toggle();
       }}
-      {...props}
     >
       {children}
     </Comp>
@@ -81,12 +99,19 @@ export function CollapsibleTrigger({
 
 /** Collapsible content — rendered only while open. */
 export function CollapsibleContent(
-  { children, ...props }: React.HTMLAttributes<HTMLDivElement>,
-): React.ReactElement | null {
+  { children, hidden, id, ...props }: React.HTMLAttributes<HTMLDivElement>,
+): React.ReactElement {
   const ctx = React.useContext(CollapsibleContext);
-  if (!ctx?.open) return null;
+  if (!ctx) {
+    throw new Error("CollapsibleContent must be used within <Collapsible>");
+  }
   return (
-    <div data-state="open" {...props}>
+    <div
+      {...props}
+      id={id ?? ctx.contentId}
+      data-state={ctx.open ? "open" : "closed"}
+      hidden={Boolean(hidden || !ctx.open)}
+    >
       {children}
     </div>
   );

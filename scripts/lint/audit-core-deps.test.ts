@@ -4,6 +4,7 @@ import {
   findCoreThirdPartyImports,
   findCoreThirdPartySourceImports,
   findRootNpmSpecifierLiterals,
+  readCoreSourceFiles,
 } from "./audit-core-deps.ts";
 
 describe("findCoreThirdPartyImports", () => {
@@ -170,6 +171,11 @@ describe("findCoreThirdPartySourceImports", () => {
           content: 'import { z } from "zod";',
         },
         {
+          path: "src/tool/__tests__/extension-setup.ts",
+          content:
+            'import extension from "../../../extensions/ext-example/src/index.ts";',
+        },
+        {
           path: "cli/templates/files/app/tool.ts",
           content: 'import { z } from "zod";',
         },
@@ -183,6 +189,38 @@ describe("findCoreThirdPartySourceImports", () => {
     );
 
     assertEquals(issues, []);
+  });
+
+  it("flags relative imports that bypass first-party extension package boundaries", () => {
+    const issues = findCoreThirdPartySourceImports([
+      {
+        path: "src/extensions/builtin-schema-validator.ts",
+        content:
+          'import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";\n',
+      },
+      {
+        path: "src/provider/adapter.ts",
+        content:
+          'import provider from "../../extensions/ext-llm-openai/src/index.ts";\n',
+      },
+      {
+        path: "src/extensions/valid.ts",
+        content: 'import extSchema from "@veryfront/ext-schema-zod";\n',
+      },
+    ]);
+
+    assertEquals(issues, [
+      {
+        path: "src/extensions/builtin-schema-validator.ts",
+        line: 1,
+        specifier: "../../extensions/ext-schema-zod/src/adapter.ts",
+      },
+      {
+        path: "src/provider/adapter.ts",
+        line: 1,
+        specifier: "../../extensions/ext-llm-openai/src/index.ts",
+      },
+    ]);
   });
 
   it("handles multiline imports and reports the import start line", () => {
@@ -205,4 +243,25 @@ describe("findCoreThirdPartySourceImports", () => {
       { path: "src/config/example.ts", line: 4, specifier: "@mdx-js/mdx" },
     ]);
   });
+
+  it("ignores import-like text in strings, templates, and comments", () => {
+    const issues = findCoreThirdPartySourceImports([
+      {
+        path: "src/html/template.ts",
+        content: [
+          'const source = `import mermaid from "${MERMAID_ESM_URL}"`;',
+          'const example = "import { test } from \\"bun:test\\"";',
+          '// import fake from "third-party";',
+        ].join("\n"),
+      },
+    ]);
+
+    assertEquals(issues, []);
+  });
+});
+
+Deno.test("core dependency audit traverses the repository root", async () => {
+  const files = await readCoreSourceFiles();
+  assertEquals(files.some(({ path }) => path === "src/index.ts"), true);
+  assertEquals(files.some(({ path }) => path === "cli/main.ts"), true);
 });

@@ -788,6 +788,108 @@ describe("StatOperations", () => {
       assertStrictEquals(error, apiFailure);
     });
 
+    it("should propagate stat API search error proxies through telemetry without invoking traps", async () => {
+      let proxyTrapCalls = 0;
+      const hostile = new Proxy(
+        FILE_NOT_FOUND.create({ detail: "File not found: pages/missing.tsx" }),
+        {
+          getPrototypeOf(): never {
+            proxyTrapCalls += 1;
+            throw new Error("getPrototypeOf trap must not run");
+          },
+        },
+      );
+      const statOps = createStatOps(
+        createMockClient({
+          searchFiles: () => Promise.reject(hostile),
+        }),
+        new PathNormalizer(),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+      );
+
+      const error = await assertRejects(() => statOps.stat("pages/missing.tsx"));
+      assertEquals(proxyTrapCalls, 0);
+      assertStrictEquals(error, hostile);
+    });
+
+    it("should propagate accessor-backed API failures without following descriptor prototypes", async () => {
+      const apiFailure = FILE_NOT_FOUND.create({
+        detail: "File not found: pages/missing.tsx",
+      });
+      let slugAccessorCalls = 0;
+      let messageAccessorCalls = 0;
+      Object.defineProperty(apiFailure, "slug", {
+        configurable: true,
+        get(): never {
+          slugAccessorCalls += 1;
+          throw new Error("slug accessor must not run");
+        },
+      });
+      Object.defineProperty(apiFailure, "message", {
+        configurable: true,
+        get(): never {
+          messageAccessorCalls += 1;
+          throw new Error("message accessor must not run");
+        },
+      });
+      const previous = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      let inheritedValueCalls = 0;
+      let caught: unknown;
+      Object.defineProperty(Object.prototype, "value", {
+        configurable: true,
+        get(): never {
+          inheritedValueCalls += 1;
+          throw new Error("inherited descriptor value must not run");
+        },
+      });
+
+      try {
+        const statOps = createStatOps(
+          createMockClient({
+            searchFiles: () => Promise.reject(apiFailure),
+          }),
+          new PathNormalizer(),
+          createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+        );
+        caught = await assertRejects(() => statOps.stat("pages/missing.tsx"));
+      } finally {
+        if (previous) {
+          Object.defineProperty(Object.prototype, "value", previous);
+        } else {
+          delete (Object.prototype as Record<string, unknown>).value;
+        }
+      }
+
+      assertStrictEquals(caught, apiFailure);
+      assertEquals(slugAccessorCalls, 0);
+      assertEquals(messageAccessorCalls, 0);
+      assertEquals(inheritedValueCalls, 0);
+    });
+
+    it("should propagate resolveFile API error proxies without invoking prototype traps", async () => {
+      let prototypeReads = 0;
+      const hostile = new Proxy(
+        FILE_NOT_FOUND.create({ detail: "File not found: pages/missing.tsx" }),
+        {
+          getPrototypeOf(): never {
+            prototypeReads += 1;
+            throw new Error("getPrototypeOf trap must not run");
+          },
+        },
+      );
+      const statOps = createStatOps(
+        createMockClient({
+          searchFiles: () => Promise.reject(hostile),
+        }),
+        new PathNormalizer(),
+        createBranchContextWithFiles([]),
+      );
+
+      const error = await assertRejects(() => statOps.resolveFile("pages/missing"));
+      assertEquals(prototypeReads, 0);
+      assertStrictEquals(error, hostile);
+    });
+
     it("should propagate resolveFile API 404 failures for missing project resources", async () => {
       const apiFailure = API_CLIENT_ERROR.create({
         detail: "Project not found",

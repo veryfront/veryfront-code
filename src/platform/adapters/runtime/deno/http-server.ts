@@ -8,6 +8,7 @@ import {
 import { getEnvOverlayStorage } from "../../../compat/process.ts";
 import { INITIALIZATION_ERROR, NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { recordRequestPeerFromTransport } from "../shared/request-peer.ts";
 
 type DenoRequestHandler = (
   request: Request,
@@ -19,12 +20,23 @@ export interface DenoNativeHttpServer {
   shutdown(): Promise<void>;
 }
 
+export interface DenoServeHandlerInfo {
+  readonly remoteAddr?: {
+    readonly transport?: unknown;
+    readonly hostname?: unknown;
+    readonly port?: unknown;
+  };
+}
+
 export interface DenoServeRuntime {
   serve(options: {
     readonly port: number;
     readonly hostname: string;
     readonly signal: AbortSignal;
-    readonly handler: (request: Request) => Promise<Response>;
+    readonly handler: (
+      request: Request,
+      info?: DenoServeHandlerInfo,
+    ) => Promise<Response>;
     readonly onListen: (address: { hostname: string; port: number }) => void;
   }): DenoNativeHttpServer;
 }
@@ -165,8 +177,19 @@ export async function createDenoServerWithRuntime(
     port,
     hostname,
     signal: controller.signal,
-    handler: async (request) => {
+    handler: async (request, info) => {
       try {
+        const remoteAddress = info?.remoteAddr;
+        if (
+          remoteAddress?.transport === "tcp" &&
+          typeof remoteAddress.hostname === "string"
+        ) {
+          recordRequestPeerFromTransport(request, {
+            runtime: "deno",
+            transport: "tcp",
+            hostname: remoteAddress.hostname,
+          });
+        }
         const response = await wrappedHandler(request);
         return toNativeResponse(response, NativeResponse);
       } catch (error) {

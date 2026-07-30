@@ -43,14 +43,6 @@ async function buildReactVersion(): Promise<string> {
   return match[1]!;
 }
 
-async function buildMermaidUrl(): Promise<string> {
-  const mermaidImport = (await readReactWorkspaceImports())["@veryfront/mermaid-upstream"] ?? "";
-  if (!mermaidImport) {
-    throw new Error("react/deno.json does not define the Mermaid upstream");
-  }
-  return mermaidImport;
-}
-
 describe("constants/cdn — React default version drift guard", () => {
   it("REACT_DEFAULT_VERSION matches the version the build bundles (react/deno.json)", async () => {
     assertEquals(REACT_DEFAULT_VERSION, await buildReactVersion());
@@ -66,22 +58,22 @@ describe("constants/cdn — React default version drift guard", () => {
 });
 
 describe("constants/cdn — Mermaid dependency drift guard", () => {
-  it("standalone previews use the exact package-audited Mermaid URL", async () => {
-    assertEquals(MERMAID_ESM_URL, await buildMermaidUrl());
+  it("standalone previews use the shared exact package URL", () => {
+    assertEquals(
+      MERMAID_ESM_URL,
+      getFrameworkWorkspaceDependencyUrl("mermaid"),
+    );
   });
 
-  it("all browser-owned versions and esm.sh pins match react/deno.json", async () => {
-    const imports = await readReactWorkspaceImports();
+  it("all browser-owned package URLs use the declared versions and esm.sh pin", () => {
     for (
       const [packageName, version] of Object.entries(
         FRAMEWORK_BROWSER_DEPENDENCY_VERSIONS,
       )
     ) {
-      const target = imports[`@veryfront/${packageName}-upstream`];
+      const target = getFrameworkWorkspaceDependencyUrl(packageName);
       if (!target) {
-        throw new Error(
-          `react/deno.json does not define ${packageName} upstream`,
-        );
+        throw new Error(`No audited browser URL exists for ${packageName}`);
       }
       const url = new URL(target);
       assertEquals(url.pathname, `/${packageName}@${version}`, packageName);
@@ -90,10 +82,23 @@ describe("constants/cdn — Mermaid dependency drift guard", () => {
         ESM_SH_BUILD_PIN,
         packageName,
       );
+    }
+  });
+
+  it("keeps optional rich renderers out of the React workspace", async () => {
+    const imports = await readReactWorkspaceImports();
+    for (
+      const packageName of [
+        "react-markdown",
+        "remark-gfm",
+        "shiki",
+        "mermaid",
+      ]
+    ) {
       assertEquals(
-        target,
-        getFrameworkWorkspaceDependencyUrl(packageName),
-        packageName,
+        imports[`@veryfront/${packageName}-upstream`],
+        undefined,
+        `${packageName} must be owned by an extension, not core React`,
       );
     }
   });

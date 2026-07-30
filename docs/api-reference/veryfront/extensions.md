@@ -12,8 +12,8 @@ import {
   auditCapabilities,
   captureDistributedRuntimeProvider,
   captureImageOptimizationEngine,
-  createStudioCaptureBundleProvider,
-  detectConflicts,
+  captureNodeWebSocketServer,
+  createDevUiAssetProvider,
 } from "veryfront/extensions";
 ```
 
@@ -38,36 +38,48 @@ await loader.teardownAll();
 
 | Name | Description | Source |
 |------|-------------|--------|
+| `DevUiAssetProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L9) |
 | `DistributedRuntimeProviderName` | Registry name used by distributed-infrastructure extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L25) |
 | `ImageOptimizationEngineName` | Registry name used for the image optimization extension contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L14) |
+| `IsolatedSsrRendererProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/rendering/isolated-ssr-renderer.ts#L11) |
+| `NodeWebSocketServerProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L11) |
 | `SandboxShellToolsProviderName` | Render sandbox shell tools provider name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L5) |
-| `StudioCaptureBundleProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L11) |
+| `StudioCaptureBundleProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L15) |
 
 ### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
 | `assertImageOptimizationEngine` | Validate an implementation received through the dynamic contract registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L120) |
-| `auditCapabilities` | Log capabilities for a named extension at startup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L781) |
-| `captureDistributedRuntimeProvider` | Capture a provider's complete callable surface without invoking accessors. Later mutation of the registry object cannot redirect active operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L429) |
+| `auditCapabilities` | Log capabilities for a named extension at startup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L834) |
+| `captureDistributedRuntimeProvider` | Capture a provider's complete callable surface without invoking accessors. Later mutation of the registry object cannot redirect active operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L433) |
 | `captureImageOptimizationEngine` | Capture dynamic properties once so one run cannot split across mutations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L127) |
-| `createStudioCaptureBundleProvider` | Create an immutable provider suitable for extension contract registration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L118) |
+| `captureNodeWebSocketServer` | Capture one server instance without retaining mutable method lookups. The underlying implementation remains the receiver because protocol engines legitimately keep mutable transport state on their instance. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L142) |
+| `createDevUiAssetProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L33) |
+| `createIsolatedSsrRendererProvider` | Create immutable registration metadata for an extension factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/rendering/isolated-ssr-renderer.ts#L189) |
+| `createNodeWebSocketServerProvider` | Create immutable registration metadata from a standalone factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L231) |
+| `createStudioCaptureBundleProvider` | Create an immutable provider suitable for extension contract registration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L50) |
 | `detectConflicts` | Detect contract conflicts between resolved extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L509) |
 | `discoverLocalExtensions` | Find `*.extension.ts` files in the project root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L436) |
 | `discoverPackageExtensions` | Scan `node_modules` (including `@scoped` packages) for packages that declare veryfront extension metadata in their `package.json`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L348) |
 | `discoverProjectExtensions` | Discover project extensions living under `extensions/` in the project root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L407) |
 | `formatCapabilities` | Format capabilities as human-readable strings for logging. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L36) |
-| `getRecommendation` | Return recommendation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/recommendations.ts#L33) |
+| `getRecommendation` | Return recommendation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/recommendations.ts#L38) |
 | `loadExtensionFactory` | Dynamically import an extension factory from `path` and resolve it. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/factory-loader.ts#L34) |
-| `mapToDenoPermissions` | Map capabilities to Deno CLI permission flags. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L734) |
+| `mapToDenoPermissions` | Map capabilities to Deno CLI permission flags. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L787) |
 | `mergeExtensions` | Merge extensions from all four sources in priority order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L169) |
 | `orchestrateExtensions` | Run the full extension pipeline against a resolved project config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/orchestrate.ts#L117) |
 | `parsePackageMetadata` | Parse veryfront extension metadata from a package.json-like object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L132) |
 | `resolve` | Resolve path segments to an absolute path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L14) |
-| `snapshotStudioCaptureBundleProvider` | Snapshot an untrusted extension contract without invoking accessors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L81) |
-| `tryResolve` | Try to resolve. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L30) |
+| `snapshotDevUiAssetProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L27) |
+| `snapshotIsolatedSsrRendererProvider` | Snapshot an extension-owned provider without invoking accessors or retaining mutable provider metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/rendering/isolated-ssr-renderer.ts#L84) |
+| `snapshotNodeWebSocketServerProvider` | Capture a provider generation without retaining its mutable registration object or invoking extension-owned accessors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L189) |
+| `snapshotStudioCaptureBundleProvider` | Snapshot an untrusted extension contract without invoking accessors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L40) |
+| `tryResolve` | Try to resolve. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L33) |
+| `validateDevUiBundle` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L23) |
 | `validateExtension` | Validate the shape of an extension object. Returns an array of issue descriptions (empty array = valid). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L353) |
-| `validateStudioCaptureBundle` | Validate the shared format and UTF-8 byte budget for every Studio bridge bundle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L55) |
+| `validateIsolatedSsrRendererModuleUrl` | Validate one worker renderer module URL without resolving or importing it. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/rendering/isolated-ssr-renderer.ts#L72) |
+| `validateStudioCaptureBundle` | Validate the shared format and UTF-8 byte budget for every Studio bridge bundle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L30) |
 
 ### Classes
 
@@ -82,6 +94,8 @@ await loader.teardownAll();
 | `Capability` | Declares a system capability an extension requires. Object-based for extensibility -- scoping fields vary by type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L11) |
 | `ConflictInfo` | Information about a contract conflict between extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L29) |
 | `CreateSandboxShellToolsInput` | Input payload for create sandbox shell tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L38) |
+| `DevUiAssetProvider` | One self-contained browser bundle mounts dashboard or projects by shell identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L19) |
+| `DevUiKind` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L29) |
 | `DistributedRuntimeProvider` | Optional distributed runtime implementation supplied by an extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L295) |
 | `Extension` | Public API contract for extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L50) |
 | `ExtensionActivationMode` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L30) |
@@ -97,6 +111,14 @@ await loader.teardownAll();
 | `ImageOptimizationResult` | Portable result returned by an image optimization engine. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L47) |
 | `ImageOptimizationVariantRequest` | One immutable output requested from an image optimization engine. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L24) |
 | `ImageOptimizationVariantResult` | One encoded output returned by an image optimization engine. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L39) |
+| `IsolatedSsrRenderer` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/rendering/isolated-ssr-renderer.ts#L22) |
+| `IsolatedSsrRendererModule` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/rendering/isolated-ssr-renderer.ts#L31) |
+| `IsolatedSsrRendererProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/rendering/isolated-ssr-renderer.ts#L15) |
+| `NodeWebSocketConnection` | Minimal connection surface consumed by core's runtime-neutral adapter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L24) |
+| `NodeWebSocketMessageData` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L18) |
+| `NodeWebSocketServer` | Minimal server surface used by upgrade and shutdown ownership. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L50) |
+| `NodeWebSocketServerOptions` | Exact no-server options supplied by core for an existing HTTP listener. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L41) |
+| `NodeWebSocketServerProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L66) |
 | `OrchestrateOptions` | Options for `orchestrateExtensions`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/orchestrate.ts#L29) |
 | `PackageMetadata` | Metadata extracted from a package.json that declares itself as a veryfront extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L19) |
 | `ResolvedExtension` | Public API contract for resolved extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L78) |
@@ -105,18 +127,28 @@ await loader.teardownAll();
 | `SandboxShellToolExecute` | Public API contract for sandbox shell tool execute. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L8) |
 | `SandboxShellToolSet` | Public API contract for sandbox shell tool set. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L27) |
 | `SandboxShellToolsProvider` | Public API contract for sandbox shell tools provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L47) |
-| `StudioCaptureBundleProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L16) |
+| `StudioCaptureBundleProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L24) |
 
 ### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
 | `CIRCULAR_DEPENDENCY_ERROR` | Shared circular dependency error value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L28) |
+| `DASHBOARD_CSRF_COOKIE_NAME` | Stable prefix for port-scoped privileged dashboard session cookies. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L2) |
+| `DASHBOARD_CSRF_HEADER_NAME` | Shared request header carrying the shell's session-bound CSRF token. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L4) |
+| `DASHBOARD_CSRF_META_NAME` | Shared metadata name used to pass the CSRF token into the extension UI. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L6) |
+| `DASHBOARD_CSRF_TOKEN_PATTERN` | A 32-byte token encoded as unpadded base64url. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L25) |
+| `DEV_UI_KIND_ATTRIBUTE` | Stable shell identity consumed by the extension-owned shared bundle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L28) |
 | `EXTENSION_CONFLICT_ERROR` | Shared extension conflict error value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L37) |
 | `EXTENSION_VALIDATION_ERROR` | Shared extension validation error value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L19) |
+| `MAX_DEV_UI_BUNDLE_BYTES` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L10) |
 | `MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS` | Maximum stable implementation identity accepted across the boundary. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L17) |
-| `MAX_STUDIO_CAPTURE_BUNDLE_BYTES` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L12) |
+| `MAX_ISOLATED_SSR_RENDERER_READ_ROOTS` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/rendering/isolated-ssr-renderer.ts#L12) |
+| `MAX_ISOLATED_SSR_RENDERER_URL_CHARACTERS` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/rendering/isolated-ssr-renderer.ts#L13) |
+| `MAX_STUDIO_CAPTURE_BUNDLE_BYTES` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L16) |
 | `MISSING_EXTENSION_ERROR` | Shared missing extension error value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L10) |
+| `NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L13) |
+| `NODE_WEBSOCKET_SERVER_PROVIDER_PACKAGE` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L12) |
 
 ## Deep imports
 
@@ -265,11 +297,11 @@ import { register, reset, resolve } from "veryfront/extensions/contracts";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `register` | Register. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L36) |
-| `reset` | Reset. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L51) |
+| `register` | Register. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L39) |
+| `reset` | Reset. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L54) |
 | `resolve` | Resolve path segments to an absolute path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L14) |
-| `tryResolve` | Try to resolve. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L30) |
-| `unregister` | Unregister. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L45) |
+| `tryResolve` | Try to resolve. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L33) |
+| `unregister` | Unregister. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L48) |
 
 ### `veryfront/extensions/css`
 
@@ -334,6 +366,79 @@ import "veryfront/extensions/database";
 | `DatabaseClient` | DatabaseClient contract interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/database/database-client.ts#L23) |
 | `QueryResult` | Result returned from `DatabaseClient.query`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/database/database-client.ts#L10) |
 
+### `veryfront/extensions/dev-ui`
+
+Contracts and protocol constants for extension-owned local development UIs.
+
+```ts
+import { createDevUiAssetProvider, getDashboardSessionCookieName, snapshotDevUiAssetProvider } from "veryfront/extensions/dev-ui";
+```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `DevUiAssetProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L9) |
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `createDevUiAssetProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L33) |
+| `getDashboardSessionCookieName` | Derive the host cookie name for one concrete development-server listener. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L17) |
+| `snapshotDevUiAssetProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L27) |
+| `validateDevUiBundle` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L23) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `DevUiAssetProvider` | One self-contained browser bundle mounts dashboard or projects by shell identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L19) |
+| `DevUiKind` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L29) |
+
+#### Constants
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `DASHBOARD_CSRF_COOKIE_NAME` | Stable prefix for port-scoped privileged dashboard session cookies. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L2) |
+| `DASHBOARD_CSRF_HEADER_NAME` | Shared request header carrying the shell's session-bound CSRF token. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L4) |
+| `DASHBOARD_CSRF_META_NAME` | Shared metadata name used to pass the CSRF token into the extension UI. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L6) |
+| `DASHBOARD_CSRF_TOKEN_PATTERN` | A 32-byte token encoded as unpadded base64url. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L25) |
+| `DASHBOARD_SESSION_PATH` | Asset-independent endpoint used by trusted headless development clients. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L8) |
+| `DEV_UI_KIND_ATTRIBUTE` | Stable shell identity consumed by the extension-owned shared bundle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L28) |
+| `MAX_DEV_UI_BUNDLE_BYTES` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L10) |
+
+### `veryfront/extensions/dev-ui/protocol`
+
+Stable prefix for port-scoped privileged dashboard session cookies.
+
+```ts
+import { getDashboardSessionCookieName, DASHBOARD_CSRF_COOKIE_NAME, DASHBOARD_CSRF_HEADER_NAME } from "veryfront/extensions/dev-ui/protocol";
+```
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `getDashboardSessionCookieName` | Derive the host cookie name for one concrete development-server listener. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L17) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `DevUiKind` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L29) |
+
+#### Constants
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `DASHBOARD_CSRF_COOKIE_NAME` | Stable prefix for port-scoped privileged dashboard session cookies. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L2) |
+| `DASHBOARD_CSRF_HEADER_NAME` | Shared request header carrying the shell's session-bound CSRF token. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L4) |
+| `DASHBOARD_CSRF_META_NAME` | Shared metadata name used to pass the CSRF token into the extension UI. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L6) |
+| `DASHBOARD_CSRF_TOKEN_PATTERN` | A 32-byte token encoded as unpadded base64url. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L25) |
+| `DASHBOARD_SESSION_PATH` | Asset-independent endpoint used by trusted headless development clients. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L8) |
+| `DEV_UI_KIND_ATTRIBUTE` | Stable shell identity consumed by the extension-owned shared bundle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/protocol.ts#L28) |
+
 ### `veryfront/extensions/distributed`
 
 Provider-neutral contracts for optional distributed runtime infrastructure.
@@ -353,8 +458,8 @@ import { captureDistributedCacheAdministration, captureDistributedRuntimeProvide
 | Name | Description | Source |
 |------|-------------|--------|
 | `captureDistributedCacheAdministration` | Capture the administrative surface returned by a distributed provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L189) |
-| `captureDistributedRuntimeProvider` | Capture a provider's complete callable surface without invoking accessors. Later mutation of the registry object cannot redirect active operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L429) |
-| `captureDistributedWorkflowWorkerEnvironment` | Snapshot and bound provider-owned environment passed to isolated workflow processes. Core reserves execution/tenant identity variables and never evaluates provider-specific names or values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L353) |
+| `captureDistributedRuntimeProvider` | Capture a provider's complete callable surface without invoking accessors. Later mutation of the registry object cannot redirect active operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L433) |
+| `captureDistributedWorkflowWorkerEnvironment` | Snapshot and bound provider-owned environment passed to isolated workflow processes. Core reserves execution/tenant identity variables and never evaluates provider-specific names or values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L357) |
 
 #### Types
 
@@ -462,7 +567,7 @@ import { requireRateLimitKey, requireRateLimitWindowMs, MAX_TIMER_DELAY_MS } fro
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MAX_TIMER_DELAY_MS` | Largest delay supported consistently by JavaScript timer implementations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/limits.ts#L34) |
+| `MAX_TIMER_DELAY_MS` | Largest delay supported consistently by JavaScript timer implementations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/limits.ts#L36) |
 
 ### `veryfront/extensions/distributed/routing-invalidation-support`
 
@@ -493,14 +598,18 @@ import { hasProjectIdentityControlCharacters, isCanonicalOpaqueProjectIdentifier
 Provider-neutral workflow helpers shared with backend extensions.
 
 ```ts
-import { assertWorkflowRunUpdate, requeueRun, requireWorkflowSourceIntegrationPolicy } from "veryfront/extensions/distributed/workflow-support";
+import { assertWorkflowLockId, assertWorkflowRunUpdate, assertWorkflowWorkerId } from "veryfront/extensions/distributed/workflow-support";
 ```
 
 #### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `assertWorkflowRunUpdate` | Reject untyped callers that attempt to rewrite immutable run state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L43) |
+| `assertWorkflowLockId` | Reject missing or whitespace-only opaque workflow lock tokens. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L71) |
+| `assertWorkflowRunUpdate` | Reject untyped callers that attempt to rewrite immutable run state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L57) |
+| `assertWorkflowWorkerId` | Reject missing or whitespace-padded durable workflow owner identities. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L78) |
+| `captureApprovalDecisionTiming` | Validate and detach caller-owned approval decision timing. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L125) |
+| `capturePendingApprovalMetadataUpdate` | Capture the only approval metadata update allowed outside the decision CAS. Accessors and inherited properties are rejected before user code can run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L187) |
 | `requeueRun` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/shared/requeue-run.ts#L8) |
 | `requireWorkflowSourceIntegrationPolicy` | Require the policy snapshot that belongs to the source which created this run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/source-integration-policy.ts#L21) |
 | `resolveRunDateBounds` | Validate optional date filters without invoking caller-provided methods. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/run-filter.ts#L54) |
@@ -510,16 +619,19 @@ import { assertWorkflowRunUpdate, requeueRun, requireWorkflowSourceIntegrationPo
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ApprovalDecision` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L264) |
-| `BackendConfig` | Configuration used by backend. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L57) |
-| `Checkpoint` | Checkpoint - defined locally to use WorkflowContext interface (Zod inference doesn't handle index signatures with required properties well) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L59) |
-| `PendingApproval` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L262) |
-| `RunFilter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L266) |
-| `WorkflowBackend` | Public API contract for workflow backend. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L72) |
-| `WorkflowQueueItem` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L265) |
-| `WorkflowRun` | Workflow run state | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L253) |
-| `WorkflowRunUpdate` | Run state that may change after the immutable run snapshot is created. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L13) |
-| `WorkflowStatus` | Public API contract for workflow status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L251) |
+| `ApprovalDecision` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L279) |
+| `ApprovalDecisionTiming` | Canonical time and expiry predicate for one approval decision attempt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L119) |
+| `ApprovalExpiryCondition` | Expiry predicate evaluated in the same transaction as an approval decision. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L110) |
+| `BackendConfig` | Configuration used by backend. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L90) |
+| `Checkpoint` | Checkpoint - defined locally to use WorkflowContext interface (Zod inference doesn't handle index signatures with required properties well) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L64) |
+| `PendingApproval` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L277) |
+| `PendingApprovalMetadataUpdate` | Metadata that may be attached without changing an approval decision. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L105) |
+| `RunFilter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L281) |
+| `WorkflowBackend` | Public API contract for workflow backend. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L223) |
+| `WorkflowQueueItem` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L280) |
+| `WorkflowRun` | Workflow run state | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L262) |
+| `WorkflowRunUpdate` | Run state that may change after the immutable run snapshot is created. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L27) |
+| `WorkflowStatus` | Public API contract for workflow status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L266) |
 
 #### Constants
 
@@ -656,7 +768,7 @@ import { ApplicationErrorReporterInitializerName, NodeTelemetryProviderName } fr
 Parser category barrel - CodeParser (AST traversal) contract.
 
 ```ts
-import { HTMLHeadLocatorName, MAX_HTML_HEAD_PARSE_BYTES } from "veryfront/extensions/parser";
+import { createSkillDocumentParserProvider, snapshotSkillDocumentParserProvider, HTMLHeadLocatorName } from "veryfront/extensions/parser";
 ```
 
 #### Components
@@ -664,6 +776,14 @@ import { HTMLHeadLocatorName, MAX_HTML_HEAD_PARSE_BYTES } from "veryfront/extens
 | Name | Description | Source |
 |------|-------------|--------|
 | `HTMLHeadLocatorName` | Stable runtime identifier for the HTML head locator extension contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/html-head-locator.ts#L2) |
+| `SkillDocumentParserProviderName` | Stable runtime identifier for the Skill document parser contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/skill-document-parser.ts#L158) |
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `createSkillDocumentParserProvider` | Create immutable provider registration metadata from a standalone parser. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/skill-document-parser.ts#L261) |
+| `snapshotSkillDocumentParserProvider` | Capture one immutable provider generation without retaining its mutable registration object or invoking extension-owned accessors or Proxy traps. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/skill-document-parser.ts#L183) |
 
 #### Types
 
@@ -684,6 +804,7 @@ import { HTMLHeadLocatorName, MAX_HTML_HEAD_PARSE_BYTES } from "veryfront/extens
 | `MaxHTMLHeadParseBytes` | Literal type shared by implementations that enforce the parse-size limit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/html-head-locator.ts#L8) |
 | `NodePath` | Wrapper providing traversal context for a visited node. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L22) |
 | `ParseOptions` | Options passed to `CodeParser.parse`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L44) |
+| `SkillDocumentParserProvider` | Dependency-free contract implemented by Skill YAML parser extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/skill-document-parser.ts#L161) |
 | `TraverseVisitor` | Visitor callbacks keyed by node type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L34) |
 
 #### Constants
@@ -747,3 +868,42 @@ import "veryfront/extensions/schema";
 | `ValidationIssue` | A single validation issue with location context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts#L123) |
 | `ValidationResult` | Discriminated union of validation outcomes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts#L149) |
 | `ValidationSuccess` | Successful validation outcome. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts#L133) |
+
+### `veryfront/extensions/websocket`
+
+Contracts for extension-owned Node.js WebSocket implementations.
+
+```ts
+import { captureNodeWebSocketServer, createNodeWebSocketServerProvider, snapshotNodeWebSocketServerProvider } from "veryfront/extensions/websocket";
+```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `NodeWebSocketServerProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L11) |
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `captureNodeWebSocketServer` | Capture one server instance without retaining mutable method lookups. The underlying implementation remains the receiver because protocol engines legitimately keep mutable transport state on their instance. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L142) |
+| `createNodeWebSocketServerProvider` | Create immutable registration metadata from a standalone factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L231) |
+| `snapshotNodeWebSocketServerProvider` | Capture a provider generation without retaining its mutable registration object or invoking extension-owned accessors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L189) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `NodeWebSocketConnection` | Minimal connection surface consumed by core's runtime-neutral adapter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L24) |
+| `NodeWebSocketMessageData` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L18) |
+| `NodeWebSocketServer` | Minimal server surface used by upgrade and shutdown ownership. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L50) |
+| `NodeWebSocketServerOptions` | Exact no-server options supplied by core for an existing HTTP listener. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L41) |
+| `NodeWebSocketServerProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L66) |
+
+#### Constants
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L13) |
+| `NODE_WEBSOCKET_SERVER_PROVIDER_PACKAGE` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L12) |

@@ -193,8 +193,8 @@ export function isVeryfrontDomain(host: string): boolean {
  * Check if a host is a local development host where HMR connections should be allowed.
  * Recognises localhost, 127.0.0.1, 0.0.0.0, *.localhost, and local dev domains
  * (veryfront.me, lvh.me, veryfront.dev) — but excludes explicit production/staging
- * subdomains ({slug}.production.{local}, {slug}.staging.{local}) since those are
- * used for testing non-dev behaviour locally.
+ * namespaces (production.{local}, staging.{local}, and their slug-prefixed
+ * variants) since those are used for testing non-dev behaviour locally.
  */
 export function isLocalDevHost(host: string): boolean {
   const domain = stripPort(host).toLowerCase();
@@ -217,10 +217,14 @@ export function isLocalDevHost(host: string): boolean {
   // Explicit staging is for testing staging behaviour — not a dev host
   if (parsed.environment === "staging") return false;
 
-  // Explicit production ({slug}.production.{local}) is for testing production behaviour.
+  // Explicit production ({slug}.production.{local} or production.{local}) is for
+  // testing production behaviour.
   // Slug-only domains ({slug}.{local}) also parse as "production" but ARE dev hosts,
-  // so only exclude when ".production." appears in the domain.
-  if (parsed.environment === "production" && /\.production\./i.test(domain)) return false;
+  // so exclude only the dedicated production namespace.
+  if (
+    parsed.environment === "production" &&
+    (domain.startsWith("production.") || domain.includes(".production."))
+  ) return false;
 
   return true;
 }

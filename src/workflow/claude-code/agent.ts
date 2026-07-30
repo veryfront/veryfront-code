@@ -1,273 +1,300 @@
 /**
- * Claude Agent SDK Integration
+ * Provider-neutral Claude Code agent facade.
  *
- * Uses the official @anthropic-ai/claude-agent-sdk which runs through
- * your local Claude Code installation. No separate API key needed —
- * it uses whatever auth your `claude` binary is configured with
- * (Max subscription, API key, org key, etc.).
+ * Core validates and snapshots requests, then delegates execution to the
+ * `ClaudeCodeAgentRuntime` extension contract. The Anthropic SDK is owned by a
+ * first-party extension and is never imported by this module.
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
-import { cwd } from "#veryfront/compat/process.ts";
-import { importClaudeAgentSDK } from "#veryfront/compat/opaque-deps.ts";
-import type { ClaudeCodeMode, ClaudeCodeResult } from "./types.ts";
+import { resolve } from "#veryfront/extensions/contracts.ts";
+import {
+  type ClaudeCodeAgentExecutionConfig,
+  type ClaudeCodeAgentRuntime,
+  ClaudeCodeAgentRuntimeName,
+} from "./runtime-contract.ts";
+import type { ClaudeCodeMode, ClaudeCodeResult, FileChange } from "./types.ts";
 
-const logger = baseLogger.component("agent-sdk");
+/** Maximum supported conversation turns for a single core agent request. */
+export const MAX_CLAUDE_CODE_AGENT_TURNS = 100;
 
-/**
- * Agent configuration
- */
-export interface AgentConfig {
-  /** Model to use (default: claude-sonnet-4-5-20250929) */
-  model?: string;
+/** Caller-facing agent configuration. Omitted mode defaults to read-only analysis. */
+export type AgentConfig = Omit<ClaudeCodeAgentExecutionConfig, "mode"> & {
+  readonly mode?: ClaudeCodeMode;
+  /** Callback awaited exactly once after a runtime returns a valid result. */
+  readonly onComplete?: (result: ClaudeCodeResult) => void | Promise<void>;
+};
 
-  /** Tool mode — maps to SDK permission modes */
-  mode?: ClaudeCodeMode;
-
-  /**
-   * Explicitly opt in to `bypassPermissions` mode (unrestricted filesystem
-   * and shell access with no interactive prompts).
-   *
-   * When `true`, the agent runs with `permissionMode: "bypassPermissions"`
-   * regardless of `mode`. This is a server-side-only flag — it cannot be
-   * set from tool input schemas.
-   *
-   * @default false
-   */
-  bypassPermissions?: boolean;
-
-  /** Maximum conversation turns before stopping */
-  maxTurns?: number;
-
-  /** Maximum budget in USD */
-  maxBudgetUsd?: number;
-
-  /** System prompt override */
-  systemPrompt?: string;
-
-  /** Working directory for file operations */
-  cwd?: string;
-
-  /** Allowed tools (default: all Claude Code tools) */
-  allowedTools?: string[];
-
-  /** Additional directories Claude can access */
-  additionalDirectories?: string[];
-
-  /** Enable debug logging */
-  debug?: boolean;
-
-  /** Callback when execution completes */
-  onComplete?: (result: ClaudeCodeResult) => void | Promise<void>;
+interface NormalizedAgentConfig {
+  readonly execution: ClaudeCodeAgentExecutionConfig;
+  readonly onComplete?: AgentConfig["onComplete"];
 }
 
-const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
+const MODES = new Set<ClaudeCodeMode>(["analysis", "code", "custom"]);
+const FILE_CHANGE_TYPES = new Set<FileChange["type"]>([
+  "created",
+  "modified",
+  "deleted",
+]);
 
-/**
- * Map tool mode to SDK permission mode.
- *
- * `bypassPermissions` is only available when explicitly opted in via
- * `config.bypassPermissions = true` — it cannot be selected from
- * user-facing tool input schemas.
- */
-/** @internal Pure policy mapping exported for direct regression tests. */
-export function resolvePermissionMode(
-  config: AgentConfig,
-): "default" | "acceptEdits" | "bypassPermissions" | "plan" {
-  if (config.bypassPermissions === true) {
-    logger.warn(
-      "Agent running with bypassPermissions — unrestricted filesystem and shell access",
+function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+}
+
+function optionalNonEmptyString(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new TypeError(`${label} must be a non-empty string`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new TypeError(`${label} must be a string`);
+  return value;
+}
+
+function optionalBoolean(value: unknown, label: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") {
+    throw new TypeError(`${label} must be a boolean`);
+  }
+  return value;
+}
+
+function optionalAbortSignal(value: unknown): AbortSignal | undefined {
+  if (value === undefined) return undefined;
+  if (!(value instanceof AbortSignal)) {
+    throw new TypeError("Agent config abortSignal must be an AbortSignal");
+  }
+  return value;
+}
+
+function optionalStringList(value: unknown, label: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${label} must be an array of non-empty strings`);
+  }
+  return value.map((entry, index) => {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      throw new TypeError(`${label}[${index}] must be a non-empty string`);
+    }
+    return entry;
+  });
+}
+
+function normalizeAgentConfig(config: AgentConfig): NormalizedAgentConfig {
+  assertRecord(config, "Agent config");
+
+  const mode = config.mode ?? "analysis";
+  if (!MODES.has(mode)) {
+    throw new TypeError("Agent config mode must be analysis, code, or custom");
+  }
+
+  const maxTurns = config.maxTurns;
+  if (
+    maxTurns !== undefined &&
+    (!Number.isSafeInteger(maxTurns) || maxTurns < 1 ||
+      maxTurns > MAX_CLAUDE_CODE_AGENT_TURNS)
+  ) {
+    throw new RangeError(
+      `Agent config maxTurns must be a safe integer between 1 and ${MAX_CLAUDE_CODE_AGENT_TURNS}`,
     );
-    return "bypassPermissions";
   }
 
-  switch (config.mode) {
-    case "analysis":
-      return "plan"; // read-only
-    case "code":
-      return "acceptEdits"; // can write files + run commands
-    case "custom":
-      return "default"; // user controls via allowedTools
-    default:
-      return "acceptEdits";
+  const maxBudgetUsd = config.maxBudgetUsd;
+  if (
+    maxBudgetUsd !== undefined &&
+    (!Number.isFinite(maxBudgetUsd) || maxBudgetUsd <= 0)
+  ) {
+    throw new RangeError("Agent config maxBudgetUsd must be a positive finite number");
   }
+
+  const onComplete = config.onComplete;
+  if (onComplete !== undefined && typeof onComplete !== "function") {
+    throw new TypeError("Agent config onComplete must be a function");
+  }
+
+  return {
+    execution: {
+      mode,
+      model: optionalNonEmptyString(config.model, "Agent config model"),
+      bypassPermissions: optionalBoolean(
+        config.bypassPermissions,
+        "Agent config bypassPermissions",
+      ),
+      maxTurns,
+      maxBudgetUsd,
+      systemPrompt: optionalNonEmptyString(
+        config.systemPrompt,
+        "Agent config systemPrompt",
+      ),
+      cwd: optionalNonEmptyString(config.cwd, "Agent config cwd"),
+      allowedTools: optionalStringList(
+        config.allowedTools,
+        "Agent config allowedTools",
+      ),
+      additionalDirectories: optionalStringList(
+        config.additionalDirectories,
+        "Agent config additionalDirectories",
+      ),
+      debug: optionalBoolean(config.debug, "Agent config debug"),
+      abortSignal: optionalAbortSignal(config.abortSignal),
+    },
+    onComplete,
+  };
 }
 
-/**
- * Execute a task using the Claude Agent SDK.
- *
- * Uses your local Claude Code installation — no ANTHROPIC_API_KEY needed.
- *
- * @example
- * ```typescript
- * const result = await executeAgent("Fix the failing tests in src/utils", {
- *   cwd: "/path/to/project",
- *   mode: "code",
- * });
- * ```
- */
+function snapshotFileChange(value: unknown, index: number): FileChange {
+  assertRecord(value, `Agent result changes[${index}]`);
+  const path = optionalNonEmptyString(
+    value.path,
+    `Agent result changes[${index}].path`,
+  );
+  if (path === undefined) {
+    throw new TypeError(`Agent result changes[${index}].path is required`);
+  }
+  if (typeof value.type !== "string" || !FILE_CHANGE_TYPES.has(value.type as FileChange["type"])) {
+    throw new TypeError(
+      `Agent result changes[${index}].type must be created, modified, or deleted`,
+    );
+  }
+  const change: FileChange = {
+    path,
+    type: value.type as FileChange["type"],
+  };
+  const originalChecksum = optionalNonEmptyString(
+    value.originalChecksum,
+    `Agent result changes[${index}].originalChecksum`,
+  );
+  const newChecksum = optionalNonEmptyString(
+    value.newChecksum,
+    `Agent result changes[${index}].newChecksum`,
+  );
+  if (originalChecksum !== undefined) change.originalChecksum = originalChecksum;
+  if (newChecksum !== undefined) change.newChecksum = newChecksum;
+  return change;
+}
+
+function requiredStringList(value: unknown, label: string): string[] {
+  const result = optionalStringList(value, label);
+  if (result === undefined) throw new TypeError(`${label} is required`);
+  return result;
+}
+
+function snapshotRuntimeResult(value: unknown): ClaudeCodeResult {
+  assertRecord(value, "ClaudeCodeAgentRuntime result");
+  if (typeof value.success !== "boolean") {
+    throw new TypeError("Agent result success must be a boolean");
+  }
+  if (!Number.isSafeInteger(value.iterations) || (value.iterations as number) < 0) {
+    throw new TypeError("Agent result iterations must be a non-negative safe integer");
+  }
+  if (
+    typeof value.executionTime !== "number" ||
+    !Number.isFinite(value.executionTime) ||
+    value.executionTime < 0
+  ) {
+    throw new TypeError("Agent result executionTime must be a non-negative finite number");
+  }
+
+  const response = optionalString(value.response, "Agent result response");
+  const error = optionalNonEmptyString(value.error, "Agent result error");
+  if (!value.success && error === undefined) {
+    throw new TypeError("An unsuccessful agent result must include an error");
+  }
+
+  let changes: FileChange[] | undefined;
+  if (value.changes !== undefined) {
+    if (!Array.isArray(value.changes)) {
+      throw new TypeError("Agent result changes must be an array");
+    }
+    changes = value.changes.map(snapshotFileChange);
+  }
+
+  const result: ClaudeCodeResult = {
+    success: value.success,
+    iterations: value.iterations as number,
+    filesModified: requiredStringList(
+      value.filesModified,
+      "Agent result filesModified",
+    ),
+    commandsExecuted: requiredStringList(
+      value.commandsExecuted,
+      "Agent result commandsExecuted",
+    ),
+    executionTime: value.executionTime,
+  };
+  if (response !== undefined) result.response = response;
+  if (changes !== undefined) result.changes = changes;
+  if (error !== undefined) result.error = error;
+  return result;
+}
+
+function getRuntime(): ClaudeCodeAgentRuntime {
+  const runtime: unknown = resolve<ClaudeCodeAgentRuntime>(ClaudeCodeAgentRuntimeName);
+  if (
+    runtime === null || typeof runtime !== "object" ||
+    typeof (runtime as { execute?: unknown }).execute !== "function"
+  ) {
+    throw new TypeError(
+      `${ClaudeCodeAgentRuntimeName} extension contract must provide an execute function`,
+    );
+  }
+  return runtime as ClaudeCodeAgentRuntime;
+}
+
+/** Execute a task through the configured Claude Code agent runtime extension. */
 export async function executeAgent(
   task: string,
   config: AgentConfig = {},
 ): Promise<ClaudeCodeResult> {
-  const startTime = Date.now();
-  const filesModified: string[] = [];
-  const commandsExecuted: string[] = [];
+  const normalizedTask = optionalNonEmptyString(task, "Agent task");
+  if (normalizedTask === undefined) throw new TypeError("Agent task is required");
+  const { execution, onComplete } = normalizeAgentConfig(config);
+  execution.abortSignal?.throwIfAborted();
+  const runtimeResult = await getRuntime().execute(normalizedTask, execution);
+  execution.abortSignal?.throwIfAborted();
+  const result = snapshotRuntimeResult(runtimeResult);
 
-  try {
-    // Dynamic import — only loads SDK when actually used
-    const { query } = await importClaudeAgentSDK();
-
-    if (config.debug) {
-      logger.info("Starting task:", task);
-      logger.info("Config:", {
-        model: config.model || DEFAULT_MODEL,
-        cwd: config.cwd || cwd(),
-        maxTurns: config.maxTurns,
-        mode: config.mode,
-      });
-    }
-
-    const conversation = query({
-      prompt: task,
-      options: {
-        model: config.model || DEFAULT_MODEL,
-        cwd: config.cwd || cwd(),
-        maxTurns: config.maxTurns,
-        maxBudgetUsd: config.maxBudgetUsd,
-        permissionMode: resolvePermissionMode(config),
-        allowedTools: config.allowedTools,
-        additionalDirectories: config.additionalDirectories,
-        systemPrompt: config.systemPrompt
-          ? config.systemPrompt
-          : { type: "preset", preset: "claude_code" },
-      },
-    });
-
-    let finalText = "";
-    let totalTurns = 0;
-
-    for await (const message of conversation) {
-      if (message.type === "assistant") {
-        totalTurns++;
-
-        for (const block of message.message.content) {
-          if (block.type === "text") {
-            finalText = block.text;
-          } else if (block.type === "tool_use") {
-            // Track tool usage for the result
-            if (block.name === "Bash") {
-              const input = block.input as { command?: string };
-              if (input.command) {
-                commandsExecuted.push(input.command);
-              }
-            } else if (block.name === "Write" || block.name === "Edit") {
-              const input = block.input as { file_path?: string };
-              if (input.file_path && !filesModified.includes(input.file_path)) {
-                filesModified.push(input.file_path);
-              }
-            }
-          }
-        }
-
-        if (config.debug) {
-          logger.info(`Turn ${totalTurns}:`, {
-            text: finalText?.slice(0, 100),
-            toolCalls: message.message.content
-              .filter((b: { type: string }) => b.type === "tool_use")
-              .map((b: { name: string }) => b.name),
-          });
-        }
-      }
-
-      if (message.type === "result") {
-        if (config.debug) {
-          logger.info("Complete:", {
-            turns: message.num_turns,
-            cost: message.total_cost_usd,
-            duration: message.duration_ms,
-          });
-        }
-
-        const isSuccess = message.subtype === "success";
-
-        const result: ClaudeCodeResult = {
-          success: isSuccess,
-          iterations: message.num_turns,
-          response: isSuccess ? message.result : undefined,
-          filesModified,
-          commandsExecuted,
-          error: !isSuccess && "errors" in message
-            ? (message as { errors: string[] }).errors.join("\n")
-            : undefined,
-          executionTime: Date.now() - startTime,
-        };
-
-        config.onComplete?.(result);
-        return result;
-      }
-    }
-
-    // Shouldn't reach here, but handle gracefully
-    const result: ClaudeCodeResult = {
-      success: true,
-      iterations: totalTurns,
-      response: finalText,
-      filesModified,
-      commandsExecuted,
-      executionTime: Date.now() - startTime,
-    };
-
-    config.onComplete?.(result);
-    return result;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error("Error:", errorMessage);
-
-    const result: ClaudeCodeResult = {
-      success: false,
-      iterations: 0,
-      error: errorMessage,
-      filesModified,
-      commandsExecuted,
-      executionTime: Date.now() - startTime,
-    };
-
-    config.onComplete?.(result);
-    return result;
+  if (onComplete) {
+    await onComplete(snapshotRuntimeResult(result));
   }
+  return result;
 }
 
-/** @internal Applies the reusable-agent override policy without loading the SDK. */
+/** @internal Applies reusable-agent override policy and snapshots mutable inputs. */
 export function mergeAgentConfig(
   defaults: AgentConfig,
   overrides: AgentConfig,
 ): AgentConfig {
-  const { bypassPermissions: _, ...safeOverrides } = overrides;
-  return { ...defaults, ...safeOverrides };
+  assertRecord(defaults, "Agent defaults");
+  assertRecord(overrides, "Agent overrides");
+  const { bypassPermissions: requestedBypass, ...safeOverrides } = overrides;
+  const merged: AgentConfig = { ...defaults, ...safeOverrides };
+
+  // Per-call overrides may reduce privileges but cannot enable bypass mode.
+  if (requestedBypass === false) {
+    (merged as { bypassPermissions?: boolean }).bypassPermissions = false;
+  }
+
+  const normalized = normalizeAgentConfig(merged);
+  return { ...normalized.execution, onComplete: normalized.onComplete };
 }
 
 /**
- * Create a reusable agent function with preset configuration.
+ * Create a reusable agent with snapshotted defaults.
  *
- * **Security note:** `overrides` cannot set `bypassPermissions` — it is
- * stripped before execution. Only `defaults` can enable bypass mode, so keep
- * `defaults` server-controlled and never derived from untrusted input.
- *
- * @example
- * ```typescript
- * const reviewer = createAgent({
- *   mode: "analysis",
- *   systemPrompt: "You are an expert code reviewer.",
- * });
- *
- * const result = await reviewer("Review src/auth/ for security issues");
- * ```
+ * Per-call overrides cannot enable `bypassPermissions`; only server-controlled
+ * defaults can do so. An override may explicitly disable an enabled bypass.
  */
 export function createAgent(
   defaults: AgentConfig = {},
 ): (task: string, overrides?: AgentConfig) => Promise<ClaudeCodeResult> {
+  const selectedDefaults = mergeAgentConfig(defaults, {});
   return (task: string, overrides: AgentConfig = {}) => {
-    return executeAgent(task, mergeAgentConfig(defaults, overrides));
+    return executeAgent(task, mergeAgentConfig(selectedDefaults, overrides));
   };
 }

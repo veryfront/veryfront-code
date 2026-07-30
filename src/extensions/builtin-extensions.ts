@@ -12,11 +12,10 @@ import { createDeferredResolvedExtension } from "./deferred-extension.ts";
 import { captureRegistrationId } from "./runtime-validation.ts";
 import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
-import { OpenAIProvider } from "../../extensions/ext-llm-openai/src/index.ts";
-import { AnthropicProvider } from "../../extensions/ext-llm-anthropic/src/index.ts";
-import { GoogleProvider } from "../../extensions/ext-llm-google/src/index.ts";
-import extEvalReportMlflow from "../../extensions/ext-eval-report-mlflow/src/index.ts";
-import extZod from "../../extensions/ext-schema-zod/src/index.ts";
+import { OpenAIProvider } from "@veryfront/ext-llm-openai";
+import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
+import { GoogleProvider } from "@veryfront/ext-llm-google";
+import extZod from "@veryfront/ext-schema-zod";
 export { ensureBuiltinSchemaValidator } from "./builtin-schema-validator.ts";
 
 type BuiltinLLMProviderDefinition = {
@@ -69,6 +68,11 @@ export const OPTIONAL_BUILTIN_EXTENSIONS = Object.freeze(
       sourceDirectory: "ext-bundler-esbuild",
     },
     {
+      name: "ext-dev-ui-react",
+      origin: "veryfront/ext-dev-ui-react",
+      sourceDirectory: "ext-dev-ui-react",
+    },
+    {
       name: "ext-parser-babel",
       origin: "veryfront/ext-parser-babel",
       sourceDirectory: "ext-parser-babel",
@@ -103,7 +107,6 @@ export const OPTIONAL_BUILTIN_EXTENSIONS = Object.freeze(
       origin: "veryfront/ext-eval-report-mlflow",
       sourceDirectory: "ext-eval-report-mlflow",
       evalExporterId: "mlflow",
-      factory: extEvalReportMlflow,
     },
   ] satisfies OptionalBuiltinExtensionDefinition[]).map((definition) => Object.freeze(definition)),
 );

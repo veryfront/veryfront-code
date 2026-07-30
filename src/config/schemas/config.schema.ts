@@ -543,7 +543,8 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           /**
            * Restrict module imports to specific directories (opt-in security).
            * When not set, users can import from any directory in the project.
-           * When set, only imports from these directories are allowed.
+           * When set, only imports from these directories are allowed; an
+           * explicit empty array denies imports from every project directory.
            * @example ["app", "pages", "components", "lib", "src", "utils"]
            */
           allowedImportDirs: v.array(v.string()).optional(),

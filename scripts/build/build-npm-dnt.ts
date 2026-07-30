@@ -16,39 +16,40 @@
 
 import { build, emptyDir } from "#dnt";
 import {
-	BROWSER_SAFE_CLIENT_MODULES,
-	BROWSER_SAFE_DNT_TIMER_MODULES,
-	BROWSER_SAFE_EXPORTS,
-	BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
-	createDntEntryPoints,
-	NPM_INTERNAL_ENTRY_POINTS,
+  BROWSER_SAFE_CLIENT_MODULES,
+  BROWSER_SAFE_DNT_TIMER_MODULES,
+  BROWSER_SAFE_EXPORTS,
+  BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+  createDntEntryPoints,
+  NPM_INTERNAL_ENTRY_POINTS,
 } from "./browser-safe-exports.mjs";
 import {
-	npmDependencyRange,
-	readDenoConfigSet,
+  npmDependencyRange,
+  readDenoConfigSet,
 } from "./npm-dependency-sources.ts";
 import { buildExtensionPackages } from "./build-npm-extension-packages.ts";
 import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
 import {
-	assertRootArtifactExcludesCSSImplementations,
-	assertRootPackageExcludesCSSImplementations,
-	normalizeNpmPackageMetadata,
-	removeInternalNpmEntryPointExports,
-	resolveNpmBuildVersion,
+  assertRootArtifactExcludesCSSImplementations,
+  assertRootArtifactExcludesExtensionImplementations,
+  assertRootPackageExcludesCSSImplementations,
+  normalizeNpmPackageMetadata,
+  removeInternalNpmEntryPointExports,
+  resolveNpmBuildVersion,
 } from "./npm-package-metadata.ts";
 import {
-	assertNoBundledReactDomClientShim,
-	normalizeEsmShReactNpmShims,
+  assertNoBundledReactDomClientShim,
+  normalizeEsmShReactNpmShims,
 } from "./npm-react-shims.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = resolveNpmBuildVersion(
-	denoJson.version,
-	Deno.env.get("VERYFRONT_NPM_VERSION"),
+  denoJson.version,
+  Deno.env.get("VERYFRONT_NPM_VERSION"),
 );
 const license = denoJson.license;
 if (!license) {
-	throw new Error("deno.json must have a 'license' field");
+  throw new Error("deno.json must have a 'license' field");
 }
 const denoConfigSet = await readDenoConfigSet(".", denoJson);
 
@@ -57,429 +58,518 @@ console.log(`\n📦 Building Veryfront v${version} for npm using dnt...\n`);
 // Generate templates manifest before build
 console.log("📝 Generating templates manifest...");
 const genManifest = new Deno.Command("deno", {
-	args: ["run", "--frozen", "-A", "scripts/build/generate-templates-manifest.ts"],
-	stdout: "inherit",
-	stderr: "inherit",
+  args: [
+    "run",
+    "--frozen",
+    "-A",
+    "scripts/build/generate-templates-manifest.ts",
+  ],
+  stdout: "inherit",
+  stderr: "inherit",
 });
 const { code: manifestCode } = await genManifest.output();
 if (manifestCode !== 0) {
-	throw new Error("Failed to generate templates manifest");
+  throw new Error("Failed to generate templates manifest");
 }
 
 await emptyDir("./npm");
 
 // Convert deno.json exports to dnt entry points
 const entryPoints = createDntEntryPoints(
-	denoJson.exports as Record<string, string>,
-	NPM_INTERNAL_ENTRY_POINTS,
+  denoJson.exports as Record<string, string>,
+  NPM_INTERNAL_ENTRY_POINTS,
 );
 
 // Auto-derive esm.sh URL mappings from deno.json imports so versions stay in sync.
 // dnt ignores mappings it doesn't encounter, so including all is safe.
-const esmShMappings = buildEsmShMappings(denoJson.imports as Record<string, string>);
+const esmShMappings = buildEsmShMappings(
+  denoJson.imports as Record<string, string>,
+);
 
 // npm range for the bare react/react-dom peer the emitted package imports (see
 // the `./react/*.ts` mappings below). Derived from the pinned esm.sh version.
 const reactRange = npmDependencyRange(
-	denoConfigSet,
-	"@veryfront/react-upstream",
-	"^",
+  denoConfigSet,
+  "@veryfront/react-upstream",
+  "^",
 );
-const reactMarkdownRange = npmDependencyRange(
-	denoConfigSet,
-	"@veryfront/react-markdown-upstream",
-);
-const remarkGfmRange = npmDependencyRange(
-	denoConfigSet,
-	"@veryfront/remark-gfm-upstream",
-);
-const shikiRange = npmDependencyRange(
-	denoConfigSet,
-	"@veryfront/shiki-upstream",
-);
-const mermaidRange = npmDependencyRange(
-	denoConfigSet,
-	"@veryfront/mermaid-upstream",
+
+const ROOT_RUNTIME_EXTENSION_SOURCE_DIRECTORIES = Object.freeze(
+  [
+    "ext-bundler-esbuild",
+    "ext-content-mdx",
+    "ext-dev-ui-react",
+    "ext-llm-anthropic",
+    "ext-llm-google",
+    "ext-llm-openai",
+    "ext-parser-babel",
+    "ext-schema-zod",
+    "ext-yaml",
+  ] as const,
 );
 
 await build({
-	entryPoints,
-	outDir: "./npm",
+  entryPoints,
+  outDir: "./npm",
 
-	// Don't run tests during build (they're Deno-specific)
-	test: false,
+  // Don't run tests during build (they're Deno-specific)
+  test: false,
 
-	// ESM only (no CommonJS) - allows top-level await
-	scriptModule: false,
+  // ESM only (no CommonJS) - allows top-level await
+  scriptModule: false,
 
-	// Skip type checking - runtime compatibility is verified by Deno's type checker
-	// dnt's Node type environment differs significantly from Deno's web-standard types
-	typeCheck: false,
+  // Skip type checking - runtime compatibility is verified by Deno's type checker
+  // dnt's Node type environment differs significantly from Deno's web-standard types
+  typeCheck: false,
 
-	// Skip npm install - we run it manually with --legacy-peer-deps to avoid peer dep conflicts
-	skipNpmInstall: true,
+  // Skip npm install - we run it manually with --legacy-peer-deps to avoid peer dep conflicts
+  skipNpmInstall: true,
 
-	// Package metadata
-	//
-	// `undici` and `blob` shims are intentionally disabled. With those enabled,
-	// dnt injects `_dnt.shims.js → undici` (and `buffer`) imports into every
-	// file that references fetch/Headers/Response/Blob — including client-bound
-	// React runtime files like `src/react/runtime/core.ts`. The SSR http-cache
-	// pipeline then tries to fetch `undici` from esm.sh, which returns 404
-	// (esm.sh refuses to build Node-only packages with `external=react`).
-	//
-	// Node 18+ (our minimum engine) provides fetch/Headers/Response/Request/
-	// FormData/File/Blob as globals natively, so no shim is needed.
-	shims: {
-		deno: true,
-		// Node 18+ provides native timers. Keeping the dnt timer shim here turns
-		// Timeout objects into numbers, which prevents unrefTimer() from releasing
-		// framework background intervals in short-lived Node processes.
-		timers: false,
-		crypto: true,
-	},
+  // Package metadata
+  //
+  // `undici` and `blob` shims are intentionally disabled. With those enabled,
+  // dnt injects `_dnt.shims.js → undici` (and `buffer`) imports into every
+  // file that references fetch/Headers/Response/Blob — including client-bound
+  // React runtime files like `src/react/runtime/core.ts`. The SSR http-cache
+  // pipeline then tries to fetch `undici` from esm.sh, which returns 404
+  // (esm.sh refuses to build Node-only packages with `external=react`).
+  //
+  // Node 18+ (our minimum engine) provides fetch/Headers/Response/Request/
+  // FormData/File/Blob as globals natively, so no shim is needed.
+  shims: {
+    deno: true,
+    // Node 18+ provides native timers. Keeping the dnt timer shim here turns
+    // Timeout objects into numbers, which prevents unrefTimer() from releasing
+    // framework background intervals in short-lived Node processes.
+    timers: false,
+    crypto: true,
+  },
 
-	// Compiler options for declaration generation
-	compilerOptions: {
-		lib: ["ES2022", "DOM", "DOM.Iterable"],
-		target: "ES2022",
-		skipLibCheck: true,
-	},
+  // Compiler options for declaration generation
+  compilerOptions: {
+    lib: ["ES2022", "DOM", "DOM.Iterable"],
+    target: "ES2022",
+    skipLibCheck: true,
+  },
 
-	// Map Deno std and type packages to npm equivalents
-	mappings: {
-		// esm.sh URLs - derived from deno.json imports
-		...esmShMappings,
-		// React must resolve to the CONSUMER's bare `react` / `react-dom` in the
-		// emitted package. The repo pins react through the local `./react/*.ts`
-		// deno shims (so Deno imports a stable esm.sh build); if dnt bundles those
-		// into a local `npm/esm/react/react.js` and rewrites every component
-		// import to it, the shim's multi-hop `export { HTMLAttributes, … } from`
-		// re-export collapses `interface Props extends React.HTMLAttributes<…>` to
-		// `{}` under a consumer's `tsc` — stripping `children`/`className`/handlers
-		// from every component's public type (invisible to `deno check`). Mapping
-		// the local shims straight to the bare npm specifiers makes emitted code
-		// `import … from "react"`, so `React.HTMLAttributes` resolves against the
-		// consumer's own `@types/react`. See scripts/typecheck/README.md.
-		//
-		// `react-dom/client` is intentionally absent. Browser hydration imports are
-		// prebundled separately and no npm entry point reaches the local client
-		// shim. Dnt rejects package mappings that are not present in its module
-		// graph, so retaining that stale mapping makes the npm build fail before
-		// emission. The generated-package gates below fail closed if this local
-		// shim becomes reachable and verify consumer-facing React declarations.
-		"./react/react.ts": { name: "react", version: reactRange },
-		"./react/react-dom.ts": { name: "react-dom", version: reactRange },
-		"./react/react-dom-server.ts": {
-			name: "react-dom",
-			version: reactRange,
-			subPath: "server",
-		},
-		"./react/jsx-runtime.ts": {
-			name: "react",
-			version: reactRange,
-			subPath: "jsx-runtime",
-		},
-		"./react/jsx-dev-runtime.ts": {
-			name: "react",
-			version: reactRange,
-			subPath: "jsx-dev-runtime",
-		},
-		"./react/react-markdown.ts": {
-			name: "react-markdown",
-			version: reactMarkdownRange,
-		},
-		"./react/remark-gfm.ts": {
-			name: "remark-gfm",
-			version: remarkGfmRange,
-		},
-		"./react/shiki.ts": {
-			name: "shiki",
-			version: shikiRange,
-		},
-		"./react/mermaid.ts": {
-			name: "mermaid",
-			version: mermaidRange,
-		},
-		// Keep the worker entry behind the separately published parser-only
-		// package boundary. Without this mapping dnt follows the workspace
-		// export and rewrites the import to a bundled extensions/ source path,
-		// which relies on npm hoisting and breaks strict package layouts.
-		// Omitting version also keeps dnt from fetching an unpublished matching
-		// extension before postBuild pins the co-published package.
-		"./extensions/ext-parser-babel/src/parser-only.ts": {
-			name: "@veryfront/ext-parser-babel",
-			subPath: "parser-only",
-		},
-	},
+  // Map Deno std and type packages to npm equivalents
+  mappings: {
+    // esm.sh URLs - derived from deno.json imports
+    ...esmShMappings,
+    // React must resolve to the CONSUMER's bare `react` / `react-dom` in the
+    // emitted package. The repo pins react through the local `./react/*.ts`
+    // deno shims (so Deno imports a stable esm.sh build); if dnt bundles those
+    // into a local `npm/esm/react/react.js` and rewrites every component
+    // import to it, the shim's multi-hop `export { HTMLAttributes, … } from`
+    // re-export collapses `interface Props extends React.HTMLAttributes<…>` to
+    // `{}` under a consumer's `tsc` — stripping `children`/`className`/handlers
+    // from every component's public type (invisible to `deno check`). Mapping
+    // the local shims straight to the bare npm specifiers makes emitted code
+    // `import … from "react"`, so `React.HTMLAttributes` resolves against the
+    // consumer's own `@types/react`. See scripts/typecheck/README.md.
+    //
+    // `react-dom/client` is intentionally absent. Browser hydration imports are
+    // prebundled separately and no npm entry point reaches the local client
+    // shim. Dnt rejects package mappings that are not present in its module
+    // graph, so retaining that stale mapping makes the npm build fail before
+    // emission. The generated-package gates below fail closed if this local
+    // shim becomes reachable and verify consumer-facing React declarations.
+    "./react/react.ts": {
+      name: "react",
+      version: reactRange,
+      peerDependency: true,
+    },
+    "./react/react-dom.ts": {
+      name: "react-dom",
+      version: reactRange,
+      peerDependency: true,
+    },
+    "./react/react-dom-server.ts": {
+      name: "react-dom",
+      version: reactRange,
+      subPath: "server",
+      peerDependency: true,
+    },
+    "./react/jsx-runtime.ts": {
+      name: "react",
+      version: reactRange,
+      subPath: "jsx-runtime",
+      peerDependency: true,
+    },
+    "./react/jsx-dev-runtime.ts": {
+      name: "react",
+      version: reactRange,
+      subPath: "jsx-dev-runtime",
+      peerDependency: true,
+    },
+    // Keep the worker entry behind the separately published parser-only
+    // package boundary. Without this mapping dnt follows the workspace
+    // export and rewrites the import to a bundled extensions/ source path,
+    // which relies on npm hoisting and breaks strict package layouts.
+    // Omitting version also keeps dnt from fetching an unpublished matching
+    // extension before postBuild pins the co-published package.
+    "./extensions/ext-parser-babel/src/parser-only.ts": {
+      name: "@veryfront/ext-parser-babel",
+      subPath: "parser-only",
+    },
+    // Required implementations stay behind their co-published package
+    // boundaries. Mapping the workspace entry points prevents dnt from copying
+    // extension-owned SDKs and validators into the root artifact.
+    "./extensions/ext-llm-anthropic/src/index.ts": {
+      name: "@veryfront/ext-llm-anthropic",
+    },
+    "./extensions/ext-llm-google/src/index.ts": {
+      name: "@veryfront/ext-llm-google",
+    },
+    "./extensions/ext-llm-openai/src/index.ts": {
+      name: "@veryfront/ext-llm-openai",
+    },
+    "./extensions/ext-schema-zod/src/index.ts": {
+      name: "@veryfront/ext-schema-zod",
+    },
+  },
 
-	package: {
-		name: "veryfront",
-		version,
-		description: "The simplest way to build AI-powered apps",
-		license,
-		author: "Veryfront",
-		repository: {
-			type: "git",
-			url: "git+https://github.com/veryfront/veryfront-code.git",
-		},
-		bugs: {
-			url: "https://github.com/veryfront/veryfront-code/issues",
-		},
-		homepage: "https://veryfront.com",
-		engines: {
-			node: ">=18.18.0",
-		},
-		// dnt can't detect dynamic imports, so we add them explicitly
-		dependencies: {
-			"@types/react": npmDependencyRange(denoConfigSet, "@types/react"),
-			"@types/react-dom": npmDependencyRange(denoConfigSet, "@types/react-dom"),
-			"react-markdown": reactMarkdownRange,
-			"remark-gfm": remarkGfmRange,
-			"shiki": shikiRange,
-			"mermaid": mermaidRange,
-			// Root deno.json intentionally rejects core npm imports; ws is a
-			// Node-only dynamic import used by the npm server/HMR path.
-			"ws": "8.21.0",
-		},
-		keywords: [
-			"react",
-			"framework",
-			"ai",
-			"agents",
-			"mcp",
-			"llm",
-			"ssr",
-			"rsc",
-			"typescript",
-		],
-		// postinstall added in postBuild after files are copied
-	},
+  package: {
+    name: "veryfront",
+    version,
+    description: "The simplest way to build AI-powered apps",
+    license,
+    author: "Veryfront",
+    repository: {
+      type: "git",
+      url: "git+https://github.com/veryfront/veryfront-code.git",
+    },
+    bugs: {
+      url: "https://github.com/veryfront/veryfront-code/issues",
+    },
+    homepage: "https://veryfront.com",
+    engines: {
+      node: ">=18.18.0",
+    },
+    dependencies: {
+      "@types/react": npmDependencyRange(denoConfigSet, "@types/react"),
+      "@types/react-dom": npmDependencyRange(denoConfigSet, "@types/react-dom"),
+    },
+    keywords: [
+      "react",
+      "framework",
+      "ai",
+      "agents",
+      "mcp",
+      "llm",
+      "ssr",
+      "rsc",
+      "typescript",
+    ],
+    // postinstall added in postBuild after files are copied
+  },
 
-	// Post-build steps
-	async postBuild() {
-		const pkgPath = "./npm/package.json";
-		const initialPkg = JSON.parse(await Deno.readTextFile(pkgPath));
-		normalizeNpmPackageMetadata(initialPkg);
-		await Deno.writeTextFile(pkgPath, JSON.stringify(initialPkg, null, 2));
+  // Post-build steps
+  async postBuild() {
+    const pkgPath = "./npm/package.json";
+    const initialPkg = JSON.parse(await Deno.readTextFile(pkgPath));
+    normalizeNpmPackageMetadata(initialPkg);
+    await Deno.writeTextFile(pkgPath, JSON.stringify(initialPkg, null, 2));
 
-		// Run npm install with scripts disabled to avoid supply-chain install hooks.
-		// Keep --legacy-peer-deps to avoid peer dep conflicts
-		// (e.g., @ai-sdk/react requires react ~19.1.2 but framework uses 19.1.1)
-		const npmInstall = new Deno.Command("npm", {
-			args: ["install", "--ignore-scripts", "--legacy-peer-deps"],
-			cwd: "./npm",
-			stdout: "inherit",
-			stderr: "inherit",
-		});
-		const { code } = await npmInstall.output();
-		if (code !== 0) {
-			throw new Error(`npm install failed with exit code ${code}`);
-		}
+    // Run npm install with scripts disabled to avoid supply-chain install hooks.
+    // Keep --legacy-peer-deps to avoid peer dep conflicts
+    // (e.g., @ai-sdk/react requires react ~19.1.2 but framework uses 19.1.1)
+    const npmInstall = new Deno.Command("npm", {
+      args: ["install", "--ignore-scripts", "--legacy-peer-deps"],
+      cwd: "./npm",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const { code } = await npmInstall.output();
+    if (code !== 0) {
+      throw new Error(`npm install failed with exit code ${code}`);
+    }
 
-		// Copy RSC client files that are read at runtime (not imported as modules).
-		// script-handlers.ts resolves these relative to import.meta.url.
-		const rscClientFiles = ["client-boot.ts", "client-dom.ts", "hydrate-client.ts"];
-		const rscSrc = "./src/rendering/rsc";
-		const rscDest = "./npm/esm/src/rendering/rsc";
-		await Deno.mkdir(rscDest, { recursive: true });
-		for (const file of rscClientFiles) {
-			await Deno.copyFile(`${rscSrc}/${file}`, `${rscDest}/${file}`);
-		}
-		console.log(`📝 Copied ${rscClientFiles.length} RSC client files`);
+    // Copy RSC client files that are read at runtime (not imported as modules).
+    // script-handlers.ts resolves these relative to import.meta.url.
+    const rscClientFiles = [
+      "client-boot.ts",
+      "client-dom.ts",
+      "hydrate-client.ts",
+    ];
+    const rscSrc = "./src/rendering/rsc";
+    const rscDest = "./npm/esm/src/rendering/rsc";
+    await Deno.mkdir(rscDest, { recursive: true });
+    for (const file of rscClientFiles) {
+      await Deno.copyFile(`${rscSrc}/${file}`, `${rscDest}/${file}`);
+    }
+    console.log(`📝 Copied ${rscClientFiles.length} RSC client files`);
 
-		// Fix dnt polyfill bug: process.argv[1] can be undefined in dynamic imports
-		await patchDntArgvPolyfill(
-			"./npm/esm/_dnt.polyfills.js",
-			{ required: true },
-		);
+    // Fix dnt polyfill bug: process.argv[1] can be undefined in dynamic imports
+    await patchDntArgvPolyfill(
+      "./npm/esm/_dnt.polyfills.js",
+      { required: true },
+    );
 
-		const patchedReactShimCount = normalizeEsmShReactNpmShims("./npm/esm/deps/esm.sh");
-		if (patchedReactShimCount > 0) {
-			console.log(`📝 Patched ${patchedReactShimCount} React ecosystem esm.sh npm shims`);
-		}
-		assertNoBundledReactDomClientShim("./npm/esm");
+    const patchedReactShimCount = normalizeEsmShReactNpmShims(
+      "./npm/esm/deps/esm.sh",
+    );
+    if (patchedReactShimCount > 0) {
+      console.log(
+        `📝 Patched ${patchedReactShimCount} React ecosystem esm.sh npm shims`,
+      );
+    }
+    assertNoBundledReactDomClientShim("./npm/esm");
 
-		// Guard the react-mapping fix: emitted component `.d.ts` MUST import react
-		// via the bare `react` specifier so `React.HTMLAttributes` resolves against
-		// the consumer's `@types/react`. If dnt ever bundles a local react shim
-		// again, `interface Props extends React.HTMLAttributes<…>` collapses to `{}`
-		// for consumers (children/className/handlers vanish) while `deno check`
-		// stays green. See scripts/typecheck/README.md.
-		assertConsumerReactImport(
-			"./npm/esm/src/react/components/ui/app-shell.d.ts",
-		);
-		assertWorkerParserPackageImport(
-			"./npm/esm/src/config/declarative-evaluator-worker-entry.js",
-		);
+    // Guard the react-mapping fix: emitted component `.d.ts` MUST import react
+    // via the bare `react` specifier so `React.HTMLAttributes` resolves against
+    // the consumer's `@types/react`. If dnt ever bundles a local react shim
+    // again, `interface Props extends React.HTMLAttributes<…>` collapses to `{}`
+    // for consumers (children/className/handlers vanish) while `deno check`
+    // stays green. See scripts/typecheck/README.md.
+    assertConsumerReactImport(
+      "./npm/esm/src/react/components/ui/app-shell.d.ts",
+    );
+    assertWorkerParserPackageImport(
+      "./npm/esm/src/config/declarative-evaluator-worker-entry.js",
+    );
 
-		// Keep browser-safe client exports free of dnt Node polyfill imports.
-		// These modules are consumed directly in browser bundles and do not rely on
-		// any Node-only globals, so retaining the injected side-effect import only
-		// bloats the graph and breaks browser builds.
-		const internalEntryPoints: Readonly<Record<string, string>> =
-			BROWSER_SAFE_INTERNAL_ENTRY_POINTS;
-		for (const exportPath of [...BROWSER_SAFE_EXPORTS, ...Object.keys(internalEntryPoints)]) {
-			const sourcePath = (denoJson.exports as Record<string, string>)[exportPath] ??
-				internalEntryPoints[exportPath];
-			if (!sourcePath) {
-				throw new Error(`Missing browser-safe export source for ${exportPath}`);
-			}
+    // Keep browser-safe client exports free of dnt Node polyfill imports.
+    // These modules are consumed directly in browser bundles and do not rely on
+    // any Node-only globals, so retaining the injected side-effect import only
+    // bloats the graph and breaks browser builds.
+    const internalEntryPoints: Readonly<Record<string, string>> =
+      BROWSER_SAFE_INTERNAL_ENTRY_POINTS;
+    for (
+      const exportPath of [
+        ...BROWSER_SAFE_EXPORTS,
+        ...Object.keys(internalEntryPoints),
+      ]
+    ) {
+      const sourcePath =
+        (denoJson.exports as Record<string, string>)[exportPath] ??
+          internalEntryPoints[exportPath];
+      if (!sourcePath) {
+        throw new Error(`Missing browser-safe export source for ${exportPath}`);
+      }
 
-			const builtJsPath = `./npm/esm/${sourcePath.replace(/\.tsx?$/, ".js").replace(/^\.\//, "")}`;
-			const builtDtsPath = `./npm/esm/${sourcePath.replace(/\.tsx?$/, ".d.ts").replace(/^\.\//, "")}`;
+      const builtJsPath = `./npm/esm/${
+        sourcePath.replace(/\.tsx?$/, ".js").replace(/^\.\//, "")
+      }`;
+      const builtDtsPath = `./npm/esm/${
+        sourcePath.replace(/\.tsx?$/, ".d.ts").replace(/^\.\//, "")
+      }`;
 
-			for (const path of [builtJsPath, builtDtsPath]) {
-				stripPolyfillImportIfPresent(
-					path,
-					`${exportPath} browser-safe polyfill removal`,
-				);
-				assertNoDntRuntimeImports(
-					path,
-					`${exportPath} browser-safe artifact`,
-				);
-			}
-		}
+      for (const path of [builtJsPath, builtDtsPath]) {
+        stripPolyfillImportIfPresent(
+          path,
+          `${exportPath} browser-safe polyfill removal`,
+        );
+        assertNoDntRuntimeImports(
+          path,
+          `${exportPath} browser-safe artifact`,
+        );
+      }
+    }
 
-		for (const path of [
-			...BROWSER_SAFE_CLIENT_MODULES,
-			...BROWSER_SAFE_DNT_TIMER_MODULES,
-		]) {
-			normalizeBrowserTimerShim(
-				`./npm/esm/${path}`,
-				`${path} browser-safe dnt shim removal`,
-			);
-		}
+    for (
+      const path of [
+        ...BROWSER_SAFE_CLIENT_MODULES,
+        ...BROWSER_SAFE_DNT_TIMER_MODULES,
+      ]
+    ) {
+      normalizeBrowserTimerShim(
+        `./npm/esm/${path}`,
+        `${path} browser-safe dnt shim removal`,
+      );
+    }
 
-		// Note: Templates are now embedded in manifest.json which is bundled by dnt
-		// No need to copy template files separately
+    // Note: Templates are now embedded in manifest.json which is bundled by dnt
+    // No need to copy template files separately
 
-		// Copy bin wrapper
-		await Deno.mkdir("./npm/bin", { recursive: true });
-		await Deno.copyFile("./scripts/build/bin-wrapper.js", "./npm/bin/veryfront.js");
-		await Deno.chmod("./npm/bin/veryfront.js", 0o755);
+    // Copy bin wrapper
+    await Deno.mkdir("./npm/bin", { recursive: true });
+    await Deno.copyFile(
+      "./scripts/build/bin-wrapper.js",
+      "./npm/bin/veryfront.js",
+    );
+    await Deno.chmod("./npm/bin/veryfront.js", 0o755);
 
-		// Copy package documentation files (must exist at repo root)
-		await Deno.mkdir("./npm/assets", { recursive: true });
-		await Deno.copyFile("./assets/banner.svg", "./npm/assets/banner.svg");
-		await Deno.copyFile("./LICENSE", "./npm/LICENSE");
-		await Deno.copyFile("./NOTICE", "./npm/NOTICE");
-		await Deno.copyFile("./README.md", "./npm/README.md");
+    // Copy package documentation files (must exist at repo root)
+    await Deno.mkdir("./npm/assets", { recursive: true });
+    await Deno.copyFile("./assets/banner.svg", "./npm/assets/banner.svg");
+    await Deno.copyFile("./LICENSE", "./npm/LICENSE");
+    await Deno.copyFile("./NOTICE", "./npm/NOTICE");
+    await Deno.copyFile("./README.md", "./npm/README.md");
 
-		// Copy base tsconfig for user projects to extend
-		await Deno.writeTextFile("./npm/tsconfig.json", JSON.stringify({
-			compilerOptions: {
-				target: "ES2022",
-				module: "ESNext",
-				moduleResolution: "Bundler",
-				jsx: "react-jsx",
-				strict: true,
-				skipLibCheck: true,
-				esModuleInterop: true,
-				noEmit: true,
-			},
-		}, null, 2));
+    // Copy base tsconfig for user projects to extend
+    await Deno.writeTextFile(
+      "./npm/tsconfig.json",
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "ESNext",
+            moduleResolution: "Bundler",
+            jsx: "react-jsx",
+            strict: true,
+            skipLibCheck: true,
+            esModuleInterop: true,
+            noEmit: true,
+          },
+        },
+        null,
+        2,
+      ),
+    );
 
-		// Update package.json with bin entry and type
-		const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
-		removeInternalNpmEntryPointExports(
-			pkg,
-			Object.keys(NPM_INTERNAL_ENTRY_POINTS),
-		);
-		pkg.type = "module"; // Required for ESM imports without warnings
-		pkg.types = "./esm/src/index.d.ts";
-		pkg.bin = { veryfront: "bin/veryfront.js" };
-		pkg.dependencies ??= {};
-		// Add after build-local npm install so releases do not require the
-		// just-built auto-loaded extension versions to already exist in the registry.
-		pkg.dependencies["@veryfront/ext-bundler-esbuild"] = version;
-		pkg.dependencies["@veryfront/ext-content-mdx"] = version;
-		// ext-parser-babel provides the CodeParser contract that `veryfront serve`
-		// needs to vet client-page modules for /_veryfront/rsc/module hydration;
-		// without it the endpoint 404s and client pages render without hydrating.
-		pkg.dependencies["@veryfront/ext-parser-babel"] = version;
-		pkg.dependencies["@veryfront/ext-yaml"] = version;
-		pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];
-		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
-		addTypesExportEntries(pkg.exports);
-		normalizeNpmPackageMetadata(pkg);
-		assertRootPackageExcludesCSSImplementations(pkg);
-		await assertRootArtifactExcludesCSSImplementations("./npm/esm");
-		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
+    // Update package.json with bin entry and type
+    const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
+    removeInternalNpmEntryPointExports(
+      pkg,
+      Object.keys(NPM_INTERNAL_ENTRY_POINTS),
+    );
+    pkg.type = "module"; // Required for ESM imports without warnings
+    pkg.types = "./esm/src/index.d.ts";
+    pkg.bin = { veryfront: "bin/veryfront.js" };
+    pkg.dependencies ??= {};
+    // Add after build-local npm install so releases do not require the
+    // just-built auto-loaded extension versions to already exist in the registry.
+    pkg.dependencies["@veryfront/ext-bundler-esbuild"] = version;
+    pkg.dependencies["@veryfront/ext-content-mdx"] = version;
+    pkg.dependencies["@veryfront/ext-dev-ui-react"] = version;
+    pkg.dependencies["@veryfront/ext-llm-anthropic"] = version;
+    pkg.dependencies["@veryfront/ext-llm-google"] = version;
+    pkg.dependencies["@veryfront/ext-llm-openai"] = version;
+    // ext-parser-babel provides the CodeParser contract that `veryfront serve`
+    // needs to vet client-page modules for /_veryfront/rsc/module hydration;
+    // without it the endpoint 404s and client pages render without hydrating.
+    pkg.dependencies["@veryfront/ext-parser-babel"] = version;
+    pkg.dependencies["@veryfront/ext-schema-zod"] = version;
+    pkg.dependencies["@veryfront/ext-yaml"] = version;
+    pkg.files = [
+      "esm",
+      "script",
+      "bin",
+      "assets",
+      "tsconfig.json",
+      "LICENSE",
+      "NOTICE",
+      "README.md",
+    ];
+    pkg.exports["./tsconfig.json"] = "./tsconfig.json";
+    addTypesExportEntries(pkg.exports);
+    normalizeNpmPackageMetadata(pkg);
+    assertRootPackageExcludesCSSImplementations(pkg);
+    await assertRootArtifactExcludesCSSImplementations("./npm/esm");
+    await assertRootArtifactExcludesExtensionImplementations("./npm/esm");
+    await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
 
-		const writtenPkg = JSON.parse(await Deno.readTextFile(pkgPath));
-		for (const entryPoint of Object.keys(NPM_INTERNAL_ENTRY_POINTS)) {
-			if (Object.hasOwn(writtenPkg.exports ?? {}, entryPoint)) {
-				throw new Error(
-					`Published npm metadata still exposes internal entry point ${entryPoint}`,
-				);
-			}
-		}
-	},
+    const writtenPkg = JSON.parse(await Deno.readTextFile(pkgPath));
+    for (const entryPoint of Object.keys(NPM_INTERNAL_ENTRY_POINTS)) {
+      if (Object.hasOwn(writtenPkg.exports ?? {}, entryPoint)) {
+        throw new Error(
+          `Published npm metadata still exposes internal entry point ${entryPoint}`,
+        );
+      }
+    }
+  },
 });
 
 await buildExtensionPackages({
-	rootDir: Deno.cwd(),
-	outDir: `${Deno.cwd()}/npm/extensions`,
-	rootConfig: denoJson,
-	version,
-	license,
+  rootDir: Deno.cwd(),
+  outDir: `${Deno.cwd()}/npm/extensions`,
+  rootConfig: denoJson,
+  version,
+  license,
 });
+
+await installLocalRootRuntimeExtensionsForVerification();
 
 await verifyNpmRootImportLifecycle();
 await verifyNpmProxyStreamingPortability();
 
+async function installLocalRootRuntimeExtensionsForVerification(): Promise<
+  void
+> {
+  const packagePath = "./npm/package.json";
+  const packageMetadataBefore = await Deno.readTextFile(packagePath);
+  const install = await new Deno.Command("npm", {
+    args: [
+      "install",
+      "--ignore-scripts",
+      "--legacy-peer-deps",
+      "--no-save",
+      "--no-package-lock",
+      ...ROOT_RUNTIME_EXTENSION_SOURCE_DIRECTORIES.map((sourceDirectory) =>
+        `./extensions/${sourceDirectory}`
+      ),
+    ],
+    cwd: "./npm",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).output();
+  if (!install.success) {
+    throw new Error(
+      `Local runtime extension install failed with exit code ${install.code}`,
+    );
+  }
+  const packageMetadataAfter = await Deno.readTextFile(packagePath);
+  if (packageMetadataAfter !== packageMetadataBefore) {
+    throw new Error(
+      "Local runtime extension verification install mutated published package metadata",
+    );
+  }
+}
+
 async function verifyNpmRootImportLifecycle(): Promise<void> {
-	const timeoutMs = 10_000;
-	const child = new Deno.Command("node", {
-		args: [
-			"--input-type=module",
-			"--eval",
-			'const mod = await import("./esm/src/index.js"); if (typeof mod.defineConfig !== "function") throw new Error("defineConfig export missing");',
-		],
-		cwd: "./npm",
-		env: { VF_DISABLE_LRU_INTERVAL: "0" },
-		stdout: "piped",
-		stderr: "piped",
-	}).spawn();
-	const outputPromise = child.output();
-	let timeoutId: number | undefined;
-	const result = await Promise.race([
-		outputPromise.then((output) => ({ kind: "complete" as const, output })),
-		new Promise<{ kind: "timeout" }>((resolve) => {
-			timeoutId = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
-		}),
-	]);
+  const timeoutMs = 10_000;
+  const child = new Deno.Command("node", {
+    args: [
+      "--input-type=module",
+      "--eval",
+      'const mod = await import("./esm/src/index.js"); if (typeof mod.defineConfig !== "function") throw new Error("defineConfig export missing");',
+    ],
+    cwd: "./npm",
+    env: { VF_DISABLE_LRU_INTERVAL: "0" },
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  const outputPromise = child.output();
+  let timeoutId: number | undefined;
+  const result = await Promise.race([
+    outputPromise.then((output) => ({ kind: "complete" as const, output })),
+    new Promise<{ kind: "timeout" }>((resolve) => {
+      timeoutId = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+    }),
+  ]);
 
-	if (timeoutId !== undefined) clearTimeout(timeoutId);
+  if (timeoutId !== undefined) clearTimeout(timeoutId);
 
-	if (result.kind === "timeout") {
-		try {
-			child.kill();
-		} catch {
-			// The process may exit between the timeout and the kill attempt.
-		}
-		const output = await outputPromise.catch(() => undefined);
-		const stderr = output ? new TextDecoder().decode(output.stderr).trim() : "";
-		throw new Error(
-			`Built npm root import did not exit within ${timeoutMs}ms; ` +
-				`a referenced import-time handle is still active.${stderr ? `\n${stderr}` : ""}`,
-		);
-	}
+  if (result.kind === "timeout") {
+    try {
+      child.kill();
+    } catch {
+      // The process may exit between the timeout and the kill attempt.
+    }
+    const output = await outputPromise.catch(() => undefined);
+    const stderr = output ? new TextDecoder().decode(output.stderr).trim() : "";
+    throw new Error(
+      `Built npm root import did not exit within ${timeoutMs}ms; ` +
+        `a referenced import-time handle is still active.${
+          stderr ? `\n${stderr}` : ""
+        }`,
+    );
+  }
 
-	if (!result.output.success) {
-		const stderr = new TextDecoder().decode(result.output.stderr).trim();
-		throw new Error(
-			`Built npm root import failed with exit code ${result.output.code}.` +
-				(stderr ? `\n${stderr}` : ""),
-		);
-	}
+  if (!result.output.success) {
+    const stderr = new TextDecoder().decode(result.output.stderr).trim();
+    throw new Error(
+      `Built npm root import failed with exit code ${result.output.code}.` +
+        (stderr ? `\n${stderr}` : ""),
+    );
+  }
 
-	console.log("✅ Verified npm root import lifecycle");
+  console.log("✅ Verified npm root import lifecycle");
 }
 
 async function verifyNpmProxyStreamingPortability(): Promise<void> {
-	const source = `
+  const source = `
 const { injectContextHeaders } = await import("./esm/src/proxy/handler.js");
 const { fetchWithProxyDeadline } = await import("./esm/src/proxy/outbound-request.js");
 const stream = (text) => new ReadableStream({
@@ -527,39 +617,39 @@ if (response.status !== 204 || outboundBody !== "outbound body") {
   throw new Error("Built npm proxy fetch changed the streamed request body");
 }
 `;
-	const output = await new Deno.Command("node", {
-		args: ["--input-type=module", "--eval", source],
-		cwd: "./npm",
-		env: { VF_DISABLE_LRU_INTERVAL: "0" },
-		stdout: "piped",
-		stderr: "piped",
-	}).output();
+  const output = await new Deno.Command("node", {
+    args: ["--input-type=module", "--eval", source],
+    cwd: "./npm",
+    env: { VF_DISABLE_LRU_INTERVAL: "0" },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
 
-	if (!output.success) {
-		const stderr = new TextDecoder().decode(output.stderr).trim();
-		throw new Error(
-			`Built npm proxy streaming verification failed with exit code ${output.code}.` +
-				(stderr ? `\n${stderr}` : ""),
-		);
-	}
+  if (!output.success) {
+    const stderr = new TextDecoder().decode(output.stderr).trim();
+    throw new Error(
+      `Built npm proxy streaming verification failed with exit code ${output.code}.` +
+        (stderr ? `\n${stderr}` : ""),
+    );
+  }
 
-	console.log("✅ Verified npm proxy streaming portability");
+  console.log("✅ Verified npm proxy streaming portability");
 }
 
 function addTypesExportEntries(
-	exportsMap: Record<string, string | { import?: string; types?: string }>,
+  exportsMap: Record<string, string | { import?: string; types?: string }>,
 ): void {
-	for (const [exportKey, exportValue] of Object.entries(exportsMap)) {
-		if (exportKey === "./tsconfig.json" || typeof exportValue === "string") {
-			continue;
-		}
+  for (const [exportKey, exportValue] of Object.entries(exportsMap)) {
+    if (exportKey === "./tsconfig.json" || typeof exportValue === "string") {
+      continue;
+    }
 
-		if (!exportValue.import || !exportValue.import.endsWith(".js")) {
-			continue;
-		}
+    if (!exportValue.import || !exportValue.import.endsWith(".js")) {
+      continue;
+    }
 
-		exportValue.types = exportValue.import.replace(/\.js$/, ".d.ts");
-	}
+    exportValue.types = exportValue.import.replace(/\.js$/, ".d.ts");
+  }
 }
 
 /**
@@ -568,90 +658,101 @@ function addTypesExportEntries(
  * See the call site + scripts/typecheck/README.md for why this matters.
  */
 function assertConsumerReactImport(path: string): void {
-	const content = Deno.readTextFileSync(path);
-	const bareImport = /import \* as React from ["']react["'];/.test(content);
-	const shimImport = /import \* as React from ["'][^"']*\/react\/react\.js["'];/
-		.test(content);
-	if (!bareImport || shimImport) {
-		throw new Error(
-			`Consumer react-import guard failed for ${path}: emitted component ` +
-				`types must import from the bare "react" specifier, not a bundled ` +
-				`react shim, or every \`extends React.HTMLAttributes\` component ` +
-				`ships with its DOM props stripped for consumers. See ` +
-				`scripts/typecheck/README.md.`,
-		);
-	}
-	console.log(`✅ Verified consumer react import in ${path}`);
+  const content = Deno.readTextFileSync(path);
+  const bareImport = /import \* as React from ["']react["'];/.test(content);
+  const shimImport = /import \* as React from ["'][^"']*\/react\/react\.js["'];/
+    .test(content);
+  if (!bareImport || shimImport) {
+    throw new Error(
+      `Consumer react-import guard failed for ${path}: emitted component ` +
+        `types must import from the bare "react" specifier, not a bundled ` +
+        `react shim, or every \`extends React.HTMLAttributes\` component ` +
+        `ships with its DOM props stripped for consumers. See ` +
+        `scripts/typecheck/README.md.`,
+    );
+  }
+  console.log(`✅ Verified consumer react import in ${path}`);
 }
 
 function assertWorkerParserPackageImport(path: string): void {
-	const content = Deno.readTextFileSync(path);
-	const packageSpecifier = "@veryfront/ext-parser-babel/parser-only";
-	if (
-		!content.includes(packageSpecifier) ||
-		content.includes("extensions/ext-parser-babel")
-	) {
-		throw new Error(
-			`Declarative worker parser-boundary guard failed for ${path}: ` +
-				`the emitted worker must import ${packageSpecifier} directly and ` +
-				`must not depend on an inlined workspace extension path.`,
-		);
-	}
-	console.log(`✅ Verified declarative worker parser package import in ${path}`);
+  const content = Deno.readTextFileSync(path);
+  const packageSpecifier = "@veryfront/ext-parser-babel/parser-only";
+  if (
+    !content.includes(packageSpecifier) ||
+    content.includes("extensions/ext-parser-babel")
+  ) {
+    throw new Error(
+      `Declarative worker parser-boundary guard failed for ${path}: ` +
+        `the emitted worker must import ${packageSpecifier} directly and ` +
+        `must not depend on an inlined workspace extension path.`,
+    );
+  }
+  console.log(
+    `✅ Verified declarative worker parser package import in ${path}`,
+  );
 }
 
 function stripPolyfillImportIfPresent(
-	path: string,
-	description: string,
+  path: string,
+  description: string,
 ): void {
-	const content = Deno.readTextFileSync(path);
-	const polyfillImportPattern = /^import ["'](?:\.\.\/)+_dnt\.polyfills\.js["'];\n/m;
-	const patched = content.replace(polyfillImportPattern, "");
-	if (patched === content) {
-		console.log(`ℹ️  ${description} not needed for ${path}`);
-		return;
-	}
+  const content = Deno.readTextFileSync(path);
+  const polyfillImportPattern =
+    /^import ["'](?:\.\.\/)+_dnt\.polyfills\.js["'];\n/m;
+  const patched = content.replace(polyfillImportPattern, "");
+  if (patched === content) {
+    console.log(`ℹ️  ${description} not needed for ${path}`);
+    return;
+  }
 
-	Deno.writeTextFileSync(path, patched);
-	console.log(`📝 Patched ${description} in ${path}`);
+  Deno.writeTextFileSync(path, patched);
+  console.log(`📝 Patched ${description} in ${path}`);
 }
 
 function assertNoDntRuntimeImports(path: string, description: string): void {
-	const content = Deno.readTextFileSync(path);
-	const forbiddenReferences = ["_dnt.polyfills", "_dnt.shims"]
-		.filter((reference) => content.includes(reference));
-	if (forbiddenReferences.length > 0) {
-		throw new Error(
-			`${description} at ${path} still references ${forbiddenReferences.join(", ")}`,
-		);
-	}
+  const content = Deno.readTextFileSync(path);
+  const forbiddenReferences = ["_dnt.polyfills", "_dnt.shims"]
+    .filter((reference) => content.includes(reference));
+  if (forbiddenReferences.length > 0) {
+    throw new Error(
+      `${description} at ${path} still references ${
+        forbiddenReferences.join(", ")
+      }`,
+    );
+  }
 }
 
 function normalizeBrowserTimerShim(
-	path: string,
-	description: string,
+  path: string,
+  description: string,
 ): void {
-	const content = Deno.readTextFileSync(path);
-	const patched = content
-		.replace(/^import \* as dntShim from ["'](?:\.\.\/)+_dnt\.shims\.js["'];\n/m, "")
-		.replaceAll("dntShim.dntGlobalThis", "globalThis")
-		.replaceAll("dntShim.Deno", "globalThis.Deno")
-		.replaceAll("dntShim.dntGlobalThis.setTimeout", "globalThis.setTimeout")
-		.replaceAll("dntShim.setTimeout", "globalThis.setTimeout")
-		.replaceAll("dntShim.dntGlobalThis.clearTimeout", "globalThis.clearTimeout")
-		.replaceAll("dntShim.clearTimeout", "globalThis.clearTimeout")
-		.replaceAll("dntShim.dntGlobalThis.setInterval", "globalThis.setInterval")
-		.replaceAll("dntShim.setInterval", "globalThis.setInterval")
-		.replaceAll("dntShim.dntGlobalThis.clearInterval", "globalThis.clearInterval")
-		.replaceAll("dntShim.clearInterval", "globalThis.clearInterval");
+  const content = Deno.readTextFileSync(path);
+  const patched = content
+    .replace(
+      /^import \* as dntShim from ["'](?:\.\.\/)+_dnt\.shims\.js["'];\n/m,
+      "",
+    )
+    .replaceAll("dntShim.dntGlobalThis", "globalThis")
+    .replaceAll("dntShim.Deno", "globalThis.Deno")
+    .replaceAll("dntShim.dntGlobalThis.setTimeout", "globalThis.setTimeout")
+    .replaceAll("dntShim.setTimeout", "globalThis.setTimeout")
+    .replaceAll("dntShim.dntGlobalThis.clearTimeout", "globalThis.clearTimeout")
+    .replaceAll("dntShim.clearTimeout", "globalThis.clearTimeout")
+    .replaceAll("dntShim.dntGlobalThis.setInterval", "globalThis.setInterval")
+    .replaceAll("dntShim.setInterval", "globalThis.setInterval")
+    .replaceAll(
+      "dntShim.dntGlobalThis.clearInterval",
+      "globalThis.clearInterval",
+    )
+    .replaceAll("dntShim.clearInterval", "globalThis.clearInterval");
 
-	if (patched === content) {
-		console.log(`ℹ️  ${description} not needed for ${path}`);
-		return;
-	}
+  if (patched === content) {
+    console.log(`ℹ️  ${description} not needed for ${path}`);
+    return;
+  }
 
-	Deno.writeTextFileSync(path, patched);
-	console.log(`📝 Patched ${description} in ${path}`);
+  Deno.writeTextFileSync(path, patched);
+  console.log(`📝 Patched ${description} in ${path}`);
 }
 
 /**
@@ -661,33 +762,39 @@ function normalizeBrowserTimerShim(
  * react-dom/client) are excluded — dnt errors on unused mappings.
  */
 function buildEsmShMappings(
-	imports: Record<string, string>,
+  imports: Record<string, string>,
 ): Record<string, { name: string; version: string; subPath?: string }> {
-	const mappings: Record<string, { name: string; version: string; subPath?: string }> = {};
+  const mappings: Record<
+    string,
+    { name: string; version: string; subPath?: string }
+  > = {};
 
-	for (const [key, url] of Object.entries(imports)) {
-		if (!url.startsWith("https://esm.sh/")) continue;
+  for (const [key, url] of Object.entries(imports)) {
+    if (!url.startsWith("https://esm.sh/")) continue;
 
-		// Skip packages not reached from npm entry points. dnt errors on unused mappings.
-		// - @types/* and csstype: type-only, never in JS output
-		// - react-dom (base) and react-dom/client: client-side only, not in server build graph
-		if (key.startsWith("@types/") || key === "csstype") continue;
-		if (key === "react-dom" || key === "react-dom/client") continue;
+    // Skip packages not reached from npm entry points. dnt errors on unused mappings.
+    // - @types/* and csstype: type-only, never in JS output
+    // - react-dom (base) and react-dom/client: client-side only, not in server build graph
+    if (key.startsWith("@types/") || key === "csstype") continue;
+    if (key === "react-dom" || key === "react-dom/client") continue;
 
-		// Strip prefix and query params: "react@19.1.1/jsx-runtime"
-		const pathPart = url.replace("https://esm.sh/", "").split("?")[0]!;
+    // Strip prefix and query params: "react@19.1.1/jsx-runtime"
+    const pathPart = url.replace("https://esm.sh/", "").split("?")[0]!;
 
-		// Match scoped (@scope/name@version/subPath) or regular (name@version/subPath)
-		const match = pathPart.match(/^(@[^/]+\/[^@]+|[^@]+)@([^/]+)(?:\/(.+))?$/);
-		if (!match) continue;
+    // Match scoped (@scope/name@version/subPath) or regular (name@version/subPath)
+    const match = pathPart.match(/^(@[^/]+\/[^@]+|[^@]+)@([^/]+)(?:\/(.+))?$/);
+    if (!match) continue;
 
-		const [, name, ver, subPath] = match;
-		const entry: { name: string; version: string; subPath?: string } = { name: name!, version: ver! };
-		if (subPath) entry.subPath = subPath;
-		mappings[url] = entry;
-	}
+    const [, name, ver, subPath] = match;
+    const entry: { name: string; version: string; subPath?: string } = {
+      name: name!,
+      version: ver!,
+    };
+    if (subPath) entry.subPath = subPath;
+    mappings[url] = entry;
+  }
 
-	return mappings;
+  return mappings;
 }
 
 console.log(`

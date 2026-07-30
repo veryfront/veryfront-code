@@ -3,7 +3,9 @@ import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
 import { VeryfrontOperationsBase } from "./base-operations.ts";
-import { createError, fromError, toError, VeryfrontError } from "#veryfront/errors";
+import { createError, fromError, toError } from "#veryfront/errors";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { buildStatCacheKeyPrefix } from "./cache-keys.ts";
 import { STAT_OPERATION_EXTENSION_PRIORITY as EXTENSION_PRIORITY } from "./extension-priority.ts";
 import {
@@ -26,7 +28,7 @@ const API_SEARCH_CIRCUIT_BREAKER_THRESHOLD = 5;
 const API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS = 30_000;
 
 function isFileNotFoundError(error: unknown): boolean {
-  if (error instanceof VeryfrontError && error.slug === "file-not-found") {
+  if (snapshotVeryfrontError(error)?.slug === "file-not-found") {
     return true;
   }
 
@@ -184,7 +186,7 @@ export class StatOperations extends VeryfrontOperationsBase {
             }
             logger.error("stat API search failed", {
               normalizedPath,
-              error: error instanceof Error ? error.message : String(error),
+              error: snapshotThrowableDiagnostic(error),
             });
             throw error;
           }
@@ -407,7 +409,10 @@ export class StatOperations extends VeryfrontOperationsBase {
             failures: result.failures,
           });
         }
-        logger.error("API pattern search failed", { pattern, error });
+        logger.error("API pattern search failed", {
+          pattern,
+          error: snapshotThrowableDiagnostic(error),
+        });
         throw error;
       }
 

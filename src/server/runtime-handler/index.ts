@@ -18,6 +18,13 @@ import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
+import {
+  inheritRequestPeerProvenance,
+} from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import {
+  cancelRejectedLocalControlRequestBody,
+  isTrustedLocalControlRequest,
+} from "#veryfront/security/http/local-control-request.ts";
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
@@ -46,6 +53,7 @@ import { StylesCSSHandler } from "../handlers/dev/styles-css.handler.ts";
 import { StudioBridgeModulesHandler } from "../handlers/studio/bridge-modules.handler.ts";
 import { createStudioBridgeBundleLoader } from "../handlers/studio/studio-bridge-bundle.ts";
 import type { StudioCaptureBundleProvider } from "#veryfront/extensions/studio/index.ts";
+import { type DevUiAssetProvider, snapshotDevUiAssetProvider } from "#veryfront/extensions/dev-ui";
 import { StaticHandler } from "../handlers/request/static.handler.ts";
 import { SnippetHandler } from "../handlers/request/snippet.handler.ts";
 import { LibModulesHandler } from "../handlers/request/lib-modules.handler.ts";
@@ -102,7 +110,11 @@ import {
 } from "./isolation.ts";
 import { ProjectDiscoveryCache } from "./local-project-discovery.ts";
 import { buildMinimalContext } from "./handler-context-builder.ts";
-import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
+import {
+  createLocalProjectsDiscoveryService,
+  handleProjectsRequest,
+  shouldHandleProjectsUI,
+} from "./projects-handler.ts";
 import {
   HTTP_GATEWAY_TIMEOUT,
   isHMRWebSocketUpgrade,
@@ -216,6 +228,8 @@ export interface HandlerDependencies {
   profile?: RuntimeProfile;
   /** Explicitly composed Studio browser capture bundle for this generation. */
   studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
+  /** Explicitly composed local development UI bundle for this generation. */
+  devUiAssetProvider?: Readonly<DevUiAssetProvider>;
 }
 
 /** Factory for each handler. Only called when no override is provided (lazy instantiation). */
@@ -244,8 +258,10 @@ const handlerFactories: Record<
   AgentRunCancelHandler: () => new AgentRunCancelHandler(),
   ProjectRunExecuteHandler: () => new ProjectRunExecuteHandler(),
   ChannelInvokeHandler: () => new ChannelInvokeHandler(),
-  DevDashboardHandler: () => new DevDashboardHandler(),
-  ProjectsHandler: () => new ProjectsHandler(),
+  DevDashboardHandler: (_projectDir, _adapter, dependencies) =>
+    new DevDashboardHandler(dependencies.devUiAssetProvider),
+  ProjectsHandler: (_projectDir, _adapter, dependencies) =>
+    new ProjectsHandler(dependencies.devUiAssetProvider),
   StudioBridgeModulesHandler: (_projectDir, _adapter, dependencies) => {
     const loader = createStudioBridgeBundleLoader(dependencies.studioCaptureProvider);
     return new StudioBridgeModulesHandler((localDevelopment) => loader.load(localDevelopment));
@@ -332,6 +348,8 @@ export interface RuntimeHandlerOptions {
   profile?: RuntimeProfile;
   /** Explicitly composed Studio browser capture bundle for this runtime generation. */
   studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
+  /** Explicitly composed local development UI bundle for this runtime generation. */
+  devUiAssetProvider?: Readonly<DevUiAssetProvider>;
 }
 
 export function createVeryfrontHandler(
@@ -343,7 +361,20 @@ export function createVeryfrontHandler(
   dispose: () => Promise<void>;
 } {
   const profile: RuntimeProfile = opts.profile ?? "development";
+  const devUiAssetProvider = opts.devUiAssetProvider === undefined
+    ? undefined
+    : snapshotDevUiAssetProvider(opts.devUiAssetProvider);
   const discoveryCache = new ProjectDiscoveryCache();
+  const projectsRuntime = profile === "development"
+    ? {
+      projectsHandler: new ProjectsHandler(devUiAssetProvider),
+      discoveryService: createLocalProjectsDiscoveryService({
+        projectRoot: projectDir,
+        fileSystem: adapter.fs,
+        cache: discoveryCache,
+      }),
+    }
+    : undefined;
   const isDebugEnabled = (): boolean => {
     if (opts.debug) return true;
 
@@ -405,9 +436,13 @@ export function createVeryfrontHandler(
   })();
 
   const { registry, apiHandler } = createHandlerRegistry(projectDir, adapter, {
+    overrides: projectsRuntime === undefined
+      ? undefined
+      : { ProjectsHandler: projectsRuntime.projectsHandler },
     debug: Boolean(opts.debug),
     profile,
     studioCaptureProvider: opts.studioCaptureProvider,
+    devUiAssetProvider,
   });
 
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
@@ -554,6 +589,26 @@ export function createVeryfrontHandler(
             return new Response("Not Found", { status: 404 });
           }
 
+          const isDashboardPath = url.pathname === "/_dev" ||
+            url.pathname.startsWith("/_dev/");
+          if (
+            profile === "development" &&
+            isDashboardPath &&
+            (isProxyMode || !isTrustedLocalControlRequest(request))
+          ) {
+            cancelRejectedLocalControlRequestBody(request, "Dashboard request rejected");
+            return new Response(
+              "Dashboard access requires a direct loopback connection",
+              {
+                status: 403,
+                headers: {
+                  "Cache-Control": "no-store",
+                  "Content-Type": "text/plain; charset=utf-8",
+                },
+              },
+            );
+          }
+
           await profilePhase("runtime.ready", () => readyPromise);
 
           await timeAsync("security:load", () =>
@@ -608,21 +663,41 @@ export function createVeryfrontHandler(
 
           // Handle projects discovery UI
           if (
-            profile === "development" &&
+            projectsRuntime !== undefined &&
             shouldHandleProjectsUI(url.pathname, projectRes.projectSlug, projectRes.parsedDomain)
           ) {
+            if (isProxyMode || !isTrustedLocalControlRequest(request)) {
+              cancelRejectedLocalControlRequestBody(
+                request,
+                "Local project discovery request rejected",
+              );
+              return new Response(
+                "Local project discovery requires a direct loopback connection",
+                {
+                  status: 403,
+                  headers: {
+                    "Cache-Control": "no-store",
+                    "Content-Type": "text/plain; charset=utf-8",
+                  },
+                },
+              );
+            }
             const response = await handleProjectsRequest(
               request,
               url,
-              buildMinimalContext(
-                projectDir,
-                adapter,
-                securityLoader.getSecurityConfig(),
-                securityLoader.getCspUserHeader(),
-                isDebugEnabled(),
-                config,
-              ),
-              discoveryCache,
+              {
+                ...buildMinimalContext(
+                  projectDir,
+                  adapter,
+                  securityLoader.getSecurityConfig(),
+                  securityLoader.getCspUserHeader(),
+                  isDebugEnabled(),
+                  config,
+                ),
+                parsedDomain: projectRes.parsedDomain,
+                projectSlug: projectRes.projectSlug,
+              },
+              projectsRuntime,
             );
             if (response) return response;
           }
@@ -727,7 +802,7 @@ export function createVeryfrontHandler(
             // closes with an unexpected EOF.
             const timeoutRequest = isHMRWebSocketUpgrade(req, url.pathname)
               ? req
-              : new Request(req, { signal });
+              : inheritRequestPeerProvenance(req, new Request(req, { signal }));
             return runWithRequestProfiling(
               {
                 category: profileCategory,

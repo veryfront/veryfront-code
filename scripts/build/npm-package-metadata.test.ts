@@ -11,6 +11,7 @@ import {
 } from "./browser-safe-exports.mjs";
 import {
   assertRootArtifactExcludesCSSImplementations,
+  assertRootArtifactExcludesExtensionImplementations,
   assertRootPackageExcludesCSSImplementations,
   deriveExtensionDependencyOwnership,
   type ExtensionDependencyOwnership,
@@ -148,7 +149,18 @@ Deno.test("fails closed when generated npm exports cannot prove an internal entr
 Deno.test("root npm build metadata does not inject extension implementation dependencies", async () => {
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
 
-  for (const packageName of ["@kreuzberg/node", "better-sqlite3"]) {
+  for (
+    const packageName of [
+      "@kreuzberg/node",
+      "better-sqlite3",
+      "mermaid",
+      "react-markdown",
+      "remark-gfm",
+      "shiki",
+      "ws",
+      "@types/ws",
+    ]
+  ) {
     assertEquals(
       source.includes(`"${packageName}"`),
       false,
@@ -232,6 +244,22 @@ Deno.test("root npm artifact rejects bundled CSS extension source directories", 
   }
 });
 
+Deno.test("root npm artifact rejects every bundled extension implementation", async () => {
+  const output = await Deno.makeTempDir();
+  try {
+    await assertRootArtifactExcludesExtensionImplementations(output);
+    const implementation = `${output}/extensions/ext-schema-zod`;
+    await Deno.mkdir(implementation, { recursive: true });
+    await assertRejects(
+      () => assertRootArtifactExcludesExtensionImplementations(output),
+      NpmPackageOwnershipError,
+      "ext-schema-zod",
+    );
+  } finally {
+    await Deno.remove(output, { recursive: true });
+  }
+});
+
 Deno.test("root npm CLI package declares auto-loaded first-party extensions after local install", async () => {
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
   const installIndex = source.indexOf(
@@ -241,7 +269,12 @@ Deno.test("root npm CLI package declares auto-loaded first-party extensions afte
     const packageName of [
       "@veryfront/ext-bundler-esbuild",
       "@veryfront/ext-content-mdx",
+      "@veryfront/ext-dev-ui-react",
+      "@veryfront/ext-llm-anthropic",
+      "@veryfront/ext-llm-google",
+      "@veryfront/ext-llm-openai",
       "@veryfront/ext-parser-babel",
+      "@veryfront/ext-schema-zod",
       "@veryfront/ext-yaml",
     ]
   ) {
@@ -275,7 +308,12 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
             "@veryfront/ext-bundler-esbuild": "0.1.1016",
             "@veryfront/ext-content-mdx": "^0.1.1016",
             "@veryfront/ext-css-tailwind": "^0.1.1016",
+            "@veryfront/ext-dev-ui-react": "0.1.1016",
+            "@veryfront/ext-llm-anthropic": "0.1.1016",
+            "@veryfront/ext-llm-google": "0.1.1016",
+            "@veryfront/ext-llm-openai": "0.1.1016",
             "@veryfront/ext-parser-babel": "^0.1.1016",
+            "@veryfront/ext-schema-zod": "0.1.1016",
             "@veryfront/ext-yaml": "^0.1.1016",
             "@veryfront/not-an-extension": "^0.1.1016",
             zod: "4.3.6",
@@ -316,7 +354,12 @@ Deno.test("npm publish version bump pins first-party extension dependencies to t
       "@veryfront/ext-bundler-esbuild": publishVersion,
       "@veryfront/ext-content-mdx": publishVersion,
       "@veryfront/ext-css-tailwind": publishVersion,
+      "@veryfront/ext-dev-ui-react": publishVersion,
+      "@veryfront/ext-llm-anthropic": publishVersion,
+      "@veryfront/ext-llm-google": publishVersion,
+      "@veryfront/ext-llm-openai": publishVersion,
       "@veryfront/ext-parser-babel": publishVersion,
+      "@veryfront/ext-schema-zod": publishVersion,
       "@veryfront/ext-yaml": publishVersion,
       "@veryfront/not-an-extension": "^0.1.1016",
       zod: "4.3.6",
@@ -655,6 +698,44 @@ describe("extension dependency ownership", () => {
     }]);
   });
 
+  it("indexes only dependencies selected for the published extension runtime", () => {
+    const manifest = extensionManifest("@veryfront/ext-generated-runtime", {
+      runtime: "npm:package-runtime@1.2.3",
+      bundled: "npm:package-build-only@4.5.6",
+    });
+    manifest.veryfront = {
+      extension: true,
+      npm: { runtimeDependencies: ["package-runtime"] },
+    };
+
+    const ownership = deriveExtensionDependencyOwnership([{
+      manifestPath: "extensions/ext-generated-runtime/deno.json",
+      manifest,
+    }]);
+
+    assertEquals(Object.keys(ownership.packages), ["package-runtime"]);
+    assertEquals(ownership.packages["package-build-only"], undefined);
+  });
+
+  it("rejects unknown published runtime dependency selections", () => {
+    const manifest = extensionManifest("@veryfront/ext-generated-runtime", {
+      bundled: "npm:package-build-only@4.5.6",
+    });
+    manifest.veryfront = {
+      extension: true,
+      npm: { runtimeDependencies: ["package-missing"] },
+    };
+
+    assertOwnershipError(
+      () =>
+        deriveExtensionDependencyOwnership([{
+          manifestPath: "extensions/ext-generated-runtime/deno.json",
+          manifest,
+        }]),
+      "invalid-extension-manifest",
+    );
+  });
+
   it("fails closed on conflicting aliases inside one extension manifest", () => {
     assertOwnershipError(
       () =>
@@ -981,7 +1062,12 @@ describe("npm supply-chain policy", () => {
     const autoLoadedExtensions = [
       "ext-bundler-esbuild",
       "ext-content-mdx",
+      "ext-dev-ui-react",
+      "ext-llm-anthropic",
+      "ext-llm-google",
+      "ext-llm-openai",
       "ext-parser-babel",
+      "ext-schema-zod",
       "ext-yaml",
     ];
 
@@ -999,7 +1085,12 @@ describe("npm supply-chain policy", () => {
     }
 
     assertStringIncludes(source, "CodeParser was not registered");
-    assertStringIncludes(source, "SkillDocumentParserProvider was not registered");
+    assertStringIncludes(source, "DevUiAssetProvider was not registered");
+    assertStringIncludes(source, "data-veryfront-dev-ui-styles");
+    assertStringIncludes(
+      source,
+      "SkillDocumentParserProvider was not registered",
+    );
     assertStringIncludes(source, "skills validate");
     assertStringIncludes(source, "app/page.tsx");
     assertStringIncludes(source, "@veryfront/ext-parser-babel/parser-only");
@@ -1081,6 +1172,7 @@ describe("npm supply-chain policy", () => {
       "ext-bundler-esbuild",
       "ext-content-mdx",
       "ext-css-tailwind",
+      "ext-dev-ui-react",
       "ext-db-sqlite",
       "ext-document-kreuzberg",
       "ext-eval-report-mlflow",
@@ -1137,10 +1229,10 @@ describe("npm supply-chain policy", () => {
 
   it("keeps workflow React hooks off the broad errors barrel", async () => {
     const hookSources = [
-      "src/workflow/react/use-approval.ts",
-      "src/workflow/react/use-workflow.ts",
-      "src/workflow/react/use-workflow-list.ts",
-      "src/workflow/react/use-workflow-start.ts",
+      "src/react/workflow/use-approval.ts",
+      "src/react/workflow/use-workflow.ts",
+      "src/react/workflow/use-workflow-list.ts",
+      "src/react/workflow/use-workflow-start.ts",
     ];
 
     for (const path of hookSources) {
@@ -1157,12 +1249,12 @@ describe("npm supply-chain policy", () => {
   it("keeps workflow React hooks in the browser-safe npm patch set", () => {
     assertEquals(BROWSER_SAFE_EXPORTS.includes("./workflow"), false);
     assertEquals(
-      BROWSER_SAFE_CLIENT_MODULES.includes("src/workflow/react/index.js"),
+      BROWSER_SAFE_CLIENT_MODULES.includes("src/react/workflow/index.js"),
       true,
     );
     assertEquals(
       BROWSER_SAFE_CLIENT_MODULES.includes(
-        "src/workflow/react/use-workflow-start.js",
+        "src/react/workflow/use-workflow-start.js",
       ),
       true,
     );

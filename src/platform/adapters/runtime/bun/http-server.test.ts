@@ -10,6 +10,7 @@ import type {
 import { getBunRuntime } from "./types.ts";
 import { BunServer, createBunServer, createBunServerWithRuntime } from "./http-server.ts";
 import { BunServerAdapter, BunWebSocket, type BunWebSocketData } from "./websocket-adapter.ts";
+import { getRequestPeerProvenance, isRequestFromLoopbackPeer } from "../shared/request-peer.ts";
 
 class FakeNativeServer implements NativeBunServer<BunWebSocketData> {
   readonly upgradeCalls: Array<{
@@ -23,7 +24,14 @@ class FakeNativeServer implements NativeBunServer<BunWebSocketData> {
   constructor(
     readonly hostname = "127.0.0.1",
     readonly port = 41_237,
+    readonly peerAddress: string | null = "127.0.0.1",
   ) {}
+
+  requestIP(_request: Request): { address: string; port: number; family: string } | null {
+    return this.peerAddress === null
+      ? null
+      : { address: this.peerAddress, port: 52_000, family: "IPv4" };
+  }
 
   stop(closeActiveConnections?: boolean): Promise<void> {
     this.stopCalls.push(closeActiveConnections);
@@ -73,6 +81,57 @@ function createRuntime(nativeServer: FakeNativeServer): {
 }
 
 describe("Bun HTTP server lifecycle", () => {
+  it("records Bun's native request peer before dispatching the request", async () => {
+    const native = new FakeNativeServer("127.0.0.1", 41_237, "203.0.113.8");
+    const fake = createRuntime(native);
+    let observed:
+      | { provenance: ReturnType<typeof getRequestPeerProvenance>; loopback: boolean }
+      | undefined;
+    await createBunServerWithRuntime(fake.runtime, (request) => {
+      observed = {
+        provenance: getRequestPeerProvenance(request),
+        loopback: isRequestFromLoopbackPeer(request),
+      };
+      return new Response("ok");
+    });
+    const request = new Request("http://localhost/_dev", {
+      headers: { host: "localhost" },
+    });
+
+    await fake.getOptions().fetch(request, native);
+
+    assertEquals(observed, {
+      provenance: {
+        runtime: "bun",
+        transport: "tcp",
+        hostname: "203.0.113.8",
+      },
+      loopback: false,
+    });
+  });
+
+  it("continues serving ordinary requests if Bun's peer lookup fails", async () => {
+    const native = new FakeNativeServer();
+    native.requestIP = () => {
+      throw new Error("peer lookup failed");
+    };
+    const fake = createRuntime(native);
+    let observedPeer: ReturnType<typeof getRequestPeerProvenance>;
+    await createBunServerWithRuntime(fake.runtime, (request) => {
+      observedPeer = getRequestPeerProvenance(request);
+      return new Response("ok");
+    });
+
+    const response = await fake.getOptions().fetch(
+      new Request("http://localhost/"),
+      native,
+    );
+
+    assertEquals(response?.status, 200);
+    assertEquals(await response?.text(), "ok");
+    assertEquals(observedPeer, undefined);
+  });
+
   it("reports the actual bound address and installs the native WebSocket handler", async () => {
     const native = new FakeNativeServer("::1", 45_678);
     const fake = createRuntime(native);

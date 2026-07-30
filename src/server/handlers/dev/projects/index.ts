@@ -16,8 +16,41 @@ import { PROJECTS_SHELL_HTML } from "./html-shell.ts";
 import { handleProjectsAPI } from "./api.ts";
 import { handleProjectsUI } from "./ui-handler.ts";
 import { createDevNotFoundResponse } from "../shared/not-found-response.ts";
+import { errorResponse } from "../http-helpers.ts";
+import { DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE } from "../shared/dev-ui-bundle-response.ts";
+import { type DevUiAssetProvider, snapshotDevUiAssetProvider } from "#veryfront/extensions/dev-ui";
+
+const PROJECTS_ALLOWED_METHODS = "GET, HEAD";
+
+function cancelRejectedRequestBody(req: Request): void {
+  try {
+    void req.body?.cancel().catch(() => {});
+  } catch {
+    // Preserve the deterministic method response if a hostile stream is
+    // already locked or fails while cancellation is attempted.
+  }
+}
+
+function omitHeadBody(req: Request, response: Response): Response {
+  return req.method === "HEAD"
+    ? new Response(null, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    })
+    : response;
+}
 
 export class ProjectsHandler extends BaseHandler {
+  private readonly browserBundle?: string;
+
+  constructor(provider?: Readonly<DevUiAssetProvider>) {
+    super();
+    this.browserBundle = provider === undefined
+      ? undefined
+      : snapshotDevUiAssetProvider(provider).browserBundle;
+  }
+
   metadata: HandlerMetadata = {
     name: "ProjectsHandler",
     priority: PRIORITY_HIGH as HandlerPriority,
@@ -45,30 +78,55 @@ export class ProjectsHandler extends BaseHandler {
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) return this.continue();
 
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      cancelRejectedRequestBody(req);
+      return this.respond(
+        new Response("Method Not Allowed", {
+          status: 405,
+          headers: {
+            Allow: PROJECTS_ALLOWED_METHODS,
+            "Cache-Control": "no-store",
+            "Content-Type": "text/plain; charset=utf-8",
+          },
+        }),
+      );
+    }
+
     const { pathname } = new URL(req.url);
 
     if (pathname === "/" || pathname === "/_projects" || pathname === "/_projects/") {
+      if (this.browserBundle === undefined) {
+        return this.respond(
+          omitHeadBody(
+            req,
+            errorResponse(DEV_UI_ASSET_PROVIDER_MISSING_MESSAGE, 503),
+          ),
+        );
+      }
       return this.respond(
-        this.createResponseBuilder(ctx).withCache("no-cache").withContentType(
-          "text/html; charset=utf-8",
-          PROJECTS_SHELL_HTML,
-          HTTP_OK,
+        omitHeadBody(
+          req,
+          this.createResponseBuilder(ctx).withCache("no-cache").withContentType(
+            "text/html; charset=utf-8",
+            PROJECTS_SHELL_HTML,
+            HTTP_OK,
+          ),
         ),
       );
     }
 
     if (pathname.startsWith("/_projects/ui/")) {
-      const response = await handleProjectsUI(req);
-      if (response) return this.respond(response);
-      return this.respond(createDevNotFoundResponse());
+      const response = handleProjectsUI(req, this.browserBundle);
+      if (response) return this.respond(omitHeadBody(req, response));
+      return this.respond(omitHeadBody(req, createDevNotFoundResponse()));
     }
 
     if (pathname.startsWith("/_projects/api/")) {
       const response = await handleProjectsAPI(req, ctx);
-      if (response) return this.respond(response);
-      return this.respond(createDevNotFoundResponse());
+      if (response) return this.respond(omitHeadBody(req, response));
+      return this.respond(omitHeadBody(req, createDevNotFoundResponse()));
     }
 
-    return this.respond(createDevNotFoundResponse());
+    return this.respond(omitHeadBody(req, createDevNotFoundResponse()));
   }
 }

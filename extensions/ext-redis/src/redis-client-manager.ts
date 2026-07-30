@@ -1,5 +1,5 @@
 import { createClient } from "redis";
-import { getEnv } from "veryfront/platform";
+import { getEnv } from "veryfront";
 import { logger as baseLogger, MAX_TIMER_DELAY_MS } from "veryfront/utils";
 import { INITIALIZATION_ERROR } from "veryfront/errors";
 import { requireRedisUrl } from "./connection-config.ts";

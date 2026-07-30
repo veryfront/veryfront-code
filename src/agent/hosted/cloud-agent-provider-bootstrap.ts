@@ -39,6 +39,10 @@ type AuthJwtExtensionModule = {
   createAuthProvider: (options?: Record<string, unknown>) => AuthProvider;
 };
 
+type SchemaZodExtensionModule = {
+  createZodAdapter: () => SchemaValidator;
+};
+
 type ZeroArgumentConstructor<T> = new () => T;
 
 const OPEN_TELEMETRY_EXTENSION_PACKAGE = "@veryfront/ext-observability-opentelemetry";
@@ -203,7 +207,12 @@ async function loadDefaultCreateBashTool(): Promise<
 /** Ensures a SchemaValidator is registered, falling back to the built-in Zod adapter. */
 export async function ensureDefaultSchemaValidator(): Promise<void> {
   if (tryResolve<SchemaValidator>("SchemaValidator")) return;
-  const { createZodAdapter } = await import("../../../extensions/ext-schema-zod/src/adapter.ts");
+  const { createZodAdapter } = await importFirstPartyExtensionModule<
+    SchemaZodExtensionModule
+  >(
+    "ext-schema-zod",
+    "@veryfront/ext-schema-zod",
+  );
   if (tryResolve<SchemaValidator>("SchemaValidator")) return;
   const validator = createZodAdapter();
   if (!tryResolve<SchemaValidator>("SchemaValidator")) {

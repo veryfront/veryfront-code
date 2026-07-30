@@ -1,13 +1,10 @@
 /**
  * Shared behavioral machinery for Popover and DropdownMenu.
- * TODO(a11y): focus trap, portal + collision-aware positioning (flip/shift),
- * aria-controls, side/align offsets.
- * DropdownMenu: roving focus, typeahead, Tab, aria-activedescendant, sub menus.
  * @module react/components/ui/anchored-surface
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { Slot } from "./slot.tsx";
+import { composeRefs, Slot } from "./slot.tsx";
 import { Floating } from "./floating.tsx";
 import { type DisclosureOptions, useDisclosure } from "./disclosure.ts";
 
@@ -16,11 +13,19 @@ export interface AnchoredState {
   open: boolean;
   setOpen: (open: boolean) => void;
   anchorRef: React.RefObject<HTMLElement | null>;
+  triggerRef: React.RefObject<HTMLButtonElement | null>;
+  defaultTriggerId: string;
+  defaultContentId: string;
+  triggerId: string;
+  contentId: string;
+  setTriggerId: React.Dispatch<React.SetStateAction<string>>;
+  setContentId: React.Dispatch<React.SetStateAction<string>>;
 }
 
 /** Props for `AnchoredTrigger` (returned by the factory). */
 export interface AnchoredTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   asChild?: boolean;
+  ref?: React.Ref<HTMLButtonElement>;
   /** `aria-haspopup` value -- `"dialog"` for Popover, `"menu"` for DropdownMenu. */
   haspopup: NonNullable<React.AriaAttributes["aria-haspopup"]>;
 }
@@ -28,6 +33,12 @@ export interface AnchoredTriggerProps extends React.ButtonHTMLAttributes<HTMLBut
 /** Props for `AnchoredContent` (returned by the factory). */
 export interface AnchoredContentProps extends React.HTMLAttributes<HTMLDivElement> {
   align?: "start" | "end";
+  /** Internal focus target used by Popover and DropdownMenu skins. */
+  initialFocus?: true | string;
+}
+
+function stableDomId(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]/g, "");
 }
 
 /**
@@ -54,7 +65,34 @@ export function createAnchoredSurfaceParts() {
   ): React.ReactElement {
     const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
     const anchorRef = React.useRef<HTMLElement | null>(null);
-    const ctx = React.useMemo(() => ({ open: isOpen, setOpen, anchorRef }), [isOpen, setOpen]);
+    const triggerRef = React.useRef<HTMLButtonElement | null>(null);
+    const reactId = stableDomId(React.useId());
+    const defaultTriggerId = `vf-anchored-${reactId}-trigger`;
+    const defaultContentId = `vf-anchored-${reactId}-content`;
+    const [triggerId, setTriggerId] = React.useState(defaultTriggerId);
+    const [contentId, setContentId] = React.useState(defaultContentId);
+    const ctx = React.useMemo(
+      () => ({
+        open: isOpen,
+        setOpen,
+        anchorRef,
+        triggerRef,
+        defaultTriggerId,
+        defaultContentId,
+        triggerId,
+        contentId,
+        setTriggerId,
+        setContentId,
+      }),
+      [
+        contentId,
+        defaultContentId,
+        defaultTriggerId,
+        isOpen,
+        setOpen,
+        triggerId,
+      ],
+    );
     return (
       <span ref={anchorRef} className="relative inline-block">
         <Context.Provider value={ctx}>
@@ -69,21 +107,52 @@ export function createAnchoredSurfaceParts() {
    * click. Skins differ only in the `haspopup` value they supply.
    */
   function AnchoredTrigger(
-    { children, asChild, onClick, haspopup, ...props }: AnchoredTriggerProps,
+    {
+      children,
+      asChild,
+      disabled,
+      id,
+      onClick,
+      haspopup,
+      ref,
+      type,
+      ...props
+    }: AnchoredTriggerProps,
   ): React.ReactElement {
     const ctx = React.useContext(Context);
+    if (!ctx) {
+      throw new Error("Anchored trigger parts must be used within their root");
+    }
     const Comp = asChild ? Slot : "button";
+    const resolvedId = id ?? ctx.defaultTriggerId;
+    React.useLayoutEffect(() => {
+      ctx.setTriggerId(resolvedId);
+      return () => {
+        ctx.setTriggerId((current) => current === resolvedId ? ctx.defaultTriggerId : current);
+      };
+    }, [ctx.defaultTriggerId, ctx.setTriggerId, resolvedId]);
+    const setTriggerRef = React.useCallback((element: HTMLButtonElement | null) => {
+      ctx.triggerRef.current = element;
+    }, [ctx.triggerRef]);
+    const composedRef = React.useMemo(
+      () => composeRefs<HTMLButtonElement>(setTriggerRef, ref),
+      [ref, setTriggerRef],
+    );
     return (
       <Comp
-        {...(asChild ? {} : { type: "button" as const })}
+        {...props}
+        type={asChild ? type : type ?? "button"}
+        ref={composedRef}
+        id={resolvedId}
         aria-haspopup={haspopup}
-        aria-expanded={ctx?.open}
+        aria-expanded={ctx.open}
+        aria-controls={ctx.contentId}
+        aria-disabled={asChild && disabled ? true : undefined}
+        disabled={asChild ? undefined : disabled}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           onClick?.(e);
-          // Guard ctx before reading ctx.open (trigger may render outside a Root).
-          if (ctx) ctx.setOpen(!ctx.open);
+          if (!e.defaultPrevented && !disabled) ctx.setOpen(!ctx.open);
         }}
-        {...props}
       >
         {children}
       </Comp>
@@ -92,21 +161,44 @@ export function createAnchoredSurfaceParts() {
 
   /** `Floating` wrapper with base classes. Skins extend via `className` and `role`. */
   function AnchoredContent(
-    { children, className, align, ...props }: AnchoredContentProps,
+    {
+      children,
+      className,
+      align,
+      id,
+      initialFocus,
+      tabIndex,
+      "aria-labelledby": labelledBy,
+      ...props
+    }: AnchoredContentProps,
   ): React.ReactElement | null {
     const ctx = React.useContext(Context);
-    if (!ctx) return null;
+    if (!ctx) {
+      throw new Error("Anchored content parts must be used within their root");
+    }
+    const resolvedId = id ?? ctx.defaultContentId;
+    React.useLayoutEffect(() => {
+      ctx.setContentId(resolvedId);
+      return () => {
+        ctx.setContentId((current) => current === resolvedId ? ctx.defaultContentId : current);
+      };
+    }, [ctx.defaultContentId, ctx.setContentId, resolvedId]);
     return (
       <Floating
+        {...props}
         anchorRef={ctx.anchorRef}
         open={ctx.open}
         align={align}
         onDismiss={() => ctx.setOpen(false)}
+        initialFocus={initialFocus}
+        returnFocusRef={ctx.triggerRef}
+        id={resolvedId}
+        aria-labelledby={labelledBy ?? ctx.triggerId}
+        tabIndex={tabIndex ?? -1}
         className={cn(
           "z-50 overflow-hidden rounded-lg bg-[var(--popover)] text-[var(--foreground)] shadow-sm outline-none",
           className,
         )}
-        {...props}
       >
         {children}
       </Floating>

@@ -3,13 +3,31 @@ import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   checkVersionCompatibility,
+  clearProjectVersionCache,
   detectReactVersion,
   getReactVersionInfo,
+  getReactVersionInfoForProject,
   getRecommendedSSRMethod,
   hasFeature,
   parseVersion,
 } from "./index.ts";
+import { checkVersionCompatibilityForInfo } from "./compatibility-checker.ts";
+import { detectFeatures } from "./feature-detector.ts";
+import type { ReactVersionInfo } from "./types.ts";
 import { __resetReactVersionCacheForTests } from "./version-cache.ts";
+
+function reactVersionInfo(version: string, major: number, minor: number): ReactVersionInfo {
+  return {
+    version,
+    major,
+    minor,
+    patch: 0,
+    isReact17: major === 17,
+    isReact18: major === 18,
+    isReact19: major === 19,
+    features: detectFeatures(major, minor),
+  };
+}
 
 describe("React Version Detector", () => {
   describe("Version Parsing", () => {
@@ -156,6 +174,17 @@ describe("React Version Detector", () => {
   });
 
   describe("Version Compatibility Checking", () => {
+    it("rejects unavailable required React 19 capabilities deterministically", () => {
+      const res = checkVersionCompatibilityForInfo(
+        reactVersionInfo("18.2.0", 18, 2),
+        ["useFormStatus", "useOptimistic"],
+      );
+
+      assertEquals(res.compatible, false);
+      assertEquals(res.warnings, []);
+      assertEquals(res.errors.length, 2);
+    });
+
     it("returns valid compatibility report structure", () => {
       const res = checkVersionCompatibility(["suspense", "renderToString"]);
       assertEquals(typeof res.compatible, "boolean");
@@ -169,12 +198,13 @@ describe("React Version Detector", () => {
       assertEquals(res.errors.length, 0);
     });
 
-    it("generates warnings for React 19 features on older versions", () => {
+    it("fails closed for required React 19 features on older versions", () => {
       const info = getReactVersionInfo();
       if (info.isReact19) return;
 
       const res = checkVersionCompatibility(["useFormStatus"]);
-      assertEquals(res.warnings.some((w) => w.includes("useFormStatus")), true);
+      assertEquals(res.compatible, false);
+      assertEquals(res.errors.some((error) => error.includes("useFormStatus")), true);
     });
 
     it("generates errors for React 18 features on React 17", () => {
@@ -199,12 +229,13 @@ describe("React Version Detector", () => {
       assert(res.errors.length >= 3);
     });
 
-    it("categorizes React 19 features as warnings not errors", () => {
+    it("categorizes missing required React 19 features as errors", () => {
       const info = getReactVersionInfo();
       if (info.isReact19) return;
 
       const res = checkVersionCompatibility(["useOptimistic", "serverActions"]);
-      assert(res.warnings.length >= 2);
+      assertEquals(res.compatible, false);
+      assert(res.errors.length >= 2);
     });
   });
 
@@ -214,6 +245,54 @@ describe("React Version Detector", () => {
       const b = getReactVersionInfo();
       assertEquals(a.version, b.version);
       assertEquals(a, b);
+    });
+
+    it("returns immutable cached version metadata", () => {
+      const info = getReactVersionInfo();
+
+      assertEquals(Object.isFrozen(info), true);
+      assertEquals(Object.isFrozen(info.features), true);
+      assertEquals(Reflect.set(info.features, "streaming", false), false);
+    });
+
+    it("separates project-id cache keys from directory cache keys", async () => {
+      const firstDir = await Deno.makeTempDir({ prefix: "vf-react-cache-a-" });
+      const secondDir = await Deno.makeTempDir({ prefix: "vf-react-cache-b-" });
+      try {
+        await Deno.writeTextFile(
+          `${firstDir}/package.json`,
+          JSON.stringify({ dependencies: { react: "17.0.2" } }),
+        );
+        await Deno.writeTextFile(
+          `${secondDir}/package.json`,
+          JSON.stringify({ dependencies: { react: "19.1.0" } }),
+        );
+
+        assertEquals(
+          (await getReactVersionInfoForProject(firstDir, secondDir)).version,
+          "17.0.2",
+        );
+        assertEquals(
+          (await getReactVersionInfoForProject(secondDir)).version,
+          "19.1.0",
+        );
+
+        await Deno.writeTextFile(
+          `${firstDir}/package.json`,
+          JSON.stringify({ dependencies: { react: "18.2.0" } }),
+        );
+        clearProjectVersionCache(secondDir);
+        assertEquals(
+          (await getReactVersionInfoForProject(firstDir, secondDir)).version,
+          "18.2.0",
+        );
+      } finally {
+        __resetReactVersionCacheForTests();
+        await Promise.all([
+          Deno.remove(firstDir, { recursive: true }),
+          Deno.remove(secondDir, { recursive: true }),
+        ]);
+      }
     });
 
     it("cache reset function exists for testing", () => {

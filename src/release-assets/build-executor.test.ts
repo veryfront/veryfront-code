@@ -1429,11 +1429,12 @@ describe("release asset build executor", () => {
     const files = [
       {
         path: "pages/index.tsx",
-        content: 'import { useWorkflow } from "veryfront/workflow"; export default useWorkflow;',
+        content:
+          'import { useWorkflow } from "veryfront/workflow/react"; export default useWorkflow;',
       },
     ];
     const client = makeClient(files, rec);
-    const frameworkUrl = "/_vf_modules/_veryfront/workflow/react/index.js";
+    const frameworkUrl = "/_vf_modules/_veryfront/react/workflow/index.js";
     const transform = (_source: string, sourceFile: string) => {
       if (sourceFile.endsWith("pages/index.tsx")) {
         return Promise.resolve(
@@ -1447,7 +1448,7 @@ describe("release asset build executor", () => {
 
     const manifest = parseReleaseAssetManifest(rec.manifest);
     assertExists(manifest);
-    assertExists(manifest.dependencies["veryfront/workflow"]);
+    assertExists(manifest.dependencies["veryfront/workflow/react"]);
     const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
     assertExists(pageHash);
 
@@ -1456,7 +1457,7 @@ describe("release asset build executor", () => {
     assert(!pageUpload.text.includes(`"${frameworkUrl}"`));
     assert(
       pageUpload.text.includes(
-        `"/_vf/assets/${manifest.dependencies["veryfront/workflow"]?.contentHash}.js"`,
+        `"/_vf/assets/${manifest.dependencies["veryfront/workflow/react"]?.contentHash}.js"`,
       ),
     );
   });

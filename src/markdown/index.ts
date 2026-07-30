@@ -1,9 +1,9 @@
 /**
- * Server-rendered CommonMark and GitHub Flavored Markdown.
+ * Dependency-free Markdown source presentation for React.
  *
- * Semantic Markdown is rendered synchronously during SSR. Fenced source stays
- * readable while browser-only syntax highlighting and Mermaid rendering load.
- * Raw HTML and unsafe link protocols are not emitted by default.
+ * Core renders escaped source explicitly. Semantic Markdown is an optional
+ * capability supplied by a trusted extension through
+ * `MarkdownRendererProvider` or the per-component `renderer` prop.
  *
  * @module markdown
  *
@@ -19,6 +19,14 @@
 
 export {
   type CodeBlockProps,
+  type Components,
   Markdown,
+  type MarkdownComponents,
+  type MarkdownElementRendererProps,
   type MarkdownProps,
+  type MarkdownRenderer,
+  MarkdownRendererCapabilityError,
+  type MarkdownRendererProps,
+  MarkdownRendererProvider,
+  type MarkdownRendererProviderProps,
 } from "#veryfront/react/components/chat/markdown.tsx";

@@ -105,7 +105,8 @@ const FILE_SIZE_CEILINGS: Record<string, number> = {
   // useComposerValue extracted to composition/use-composer-value.ts.
   "src/react/components/chat/chat/composition/chat-composer.tsx": 619,
   "src/react/components/chat/agent-picker.tsx": 494,
-  "src/react/components/chat/chat-actions.tsx": 503,
+  // Settings submenu behavior lives in chat-actions-settings.tsx.
+  "src/react/components/chat/chat-actions.tsx": 315,
   "src/react/components/chat/chat/controlled-chat.tsx": 242,
   "src/react/components/chat/chat/app-mode-chat.tsx": 177,
 };

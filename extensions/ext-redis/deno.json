@@ -18,7 +18,7 @@
   },
   "imports": {
     "redis": "npm:redis@5.11.0",
-    "veryfront/agent": "../../src/agent/index.ts",
+    "veryfront": "../../src/index.ts",
     "veryfront/errors": "../../src/errors/index.ts",
     "veryfront/extensions": "../../src/extensions/index.ts",
     "veryfront/extensions/distributed": "../../src/extensions/distributed/index.ts",
@@ -29,9 +29,7 @@
     "veryfront/extensions/distributed/workflow-support": "../../src/extensions/distributed/workflow-support.ts",
     "veryfront/observability": "../../src/observability/index.ts",
     "veryfront/observability/otlp-setup": "../../src/observability/tracing/otlp-setup.ts",
-    "veryfront/platform": "../../src/platform/index.ts",
     "veryfront/utils": "../../src/utils/index.ts",
-    "veryfront/workflow": "../../src/workflow/index.ts",
     "veryfront/workflow/claude-code": "../../src/workflow/claude-code/index.ts"
   },
   "tasks": {

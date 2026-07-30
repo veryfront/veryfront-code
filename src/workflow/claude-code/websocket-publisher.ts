@@ -15,7 +15,8 @@ import type {
   ClientCommandHandler,
   PongEvent,
 } from "./types.ts";
-import { ORCHESTRATION_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { INVALID_ARGUMENT, ORCHESTRATION_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { parsePositiveDurationWithLabel } from "../types.ts";
 
 const logger = baseLogger.component("websocket-publisher");
 
@@ -65,6 +66,15 @@ export class WebSocketPublisher implements BidirectionalPublisher {
   private pingTimer: number | null = null;
 
   constructor(config: WebSocketPublisherConfig) {
+    if (typeof config.runId !== "string" || !config.runId.trim()) {
+      throw INVALID_ARGUMENT.create({ detail: "WebSocket publisher runId must not be empty" });
+    }
+    if (config.pingInterval !== undefined && config.pingInterval !== 0) {
+      parsePositiveDurationWithLabel(
+        config.pingInterval,
+        "WebSocket publisher pingInterval",
+      );
+    }
     this.config = {
       debug: false,
       pingInterval: DEFAULT_PING_INTERVAL_MS,
@@ -78,7 +88,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
   private setupSocketListeners(): void {
     const { socket } = this.config;
 
-    socket.onmessage = (event) => {
+    socket.addEventListener("message", (event) => {
       try {
         const parsed: unknown = JSON.parse(event.data);
         if (!parsed || typeof parsed !== "object") return;
@@ -89,14 +99,15 @@ export class WebSocketPublisher implements BidirectionalPublisher {
           logger.error("Failed to parse command", error);
         }
       }
-    };
+    });
 
-    socket.onclose = () => {
+    socket.addEventListener("close", () => {
       this.closed = true;
       this.stopPingInterval();
-    };
+      this.commandHandlers.clear();
+    });
 
-    socket.onerror = (event) => {
+    socket.addEventListener("error", (event) => {
       if (this.config.debug) {
         logger.error("Socket error", { event: String(event) });
       }
@@ -104,7 +115,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
       // The socket may or may not close after an error, but we should
       // proactively clean up in case the close event doesn't fire
       this.stopPingInterval();
-    };
+    });
   }
 
   private handleCommand(command: ClientCommand): void {
@@ -169,14 +180,13 @@ export class WebSocketPublisher implements BidirectionalPublisher {
    * Send an event to the client
    */
   send(event: ClaudeCodeEventExtended): void {
-    if (this.closed) return;
+    if (this.closed) {
+      throw ORCHESTRATION_ERROR.create({ detail: "WebSocket publisher is closed" });
+    }
 
     const { socket } = this.config;
     if (socket.readyState !== WebSocket.OPEN) {
-      if (this.config.debug) {
-        logger.warn("Socket not open, dropping event");
-      }
-      return;
+      throw ORCHESTRATION_ERROR.create({ detail: "WebSocket is not open" });
     }
 
     socket.send(JSON.stringify(event));
@@ -258,19 +268,34 @@ export function createWebSocketHandler(config: {
 
     const { socket, response } = Deno.upgradeWebSocket(req);
 
-    socket.onopen = () => {
+    socket.addEventListener("open", () => {
       const publisher = new WebSocketPublisher({
         socket,
         runId,
         debug: config.debug,
       });
 
-      config.onConnection(publisher, runId);
+      void Promise.resolve()
+        .then(() => config.onConnection(publisher, runId))
+        .catch((error) => {
+          logger.error("WebSocket connection callback failed", {
+            runId,
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+          publisher.close();
+        });
 
-      socket.onclose = () => {
-        config.onClose?.(runId);
-      };
-    };
+      socket.addEventListener("close", () => {
+        void Promise.resolve()
+          .then(() => config.onClose?.(runId))
+          .catch((error) => {
+            logger.error("WebSocket close callback failed", {
+              runId,
+              errorName: error instanceof Error ? error.name : typeof error,
+            });
+          });
+      }, { once: true });
+    }, { once: true });
 
     return response;
   };
@@ -283,6 +308,8 @@ export function createWebSocketHandler(config: {
  */
 export class AgentController {
   private cancelled = false;
+  private disposed = false;
+  private unsubscribeCommand: () => void;
   private pendingApprovals = new Map<
     string,
     {
@@ -305,11 +332,18 @@ export class AgentController {
       onCancel?: (reason?: string) => void;
     } = {},
   ) {
+    if (config.approvalTimeout !== undefined) {
+      parsePositiveDurationWithLabel(config.approvalTimeout, "Agent approvalTimeout");
+    }
+    if (config.inputTimeout !== undefined) {
+      parsePositiveDurationWithLabel(config.inputTimeout, "Agent inputTimeout");
+    }
     // Subscribe to commands
-    publisher.onCommand((command) => this.handleCommand(command));
+    this.unsubscribeCommand = publisher.onCommand((command) => this.handleCommand(command));
   }
 
   private handleCommand(command: ClientCommand): void {
+    if (this.disposed) return;
     switch (command.type) {
       case "cancel":
         this.handleCancel(command.reason);
@@ -331,7 +365,6 @@ export class AgentController {
 
   private handleCancel(reason?: string): void {
     this.cancelled = true;
-    this.config.onCancel?.(reason);
 
     // Reject all pending approvals
     for (const [, pending] of this.pendingApprovals) {
@@ -346,6 +379,8 @@ export class AgentController {
       pending.reject(ORCHESTRATION_ERROR.create({ detail: "Cancelled" }));
     }
     this.inputResolvers = [];
+
+    this.config.onCancel?.(reason);
   }
 
   private handleApproval(
@@ -388,8 +423,16 @@ export class AgentController {
     if (this.cancelled) {
       return Promise.reject(ORCHESTRATION_ERROR.create({ detail: "Agent cancelled" }));
     }
+    if (this.disposed) {
+      return Promise.reject(ORCHESTRATION_ERROR.create({ detail: "Agent controller disposed" }));
+    }
+    if (this.pendingApprovals.has(toolCallId)) {
+      return Promise.reject(
+        INVALID_ARGUMENT.create({ detail: `Approval is already pending: ${toolCallId}` }),
+      );
+    }
 
-    const timeout = this.config.approvalTimeout || DEFAULT_APPROVAL_TIMEOUT_MS;
+    const timeout = this.config.approvalTimeout ?? DEFAULT_APPROVAL_TIMEOUT_MS;
 
     // Send approval request to client
     this.publisher.send({
@@ -424,8 +467,11 @@ export class AgentController {
     if (this.cancelled) {
       return Promise.reject(ORCHESTRATION_ERROR.create({ detail: "Agent cancelled" }));
     }
+    if (this.disposed) {
+      return Promise.reject(ORCHESTRATION_ERROR.create({ detail: "Agent controller disposed" }));
+    }
 
-    const timeout = this.config.inputTimeout || DEFAULT_INPUT_TIMEOUT_MS;
+    const timeout = this.config.inputTimeout ?? DEFAULT_INPUT_TIMEOUT_MS;
 
     // Send input request to client
     this.publisher.send({
@@ -461,14 +507,21 @@ export class AgentController {
    * Cleanup resources
    */
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.unsubscribeCommand();
+    const disposalError = ORCHESTRATION_ERROR.create({ detail: "Agent controller disposed" });
+
     // Clear all pending operations
     for (const [, pending] of this.pendingApprovals) {
       if (pending.timeout) clearTimeout(pending.timeout);
+      pending.reject(disposalError);
     }
     this.pendingApprovals.clear();
 
     for (const pending of this.inputResolvers) {
       if (pending.timeout) clearTimeout(pending.timeout);
+      pending.reject(disposalError);
     }
     this.inputResolvers = [];
   }

@@ -1,5 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Markdown } from "veryfront/react/components/chat";
+import {
+  Markdown,
+  type MarkdownRendererProps,
+  MarkdownRendererProvider,
+} from "veryfront/react/components/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -15,24 +19,34 @@ import { ReviewSurface, StoryFrame } from "../support/StoryFrame";
 const importCode = `import { Markdown } from "veryfront/react/components/chat"`;
 
 const compositionTree =
-  `Markdown  <- prose renderer; no exported sub-parts — configure it with props
-  +-- children         <- the markdown string to render (GFM + highlighting)
-  +-- renderCodeBlock  <- swap the fenced-code renderer (defaults to CodeBlock)
-  +-- components        <- override element renderers (anchor / table / heading / …)
-  +-- remarkPlugins / rehypePlugins  <- extra plugins, appended to the built-ins
-  +-- className         <- merged onto the container (via cn)`;
+  `Markdown  <- dependency-free source boundary
+  +-- children         <- exact Markdown source
+  +-- renderer         <- explicit rich-renderer capability; null selects plain source
+  +-- renderCodeBlock  <- forwarded only to the selected renderer
+  +-- components       <- forwarded only to the selected renderer
+  +-- className        <- merged onto the container
+MarkdownRendererProvider  <- installs a renderer for a subtree`;
+
+function PreviewRenderer({ source }: MarkdownRendererProps) {
+  return (
+    <article className="space-y-2" data-story-renderer="preview">
+      <strong className="block">Extension renderer selected</strong>
+      <pre className="whitespace-pre-wrap text-sm"><code>{source}</code></pre>
+    </article>
+  );
+}
 
 function MarkdownDocsPage() {
   return (
     <DocsPage>
       <DocsHero
         title="Markdown"
-        lead="Renders chat markdown with GitHub-flavored syntax, syntax-highlighted code, and tables. Fenced code renders through the shiki-based `CodeBlock` primitive (UI/CodeBlock)."
+        lead="Presents escaped Markdown source by default and delegates semantic rendering only to an explicit extension-owned renderer."
       />
 
       <DocsSection
         title="Document"
-        description="`Markdown` takes a markdown string as children and renders a full prose document with GFM support — including syntax-highlighted fenced code blocks."
+        description="`Markdown` keeps source visible and escaped when no rich-renderer capability is installed."
       >
         <DocsExampleAuto of={Document} />
       </DocsSection>
@@ -48,7 +62,7 @@ function MarkdownDocsPage() {
       <DocsSection title="API Reference">
         <DocsPropsTable
           component="Markdown"
-          description="Markdown prose renderer"
+          description="Markdown source and renderer-capability boundary"
           props={[
             {
               name: "children",
@@ -56,25 +70,20 @@ function MarkdownDocsPage() {
               description: "Markdown content to render",
             },
             {
+              name: "renderer",
+              type: "MarkdownRenderer | null",
+              description:
+                "Per-instance rich renderer; null explicitly selects escaped plain source",
+            },
+            {
               name: "renderCodeBlock",
               type: "(props: CodeBlockProps) => ReactNode",
-              description: "Custom renderer for code blocks",
+              description: "Fenced-code override forwarded to the selected renderer",
             },
             {
               name: "components",
-              type: "Components",
-              description:
-                "Override element renderers (anchor / table / heading / blockquote / …), merged over the built-in defaults",
-            },
-            {
-              name: "remarkPlugins",
-              type: "PluggableList",
-              description: "Extra remark plugins, appended after the built-ins (GFM etc.)",
-            },
-            {
-              name: "rehypePlugins",
-              type: "PluggableList",
-              description: "Extra rehype plugins, appended after the built-ins",
+              type: "MarkdownComponents",
+              description: "Element overrides forwarded to the selected renderer",
             },
             {
               name: "className",
@@ -120,43 +129,32 @@ export const Document: Story = {
   ),
 };
 
-// Acid test: swap ONE leaf — the fenced-code renderer — via `renderCodeBlock`,
-// without re-implementing `Markdown`. Prose, lists, and inline formatting keep
-// the default rendering; only code blocks change.
-export const CustomCodeBlock: Story = {
-  name: "Custom code block (renderCodeBlock)",
+// Acid test: install one renderer capability without re-implementing the
+// source boundary, container styling, or explicit plain-mode behavior.
+export const InjectedRenderer: Story = {
+  name: "Injected extension renderer",
   tags: ["!dev", "acid-test"],
   parameters: {
     docs: {
       source: {
-        code: `import { Markdown } from "veryfront/react/components/chat";
+        code: `import {
+  Markdown,
+  MarkdownRendererProvider,
+} from "veryfront/react/components/chat";
+import { ProjectMarkdownRenderer } from "./project-markdown-renderer";
 
-<Markdown
-  renderCodeBlock={({ code, language }) => (
-    <pre className="rounded-md bg-[var(--foreground)] p-3 text-[var(--background)]">
-      <span className="mb-1 block text-xs opacity-60">{language ?? "code"}</span>
-      <code>{code}</code>
-    </pre>
-  )}
->
-  {markdown}
-</Markdown>`,
+<MarkdownRendererProvider renderer={ProjectMarkdownRenderer}>
+  <Markdown>{markdown}</Markdown>
+</MarkdownRendererProvider>`,
       },
     },
   },
   render: () => (
     <StoryFrame maxWidth="760px">
-      <ReviewSurface label="Custom code block">
-        <Markdown
-          renderCodeBlock={({ code, language }) => (
-            <pre className="overflow-x-auto rounded-md bg-[var(--foreground)] p-3 text-[var(--background)]">
-              <span className="mb-1 block text-xs opacity-60">{language ?? "code"}</span>
-              <code>{code}</code>
-            </pre>
-          )}
-        >
-          {markdownExample}
-        </Markdown>
+      <ReviewSurface label="Injected renderer">
+        <MarkdownRendererProvider renderer={PreviewRenderer}>
+          <Markdown>{markdownExample}</Markdown>
+        </MarkdownRendererProvider>
       </ReviewSurface>
     </StoryFrame>
   ),

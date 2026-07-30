@@ -9,6 +9,8 @@ import { ApiRouteMatcher } from "#veryfront/routing/api/index.ts";
 import { ComponentRegistry } from "#veryfront/modules/component-registry/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { StudioCaptureBundleProvider } from "#veryfront/extensions/studio/index.ts";
+import type { DevUiAssetProvider } from "#veryfront/extensions/dev-ui";
+import type { NodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { bootstrapDev, type BootstrapResult, createRetryableDisposer } from "../bootstrap.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
@@ -37,6 +39,7 @@ import {
 } from "#veryfront/discovery";
 import type { ProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
 import { ServerStartupCleanupError } from "../startup-cleanup-error.ts";
+import { inheritRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 const rscLog = logger.component("rsc");
 const fsAdapterLog = logger.component("fs-adapter");
@@ -70,6 +73,8 @@ export class DevServer {
   private server?: Server;
   private appConfig: VeryfrontConfig | undefined;
   private studioCaptureProvider?: Readonly<StudioCaptureBundleProvider>;
+  private devUiAssetProvider?: Readonly<DevUiAssetProvider>;
+  private _nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
   private requestHandler?: RequestHandler;
   private _handler?: (req: Request) => Promise<Response>;
   readonly ready: Promise<void>;
@@ -174,6 +179,8 @@ export class DevServer {
       this.adapter = bootstrap.adapter;
       this.appConfig = bootstrap.config;
       this.studioCaptureProvider = bootstrap.studioCaptureProvider;
+      this.devUiAssetProvider = bootstrap.devUiAssetProvider;
+      this._nodeWebSocketServerProvider = bootstrap.nodeWebSocketServerProvider;
 
       // Merge CLI enableHMR flag into config to ensure HMR scripts are disabled when --no-hmr is passed
       if (this.appConfig && this.options.enableHMR === false) {
@@ -276,7 +283,10 @@ export class DevServer {
         defaultProjectSlug,
         this.options.defaultProjectId,
         localProjects,
-        { studioCaptureProvider: this.studioCaptureProvider },
+        {
+          studioCaptureProvider: this.studioCaptureProvider,
+          devUiAssetProvider: this.devUiAssetProvider,
+        },
       );
       this.requestHandler = requestHandler;
 
@@ -297,7 +307,7 @@ export class DevServer {
           if (isWebSocketUpgrade) return baseHandler(req);
 
           const interceptedReq = await interceptor(req);
-          return baseHandler(interceptedReq);
+          return baseHandler(inheritRequestPeerProvenance(req, interceptedReq));
         }
         : baseHandler;
 
@@ -315,6 +325,7 @@ export class DevServer {
         port: this.options.port,
         hostname: this.options.bindAddress ?? LOCALHOST.IPV4,
         signal: this.options.signal,
+        nodeWebSocketServerProvider: this._nodeWebSocketServerProvider,
         onListen: ({ port }: { hostname: string; port: number }) => {
           this.installRuntimePort(port);
           const url = buildLocalhostUrl(port);
@@ -370,6 +381,11 @@ export class DevServer {
       throw INITIALIZATION_ERROR.create({ detail: "DevServer not started. Call start() first." });
     }
     return this._handler;
+  }
+
+  /** Explicit Node WebSocket implementation captured with this bootstrap generation. */
+  get nodeWebSocketServerProvider(): Readonly<NodeWebSocketServerProvider> | undefined {
+    return this._nodeWebSocketServerProvider;
   }
 
   private buildDiscoveryConfig(): ProjectDiscoveryConfig {

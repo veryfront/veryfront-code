@@ -1,0 +1,65 @@
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { createDevUiAssetProvider } from "#veryfront/extensions/dev-ui";
+import type { HandlerContext } from "../../types.ts";
+import { ProjectsHandler } from "./index.ts";
+
+const BUNDLE = "globalThis.__veryfrontProjectsTest = true;";
+const PROVIDER = createDevUiAssetProvider(BUNDLE);
+
+function projectsContext(): HandlerContext {
+  return {
+    projectDir: "/project",
+    projectSlug: undefined,
+    parsedDomain: { isVeryfrontDomain: true },
+    securityConfig: null,
+    cspUserHeader: null,
+  } as HandlerContext;
+}
+
+Deno.test("projects handler serves its shell and exact captured bundle", async () => {
+  const handler = new ProjectsHandler(PROVIDER);
+  const shell = (await handler.handle(
+    new Request("https://veryfront.test/_projects"),
+    projectsContext(),
+  )).response!;
+  assertEquals(shell.status, 200);
+  assertStringIncludes(await shell.text(), 'data-veryfront-dev-ui="projects"');
+
+  const asset = (await handler.handle(
+    new Request("https://veryfront.test/_projects/ui/index.js"),
+    projectsContext(),
+  )).response!;
+  assertEquals(asset.status, 200);
+  assertEquals(await asset.text(), BUNDLE);
+
+  const nested = (await handler.handle(
+    new Request("https://veryfront.test/_projects/ui/components/App.js"),
+    projectsContext(),
+  )).response!;
+  assertEquals(nested.status, 404);
+});
+
+Deno.test("projects handler rejects asset mutations and fails closed without assets", async () => {
+  const handler = new ProjectsHandler(PROVIDER);
+  const mutation = (await handler.handle(
+    new Request("https://veryfront.test/_projects/ui/index.js", { method: "POST" }),
+    projectsContext(),
+  )).response!;
+  assertEquals(mutation.status, 405);
+  assertEquals(mutation.headers.get("allow"), "GET, HEAD");
+
+  const unavailable = new ProjectsHandler();
+  const unavailableShell = (await unavailable.handle(
+    new Request("https://veryfront.test/_projects"),
+    projectsContext(),
+  )).response!;
+  assertEquals(unavailableShell.status, 503);
+  assertStringIncludes(await unavailableShell.text(), "@veryfront/ext-dev-ui-react");
+
+  const unavailableBundle = (await unavailable.handle(
+    new Request("https://veryfront.test/_projects/ui/index.js"),
+    projectsContext(),
+  )).response!;
+  assertEquals(unavailableBundle.status, 503);
+  assertStringIncludes(await unavailableBundle.text(), "@veryfront/ext-dev-ui-react");
+});

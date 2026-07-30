@@ -222,6 +222,30 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     assertEquals(await response.text(), extensionBundle);
   });
 
+  it("routes one startup-selected Dev UI bundle to the dashboard", async () => {
+    const extensionBundle = "globalThis.__veryfrontDevUiExtension = true;";
+    const { registry } = createHandlerRegistry(projectDir, adapter, {
+      devUiAssetProvider: { browserBundle: extensionBundle },
+    });
+    const response = await registry.execute(
+      new Request("http://localhost/_dev/ui/index.js", {
+        headers: { host: "localhost" },
+      }),
+      {
+        projectDir,
+        adapter,
+        securityConfig: null,
+        cspUserHeader: null,
+        isLocalProject: true,
+        resolvedEnvironment: "preview",
+      } as Parameters<typeof registry.execute>[1],
+    );
+
+    assertExists(response);
+    assertEquals(response.status, 200);
+    assertEquals(await response.text(), extensionBundle);
+  });
+
   it("supports multiple simultaneous overrides", () => {
     const mockAuth = createMockHandler("AuthHandler", HandlerPriority.CRITICAL, "/__/auth");
     const mockSSR = createMockHandler("SSRHandler", HandlerPriority.LOW, "/");

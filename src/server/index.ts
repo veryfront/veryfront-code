@@ -45,6 +45,12 @@ import { RateLimiter } from "#veryfront/modules/server/index.ts";
 import { HMR_MAX_MESSAGES_PER_MINUTE } from "#veryfront/utils";
 import { HMRHandler } from "./handlers/preview/hmr.handler.ts";
 import { ServerStartupCleanupError } from "./startup-cleanup-error.ts";
+import {
+  captureNodeWebSocketServer,
+  NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE,
+  type NodeWebSocketConnection,
+  type NodeWebSocketServer,
+} from "#veryfront/extensions/websocket";
 
 /** Default server port when no port is specified */
 const DEFAULT_SERVER_PORT = 3_000;
@@ -247,6 +253,7 @@ export async function createHandler(
         config: bootstrap.config,
         profile: "production",
         studioCaptureProvider: bootstrap.studioCaptureProvider,
+        devUiAssetProvider: bootstrap.devUiAssetProvider,
       });
       runtimeHandlerDispose = internalHandler.dispose;
       runtimeHandlerDisposed = false;
@@ -300,6 +307,7 @@ export async function createHandler(
   // inside DevServer.start(), no additional subscription needed here.
 
   const internalFetch = devServer.handler;
+  const nodeWebSocketServerProvider = devServer.nodeWebSocketServerProvider;
   let disposalStarted = false;
   const fetch = async (req: Request) => {
     if (disposalStarted) {
@@ -315,8 +323,11 @@ export async function createHandler(
 
   const upgrade = (server: unknown) => {
     if (disposalStarted) throw new Error("Veryfront handler is already shutting down");
+    if (nodeWebSocketServerProvider === undefined) {
+      throw new Error(NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE);
+    }
     const httpServer = server as import("node:http").Server;
-    let wsServer: import("ws").WebSocketServer | null = null;
+    let wsServer: NodeWebSocketServer | null = null;
     let handshakeController:
       | import("#veryfront/platform/adapters/runtime/node/http-server.ts").NodeWebSocketHandshakeController
       | null = null;
@@ -356,7 +367,6 @@ export async function createHandler(
       }
       void (async () => {
         try {
-          const { WebSocketServer } = await import("ws");
           if (nodeUpgradeLifecycle.isDisposed || requestAbort.signal.aborted) {
             socket.destroy();
             releaseTrackedSocket();
@@ -427,12 +437,22 @@ export async function createHandler(
           }
 
           if (!wsServer) {
-            const WebSocketServerConstructor = WebSocketServer as unknown as new (
-              options: import("#veryfront/extensions/websocket").NodeWebSocketServerOptions,
-            ) => import("ws").WebSocketServer;
-            wsServer = new WebSocketServerConstructor(handshakeController.serverOptions);
-            handshakeController.attach(wsServer);
-            nodeUpgradeLifecycle.track(wsServer);
+            const candidate = captureNodeWebSocketServer(
+              nodeWebSocketServerProvider.createServer(
+                handshakeController.serverOptions,
+              ),
+            );
+            nodeUpgradeLifecycle.track(candidate);
+            try {
+              handshakeController.attach(candidate);
+            } catch (error) {
+              // The owned lifecycle retains a failed retirement for dispose()
+              // to report and retry; observe this attempt to avoid an
+              // unhandled rejection while the handshake fails immediately.
+              void nodeUpgradeLifecycle.retire(candidate).catch(() => undefined);
+              throw error;
+            }
+            wsServer = candidate;
           }
           handshakeController.authorize(request, upgradeResponse);
 
@@ -442,10 +462,11 @@ export async function createHandler(
             request,
             socket,
             head,
-            (ws: import("ws").WebSocket) => {
+            (ws: NodeWebSocketConnection) => {
               releaseTrackedSocket();
               if (!upgradeRegistry.resolveWebSocketUpgrade(requestId, ws)) {
-                ws.terminate();
+                if (ws.terminate) ws.terminate();
+                else ws.close();
                 return;
               }
               ownedServer.emit("connection", ws, request);

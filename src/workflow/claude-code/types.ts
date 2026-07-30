@@ -50,7 +50,7 @@ export interface ClaudeCodeResult {
 export interface ClaudeCodeToolInput {
   /** Task description for the agent */
   task: string;
-  /** Tool mode (default: "code") */
+  /** Tool mode (default: read-only "analysis") */
   mode?: ClaudeCodeMode;
   /** Maximum turns (default: 20) */
   maxTurns?: number;

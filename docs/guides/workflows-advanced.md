@@ -57,6 +57,13 @@ adapter. The public workflow export exposes the executor integration point.
 Storage implementations come from the host runtime: typical hosts wire S3, GCS,
 or Vercel Blob behind this adapter.
 
+`BlobStorage.list` is an optional capability. `LocalBlobStorage` provides an
+exhaustive list; `VeryfrontCloudBlobStorage` intentionally does not advertise
+listing until the uploads API exposes a stable exhaustive pagination contract.
+Feature-detect `list` rather than substituting an empty or partial result. Cloud
+requests, uploads, and downloads use the configured positive `requestTimeout`
+(30 seconds by default).
+
 Without `blobStorage`, large values still flow through step inputs and outputs
 in memory, which becomes the bottleneck once individual artifacts exceed a few
 hundred kilobytes.
@@ -68,7 +75,7 @@ routes that match the hook's `apiBase`:
 
 ```tsx
 "use client";
-import { useWorkflow, useWorkflowStart } from "veryfront/workflow";
+import { useWorkflow, useWorkflowStart } from "veryfront/workflow/react";
 
 export default function PipelineDashboard() {
   const { start, lastRunId } = useWorkflowStart({

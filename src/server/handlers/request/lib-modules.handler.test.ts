@@ -71,7 +71,7 @@ describe("LibModulesHandler", () => {
       assertEquals(LIB_MODULE_PATHS["chat.js"], "esm/src/chat/index.js");
       assertEquals(LIB_MODULE_PATHS["markdown.js"], "esm/src/markdown/index.js");
       assertEquals(LIB_MODULE_PATHS["mdx.js"], "esm/src/mdx/index.js");
-      assertEquals(LIB_MODULE_PATHS["workflow.js"], "esm/src/workflow/react/index.js");
+      assertEquals(LIB_MODULE_PATHS["workflow.js"], "esm/src/react/workflow/index.js");
     });
   });
 

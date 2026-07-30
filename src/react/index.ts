@@ -17,7 +17,12 @@ export {
 } from "./compat/index.ts";
 
 // Components
-export { AppWrapper, type AppWrapperProps } from "./components/AppWrapper.tsx";
+export {
+  AppWrapper,
+  type AppWrapperProps,
+  type MdxWrapperKind,
+  MdxWrapperRenderError,
+} from "./components/AppWrapper.tsx";
 export { Head } from "./components/Head.tsx";
 export { MDXProvider, type MDXProviderProps, useMDXComponents } from "./components/MDXProvider.tsx";
 export {
@@ -83,9 +88,12 @@ export {
 } from "./head-collector.ts";
 
 export {
+  ImageManifestProvider,
+  type ImageManifestProviderProps,
   type MdxHeading,
   PageContextProvider,
   type PageContextValue,
+  useOptimizedImageMetadata,
   usePageContext,
 } from "./context/index.tsx";
 

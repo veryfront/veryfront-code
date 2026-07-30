@@ -129,3 +129,34 @@ export {
   StudioCaptureBundleProviderName,
   validateStudioCaptureBundle,
 } from "./studio/index.ts";
+
+// Local development UI assets
+export {
+  createDevUiAssetProvider,
+  DASHBOARD_CSRF_COOKIE_NAME,
+  DASHBOARD_CSRF_HEADER_NAME,
+  DASHBOARD_CSRF_META_NAME,
+  DASHBOARD_CSRF_TOKEN_PATTERN,
+  DEV_UI_KIND_ATTRIBUTE,
+  type DevUiAssetProvider,
+  DevUiAssetProviderName,
+  type DevUiKind,
+  MAX_DEV_UI_BUNDLE_BYTES,
+  snapshotDevUiAssetProvider,
+  validateDevUiBundle,
+} from "./dev-ui/index.ts";
+
+// Node.js WebSocket transport implementation boundary
+export {
+  captureNodeWebSocketServer,
+  createNodeWebSocketServerProvider,
+  NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE,
+  NODE_WEBSOCKET_SERVER_PROVIDER_PACKAGE,
+  type NodeWebSocketConnection,
+  type NodeWebSocketMessageData,
+  type NodeWebSocketServer,
+  type NodeWebSocketServerOptions,
+  type NodeWebSocketServerProvider,
+  NodeWebSocketServerProviderName,
+  snapshotNodeWebSocketServerProvider,
+} from "./websocket/index.ts";

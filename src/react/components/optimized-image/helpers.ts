@@ -2,10 +2,10 @@ import { IMAGE_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 import { normalizeOptimizedImageSourcePath } from "#veryfront/utils/optimized-image-manifest.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import type {
-  ImageFormat,
   ImageVariant,
+  OptimizedImageFormat as ImageFormat,
   OptimizedImageMetadata,
-} from "#veryfront/build/asset-pipeline/image-optimizer/types.ts";
+} from "#veryfront/types";
 
 function encodeVariantPath(path: string, publicPath: string): string {
   const encoded = path.split("/").map((segment) => encodeURIComponent(segment)).join("/");
@@ -78,6 +78,12 @@ export function getOptimizedPath(
   publicPath: string = IMAGE_OPTIMIZATION.PUBLIC_PATH,
 ): string {
   assertManifestMatchesSource(src, metadata);
+  if (
+    requestedWidth !== undefined &&
+    (!Number.isFinite(requestedWidth) || requestedWidth <= 0)
+  ) {
+    throw new TypeError("Optimized image width must be a positive finite number");
+  }
   const variants = variantsForFormat(metadata, format);
   const selected = requestedWidth === undefined
     ? variants[variants.length - 1]!

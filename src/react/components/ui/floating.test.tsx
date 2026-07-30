@@ -1,5 +1,6 @@
 import * as React from "react";
-import { hydrateRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
+import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -7,6 +8,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "./dropdown-menu.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./select.tsx";
+import { Floating } from "./floating.tsx";
 
 function installDom(dom: JSDOM): () => void {
   const window = dom.window;
@@ -194,6 +196,71 @@ describe("Floating SSR and hydration", () => {
     } finally {
       root?.unmount();
       restore();
+    }
+  });
+
+  it("uses the anchor owner document for portals and dismissal listeners", async () => {
+    const globalDom = new JSDOM(
+      '<!doctype html><html><body><div id="global-root"></div></body></html>',
+      { pretendToBeVisual: true, url: "https://global.example/" },
+    );
+    const ownerDom = new JSDOM(
+      '<!doctype html><html><body><div id="owner-root"></div></body></html>',
+      { pretendToBeVisual: true, url: "https://owner.example/" },
+    );
+    const restore = installDom(globalDom);
+    const ownerRoot = ownerDom.window.document.getElementById("owner-root");
+    assert(ownerRoot);
+    const root = createRoot(ownerRoot);
+    const reasons: string[] = [];
+
+    function CrossDocumentFloating(): React.ReactElement {
+      const anchorRef = React.useRef<HTMLButtonElement | null>(null);
+      const [open, setOpen] = React.useState(true);
+      return (
+        <div data-vf-ui="" data-owner-scope="">
+          <button ref={anchorRef} type="button">Owner trigger</button>
+          <Floating
+            anchorRef={anchorRef}
+            open={open}
+            onDismiss={(reason) => {
+              reasons.push(reason);
+              setOpen(false);
+            }}
+            data-owner-surface=""
+          >
+            Owner surface
+          </Floating>
+        </div>
+      );
+    }
+
+    try {
+      flushSync(() => root.render(<CrossDocumentFloating />));
+      await waitFor(() => ownerDom.window.document.querySelector("[data-owner-surface]") !== null);
+      const surface = ownerDom.window.document.querySelector<HTMLElement>(
+        "[data-owner-surface]",
+      );
+      const scope = ownerDom.window.document.querySelector<HTMLElement>(
+        "[data-owner-scope]",
+      );
+      assert(surface && scope);
+      assertEquals(surface.parentElement, scope);
+      assertEquals(globalDom.window.document.querySelector("[data-owner-surface]"), null);
+
+      ownerDom.window.document.dispatchEvent(
+        new ownerDom.window.KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Escape",
+        }),
+      );
+      await waitFor(() => ownerDom.window.document.querySelector("[data-owner-surface]") === null);
+      assertEquals(reasons, ["escape"]);
+    } finally {
+      flushSync(() => root.unmount());
+      restore();
+      ownerDom.window.close();
     }
   });
 });

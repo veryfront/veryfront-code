@@ -30,7 +30,6 @@ the task against an application checkout.
 | Script                           | Task        | Purpose                                             |
 | -------------------------------- | ----------- | --------------------------------------------------- |
 | `generate-templates-manifest.ts` | `build`     | Generates template manifest for CLI scaffolding     |
-| `generate-dev-ui-manifest.ts`    | `build`     | Generates dev UI asset manifest                     |
 | `prepare-framework-sources.ts`   | `build`     | Prepares framework `.src` files for SSR transforms  |
 | `build-all.js`                   | n/a         | Cross-compiles CLI binary for all platforms         |
 | `build-npm-dnt.ts`               | `build:npm` | Builds the root npm package via dnt and emits generated extension packages |
@@ -41,6 +40,11 @@ extension packages to `npm/extensions/<extension-name>/`. The root `veryfront`
 package must stay free of feature-specific implementation dependencies. Each
 generated `@veryfront/ext-*` package owns the dependencies declared by its
 extension manifest and peers on the matching `veryfront` version.
+
+The React development UI owns its generator under
+`extensions/ext-dev-ui-react/scripts/`. Its checked-in browser bundle embeds
+the generated stylesheet so JavaScript and CSS are always shipped as one
+immutable artifact.
 
 ## lint/
 

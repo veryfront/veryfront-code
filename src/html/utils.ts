@@ -92,7 +92,7 @@ const PLATFORM_UTILITY_PATHS = {
   chat: "/_vf_modules/_veryfront/chat/index.js",
   markdown: "/_vf_modules/_veryfront/markdown/index.js",
   mdx: "/_vf_modules/_veryfront/mdx/index.js",
-  workflow: "/_vf_modules/_veryfront/workflow/react/index.js",
+  workflow: "/_vf_modules/_veryfront/react/workflow/index.js",
 } as const;
 
 // Core platform utilities that are always served locally (embedded in compiled binary)
@@ -112,7 +112,7 @@ const AI_MODULE_UTILITIES: Record<string, string> = {
   "veryfront/chat": PLATFORM_UTILITY_PATHS.chat,
   "veryfront/markdown": PLATFORM_UTILITY_PATHS.markdown,
   "veryfront/mdx": PLATFORM_UTILITY_PATHS.mdx,
-  "veryfront/workflow": PLATFORM_UTILITY_PATHS.workflow,
+  "veryfront/workflow/react": PLATFORM_UTILITY_PATHS.workflow,
 };
 
 export const PLATFORM_UTILITIES: Record<string, string> = {
@@ -158,7 +158,7 @@ const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
     veryfrontChat: (v) => `https://unpkg.com/veryfront@${v}/esm/src/chat/index.js`,
     veryfrontMarkdown: (v) => `https://unpkg.com/veryfront@${v}/esm/src/markdown/index.js`,
     veryfrontMdx: (v) => `https://unpkg.com/veryfront@${v}/esm/src/mdx/index.js`,
-    veryfrontWorkflow: (v) => `https://unpkg.com/veryfront@${v}/esm/src/workflow/react/index.js`,
+    veryfrontWorkflow: (v) => `https://unpkg.com/veryfront@${v}/esm/src/react/workflow/index.js`,
   },
   jsdelivr: {
     veryfrontChat: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/esm/src/chat/index.js`,
@@ -166,7 +166,7 @@ const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
       `https://cdn.jsdelivr.net/npm/veryfront@${v}/esm/src/markdown/index.js`,
     veryfrontMdx: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/esm/src/mdx/index.js`,
     veryfrontWorkflow: (v) =>
-      `https://cdn.jsdelivr.net/npm/veryfront@${v}/esm/src/workflow/react/index.js`,
+      `https://cdn.jsdelivr.net/npm/veryfront@${v}/esm/src/react/workflow/index.js`,
   },
 };
 
@@ -191,7 +191,7 @@ function buildCdnImportMapFromTemplates(
     "veryfront/chat": templates.veryfrontChat(veryfront),
     "veryfront/markdown": templates.veryfrontMarkdown(veryfront),
     "veryfront/mdx": templates.veryfrontMdx(veryfront),
-    "veryfront/workflow": templates.veryfrontWorkflow(veryfront),
+    "veryfront/workflow/react": templates.veryfrontWorkflow(veryfront),
     // Core runtime utilities always resolve locally.
     ...CORE_PLATFORM_UTILITIES,
     // AI modules only override the CDN entries when requested.
@@ -219,7 +219,7 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
     "veryfront/chat": "/_veryfront/lib/chat.js",
     "veryfront/markdown": "/_veryfront/lib/markdown.js",
     "veryfront/mdx": "/_veryfront/lib/mdx.js",
-    "veryfront/workflow": "/_veryfront/lib/workflow.js",
+    "veryfront/workflow/react": "/_veryfront/lib/workflow.js",
     "veryfront/head": PLATFORM_UTILITY_PATHS.head,
     "veryfront/router": PLATFORM_UTILITY_PATHS.router,
     "veryfront/context": PLATFORM_UTILITY_PATHS.context,

@@ -18,7 +18,7 @@ describe("collectNpmDependencies", () => {
         },
       },
       {
-        sourceLocation: "react/deno.json",
+        sourceLocation: "extensions/ext-diagram-mermaid/deno.json",
         imports: {
           "@veryfront/mermaid-upstream":
             "https://esm.sh/mermaid@11.16.0?target=es2022&pin=v135",

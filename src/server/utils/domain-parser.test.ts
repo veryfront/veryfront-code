@@ -349,11 +349,15 @@ describe("domain-parser", () => {
     it("rejects explicit production local dev domains", () => {
       assertEquals(isLocalDevHost("myproject.production.veryfront.me"), false);
       assertEquals(isLocalDevHost("myproject.production.lvh.me"), false);
+      assertEquals(isLocalDevHost("production.veryfront.me"), false);
+      assertEquals(isLocalDevHost("production.lvh.me"), false);
     });
 
     it("rejects explicit staging local dev domains", () => {
       assertEquals(isLocalDevHost("myproject.staging.veryfront.me"), false);
       assertEquals(isLocalDevHost("myproject.staging.lvh.me"), false);
+      assertEquals(isLocalDevHost("staging.veryfront.me"), false);
+      assertEquals(isLocalDevHost("staging.lvh.me"), false);
     });
 
     it("rejects custom domain simulation", () => {

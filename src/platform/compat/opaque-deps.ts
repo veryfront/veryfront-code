@@ -1,43 +1,14 @@
 /**
- * Opaque dynamic imports for heavy optional dependencies.
- *
- * These packages are excluded from the deno.json import map to prevent
- * `deno compile` from bundling them into the binary. The `new Function`
- * pattern makes the import invisible to static analysis so `deno compile`
- * won't trace it.
- *
- * - Deno: resolves via `npm:` specifiers at runtime
- * - Node/Bun: resolves via bare package names from node_modules
- * - Compiled binary: fails (callers must handle the error)
- *
- * Update versions here when upgrading these packages.
+ * Compatibility entry points implemented through optional extension contracts.
  *
  * @module platform/compat
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import { isDeno } from "./runtime.ts";
-import { dynamicImport } from "./dynamic-import.ts";
 import type {
   DocumentExtractor,
   KreuzbergExtractor,
 } from "#veryfront/extensions/compat/native-services.ts";
-import { OPAQUE_DEPENDENCY_VERSIONS } from "./opaque-dependency-versions.ts";
-
-function resolve(pkg: string, version: string): string {
-  return isDeno ? `npm:${pkg}@${version}` : pkg;
-}
-
-// deno-lint-ignore no-explicit-any -- callers assign to their own typed variable; any allows implicit narrowing at each call site
-type OpaqueModule = any;
-
-/** Lazily import `@anthropic-ai/claude-agent-sdk` (~69MB). */
-export function importClaudeAgentSDK(): Promise<OpaqueModule> {
-  return dynamicImport(resolve(
-    "@anthropic-ai/claude-agent-sdk",
-    OPAQUE_DEPENDENCY_VERSIONS["@anthropic-ai/claude-agent-sdk"],
-  ));
-}
 
 /**
  * Lazily import kreuzberg document extraction.

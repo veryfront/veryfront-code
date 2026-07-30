@@ -44,6 +44,11 @@ export interface BunServeOptions<T = unknown> {
 
 export interface BunServer<T = unknown> {
   stop(closeActiveConnections?: boolean): Promise<void>;
+  requestIP?(request: Request): {
+    readonly address: string;
+    readonly port: number;
+    readonly family: string;
+  } | null;
   upgrade(
     request: Request,
     options: { data: T; headers?: HeadersInit },

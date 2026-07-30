@@ -1,1170 +1,238 @@
-# Claude Code SDK Integration
+# Claude Code workflows
 
-Integrate Anthropic's Claude Code SDK into Veryfront workflows for powerful agentic coding capabilities.
+This module exposes provider-neutral Claude Code workflow tools, event
+publishers, and workspace synchronization. Veryfront core does not import an
+agent SDK. Execution is supplied through the `ClaudeCodeAgentRuntime` extension
+contract.
 
-## Overview
+## Activate the runtime
 
-This module provides a harness for running Claude Code SDK agents within Veryfront's durable workflow system. It combines:
+Install and explicitly activate the first-party Anthropic implementation:
 
-- **Claude Code SDK**: Anthropic's agentic coding capabilities (bash, file editing, computer use)
-- **Veryfront Workflows**: Durability, multi-tenancy, human-in-the-loop
-- **Tenant-Aware Operations**: File operations scoped to the current project
+```ts
+import extClaudeCodeAgent from "@veryfront/ext-claude-code-agent";
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Veryfront Workflow                          │
-│  ┌─────────┐    ┌─────────────────┐    ┌─────────────────────┐  │
-│  │  step   │───▶│ ClaudeCodeAgent │───▶│ waitForApproval     │  │
-│  └─────────┘    └────────┬────────┘    └─────────────────────┘  │
-│                          │                                       │
-│         ┌────────────────┼────────────────┐                      │
-│         ▼                ▼                ▼                      │
-│  ┌────────────┐  ┌────────────┐  ┌────────────────┐             │
-│  │ BashTool   │  │ FileTool   │  │ ComputerTool   │             │
-│  │ (sandbox)  │  │ (api.files)│  │ (optional)     │             │
-│  └────────────┘  └────────────┘  └────────────────┘             │
-│         │                │                                       │
-│         ▼                ▼                                       │
-│  ┌────────────────────────────────────┐                         │
-│  │     Tenant Context (AsyncLocal)    │                         │
-│  │  - projectSlug, token, projectId   │                         │
-│  └────────────────────────────────────┘                         │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## Features
-
-### 1. Built-in Tool Modes
-
-| Mode       | Tools Enabled     | Use Case                    |
-| ---------- | ----------------- | --------------------------- |
-| `code`     | bash, file editor | Code modifications, scripts |
-| `analysis` | file reader only  | Code review, analysis       |
-| `custom`   | User-specified    | Fine-grained control        |
-
-`bypassPermissions` remains available only as an explicit server-side
-`AgentConfig` opt-in. It is not a user-facing tool mode.
-
-### 2. Tenant-Aware File Operations
-
-All file operations automatically use the current project context:
-
-```typescript
-// Tool uses api.files internally - no tenant passing needed
-await agent.run("Read the package.json and update dependencies");
-// Automatically reads from current tenant's project
-```
-
-### 3. Sandbox Modes
-
-| Mode         | Description               | Use Case         |
-| ------------ | ------------------------- | ---------------- |
-| `strict`     | Containerized, no network | Untrusted code   |
-| `permissive` | Process isolation only    | Trusted code     |
-| `none`       | Direct execution          | Development only |
-
-### 4. Checkpointing
-
-Long-running agent tasks are checkpointed:
-
-- After each tool execution
-- On agentic loop iterations
-- Before human approval requests
-
-## Usage
-
-### Basic: As a Workflow Tool
-
-```typescript
-import { step, workflow } from "veryfront/workflow";
-
-export const codeFix = workflow({
-  id: "code-fix",
-  steps: [
-    step("fix", {
-      tool: "claude-code",
-      input: (ctx) => ({
-        task: ctx.input.issue,
-        mode: "code",
-        maxIterations: 10,
-      }),
-    }),
-  ],
-});
-```
-
-### Advanced: Custom Agent Configuration
-
-```typescript
-import { claudeCodeAgent } from "veryfront/workflow/claude-code";
-
-const agent = claudeCodeAgent({
-  model: "claude-sonnet-4-20250514",
-  mode: "code",
-  sandbox: "strict",
-
-  // Custom tools alongside built-ins
-  tools: {
-    runTests: myTestRunner,
-    deployPreview: myDeployTool,
-  },
-
-  // Callbacks for observability
-  onToolCall: (tool, input) => console.log(`Calling ${tool}`),
-  onIteration: (i, result) => console.log(`Iteration ${i}`),
-});
-
-// Use in workflow
-export const migration = workflow({
-  id: "migration",
-  steps: [
-    step("migrate", { agent }),
-    waitForApproval("review"),
-    step("apply", { tool: "git-commit" }),
-  ],
-});
-```
-
-### With Human-in-the-Loop
-
-```typescript
-export const safeMigration = workflow({
-  id: "safe-migration",
-  steps: [
-    // Agent proposes changes
-    step("propose", {
-      tool: "claude-code",
-      input: { task: "Migrate to React 19", mode: "analysis" },
-    }),
-
-    // Human reviews proposed changes
-    waitForApproval("review-changes", {
-      message: "Review proposed migration changes",
-      payload: (ctx) => ctx.propose.changes,
-    }),
-
-    // Agent applies approved changes
-    step("apply", {
-      tool: "claude-code",
-      input: (ctx) => ({
-        task: `Apply these changes: ${JSON.stringify(ctx.propose.changes)}`,
-        mode: "code",
-      }),
-    }),
-
-    // Human reviews final result
-    waitForApproval("review-final"),
-
-    step("commit", { tool: "git-commit" }),
-  ],
-});
-```
-
-## API Reference
-
-### `claudeCodeAgent(config)`
-
-Create a Claude Code agent for use in workflows.
-
-```typescript
-interface ClaudeCodeAgentConfig {
-  /** Model to use (default: claude-sonnet-4-20250514) */
-  model?: string;
-
-  /** Tool mode: 'code' | 'analysis' | 'custom' */
-  mode?: ClaudeCodeMode;
-
-  /** Sandbox mode: 'strict' | 'permissive' | 'none' */
-  sandbox?: SandboxMode;
-
-  /** Maximum agentic loop iterations */
-  maxIterations?: number;
-
-  /** Custom tools to add */
-  tools?: Record<string, Tool>;
-
-  /** System prompt override */
-  system?: string;
-
-  /** Callbacks */
-  onToolCall?: (tool: string, input: unknown) => void;
-  onIteration?: (iteration: number, result: unknown) => void;
-  onComplete?: (result: ClaudeCodeResult) => void;
-}
-```
-
-### `claudeCodeTool`
-
-Pre-configured tool for use in workflow steps.
-
-```typescript
-interface ClaudeCodeToolInput {
-  /** Task description for the agent */
-  task: string;
-
-  /** Tool mode */
-  mode?: ClaudeCodeMode;
-
-  /** Maximum iterations */
-  maxIterations?: number;
-
-  /** Files to focus on (optional) */
-  files?: string[];
-
-  /** Additional context */
-  context?: Record<string, unknown>;
-}
-```
-
-### Built-in Tools
-
-#### `bash` (type: bash_20250124)
-
-Execute shell commands in sandbox.
-
-#### `file_editor` (type: text_editor_20250124)
-
-Edit files using str_replace operations.
-
-#### `file_reader`
-
-Read files from project (uses `api.files.read`).
-
-#### `computer` (type: computer_20250124)
-
-Computer use for UI automation (optional, requires setup).
-
-## Security Considerations
-
-### File Access
-
-- All file operations scoped to tenant project
-- Path traversal protection enabled
-- No access outside project root
-
-### Shell Execution
-
-- Commands run in isolated container (strict mode)
-- Network access disabled by default
-- Resource limits enforced (CPU, memory, time)
-
-### Secrets
-
-- Environment variables not passed to sandbox
-- API keys managed via Veryfront config
-- Tenant tokens never exposed to agent
-
-## Examples
-
-### Code Review Agent
-
-```typescript
-export const codeReview = workflow({
-  id: "code-review",
-  steps: [
-    step("review", {
-      tool: "claude-code",
-      input: (ctx) => ({
-        task: `Review the following PR changes for:
-          - Security issues
-          - Performance problems
-          - Code style violations
-
-          Files: ${ctx.input.files.join(", ")}`,
-        mode: "analysis",
-      }),
-    }),
-  ],
-});
-```
-
-### Dependency Updater
-
-```typescript
-export const updateDeps = workflow({
-  id: "update-deps",
-  steps: [
-    step("analyze", {
-      tool: "claude-code",
-      input: {
-        task: "Analyze package.json and find outdated dependencies",
-        mode: "analysis",
-      },
-    }),
-
-    step("update", {
-      tool: "claude-code",
-      input: (ctx) => ({
-        task: `Update these dependencies: ${ctx.analyze.outdated.join(", ")}`,
-        mode: "code",
-      }),
-    }),
-
-    step("test", { tool: "run-tests" }),
-
-    waitForApproval("review"),
-
-    step("commit", {
-      tool: "git-commit",
-      input: { message: "chore: update dependencies" },
-    }),
-  ],
-});
-```
-
-### Bug Fix Agent
-
-```typescript
-export const bugFix = workflow({
-  id: "bug-fix",
-  steps: [
-    step("reproduce", {
-      tool: "claude-code",
-      input: (ctx) => ({
-        task: `Reproduce this bug: ${ctx.input.issueDescription}`,
-        mode: "code",
-      }),
-    }),
-
-    step("fix", {
-      tool: "claude-code",
-      input: (ctx) => ({
-        task: `Fix the bug. Root cause: ${ctx.reproduce.rootCause}`,
-        mode: "code",
-        maxIterations: 15,
-      }),
-    }),
-
-    step("verify", {
-      tool: "claude-code",
-      input: {
-        task: "Run tests to verify the fix",
-        mode: "code",
-      },
-    }),
-
-    waitForApproval("review-fix"),
-  ],
-});
-```
-
-## Configuration
-
-### Environment Variables
-
-```bash
-# Required
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Optional
-CLAUDE_CODE_SANDBOX=strict          # strict | permissive | none
-CLAUDE_CODE_MAX_ITERATIONS=20       # Default max iterations
-CLAUDE_CODE_TIMEOUT=300000          # Timeout per iteration (ms)
-```
-
-### Veryfront Config
-
-```typescript
-// veryfront.config.ts
 export default {
-  ai: {
-    claudeCode: {
-      enabled: true,
-      defaultModel: "claude-sonnet-4-20250514",
-      sandbox: "strict",
-      maxIterations: 20,
-      timeout: "5m",
-    },
-  },
+  extensions: [extClaudeCodeAgent()],
 };
 ```
 
-## Streaming
+Without a registered runtime, `executeAgent()` fails with a missing-extension
+error that names the package to install. It does not substitute a mock result or
+load an undeclared dependency from core.
 
-Real-time streaming of Claude Code execution is supported via Server-Sent Events (SSE).
+The extension is privileged: it can read and write the selected workspace,
+spawn Claude Code, read its environment, and access the network. Review that
+boundary before enabling it in a deployment.
 
-### Setting Up Streaming
+## Execute an agent
 
-The distributed examples below require `@veryfront/ext-redis` to be installed
-and explicitly activated. `REDIS_URL` supplies connection details only; it does
-not load or select an extension.
+```ts
+import { executeAgent } from "veryfront/workflow/claude-code";
 
-#### 1. Create SSE Endpoint
+const review = await executeAgent("Review src/auth for correctness", {
+  mode: "analysis",
+  cwd: "/absolute/path/to/project",
+  maxTurns: 12,
+});
 
-```typescript
-// app/api/workflows/[runId]/stream/route.ts
-import type { APIContext } from "veryfront";
-import { createDistributedEventPublisher } from "veryfront/workflow/claude-code";
-
-export async function GET(ctx: APIContext) {
-  const { runId } = ctx.params;
-
-  // Create Redis subscriber
-  const publisher = createDistributedEventPublisher({
-    endpoint: Deno.env.get("REDIS_URL")!,
-  });
-
-  // Create SSE stream
-  const stream = new ReadableStream({
-    async start(controller) {
-      const encoder = new TextEncoder();
-
-      const unsubscribe = await publisher.subscribe(runId, (event) => {
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
-        );
-
-        if (event.type === "complete" || event.type === "error") {
-          controller.close();
-          unsubscribe();
-        }
-      });
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-    },
-  });
-}
+if (!review.success) throw new Error(review.error);
 ```
 
-#### 2. Configure Agent with Publisher
+Omitting `mode` selects read-only `analysis`. File edits and shell execution
+require explicit `mode: "code"`. `bypassPermissions` is not exposed through the
+tool schema; it can only be enabled in server-controlled `AgentConfig`.
 
-```typescript
+The model is optional and is never hardcoded by core. When omitted, the runtime
+provider selects its configured/default model. `onComplete` is awaited exactly
+once after a runtime returns a valid result; callback failures are propagated.
+
+Use `createAgent()` to snapshot reusable defaults:
+
+```ts
+import { createAgent } from "veryfront/workflow/claude-code";
+
+const reviewer = createAgent({
+  mode: "analysis",
+  cwd: "/absolute/path/to/project",
+  allowedTools: ["Read", "Grep", "Glob"],
+});
+
+const result = await reviewer("Check the workflow state transitions");
+```
+
+Per-call overrides cannot elevate a reusable agent into
+`bypassPermissions`. They may explicitly disable a server-enabled bypass.
+
+## Workflow tools
+
+`claudeCodeTool` defaults to read-only analysis:
+
+```ts
+import { claudeCodeTool } from "veryfront/workflow/claude-code";
+
+const result = await claudeCodeTool.execute({
+  task: "Explain the retry policy",
+  mode: "analysis",
+  maxTurns: 10,
+});
+```
+
+`createClaudeCodeTool()` creates a tool with validated defaults. The built-in
+`codeReviewTool` is read-only; `bugFixTool`, `refactorTool`, and `docsTool`
+explicitly opt into code mode because their stated purpose requires edits.
+Writable `code` and `custom` executions never inherit the server process
+directory. Compose a fixed host-admitted canonical absolute directory with
+`createClaudeCodeTool({ cwd: "/absolute/workspace" })`, or pass an absolute
+`cwd` in the host-owned tool execution context. Execution fails before the
+runtime is invoked when neither boundary supplies one.
+
+## Runtime contract
+
+Extension authors can implement the stable core contract without importing the
+Anthropic extension:
+
+```ts
 import {
-  createDistributedEventPublisher,
-  streamingClaudeCodeAgent,
-} from "veryfront/workflow/claude-code";
+  type ClaudeCodeAgentRuntime,
+  ClaudeCodeAgentRuntimeName,
+} from "veryfront/workflow/claude-code/runtime";
 
-const publisher = createDistributedEventPublisher({
-  endpoint: Deno.env.get("REDIS_URL")!,
-});
-
-const agent = streamingClaudeCodeAgent({
-  streaming: {
-    enabled: true,
-    publisher,
+const runtime: ClaudeCodeAgentRuntime = {
+  async execute(task, config) {
+    // Delegate to a provider and return a validated ClaudeCodeResult shape.
+    return {
+      success: true,
+      iterations: 1,
+      response: `${config.mode}: ${task}`,
+      filesModified: [],
+      commandsExecuted: [],
+      executionTime: 1,
+    };
   },
-  runId: "my-run-id",
-});
-```
-
-#### 3. Consume in React
-
-```tsx
-import { useClaudeCodeStream } from "veryfront/workflow/claude-code/react";
-
-function AgentViewer({ runId }: { runId: string }) {
-  const {
-    isRunning,
-    text,
-    currentTool,
-    toolCalls,
-    result,
-    error,
-    currentIteration,
-    maxIterations,
-  } = useClaudeCodeStream({
-    url: "/api/workflows/stream",
-    runId,
-  });
-
-  return (
-    <div>
-      {/* Progress indicator */}
-      {isRunning && (
-        <div>
-          Iteration {currentIteration}/{maxIterations}
-          {currentTool && ` - Running ${currentTool.name}...`}
-        </div>
-      )}
-
-      {/* Streaming text output */}
-      <pre className="whitespace-pre-wrap">{text}</pre>
-
-      {/* Tool calls */}
-      <div className="space-y-2">
-        {toolCalls.map((tc) => (
-          <div key={tc.id} className={tc.isError ? "text-red-500" : ""}>
-            <strong>{tc.name}</strong>
-            <pre>{JSON.stringify(tc.input, null, 2)}</pre>
-            {tc.output && <pre>{tc.output}</pre>}
-          </div>
-        ))}
-      </div>
-
-      {/* Error */}
-      {error && <div className="text-red-500">{error}</div>}
-
-      {/* Result */}
-      {result && (
-        <div>
-          <h3>Complete!</h3>
-          <p>Modified {result.filesModified.length} files</p>
-          <p>Executed {result.commandsExecuted.length} commands</p>
-        </div>
-      )}
-    </div>
-  );
-}
-```
-
-### Event Types
-
-| Event                | Description             |
-| -------------------- | ----------------------- |
-| `iteration_start`    | New iteration beginning |
-| `text_delta`         | Text chunk (streaming)  |
-| `text_complete`      | Full text response      |
-| `tool_call_start`    | Tool execution starting |
-| `tool_call_input`    | Tool input streaming    |
-| `tool_call_complete` | Tool input complete     |
-| `tool_result`        | Tool execution result   |
-| `iteration_complete` | Iteration finished      |
-| `complete`           | Agent finished          |
-| `error`              | Error occurred          |
-
-### Publisher Options
-
-| Type                              | Use Case                 |
-| --------------------------------- | ------------------------ |
-| `createDistributedEventPublisher` | Distributed deployments  |
-| `MemoryEventPublisher`            | Single-process / testing |
-| `SSEEventPublisher`               | Direct HTTP streaming    |
-| `CallbackEventPublisher`          | Custom handling          |
-
-## Bidirectional Streaming (WebSocket)
-
-For interactive features like cancellation, approval flows, and user input, use WebSocket instead of SSE.
-
-### SSE vs WebSocket
-
-```
-SSE (One-way):
-┌──────────┐                    ┌──────────┐
-│  Client  │◄────── events ─────│  Server  │
-│  (React) │                    │  (SSE)   │
-└──────────┘                    └──────────┘
-
-WebSocket (Bidirectional):
-┌──────────┐◄────────────────────►┌──────────┐
-│  Client  │    events + commands │  Server  │
-│  (React) │◄────────────────────►│  (WS)    │
-└──────────┘                      └──────────┘
-```
-
-| Feature            | SSE                | WebSocket          |
-| ------------------ | ------------------ | ------------------ |
-| Events to client   | ✅                 | ✅                 |
-| Cancel agent       | ❌ (separate HTTP) | ✅                 |
-| Approve tool calls | ❌ (separate HTTP) | ✅                 |
-| User input mid-run | ❌                 | ✅                 |
-| Keepalive          | Manual             | Built-in ping/pong |
-
-### Setting Up WebSocket
-
-#### 1. Create WebSocket Endpoint
-
-```typescript
-// app/api/agent/ws/route.ts
-import {
-  AgentController,
-  createDistributedEventPublisher,
-  createWebSocketHandler,
-  streamingClaudeCodeAgent,
-} from "veryfront/workflow/claude-code";
-
-export const GET = createWebSocketHandler({
-  getRunId: (req) => new URL(req.url).searchParams.get("runId"),
-
-  onConnection: async (publisher, runId) => {
-    // Create agent controller for handling commands
-    const controller = new AgentController(publisher, {
-      approvalTimeout: 60000,
-      onCancel: (reason) => {
-        console.log(`Agent cancelled: ${reason}`);
-        // Cleanup logic here
-      },
-    });
-
-    // Subscribe to Redis events (from worker)
-    const redisPublisher = createDistributedEventPublisher({
-      endpoint: Deno.env.get("REDIS_URL")!,
-    });
-
-    await redisPublisher.subscribe(runId, (event) => {
-      publisher.send(event);
-    });
-
-    // Forward commands to worker via Redis
-    publisher.onCommand(async (command) => {
-      await redisPublisher.publish({
-        type: "command",
-        command,
-        runId,
-        timestamp: Date.now(),
-      });
-    });
-  },
-
-  onClose: (runId) => {
-    console.log(`Client disconnected: ${runId}`);
-  },
-});
-```
-
-#### 2. Consume in React with Bidirectional Hook
-
-```tsx
-import { useClaudeCodeWebSocket } from "veryfront/workflow/claude-code/react";
-
-function InteractiveAgent({ runId }: { runId: string }) {
-  const {
-    isRunning,
-    isCancelled,
-    text,
-    currentTool,
-    toolCalls,
-    pendingApprovals,
-    pendingInput,
-    result,
-    error,
-    // Actions
-    cancel,
-    approve,
-    reject,
-    sendInput,
-  } = useClaudeCodeWebSocket({
-    url: "/api/agent/ws",
-    runId,
-  });
-
-  return (
-    <div>
-      {/* Streaming output */}
-      <pre className="whitespace-pre-wrap">{text}</pre>
-
-      {/* Current tool */}
-      {currentTool && (
-        <div className="animate-pulse">
-          Running: {currentTool.name}...
-        </div>
-      )}
-
-      {/* Approval requests */}
-      {pendingApprovals.map((pa) => (
-        <div key={pa.toolCallId} className="border p-4 rounded">
-          <p className="font-bold">Approve {pa.toolName}?</p>
-          <p className="text-sm text-gray-600">{pa.reason}</p>
-          <pre className="text-xs bg-gray-100 p-2 my-2">
-            {JSON.stringify(pa.input, null, 2)}
-          </pre>
-          <div className="flex gap-2">
-            <button
-              onClick={() => approve(pa.toolCallId)}
-              className="bg-green-500 text-white px-4 py-2 rounded"
-            >
-              Approve
-            </button>
-            <button
-              onClick={() => reject(pa.toolCallId, "User rejected")}
-              className="bg-red-500 text-white px-4 py-2 rounded"
-            >
-              Reject
-            </button>
-          </div>
-        </div>
-      ))}
-
-      {/* Input request */}
-      {pendingInput && (
-        <div className="border p-4 rounded">
-          <p>{pendingInput.prompt}</p>
-          <input
-            type="text"
-            defaultValue={pendingInput.defaultValue}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                sendInput(e.currentTarget.value);
-              }
-            }}
-            className="border p-2 w-full"
-          />
-        </div>
-      )}
-
-      {/* Cancel button */}
-      {isRunning && !isCancelled && (
-        <button
-          onClick={() => cancel("User cancelled")}
-          className="bg-red-500 text-white px-4 py-2 rounded mt-4"
-        >
-          Cancel
-        </button>
-      )}
-
-      {/* Result */}
-      {result && (
-        <div className="bg-green-100 p-4 rounded mt-4">
-          <h3>Complete!</h3>
-          <p>Modified {result.filesModified.length} files</p>
-        </div>
-      )}
-
-      {/* Error */}
-      {error && (
-        <div className="bg-red-100 text-red-700 p-4 rounded mt-4">
-          {error}
-        </div>
-      )}
-
-      {/* Cancelled */}
-      {isCancelled && (
-        <div className="bg-yellow-100 p-4 rounded mt-4">
-          Agent was cancelled
-        </div>
-      )}
-    </div>
-  );
-}
-```
-
-### Client Commands
-
-| Command   | Description                       |
-| --------- | --------------------------------- |
-| `cancel`  | Stop agent execution              |
-| `approve` | Approve a pending tool call       |
-| `reject`  | Reject a pending tool call        |
-| `input`   | Send user input to agent          |
-| `ping`    | Keepalive (handled automatically) |
-
-### Server Events (Extended)
-
-| Event              | Description              |
-| ------------------ | ------------------------ |
-| `approval_request` | Tool needs user approval |
-| `input_request`    | Agent needs user input   |
-| `cancelled`        | Agent was cancelled      |
-| `pong`             | Response to ping         |
-
-### Tool Approval Configuration
-
-Require approval for dangerous operations:
-
-```typescript
-const agent = streamingClaudeCodeAgent({
-  mode: "code",
-  streaming: { enabled: true, publisher },
-  // Require approval for these tools
-  approval: {
-    requireApproval: ["bash"],
-    dangerousPatterns: [
-      /rm\s+-rf/,
-      /git\s+push/,
-      /npm\s+publish/,
-    ],
-    autoApproveTimeout: 30000, // Auto-approve after 30s
-    timeoutAction: "reject", // Or "approve"
-  },
-});
-```
-
-## Deployment Architecture
-
-Claude Code agents require long-running compute for agentic loops (1-30 minutes). This section covers deployment options.
-
-### Compute Requirements
-
-| Component        | Duration        | Serverless | Stateful    |
-| ---------------- | --------------- | ---------- | ----------- |
-| SSE endpoint     | Client lifetime | ⚠️ Limited | ✅ Ideal    |
-| Agent execution  | 1-30 minutes    | ❌ Poor    | ✅ Required |
-| Event publishing | Instant         | ✅ Great   | ✅ Great    |
-
-**Why serverless is limited:**
-
-- Execution timeouts (Vercel: 10-300s, Lambda: 15min max)
-- Cold starts break SSE connections
-- Can't hold WebSocket/SSE open across requests
-
-### Recommended Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Serverless (JIT) - Renderer                                │
-│  ┌───────────────────┐   ┌────────────────────────────────┐ │
-│  │ POST /api/start   │   │ GET /api/stream (SSE)          │ │
-│  │ - Validate input  │   │ - Subscribe to Redis           │ │
-│  │ - Enqueue run     │   │ - Forward events to client     │ │
-│  │ - Return runId    │   │ - Auto-close on complete       │ │
-│  └─────────┬─────────┘   └──────────────┬─────────────────┘ │
-└────────────│────────────────────────────│───────────────────┘
-             │                            │
-             ▼                            ▼
-       ┌──────────┐              ┌──────────────┐
-       │  Redis   │◄────────────►│   Redis      │
-       │  Queue   │              │   Pub/Sub    │
-       └────┬─────┘              └──────────────┘
-            │                            ▲
-            ▼                            │ publish events
-┌───────────────────────────────────────────────────────────────┐
-│  Stateful Worker - Agent Executor                             │
-│  ┌─────────────────────────────────────────────────────────┐  │
-│  │ Run Executor                                            │  │
-│  │ - Dequeue runs from Redis                               │  │
-│  │ - Run Claude Code agent loop (1-30 min)                 │  │
-│  │ - Execute tools (bash, file editor)                     │  │
-│  │ - Publish events to Redis pub/sub                       │  │
-│  │ - Update run state on completion                        │  │
-│  └─────────────────────────────────────────────────────────┘  │
-└───────────────────────────────────────────────────────────────┘
-```
-
-**Key benefits:**
-
-- SSE endpoint is serverless-safe (just reads from Redis)
-- Agent execution runs on dedicated stateful worker
-- Redis provides durability across restarts
-- Scales worker independently from frontend
-
-### Alternative: Chunked Execution (Serverless-Only)
-
-If you must run fully serverless, break agent into iterations:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Request 1: Start                                           │
-│  POST /api/agent/start                                      │
-│  → Initialize state in Redis                                │
-│  → Enqueue first iteration                                  │
-│  → Return runId                                             │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Request 2-N: Iterations (triggered by queue/cron)          │
-│  POST /api/agent/iterate?runId=xxx                          │
-│  → Load state from Redis                                    │
-│  → Single Anthropic API call                                │
-│  → Execute tools                                            │
-│  → Save state to Redis                                      │
-│  → Enqueue next iteration (if tool_use)                     │
-│  → Publish events to Redis                                  │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Polling/SSE: Client                                        │
-│  GET /api/agent/stream?runId=xxx                            │
-│  → Subscribe to Redis pub/sub                               │
-│  → Forward events until complete                            │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Trade-offs:**
-
-- ✅ Works on serverless
-- ❌ Higher latency (cold starts between iterations)
-- ❌ More complex state management
-- ❌ Redis round-trips add overhead
-
-### Helm Chart Configuration
-
-Add agent worker to your deployment:
-
-```yaml
-# chart/values.yaml
-
-# Existing renderer (serverless JIT)
-renderer:
-  enabled: true
-  replicaCount: 2
-  # ... existing config
-
-# NEW: Agent worker for Claude Code execution
-worker:
-  enabled: true
-  replicaCount: 1
-
-  image:
-    repository: ghcr.io/veryfront/veryfront-renderer
-    pullPolicy: IfNotPresent
-    tag: ""
-
-  # Worker runs same image, different entrypoint
-  command: ["deno", "run", "-A", "src/workflow/worker/run-entrypoint.ts"]
-
-  resources:
-    requests:
-      cpu: "500m"
-      memory: "1Gi"
-    limits:
-      cpu: "2000m"
-      memory: "2Gi"
-
-  env:
-    # Worker mode
-    WORKER_MODE: "1"
-    # Redis for run queue and events
-    REDIS_URL: "redis://redis:6379"
-    # Anthropic API
-    ANTHROPIC_API_KEY_FROM: "secret"
-    # Concurrency (runs processed in parallel)
-    WORKER_CONCURRENCY: "2"
-    # Run timeout (30 minutes)
-    WORKER_RUN_TIMEOUT: "1800000"
-    # Logging
-    LOG_FORMAT: "json"
-    OTEL_SERVICE_NAME: "veryfront-worker"
-
-  envFrom:
-    - secretRef:
-        name: veryfront-worker-secret
-
-  # No external service needed (internal only)
-  service:
-    enabled: false
-
-  # Health check via Redis connectivity
-  readinessProbe:
-    exec:
-      command: ["deno", "eval", "await Deno.connect({hostname:'redis',port:6379})"]
-    periodSeconds: 30
-    timeoutSeconds: 10
-
-  # No HPA - workers scale based on queue depth (external metric)
-  autoscaling:
-    enabled: false
-```
-
-### Worker Implementation
-
-```typescript
-// src/workflow/worker/run-entrypoint.ts
-import { RunExecutor } from "../executor/run-executor.ts";
-import { createDistributedWorkflowBackend } from "veryfront/workflow";
-import {
-  createDistributedEventPublisher,
-  streamingClaudeCodeAgent,
-} from "veryfront/workflow/claude-code";
-
-const REDIS_URL = Deno.env.get("REDIS_URL")!;
-const CONCURRENCY = parseInt(Deno.env.get("WORKER_CONCURRENCY") || "2");
-
-// Create Redis backend for run queue
-const backend = createDistributedWorkflowBackend({ endpoint: REDIS_URL });
-
-// Create run executor
-const executor = new RunExecutor({
-  backend,
-  concurrency: CONCURRENCY,
-
-  // Handle Claude Code runs
-  handlers: {
-    "claude-code": async (run) => {
-      const publisher = createDistributedEventPublisher({ endpoint: REDIS_URL });
-
-      try {
-        const agent = streamingClaudeCodeAgent({
-          mode: run.input.mode || "code",
-          maxIterations: run.input.maxIterations || 20,
-          streaming: {
-            enabled: true,
-            publisher,
-          },
-          runId: run.runId,
-        });
-
-        const result = await agent.generate({
-          input: run.input.task,
-          context: run.context || {},
-        });
-
-        return { success: true, result };
-      } finally {
-        await publisher.close();
-      }
-    },
-  },
-
-  // Error handling
-  onError: (run, error) => {
-    console.error(`[Worker] Run ${run.id} failed:`, error);
-  },
-});
-
-// Start processing
-console.log(`[Worker] Starting with concurrency ${CONCURRENCY}`);
-await executor.start();
-
-// Graceful shutdown
-Deno.addSignalListener("SIGTERM", async () => {
-  console.log("[Worker] Shutting down...");
-  await executor.stop();
-  Deno.exit(0);
-});
-```
-
-### API Routes
-
-```typescript
-// app/api/agent/start/route.ts
-import type { APIContext } from "veryfront";
-import { createDistributedWorkflowBackend } from "veryfront/workflow";
-
-export async function POST(ctx: APIContext) {
-  const { task, mode, maxIterations } = await ctx.body();
-
-  const backend = createDistributedWorkflowBackend({
-    endpoint: Deno.env.get("REDIS_URL")!,
-  });
-
-  // Enqueue run for worker
-  const runId = crypto.randomUUID();
-  await backend.enqueue({
-    id: runId,
-    type: "claude-code",
-    input: { task, mode, maxIterations },
-    context: {
-      projectSlug: ctx.projectSlug,
-      token: ctx.token,
-    },
-  });
-
-  return ctx.json({ runId });
-}
-```
-
-```typescript
-// app/api/agent/[runId]/stream/route.ts
-import type { APIContext } from "veryfront";
-import { createDistributedEventPublisher } from "veryfront/workflow/claude-code";
-
-export async function GET(ctx: APIContext) {
-  const { runId } = ctx.params;
-
-  const publisher = createDistributedEventPublisher({
-    endpoint: Deno.env.get("REDIS_URL")!,
-  });
-
-  const stream = new ReadableStream({
-    async start(controller) {
-      const encoder = new TextEncoder();
-
-      // Send initial connection event
-      controller.enqueue(
-        encoder.encode(`data: ${JSON.stringify({ type: "connected", runId })}\n\n`),
-      );
-
-      const unsubscribe = await publisher.subscribe(runId, (event) => {
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
-        );
-
-        if (event.type === "complete" || event.type === "error") {
-          controller.close();
-          unsubscribe();
-          publisher.close();
-        }
-      });
-    },
-    cancel() {
-      publisher.close();
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-    },
-  });
-}
-```
-
-### Scaling Considerations
-
-| Scenario       | Worker Replicas | Notes                                |
-| -------------- | --------------- | ------------------------------------ |
-| Development    | 0 (inline)      | Run agent in-process for simplicity  |
-| Low traffic    | 1               | Single worker, 2 concurrent runs     |
-| Medium traffic | 2-3             | Scale based on queue depth           |
-| High traffic   | 3-5 + HPA       | Use KEDA for queue-based autoscaling |
-
-**Queue-based autoscaling with KEDA:**
-
-```yaml
-apiVersion: keda.sh/v1alpha1
-kind: ScaledObject
-metadata:
-  name: veryfront-worker-scaler
-spec:
-  scaleTargetRef:
-    name: veryfront-worker
-  minReplicaCount: 1
-  maxReplicaCount: 5
-  triggers:
-    - type: redis
-      metadata:
-        address: redis:6379
-        listName: veryfront:runs:pending
-        listLength: "5" # Scale up when > 5 pending runs
-```
-
-### Monitoring
-
-**Key metrics to track:**
-
-```typescript
-// Worker metrics
-const metrics = {
-  // Run processing
-  "worker.runs.started": Counter,
-  "worker.runs.completed": Counter,
-  "worker.runs.failed": Counter,
-  "worker.runs.duration": Histogram,
-
-  // Agent metrics
-  "agent.iterations": Histogram,
-  "agent.tool_calls": Counter,
-  "agent.tokens.input": Counter,
-  "agent.tokens.output": Counter,
-
-  // Queue health
-  "queue.pending": Gauge,
-  "queue.processing": Gauge,
 };
+
+ctx.provide(ClaudeCodeAgentRuntimeName, runtime);
 ```
 
-**Grafana dashboard query examples:**
+An unsuccessful result must include an error. Core validates and snapshots
+provider results rather than trusting malformed extension output.
 
-```promql
-# Run processing rate
-rate(worker_runs_completed_total[5m])
+## Events and bidirectional control
 
-# Average run duration
-histogram_quantile(0.95, rate(worker_runs_duration_bucket[5m]))
+The module provides several independent event transports:
 
-# Queue depth
-queue_pending
+- `MemoryEventPublisher` for a single process or tests.
+- `SSEEventPublisher` for a server-sent-event response.
+- `CallbackEventPublisher` and `MultiEventPublisher` for composition.
+- `createDistributedEventPublisher()` through the configured distributed
+  runtime extension.
+- `WebSocketPublisher` and `AgentController` for commands, approvals, input,
+  cancellation, and keepalive traffic.
+
+Always close publishers and unsubscribe handlers during request or worker
+cleanup. WebSocket sends fail closed when the socket is unavailable; callers
+must handle the resulting error instead of assuming delivery.
+
+## Isolated workspace synchronization
+
+`WorkspaceSync` materializes project files into an explicitly selected absolute
+base directory. It has no ambient tenant or `/tmp` fallback.
+
+```ts
+import { withWorkspace } from "veryfront/workflow/claude-code";
+
+const abortSignal = AbortSignal.timeout(60_000);
+
+await withWorkspace(
+  {
+    baseDir: "/srv/veryfront/workspaces",
+    runId: "run_123",
+    source: {
+      listAll: ({ maxFiles, abortSignal }) => projectFiles.listBounded({ maxFiles, abortSignal }),
+      read: (path, { maxBytes, abortSignal }) =>
+        projectFiles.readTextBounded(path, { maxBytes, abortSignal }),
+    },
+    exclude: ["node_modules/**", ".git/**"],
+    maxFiles: 50_000,
+    maxEntries: 100_000,
+    maxTotalBytes: 64 * 1024 * 1024,
+    abortSignal,
+  },
+  async (workspace) => {
+    return await executeAgent("Review this project", {
+      mode: "analysis",
+      cwd: workspace.workspaceDir,
+    });
+  },
+);
 ```
 
-## Roadmap
+Initialization fails and cleans the partial workspace when listing or download
+fails. Cleanup errors are propagated (and aggregated with operation failures)
+so leaked workspaces are visible to operators.
 
-- [ ] Computer use integration for UI testing
-- [ ] Git operations as built-in tools
-- [ ] Diff preview before apply
-- [ ] Cost tracking and limits
-- [x] Streaming progress updates (SSE)
-- [x] Bidirectional streaming (WebSocket)
-- [x] Deployment architecture documentation
-- [ ] Multi-file atomic operations
-- [ ] KEDA autoscaling integration
+Source paths are admitted into one `/project/path` form before filtering,
+deduplication, reads, or writes. Traversal, NUL bytes, backslashes, dot
+segments, repeated separators, non-NFC Unicode, Windows device names and
+aliases, forbidden Windows component characters, trailing dots or spaces,
+and alternate-data-stream syntax reject the entire snapshot. Exact canonical
+duplicates reject before policy selection. Portable case or parent-file
+collisions in the selected materialization set also reject before source reads.
+Patterns support exact paths, `*.ext`, `prefix/**`, and `**/suffix` only;
+unsupported glob forms reject configuration. Paths are limited to 4,096 UTF-8
+bytes and 255 UTF-8 bytes per component. Run IDs use one 255-byte portable path
+segment. The default ceilings are 50,000 listed files, 100,000
+traversed filesystem entries, 10 MiB per file, and 64 MiB of aggregate UTF-8
+content. `maxFiles`, `maxEntries`, `maxFileSize`, and `maxTotalBytes` select
+deployment-specific positive safe-integer limits. The same ceilings protect
+change detection after agent execution. The composed source receives the file
+and byte limits before listing or reading and must enforce them before buffering
+remote data. Its `listAll` and `read` operations must remain bound to the same
+immutable source snapshot for one initialization; core cannot manufacture a
+transaction across an integration's remote storage. `include` and `exclude`
+apply in both directions: initialization omits matching source files, change
+detection prunes excluded directories and ignores output files outside the
+selected policy, and every filesystem entry that change detection actually
+visits still consumes `maxEntries`. `abortSignal` is propagated to source and
+persistence callbacks; integrations must observe it cooperatively. Use
+`AbortSignal.timeout(...)` when the operation also needs a deadline.
+`uploadChanges()` admits every changed path and settles the aggregate read
+budget before invoking persistence callbacks. It verifies that detected file
+checksums still match and that deletions remain absent before the first callback.
+Compose `onUpload` for created or modified text files and `onDelete` for
+deletions; a deletion without an `onDelete` handler is reported as unpersisted
+rather than being presented as a successful upload. Persistence is sequential
+and non-transactional. Each callback receives a frozen, detached `change` in
+its context. The persistence integration must use `type`, `originalChecksum`,
+and `newChecksum` to enforce an optimistic-concurrency precondition at its own
+storage boundary, reject conflicts, and resolve only after the change commits.
+Pass the unmodified output of `detectChanges()` to `uploadChanges()`. Runtime
+admission validates paths, duplicates, limits, and file policy, but retains
+compatibility with hand-built legacy changes whose checksum shape is
+incomplete. Persistence integrations must reject an incomplete change context.
+If cancellation is observed after one or more callbacks resolve but before the
+next callback starts, `uploadChanges()` throws `WorkspaceUploadAbortError`
+(whose error `name` is `AbortError`) with immutable `partialResult` and
+`remainingChanges` snapshots. A cancellation triggered by the final resolved
+callback still returns full success because no unsettled work remains. Retry
+the reported remaining changes for cancellation. Items already listed in
+`partialResult.failed` were attempted before cancellation and need separate
+reconciliation against the original change list. Make callbacks idempotent.
+
+The workspace directory is exclusively claimed, pinned by real path and native
+file identity when available, and rechecked around filesystem operations.
+File and persistence operations require a successfully initialized claim.
+Cleanup is inert before a claim and after successful cleanup, so it cannot
+recursively remove a later directory at the same path. Symlinked roots, parents,
+and files are rejected, as are multiply hard-linked files on hosts that expose
+link counts. Reads bind the opened handle back to the admitted pathname; writes
+publish a completed private file by rename instead of truncating a pathname.
+
+Deno does not currently expose directory-handle-relative no-follow mutation
+APIs, so a process that can modify the workspace concurrently retains a narrow
+race between the last parent identity check and the filesystem syscall. On a
+filesystem that exposes neither stable device/inode identity nor an equivalent,
+same-path directory replacement cannot be distinguished reliably. Keep the
+admitted base directory writable only by the worker identity; this module does
+not claim to be an OS sandbox.

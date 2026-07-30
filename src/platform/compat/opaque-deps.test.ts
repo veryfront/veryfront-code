@@ -3,7 +3,7 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset } from "../../extensions/contracts.ts";
 import type { DocumentExtractor } from "../../extensions/compat/native-services.ts";
-import { importClaudeAgentSDK, importKreuzberg } from "./opaque-deps.ts";
+import { importKreuzberg } from "./opaque-deps.ts";
 
 const stubKreuzbergModule = {
   extractBytes: async (_data: Uint8Array, _mimeType: string) => ({ content: "stub-content" }),
@@ -16,12 +16,6 @@ const stubDocumentExtractor: DocumentExtractor = {
 describe("platform/compat/opaque-deps", () => {
   afterEach(() => {
     reset();
-  });
-
-  describe("importClaudeAgentSDK", () => {
-    it("should be a function", () => {
-      assertEquals(typeof importClaudeAgentSDK, "function");
-    });
   });
 
   describe("importKreuzberg", () => {
