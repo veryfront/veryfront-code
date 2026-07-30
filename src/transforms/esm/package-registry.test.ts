@@ -25,6 +25,7 @@ import {
   normalizeReactVersion,
   readProjectDependencyVersions,
   resolveDependencyPinningSnapshot,
+  resolveDependencyWritebackTarget,
   resolveProjectPackageVersions,
   resolveProjectReactVersion,
   resolveRequestedDependencyPinningSnapshot,
@@ -100,6 +101,114 @@ describe("package-registry", () => {
 
     it("should fallback to default for invalid format", () => {
       assertEquals(normalizeReactVersion("not-a-version"), DEFAULT_REACT_VERSION);
+    });
+  });
+
+  describe("resolveDependencyWritebackTarget", () => {
+    it("returns main target for a mutable preview context", () => {
+      assertEquals(
+        resolveDependencyWritebackTarget({
+          environment: "preview",
+          isLocalProject: false,
+          releaseId: null,
+          branch: null,
+        }),
+        { kind: "main" },
+      );
+    });
+
+    it("returns branch target for a non-main preview branch", () => {
+      assertEquals(
+        resolveDependencyWritebackTarget({
+          environment: "preview",
+          isLocalProject: false,
+          releaseId: null,
+          branch: "feature-x",
+        }),
+        { kind: "branch", branch: "feature-x" },
+      );
+    });
+
+    it("rejects production and missing environment", () => {
+      assertEquals(
+        resolveDependencyWritebackTarget({
+          environment: "production",
+          isLocalProject: false,
+          releaseId: null,
+        }),
+        undefined,
+      );
+      assertEquals(
+        resolveDependencyWritebackTarget({ isLocalProject: false, releaseId: null }),
+        undefined,
+      );
+    });
+
+    it("rejects local and unknown project mode (fail closed)", () => {
+      assertEquals(
+        resolveDependencyWritebackTarget({
+          environment: "preview",
+          isLocalProject: true,
+          releaseId: null,
+        }),
+        undefined,
+      );
+      assertEquals(
+        resolveDependencyWritebackTarget({ environment: "preview", releaseId: null }),
+        undefined,
+      );
+    });
+
+    it("rejects any present release ID, including empty string (fail closed)", () => {
+      assertEquals(
+        resolveDependencyWritebackTarget({
+          environment: "preview",
+          isLocalProject: false,
+          releaseId: "rel_123",
+        }),
+        undefined,
+      );
+      assertEquals(
+        resolveDependencyWritebackTarget({
+          environment: "preview",
+          isLocalProject: false,
+          releaseId: "",
+        }),
+        undefined,
+      );
+    });
+
+    it("rejects malformed branch values", () => {
+      assertEquals(
+        resolveDependencyWritebackTarget({
+          environment: "preview",
+          isLocalProject: false,
+          releaseId: null,
+          branch: "",
+        }),
+        undefined,
+      );
+      assertEquals(
+        resolveDependencyWritebackTarget({
+          environment: "preview",
+          isLocalProject: false,
+          releaseId: null,
+          branch: " padded ",
+        }),
+        undefined,
+      );
+    });
+
+    it("treats the main branch as the main target", () => {
+      assertEquals(
+        resolveDependencyWritebackTarget({
+          environment: "preview",
+          isLocalProject: false,
+          releaseId: null,
+          branch: "main",
+        }),
+        { kind: "main" },
+      );
     });
   });
 

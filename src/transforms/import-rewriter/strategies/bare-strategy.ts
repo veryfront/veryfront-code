@@ -31,6 +31,10 @@ function hasVersionSpecifier(specifier: string): boolean {
 }
 
 function isPinningEnabledForRewrite(ctx: RewriteContext): boolean {
+  // "on:unknown" means the dependency state could not be established
+  // (unreadable package.json); fall back to conservative flag-off behavior,
+  // matching the canonical guard in dependency-resolution.ts.
+  if (ctx.dependencyPinningCacheKey === "on:unknown") return false;
   return ctx.dependencyPinningCacheKey
     ? ctx.dependencyPinningCacheKey.startsWith("on:")
     : isDependencyPinningEnabled();

@@ -154,7 +154,7 @@ export function resolveDependencyWritebackTarget(
   if (
     context.environment !== "preview" ||
     context.isLocalProject !== false ||
-    context.releaseId
+    context.releaseId != null
   ) return undefined;
   if (
     typeof context.branch === "string" &&
@@ -768,7 +768,6 @@ async function readProjectDependencyVersionsUncoalesced(
     if (
       cached &&
       !pinningOn &&
-      mtimeMs !== null &&
       cached.mtimeMs === mtimeMs
     ) {
       return {

@@ -431,6 +431,18 @@ describe("BareStrategy", () => {
       });
     });
 
+    it("treats an unknown dependency state as flag-off", () => {
+      // "on:unknown" (unreadable package.json) must fall back to conservative
+      // flag-off behavior instead of entering the pinning-on esm.sh branch.
+      const unknown = makeCtx({
+        target: "ssr",
+        dependencyPinningCacheKey: "on:unknown",
+      });
+      assertEquals(bareStrategy.rewrite(makeInfo("next-themes@0.4.6"), unknown), {
+        specifier: "next-themes",
+      });
+    });
+
     it("leaves an unversioned specifier unchanged", () => {
       assertEquals(bareStrategy.rewrite(makeInfo("next-themes"), ssr), { specifier: null });
     });
