@@ -18,7 +18,10 @@ export interface BranchPickerProps
 
 /** Props shared by `BranchPicker.Previous` and `BranchPicker.Next`. */
 export interface BranchPickerActionProps {
-  /** Override the chevron glyph. */
+  /** Replace the default glyph — the canonical path (RFC 2980: a leaf renders its
+   * default icon when childless; pass children to replace it). */
+  children?: React.ReactNode;
+  /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
   icon?: React.ReactNode;
   className?: string;
   /** React 19: ref is a regular prop. */
@@ -85,6 +88,7 @@ function NextIcon(): React.ReactElement {
 
 /** Previous-branch control. */
 function BranchPickerPrevious({
+  children,
   icon,
   className,
   ref,
@@ -99,7 +103,7 @@ function BranchPickerPrevious({
       className={cn(ACTION_BUTTON, className)}
       aria-label="Previous variant"
     >
-      {icon ?? <PreviousIcon />}
+      {children ?? icon ?? <PreviousIcon />}
     </button>
   );
 }
@@ -123,6 +127,7 @@ BranchPickerCount.displayName = "BranchPicker.Count";
 
 /** Next-branch control. */
 function BranchPickerNext({
+  children,
   icon,
   className,
   ref,
@@ -137,7 +142,7 @@ function BranchPickerNext({
       className={cn(ACTION_BUTTON, className)}
       aria-label="Next variant"
     >
-      {icon ?? <NextIcon />}
+      {children ?? icon ?? <NextIcon />}
     </button>
   );
 }

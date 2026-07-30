@@ -9,7 +9,7 @@ export interface StepIndicatorProps
   stepIndex: number;
   isComplete: boolean;
   className?: string;
-  /** Override the complete/pending status glyph. */
+  /** @deprecated Pass `children` to `StepIndicator.Label` instead. Kept working for backward compatibility. */
   icon?: React.ReactNode;
   /** Compose your own divider; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
@@ -90,8 +90,8 @@ StepIndicatorRule.displayName = "StepIndicator.Rule";
 
 /** `StepIndicator.Label` — the status glyph + `Step N` pill. */
 function StepIndicatorLabel(
-  { className, ref, ...props }:
-    & Omit<React.HTMLAttributes<HTMLDivElement>, "children">
+  { className, children, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
     & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element {
   const { stepIndex, isComplete, icon } = useStepIndicator();
@@ -104,7 +104,7 @@ function StepIndicatorLabel(
         className,
       )}
     >
-      {icon ?? (isComplete
+      {children ?? icon ?? (isComplete
         ? <CheckCircleIcon className="size-3.5 text-[var(--success)]" />
         : <span className="size-2 rounded-full bg-[var(--faint)] animate-pulse" />)}
       <span className="font-medium">Step {stepIndex + 1}</span>

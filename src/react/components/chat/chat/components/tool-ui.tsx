@@ -310,7 +310,10 @@ ToolCallRoot.displayName = "ToolCall.Root";
 
 /** Props for `ToolCall.Trigger` — the header button. */
 export interface ToolCallTriggerProps {
-  /** Override the leading tool icon. */
+  /** Replace the default glyph — the canonical path (RFC 2980: a leaf renders its
+   * default icon when childless; pass children to replace it). */
+  children?: React.ReactNode;
+  /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
   icon?: React.ReactNode;
   className?: string;
   /** React 19: ref is a regular prop. */
@@ -319,7 +322,7 @@ export interface ToolCallTriggerProps {
 
 /** The header row: tool icon + name + status badge + expand chevron. */
 function ToolCallTrigger(
-  { icon, className, ref }: ToolCallTriggerProps,
+  { children, icon, className, ref }: ToolCallTriggerProps,
 ): React.JSX.Element {
   const { tool, isExpanded, toggle } = useToolCall();
   return (
@@ -333,7 +336,7 @@ function ToolCallTrigger(
       )}
     >
       <div className="flex min-w-0 items-center gap-2">
-        {icon ?? <WrenchIcon className="size-3.5 shrink-0 text-[var(--foreground)]" />}
+        {children ?? icon ?? <WrenchIcon className="size-3.5 shrink-0 text-[var(--foreground)]" />}
         <span className="min-w-0 truncate text-sm font-medium leading-tight text-[var(--foreground)]">
           {tool.toolName}
         </span>

@@ -136,7 +136,10 @@ ReasoningRoot.displayName = "Reasoning.Root";
 
 /** Props for `Reasoning.Trigger` — the disclosure button. */
 export interface ReasoningTriggerProps {
-  /** Overrides the chevron glyph. */
+  /** Replace the default glyph — the canonical path (RFC 2980: a leaf renders its
+   * default icon when childless; pass children to replace it). */
+  children?: React.ReactNode;
+  /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
   icon?: React.ReactNode;
   /** Override the two labels; each defaults to the current string. */
   labels?: { thinking?: string; thought?: string };
@@ -147,7 +150,7 @@ export interface ReasoningTriggerProps {
 
 /** The header row: a "Thinking…" / "Thought process" label + expand chevron. */
 function ReasoningTrigger(
-  { icon, labels, className, ref }: ReasoningTriggerProps,
+  { children, icon, labels, className, ref }: ReasoningTriggerProps,
 ): React.JSX.Element {
   const { isStreaming, isOpen, toggle } = useReasoning();
   const thinkingLabel = labels?.thinking ?? "Thinking...";
@@ -171,7 +174,7 @@ function ReasoningTrigger(
           !isOpen && "-rotate-90",
         )}
       >
-        {icon ?? <ChevronDownIcon className="size-3.5 shrink-0" />}
+        {children ?? icon ?? <ChevronDownIcon className="size-3.5 shrink-0" />}
       </span>
     </button>
   );
