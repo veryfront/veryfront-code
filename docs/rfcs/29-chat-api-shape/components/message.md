@@ -183,14 +183,14 @@ The single message node (one `<article>`) + the compound's scoped context. All m
 
 **State attributes** - the `MessageItem` primitive already emits `data-message-item` and `data-role` today (`primitives/message-list.tsx`); those two are **kept**. The rest are proposed additions (streaming/editing/error are presented only structurally today):
 
-| Attribute           | Values                        | Meaning                                                                            |
-| ------------------- | ----------------------------- | ---------------------------------------------------------------------------------- |
-| `data-message-item` | present                       | Part marker - _kept_ (exists today).                                               |
-| `data-role`         | `user \| assistant \| system` | Author role - _kept_ (exists today).                                               |
-| `data-agent-id`     | `<id>`                        | Producing agent - per-message, for per-agent styling in multi-agent conversations. |
-| `data-streaming`    | present                       | This message is streaming now (also on `Message.Text`).                            |
-| `data-editing`      | present                       | The edit composer is active.                                                       |
-| `data-error`        | present                       | The message errored.                                                               |
+| Attribute           | Values                                | Meaning                                                                            |
+| ------------------- | ------------------------------------- | ---------------------------------------------------------------------------------- |
+| `data-message-item` | present                               | Part marker - _kept_ (exists today).                                               |
+| `data-role`         | `user \| assistant \| system \| tool` | Author role - _kept_ (exists today).                                               |
+| `data-agent-id`     | `<id>`                                | Producing agent - per-message, for per-agent styling in multi-agent conversations. |
+| `data-streaming`    | present                               | This message is streaming now (also on `Message.Text`).                            |
+| `data-editing`      | present                               | The edit composer is active.                                                       |
+| `data-error`        | present                               | The message errored.                                                               |
 
 ```css
 /* style state with CSS, not boolean props */
@@ -275,9 +275,9 @@ When childless it renders that default loop; compose the body with `Message.Part
 
 **Layout:** no node - the returned children land directly in the parent column (usually `.Content`'s `gap-2.5` flex).
 
-| Prop       | Type                  | Description                                                                                                                       |
-| ---------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `children` | `(part) => ReactNode` | Render each typed part; return a `Message.*` leaf, a `ToolCall`, or your own markup. Omit to render the default per-type mapping. |
+| Prop       | Type                         | Description                                                                                                                       |
+| ---------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `children` | `(part, index) => ReactNode` | Render each typed part; return a `Message.*` leaf, a `ToolCall`, or your own markup. Omit to render the default per-type mapping. |
 
 **Childless default (settled):** `<Message.Parts />` with no render fn renders the default per-type mapping (registry-aware) - this is the public default behind `.Content`, so `.Content`'s childless body is expressible as public composition. The render fn receives `(part, index)`.
 

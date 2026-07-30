@@ -378,7 +378,7 @@ The L1 preset renders `ChatInput` for you. Its default composition is public - e
 You own every layout div; config lives on the leaf; state comes through `data-*`.
 
 ```tsx
-function Composer() {
+function MyComposer() {
   const { chat } = useConversationChat({ agentId: "support-agent", api: "/api/ag-ui" });
   return (
     <ChatInput chat={chat}>

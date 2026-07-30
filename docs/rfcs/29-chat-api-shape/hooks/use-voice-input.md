@@ -72,7 +72,7 @@ None - voice is consumed through `useChatInput({ voice })`, which exposes `getVo
 Pass the result into the composer; the transcript folds into the field value and `ChatInput.Voice` gets `data-listening` for styling:
 
 ```tsx
-function Composer({ chat }) {
+function MyComposer({ chat }) {
   const voice = useVoiceInput({ language: "en-US" });
   return (
     <ChatInput chat={chat} voice={voice}>

@@ -239,7 +239,7 @@ The L1 preset renders pills for pending uploads automatically:
 Map the upload state to pills and compose the anatomy you want. Inside a `<ChatInput>` with `upload` configured, the pills need no wiring - `.Retry`/`.Remove` route through the nearest `ChatInput` context's upload by default (pass `upload` on `.Root` only when rendering outside a composer):
 
 ```tsx
-function Composer({ chat }) {
+function MyComposer({ chat }) {
   const upload = useUpload({ api: "/api/uploads" });
   return (
     <ChatInput chat={chat} upload={upload}>

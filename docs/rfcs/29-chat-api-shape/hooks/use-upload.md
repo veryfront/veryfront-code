@@ -75,7 +75,7 @@ Both take `(overrides?)` per the standard merge semantics.
 ## Example
 
 ```tsx
-function Composer({ chat }) {
+function MyComposer({ chat }) {
   const upload = useUpload({ api: "/api/uploads", accept: "image/*", maxFiles: 4 });
   return (
     <div {...upload.getDropTargetProps({ className: "my-surface" })}>

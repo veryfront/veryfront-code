@@ -443,8 +443,8 @@ function MyChatInput() {
   const chat = useConversationChat({ agentId });
   const chatInput = useChatInput({ chat: chat.chat, upload: useUpload() });
   return (
-    <form {...chatInput.getFormProps()} className="anything">
-      <textarea {...chatInput.getFieldProps()} className="anything" />
+    <form {...chatInput.getFormProps({ className: "anything" })}>
+      <textarea {...chatInput.getFieldProps({ className: "anything" })} />
       <button {...chatInput.getSubmitProps({ "aria-label": "Send" })}>
         {chatInput.isStreaming ? <Stop /> : <Send />}
       </button>
