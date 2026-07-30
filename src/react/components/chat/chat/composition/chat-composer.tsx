@@ -107,6 +107,10 @@ export function ChatInputField(
 
 /** Props shared by the icon action sub-parts. */
 export interface ChatInputActionProps {
+  /** Replace the default glyph — the canonical path (RFC 2980: a leaf renders its
+   * default icon when childless; pass children to replace it). */
+  children?: React.ReactNode;
+  /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
   icon?: React.ReactNode;
   className?: string;
   asChild?: boolean;
@@ -117,7 +121,7 @@ export interface ChatInputActionProps {
 
 /** Send button — shows when there is input (and not streaming). */
 export function ChatInputSend(
-  { icon, className, asChild, onClick, ref }: ChatInputActionProps,
+  { children, icon, className, asChild, onClick, ref }: ChatInputActionProps,
 ): React.ReactElement | null {
   const c = useComposerContext();
   if (c.isLoading) return null;
@@ -136,7 +140,7 @@ export function ChatInputSend(
       onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
       className={cn("shrink-0", className)}
     >
-      {icon ?? <ArrowUpIcon />}
+      {children ?? icon ?? <ArrowUpIcon />}
     </Comp>
   );
 }
@@ -144,7 +148,7 @@ ChatInputSend.displayName = "ChatInput.Send";
 
 /** Stop button — shows while streaming. */
 export function ChatInputStop(
-  { icon, className, asChild, onClick, ref }: ChatInputActionProps,
+  { children, icon, className, asChild, onClick, ref }: ChatInputActionProps,
 ): React.ReactElement | null {
   const c = useComposerContext();
   if (!c.isLoading) return null;
@@ -160,7 +164,7 @@ export function ChatInputStop(
       onClick={(e: React.MouseEvent<HTMLElement>) => (onClick ? onClick(e, run) : run())}
       className={cn("shrink-0", className)}
     >
-      {icon ?? <StopIcon />}
+      {children ?? icon ?? <StopIcon />}
     </Comp>
   );
 }
@@ -193,7 +197,7 @@ ChatInputSubmit.displayName = "ChatInput.Submit";
 
 /** Voice button — shows when the field is empty and voice is available. */
 export function ChatInputVoice(
-  { icon, className, asChild, onClick, ref }: ChatInputActionProps,
+  { children, icon, className, asChild, onClick, ref }: ChatInputActionProps,
 ): React.ReactElement | null {
   const c = useComposerContext();
   if (c.isLoading || c.canSubmit || !c.onVoice) return null;
@@ -215,7 +219,7 @@ export function ChatInputVoice(
         className,
       )}
     >
-      {icon ?? <MicGlyph />}
+      {children ?? icon ?? <MicGlyph />}
     </Comp>
   );
 }
