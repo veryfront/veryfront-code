@@ -125,6 +125,21 @@ export const UI_COMPONENTS: UiComponent[] = [
   { name: "Menubar", kind: "overlay", interactive: true, status: "shipped" },
   { name: "NumberField", kind: "form", interactive: false, status: "shipped" },
   { name: "AspectRatio", kind: "visual", interactive: false, status: "shipped" },
+
+  // ---- PLANNED (cross-library gaps vs shadcn / Radix / Base UI / React Aria) ----
+  // Scoped in from a catalog audit of the four engines + shadcn; build to spec
+  // (build · story · docs-in-story · test · JSDoc) after the chat suite + gate 2.
+  { name: "Calendar", kind: "structure", interactive: true, status: "planned" },
+  { name: "DatePicker", kind: "overlay", interactive: true, status: "planned" },
+  { name: "AlertDialog", kind: "overlay", interactive: true, status: "planned" },
+  { name: "NavigationMenu", kind: "overlay", interactive: true, status: "planned" },
+  { name: "Toolbar", kind: "structure", interactive: true, status: "planned" },
+  { name: "Breadcrumb", kind: "structure", interactive: false, status: "planned" },
+  { name: "Pagination", kind: "structure", interactive: false, status: "planned" },
+  { name: "ScrollArea", kind: "structure", interactive: false, status: "planned" },
+  { name: "Meter", kind: "visual", interactive: false, status: "planned" },
+  { name: "InputOTP", kind: "form", interactive: false, status: "planned" },
+  { name: "Field", kind: "form", interactive: false, status: "planned" },
 ];
 
 let storyFiles: string[] = [];
