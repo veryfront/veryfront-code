@@ -217,7 +217,11 @@ describe("deploy command adapters", () => {
 
     const humanOutput = stripAnsi(human.output.join("\n"));
     assertEquals(humanOutput.includes("Deployed sentinel-project to production"), true);
-    assertEquals(humanOutput.includes("https://sentinel.example.test/dashboard"), true);
+    const expectedUrlLine = `  ${sentinelResult.url}`;
+    assertEquals(
+      human.output.map(stripAnsi).find((line) => line === expectedUrlLine),
+      expectedUrlLine,
+    );
     assertEquals(humanOutput.includes("Release 2026.07.30-1"), true);
     assertEquals(humanOutput.includes("sentinel warning"), true);
 

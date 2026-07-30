@@ -971,7 +971,7 @@ export function createDeployProject(options: {
         "resolve-config",
         async () => getEnvironmentConfig(),
       );
-      let receipt = await readPushReceipt(request.projectDir);
+      const receipt = await readPushReceipt(request.projectDir);
       const branch = request.branch ?? "main";
       const setup = await ensureProjectLinkedForDeploy(
         request.projectDir,
@@ -1008,7 +1008,6 @@ export function createDeployProject(options: {
             quiet: true,
           });
         });
-        receipt = await readPushReceipt(request.projectDir);
         config = await resolveConfigWithAuth(request.projectDir, environmentConfig);
         controlPlane = createControlPlane(config);
       }
