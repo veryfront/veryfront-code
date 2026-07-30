@@ -1,10 +1,11 @@
 import { createFileSystem } from "veryfront/platform";
 import { cwd } from "veryfront/platform";
-import { basename } from "#std/path.ts";
+import { basename } from "veryfront/platform/path";
 import { parseSkillFileFrontmatter, validateSkillFileMetadata } from "veryfront/skill";
 import type { LoadedSkill } from "./types.ts";
 import { CORE_SKILLS } from "./core-skills.ts";
 import { readSkillDocument } from "./read-skill-document.ts";
+import { assertSkillDirectoryIdentity } from "./validation.ts";
 
 function getCoreSkillsDir(): string {
   return new URL("../mcp/skills", import.meta.url).pathname;
@@ -16,7 +17,9 @@ export async function loadSkill(
   try {
     const content = await readSkillDocument(`${directory}/SKILL.md`);
     const parsed = await parseSkillFileFrontmatter(content);
-    const metadata = validateSkillFileMetadata(parsed.frontmatter, basename(directory));
+    const directoryName = basename(directory);
+    assertSkillDirectoryIdentity(parsed.frontmatter, directoryName);
+    const metadata = validateSkillFileMetadata(parsed.frontmatter, directoryName);
     return { metadata, skillMd: parsed.body.trimStart(), directory };
   } catch {
     return null;

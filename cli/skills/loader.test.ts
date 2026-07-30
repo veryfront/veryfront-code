@@ -79,6 +79,20 @@ describe("Skill Loader", () => {
     });
   });
 
+  it("preserves a legacy display-style name without changing directory identity", async () => {
+    await withTempDir({
+      "skills/code-review/SKILL.md": PROJECT_SKILL.replace(
+        "name: code-review",
+        "name: Code Review",
+      ),
+    }, async (dir) => {
+      const skill = await loadSkill(join(dir, "skills", "code-review"));
+
+      assertEquals(skill?.metadata.name, "code-review");
+      assertEquals(skill?.metadata.displayName, "Code Review");
+    });
+  });
+
   it("does not load a skill document over the runtime byte budget", async () => {
     await withTempDir({
       "skills/oversized/SKILL.md": "x".repeat(1_048_577),

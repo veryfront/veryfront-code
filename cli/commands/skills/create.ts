@@ -5,7 +5,7 @@
  */
 
 import type { ParsedArgs } from "#cli/shared/types";
-import { relative } from "#std/path.ts";
+import { relative } from "veryfront/platform/path";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { exitProcess, logSuccess, logUsageError } from "#cli/utils";
 import { scaffoldProjectFile } from "../../scaffold/engine.ts";

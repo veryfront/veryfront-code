@@ -1,4 +1,4 @@
-import { dirname, join } from "#std/path.ts";
+import { dirname, join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { ensureDir, fileExists } from "../utils/fs.ts";
 import { toComponentName, toSlug } from "../utils/string.ts";

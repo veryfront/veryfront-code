@@ -5,7 +5,7 @@
  * Creates connector.json, API client, OAuth routes, token store, and tool skeletons.
  */
 
-import { join } from "#std/path.ts";
+import { join } from "veryfront/platform/path";
 import { bold, brand, dim } from "#cli/ui";
 import { cliLogger } from "#cli/utils";
 import { createFileSystem, type FileSystem } from "veryfront/platform";
