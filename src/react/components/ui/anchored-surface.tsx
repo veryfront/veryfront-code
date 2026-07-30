@@ -7,7 +7,7 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { Slot } from "./slot.tsx";
+import { composeRefs, Slot } from "./slot.tsx";
 import { Floating } from "./floating.tsx";
 import { type DisclosureOptions, useDisclosure } from "./disclosure.ts";
 
@@ -21,6 +21,8 @@ export interface AnchoredState {
 /** Props for `AnchoredTrigger` (returned by the factory). */
 export interface AnchoredTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   asChild?: boolean;
+  /** Composed with the internal positioning-anchor ref. */
+  ref?: React.Ref<HTMLButtonElement>;
   /** `aria-haspopup` value -- `"dialog"` for Popover, `"menu"` for DropdownMenu. */
   haspopup: NonNullable<React.AriaAttributes["aria-haspopup"]>;
 }
@@ -44,8 +46,9 @@ export function createAnchoredSurfaceParts() {
   const Context = React.createContext<AnchoredState | null>(null);
 
   /**
-   * Anchor `<span>` + disclosure state + context provider.
-   * The span is the positioning anchor for `Floating`.
+   * Disclosure state + context provider. Renders no node of its own - the
+   * positioning anchor for `Floating` is the trigger element itself, carried
+   * on context as `anchorRef` and attached by `AnchoredTrigger`.
    */
   function AnchoredRoot(
     { children, open, defaultOpen, onOpenChange }: DisclosureOptions & {
@@ -56,20 +59,25 @@ export function createAnchoredSurfaceParts() {
     const anchorRef = React.useRef<HTMLElement | null>(null);
     const ctx = React.useMemo(() => ({ open: isOpen, setOpen, anchorRef }), [isOpen, setOpen]);
     return (
-      <span ref={anchorRef} className="relative inline-block">
-        <Context.Provider value={ctx}>
-          {children}
-        </Context.Provider>
-      </span>
+      <Context.Provider value={ctx}>
+        {children}
+      </Context.Provider>
     );
   }
 
   /**
    * Toggle trigger. Sets `aria-haspopup` and `aria-expanded`; toggles open on
-   * click. Skins differ only in the `haspopup` value they supply.
+   * click; carries the positioning-anchor ref (composed with any consumer
+   * `ref`, including through `asChild`). Skins differ only in the `haspopup`
+   * value they supply.
+   *
+   * `asChild` contract: the child must forward `ref` to its DOM node (every
+   * `ui` component does; refs pass as regular props on function components in
+   * React 19). A child that drops `ref` leaves the surface unanchored —
+   * `Floating` warns in that case instead of silently rendering nothing.
    */
   function AnchoredTrigger(
-    { children, asChild, onClick, haspopup, ...props }: AnchoredTriggerProps,
+    { children, asChild, onClick, haspopup, ref, ...props }: AnchoredTriggerProps,
   ): React.ReactElement {
     const ctx = React.useContext(Context);
     const Comp = asChild ? Slot : "button";
@@ -78,6 +86,10 @@ export function createAnchoredSurfaceParts() {
         {...(asChild ? {} : { type: "button" as const })}
         aria-haspopup={haspopup}
         aria-expanded={ctx?.open}
+        ref={composeRefs<HTMLButtonElement>(
+          ctx?.anchorRef as React.Ref<HTMLButtonElement> | undefined,
+          ref,
+        )}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           onClick?.(e);
           // Guard ctx before reading ctx.open (trigger may render outside a Root).

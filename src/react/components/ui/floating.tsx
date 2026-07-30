@@ -15,9 +15,12 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { UI_SCOPE_SELECTOR } from "./design-tokens.ts";
 
+// Warn once per session, not per render, when a surface opens unanchored.
+let warnedMissingAnchor = false;
+
 /** Props accepted by `<Floating>`. */
 export interface FloatingProps extends React.HTMLAttributes<HTMLDivElement> {
-  /** Element the surface is positioned against (usually the trigger wrapper). */
+  /** Element the surface is positioned against (usually the trigger element). */
   anchorRef: React.RefObject<HTMLElement | null>;
   open: boolean;
   /** Horizontal edge to align to. */
@@ -57,6 +60,13 @@ export function Floating({
   React.useLayoutEffect(() => {
     if (!open) return;
     const update = () => {
+      if (anchorRef.current === null && !warnedMissingAnchor) {
+        warnedMissingAnchor = true;
+        console.warn(
+          "[ui] Floating surface opened without an anchor element. " +
+            "If the trigger uses asChild, its child must forward `ref` to a DOM node.",
+        );
+      }
       const a = anchorRef.current?.getBoundingClientRect();
       const c = ref.current;
       if (!a || !c) return;
