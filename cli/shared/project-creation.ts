@@ -17,7 +17,6 @@ import {
   type PackageManager,
 } from "../utils/package-manager.ts";
 import {
-  getIntegrationBaseFiles,
   loadIntegrationBaseConfig,
   loadIntegrationBaseFilesFromDirectory,
   loadIntegrations,
@@ -286,7 +285,6 @@ async function assembleIntegrationFiles(
 
   logger.debug(`Loading integrations: ${integrations.join(", ")}`);
 
-  files = mergeFiles(files, getIntegrationBaseFiles());
   files = mergeFiles(files, await loadIntegrationBaseFilesFromDirectory());
 
   const baseConfig = await loadIntegrationBaseConfig();
