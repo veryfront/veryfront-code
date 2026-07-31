@@ -2,7 +2,7 @@
  * MCP tool: vf_trigger_deploy
  *
  * Creates a release from a branch and deploys it to an environment through
- * Deploy Execution (`DeployProject.execute`) — the same module behind the
+ * Deploy Execution (`DeployProject.execute`), the same module behind the
  * `vf deploy` CLI command. Success means the deployment is verified and the
  * environment URL is reachable.
  */
@@ -115,8 +115,8 @@ export const vfTriggerDeploy: MCPTool<TriggerDeployInput, TriggerDeployResult> =
     "and environment readiness, and returns the deployment evidence including the live URL. " +
     "Success means the environment is verified and reachable. " +
     "Requires a valid API token (set VERYFRONT_API_TOKEN or run 'veryfront login'). " +
-    "Do not use for local builds — use vf_build instead. " +
-    "Do not use for running tests before deploy — use vf_run_tests instead.",
+    "Do not use for local builds; use vf_build instead. " +
+    "Do not use for running tests before deploy; use vf_run_tests instead.",
   inputSchema: triggerDeployInput,
   execute: (input) => triggerDeploy(input),
 };
