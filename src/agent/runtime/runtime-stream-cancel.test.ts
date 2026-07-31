@@ -144,7 +144,6 @@ describe("agent runtime stream cancellation (#2334)", () => {
       model: "hosted/cancel-crash-tool",
       system: "cancel crash tool test",
       tools: { slow_tool: slowTool },
-      toolLoading: "eager",
       maxSteps: 3,
       resolveModelTransport: async () => ({ model }),
     });

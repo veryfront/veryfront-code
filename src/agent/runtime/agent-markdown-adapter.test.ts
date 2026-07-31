@@ -1,10 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { it } from "#veryfront/testing/bdd.ts";
 import { toolRegistry } from "#veryfront/tool";
 import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "./agent-markdown-adapter.ts";
-import { parseRuntimeAgentMarkdownDefinition } from "./agent-definition.ts";
 import { getEffectiveAgentSystem } from "./effective-agent-system.ts";
 
 Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native tools", () => {
@@ -18,41 +16,6 @@ Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native to
   });
 
   assertEquals(runtimeAgent.config.providerTools, ["web_search", "web_fetch"]);
-});
-
-it("createRuntimeAgentFromMarkdownDefinition preserves tool loading", () => {
-  const deferredAgent = createRuntimeAgentFromMarkdownDefinition({
-    id: "deferred",
-    name: "Deferred",
-    description: "Loads tools on demand",
-    instructions: "Use the configured tools.",
-    toolLoading: "deferred",
-  });
-  const eagerAgent = createRuntimeAgentFromMarkdownDefinition({
-    id: "eager",
-    name: "Eager",
-    description: "Loads tools immediately",
-    instructions: "Use the configured tools.",
-    toolLoading: "eager",
-  });
-
-  assertEquals(deferredAgent.config.toolLoading, "deferred");
-  assertEquals(eagerAgent.config.toolLoading, "eager");
-});
-
-it("preserves camel-case eager tool loading from Markdown through the agent factory", () => {
-  const definition = parseRuntimeAgentMarkdownDefinition({
-    id: "markdown-eager",
-    content: `---
-toolLoading: eager
----
-Use the configured tools.
-`,
-  });
-
-  const runtimeAgent = createRuntimeAgentFromMarkdownDefinition(definition);
-
-  assertEquals(runtimeAgent.config.toolLoading, "eager");
 });
 
 Deno.test("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools", () => {

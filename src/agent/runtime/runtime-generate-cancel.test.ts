@@ -121,7 +121,6 @@ describe("agent runtime generate cancellation", () => {
     const assistant = agent({
       model: "hosted/generate-cancel-tools",
       system: "Cancellation test",
-      toolLoading: "eager",
       tools: { first_tool: firstTool, second_tool: secondTool },
       maxSteps: 2,
       resolveModelTransport: async () => ({ model }),

@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "#veryfront/tool";
-import type { ToolLoading } from "../types.ts";
+import type { RuntimeToolLoadingMode } from "./runtime-tool-config.ts";
 
 /** Framework-owned model-facing tool used to load authorized schemas. */
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
@@ -178,9 +178,10 @@ export function createToolSearchDefinition(): ToolDefinition {
 /** Plan the schemas visible to the model for the current step. */
 export function createToolExposurePlan(input: {
   authorized: readonly ToolDefinition[];
-  mode: ToolLoading;
+  mode: RuntimeToolLoadingMode;
   state: ToolExposureState;
   bootstrapToolNames?: ReadonlySet<string>;
+  hasSearchableMetadata?: boolean;
 }): ToolExposurePlan {
   const authorized = [...input.authorized];
   if (input.mode === "eager") {
@@ -199,11 +200,13 @@ export function createToolExposurePlan(input: {
   const visible = authorized
     .filter((tool) => bootstrap.has(tool.name) || input.state.loadedToolNames.has(tool.name))
     .sort((left, right) => compareAscii(left.name, right.name));
-  visible.push(createToolSearchDefinition());
   const visibleNames = new Set(visible.map((tool) => tool.name));
   const deferred = authorized
     .filter((tool) => !visibleNames.has(tool.name))
     .sort((left, right) => compareAscii(left.name, right.name));
+  if (deferred.length > 0 || input.hasSearchableMetadata === true) {
+    visible.push(createToolSearchDefinition());
+  }
 
   return {
     authorized,

@@ -4,6 +4,7 @@ import { it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
+import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { agent } from "../index.ts";
 import type { AgentConfig, Message } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
@@ -117,36 +118,39 @@ it("deferred generate searches, exposes on the next step, and executes once", as
     },
   };
   let executionCount = 0;
-  const assistant = agent({
-    id: "deferred-runtime-test",
-    model: "hosted/deferred-tools",
-    system: "Use tools when needed.",
-    tools: {
-      form_input: tool({
-        id: "form_input",
-        description: "Collect input",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => ({}),
-      }),
-      load_skill: tool({
-        id: "load_skill",
-        description: "Load a skill",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => ({}),
-      }),
-      read_release_marker: tool({
-        id: "read_release_marker",
-        description: "Read the release marker",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => {
-          executionCount++;
-          return { marker: "marker-1" };
-        },
-      }),
-    },
-    maxSteps: 4,
-    resolveModelTransport: () => ({ model }),
-  });
+  const assistant = agent(
+    {
+      id: "deferred-runtime-test",
+      model: "hosted/deferred-tools",
+      system: "Use tools when needed.",
+      tools: {
+        form_input: tool({
+          id: "form_input",
+          description: "Collect input",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+        load_skill: tool({
+          id: "load_skill",
+          description: "Load a skill",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+        read_release_marker: tool({
+          id: "read_release_marker",
+          description: "Read the release marker",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executionCount++;
+            return { marker: "marker-1" };
+          },
+        }),
+      },
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model }),
+      __vfToolLoadingMode: "deferred",
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
 
   const response = await assistant.generate({ input: "Read the release marker" });
 
@@ -155,7 +159,6 @@ it("deferred generate searches, exposes on the next step, and executes once", as
     "form_input",
     "load_skill",
     "read_release_marker",
-    "tool_search",
   ]);
   assertEquals(executionCount, 1);
   assertEquals(response.text, "Release marker marker-1");
@@ -189,25 +192,28 @@ it("deferred generate rejects a guessed tool that was not exposed", async () => 
       return { stream: new ReadableStream() };
     },
   };
-  const assistant = agent({
-    id: "deferred-guessed-generate",
-    model: "hosted/deferred-guessed-tool",
-    system: "Use tools when needed.",
-    skills: false,
-    tools: {
-      get_release: tool({
-        id: "get_release",
-        description: "Get the current release",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => {
-          executionCount++;
-          return { id: "rel-1" };
-        },
-      }),
-    },
-    maxSteps: 2,
-    resolveModelTransport: () => ({ model }),
-  });
+  const assistant = agent(
+    {
+      id: "deferred-guessed-generate",
+      model: "hosted/deferred-guessed-tool",
+      system: "Use tools when needed.",
+      skills: false,
+      tools: {
+        get_release: tool({
+          id: "get_release",
+          description: "Get the current release",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executionCount++;
+            return { id: "rel-1" };
+          },
+        }),
+      },
+      maxSteps: 2,
+      resolveModelTransport: () => ({ model }),
+      __vfToolLoadingMode: "deferred",
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
 
   const response = await assistant.generate({ input: "Find the current release" });
 
@@ -289,22 +295,20 @@ it("deferred generate does not load or execute a descriptive unauthorized tool",
     },
     maxSteps: 3,
     resolveModelTransport: () => ({ model }),
+    __vfToolLoadingMode: "deferred",
   } as AgentConfig & RuntimeToolFilterConfig;
 
   const response = await agent(config).generate({
     input: restrictedSkillMessages("Read the release marker"),
   });
 
-  assertEquals(observedTools[0], ["form_input", "load_skill", "tool_search"]);
-  assertEquals(observedTools[1], ["form_input", "load_skill", "tool_search"]);
-  assertEquals(response.toolCalls[0]?.result, {
-    matches: [],
-    resultCount: 0,
-    loadedCount: 0,
-    attachableMetadataCount: 0,
-    miss: true,
-    nextStep: "Continue with the available tools or answer without a tool.",
-  });
+  assertEquals(observedTools[0], ["form_input", "load_skill"]);
+  assertEquals(observedTools[1], ["form_input", "load_skill"]);
+  assertEquals(response.toolCalls[0]?.status, "error");
+  assertEquals(
+    response.toolCalls[0]?.error,
+    'Tool "tool_search" is not available in the current model step',
+  );
   assertEquals(response.toolCalls[1]?.status, "error");
   assertEquals(
     response.toolCalls[1]?.error,
@@ -360,36 +364,39 @@ it("deferred stream searches, exposes on the next step, and executes exact argum
     },
   };
   let executionCount = 0;
-  const assistant = agent({
-    id: "deferred-stream-runtime-test",
-    model: "hosted/deferred-stream-tools",
-    system: "Use tools when needed.",
-    tools: {
-      form_input: tool({
-        id: "form_input",
-        description: "Collect input",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => ({}),
-      }),
-      load_skill: tool({
-        id: "load_skill",
-        description: "Load a skill",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => ({}),
-      }),
-      read_release_marker: tool({
-        id: "read_release_marker",
-        description: "Read the release marker",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => {
-          executionCount++;
-          return { marker: "marker-1" };
-        },
-      }),
-    },
-    maxSteps: 4,
-    resolveModelTransport: () => ({ model }),
-  });
+  const assistant = agent(
+    {
+      id: "deferred-stream-runtime-test",
+      model: "hosted/deferred-stream-tools",
+      system: "Use tools when needed.",
+      tools: {
+        form_input: tool({
+          id: "form_input",
+          description: "Collect input",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+        load_skill: tool({
+          id: "load_skill",
+          description: "Load a skill",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+        read_release_marker: tool({
+          id: "read_release_marker",
+          description: "Read the release marker",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executionCount++;
+            return { marker: "marker-1" };
+          },
+        }),
+      },
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model }),
+      __vfToolLoadingMode: "deferred",
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
 
   const body = await (await assistant.stream({ input: "Read the release marker" }))
     .toDataStreamResponse().text();
@@ -399,7 +406,6 @@ it("deferred stream searches, exposes on the next step, and executes exact argum
     "form_input",
     "load_skill",
     "read_release_marker",
-    "tool_search",
   ]);
   assertEquals(executionCount, 1);
   assertEquals(body.includes("Release marker marker-1"), true);
@@ -437,25 +443,28 @@ it("deferred stream rejects a guessed tool that was not exposed", async () => {
       };
     },
   };
-  const assistant = agent({
-    id: "deferred-stream-guessed-tool",
-    model: "hosted/deferred-stream-guessed-tool",
-    system: "Use tools when needed.",
-    skills: false,
-    tools: {
-      create_release: tool({
-        id: "create_release",
-        description: "Create a release",
-        inputSchema: defineSchema((v) => v.object({ label: v.string() }))(),
-        execute: () => {
-          executionCount++;
-          return { id: "rel-1" };
-        },
-      }),
-    },
-    maxSteps: 2,
-    resolveModelTransport: () => ({ model }),
-  });
+  const assistant = agent(
+    {
+      id: "deferred-stream-guessed-tool",
+      model: "hosted/deferred-stream-guessed-tool",
+      system: "Use tools when needed.",
+      skills: false,
+      tools: {
+        create_release: tool({
+          id: "create_release",
+          description: "Create a release",
+          inputSchema: defineSchema((v) => v.object({ label: v.string() }))(),
+          execute: () => {
+            executionCount++;
+            return { id: "rel-1" };
+          },
+        }),
+      },
+      maxSteps: 2,
+      resolveModelTransport: () => ({ model }),
+      __vfToolLoadingMode: "deferred",
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
 
   await (await assistant.stream({ input: "Create release v1.2.3" }))
     .toDataStreamResponse().text();
@@ -556,6 +565,7 @@ it("deferred stream returns attachable metadata without granting execution autho
     },
     maxSteps: 3,
     resolveModelTransport: () => ({ model }),
+    __vfToolLoadingMode: "deferred",
   } as AgentConfig & RuntimeToolFilterConfig;
 
   const body = await (await agent(config).stream({
@@ -575,10 +585,11 @@ it("deferred stream returns attachable metadata without granting execution autho
   assertEquals(executionCount, 0);
 });
 
-it("respond defaults omitted tool loading to deferred and completes search-load-execute", async () => {
+it("respond defers a tools true catalog and completes search-load-execute", async () => {
   const observedTools: string[][] = [];
   let step = 0;
   let executionCount = 0;
+  const toolName = "get_release_prd_true";
   const model: ModelRuntime = {
     provider: "hosted",
     modelId: "hosted/respond-default-deferred",
@@ -595,7 +606,7 @@ it("respond defaults omitted tool loading to deferred and completes search-load-
               type: "tool-call",
               toolCallId: "search-1",
               toolName: "tool_search",
-              input: { query: "get_release" },
+              input: { query: toolName },
             },
             { type: "finish", finishReason: "tool-calls" },
           ]),
@@ -607,7 +618,7 @@ it("respond defaults omitted tool loading to deferred and completes search-load-
             {
               type: "tool-call",
               toolCallId: "release-1",
-              toolName: "get_release",
+              toolName,
               input: {},
             },
             { type: "finish", finishReason: "tool-calls" },
@@ -622,48 +633,85 @@ it("respond defaults omitted tool loading to deferred and completes search-load-
       };
     },
   };
-  const assistant = agent({
-    id: "respond-default-deferred",
-    model: "hosted/respond-default-deferred",
-    system: "Use tools when needed.",
-    skills: false,
-    tools: {
-      get_release: tool({
-        id: "get_release",
-        description: "Get the current release",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => {
-          executionCount++;
-          return { id: "rel-1" };
-        },
+  toolRegistry.register(
+    toolName,
+    tool({
+      id: toolName,
+      description: "Get the current release",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => {
+        executionCount++;
+        return { id: "rel-1" };
+      },
+    }),
+  );
+
+  try {
+    const assistant = agent({
+      id: "respond-tools-true-deferred",
+      model: "hosted/respond-default-deferred",
+      system: "Use tools when needed.",
+      skills: false,
+      tools: true,
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model }),
+    });
+
+    const body = await (await assistant.respond(
+      new Request("https://example.test/agent", {
+        method: "POST",
+        body: JSON.stringify({
+          messages: [{
+            id: "user-1",
+            role: "user",
+            parts: [{ type: "text", text: "Find the current release" }],
+          }],
+        }),
       }),
+    )).text();
+
+    assertEquals(assistant.config.tools, true);
+    assertEquals(observedTools[0]?.includes(toolName), false);
+    assertEquals(observedTools[0]?.includes("tool_search"), true);
+    assertEquals(observedTools[1]?.includes(toolName), true);
+    assertEquals(executionCount, 1);
+    assertEquals(body.includes("Release rel-1"), true);
+  } finally {
+    toolRegistry.delete(toolName);
+  }
+});
+
+it("omitted tools expose no project catalog and no tool_search", async () => {
+  let observedTools: string[] = [];
+  const model: ModelRuntime = {
+    provider: "hosted",
+    modelId: "hosted/no-project-tools",
+    async doGenerate(options: unknown) {
+      observedTools = toolNames(options);
+      return {
+        content: [{ type: "text", text: "hello" }],
+        finishReason: "stop",
+      };
     },
-    maxSteps: 4,
+    async doStream() {
+      return { stream: new ReadableStream() };
+    },
+  };
+  const assistant = agent({
+    id: "no-project-tools",
+    model: "hosted/no-project-tools",
+    system: "Answer directly.",
+    skills: false,
+    maxSteps: 1,
     resolveModelTransport: () => ({ model }),
   });
 
-  const body = await (await assistant.respond(
-    new Request("https://example.test/agent", {
-      method: "POST",
-      body: JSON.stringify({
-        messages: [{
-          id: "user-1",
-          role: "user",
-          parts: [{ type: "text", text: "Find the current release" }],
-        }],
-      }),
-    }),
-  )).text();
+  await assistant.generate({ input: "hi" });
 
-  assertEquals(assistant.config.toolLoading, "deferred");
-  assertEquals(observedTools[0]?.includes("get_release"), false);
-  assertEquals(observedTools[0]?.includes("tool_search"), true);
-  assertEquals(observedTools[1]?.includes("get_release"), true);
-  assertEquals(executionCount, 1);
-  assertEquals(body.includes("Release rel-1"), true);
+  assertEquals(observedTools, []);
 });
 
-it("respond preserves an explicit eager tool-loading configuration", async () => {
+it("respond exposes an explicit tool map eagerly and ignores a removed loading-policy field", async () => {
   let observedTools: string[] = [];
   const model: ModelRuntime = {
     provider: "hosted",
@@ -686,11 +734,11 @@ it("respond preserves an explicit eager tool-loading configuration", async () =>
     model: "hosted/respond-explicit-eager",
     system: "Answer directly.",
     skills: false,
-    toolLoading: "eager",
+    toolLoading: "deferred",
     tools: { get_release: releaseTool() },
     maxSteps: 1,
     resolveModelTransport: () => ({ model }),
-  });
+  } as AgentConfig);
 
   await (await assistant.respond(
     new Request("https://example.test/agent", {
@@ -705,6 +753,7 @@ it("respond preserves an explicit eager tool-loading configuration", async () =>
     }),
   )).text();
 
+  assertEquals(Object.hasOwn(assistant.config, "toolLoading"), false);
   assertEquals(observedTools.includes("get_release"), true);
   assertEquals(observedTools.includes("tool_search"), false);
 });
@@ -736,7 +785,6 @@ it("eager generate, stream, and respond preserve a custom tool_search", async ()
     model: "hosted/custom-tool-search",
     system: "Use the custom search.",
     skills: false,
-    toolLoading: "eager",
     tools: {
       tool_search: tool({
         id: "tool_search",
@@ -769,6 +817,7 @@ it("eager generate, stream, and respond preserve a custom tool_search", async ()
     ["tool_search"],
     ["tool_search"],
   ]);
+  toolRegistry.delete("tool_search");
 });
 
 it("eager generate executes a custom tool_search", async () => {
@@ -804,7 +853,6 @@ it("eager generate executes a custom tool_search", async () => {
     model: "hosted/custom-tool-search-generate",
     system: "Use the custom search.",
     skills: false,
-    toolLoading: "eager",
     tools: {
       tool_search: tool({
         id: "tool_search",
@@ -824,6 +872,7 @@ it("eager generate executes a custom tool_search", async () => {
 
   assertEquals(executionInputs, ["releases"]);
   assertEquals(response.toolCalls[0]?.status, "completed");
+  toolRegistry.delete("tool_search");
 });
 
 it("eager stream executes a custom tool_search", async () => {
@@ -863,7 +912,6 @@ it("eager stream executes a custom tool_search", async () => {
     model: "hosted/custom-tool-search-stream",
     system: "Use the custom search.",
     skills: false,
-    toolLoading: "eager",
     tools: {
       tool_search: tool({
         id: "tool_search",
@@ -882,52 +930,7 @@ it("eager stream executes a custom tool_search", async () => {
   await (await assistant.stream({ input: "Search releases" })).toDataStreamResponse().text();
 
   assertEquals(executionInputs, ["releases"]);
-});
-
-it("respond preserves an explicit deferred tool-loading configuration", async () => {
-  let observedTools: string[] = [];
-  const model: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/respond-explicit-deferred",
-    async doGenerate() {
-      return { content: [{ type: "text", text: "unused" }] };
-    },
-    async doStream(options: unknown) {
-      observedTools = toolNames(options);
-      return {
-        stream: createRuntimeStream([
-          { type: "text-delta", text: "done" },
-          { type: "finish", finishReason: "stop" },
-        ]),
-      };
-    },
-  };
-  const assistant = agent({
-    id: "respond-explicit-deferred",
-    model: "hosted/respond-explicit-deferred",
-    system: "Answer directly.",
-    skills: false,
-    toolLoading: "deferred",
-    tools: { get_release: releaseTool() },
-    maxSteps: 1,
-    resolveModelTransport: () => ({ model }),
-  });
-
-  await (await assistant.respond(
-    new Request("https://example.test/agent", {
-      method: "POST",
-      body: JSON.stringify({
-        messages: [{
-          id: "user-1",
-          role: "user",
-          parts: [{ type: "text", text: "hi" }],
-        }],
-      }),
-    }),
-  )).text();
-
-  assertEquals(observedTools.includes("get_release"), false);
-  assertEquals(observedTools.includes("tool_search"), true);
+  toolRegistry.delete("tool_search");
 });
 
 it("generate flushes and restores a deferred tool checkpoint without another search", async () => {
@@ -970,6 +973,7 @@ it("generate flushes and restores a deferred tool checkpoint without another sea
     tools: { get_release: releaseTool() },
     maxSteps: 2,
     resolveModelTransport: () => ({ model: firstRunModel }),
+    __vfToolLoadingMode: "deferred",
     __vfPersistToolExposureCheckpoint: async (nextCheckpoint: ToolExposureCheckpoint) => {
       await Promise.resolve();
       checkpoint = nextCheckpoint;
@@ -1011,7 +1015,7 @@ it("generate flushes and restores a deferred tool checkpoint without another sea
 
   assertEquals(resumedCalls, 1);
   assertEquals(resumedTools[0]?.includes("get_release"), true);
-  assertEquals(resumedTools[0]?.includes("tool_search"), true);
+  assertEquals(resumedTools[0]?.includes("tool_search"), false);
   assertEquals(resumedRequest.includes("authorizedCatalogFingerprint"), false);
   assertEquals(resumedRequest.includes("loadedToolNames"), false);
 });
@@ -1066,6 +1070,7 @@ it("stream flushes and restores a deferred tool checkpoint without another searc
     tools: { get_release: releaseTool() },
     maxSteps: 2,
     resolveModelTransport: () => ({ model: firstRunModel }),
+    __vfToolLoadingMode: "deferred",
     __vfPersistToolExposureCheckpoint: async (nextCheckpoint: ToolExposureCheckpoint) => {
       await Promise.resolve();
       checkpoint = nextCheckpoint;
@@ -1113,7 +1118,7 @@ it("stream flushes and restores a deferred tool checkpoint without another searc
 
   assertEquals(resumedCalls, 1);
   assertEquals(resumedTools[0]?.includes("get_release"), true);
-  assertEquals(resumedTools[0]?.includes("tool_search"), true);
+  assertEquals(resumedTools[0]?.includes("tool_search"), false);
   assertEquals(firstRunBody.includes("AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT"), false);
   assertEquals(firstRunBody.includes("authorizedCatalogFingerprint"), false);
 });
@@ -1152,6 +1157,7 @@ it("generate aborts before the next model step when checkpoint persistence fails
     tools: { get_release: releaseTool() },
     maxSteps: 2,
     resolveModelTransport: () => ({ model }),
+    __vfToolLoadingMode: "deferred",
     __vfPersistToolExposureCheckpoint: () => {
       throw new Error("checkpoint write failed");
     },
@@ -1201,6 +1207,7 @@ it("stream aborts before the next model step when checkpoint persistence fails",
     tools: { get_release: releaseTool() },
     maxSteps: 2,
     resolveModelTransport: () => ({ model }),
+    __vfToolLoadingMode: "deferred",
     __vfPersistToolExposureCheckpoint: () => {
       throw new Error("checkpoint stream write failed");
     },
@@ -1251,6 +1258,7 @@ it("generate drops revoked checkpoint tools after the authorized catalog changes
       tools: { get_release: releaseTool() },
       maxSteps: 2,
       resolveModelTransport: () => ({ model: firstRunModel }),
+      __vfToolLoadingMode: "deferred",
       __vfPersistToolExposureCheckpoint: (nextCheckpoint: ToolExposureCheckpoint) => {
         checkpoint = nextCheckpoint;
       },
@@ -1289,6 +1297,7 @@ it("generate drops revoked checkpoint tools after the authorized catalog changes
       },
       maxSteps: 1,
       resolveModelTransport: () => ({ model: resumedModel }),
+      __vfToolLoadingMode: "deferred",
       __vfToolExposureCheckpoint: checkpoint,
     } as AgentConfig & RuntimeToolFilterConfig,
   ).generate({ input: "Continue" });
@@ -1336,6 +1345,7 @@ it("stream resume drops revoked checkpoint tools after the authorized catalog ch
       tools: { get_release: releaseTool() },
       maxSteps: 2,
       resolveModelTransport: () => ({ model: firstRunModel }),
+      __vfToolLoadingMode: "deferred",
       __vfPersistToolExposureCheckpoint: (nextCheckpoint: ToolExposureCheckpoint) => {
         checkpoint = nextCheckpoint;
       },
@@ -1375,6 +1385,7 @@ it("stream resume drops revoked checkpoint tools after the authorized catalog ch
       },
       maxSteps: 1,
       resolveModelTransport: () => ({ model: resumedModel }),
+      __vfToolLoadingMode: "deferred",
       __vfToolExposureCheckpoint: checkpoint,
     } as AgentConfig & RuntimeToolFilterConfig,
   ).stream({ input: "Continue" })).toDataStreamResponse().text();
@@ -1384,7 +1395,7 @@ it("stream resume drops revoked checkpoint tools after the authorized catalog ch
   assertEquals(resumedTools.includes("tool_search"), true);
 });
 
-it("host operational loading override wins for generate, stream, and respond ingress", async () => {
+it("operator eager rollback wins over host binding and request context", async () => {
   const observedTools: string[][] = [];
   const model: ModelRuntime = {
     provider: "hosted",
@@ -1412,21 +1423,21 @@ it("host operational loading override wins for generate, stream, and respond ing
       model: "hosted/operational-tool-loading-override",
       system: "Answer directly.",
       skills: false,
-      toolLoading: "eager",
       tools: { get_release: releaseTool() },
       maxSteps: 1,
       resolveModelTransport: () => ({ model }),
-      __vfOperationalToolLoadingOverride: "deferred",
+      __vfToolLoadingMode: "deferred",
+      __vfOperationalToolLoadingOverride: "eager",
     } as AgentConfig & RuntimeToolFilterConfig,
   );
 
   await assistant.generate({
     input: "hi",
-    context: { __vfOperationalToolLoadingOverride: "eager" },
+    context: { __vfOperationalToolLoadingOverride: "deferred" },
   });
   await (await assistant.stream({
     input: "hi",
-    context: { __vfOperationalToolLoadingOverride: "eager" },
+    context: { __vfOperationalToolLoadingOverride: "deferred" },
   })).toDataStreamResponse().text();
   await (await assistant.respond(
     new Request("https://example.test/agent", {
@@ -1437,15 +1448,15 @@ it("host operational loading override wins for generate, stream, and respond ing
           role: "user",
           parts: [{ type: "text", text: "hi" }],
         }],
-        context: { __vfOperationalToolLoadingOverride: "eager" },
+        context: { __vfOperationalToolLoadingOverride: "deferred" },
       }),
     }),
   )).text();
 
   assertEquals(observedTools.length, 3);
   for (const tools of observedTools) {
-    assertEquals(tools.includes("get_release"), false);
-    assertEquals(tools.includes("tool_search"), true);
+    assertEquals(tools.includes("get_release"), true);
+    assertEquals(tools.includes("tool_search"), false);
   }
 });
 
@@ -1512,15 +1523,18 @@ it("veryfront-cloud Anthropic and OpenAI transports default to framework fallbac
         return { stream: new ReadableStream() };
       },
     };
-    const assistant = agent({
-      id: `framework-fallback-${modelId.replaceAll("/", "-")}`,
-      model: modelId,
-      system: "Answer directly.",
-      skills: false,
-      tools: { get_release: releaseTool() },
-      maxSteps: 1,
-      resolveModelTransport: () => ({ model }),
-    });
+    const assistant = agent(
+      {
+        id: `framework-fallback-${modelId.replaceAll("/", "-")}`,
+        model: modelId,
+        system: "Answer directly.",
+        skills: false,
+        tools: { get_release: releaseTool() },
+        maxSteps: 1,
+        resolveModelTransport: () => ({ model }),
+        __vfToolLoadingMode: "deferred",
+      } as AgentConfig & RuntimeToolFilterConfig,
+    );
 
     await assistant.generate({ input: "hi" });
 
@@ -1531,65 +1545,71 @@ it("veryfront-cloud Anthropic and OpenAI transports default to framework fallbac
 it(
   "framework fallback preserves configured provider tools for generate, stream, and respond",
   async () => {
-    for (
-      const configuredModel of [
-        "anthropic/claude-3-7-sonnet",
-        "veryfront-cloud/anthropic/claude-opus-4-6",
-      ]
-    ) {
-      const observedTools: string[][] = [];
-      const model: ModelRuntime = {
-        provider: configuredModel.startsWith("veryfront-cloud/") ? "veryfront-cloud" : "anthropic",
-        modelId: configuredModel.split("/").at(-1) ?? configuredModel,
-        async doGenerate(options: unknown) {
-          observedTools.push(toolNames(options));
-          return {
-            content: [{ type: "text", text: "done" }],
-            finishReason: "stop",
-          };
-        },
-        async doStream(options: unknown) {
-          observedTools.push(toolNames(options));
-          return {
-            stream: createRuntimeStream([
-              { type: "text-delta", text: "done" },
-              { type: "finish", finishReason: "stop" },
-            ]),
-          };
-        },
-      };
-      const assistant = agent({
-        id: `fallback-provider-tools-${configuredModel.replaceAll("/", "-")}`,
-        model: configuredModel,
-        system: "Use configured tools.",
-        skills: false,
-        toolLoading: "deferred",
-        tools: { get_release: releaseTool() },
-        providerTools: ["web_search"],
-        maxSteps: 1,
-        resolveModelTransport: () => ({ model }),
-      });
+    toolRegistry.register("get_release", releaseTool());
+    try {
+      for (
+        const configuredModel of [
+          "anthropic/claude-3-7-sonnet",
+          "veryfront-cloud/anthropic/claude-opus-4-6",
+        ]
+      ) {
+        const observedTools: string[][] = [];
+        const model: ModelRuntime = {
+          provider: configuredModel.startsWith("veryfront-cloud/")
+            ? "veryfront-cloud"
+            : "anthropic",
+          modelId: configuredModel.split("/").at(-1) ?? configuredModel,
+          async doGenerate(options: unknown) {
+            observedTools.push(toolNames(options));
+            return {
+              content: [{ type: "text", text: "done" }],
+              finishReason: "stop",
+            };
+          },
+          async doStream(options: unknown) {
+            observedTools.push(toolNames(options));
+            return {
+              stream: createRuntimeStream([
+                { type: "text-delta", text: "done" },
+                { type: "finish", finishReason: "stop" },
+              ]),
+            };
+          },
+        };
+        const assistant = agent({
+          id: `fallback-provider-tools-${configuredModel.replaceAll("/", "-")}`,
+          model: configuredModel,
+          system: "Use configured tools.",
+          skills: false,
+          tools: true,
+          providerTools: ["web_search"],
+          maxSteps: 1,
+          resolveModelTransport: () => ({ model }),
+        });
 
-      await assistant.generate({ input: "hi" });
-      await (await assistant.stream({ input: "hi" })).toDataStreamResponse().text();
-      await (await assistant.respond(
-        new Request("https://example.test/agent", {
-          method: "POST",
-          body: JSON.stringify({
-            messages: [{
-              id: "user-1",
-              role: "user",
-              parts: [{ type: "text", text: "hi" }],
-            }],
+        await assistant.generate({ input: "hi" });
+        await (await assistant.stream({ input: "hi" })).toDataStreamResponse().text();
+        await (await assistant.respond(
+          new Request("https://example.test/agent", {
+            method: "POST",
+            body: JSON.stringify({
+              messages: [{
+                id: "user-1",
+                role: "user",
+                parts: [{ type: "text", text: "hi" }],
+              }],
+            }),
           }),
-        }),
-      )).text();
+        )).text();
 
-      assertEquals(observedTools, [
-        ["tool_search", "web_search"],
-        ["tool_search", "web_search"],
-        ["tool_search", "web_search"],
-      ]);
+        assertEquals(observedTools, [
+          ["form_input", "tool_search", "web_search"],
+          ["form_input", "tool_search", "web_search"],
+          ["form_input", "tool_search", "web_search"],
+        ]);
+      }
+    } finally {
+      toolRegistry.delete("get_release");
     }
   },
 );
@@ -1637,35 +1657,40 @@ it("direct Google uses framework fallback to search, expose, and execute once", 
       return { stream: new ReadableStream() };
     },
   };
-  const assistant = agent({
-    id: "google-framework-fallback",
-    model: "google/gemini-3.1-pro-preview",
-    system: flattenSystemInstructions(
-      withRuntimeToolInventory("Use tools when needed.", ["tool_search"]),
-    ),
-    skills: false,
-    toolLoading: "deferred",
-    tools: {
-      get_release: tool({
-        id: "get_release",
-        description: "Get the current release",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => {
-          executionCount++;
-          return { id: "rel-1" };
-        },
-      }),
-    },
-    maxSteps: 4,
-    resolveModelTransport: () => ({ model }),
-  });
+  toolRegistry.register(
+    "get_release",
+    tool({
+      id: "get_release",
+      description: "Get the current release",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => {
+        executionCount++;
+        return { id: "rel-1" };
+      },
+    }),
+  );
+  try {
+    const assistant = agent({
+      id: "google-framework-fallback",
+      model: "google/gemini-3.1-pro-preview",
+      system: flattenSystemInstructions(
+        withRuntimeToolInventory("Use tools when needed.", ["tool_search"]),
+      ),
+      skills: false,
+      tools: true,
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model }),
+    });
 
-  const response = await assistant.generate({ input: "Find the current release" });
+    const response = await assistant.generate({ input: "Find the current release" });
 
-  assertEquals(observedTools[0], ["tool_search"]);
-  assertEquals(observedTools[1], ["get_release", "tool_search"]);
-  assertEquals(observedSystems[0]?.includes("- get_release"), false);
-  assertEquals(observedSystems[1]?.includes("- get_release"), true);
-  assertEquals(executionCount, 1);
-  assertEquals(response.text, "Release rel-1");
+    assertEquals(observedTools[0], ["form_input", "tool_search"]);
+    assertEquals(observedTools[1], ["form_input", "get_release", "tool_search"]);
+    assertEquals(observedSystems[0]?.includes("- get_release"), false);
+    assertEquals(observedSystems[1]?.includes("- get_release"), true);
+    assertEquals(executionCount, 1);
+    assertEquals(response.text, "Release rel-1");
+  } finally {
+    toolRegistry.delete("get_release");
+  }
 });

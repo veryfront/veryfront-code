@@ -268,7 +268,6 @@ export function createAgentServiceRuntime<
       model: agentConfig.model,
       temperature: agentConfig.temperature,
       maxSteps: agentConfig.maxSteps,
-      toolLoading: agentConfig.toolLoading,
       providerTools: agentConfig.providerTools,
       skills: agentConfig.skills,
       tools: normalizeAgentServiceTools(agentConfig.tools),

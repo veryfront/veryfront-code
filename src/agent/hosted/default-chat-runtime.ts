@@ -125,7 +125,7 @@ export type DefaultHostedChatRuntimeProjectSwitchInput = {
 export type CreateDefaultHostedChatRuntimeOptions = {
   options: DefaultHostedChatRuntimeCreationOptions;
   /** Host-owned kill switch; never populated from hosted request payloads. */
-  operationalToolLoadingOverride?: AgentConfig["toolLoading"];
+  operationalToolLoadingOverride?: "eager";
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   config: DefaultHostedChatRuntimeConfig;
   buildLocalTools: (
@@ -204,9 +204,7 @@ async function buildToolAssembly(
     createRemoteToolSource: input.createRemoteToolSource,
     traceLocalTools: input.traceLocalTools,
     preloadLatestConversationUserText: input.preloadLatestConversationUserText,
-    toolLoading: input.operationalToolLoadingOverride ??
-      input.options.liveProjectSteering?.agent.toolLoading ??
-      "deferred",
+    operationalToolLoadingOverride: input.operationalToolLoadingOverride,
     sourceIntegrationPolicy: input.sourceIntegrationPolicy,
     prepareRemoteToolInput: ({ toolName, toolInput }) =>
       applyDefaultResearchArtifactPath(toolName, toolInput, input.taskContext),
@@ -241,7 +239,7 @@ function createRuntimeAgentConfig(input: {
   toolAssembly: HostedChatRuntimeToolAssemblyResult;
   modelId: string;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
-  operationalToolLoadingOverride?: AgentConfig["toolLoading"];
+  operationalToolLoadingOverride?: "eager";
   refreshSystem?: CreateDefaultHostedChatRuntimeOptions["refreshSystem"];
 }): AgentConfig {
   const liveProjectSteering = input.options.liveProjectSteering;
@@ -267,7 +265,7 @@ function createRuntimeAgentConfig(input: {
     model: input.modelId,
     system: input.toolAssembly.systemInstructions,
     tools: runtimeTools,
-    toolLoading: input.options.liveProjectSteering?.agent.toolLoading ?? "deferred",
+    __vfToolLoadingMode: input.toolAssembly.toolLoadingMode,
     providerTools: input.toolAssembly.providerToolNames,
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,

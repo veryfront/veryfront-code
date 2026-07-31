@@ -4,7 +4,11 @@ import { filterToolsForSkill, type SkillToolAvailability } from "#veryfront/skil
 import type { ToolConfigEntry } from "./tool-helpers.ts";
 import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
-import { SOURCE_INTEGRATION_POLICY_CONTEXT_KEY } from "./runtime-tool-config.ts";
+import {
+  getRuntimeToolSearchAuthorization,
+  resolveRuntimeToolLoading,
+  SOURCE_INTEGRATION_POLICY_CONTEXT_KEY,
+} from "./runtime-tool-config.ts";
 import {
   createToolExposurePlan,
   createToolExposureState,
@@ -151,10 +155,13 @@ export async function prepareAgentRuntimeStep(
       toolExposureState.loadedToolNames.add(toolName);
     }
   }
+  const toolSearchAuthorization = getRuntimeToolSearchAuthorization(input.config);
   const toolExposurePlan = createToolExposurePlan({
     authorized: tools,
-    mode: input.config.toolLoading ?? "deferred",
+    mode: resolveRuntimeToolLoading(input.config).mode,
     state: toolExposureState,
+    hasSearchableMetadata: toolSearchAuthorization.canConfigureAgentTools === true &&
+      toolSearchAuthorization.attachableCatalog.length > 0,
   });
   const systemPrompt = hasRuntimeToolInventory(runtimeState.systemPrompt)
     ? flattenSystemInstructions(

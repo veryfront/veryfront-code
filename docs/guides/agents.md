@@ -45,7 +45,6 @@ name: Support
 description: Helps users with support questions
 model: openai/gpt-5.4
 max-steps: 6
-tool-loading: deferred
 ---
 
 You are a support assistant. Answer clearly and ask for missing details before
@@ -132,28 +131,26 @@ models that reject generic sampling parameters or require mode-specific values.
 `maxSteps` limits how many tool-call iterations the agent can perform per
 request. See [Tools](./tools.md) for how to define `getWeather`.
 
-## Load tool schemas progressively
+## Load broad tool catalogs progressively
 
-Tool schemas load progressively by default. In `deferred` mode, the model first
-sees `tool_search` plus bootstrap tools. A successful search makes matching
-authorized schemas visible on the next model step.
+The `tools` selector controls both authorization and initial schema exposure:
+
+- Omit `tools` to expose no project tools.
+- Use an explicit map to expose only those selected schemas immediately.
+- Use `tools: true` to authorize every tool in the current scope while initially
+  exposing only bootstrap tools and `tool_search`.
+
+A successful search makes matching authorized schemas visible on the next model
+step.
 
 ```ts
 const assistant = agent({
   name: "release-assistant",
   model,
   system: "Use the release tools to answer project release questions.",
-  toolLoading: "deferred",
-  tools: {
-    get_release,
-    list_projects,
-  },
+  tools: true,
 });
 ```
-
-Use `toolLoading: "eager"` in TypeScript or `tool-loading: eager` in Markdown
-when the model must receive every authorized schema on the first step. The
-framework never selects eager mode based on the number of configured tools.
 
 The framework `tool_search` fallback is provider-neutral. It searches the
 authorized `tools` catalog and does not search `providerTools`. Search ranks an
@@ -391,8 +388,7 @@ export default agent({
 | `model`               | `string`                                                                                               | Optional provider/model override. Omit for `openai/gpt-5.4-nano`; use `"auto"` for runtime selection. |
 | `system`              | `string \| () => string \| Promise<string>`                                                            | System prompt                                                                                         |
 | `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run                                       |
-| `tools`               | `Record<string, boolean \| Tool>`                                                                      | Tools the agent can use                                                                               |
-| `toolLoading`         | `"deferred" \| "eager"`                                                                                | When authorized tool schemas become model-visible (default: `"deferred"`)                             |
+| `tools`               | `true \| Record<string, boolean \| Tool>`                                                              | Omit for no project tools, use `true` for deferred scoped discovery, or select eager tools explicitly |
 | `delegates`           | `string[]`                                                                                             | Exact agent ids exposed as scoped `agent_<id>` tools                                                  |
 | `providerTools`       | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                                          |
 | `mcpServers`          | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                                                    |

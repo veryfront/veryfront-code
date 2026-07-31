@@ -10,7 +10,7 @@ import {
 } from "./mcp-server-tool-sources.ts";
 
 function eagerAgent(config: Parameters<typeof agent>[0]): ReturnType<typeof agent> {
-  return agent({ ...config, toolLoading: "eager" });
+  return agent({ ...config, __vfToolLoadingMode: "eager" } as Parameters<typeof agent>[0]);
 }
 
 function createRuntimeStream(parts: unknown[]) {

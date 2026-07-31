@@ -185,13 +185,13 @@ it("proves deferred catalogs, exact schema-free search output, and one execution
   );
 });
 
-it("rejects eager loading because the first request exposes the target", async () => {
+it("rejects an explicit tool map because the first request exposes the target", async () => {
   await assertRejects(
     () =>
       runToolSearchLiveProof({
         model: "openai/scripted",
         modelRuntime: scriptedFallbackModel(),
-        toolLoading: "eager",
+        selector: "explicit",
       }),
     Error,
     "first model request",

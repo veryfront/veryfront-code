@@ -275,11 +275,14 @@ export function createDefaultHostedProjectSteeringRefresh(
       model: input.taskContext.model,
       requiredToolNames: input.toolAssembly.localToolNames,
     });
-    const modelVisibleToolNames = (input.liveProjectSteering.agent.toolLoading ?? "deferred") ===
-        "deferred"
+    const bootstrapToolNames = toolNames.filter((toolName) =>
+      toolName === "form_input" || toolName === "load_skill"
+    );
+    const hasDeferredTools = toolNames.length > bootstrapToolNames.length;
+    const modelVisibleToolNames = input.toolAssembly.toolLoadingMode === "deferred"
       ? [
-        ...toolNames.filter((toolName) => toolName === "form_input" || toolName === "load_skill"),
-        TOOL_SEARCH_TOOL_NAME,
+        ...bootstrapToolNames,
+        ...(hasDeferredTools ? [TOOL_SEARCH_TOOL_NAME] : []),
       ].sort()
       : toolNames;
     input.taskContext.availableToolNames = modelVisibleToolNames;

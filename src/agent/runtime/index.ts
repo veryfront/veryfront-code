@@ -93,6 +93,7 @@ import {
   getRuntimeToolSearchAuthorization,
   isRuntimeToolExposureCheckpointPersistenceRequired,
   resolveRuntimeToolLoading,
+  type RuntimeToolFilterConfig,
 } from "./runtime-tool-config.ts";
 import {
   applySourceIntegrationPolicy,
@@ -100,7 +101,6 @@ import {
 } from "#veryfront/integrations/source-policy.ts";
 import { prepareAgentRuntimeStep } from "./agent-runtime-step.ts";
 import { buildStreamedAssistantMessage } from "./streamed-assistant-message.ts";
-import { resolveToolLoading } from "./agent-definition.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -653,10 +653,7 @@ export class AgentRuntime {
 
   constructor(id: string, config: AgentConfig) {
     this.id = id;
-    this.config = {
-      ...config,
-      toolLoading: resolveToolLoading(config.toolLoading),
-    };
+    this.config = { ...config };
 
     // Agents are stateless by default (see docs/guides/memory-and-streaming.md):
     // with no `memory` config, calls never share conversation history, so
@@ -1039,9 +1036,9 @@ export class AgentRuntime {
         : isRuntimeToolExposureCheckpointPersistenceRequired(this.config);
       const runtimeToolsConfig = hasToolReplacements ? toolReplacements : this.config.tools;
       const toolLoadingResolution = resolveRuntimeToolLoading(this.config);
-      const runConfig: AgentConfig = {
+      const runConfig: RuntimeToolFilterConfig = {
         ...this.config,
-        toolLoading: toolLoadingResolution.mode,
+        __vfToolLoadingMode: hasToolReplacements ? "eager" : toolLoadingResolution.mode,
       };
       const runtimeStepConfig: AgentConfig = hasToolReplacements
         ? {
@@ -1121,7 +1118,7 @@ export class AgentRuntime {
           )
           : preparedStep.tools;
         setSpanAttributes(loopSpan, {
-          "tool.loading.mode": runtimeStepConfig.toolLoading ?? "deferred",
+          "tool.loading.mode": resolveRuntimeToolLoading(runtimeStepConfig).mode,
           "tool.loading.provenance": toolLoadingResolution.provenance,
           "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
           "tool.catalog.visible_count": tools.length,
@@ -1658,9 +1655,9 @@ export class AgentRuntime {
     const requireToolExposureCheckpointPersistence =
       isRuntimeToolExposureCheckpointPersistenceRequired(this.config);
     const toolLoadingResolution = resolveRuntimeToolLoading(this.config);
-    const runtimeStepConfig: AgentConfig = {
+    const runtimeStepConfig: RuntimeToolFilterConfig = {
       ...this.config,
-      toolLoading: toolLoadingResolution.mode,
+      __vfToolLoadingMode: toolLoadingResolution.mode,
     };
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
     const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
@@ -1714,7 +1711,7 @@ export class AgentRuntime {
         )
         : preparedStep.tools;
       setOtelActiveSpanAttributes({
-        "tool.loading.mode": runtimeStepConfig.toolLoading ?? "deferred",
+        "tool.loading.mode": resolveRuntimeToolLoading(runtimeStepConfig).mode,
         "tool.loading.provenance": toolLoadingResolution.provenance,
         "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
         "tool.catalog.visible_count": tools.length,

@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-- Added progressive tool-schema loading for agents. `toolLoading` remains optional; omitted values
-  intentionally use deferred loading, while `toolLoading: "eager"` preserves the rollback path and
-  exposes all authorized tool schemas up front. `tool_search` is now reserved by deferred loading;
-  rename any custom tool with that name, or temporarily set `toolLoading: "eager"` while migrating.
+- Added progressive tool-schema loading for agents through the existing `tools` selector. `tools:
+  true` keeps the authorized scoped catalog behind `tool_search`; explicit tool maps expose their
+  selected schemas immediately; omitted tools expose no project catalog. A trusted host-only eager
+  rollback remains operational infrastructure and is not part of the public agent API.
 - Added the provider-neutral `tool_search` fallback for authorized framework tools. Search ranks exact
   names before name, description, and input-parameter substrings, returns at most five schema-free
   matches, and does not paginate or search provider-native tools.

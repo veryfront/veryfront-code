@@ -39,7 +39,6 @@ import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-schema-validator.ts";
 import { buildAgentDelegateTools } from "./runtime/agent-delegation.ts";
 import { normalizeAgentDelegateIds } from "./runtime/agent-delegation-names.ts";
-import { resolveToolLoading } from "./runtime/agent-definition.ts";
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -111,6 +110,12 @@ function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStrea
   };
 }
 
+function withoutRemovedToolLoading(config: AgentConfig): AgentConfig {
+  const canonicalConfig = { ...config } as AgentConfig & Record<string, unknown>;
+  delete canonicalConfig.toolLoading;
+  return canonicalConfig;
+}
+
 /** Agent helper. */
 export function agent(config: AgentConfig): Agent {
   if (typeof config.id === "string" && config.id.trim().length === 0) {
@@ -135,10 +140,9 @@ export function agent(config: AgentConfig): Agent {
   }
 
   const publicConfig: ResolvedAgentConfig = {
-    ...config,
+    ...withoutRemovedToolLoading(config),
     ...(delegates === undefined ? {} : { delegates }),
     model: resolveConfiguredAgentModel(config.model),
-    toolLoading: resolveToolLoading(config.toolLoading),
   };
 
   if (config.tools && config.tools !== true) {

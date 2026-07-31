@@ -4,6 +4,7 @@ import { dirname } from "#std/path.ts";
 import { agent, type AgentResponse } from "#veryfront/agent";
 import type { ModelRuntime } from "#veryfront/provider";
 import { dynamicTool } from "#veryfront/tool";
+import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { AnthropicProvider } from "../extensions/ext-llm-anthropic/src/index.ts";
 import { OpenAIProvider } from "../extensions/ext-llm-openai/src/index.ts";
 
@@ -34,8 +35,8 @@ export type ExtractToolSearchLiveProofInput = {
 type RunToolSearchLiveProofInput = {
   model: string;
   modelRuntime?: ModelRuntime;
-  /** Test-only mutation used to prove the verifier rejects eager loading. */
-  toolLoading?: "deferred" | "eager";
+  /** Test-only selector used to prove explicit maps remain eager. */
+  selector?: "all-scoped" | "explicit";
 };
 
 const TARGET_TOOL = "read_release_marker";
@@ -241,10 +242,7 @@ export function extractToolSearchLiveProof(
     );
   }
   const secondCatalog = input.requestCatalogs[1] ?? [];
-  if (
-    !secondCatalog.includes("tool_search") ||
-    !secondCatalog.includes(TARGET_TOOL)
-  ) {
+  if (!secondCatalog.includes(TARGET_TOOL)) {
     throw new Error(
       "The second model request did not expose the searched target tool",
     );
@@ -309,47 +307,52 @@ export async function runToolSearchLiveProof(
     resolved.runtime,
     requestCatalogs,
   );
-  const verifier = agent({
-    id: "tool-search-live-verifier",
-    model: resolved.model,
-    toolLoading: input.toolLoading ?? "deferred",
-    system: [
-      "Verify framework deferred tool loading.",
-      "First call tool_search with the query release marker.",
-      `On the next step call ${TARGET_TOOL} exactly once.`,
-      "After the tool result, reply with a short confirmation and do not call more tools.",
-    ].join(" "),
-    skills: false,
-    tools: {
-      [TARGET_TOOL]: dynamicTool({
-        id: TARGET_TOOL,
-        description: TARGET_DESCRIPTION,
-        inputSchema: {
-          type: "object",
-          properties: {},
-          additionalProperties: false,
-        },
-        execute: () => {
-          targetExecutionCount += 1;
-          return { marker: "framework-fallback-verified" };
-        },
-      }),
+  const targetTool = dynamicTool({
+    id: TARGET_TOOL,
+    description: TARGET_DESCRIPTION,
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
     },
-    maxSteps: 4,
-    resolveModelTransport: () => ({ model: observedRuntime }),
+    execute: () => {
+      targetExecutionCount += 1;
+      return { marker: "framework-fallback-verified" };
+    },
   });
+  if (input.selector !== "explicit") {
+    toolRegistry.register(TARGET_TOOL, targetTool);
+  }
+  try {
+    const verifier = agent({
+      id: "tool-search-live-verifier",
+      model: resolved.model,
+      system: [
+        "Verify framework deferred tool loading.",
+        "First call tool_search with the query release marker.",
+        `On the next step call ${TARGET_TOOL} exactly once.`,
+        "After the tool result, reply with a short confirmation and do not call more tools.",
+      ].join(" "),
+      skills: false,
+      tools: input.selector === "explicit" ? { [TARGET_TOOL]: targetTool } : true,
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model: observedRuntime }),
+    });
 
-  const response = await verifier.generate({
-    input:
-      `Use tool_search before ${TARGET_TOOL}, execute the marker tool once, then finish.`,
-  });
-  return extractToolSearchLiveProof({
-    model: resolved.model,
-    effectiveProvider: String(observedRuntime.provider),
-    response,
-    requestCatalogs,
-    targetExecutionCount,
-  });
+    const response = await verifier.generate({
+      input:
+        `Use tool_search before ${TARGET_TOOL}, execute the marker tool once, then finish.`,
+    });
+    return extractToolSearchLiveProof({
+      model: resolved.model,
+      effectiveProvider: String(observedRuntime.provider),
+      response,
+      requestCatalogs,
+      targetExecutionCount,
+    });
+  } finally {
+    toolRegistry.delete(TARGET_TOOL);
+  }
 }
 
 function validateSanitizedReport(serialized: string): void {

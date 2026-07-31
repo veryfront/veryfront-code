@@ -8,7 +8,7 @@ import {
 } from "../service/bootstrap.ts";
 import { loadAgentServiceEnvFiles } from "../service/env-files.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
-import type { AgentVeryfrontMcpServerConfig, ToolLoading } from "../types.ts";
+import type { AgentVeryfrontMcpServerConfig } from "../types.ts";
 import {
   type AgentServiceRuntimeBundle,
   combineAgentServiceLifecycle,
@@ -116,7 +116,7 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
   mcpServers?: readonly NodeVeryfrontCloudAgentServiceMcpServer[];
   forwardedConfigNamespace?: string;
   /** Service-operator override; never read from an individual chat request. */
-  operationalToolLoadingOverride?: ToolLoading;
+  operationalToolLoadingOverride?: "eager";
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
   processTarget?: NodeVeryfrontCloudAgentServiceProcessTarget;

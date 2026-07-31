@@ -119,7 +119,7 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
     values: { topic: "Support FAQ assistant" },
     inputRequestId: "input-request-1",
   });
-  assertEquals(capturedContext.availableToolNames, ["tool_search"]);
+  assertEquals(capturedContext.availableToolNames, ["sleep"]);
 });
 
 Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integration discovery", async () => {
@@ -303,7 +303,7 @@ Deno.test("createDefaultHostedChatRuntime awaits per-run tool setup and exposes 
   });
 
   assertExists(capturedContext);
-  assertEquals(capturedContext.availableToolNames, ["tool_search"]);
+  assertEquals(capturedContext.availableToolNames, ["bash"]);
   await runtime.cleanup();
   assertEquals(cleanupCalls, 1);
 });

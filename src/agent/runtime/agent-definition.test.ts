@@ -36,95 +36,22 @@ Follow the support runbook.
     thinking: { enabled: true, budgetTokens: 1200 },
     maxSteps: 8,
     providerTools: ["web_search", "web_fetch"],
-    toolLoading: "deferred",
     instructions: "Follow the support runbook.",
   });
 });
 
-it("parseRuntimeAgentMarkdownDefinition defaults tool loading to deferred", () => {
+it("does not expose tool loading policy through Markdown frontmatter", () => {
   const result = parseRuntimeAgentMarkdownDefinition({
-    id: "support-agent",
-    content: "Help the user.",
-  });
-
-  assertEquals(result.toolLoading, "deferred");
-});
-
-it("parseRuntimeAgentMarkdownDefinition parses explicit tool loading modes", () => {
-  for (const toolLoading of ["deferred", "eager"] as const) {
-    const result = parseRuntimeAgentMarkdownDefinition({
-      id: `${toolLoading}-agent`,
-      content: `---
-tool-loading: ${toolLoading}
----
-Help the user.
-`,
-    });
-
-    assertEquals(result.toolLoading, toolLoading);
-  }
-});
-
-it("parseRuntimeAgentMarkdownDefinition accepts camel-case toolLoading frontmatter", () => {
-  const result = parseRuntimeAgentMarkdownDefinition({
-    id: "eager-agent",
+    id: "canonical-tools-contract",
     content: `---
-toolLoading: eager
----
-Help the user.
-`,
-  });
-
-  assertEquals(result.toolLoading, "eager");
-});
-
-it("parseRuntimeAgentMarkdownDefinition accepts matching tool loading aliases", () => {
-  const result = parseRuntimeAgentMarkdownDefinition({
-    id: "matching-aliases-agent",
-    content: `---
+name: Canonical tools contract
 tool-loading: eager
-toolLoading: eager
 ---
-Help the user.
+Use the authored tools selector.
 `,
   });
 
-  assertEquals(result.toolLoading, "eager");
-});
-
-it("parseRuntimeAgentMarkdownDefinition rejects conflicting tool loading aliases", () => {
-  assertThrows(
-    () =>
-      parseRuntimeAgentMarkdownDefinition({
-        id: "conflicting-aliases-agent",
-        content: `---
-tool-loading: deferred
-toolLoading: eager
----
-Help the user.
-`,
-      }),
-    Error,
-    'cannot specify conflicting "tool-loading" and "toolLoading"',
-  );
-});
-
-it("parseRuntimeAgentMarkdownDefinition rejects invalid tool loading modes", () => {
-  for (const toolLoading of ["auto", "defered", "unknown"]) {
-    assertThrows(
-      () =>
-        parseRuntimeAgentMarkdownDefinition({
-          id: "invalid-agent",
-          content: `---
-tool-loading: ${toolLoading}
----
-Help the user.
-`,
-        }),
-      Error,
-      "tool-loading",
-    );
-  }
+  assertEquals(Object.hasOwn(result, "toolLoading"), false);
 });
 
 Deno.test("parseRuntimeAgentMarkdownDefinition falls back to id and handles boolean thinking", () => {
@@ -142,7 +69,6 @@ Draft concise copy.
       name: "writer",
       description: "",
       thinking: { enabled: false },
-      toolLoading: "deferred",
       instructions: "Draft concise copy.",
     },
   );

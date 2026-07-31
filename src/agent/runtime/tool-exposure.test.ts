@@ -59,6 +59,23 @@ it("tool exposure plans eager and deferred visibility deterministically", () => 
   );
 });
 
+it("deferred exposure omits tool_search when only bootstrap tools are authorized", () => {
+  const deferred = createToolExposurePlan({
+    authorized: [
+      definition("form_input", "Ask the user for structured input"),
+      definition("load_skill", "Load a configured skill"),
+    ],
+    mode: "deferred",
+    state: createToolExposureState(),
+  });
+
+  assertEquals(
+    deferred.visible.map((tool) => tool.name),
+    ["form_input", "load_skill"],
+  );
+  assertEquals(deferred.deferred, []);
+});
+
 it("tool search ranks exact name, description, and parameter matches", () => {
   const state = createToolExposureState();
   const exact = searchToolExposure({ query: "get_release", authorized: catalog, state });

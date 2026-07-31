@@ -6,6 +6,7 @@ import { tool } from "../../src/tool/factory.ts";
 import { agent } from "../../src/agent/index.ts";
 import { type AgentConfig, type Message } from "../../src/agent/types.ts";
 import type { ModelRuntime } from "../../src/provider/types.ts";
+import type { RuntimeToolFilterConfig } from "../../src/agent/runtime/runtime-tool-config.ts";
 
 function assert(condition: unknown, message?: string): void {
   if (!condition) throw new Error(message || "Assertion failed");
@@ -111,7 +112,8 @@ it("deferred respond searches, exposes on the next step, and executes once", asy
     },
     maxSteps: 4,
     resolveModelTransport: () => ({ model }),
-  });
+    __vfToolLoadingMode: "deferred",
+  } as AgentConfig & RuntimeToolFilterConfig);
 
   const response = await assistant.respond(
     new Request("https://example.test/agent", {
@@ -132,7 +134,6 @@ it("deferred respond searches, exposes on the next step, and executes once", asy
     "form_input",
     "load_skill",
     "read_release_marker",
-    "tool_search",
   ]);
   assertEquals(executionCount, 1);
   assert(body.includes("marker-1"), "respond should stream the final marker");
@@ -420,7 +421,6 @@ describe("AgentRuntime streaming", () => {
         id: "test-agent",
         model: "mock/mock-model",
         system: "You are a tester",
-        toolLoading: "eager",
         memory: { type: "conversation", maxTokens: 4000 },
         tools: {
           "repeat-id": tool({
@@ -543,7 +543,6 @@ describe("AgentRuntime streaming", () => {
         id: "test-agent",
         model: "mock/mock-model",
         system: "You are a tester",
-        toolLoading: "eager",
         memory: { type: "conversation", maxTokens: 4000 },
         tools: {
           review: tool({

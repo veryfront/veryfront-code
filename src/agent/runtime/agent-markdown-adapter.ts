@@ -24,7 +24,6 @@ export function createRuntimeAgentFromMarkdownDefinition(
     description: definition.description,
     ...(definition.avatarUrl ? { avatarUrl: definition.avatarUrl } : {}),
     system: definition.instructions,
-    toolLoading: definition.toolLoading,
     ...(definition.model ? { model: definition.model } : {}),
     ...(definition.temperature === undefined ? {} : { temperature: definition.temperature }),
     ...(definition.maxSteps === undefined ? {} : { maxSteps: definition.maxSteps }),

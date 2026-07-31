@@ -138,9 +138,6 @@ export interface AgentHttpMcpServerConfig {
 /** MCP server available to an agent. */
 export type AgentMcpServerConfig = AgentHttpMcpServerConfig | AgentVeryfrontMcpServerConfig;
 
-/** Controls when authorized tool schemas become visible to the model. */
-export type ToolLoading = "eager" | "deferred";
-
 /** Configuration used by agent. */
 export interface AgentConfig {
   id?: string;
@@ -161,12 +158,14 @@ export interface AgentConfig {
    */
   model?: ModelString;
   system: string | (() => string) | (() => Promise<string>);
-  tools?: true | Record<string, Tool | boolean>;
   /**
-   * Controls when authorized tool schemas become visible to the model.
-   * Defaults to `"deferred"`.
+   * Project tools available to this agent.
+   *
+   * Omit to expose no project tools. `true` authorizes the current scoped
+   * catalog behind `tool_search`; an explicit map exposes only those selected
+   * schemas immediately.
    */
-  toolLoading?: ToolLoading;
+  tools?: true | Record<string, Tool | boolean>;
   /**
    * Exact registered agent ids this agent may call through scoped
    * `agent_<id>` tools. Each delegate keeps its own model, skills, and tools.

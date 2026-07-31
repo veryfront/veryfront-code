@@ -708,7 +708,7 @@ describe("eval CLI command helpers", () => {
     }]);
   });
 
-  it("runs request-scoped mock tools through framework tool search", async () => {
+  it("exposes request-scoped mock tools eagerly", async () => {
     let modelStep = 0;
     let markerExecutions = 0;
     const model: ModelRuntime = {
@@ -717,18 +717,6 @@ describe("eval CLI command helpers", () => {
       async doGenerate() {
         modelStep++;
         if (modelStep === 1) {
-          return {
-            content: [{
-              type: "tool-call",
-              toolCallId: "search-1",
-              toolName: "tool_search",
-              input: JSON.stringify({ query: "release marker" }),
-            }],
-            finishReason: "tool-calls",
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          };
-        }
-        if (modelStep === 2) {
           return {
             content: [{
               type: "tool-call",
@@ -755,8 +743,7 @@ describe("eval CLI command helpers", () => {
       model: "hosted/eval-tool-search-mocks",
       system: "Search for tools before using them.",
       skills: false,
-      toolLoading: "deferred",
-      maxSteps: 4,
+      maxSteps: 3,
       resolveModelTransport: async () => ({ model }),
     });
     const definition = evalAgent({
@@ -776,7 +763,6 @@ describe("eval CLI command helpers", () => {
       },
       check({ expect }) {
         expect.completed().gate();
-        expect.calledTool("tool_search").gate();
         expect.calledTool("read_release_marker").gate();
         expect.toolCallCount("read_release_marker", { exact: 1 }).gate();
         expect.noFailedTools().gate();
@@ -791,12 +777,10 @@ describe("eval CLI command helpers", () => {
     assertEquals(
       report.records[0]?.trace.toolCalls.map(({ name, status }) => ({ name, status })),
       [
-        { name: "tool_search", status: "ok" },
         { name: "read_release_marker", status: "ok" },
       ],
     );
     assertEquals(report.records[0]?.checks?.map(({ pass }) => pass), [
-      true,
       true,
       true,
       true,
@@ -881,7 +865,6 @@ describe("eval CLI command helpers", () => {
       model: "hosted/eval-skill-mocks",
       system: "Use skills.",
       skills: true,
-      toolLoading: "eager",
       tools: {
         load_skill: makeEvalTool("load_skill"),
         load_skill_reference: makeEvalTool("load_skill_reference"),
@@ -943,7 +926,6 @@ describe("eval CLI command helpers", () => {
       id: "eval-default-skills-agent",
       model: "hosted/eval-default-skills-mocks",
       system: "Use skills.",
-      toolLoading: "eager",
       tools: {
         load_skill: makeEvalTool("load_skill"),
         load_skill_reference: makeEvalTool("load_skill_reference"),
@@ -956,7 +938,6 @@ describe("eval CLI command helpers", () => {
       model: "hosted/eval-default-skills-mocks",
       system: "Do not use skills.",
       skills: false,
-      toolLoading: "eager",
       tools: {
         load_skill: makeEvalTool("load_skill"),
         load_skill_reference: makeEvalTool("load_skill_reference"),

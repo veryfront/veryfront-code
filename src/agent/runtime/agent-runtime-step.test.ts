@@ -35,7 +35,6 @@ describe("agent/runtime-step", () => {
         model: "auto",
         system: "Base",
         tools: true,
-        toolLoading: "deferred",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [
@@ -74,7 +73,7 @@ describe("agent/runtime-step", () => {
       activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
-      config: { model: "auto", system: "Base", toolLoading: "eager" } as AgentConfig,
+      config: { model: "auto", system: "Base", __vfToolLoadingMode: "eager" } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [],
       isLocalModel: true,
@@ -104,7 +103,7 @@ describe("agent/runtime-step", () => {
         model: "auto",
         system: "Base",
         tools: true,
-        toolLoading: "eager",
+        __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async (_toolsConfig, options) => {
@@ -140,7 +139,7 @@ describe("agent/runtime-step", () => {
       model: "auto",
       system: "Base system",
       tools: true,
-      toolLoading: "eager",
+      __vfToolLoadingMode: "eager",
     } as AgentConfig;
     const capturedContexts: ToolExecutionContext[] = [];
     const remoteSource = remoteToolSource("remote_source");
@@ -219,7 +218,7 @@ describe("agent/runtime-step", () => {
         model: "auto",
         system: "Base",
         tools: true,
-        toolLoading: "eager",
+        __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       isLocalModel: false,
@@ -253,7 +252,7 @@ describe("agent/runtime-step", () => {
         system: "Base",
         tools: true,
         skills: [],
-        toolLoading: "eager",
+        __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async (_toolsConfig, options) => {
@@ -289,7 +288,7 @@ describe("agent/runtime-step", () => {
         model: "auto",
         system: "system",
         tools: true,
-        toolLoading: "eager",
+        __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [],
@@ -337,7 +336,7 @@ describe("agent/runtime-step", () => {
       resolveRuntimeState: async () => ({ systemPrompt: "Local", context: undefined }),
     });
 
-    assertEquals(prepared.tools.map((tool) => tool.name), ["tool_search"]);
+    assertEquals(prepared.tools.map((tool) => tool.name), []);
     assertEquals(prepared.toolContext, {});
   });
 
@@ -364,7 +363,7 @@ describe("agent/runtime-step", () => {
         system: "Base",
         tools: true,
         skills: true,
-        toolLoading: "eager",
+        __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       isLocalModel: false,
@@ -403,7 +402,7 @@ describe("agent/runtime-step", () => {
         system: "Base",
         tools: true,
         skills: true,
-        toolLoading: "eager",
+        __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       isLocalModel: false,
@@ -465,7 +464,7 @@ describe("agent/runtime-step", () => {
         system: "Base",
         tools: true,
         skills: true,
-        toolLoading: "eager",
+        __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       isLocalModel: false,
@@ -507,7 +506,7 @@ describe("agent/runtime-step", () => {
         system: "Base",
         tools: true,
         skills: true,
-        toolLoading: "eager",
+        __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       isLocalModel: false,
@@ -548,7 +547,7 @@ describe("agent/runtime-step", () => {
         system: "Base",
         tools: true,
         skills: true,
-        toolLoading: "eager",
+        __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       isLocalModel: false,

@@ -125,7 +125,7 @@ describe("agent/agent-service-runtime", () => {
     assertEquals(typeof tools?.execute_skill_script, "object");
   });
 
-  it("preserves explicit Markdown tool loading on the service agent", () => {
+  it("keeps tool loading policy out of the service agent contract", () => {
     const bundle = createAgentServiceRuntime({
       serviceName: "test-eager-agent-service",
       getConfig: () => ({
@@ -139,7 +139,6 @@ describe("agent/agent-service-runtime", () => {
         name: "Assistant",
         description: "",
         instructions: "You are a test assistant.",
-        toolLoading: "eager",
       }),
       logger: createLogger(),
       prepareExecution: async () => ({ ok: true }),
@@ -148,8 +147,8 @@ describe("agent/agent-service-runtime", () => {
     });
 
     assertEquals(
-      bundle.runtime.contract.agents.assistant?.config.toolLoading,
-      "eager",
+      Object.hasOwn(bundle.runtime.contract.agents.assistant?.config ?? {}, "toolLoading"),
+      false,
     );
   });
 

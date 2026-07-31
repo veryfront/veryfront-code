@@ -65,10 +65,11 @@ Use this pattern to verify the tool contract before giving the tool to an agent.
 
 ## How agents use tools
 
-When you add a tool to an agent, the tool is authorized for that agent. By
-default, the framework sends only bootstrap schemas and `tool_search` to the
-model. A search result loads matching authorized schemas for the next model
-step. The search result contains names and descriptions, not input or output
+An explicit tool map authorizes only the selected tools and sends those schemas
+to the model immediately. Use `tools: true` for a broad authorized scope: the
+framework initially sends only bootstrap schemas and `tool_search`, then loads
+matching schemas for the next model step. Omit `tools` to expose no project
+tools. Search results contain names and descriptions, not input or output
 schemas.
 
 ```ts
@@ -77,16 +78,14 @@ import { agent } from "veryfront/agent";
 
 export default agent({
   system: "You are a weather assistant. Use the getWeather tool to answer weather questions.",
-  tools: { getWeather: true },
-  toolLoading: "deferred",
+  tools: true,
   maxSteps: 3,
 });
 ```
 
-Set `toolLoading: "eager"` when every authorized schema must be visible on the
-first step. The framework never selects eager mode based on catalog size.
-Schema loading and tool authorization stay separate, and execution rechecks
-authorization.
+Use an explicit map such as `tools: { getWeather: true }` when the model needs a
+selected schema on its first step. Schema loading and tool authorization stay
+separate, and execution rechecks authorization.
 
 `tool_search` uses deterministic, case-insensitive matching. It treats
 underscores as spaces and ranks results in this order:
@@ -119,7 +118,7 @@ In most projects, you can omit `model` and use `openai/gpt-5.4-nano`. Set
 `model: "auto"` when you want runtime defaults to choose local or Veryfront
 Cloud inference automatically.
 
-When a user asks "What's the weather in Tokyo?", a deferred agent:
+When a user asks "What's the weather in Tokyo?", an agent with `tools: true`:
 
 1. Sends the question with `tool_search` to the model.
 2. The model searches for a weather capability.

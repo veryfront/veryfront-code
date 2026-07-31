@@ -162,7 +162,6 @@ describe("agent runtime tool result tracing", () => {
     const assistant = agent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Update agents and recover from failed tool calls.",
-      toolLoading: "eager",
       tools: { update_agent: updateAgent },
       maxSteps: 2,
       resolveModelTransport: async () => ({ model }),

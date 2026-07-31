@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "#veryfront/tool";
-import type { AgentConfig, ToolLoading } from "../types.ts";
+import type { AgentConfig } from "../types.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import { resolveEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { type SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
@@ -8,7 +8,9 @@ import {
   type ToolExposureCheckpoint,
   type ToolSearchAuthorization,
 } from "./tool-exposure.ts";
-import { resolveToolLoading } from "./agent-definition.ts";
+
+/** Internal schema-loading mode derived from the authored tools selector. */
+export type RuntimeToolLoadingMode = "eager" | "deferred";
 
 export const SOURCE_INTEGRATION_POLICY_CONTEXT_KEY = "__vfSourceIntegrationPolicy";
 
@@ -22,13 +24,14 @@ export type RuntimeToolFilterConfig = AgentConfig & {
     checkpoint: ToolExposureCheckpoint,
   ) => void | Promise<void>;
   __vfToolExposureCheckpointPersistenceRequired?: boolean;
-  __vfOperationalToolLoadingOverride?: ToolLoading;
+  __vfToolLoadingMode?: RuntimeToolLoadingMode;
+  __vfOperationalToolLoadingOverride?: "eager";
 } & RuntimeRemoteToolConfig;
 
 /** Effective runtime loading mode and the trusted source that selected it. */
 export type RuntimeToolLoadingResolution = {
-  mode: ToolLoading;
-  provenance: "host-operational-override" | "agent-config";
+  mode: RuntimeToolLoadingMode;
+  provenance: "host-operational-override" | "host-runtime-binding" | "tools-selector";
 };
 
 /** Resolve tool loading without accepting request context as configuration. */
@@ -37,15 +40,22 @@ export function resolveRuntimeToolLoading(
 ): RuntimeToolLoadingResolution {
   const operationalOverride =
     (config as RuntimeToolFilterConfig).__vfOperationalToolLoadingOverride;
-  if (operationalOverride === "eager" || operationalOverride === "deferred") {
+  if (operationalOverride === "eager") {
     return {
       mode: operationalOverride,
       provenance: "host-operational-override",
     };
   }
+  const hostRuntimeMode = (config as RuntimeToolFilterConfig).__vfToolLoadingMode;
+  if (hostRuntimeMode === "eager" || hostRuntimeMode === "deferred") {
+    return {
+      mode: hostRuntimeMode,
+      provenance: "host-runtime-binding",
+    };
+  }
   return {
-    mode: resolveToolLoading(config.toolLoading),
-    provenance: "agent-config",
+    mode: config.tools === true ? "deferred" : "eager",
+    provenance: "tools-selector",
   };
 }
 

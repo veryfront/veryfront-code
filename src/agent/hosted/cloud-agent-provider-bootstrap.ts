@@ -25,7 +25,6 @@ import type { CreateNodeAgentServiceRuntimeInfrastructureOptions } from "../serv
 import type { RunAgentServiceMainOptions } from "../service/bootstrap.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import type { ProjectAgentRuntimeAgentSource } from "../project/agent-runtime.ts";
-import type { ToolLoading } from "../types.ts";
 import {
   type AgentServicePathOption,
   resolveEnvironment,
@@ -58,7 +57,7 @@ export type ResolvedNodeVeryfrontCloudAgentServiceOptions = {
   agentSource?: ProjectAgentRuntimeAgentSource;
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   forwardedConfigNamespace?: string;
-  operationalToolLoadingOverride?: ToolLoading;
+  operationalToolLoadingOverride?: "eager";
   createBashTool: AgentServiceSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
   processTarget?:

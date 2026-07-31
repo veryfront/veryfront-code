@@ -95,6 +95,7 @@ it("generate awaits checkpoint persistence before the next model step and target
     tools: { get_release: releaseTool(() => callOrder.push("target_tool")) },
     maxSteps: 3,
     resolveModelTransport: () => ({ model }),
+    __vfToolLoadingMode: "deferred",
     __vfToolExposureCheckpointPersistenceRequired: true,
     __vfPersistToolExposureCheckpoint: async () => {
       callOrder.push("persist_checkpoint:start");
@@ -156,6 +157,7 @@ it("stream awaits checkpoint persistence before the next model step", async () =
     tools: { get_release: releaseTool() },
     maxSteps: 2,
     resolveModelTransport: () => ({ model }),
+    __vfToolLoadingMode: "deferred",
     __vfToolExposureCheckpointPersistenceRequired: true,
     __vfPersistToolExposureCheckpoint: async () => {
       callOrder.push("persist_checkpoint:start");
@@ -204,7 +206,8 @@ it("a new runtime restores a persisted checkpoint and calls the target without a
     skills: false,
     tools: { get_release: releaseTool() },
     maxSteps: 2,
-  } satisfies Partial<AgentConfig>;
+    __vfToolLoadingMode: "deferred",
+  } satisfies Partial<AgentConfig & RuntimeToolFilterConfig>;
   await agent(
     {
       ...baseConfig,
@@ -296,6 +299,7 @@ it("restores the invocation checkpoint only on step zero", async () => {
     },
     maxSteps: 2,
     resolveModelTransport: () => ({ model }),
+    __vfToolLoadingMode: "deferred",
     __vfToolExposureCheckpoint: {
       version: 1,
       authorizedCatalogFingerprint: "v1-previous",
@@ -337,6 +341,7 @@ it("required durable checkpoint persistence fails closed when the callback is ab
     tools: { get_release: releaseTool() },
     maxSteps: 2,
     resolveModelTransport: () => ({ model }),
+    __vfToolLoadingMode: "deferred",
     __vfToolExposureCheckpointPersistenceRequired: true,
   } as AgentConfig & RuntimeToolFilterConfig;
 
@@ -388,6 +393,7 @@ it("checkpoint persistence rejection aborts before continuation and target execu
     tools: { get_release: releaseTool(() => targetExecutions++) },
     maxSteps: 2,
     resolveModelTransport: () => ({ model }),
+    __vfToolLoadingMode: "deferred",
     __vfToolExposureCheckpointPersistenceRequired: true,
     __vfPersistToolExposureCheckpoint: () => Promise.reject(new Error("checkpoint rejected")),
   } as AgentConfig & RuntimeToolFilterConfig;

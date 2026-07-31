@@ -41,7 +41,7 @@ import {
   isIntegrationToolAllowedBySourcePolicy,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
-import type { ToolLoading } from "../types.ts";
+import type { RuntimeToolLoadingMode } from "../runtime/runtime-tool-config.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 
 /** Context for hosted chat runtime tool assembly. */
@@ -72,6 +72,7 @@ export type HostedChatRuntimeToolAssemblyResult = {
   providerToolNames: string[];
   availableToolNames: string[];
   modelVisibleToolNames?: string[];
+  toolLoadingMode: RuntimeToolLoadingMode;
   compatibleRemoteToolNames: string[];
   systemInstructions: string;
 };
@@ -111,7 +112,7 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   toolDiscoveryContext?: RuntimeToolDiscoveryContext;
   /** Exact project-source restriction applied before tool inventory is exposed. */
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
-  toolLoading?: ToolLoading;
+  operationalToolLoadingOverride?: "eager";
 };
 
 function activeProjectId(taskContext: HostedChatRuntimeToolAssemblyContext): string | null {
@@ -341,12 +342,16 @@ export async function prepareHostedChatRuntimeToolAssembly<
   const compatibleRemoteToolNames = remoteToolNames.filter((toolName) =>
     compatibleToolNames.has(toolName)
   );
-  const modelVisibleToolNames = input.toolLoading === "deferred"
+  const toolLoadingMode: RuntimeToolLoadingMode = input.operationalToolLoadingOverride ??
+    (input.allowedToolNames === null ? "deferred" : "eager");
+  const bootstrapToolNames = availableToolNames.filter((toolName) =>
+    toolName === "form_input" || toolName === "load_skill"
+  );
+  const hasDeferredTools = availableToolNames.length > bootstrapToolNames.length;
+  const modelVisibleToolNames = toolLoadingMode === "deferred"
     ? [
-      ...availableToolNames.filter((toolName) =>
-        toolName === "form_input" || toolName === "load_skill"
-      ),
-      TOOL_SEARCH_TOOL_NAME,
+      ...bootstrapToolNames,
+      ...(hasDeferredTools ? [TOOL_SEARCH_TOOL_NAME] : []),
     ].sort()
     : availableToolNames;
 
@@ -377,6 +382,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     providerToolNames,
     availableToolNames,
     modelVisibleToolNames,
+    toolLoadingMode,
     compatibleRemoteToolNames,
     systemInstructions,
   };

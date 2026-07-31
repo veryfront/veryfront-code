@@ -98,7 +98,6 @@ it("suppresses an OpenAI streamed tool call dropped by provider tool conversion"
     model: "veryfront-cloud/openai/gpt-5.2",
     system: "Use available tools only.",
     tools,
-    toolLoading: "eager",
     maxSteps: 2,
     resolveModelTransport: async () => ({ model }),
   });

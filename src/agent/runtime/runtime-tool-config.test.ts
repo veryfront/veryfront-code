@@ -1,8 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "../types.ts";
-import { AgentRuntime } from "./index.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
@@ -23,38 +22,43 @@ function runtimeConfig(extra: Record<string, unknown> = {}): AgentConfig {
 }
 
 describe("agent/runtime-tool-config", () => {
-  it("resolves tool loading with host override ahead of agent config and records provenance", () => {
-    assertEquals(resolveRuntimeToolLoading(runtimeConfig({ toolLoading: "deferred" })), {
-      mode: "deferred",
-      provenance: "agent-config",
+  it("derives tool loading from the public tools selector", () => {
+    assertEquals(resolveRuntimeToolLoading(runtimeConfig()), {
+      mode: "eager",
+      provenance: "tools-selector",
     });
+    assertEquals(resolveRuntimeToolLoading(runtimeConfig({ tools: true })), {
+      mode: "deferred",
+      provenance: "tools-selector",
+    });
+    assertEquals(resolveRuntimeToolLoading(runtimeConfig({ tools: { get_release: true } })), {
+      mode: "eager",
+      provenance: "tools-selector",
+    });
+  });
+
+  it("keeps host bindings internal and gives the eager rollback override precedence", () => {
     assertEquals(
-      resolveRuntimeToolLoading(
-        runtimeConfig({
-          toolLoading: "eager",
-          __vfOperationalToolLoadingOverride: "deferred",
-        }),
-      ),
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: true,
+        __vfToolLoadingMode: "eager",
+      })),
       {
-        mode: "deferred",
+        mode: "eager",
+        provenance: "host-runtime-binding",
+      },
+    );
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: true,
+        __vfToolLoadingMode: "deferred",
+        __vfOperationalToolLoadingOverride: "eager",
+      })),
+      {
+        mode: "eager",
         provenance: "host-operational-override",
       },
     );
-  });
-
-  it("rejects invalid agent-config tool loading modes", () => {
-    for (const toolLoading of ["auto", "defered", "unknown"]) {
-      assertThrows(
-        () => resolveRuntimeToolLoading(runtimeConfig({ toolLoading })),
-        Error,
-        "toolLoading",
-      );
-      assertThrows(
-        () => new AgentRuntime("invalid-tool-loading", runtimeConfig({ toolLoading })),
-        Error,
-        "toolLoading",
-      );
-    }
   });
 
   it("defaults trusted authoring search authorization closed", () => {

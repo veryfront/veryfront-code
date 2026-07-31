@@ -16,6 +16,7 @@ function createAgent(): RuntimeAgentMarkdownDefinition {
     name: "Agent",
     description: "Agent description",
     instructions: "Base instructions",
+    tools: true,
   };
 }
 
@@ -54,6 +55,7 @@ function createRefreshInput(
       remoteToolNames: [],
       providerToolNames: [],
       availableToolNames: [],
+      toolLoadingMode: "deferred",
       compatibleRemoteToolNames: [],
       systemInstructions: "",
     },
@@ -188,6 +190,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
         remoteToolNames: ["confluence__search_content"],
         providerToolNames: [],
         availableToolNames: ["confluence__search_content", "sleep"],
+        toolLoadingMode: "deferred",
         compatibleRemoteToolNames: ["confluence__search_content"],
         systemInstructions: "",
       },
@@ -297,6 +300,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
         remoteToolNames: [],
         providerToolNames: ["web_fetch", "web_search"],
         availableToolNames: [],
+        toolLoadingMode: "deferred",
         compatibleRemoteToolNames: [],
         systemInstructions: "",
       },
