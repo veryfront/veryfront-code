@@ -45,7 +45,7 @@ describe("manifestDependencies", () => {
       ),
     ) as ExtensionManifest;
 
-    assertEquals(manifestDependencies(manifest).ai, "7.0.44");
+    assertEquals(manifestDependencies(manifest).ai, "7.0.41");
   });
 
   it("derives npm dependencies from extension imports", () => {
