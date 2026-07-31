@@ -103,37 +103,52 @@ describe("hydration-script-builder/prod-scripts", () => {
   describe("generateProdHydrationModule", () => {
     it("should import React", () => {
       const result = generateProdHydrationModule();
-      assertEquals(result.includes("import * as React from 'react'"), true);
+      assertEquals(result.includes('import * as React from "react"'), true);
     });
 
     it("should import createRoot for RSC module client rendering", () => {
       const result = generateProdHydrationModule();
-      assertEquals(result.includes("import { createRoot } from 'react-dom/client'"), true);
+      assertEquals(result.includes('import { createRoot } from "react-dom/client"'), true);
     });
 
     it("should import RouterProvider from veryfront/router", () => {
       const result = generateProdHydrationModule();
-      assertEquals(result.includes("from 'veryfront/router'"), true);
+      assertEquals(result.includes('from "veryfront/router"'), true);
     });
 
     it("should import PageContextProvider from veryfront/context", () => {
       const result = generateProdHydrationModule();
-      assertEquals(result.includes("from 'veryfront/context'"), true);
+      assertEquals(result.includes('from "veryfront/context"'), true);
     });
 
-    it("should include router script content", () => {
+    it("should read getNavigationStore off the namespace so legacy assets still link", () => {
       const result = generateProdHydrationModule();
-      assertEquals(result.includes("MODULE_SERVER_URL"), true);
+      // A static named import would fail to link against a release-pinned
+      // router asset that predates the export; a namespace read degrades.
+      assertEquals(result.includes('import * as RouterRuntime from "veryfront/router"'), true);
+      assertEquals(/import \{[^}]*getNavigationStore[^}]*\} from/.test(result), false);
     });
 
-    it("should include loader script content", () => {
+    it("should include the router runtime", () => {
+      const result = generateProdHydrationModule();
+      assertEquals(result.includes("createRouterRuntime"), true);
+      assertEquals(result.includes("navigateSPA"), true);
+    });
+
+    it("should include the component loader", () => {
       const result = generateProdHydrationModule();
       assertEquals(result.includes("loadComponent"), true);
     });
 
-    it("should include renderer script content", () => {
+    it("should include the hydration renderer and start it", () => {
       const result = generateProdHydrationModule();
       assertEquals(result.includes("renderPage"), true);
+      assertEquals(result.includes("createHydrationRenderer"), true);
+    });
+
+    it("should not ship the type-only hydration data contract", () => {
+      const result = generateProdHydrationModule();
+      assertEquals(result.includes("HydrationDataStructure"), false);
     });
   });
 });
