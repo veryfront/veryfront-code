@@ -352,6 +352,14 @@ describe("resolveOrCreateProject", () => {
         if (outcome.kind !== "created") throw new Error("unreachable");
         assertEquals(calls.getProject, ["my-app"]);
         assertEquals(outcome.project, { id: "proj_canonical", slug: "my-app" });
+        // An empty reservation id must never leave the project unlinked.
+        assertEquals(outcome.persisted, true);
+        assertEquals(await readLink(dir), {
+          version: 1,
+          controlPlane: CONTROL_PLANE,
+          projectId: "proj_canonical",
+          projectSlug: "my-app",
+        });
       });
     });
 
