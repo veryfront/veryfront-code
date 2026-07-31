@@ -132,12 +132,48 @@ models that reject generic sampling parameters or require mode-specific values.
 `maxSteps` limits how many tool-call iterations the agent can perform per
 request. See [Tools](./tools.md) for how to define `getWeather`.
 
+## Load tool schemas progressively
+
 Tool schemas load progressively by default. In `deferred` mode, the model first
-sees `tool_search` plus configured bootstrap tools. A successful search makes
-matching authorized schemas visible on the next model step. Use
-`toolLoading: "eager"` in TypeScript or `tool-loading: eager` in Markdown when
-the model must receive every authorized schema immediately. Loading a schema
-never authorizes a tool.
+sees `tool_search` plus bootstrap tools. A successful search makes matching
+authorized schemas visible on the next model step.
+
+```ts
+const assistant = agent({
+  name: "release-assistant",
+  model,
+  system: "Use the release tools to answer project release questions.",
+  toolLoading: "deferred",
+  tools: {
+    get_release,
+    list_projects,
+  },
+});
+```
+
+Use `toolLoading: "eager"` in TypeScript or `tool-loading: eager` in Markdown
+when the model must receive every authorized schema on the first step. The
+framework never selects eager mode based on the number of configured tools.
+
+The framework `tool_search` fallback is provider-neutral. It searches the
+authorized `tools` catalog and does not search `providerTools`. Search ranks an
+exact tool name first, followed by normalized substrings in the tool name,
+description, and input parameter descriptions. It returns at most five names
+and descriptions. Results never include schemas, and `tool_search` has no
+pagination options.
+
+Loading a schema never authorizes a tool. The runtime rechecks authorization
+before execution. It also filters restored loaded-tool state against the
+currently authorized catalog.
+
+You can use deferred loading with a direct provider and its API key without
+Veryfront Cloud. Hosted durable runs additionally require the Veryfront API
+durable run-event contract. The hosted runtime stores loaded-tool state in a
+private checkpoint and waits for that checkpoint before continuing. Private
+checkpoint data does not appear in public messages or replay. Provider-native
+tool search and provider replay are not part of this feature.
+
+See [Tools](./tools.md#how-agents-use-tools) for the search and execution flow.
 
 ## Enable provider tools
 
@@ -356,7 +392,7 @@ export default agent({
 | `system`              | `string \| () => string \| Promise<string>`                                                            | System prompt                                                                                         |
 | `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run                                       |
 | `tools`               | `Record<string, boolean \| Tool>`                                                                      | Tools the agent can use                                                                               |
-| `toolLoading`         | `"deferred" \| "eager"`                                                                               | When authorized tool schemas become model-visible (default: `"deferred"`)                            |
+| `toolLoading`         | `"deferred" \| "eager"`                                                                                | When authorized tool schemas become model-visible (default: `"deferred"`)                             |
 | `delegates`           | `string[]`                                                                                             | Exact agent ids exposed as scoped `agent_<id>` tools                                                  |
 | `providerTools`       | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                                          |
 | `mcpServers`          | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                                                    |

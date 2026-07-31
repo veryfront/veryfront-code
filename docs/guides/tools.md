@@ -88,16 +88,45 @@ first step. The framework never selects eager mode based on catalog size.
 Schema loading and tool authorization stay separate, and execution rechecks
 authorization.
 
+`tool_search` uses deterministic, case-insensitive matching. It treats
+underscores as spaces and ranks results in this order:
+
+1. Exact tool name.
+2. Tool name substring.
+3. Tool description substring.
+4. Input parameter description substring.
+
+Equal-rank matches use ASCII tool-name order. Each search returns at most five
+matches. Results contain the tool name, description, and loading status, but no
+input or output schema. The search tool has no page or pagination parameter.
+Refine the query when the required tool is not in the first five matches.
+
+The search only loads schemas from the current authorized `tools` catalog. It
+does not search or load provider-native `providerTools`. The runtime reapplies
+the current authorization policy before executing a tool and when restoring a
+loaded-tool checkpoint, so a previously loaded name cannot restore a removed
+permission.
+
+Deferred loading works with direct provider model strings and provider API
+keys. Veryfront Cloud is not required for that path. Hosted durable execution
+uses the same framework search, but it requires the Veryfront API durable
+run-event contract. Before the next model step, the hosted runtime persists a
+private loaded-tool checkpoint. It fails the continuation if required
+persistence is unavailable, and it excludes the checkpoint from public
+messages and replay.
+
 In most projects, you can omit `model` and use `openai/gpt-5.4-nano`. Set
 `model: "auto"` when you want runtime defaults to choose local or Veryfront
 Cloud inference automatically.
 
-When a user asks "What's the weather in Tokyo?", the agent:
+When a user asks "What's the weather in Tokyo?", a deferred agent:
 
-1. Sends the question to the model
-2. The model calls `getWeather({ city: "Tokyo" })`
-3. The tool returns `{ temperature: 22, conditions: "sunny" }`
-4. The model formats a natural language response
+1. Sends the question with `tool_search` to the model.
+2. The model searches for a weather capability.
+3. The framework loads the matching authorized `getWeather` schema.
+4. The next model step calls `getWeather({ city: "Tokyo" })`.
+5. The tool returns `{ temperature: 22, conditions: "sunny" }`.
+6. The model formats a natural language response.
 
 ## Tool surfaces in agent config
 
@@ -113,7 +142,8 @@ Agent config separates tools by execution boundary:
 Use `tools` for functions you define in the project. Do not add provider-native
 tools or skill loader tools to `tools`.
 
-Use `providerTools` for provider-executed capabilities:
+Use `providerTools` for provider-executed capabilities. Framework
+`tool_search` does not search this catalog:
 
 ```ts
 // agents/researcher.ts
