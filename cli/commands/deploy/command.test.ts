@@ -16,7 +16,7 @@ import type {
 import type { DeployResult } from "../../shared/deployment/result.ts";
 import { stripAnsi } from "../../ui/ansi.ts";
 import { DeployArgsSchema, parseDeployArgs } from "./index.ts";
-import { deployCommandWithProjectForTesting } from "./command.ts";
+import { deployCommand } from "./command.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 
 async function captureConsole<T>(fn: () => Promise<T>): Promise<{ result: T; output: string[] }> {
@@ -86,20 +86,14 @@ describe("deploy command adapters", () => {
       force: false,
       quiet: false,
       skipSourcePush: true,
-      environmentPollIntervalMs: 1,
-      environmentTimeoutMs: 1,
+      deployProject: createFakeDeployment(),
     };
 
     const human = await withMockFetch(
       () => {
         throw new Error("adapter performed fetch orchestration");
       },
-      () =>
-        captureConsole(() =>
-          deployCommandWithProjectForTesting(options, {
-            createDeployProject: createFakeDeployment,
-          })
-        ),
+      () => captureConsole(() => deployCommand(options)),
     );
 
     let json: { result: DeployResult | null; output: string[] };
@@ -109,12 +103,7 @@ describe("deploy command adapters", () => {
         () => {
           throw new Error("adapter performed fetch orchestration");
         },
-        () =>
-          captureConsole(() =>
-            deployCommandWithProjectForTesting(options, {
-              createDeployProject: createFakeDeployment,
-            })
-          ),
+        () => captureConsole(() => deployCommand(options)),
       );
     } finally {
       setJsonMode(false);
