@@ -85,9 +85,9 @@ export type {
 
 // Types
 export type {
+  ApprovalRequestEvent,
   // Bidirectional types
   ApproveCommand,
-  ApprovalRequestEvent,
   BidirectionalPublisher,
   CancelCommand,
   CancelledEvent,
@@ -108,6 +108,7 @@ export type {
   ClientCommand,
   ClientCommandDisposition,
   ClientCommandHandler,
+  ClientCommandObserver,
   ClientCommandType,
   CommandAckEvent,
   CompleteEvent,

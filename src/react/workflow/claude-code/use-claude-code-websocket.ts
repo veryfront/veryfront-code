@@ -144,7 +144,7 @@ export interface UseClaudeCodeWebSocketOptions {
  * Actions returned by the hook
  */
 export interface UseClaudeCodeWebSocketActions {
-  /** Connect to WebSocket */
+  /** Connect the active run; no-op after its terminal event. Change runId for a new lifecycle. */
   connect: () => void;
 
   /** Disconnect from WebSocket */

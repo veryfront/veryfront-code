@@ -346,6 +346,9 @@ export type ClientCommandHandler = (
   | void
   | Promise<ClientCommandDisposition | void>;
 
+/** Passive command observer. Its completion never controls command acknowledgement. */
+export type ClientCommandObserver = (command: ClientCommand) => void | Promise<void>;
+
 /**
  * Extended event type including bidirectional events
  */
@@ -433,6 +436,8 @@ export type ClaudeCodeEventExtended =
 export interface BidirectionalPublisher extends ClaudeCodeEventPublisher {
   /** Subscribe to client commands */
   onCommand(handler: ClientCommandHandler): () => void;
+  /** Subscribe without becoming the authoritative command handler. */
+  observeCommands?(observer: ClientCommandObserver): () => void;
   /** Send an event to the client */
   send(event: ClaudeCodeEventExtended): void | Promise<void>;
 }

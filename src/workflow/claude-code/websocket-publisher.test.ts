@@ -219,7 +219,7 @@ describe("WebSocketPublisher", () => {
     });
     const OriginalTextEncoder = globalThis.TextEncoder;
     class BoundedTextEncoder extends OriginalTextEncoder {
-      override encode(input?: string): Uint8Array {
+      override encode(input?: string) {
         if ((input?.length ?? 0) > 64 * 1024) {
           throw new Error("oversized frame reached TextEncoder");
         }
@@ -531,6 +531,35 @@ describe("WebSocketPublisher", () => {
 
     const ack = JSON.parse(socket.sent[0]!);
     assertEquals(ack.status, "accepted");
+    publisher.close();
+  });
+
+  it("isolates the authoritative command from passive observer mutation", async () => {
+    const socket = new FakeWebSocket();
+    const publisher = new WebSocketPublisher({
+      socket: socket as unknown as WebSocket,
+      runId: "run-1",
+      pingInterval: 0,
+    });
+    let authoritativeReason: string | undefined;
+    publisher.onCommand((received) => {
+      if (received.type === "cancel") authoritativeReason = received.reason;
+      return { status: "accepted" };
+    });
+    publisher.observeCommands((received) => {
+      if (received.type === "cancel") received.reason = "mutated";
+    });
+
+    socket.emitMessage(JSON.stringify({
+      type: "cancel",
+      timestamp: 1,
+      runId: "run-1",
+      commandId: "isolated-1",
+      reason: "original",
+    }));
+    await settleCommands();
+
+    assertEquals(authoritativeReason, "original");
     publisher.close();
   });
 

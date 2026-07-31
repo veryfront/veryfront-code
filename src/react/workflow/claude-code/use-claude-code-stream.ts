@@ -136,7 +136,9 @@ export interface UseClaudeCodeStreamOptions {
 export function useClaudeCodeStream(
   options: UseClaudeCodeStreamOptions,
 ): UseClaudeCodeStreamState & {
+  /** Connect the active run; no-op after its terminal event. Change runId for a new lifecycle. */
   connect: () => void;
+  /** Disconnect the active transport without changing accumulated event state. */
   disconnect: () => void;
 } {
   const {

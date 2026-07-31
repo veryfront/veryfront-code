@@ -394,6 +394,37 @@ describe("useClaudeCodeStream transport ownership", () => {
     }
   });
 
+  it("permits a new connection after terminal ownership moves to another run", () => {
+    const browser = installBrowser();
+    FakeEventSource.instances = [];
+    try {
+      const view = mount({ url: "/events", runId: "run-1" });
+      flushSync(() =>
+        FakeEventSource.instances[0]!.message({
+          type: "complete",
+          timestamp: 1,
+          runId: "run-1",
+          result: {
+            success: true,
+            iterations: 1,
+            filesModified: [],
+            commandsExecuted: [],
+            executionTime: 1,
+          },
+        })
+      );
+
+      view.render({ url: "/events", runId: "run-2" });
+
+      assertEquals(FakeEventSource.instances.length, 2);
+      assertStringIncludes(FakeEventSource.instances[1]!.url, "runId=run-2");
+      assertEquals(FakeEventSource.instances[1]!.closed, false);
+      view.unmount();
+    } finally {
+      browser.restore();
+    }
+  });
+
   it("retains event state when only autoConnect is toggled", () => {
     const browser = installBrowser();
     FakeEventSource.instances = [];

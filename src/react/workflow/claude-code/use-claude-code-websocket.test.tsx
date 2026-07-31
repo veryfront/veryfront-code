@@ -439,6 +439,47 @@ describe("useClaudeCodeWebSocket transport ownership", () => {
       browser.restore();
     }
   });
+
+  it("permits a new connection after terminal ownership moves to another run", () => {
+    const browser = installBrowser();
+    FakeWebSocket.instances = [];
+    try {
+      const view = mount({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        pingInterval: 0,
+      });
+      const first = FakeWebSocket.instances[0]!;
+      flushSync(() => first.open());
+      flushSync(() =>
+        first.message({
+          type: "complete",
+          timestamp: 1,
+          runId: "run-1",
+          result: {
+            success: true,
+            iterations: 1,
+            filesModified: [],
+            commandsExecuted: [],
+            executionTime: 1,
+          },
+        })
+      );
+
+      view.render({
+        url: "wss://example.test/ws",
+        runId: "run-2",
+        pingInterval: 0,
+      });
+
+      assertEquals(FakeWebSocket.instances.length, 2);
+      assertStringIncludes(FakeWebSocket.instances[1]!.url, "runId=run-2");
+      assertEquals(FakeWebSocket.instances[1]!.closed, false);
+      view.unmount();
+    } finally {
+      browser.restore();
+    }
+  });
 });
 
 describe("useClaudeCodeWebSocket delivery", () => {

@@ -13,6 +13,7 @@ import type {
   ClientCommand,
   ClientCommandDisposition,
   ClientCommandHandler,
+  ClientCommandObserver,
   ClientCommandType,
   CommandAckEvent,
   PongEvent,
@@ -267,6 +268,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
     socket: WebSocket;
   };
   private commandHandler: ClientCommandHandler | null = null;
+  private commandObservers = new Set<ClientCommandObserver>();
   private commandLedger = new Map<string, CommandLedgerEntry>();
   private commandHandlerTimers = new Set<number>();
   private closed = false;
@@ -328,6 +330,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
       this.stopPingInterval();
       this.stopCommandHandlerTimers();
       this.commandHandler = null;
+      this.commandObservers.clear();
       this.commandLedger.clear();
     });
 
@@ -374,16 +377,30 @@ export class WebSocketPublisher implements BidirectionalPublisher {
       this.finishKeyedCommand(command, { status: "accepted" });
       return;
     }
+    this.notifyCommandObservers(command);
     this.dispatchKeyedCommand(command);
   }
 
   private dispatchLegacyCommand(command: ClientCommand): void {
+    this.notifyCommandObservers(command);
     const handler = this.commandHandler;
     if (!handler) return;
     try {
       void Promise.resolve(handler(command)).catch((error) => this.reportHandlerError(error));
     } catch (error) {
       this.reportHandlerError(error);
+    }
+  }
+
+  private notifyCommandObservers(command: ClientCommand): void {
+    for (const observer of [...this.commandObservers]) {
+      try {
+        void Promise.resolve(observer(structuredClone(command))).catch((error) =>
+          this.reportHandlerError(error)
+        );
+      } catch (error) {
+        this.reportHandlerError(error);
+      }
     }
   }
 
@@ -420,10 +437,12 @@ export class WebSocketPublisher implements BidirectionalPublisher {
     }
     void Promise.resolve(result)
       .then((disposition) => {
-        finish(disposition ?? {
-          status: "rejected",
-          reason: "no authoritative handler accepted",
-        });
+        finish(
+          disposition ?? {
+            status: "rejected",
+            reason: "no authoritative handler accepted",
+          },
+        );
       })
       .catch((error) => {
         this.reportHandlerError(error);
@@ -550,6 +569,12 @@ export class WebSocketPublisher implements BidirectionalPublisher {
     };
   }
 
+  /** Subscribe to admitted commands without participating in acknowledgement. */
+  observeCommands(observer: ClientCommandObserver): () => void {
+    this.commandObservers.add(observer);
+    return () => this.commandObservers.delete(observer);
+  }
+
   /**
    * Send an event to the client
    */
@@ -593,6 +618,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
     }
 
     this.commandHandler = null;
+    this.commandObservers.clear();
     this.commandLedger.clear();
   }
 
