@@ -17,14 +17,14 @@
  *    runtime-context marker, `<project_instructions>`, `<project_context>`,
  *    any caller-supplied extra blocks, the instructions after the marker, and
  *    `<available_skills>`.
- * 2. An uncached `<environment_context>` message, when environment facts are
- *    supplied.
+ * 2. An uncached `<environment_context>` message.
  *
- * Every block — including the skills block — is dropped when the instructions
- * already carry that tag as a complete element. Callers compose in layers: the
- * factory renders a prompt that a project-runtime run later re-composes, and
- * dropping already-present elements keeps that idempotent instead of emitting
- * the same project reference or skill catalog twice.
+ * Only the instructions are unconditional: each block appears only when the
+ * caller supplied its input and the instructions do not already carry that tag
+ * as a complete element, so message 2 can be absent and message 1 can be the
+ * instructions alone. Callers compose in layers — the factory's output is later
+ * re-composed by a project-runtime run — and skipping already-present elements
+ * keeps that idempotent instead of repeating a project reference or catalog.
  *
  * @module
  */
