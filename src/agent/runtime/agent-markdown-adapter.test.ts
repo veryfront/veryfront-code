@@ -4,6 +4,7 @@ import { it } from "#veryfront/testing/bdd.ts";
 import { toolRegistry } from "#veryfront/tool";
 import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "./agent-markdown-adapter.ts";
+import { parseRuntimeAgentMarkdownDefinition } from "./agent-definition.ts";
 import { getEffectiveAgentSystem } from "./effective-agent-system.ts";
 
 Deno.test("createRuntimeAgentFromMarkdownDefinition preserves provider-native tools", () => {
@@ -37,6 +38,21 @@ it("createRuntimeAgentFromMarkdownDefinition preserves tool loading", () => {
 
   assertEquals(deferredAgent.config.toolLoading, "deferred");
   assertEquals(eagerAgent.config.toolLoading, "eager");
+});
+
+it("preserves camel-case eager tool loading from Markdown through the agent factory", () => {
+  const definition = parseRuntimeAgentMarkdownDefinition({
+    id: "markdown-eager",
+    content: `---
+toolLoading: eager
+---
+Use the configured tools.
+`,
+  });
+
+  const runtimeAgent = createRuntimeAgentFromMarkdownDefinition(definition);
+
+  assertEquals(runtimeAgent.config.toolLoading, "eager");
 });
 
 Deno.test("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools", () => {

@@ -65,6 +65,50 @@ Help the user.
   }
 });
 
+it("parseRuntimeAgentMarkdownDefinition accepts camel-case toolLoading frontmatter", () => {
+  const result = parseRuntimeAgentMarkdownDefinition({
+    id: "eager-agent",
+    content: `---
+toolLoading: eager
+---
+Help the user.
+`,
+  });
+
+  assertEquals(result.toolLoading, "eager");
+});
+
+it("parseRuntimeAgentMarkdownDefinition accepts matching tool loading aliases", () => {
+  const result = parseRuntimeAgentMarkdownDefinition({
+    id: "matching-aliases-agent",
+    content: `---
+tool-loading: eager
+toolLoading: eager
+---
+Help the user.
+`,
+  });
+
+  assertEquals(result.toolLoading, "eager");
+});
+
+it("parseRuntimeAgentMarkdownDefinition rejects conflicting tool loading aliases", () => {
+  assertThrows(
+    () =>
+      parseRuntimeAgentMarkdownDefinition({
+        id: "conflicting-aliases-agent",
+        content: `---
+tool-loading: deferred
+toolLoading: eager
+---
+Help the user.
+`,
+      }),
+    Error,
+    'cannot specify conflicting "tool-loading" and "toolLoading"',
+  );
+});
+
 it("parseRuntimeAgentMarkdownDefinition rejects invalid tool loading modes", () => {
   for (const toolLoading of ["auto", "defered", "unknown"]) {
     assertThrows(

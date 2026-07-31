@@ -213,10 +213,24 @@ export function parseRuntimeAgentMarkdownDefinition(
   const providerTools = Object.hasOwn(attrs, "provider-tools")
     ? parseStringArray(attrs["provider-tools"], "provider-tools")
     : undefined;
-  const toolLoading = resolveToolLoading(
-    attrs["tool-loading"],
-    'Agent frontmatter "tool-loading"',
-  );
+  const hasToolLoadingAlias = Object.hasOwn(attrs, "tool-loading");
+  const hasToolLoading = Object.hasOwn(attrs, "toolLoading");
+  const toolLoadingAlias = hasToolLoadingAlias
+    ? resolveToolLoading(attrs["tool-loading"], 'Agent frontmatter "tool-loading"')
+    : undefined;
+  const camelCaseToolLoading = hasToolLoading
+    ? resolveToolLoading(attrs.toolLoading, 'Agent frontmatter "toolLoading"')
+    : undefined;
+  if (
+    toolLoadingAlias !== undefined && camelCaseToolLoading !== undefined &&
+    toolLoadingAlias !== camelCaseToolLoading
+  ) {
+    throw CONFIG_INVALID.create({
+      detail:
+        'Agent frontmatter cannot specify conflicting "tool-loading" and "toolLoading" values.',
+    });
+  }
+  const toolLoading = toolLoadingAlias ?? camelCaseToolLoading ?? resolveToolLoading(undefined);
   const skills = Object.hasOwn(attrs, "skills") ? parseSkillSelector(attrs.skills) : undefined;
   const tools = Object.hasOwn(attrs, "tools")
     ? parseCapabilitySelector(attrs.tools, "tools")
