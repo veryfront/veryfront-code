@@ -6,7 +6,7 @@
  * @module build/transforms/mdx/esm-module-loader/cache
  */
 
-import { join } from "#veryfront/compat/path";
+import { fromFileUrl, join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
   getCacheBaseDir,
@@ -42,6 +42,14 @@ export const verifiedModuleDeps = new LRUCache<string, true>({
   maxEntries: MAX_VERIFIED_MODULE_DEPS,
 });
 
+function decodeFileUrlPath(path: string): string | null {
+  try {
+    return fromFileUrl(`file://${path}`);
+  } catch (_) {
+    return null;
+  }
+}
+
 class BoundedModulePathCache extends Map<string, string> {
   constructor(private readonly maxEntries: number) {
     super();
@@ -71,8 +79,10 @@ function hasIncompatibleCachePaths(code: string): boolean {
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {
-    const path = match[1];
-    if (!path) continue;
+    const encodedPath = match[1];
+    if (!encodedPath) continue;
+    const path = decodeFileUrlPath(encodedPath);
+    if (!path) return true;
 
     // Check HTTP bundle paths
     if (path.includes("veryfront-http-bundle") && !path.startsWith(localHttpCacheDir)) {
@@ -115,9 +125,12 @@ async function findMissingFileDependencies(code: string): Promise<string[]> {
   const missing: string[] = [];
   let match;
   while ((match = pattern.exec(code)) !== null) {
-    const path = match[1] as string;
-    // Skip query parameters in paths
-    const cleanPath = path.replace(/\?.*$/, "");
+    const encodedPath = match[1] as string;
+    const cleanPath = decodeFileUrlPath(encodedPath);
+    if (!cleanPath) {
+      missing.push(encodedPath.replace(/[?#].*$/, ""));
+      continue;
+    }
     try {
       const stat = await localFs.stat(cleanPath);
       if (!stat?.isFile) {
