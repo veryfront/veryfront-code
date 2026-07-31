@@ -20,12 +20,13 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { createModalSurfaceParts } from "./modal-surface.tsx";
+import { useAdapter } from "./adapter/context.tsx";
 
-// Per-skin context + machinery -- distinct from Dialog's instance so a
-// DialogClose nested inside a Drawer cannot accidentally close the Drawer.
-const { ModalRoot: _Root, ModalTrigger: _Trigger, ModalClose: _Close, ModalContent: _Content } =
-  createModalSurfaceParts("Drawer");
+// The Drawer is a Dialog with an edge-sliding skin: it shares the `dialog`
+// adapter slot (`useAdapter().dialog`), so a swapped engine drives its modal
+// mechanics (focus trap, dismiss, scroll-lock) while this file supplies only the
+// bottom-sheet layout. A `DrawerClose`/`DialogClose` nested inside closes the
+// nearest modal (React-context nesting), which is the intuitive behaviour.
 
 /** Props accepted by `<Drawer>`. */
 export interface DrawerProps {
@@ -39,16 +40,18 @@ export interface DrawerProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-/** Drawer root — owns open state. */
+/** Drawer root — owns open state (via the adapter's dialog engine). */
 export function Drawer(props: DrawerProps): React.ReactElement {
-  return <_Root {...props} />;
+  const { dialog } = useAdapter();
+  return <dialog.Root {...props} />;
 }
 
 /** Trigger — opens the drawer. `asChild` merges onto the child element. */
 export function DrawerTrigger(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  return <_Trigger {...props} />;
+  const { dialog } = useAdapter();
+  return <dialog.Trigger {...props} />;
 }
 
 /** Bottom sheet — overlay + sliding surface with a drag handle. */
@@ -57,8 +60,9 @@ export function DrawerContent({
   className,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
+  const { dialog } = useAdapter();
   return (
-    <_Content
+    <dialog.Content
       className={cn(
         "fixed inset-x-0 bottom-0 z-50 flex flex-col max-h-[85vh] w-full rounded-t-xl bg-[var(--drawer)] text-[var(--foreground)] outline-none",
         className,
@@ -72,7 +76,7 @@ export function DrawerContent({
       {...props}
     >
       {children}
-    </_Content>
+    </dialog.Content>
   );
 }
 
@@ -127,5 +131,6 @@ export function DrawerFooter(
 export function DrawerClose(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  return <_Close {...props} />;
+  const { dialog } = useAdapter();
+  return <dialog.Close {...props} />;
 }

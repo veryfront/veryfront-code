@@ -923,7 +923,11 @@ export const reactAriaTabs: TabsParts = {
   Root: ({ value, onValueChange, children, ref, ...rest }) => (
     <TabsSelectionContext.Provider value={value}>
       {/* verify `selectedKey`/`onSelectionChange` vs your react-aria-components version. */}
-      <Tabs selectedKey={value} onSelectionChange={(key) => onValueChange(String(key))}>
+      <Tabs
+        selectedKey={value}
+        onSelectionChange={(key) =>
+          onValueChange(String(key))}
+      >
         <TabList ref={ref} {...rest}>
           {children}
         </TabList>

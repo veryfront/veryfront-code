@@ -96,7 +96,7 @@ export const UI_COMPONENTS: UiComponent[] = [
   },
   { name: "Tooltip", kind: "overlay", interactive: true, adapterKey: "tooltip", status: "shipped" },
   { name: "Select", kind: "overlay", interactive: true, adapterKey: "select", status: "shipped" },
-  { name: "Drawer", kind: "overlay", interactive: true, status: "shipped" },
+  { name: "Drawer", kind: "overlay", interactive: true, adapterKey: "dialog", status: "shipped" },
   { name: "Command", kind: "overlay", interactive: true, status: "shipped" },
   // structure
   { name: "Tabs", kind: "structure", interactive: true, adapterKey: "tabs", status: "shipped" },
