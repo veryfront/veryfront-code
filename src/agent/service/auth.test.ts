@@ -5,6 +5,9 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import apiRunEventWriterContract from "../../../tests/fixtures/contracts/api-run-event-writer-jwt-payload.json" with {
+  type: "json",
+};
 import {
   createHostedServiceAuth,
   getHostedServiceTokenFromRequest,
@@ -228,15 +231,9 @@ describe("agent/agent-service-auth", () => {
   });
 
   it("accepts only the dedicated writer claims for exactly one project and run", async () => {
-    const fixture = await createRs256JwtFixture({
-      actorType: "service_account",
-      userId: "00000000-0000-0000-0000-000000000001",
-      serviceAccountId: "00000000-0000-0000-0000-000000000001",
-      tokenUse: "run_event_writer",
-      projectId: "11111111-1111-4111-8111-111111111111",
-      runId: "run_1",
-      scopes: ["agent-runs:events:append"],
-    });
+    assertEquals(apiRunEventWriterContract.contractId, "veryfront.run-event-writer.jwt-payload.v1");
+    assertEquals(apiRunEventWriterContract.serviceIdentity, "veryfront-server");
+    const fixture = await createRs256JwtFixture(apiRunEventWriterContract.payload);
     const auth = createHostedServiceAuth({
       authProvider: webCryptoAuthProvider,
       getConfig: () => ({
