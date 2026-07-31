@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ApiClient, ResolvedConfig } from "#cli/shared/config";
 import { createHttpDeployControlPlane, type DeployReleaseFile } from "./control-plane.ts";
@@ -153,5 +153,271 @@ describe("createHttpDeployControlPlane", () => {
         params: { limit: "100", cursor: "cursor-2" },
       },
     ]);
+  });
+});
+
+describe("createHttpDeployControlPlane environments", () => {
+  it("finds the named environment among others and normalizes it", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () =>
+          Promise.resolve({
+            data: [
+              { id: "env-1", name: "production", protected: true },
+              { id: "env-2", name: "staging", protected: false },
+            ],
+            page_info: {},
+          }),
+      }),
+    );
+
+    assertEquals(await controlPlane.getEnvironment("my-project", "staging"), {
+      id: "env-2",
+      name: "staging",
+      protected: false,
+    });
+  });
+
+  it("returns null when the named environment does not exist", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () => Promise.resolve({ data: [], page_info: {} }),
+      }),
+    );
+
+    assertEquals(await controlPlane.getEnvironment("my-project", "nonexistent"), null);
+  });
+
+  it("returns null after exhausting all environment pages", async () => {
+    let callCount = 0;
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () => {
+          callCount++;
+          if (callCount === 1) {
+            return Promise.resolve({
+              data: [{ id: "env-1", name: "staging", protected: false }],
+              page_info: { next: "cursor-2" },
+            });
+          }
+          return Promise.resolve({ data: [], page_info: {} });
+        },
+      }),
+    );
+
+    assertEquals(await controlPlane.getEnvironment("my-project", "production"), null);
+    assertEquals(callCount, 2, "reads every page before concluding absence");
+  });
+
+  it("propagates environment listing API errors", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () => Promise.reject(new Error("Network error")),
+      }),
+    );
+
+    await assertRejects(
+      () => controlPlane.getEnvironment("my-project", "production"),
+      Error,
+      "Network error",
+    );
+  });
+});
+
+describe("createHttpDeployControlPlane releases", () => {
+  it("sends branch references through the release creation wire format", async () => {
+    let capturedUrl = "";
+    let capturedBody: unknown = null;
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        post: (url, body) => {
+          capturedUrl = url;
+          capturedBody = body;
+          return Promise.resolve({ id: "rel-123", version: "1.0.0", name: "develop" });
+        },
+      }),
+    );
+
+    await controlPlane.createRelease("my-project", { branch: "develop" });
+    assertEquals(capturedUrl, "/projects/my-project/releases");
+    assertEquals(capturedBody, { branch_reference: "develop" });
+  });
+
+  it("sends name and branch together in the release creation wire format", async () => {
+    let capturedBody: unknown = null;
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        post: (_url, body) => {
+          capturedBody = body;
+          return Promise.resolve({ id: "rel-123", version: "1.0.0", name: "v2.0.0" });
+        },
+      }),
+    );
+
+    await controlPlane.createRelease("my-project", { name: "v2.0.0", branch: "develop" });
+    assertEquals(capturedBody, { name: "v2.0.0", branch_reference: "develop" });
+  });
+
+  it("propagates release creation API errors", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        post: () => Promise.reject(new Error("Branch not found")),
+      }),
+    );
+
+    await assertRejects(
+      () => controlPlane.createRelease("my-project", { branch: "nonexistent" }),
+      Error,
+      "Branch not found",
+    );
+  });
+
+  it("normalizes canonical release records from wire aliases", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: (path) => {
+          assertEquals(path, "/projects/my-project/releases/rel-123");
+          return Promise.resolve({
+            id: "rel-123",
+            name: "github-main-90719c01",
+            version: "0.0.41",
+            project_id: "project-1",
+          });
+        },
+      }),
+    );
+
+    const release = await controlPlane.getRelease("my-project", "rel-123");
+    assertEquals(release.id, "rel-123");
+    assertEquals(release.version, "0.0.41");
+    assertEquals(release.projectId, "project-1");
+  });
+
+  it("rejects release files with invalid version data", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () =>
+          Promise.resolve({
+            data: [{ path: "app.ts", data: "not-json" }],
+            page_info: {},
+          }),
+      }),
+    );
+
+    await assertRejects(
+      async () => {
+        for await (const _ of controlPlane.listReleaseFiles("my-project", "rel-1")) {
+          // drain
+        }
+      },
+      Error,
+      "has invalid version data",
+    );
+  });
+});
+
+describe("createHttpDeployControlPlane deployments", () => {
+  it("sends deployment creation through the wire format", async () => {
+    let capturedUrl = "";
+    let capturedBody: unknown = null;
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        post: (url, body) => {
+          capturedUrl = url;
+          capturedBody = body;
+          return Promise.resolve({
+            id: "deploy-123",
+            release_id: "rel-456",
+            environment_id: "env-789",
+          });
+        },
+      }),
+    );
+
+    const deployment = await controlPlane.createDeployment("my-project", {
+      releaseId: "rel-456",
+      environmentId: "env-789",
+    });
+    assertEquals(capturedUrl, "/projects/my-project/deployments");
+    assertEquals(capturedBody, { release_id: "rel-456", environment_id: "env-789" });
+    assertEquals(deployment.id, "deploy-123");
+    assertEquals(deployment.releaseId, "rel-456");
+    assertEquals(deployment.environmentId, "env-789");
+  });
+
+  it("normalizes canonical deployment reads from the wire format", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: (path) => {
+          assertEquals(path, "/projects/my-project/deployments/deploy-123");
+          return Promise.resolve({
+            id: "deploy-123",
+            release_id: "rel-456",
+            environment_id: "env-789",
+          });
+        },
+      }),
+    );
+
+    const deployment = await controlPlane.getDeployment("my-project", "deploy-123");
+    assertEquals(deployment.releaseId, "rel-456");
+    assertEquals(deployment.environmentId, "env-789");
+  });
+
+  it("normalizes legacy nested references on deployment reads", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () =>
+          Promise.resolve({
+            id: "deploy-123",
+            release: { id: "rel-456" },
+            environment: { id: "env-789" },
+          }),
+      }),
+    );
+
+    const deployment = await controlPlane.getDeployment("my-project", "deploy-123");
+    assertEquals(deployment.releaseId, "rel-456");
+    assertEquals(deployment.environmentId, "env-789");
+  });
+
+  it("propagates deployment creation API errors", async () => {
+    for (
+      const failure of [
+        "Cannot deploy to protected environment without approval",
+        "Release not found",
+        "Environment not found",
+      ]
+    ) {
+      const controlPlane = createHttpDeployControlPlane(
+        config,
+        mockClientReturning({
+          post: () => Promise.reject(new Error(failure)),
+        }),
+      );
+
+      await assertRejects(
+        () =>
+          controlPlane.createDeployment("my-project", {
+            releaseId: "rel-123",
+            environmentId: "env-123",
+          }),
+        Error,
+        failure,
+        failure,
+      );
+    }
   });
 });

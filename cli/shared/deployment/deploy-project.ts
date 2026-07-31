@@ -42,6 +42,14 @@ import type { DeployResult } from "./result.ts";
 
 export interface DeployProjectRequest {
   projectDir: string;
+  /**
+   * Explicit project reference for callers that target a project by slug
+   * (for example MCP tools). Takes precedence over receipt, link, and
+   * inference, and never persists a local project link. Requires
+   * `source: { kind: "already-pushed" }` — a request-scoped deploy never
+   * pushes local sources on the caller's behalf.
+   */
+  projectSlug?: string;
   branch?: string;
   environment: string;
   releaseName?: string;
@@ -232,6 +240,7 @@ async function ensureProjectLinkedForDeploy(
   receipt: PushReceipt | null,
   mode: DeployProjectRequest["mode"],
   controlPlaneFactory: (config: ResolvedConfig) => DeployControlPlane,
+  explicitProjectSlug?: string,
 ): Promise<{
   config: ResolvedConfig;
   controlPlane: DeployControlPlane;
@@ -240,12 +249,18 @@ async function ensureProjectLinkedForDeploy(
 }> {
   const details = await resolveConfigWithAuthDetails(projectDir, env);
   const initial = details.config;
-  const projectReferenceSource = details.projectReferenceSource;
+  const requestReference = explicitProjectSlug ? normalizeProjectSlug(explicitProjectSlug) : null;
+  const projectReferenceSource: ProjectReferenceSource = requestReference
+    ? { kind: "argument", name: "--project" }
+    : details.projectReferenceSource;
   const isInferredReference = projectReferenceSource.kind === "inferred";
-  const projectReference = isInferredReference
-    ? normalizeProjectSlug(initial.projectSlug || await inferDeployProjectSlug(projectDir))
-    : initial.projectSlug;
-  const config = { ...initial, projectSlug: projectReference };
+  const projectReference = requestReference ??
+    (isInferredReference
+      ? normalizeProjectSlug(initial.projectSlug || await inferDeployProjectSlug(projectDir))
+      : initial.projectSlug);
+  const config = requestReference
+    ? { ...initial, projectId: undefined, projectSlug: requestReference }
+    : { ...initial, projectSlug: projectReference };
   const controlPlane = controlPlaneFactory(config);
 
   if (!isInferredReference) {
@@ -966,6 +981,12 @@ export function createDeployProject(options: {
 
   return {
     async execute(request, observer) {
+      if (request.projectSlug && request.source.kind === "ensure-pushed") {
+        throw DEPLOYMENT_ERROR.create({
+          detail:
+            `An explicit projectSlug requires source { kind: "already-pushed" }: request-scoped deploys never push local sources. Run veryfront push first, or omit projectSlug to deploy the locally configured project.`,
+        });
+      }
       const environmentConfig = await step(
         observer,
         "resolve-config",
@@ -979,6 +1000,7 @@ export function createDeployProject(options: {
         receipt,
         request.mode,
         createControlPlane,
+        request.projectSlug,
       );
       let { config, controlPlane, project } = setup;
       const bootstrapPush = needsBootstrapPush(receipt, request.source);
