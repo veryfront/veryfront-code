@@ -1,8 +1,10 @@
 /**
  * MCP tool: vf_trigger_deploy
  *
- * Creates a release from a branch and deploys it to an environment.
- * Wraps the same API calls used by the `vf deploy` CLI command.
+ * Creates a release from a branch and deploys it to an environment through
+ * Deploy Execution (`DeployProject.execute`) — the same module behind the
+ * `vf deploy` CLI command. Success means the deployment is verified and the
+ * environment URL is reachable.
  */
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
@@ -10,18 +12,8 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "veryfront/mcp";
 import { getEnvironmentConfig } from "veryfront/config";
 import { cwd } from "veryfront/platform";
-import { createApiClient, resolveConfig } from "#cli/shared/config";
-import {
-  assertProjectOwnership,
-  createDeployment,
-  createRelease,
-  getEnvironmentByName,
-  getProject,
-  resolvePushedSource,
-  verifyDeployment,
-  verifyReleaseSource,
-} from "../../commands/deploy/command.ts";
-import { normalizeControlPlane } from "../../shared/deployment-provenance.ts";
+import { createDeployProject, type DeployProject } from "../../shared/deployment/deploy-project.ts";
+import type { DeployResult } from "../../shared/deployment/result.ts";
 
 const getTriggerDeployInput = defineSchema((v) =>
   v.object({
@@ -40,24 +32,18 @@ const triggerDeployInput = lazySchema(getTriggerDeployInput);
 
 export type TriggerDeployInput = InferSchema<ReturnType<typeof getTriggerDeployInput>>;
 
-export interface TriggerDeployResult {
-  success: boolean;
-  project?: { id: string; slug: string };
-  deploymentId?: string;
-  release?: { id: string; name: string; version: string };
-  environment?: { id: string; name: string };
-  commitSha?: string | null;
-  sourceDigest?: string;
-  controlPlane?: string;
-  error?: string;
-}
+export type TriggerDeployResult =
+  | ({ success: true } & DeployResult)
+  | { success: false; error: string };
 
 export interface TriggerDeployOptions {
   projectDir?: string;
+  /** Deploy Execution override for tests; production uses createDeployProject(). */
+  deployProject?: DeployProject;
 }
 
 /**
- * Trigger a deploy via the Veryfront API.
+ * Trigger a deploy via Deploy Execution.
  *
  * Exported for standalone MCP server reuse.
  */
@@ -67,95 +53,31 @@ export async function triggerDeploy(
 ): Promise<TriggerDeployResult> {
   try {
     const env = getEnvironmentConfig();
-    const apiToken = env.apiToken;
-
-    if (!apiToken) {
+    if (!env.apiToken) {
       return {
         success: false,
         error: "Not authenticated. Run 'veryfront login' first.",
       };
     }
 
-    const config = await resolveConfig(undefined, {
-      ...env,
-      apiToken,
-      projectSlug: input.projectSlug,
-    });
-
-    const client = createApiClient(config);
-    const project = await getProject(client, input.projectSlug);
-
-    const environment = await getEnvironmentByName(
-      client,
-      project.id,
-      input.environment,
-    );
-    if (!environment) {
-      return {
-        success: false,
-        error: `Environment "${input.environment}" not found.`,
-      };
-    }
-    assertProjectOwnership("Environment", environment, project.id);
-
-    const source = await resolvePushedSource({
+    const deployProject = options.deployProject ?? createDeployProject();
+    const outcome = await deployProject.execute({
       projectDir: options.projectDir ?? cwd(),
-      controlPlane: config.apiUrl,
-      projectId: project.id,
-      projectSlug: project.slug,
+      projectSlug: input.projectSlug,
       branch: input.branch,
+      environment: input.environment,
+      mode: "apply",
+      source: { kind: "already-pushed" },
     });
 
-    const release = await createRelease(client, project.id, {
-      branch: input.branch,
-    });
-    if (!release.version) {
+    if (outcome.kind !== "deployed") {
       return {
         success: false,
-        error: `Release ${release.id} has no version.`,
+        error: `Deploy did not complete: unexpected outcome "${outcome.kind}".`,
       };
     }
 
-    const verifiedRelease = await verifyReleaseSource(client, project.id, {
-      projectId: project.id,
-      releaseId: release.id,
-      releaseName: release.name,
-      commitSha: source.commitSha,
-      sourceDigest: source.sourceDigest,
-    });
-
-    const deployment = await createDeployment(
-      client,
-      project.id,
-      release.id,
-      environment.id,
-    );
-    const verification = await verifyDeployment(client, project.id, {
-      projectId: project.id,
-      projectSlug: project.slug,
-      environmentId: environment.id,
-      environmentName: input.environment,
-      releaseId: release.id,
-      releaseName: release.name,
-      deploymentId: deployment.id,
-      commitSha: source.commitSha,
-      sourceDigest: source.sourceDigest,
-    }, { verifiedRelease });
-
-    return {
-      success: true,
-      project: { id: verification.projectId, slug: verification.projectSlug },
-      deploymentId: verification.deploymentId,
-      release: {
-        id: verification.releaseId,
-        name: release.name,
-        version: verification.releaseVersion,
-      },
-      environment: { id: verification.environmentId, name: verification.environmentName },
-      commitSha: verification.commitSha,
-      sourceDigest: verification.sourceDigest,
-      controlPlane: normalizeControlPlane(config.apiUrl),
-    };
+    return { success: true, ...outcome.result };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const status = typeof error === "object" && error !== null
@@ -189,8 +111,9 @@ export const vfTriggerDeploy: MCPTool<TriggerDeployInput, TriggerDeployResult> =
   description:
     "Use this when you need to deploy a project to an environment via the Veryfront API. " +
     "Requires a successful vf push from the current project, then creates and verifies a release " +
-    "from the specified branch and deploys it to the target environment. " +
-    "Returns project, deployment, release, environment, and commit evidence on success. " +
+    "from the specified branch, deploys it to the target environment, waits for release assets " +
+    "and environment readiness, and returns the deployment evidence including the live URL. " +
+    "Success means the environment is verified and reachable. " +
     "Requires a valid API token (set VERYFRONT_API_TOKEN or run 'veryfront login'). " +
     "Do not use for local builds — use vf_build instead. " +
     "Do not use for running tests before deploy — use vf_run_tests instead.",

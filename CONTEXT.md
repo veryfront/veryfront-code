@@ -26,6 +26,19 @@ cadence, and settles exactly one typed Stream Outcome per attempt. Telemetry
 observes execution but never extends a semantic deadline. One agent run may
 contain several provider attempts separated by local tool execution.
 
+## Deploy Execution
+
+The single owner of deploying a project, from source resolution to a
+reachable environment: `cli/shared/deployment/deploy-project.ts`
+(`DeployProject.execute`). One request — project directory, optional
+explicit project slug, branch, environment, mode, and source kind
+(ensure-pushed or already-pushed) — settles into one typed outcome, with
+steps reported through an observer. The CLI deploy command and the MCP
+deploy tool are presentation adapters over this module; the control plane
+(HTTP in production, fake in tests) is its one seam. Success means the
+deployment is verified **and** ready — no adapter skips or re-implements
+verification, polling, or readiness waits.
+
 ## Stream Delivery
 
 The separate agent-loop fan-out boundary that will route lifecycle frames to
