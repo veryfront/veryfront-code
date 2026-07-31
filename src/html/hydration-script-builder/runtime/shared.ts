@@ -1,0 +1,101 @@
+/**
+ * Cross-cutting pieces every other runtime module needs: the debug switch, the
+ * loggers, the DEBUG-only perf timers, and the route-param normalizer.
+ *
+ * These used to be free variables that happened to be in scope because
+ * router.ts was concatenated first. They are now imported.
+ */
+
+import type { RuntimeDocument, RuntimeWindow } from "./env.ts";
+
+/** The module server the loader resolves project modules against. */
+export function moduleServerUrl(window: RuntimeWindow): string {
+  return window.location.origin + "/_vf_modules";
+}
+
+export interface RuntimeLogging {
+  DEBUG: boolean;
+  log: (...args: unknown[]) => void;
+  logError: (...args: unknown[]) => void;
+  logBackgroundFetchFailure: (reason: string, path: string, error: unknown) => void;
+  perfStart: (label: string) => void;
+  perfEnd: (label: string) => number;
+}
+
+/**
+ * Debug logging is production-safe: `log` compiles away to a no-op unless the
+ * page opted in via `window.__VERYFRONT_DEBUG__` or `?vf_debug`.
+ */
+export function createLogging(window: RuntimeWindow): RuntimeLogging {
+  const DEBUG = Boolean(
+    window.__VERYFRONT_DEBUG__ || new URLSearchParams(window.location.search).has("vf_debug"),
+  );
+
+  const log: (...args: unknown[]) => void = DEBUG
+    ? console.log.bind(console, "[Veryfront]")
+    : () => {};
+  const logError: (...args: unknown[]) => void = console.error.bind(console, "[Veryfront]");
+
+  function logBackgroundFetchFailure(reason: string, path: string, error: unknown): void {
+    const message = (error as { message?: string })?.message ?? String(error);
+    log(reason + " failed:", path, message);
+  }
+
+  const perfTimers = new Map<string, number>();
+  const perfStart = DEBUG
+    ? (label: string) => {
+      perfTimers.set(label, performance.now());
+    }
+    : () => {};
+  const perfEnd = DEBUG
+    ? (label: string) => {
+      const start = perfTimers.get(label);
+      if (!start) return 0;
+
+      const duration = performance.now() - start;
+      perfTimers.delete(label);
+      console.log(
+        "[Veryfront Perf] %c" + label + ": %c" + duration.toFixed(2) + "ms",
+        "color: #888",
+        duration > 100 ? "color: #f00; font-weight: bold" : "color: #0a0",
+      );
+      return duration;
+    }
+    : () => 0;
+
+  return { DEBUG, log, logError, logBackgroundFetchFailure, perfStart, perfEnd };
+}
+
+export function isAbortError(error: unknown): boolean {
+  return (error as { name?: string })?.name === "AbortError";
+}
+
+/** The CSP nonce the document was served with, so injected styles inherit it. */
+export function getDocumentNonce(document: RuntimeDocument): string | undefined {
+  const element = document.querySelector("script[nonce], style[nonce], link[nonce]");
+  if (!element) return undefined;
+
+  return element.nonce || element.getAttribute("nonce") || undefined;
+}
+
+/**
+ * Catch-all segments arrive as arrays and are joined so no path info is lost,
+ * matching the server's flattenRouteParams and the RSC hydration normalizer.
+ *
+ * TODO(convergence): the same join exists server-side in
+ * rendering/rsc/hydration-router.ts, routing/api/context-builder.ts and
+ * client/spa/ClientApp.tsx. They differ in how they treat `undefined` and
+ * non-array values, so they are not collapsed here.
+ */
+export function normalizeRouteParams(
+  raw: Record<string, string | string[] | undefined> | undefined | null,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!raw) return out;
+  for (const key in raw) {
+    const value = raw[key];
+    if (value === undefined) continue;
+    out[key] = Array.isArray(value) ? value.join("/") : value;
+  }
+  return out;
+}

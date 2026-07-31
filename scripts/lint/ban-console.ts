@@ -48,6 +48,7 @@ function shouldSkip(path: string): boolean {
     // Process lifecycle — intentional console.error for fatal crashes
     path.includes("/platform/compat/process/lifecycle.ts") ||
     // Client-side code (runs in browser, not server)
+    path.includes("/hydration-script-builder/runtime/") ||
     path.includes("/rsc/client-boot.ts") ||
     path.includes("/rsc/client-module-strategy.ts") ||
     path.includes("/handlers/dev/scripts/hmr-scripts.ts") ||
