@@ -41,19 +41,62 @@ const candidatesPath = join(
   "framework-candidates.generated.ts",
 );
 
-async function writeFormattedTypeScriptFile(path: string, contents: string): Promise<void> {
-  await Deno.writeTextFile(path, contents);
-  const result = await new Deno.Command("deno", {
-    args: ["fmt", path],
-    stdout: "null",
+const checkMode = Deno.args.includes("--check");
+const staleFiles: string[] = [];
+
+/**
+ * Format through stdin rather than writing and formatting in place, so --check
+ * can compare against the same shape the write path lands on disk.
+ */
+async function formatTypeScript(source: string): Promise<string> {
+  const fmt = new Deno.Command("deno", {
+    args: ["fmt", "-", "--ext", "ts"],
+    stdin: "piped",
+    stdout: "piped",
     stderr: "piped",
-  }).output();
+  }).spawn();
+
+  const writer = fmt.stdin.getWriter();
+  await writer.write(new TextEncoder().encode(source));
+  await writer.close();
+
+  const result = await fmt.output();
   if (!result.success) {
     const errorOutput = new TextDecoder().decode(result.stderr).trim();
     throw new Error(
-      `Failed to format generated file ${path}${errorOutput ? `: ${errorOutput}` : ""}`,
+      `Failed to format generated output${errorOutput ? `: ${errorOutput}` : ""}`,
     );
   }
+  return new TextDecoder().decode(result.stdout);
+}
+
+/**
+ * Writes the generated file, or under --check reports whether the committed
+ * copy still matches. Stale files are collected rather than exited on, so one
+ * run tells you everything that needs regenerating.
+ */
+async function emitGeneratedFile(
+  path: string,
+  contents: string,
+  detail: string,
+): Promise<void> {
+  const formatted = await formatTypeScript(contents);
+
+  if (checkMode) {
+    const existing = await Deno.readTextFile(path).catch(() => null);
+    if (existing !== formatted) {
+      console.error(`${path} is stale. Run deno task generate.`);
+      staleFiles.push(path);
+      return;
+    }
+    console.log(`${path} is current.`);
+    console.log(`   ${detail}`);
+    return;
+  }
+
+  await Deno.writeTextFile(path, formatted);
+  console.log(`✅ Generated ${path}`);
+  console.log(`   ${detail}`);
 }
 
 console.log("[prebundle-client-scripts] Bundling client router...");
@@ -79,8 +122,7 @@ export const CLIENT_ROUTER_BUNDLE: string | undefined = ${JSON.stringify(routerB
 export const CLIENT_PREFETCH_BUNDLE: string | undefined = ${JSON.stringify(prefetchBundle)};
 `;
 
-await writeFormattedTypeScriptFile(templatesPath, output);
-console.log(`[prebundle-client-scripts] Written to ${templatesPath}`);
+await emitGeneratedFile(templatesPath, output, "client router + prefetch bundles");
 
 // --- Extract framework component Tailwind candidates ---
 console.log("[prebundle-client-scripts] Extracting framework component candidates...");
@@ -133,7 +175,12 @@ const candidatesOutput = `/**
 export const FRAMEWORK_CANDIDATES: readonly string[] = ${JSON.stringify(sorted, null, 2).replace(/\n\]$/, ",\n]")};
 `;
 
-await writeFormattedTypeScriptFile(candidatesPath, candidatesOutput);
-console.log(
-  `[prebundle-client-scripts] Extracted ${sorted.length} framework candidates to ${candidatesPath}`,
+await emitGeneratedFile(
+  candidatesPath,
+  candidatesOutput,
+  `${sorted.length} framework candidates`,
 );
+
+if (staleFiles.length > 0) {
+  Deno.exit(1);
+}
