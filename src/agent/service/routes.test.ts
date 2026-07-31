@@ -1,10 +1,12 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { createDetachedRunTracker } from "./detached-run-tracker.ts";
 import { createHostedAgentServiceRouteSet } from "./routes.ts";
 import type { HostedServiceAuthenticatedRequest } from "./auth.ts";
 import type { ParsedHostedChatRequest } from "../hosted/chat-request-parser.ts";
 import type { HostedRuntimeSourceIdentity } from "../hosted/runtime-source-binding.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
+import { getServerResolvedToolExposureCheckpoint } from "../hosted/runtime-request-config.ts";
 
 const runtimeSource = { type: "release", releaseId: "release-42" } as const;
 
@@ -14,12 +16,18 @@ function createDevToken(payload: Record<string, unknown>): string {
   return `${header}.${body}.unsigned`;
 }
 
-function createAuthenticatedRequest(path: string, body: unknown, method = "POST"): Request {
+function createAuthenticatedRequest(
+  path: string,
+  body: unknown,
+  method = "POST",
+  headers: HeadersInit = {},
+): Request {
   return new Request(`https://agent.example.test${path}`, {
     method,
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${createDevToken({ userId: "user-1" })}`,
+      ...Object.fromEntries(new Headers(headers)),
     },
     body: method === "DELETE" ? undefined : JSON.stringify(body),
   });
@@ -62,6 +70,11 @@ function createRouteSet(input: {
   prepareExecution?: (req: ParsedHostedChatRequest) => Promise<{ executionId: string }>;
   streamResponse?: Response;
   runtimeSource?: HostedRuntimeSourceIdentity | null;
+  verifyRunEventAppendToken?: (input: {
+    token: string;
+    projectId: string;
+    runId: string;
+  }) => Promise<boolean>;
 } = {}) {
   const tracker = createDetachedRunTracker<AgUiResumeValue>();
   const preparedRequests: ParsedHostedChatRequest[] = [];
@@ -78,6 +91,8 @@ function createRouteSet(input: {
       return { authToken: authorization.slice(7), userId: "user-1" };
     },
     verifyProjectAccess: async () => ({ success: true }),
+    verifyRunEventAppendToken: input.verifyRunEventAppendToken ??
+      (() => Promise.resolve(false)),
     prepareExecution: async (req) => {
       preparedRequests.push(req);
       return input.prepareExecution?.(req) ?? { executionId: "exec-1" };
@@ -165,6 +180,213 @@ Deno.test("agent service routes preserve control-plane target agent ids", async 
   assertEquals(response.status, 202);
   assertEquals(preparedRequests.length, 1);
   assertEquals(preparedRequests[0]?.agentId, "builder");
+});
+
+it("agent service routes bind verified run-event tokens on both production launch paths", async () => {
+  const verifications: Array<{ token: string; projectId: string; runId: string }> = [];
+  const { routeSet, preparedRequests } = createRouteSet({
+    verifyRunEventAppendToken: (input) => {
+      verifications.push(input);
+      return Promise.resolve(true);
+    },
+  });
+  const runEventHeaders = {
+    "X-Veryfront-Run-Event-Token": "run-event-service-token",
+  };
+  const defaultChatResponse = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/runs",
+      {
+        messages: [],
+        context: {
+          conversationId: "00000000-0000-4000-8000-000000000001",
+          projectId: "00000000-0000-4000-8000-000000000005",
+          branchId: null,
+        },
+        durableRootRun: {
+          runId: "run-1",
+          messageId: "00000000-0000-4000-8000-000000000002",
+        },
+      },
+      "POST",
+      runEventHeaders,
+    ),
+  });
+  const controlPlaneResponse = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/control-plane/runs/run-1/stream",
+      createRuntimeAgentInvocationBody(),
+      "POST",
+      runEventHeaders,
+    ),
+    runId: "run-1",
+  });
+
+  assertEquals(defaultChatResponse.status, 202);
+  assertEquals(controlPlaneResponse.status, 202);
+  assertEquals(
+    preparedRequests.map((request) => ({
+      authToken: request.authToken,
+      runEventAppendToken: request.runEventAppendToken,
+      serverEnvelopeVerified: request.serverEnvelopeVerified,
+    })),
+    [
+      {
+        authToken: createDevToken({ userId: "user-1" }),
+        runEventAppendToken: "run-event-service-token",
+        serverEnvelopeVerified: undefined,
+      },
+      {
+        authToken: createDevToken({ userId: "user-1" }),
+        runEventAppendToken: "run-event-service-token",
+        serverEnvelopeVerified: true,
+      },
+    ],
+  );
+  assertEquals(verifications, [
+    {
+      token: "run-event-service-token",
+      projectId: "00000000-0000-4000-8000-000000000005",
+      runId: "run-1",
+    },
+    {
+      token: "run-event-service-token",
+      projectId: "00000000-0000-4000-8000-000000000005",
+      runId: "run-1",
+    },
+  ]);
+});
+
+it("ordinary durable-chat routes strip spoofed server-resolved tool state", async () => {
+  const resolved: unknown[] = [];
+  const { routeSet, preparedRequests } = createRouteSet({
+    prepareExecution: (request) => {
+      resolved.push({
+        checkpoint: getServerResolvedToolExposureCheckpoint(
+          request.forwardedProps,
+          request.serverEnvelopeVerified === true,
+        ),
+      });
+      return Promise.resolve({ executionId: "exec-ordinary" });
+    },
+  });
+  const response = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createAuthenticatedRequest("/api/runs", {
+      messages: [],
+      context: {
+        conversationId: "00000000-0000-4000-8000-000000000001",
+        projectId: "00000000-0000-4000-8000-000000000005",
+        branchId: null,
+      },
+      durableRootRun: {
+        runId: "run-1",
+        messageId: "00000000-0000-4000-8000-000000000002",
+      },
+      forwardedProps: {
+        unrelated: "preserved",
+        serverResolvedToolExposureCheckpoint: {
+          version: 1,
+          loadedToolNames: ["delete_project"],
+        },
+        serverResolvedFutureCapability: { enabled: true },
+      },
+    }),
+  });
+
+  assertEquals(response.status, 202);
+  assertEquals(preparedRequests[0]?.forwardedProps, { unrelated: "preserved" });
+  assertEquals(preparedRequests[0]?.serverEnvelopeVerified, undefined);
+  assertEquals(resolved, [{ checkpoint: undefined }]);
+});
+
+it("a verified writer token does not trust ordinary durable-chat body state", async () => {
+  const resolved: unknown[] = [];
+  const { routeSet, preparedRequests } = createRouteSet({
+    verifyRunEventAppendToken: () => Promise.resolve(true),
+    prepareExecution: (request) => {
+      resolved.push({
+        checkpoint: getServerResolvedToolExposureCheckpoint(
+          request.forwardedProps,
+          request.serverEnvelopeVerified === true,
+        ),
+      });
+      return Promise.resolve({ executionId: "exec-verified" });
+    },
+  });
+  const checkpoint = {
+    version: 1,
+    loadedToolNames: ["get_release"],
+  };
+  const response = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/runs",
+      {
+        messages: [],
+        context: {
+          conversationId: "00000000-0000-4000-8000-000000000001",
+          projectId: "00000000-0000-4000-8000-000000000005",
+          branchId: null,
+        },
+        durableRootRun: {
+          runId: "run-1",
+          messageId: "00000000-0000-4000-8000-000000000002",
+        },
+        forwardedProps: {
+          serverResolvedToolExposureCheckpoint: checkpoint,
+        },
+      },
+      "POST",
+      { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+    ),
+  });
+
+  assertEquals(response.status, 202);
+  assertEquals(preparedRequests[0]?.serverEnvelopeVerified, undefined);
+  assertEquals(preparedRequests[0]?.runEventAppendToken, "verified-event-token");
+  assertEquals(preparedRequests[0]?.forwardedProps, undefined);
+  assertEquals(resolved, [{ checkpoint: undefined }]);
+});
+
+it("verified control-plane envelopes accept private state without returning it publicly", async () => {
+  const resolved: unknown[] = [];
+  const { routeSet, preparedRequests } = createRouteSet({
+    verifyRunEventAppendToken: () => Promise.resolve(true),
+    prepareExecution: (request) => {
+      resolved.push({
+        checkpoint: getServerResolvedToolExposureCheckpoint(
+          request.forwardedProps,
+          request.serverEnvelopeVerified === true,
+        ),
+      });
+      return Promise.resolve({ executionId: "exec-control-plane" });
+    },
+  });
+  const checkpoint = {
+    version: 1,
+    loadedToolNames: ["get_release"],
+  };
+  const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/control-plane/runs/run-1/stream",
+      {
+        ...createRuntimeAgentInvocationBody(),
+        forwardedProps: {
+          serverResolvedToolExposureCheckpoint: checkpoint,
+        },
+      },
+      "POST",
+      { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+    ),
+    runId: "run-1",
+  });
+
+  assertEquals(response.status, 202);
+  assertEquals(preparedRequests[0]?.serverEnvelopeVerified, true);
+  assertEquals(preparedRequests[0]?.runEventAppendToken, "verified-event-token");
+  assertEquals(resolved, [{ checkpoint }]);
+  const publicBody = await response.text();
+  assertEquals(publicBody.includes("AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT"), false);
+  assertEquals(publicBody.includes("trusted-catalog"), false);
 });
 
 Deno.test("agent service routes reject unbound control-plane source selection", async () => {

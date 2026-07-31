@@ -173,6 +173,13 @@ export interface AgentConfig {
    * block — the same surface the hosted chat runtime fills from Studio.
    */
   environmentContext?: string;
+  /**
+   * Project tools available to this agent.
+   *
+   * Omit to expose no project tools. `true` authorizes the current scoped
+   * catalog behind `tool_search`; an explicit map exposes only those selected
+   * schemas immediately.
+   */
   tools?: true | Record<string, Tool | boolean>;
   /**
    * Exact registered agent ids this agent may call through scoped

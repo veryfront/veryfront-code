@@ -150,6 +150,56 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps empty allowed tools as exp
   assertEquals(taskContext.availableToolNames, []);
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly defers an unrestricted tools true catalog", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: { sleep: localTool("Sleep") },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "deferred");
+  assertEquals(taskContext.availableToolNames, ["tool_search"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly enforces the host authorization ceiling before discovery", async () => {
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    hostToolPolicy: { allow: ["load_skill"] },
+    taskContext: {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+      availableSkillIds: ["deploy"],
+    },
+    instructions: "Base instructions",
+    localTools: {
+      load_skill: localTool("Load skill"),
+      sandbox_read_file: localTool("Read sandbox file"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.availableToolNames.includes("load_skill"), true);
+  assertEquals(toolAssembly.availableToolNames.includes("sandbox_read_file"), false);
+  assertEquals(Object.hasOwn(toolAssembly.runtimeTools, "sandbox_read_file"), false);
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly keeps skill infrastructure for config-derived empty tools", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",

@@ -88,6 +88,11 @@ import {
   getRuntimeForwardedIntegrationToolDefs,
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
+  getRuntimeToolExposureCheckpoint,
+  getRuntimeToolExposureCheckpointPersister,
+  isRuntimeToolExposureCheckpointPersistenceRequired,
+  resolveRuntimeToolLoading,
+  type RuntimeToolFilterConfig,
 } from "./runtime-tool-config.ts";
 import {
   applySourceIntegrationPolicy,
@@ -95,6 +100,11 @@ import {
 } from "#veryfront/integrations/source-policy.ts";
 import { prepareAgentRuntimeStep } from "./agent-runtime-step.ts";
 import { buildStreamedAssistantMessage } from "./streamed-assistant-message.ts";
+import {
+  flattenSystemInstructions,
+  hasRuntimeToolInventory,
+  withRuntimeToolInventory,
+} from "./tool-inventory.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -175,6 +185,7 @@ function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
       return undefined;
   }
 }
+
 export {
   enforceSkillPolicy,
   extractSkillPolicy,
@@ -192,7 +203,7 @@ import {
 } from "./tool-helpers.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 import { resolveRuntimeModel } from "./model-resolution.ts";
-import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
+import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
 import {
@@ -201,9 +212,102 @@ import {
 } from "./skill-delegation-overrides.ts";
 import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
 import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
+import {
+  createToolExposureCheckpoint,
+  createToolExposureState,
+  searchToolExposure,
+  TOOL_SEARCH_TOOL_NAME,
+  type ToolExposureCheckpoint,
+  type ToolExposurePlan,
+  type ToolExposureState,
+} from "./tool-exposure.ts";
 
 const logger = serverLogger.component("agent");
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
+
+function buildGeneratedAssistantMessage(
+  response: RuntimeGenerateTextResult,
+  metadata: { id: string; timestamp: number },
+): Message {
+  const parts: MessagePart[] = [];
+  if (response.text) parts.push({ type: "text", text: response.text });
+  for (const toolCall of response.toolCalls ?? []) {
+    parts.push({
+      type: `tool-${toolCall.toolName}`,
+      toolCallId: toolCall.toolCallId,
+      toolName: toolCall.toolName,
+      args: toolCall.input as Record<string, unknown>,
+    });
+  }
+  return {
+    ...metadata,
+    role: "assistant",
+    parts,
+  };
+}
+
+function executeFrameworkToolSearch(input: {
+  args: Record<string, unknown>;
+  plan: ToolExposurePlan;
+  state: ToolExposureState;
+}): {
+  result: ReturnType<typeof searchToolExposure> & { nextStep: string };
+  checkpoint: ReturnType<typeof createToolExposureCheckpoint>;
+} {
+  const query = typeof input.args.query === "string" ? input.args.query.trim() : "";
+  if (!query) {
+    throw new Error('tool_search requires a non-empty "query" string');
+  }
+  const result = searchToolExposure({
+    query,
+    authorized: input.plan.authorized,
+    state: input.state,
+  });
+  return {
+    result: {
+      ...result,
+      nextStep: result.loadedCount > 0
+        ? "Continue to the next model step. Loaded tool schemas will be available then."
+        : "Continue with the available tools or answer without a tool.",
+    },
+    checkpoint: createToolExposureCheckpoint(input.plan.authorized, input.state),
+  };
+}
+
+async function persistToolExposureCheckpointBeforeContinuation(input: {
+  checkpoint: ToolExposureCheckpoint;
+  persist: ((checkpoint: ToolExposureCheckpoint) => void | Promise<void>) | undefined;
+  required: boolean;
+}): Promise<void> {
+  if (!input.persist) {
+    if (input.required) {
+      throw new Error("Tool exposure checkpoint persistence is required before continuation");
+    }
+    return;
+  }
+  await input.persist(input.checkpoint);
+}
+
+function isToolVisibleForStep(toolName: string, plan: ToolExposurePlan): boolean {
+  return plan.visible.some((tool) => tool.name === toolName);
+}
+
+function isFrameworkToolSearch(toolName: string, plan: ToolExposurePlan): boolean {
+  return toolName === TOOL_SEARCH_TOOL_NAME &&
+    isToolVisibleForStep(toolName, plan) &&
+    !plan.authorized.some((tool) => tool.name === toolName);
+}
+
+function toolNotVisibleError(toolName: string): string {
+  return `Tool "${toolName}" is not available in the current model step`;
+}
+
+function resolveToolExecutionAuthority(input: {
+  toolName: string;
+  plan: ToolExposurePlan;
+}): { kind: "visible" } | undefined {
+  return isToolVisibleForStep(input.toolName, input.plan) ? { kind: "visible" } : undefined;
+}
 
 function buildStreamFinishUsage(
   usage: AgentResponse["usage"],
@@ -268,6 +372,28 @@ function getResponseFinishReason(response: AgentResponse): string | undefined {
 
 function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean {
   return toolName === "create_agent" || toolName === "update_agent";
+}
+
+function applyAgentWriteFinalResponseGuard(plan: ToolExposurePlan): ToolExposurePlan {
+  const keep = (tool: { name: string }) => !shouldHideProjectToolAfterAgentWriteSuccess(tool.name);
+  return {
+    ...plan,
+    authorized: plan.authorized.filter(keep),
+    visible: plan.visible.filter(keep),
+    deferred: plan.deferred.filter(keep),
+  };
+}
+
+function synchronizeRuntimeToolInventory(
+  systemPrompt: string,
+  runtimeTools: Record<string, unknown> | undefined,
+): string {
+  if (!hasRuntimeToolInventory(systemPrompt)) {
+    return systemPrompt;
+  }
+  return flattenSystemInstructions(
+    withRuntimeToolInventory(systemPrompt, Object.keys(runtimeTools ?? {}).sort()),
+  );
 }
 
 function parseToolResultJson(result: string): unknown {
@@ -550,7 +676,7 @@ export class AgentRuntime {
 
   constructor(id: string, config: AgentConfig) {
     this.id = id;
-    this.config = config;
+    this.config = { ...config };
 
     // Agents are stateless by default (see docs/guides/memory-and-streaming.md):
     // with no `memory` config, calls never share conversation history, so
@@ -733,7 +859,8 @@ export class AgentRuntime {
     const resolvedModelString = transport.resolvedModelString;
     debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
-    const memoryMessages = await this.prepareTurnMessages(messages);
+    const inputMessages = normalizeInput(messages);
+    const memoryMessages = await this.prepareTurnMessages(inputMessages);
 
     const systemPrompt = await this.resolveSystemPrompt();
 
@@ -920,17 +1047,32 @@ export class AgentRuntime {
       let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
         runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
       const hasToolReplacements = toolReplacements !== undefined;
+      const initialToolExposureCheckpoint = hasToolReplacements
+        ? undefined
+        : getRuntimeToolExposureCheckpoint(this.config);
+      const toolExposureState = createToolExposureState();
+      const persistToolExposureCheckpoint = hasToolReplacements
+        ? undefined
+        : getRuntimeToolExposureCheckpointPersister(this.config);
+      const requireToolExposureCheckpointPersistence = hasToolReplacements
+        ? false
+        : isRuntimeToolExposureCheckpointPersistenceRequired(this.config);
       const runtimeToolsConfig = hasToolReplacements ? toolReplacements : this.config.tools;
+      const toolLoadingResolution = resolveRuntimeToolLoading(this.config);
+      const runConfig: RuntimeToolFilterConfig = {
+        ...this.config,
+        __vfToolLoadingMode: hasToolReplacements ? "eager" : toolLoadingResolution.mode,
+      };
       const runtimeStepConfig: AgentConfig = hasToolReplacements
         ? {
-          ...this.config,
+          ...runConfig,
           tools: runtimeToolsConfig,
           skills: undefined,
           providerTools: undefined,
           mcpServers: undefined,
           sandbox: undefined,
         }
-        : this.config;
+        : runConfig;
       const allowedRemoteToolNames = hasToolReplacements
         ? undefined
         : getRuntimeAllowedRemoteTools(this.config);
@@ -975,6 +1117,7 @@ export class AgentRuntime {
           isLocalModel: isLocal,
           messages: currentMessages,
           mode: "generate",
+          providerToolNames: agentWriteFinalResponseToolGuardEnabled ? [] : providerTools,
           remoteToolSources,
           sourceIntegrationPolicy,
           resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -983,22 +1126,36 @@ export class AgentRuntime {
           systemPrompt: currentSystemPrompt,
           toolContextBase: { ...toolContextBase, abortSignal },
           strictConfiguredToolsOnly: hasToolReplacements,
+          toolExposureState,
+          toolExposureCheckpoint: step === 0 ? initialToolExposureCheckpoint : undefined,
         });
         throwIfAborted(abortSignal);
         currentSystemPrompt = preparedStep.systemPrompt;
         currentRuntimeContext = preparedStep.runtimeContext;
         const toolContext = preparedStep.toolContext;
-        const tools = agentWriteFinalResponseToolGuardEnabled
-          ? preparedStep.tools.filter((tool) =>
-            !shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
-          )
-          : preparedStep.tools;
+        const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
+          ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan)
+          : preparedStep.toolExposurePlan;
+        const tools = effectiveToolExposurePlan.visible;
+        setSpanAttributes(loopSpan, {
+          "tool.loading.mode": resolveRuntimeToolLoading(runtimeStepConfig).mode,
+          "tool.loading.provenance": toolLoadingResolution.provenance,
+          "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
+          "tool.catalog.visible_count": tools.length,
+          "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
+          "tool.loading.path": "framework-fallback",
+        });
         const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
 
         const temperature = this.resolveTemperature(
           temperatureModelString ?? effectiveModel,
           providerOptions,
         );
+        const runtimeTools = convertToolsToRuntimeTools(tools, {
+          model: effectiveModel,
+          providerTools: stepProviderTools,
+        });
+        currentSystemPrompt = synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools);
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
@@ -1008,10 +1165,7 @@ export class AgentRuntime {
             model: languageModel,
             system: currentSystemPrompt,
             messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
-            tools: convertToolsToRuntimeTools(tools, {
-              model: effectiveModel,
-              providerTools: stepProviderTools,
-            }),
+            tools: runtimeTools,
             experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
             ...(temperature === undefined ? {} : { temperature }),
@@ -1056,24 +1210,10 @@ export class AgentRuntime {
           setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
         }
 
-        const assistantParts: MessagePart[] = [];
-        if (response.text) assistantParts.push({ type: "text", text: response.text });
-
-        for (const tc of response.toolCalls ?? []) {
-          assistantParts.push({
-            type: `tool-${tc.toolName}`,
-            toolCallId: tc.toolCallId,
-            toolName: tc.toolName,
-            args: tc.input as Record<string, unknown>,
-          });
-        }
-
-        const assistantMessage: Message = {
+        const assistantMessage = buildGeneratedAssistantMessage(response, {
           id: `msg_${Date.now()}_${step}`,
-          role: "assistant",
-          parts: assistantParts,
           timestamp: Date.now(),
-        };
+        });
         currentMessages.push(assistantMessage);
         await this.memory.add(assistantMessage);
         throwIfAborted(abortSignal);
@@ -1173,6 +1313,82 @@ export class AgentRuntime {
                 "gen_ai.tool.call.id": tc.toolCallId,
               }),
             );
+
+            const executionAuthority = resolveToolExecutionAuthority({
+              toolName: tc.toolName,
+              plan: effectiveToolExposurePlan,
+            });
+            if (
+              !hasToolReplacements &&
+              generatedToolResult === undefined &&
+              executionAuthority === undefined
+            ) {
+              toolCall.status = "error";
+              toolCall.error = toolNotVisibleError(tc.toolName);
+              setSpanAttributes(toolSpan, {
+                "tool.status": "blocked",
+                error: true,
+                "error.type": "ToolExposureBlocked",
+                "error.message": toolCall.error,
+              });
+              const errorMessage = createToolErrorMessage(
+                tc.toolCallId,
+                tc.toolName,
+                toolCall.error,
+              );
+              currentMessages.push(errorMessage);
+              await this.memory.add(errorMessage);
+              toolCalls.push(toolCall);
+              return;
+            }
+            if (
+              generatedToolResult === undefined &&
+              isFrameworkToolSearch(tc.toolName, effectiveToolExposurePlan)
+            ) {
+              let checkpoint: ToolExposureCheckpoint;
+              try {
+                const search = executeFrameworkToolSearch({
+                  args: toolCall.args,
+                  plan: effectiveToolExposurePlan,
+                  state: toolExposureState,
+                });
+                toolCall.status = "completed";
+                toolCall.result = search.result;
+                setSpanAttributes(toolSpan, {
+                  "tool.status": "completed",
+                  "tool.search.result_count": search.result.resultCount,
+                  "tool.search.loaded_count": search.result.loadedCount,
+                  "tool.search.miss": search.result.miss,
+                });
+                const toolResultMessage = createToolResultMessage(
+                  tc.toolCallId,
+                  tc.toolName,
+                  search.result,
+                );
+                currentMessages.push(toolResultMessage);
+                await this.memory.add(toolResultMessage);
+                checkpoint = search.checkpoint;
+              } catch (error) {
+                toolCall.status = "error";
+                toolCall.error = error instanceof Error ? error.message : String(error);
+                const errorMessage = createToolErrorMessage(
+                  tc.toolCallId,
+                  tc.toolName,
+                  toolCall.error,
+                );
+                currentMessages.push(errorMessage);
+                await this.memory.add(errorMessage);
+                toolCalls.push(toolCall);
+                return;
+              }
+              await persistToolExposureCheckpointBeforeContinuation({
+                checkpoint,
+                persist: persistToolExposureCheckpoint,
+                required: requireToolExposureCheckpointPersistence,
+              });
+              toolCalls.push(toolCall);
+              return;
+            }
 
             if (generatedToolResult && !hasToolReplacements) {
               if (generatedToolResult.providerExecuted === true) {
@@ -1452,6 +1668,16 @@ export class AgentRuntime {
       runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
+    const initialToolExposureCheckpoint = getRuntimeToolExposureCheckpoint(this.config);
+    const toolExposureState = createToolExposureState();
+    const persistToolExposureCheckpoint = getRuntimeToolExposureCheckpointPersister(this.config);
+    const requireToolExposureCheckpointPersistence =
+      isRuntimeToolExposureCheckpointPersistenceRequired(this.config);
+    const toolLoadingResolution = resolveRuntimeToolLoading(this.config);
+    const runtimeStepConfig: RuntimeToolFilterConfig = {
+      ...this.config,
+      __vfToolLoadingMode: toolLoadingResolution.mode,
+    };
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
     const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
     const remoteToolSources = getRuntimeRemoteToolSources(this.config, undefined, this.id);
@@ -1478,12 +1704,13 @@ export class AgentRuntime {
         activeSkillPolicy,
         activeSkillToolAvailability,
         allowedRemoteToolNames,
-        config: this.config,
+        config: runtimeStepConfig,
         forwardedRemoteToolDefinitions,
         getAvailableTools,
         isLocalModel: isLocalStreaming,
         messages: currentMessages,
         mode: "stream",
+        providerToolNames: agentWriteFinalResponseToolGuardEnabled ? [] : providerTools,
         remoteToolSources,
         sourceIntegrationPolicy,
         resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -1491,21 +1718,31 @@ export class AgentRuntime {
         step,
         systemPrompt: currentSystemPrompt,
         toolContextBase,
+        toolExposureState,
+        toolExposureCheckpoint: step === 0 ? initialToolExposureCheckpoint : undefined,
       });
       currentSystemPrompt = preparedStep.systemPrompt;
       currentRuntimeContext = preparedStep.runtimeContext;
       const toolContext = preparedStep.toolContext;
-      const tools = agentWriteFinalResponseToolGuardEnabled
-        ? preparedStep.tools.filter((tool) =>
-          !shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
-        )
-        : preparedStep.tools;
+      const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
+        ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan)
+        : preparedStep.toolExposurePlan;
+      const tools = effectiveToolExposurePlan.visible;
+      setOtelActiveSpanAttributes({
+        "tool.loading.mode": resolveRuntimeToolLoading(runtimeStepConfig).mode,
+        "tool.loading.provenance": toolLoadingResolution.provenance,
+        "tool.catalog.authorized_count": preparedStep.toolExposurePlan.authorized.length,
+        "tool.catalog.visible_count": tools.length,
+        "tool.catalog.deferred_count": preparedStep.toolExposurePlan.deferred.length,
+        "tool.loading.path": "framework-fallback",
+      });
       const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
         providerTools: stepProviderTools,
       });
+      currentSystemPrompt = synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools);
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort();
 
       const temperature = this.resolveTemperature(
@@ -1602,7 +1839,6 @@ export class AgentRuntime {
       latestAssistantText = getTextFromParts(assistantMessage.parts);
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
-
       const finalToolResults = collectFinalStreamToolResults(state);
 
       const persistToolResult = async (toolResult: StreamingToolResult): Promise<void> => {
@@ -1797,6 +2033,67 @@ export class AgentRuntime {
           continue;
         }
 
+        if (isFrameworkToolSearch(tc.name, effectiveToolExposurePlan)) {
+          let checkpoint: ToolExposureCheckpoint;
+          try {
+            callbacks?.onToolCall?.(toolCall);
+            const search = executeFrameworkToolSearch({
+              args: toolCall.args,
+              plan: effectiveToolExposurePlan,
+              state: toolExposureState,
+            });
+            toolCall.status = "completed";
+            toolCall.result = search.result;
+            toolCalls.push(toolCall);
+            setOtelActiveSpanAttributes({
+              "tool.search.result_count": search.result.resultCount,
+              "tool.search.loaded_count": search.result.loadedCount,
+              "tool.search.miss": search.result.miss,
+            });
+            sendSSE(controller, encoder, {
+              type: "tool-output-available",
+              toolCallId: toolCall.id,
+              output: search.result,
+            });
+            const toolResultMessage = createToolResultMessage(tc.id, tc.name, search.result);
+            currentMessages.push(toolResultMessage);
+            await this.memory.add(toolResultMessage);
+            checkpoint = search.checkpoint;
+            currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
+          } catch (error) {
+            await this.recordToolError(
+              toolCall,
+              error instanceof Error ? error.message : String(error),
+              controller,
+              encoder,
+              currentMessages,
+              toolCalls,
+            );
+            continue;
+          }
+          await persistToolExposureCheckpointBeforeContinuation({
+            checkpoint,
+            persist: persistToolExposureCheckpoint,
+            required: requireToolExposureCheckpointPersistence,
+          });
+          continue;
+        }
+
+        const executionAuthority = resolveToolExecutionAuthority({
+          toolName: tc.name,
+          plan: effectiveToolExposurePlan,
+        });
+        if (executionAuthority === undefined) {
+          await this.recordToolError(
+            toolCall,
+            toolNotVisibleError(tc.name),
+            controller,
+            encoder,
+            currentMessages,
+            toolCalls,
+          );
+          continue;
+        }
         const policyCheck = enforceSkillPolicy(
           tc.name,
           activeSkillPolicy,

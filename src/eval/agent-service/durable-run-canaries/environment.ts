@@ -8,6 +8,7 @@ export interface DurableRunCanaryEnvironment {
   apiUrl: string;
   authToken: string;
   projectId: string;
+  model: string | undefined;
   requestTimeoutMs: number;
   keepSuccessfulEvidence: boolean;
 }
@@ -25,6 +26,7 @@ export function resolveDurableRunCanaryEnvironment(
       : parseAgentServiceConfig(env).VERYFRONT_API_URL,
     authToken: typeof env.VERYFRONT_TOKEN === "string" ? env.VERYFRONT_TOKEN : "",
     projectId: typeof env.AG_UI_EVAL_PROJECT_ID === "string" ? env.AG_UI_EVAL_PROJECT_ID : "",
+    model: typeof env.AG_UI_EVAL_MODEL === "string" ? env.AG_UI_EVAL_MODEL : undefined,
     requestTimeoutMs: Number(
       env.DURABLE_CANARY_TIMEOUT_MS ?? DEFAULT_DURABLE_RUN_CANARY_TIMEOUT_MS,
     ),

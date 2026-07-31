@@ -40,6 +40,13 @@ export type HostedServiceAuthenticatedRequest = {
   userId: string;
 };
 
+/** Claims that bind an internal run-event append token to one durable run. */
+export type HostedServiceRunEventAppendTokenInput = {
+  token: string;
+  projectId: string;
+  runId: string;
+};
+
 /** Error shape for hosted service jwt. */
 export type HostedServiceJwtError = {
   statusCode: number;
@@ -67,6 +74,7 @@ export type HostedServiceProjectAccessResult =
 /** Configuration used by hosted service auth. */
 export type HostedServiceAuthConfig = {
   OAUTH_PUBLIC_KEY?: string | null;
+  SERVICE_ACCOUNT_VERYFRONT_SERVER_ID?: string | null;
   NODE_ENV?: string | null;
   VERYFRONT_API_URL: string;
 };
@@ -95,6 +103,29 @@ type AuthJwtExtensionModule = {
   createAuthProvider: (options?: Record<string, unknown>) => HostedServiceJwtVerifier;
 };
 
+const RUN_EVENT_WRITER_TOKEN_USE = "run_event_writer";
+// veryfront-issue-inbox#353: remove V1 only after API, Framework, and Agent all
+// emit and accept the V2 `scopes` contract in every deployed environment.
+const RUN_EVENT_WRITER_V1_SCOPES = ["projects:read", "runs:write"] as const;
+const RUN_EVENT_WRITER_V2_SCOPES = ["agent-runs:events:append"] as const;
+
+function hasExactScopes(scopes: unknown, expected: readonly string[]): boolean {
+  return Array.isArray(scopes) &&
+    scopes.length === expected.length &&
+    scopes.every((value): value is string => typeof value === "string") &&
+    new Set(scopes).size === scopes.length &&
+    expected.every((requiredScope) => scopes.includes(requiredScope));
+}
+
+function hasExactRunEventWriterScopes(payload: TokenPayload): boolean {
+  const claims = payload as TokenPayload & { scope?: unknown; scopes?: unknown };
+  const isLegacy = claims.scopes === undefined &&
+    hasExactScopes(claims.scope, RUN_EVENT_WRITER_V1_SCOPES);
+  const isCurrent = claims.scope === undefined &&
+    hasExactScopes(claims.scopes, RUN_EVENT_WRITER_V2_SCOPES);
+  return isLegacy || isCurrent;
+}
+
 /** Options accepted by hosted service auth. */
 export type HostedServiceAuthOptions = {
   getConfig: () => HostedServiceAuthConfig;
@@ -112,6 +143,9 @@ export type HostedServiceAuth = {
   ) => Promise<HostedServiceAuthenticatedRequest | Response>;
   getTokenFromRequest: typeof getHostedServiceTokenFromRequest;
   verifyJwt: (token: string) => Promise<HostedServiceJwtResult>;
+  verifyRunEventAppendToken: (
+    input: HostedServiceRunEventAppendTokenInput,
+  ) => Promise<boolean>;
   verifyProjectAccess: (
     projectId: string,
     token: string,
@@ -382,6 +416,44 @@ export function createHostedServiceAuth(
     };
   }
 
+  async function verifyRunEventAppendToken(
+    input: HostedServiceRunEventAppendTokenInput,
+  ): Promise<boolean> {
+    return await trace("auth.verifyRunEventAppendToken", async () => {
+      const config = options.getConfig();
+      if (!config.OAUTH_PUBLIC_KEY || !config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID) {
+        return false;
+      }
+
+      try {
+        const authProvider = await getAuthProvider(options);
+        if (!authProvider) {
+          return false;
+        }
+
+        const payload = await authProvider.verifyWithPublicKey(
+          input.token,
+          config.OAUTH_PUBLIC_KEY,
+          { algorithms: ["RS256"] },
+        ) as TokenPayload;
+
+        return payload.actorType === "service_account" &&
+          payload.tokenUse === RUN_EVENT_WRITER_TOKEN_USE &&
+          typeof payload.serviceAccountId === "string" &&
+          payload.userId === payload.serviceAccountId &&
+          payload.serviceAccountId === config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID &&
+          payload.projectId === input.projectId &&
+          payload.runId === input.runId &&
+          hasExactRunEventWriterScopes(payload);
+      } catch (error) {
+        options.logger?.debug?.("Run-event append token verification failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      }
+    });
+  }
+
   async function verifyProjectAccess(
     projectId: string,
     token: string,
@@ -466,6 +538,7 @@ export function createHostedServiceAuth(
     authenticateRequest,
     getTokenFromRequest: getHostedServiceTokenFromRequest,
     verifyJwt,
+    verifyRunEventAppendToken,
     verifyProjectAccess,
   };
 }

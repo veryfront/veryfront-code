@@ -158,6 +158,7 @@ export {
   type HostedChatRuntimeToolAssemblyContext,
   type HostedChatRuntimeToolAssemblyResult,
   type HostedChatRuntimeToolAssemblyResult as AgentServiceChatRuntimeToolAssemblyResult,
+  type HostedHostToolPolicy,
   prepareHostedChatRuntimeToolAssembly,
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./hosted/chat-runtime-tool-assembly.ts";

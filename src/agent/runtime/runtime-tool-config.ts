@@ -3,6 +3,10 @@ import type { AgentConfig } from "../types.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import { resolveEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { type SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import { isValidToolExposureCheckpointName, type ToolExposureCheckpoint } from "./tool-exposure.ts";
+
+/** Internal schema-loading mode derived from the authored tools selector. */
+export type RuntimeToolLoadingMode = "eager" | "deferred";
 
 export const SOURCE_INTEGRATION_POLICY_CONTEXT_KEY = "__vfSourceIntegrationPolicy";
 
@@ -10,7 +14,45 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfForwardedIntegrationToolDefs?: Array<
     { name: string; description: string; parameters: Record<string, unknown> }
   >;
+  __vfToolExposureCheckpoint?: ToolExposureCheckpoint;
+  __vfPersistToolExposureCheckpoint?: (
+    checkpoint: ToolExposureCheckpoint,
+  ) => void | Promise<void>;
+  __vfToolExposureCheckpointPersistenceRequired?: boolean;
+  __vfToolLoadingMode?: RuntimeToolLoadingMode;
+  __vfOperationalToolLoadingOverride?: "eager";
 } & RuntimeRemoteToolConfig;
+
+/** Effective runtime loading mode and the trusted source that selected it. */
+export type RuntimeToolLoadingResolution = {
+  mode: RuntimeToolLoadingMode;
+  provenance: "host-operational-override" | "host-runtime-binding" | "tools-selector";
+};
+
+/** Resolve tool loading without accepting request context as configuration. */
+export function resolveRuntimeToolLoading(
+  config: AgentConfig,
+): RuntimeToolLoadingResolution {
+  const operationalOverride =
+    (config as RuntimeToolFilterConfig).__vfOperationalToolLoadingOverride;
+  if (operationalOverride === "eager") {
+    return {
+      mode: operationalOverride,
+      provenance: "host-operational-override",
+    };
+  }
+  const hostRuntimeMode = (config as RuntimeToolFilterConfig).__vfToolLoadingMode;
+  if (hostRuntimeMode === "eager" || hostRuntimeMode === "deferred") {
+    return {
+      mode: hostRuntimeMode,
+      provenance: "host-runtime-binding",
+    };
+  }
+  return {
+    mode: config.tools === true ? "deferred" : "eager",
+    provenance: "tools-selector",
+  };
+}
 
 export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {
   const configWithRuntimeFilters = config as RuntimeToolFilterConfig;
@@ -48,6 +90,36 @@ export function getRuntimeProviderTools(config: AgentConfig): string[] {
     return [];
   }
   return raw.every((toolName) => typeof toolName === "string") ? raw : [];
+}
+
+/** Return a supported trusted private exposure checkpoint. */
+export function getRuntimeToolExposureCheckpoint(
+  config: AgentConfig,
+): ToolExposureCheckpoint | undefined {
+  const value = (config as RuntimeToolFilterConfig).__vfToolExposureCheckpoint;
+  if (
+    value?.version !== 1 ||
+    !Array.isArray(value.loadedToolNames) ||
+    !value.loadedToolNames.every(isValidToolExposureCheckpointName)
+  ) {
+    return undefined;
+  }
+  return value;
+}
+
+/** Return whether the trusted host requires checkpoint durability before continuation. */
+export function isRuntimeToolExposureCheckpointPersistenceRequired(
+  config: AgentConfig,
+): boolean {
+  return (config as RuntimeToolFilterConfig).__vfToolExposureCheckpointPersistenceRequired === true;
+}
+
+/** Return the trusted private checkpoint persistence hook. */
+export function getRuntimeToolExposureCheckpointPersister(
+  config: AgentConfig,
+): ((checkpoint: ToolExposureCheckpoint) => void | Promise<void>) | undefined {
+  const value = (config as RuntimeToolFilterConfig).__vfPersistToolExposureCheckpoint;
+  return typeof value === "function" ? value : undefined;
 }
 
 export function getRuntimeForwardedIntegrationToolDefs(

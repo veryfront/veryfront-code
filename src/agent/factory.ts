@@ -222,7 +222,14 @@ export function agent(config: AgentConfig): Agent {
   // Call context assembled at invocation time so registry-backed skills pick up
   // HMR changes and host-supplied project/environment facts stay current.
   const originalSystem = config.system;
-  const configuredToolNames = mergedToolsConfig === true || mergedToolsConfig === undefined
+  const configuredToolNames = mergedToolsConfig === true
+    ? [
+      "form_input",
+      ...(shouldExposeSkillTools ? ["load_skill"] : []),
+      "tool_search",
+      ...(config.providerTools ?? []),
+    ].sort()
+    : mergedToolsConfig === undefined
     ? undefined
     : Object.entries(mergedToolsConfig)
       .filter(([, entry]) => entry !== false)

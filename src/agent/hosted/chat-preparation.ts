@@ -27,7 +27,6 @@ import {
   resolveHostedRuntimeRequestConfig,
 } from "./runtime-request-config.ts";
 import { getRuntimeUploadUrl } from "../runtime/upload-url-client.ts";
-import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import {
   resolveRuntimeSkillSelectorForAgent,
   type RuntimeSkillDefinition,
@@ -40,6 +39,13 @@ import {
   ContextCompactionError,
 } from "./context-budget-manager.ts";
 import { findSubmittedFormInputResult } from "./form-input-tool.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
+import {
+  createToolExposureCheckpointEvent,
+  TOOL_SEARCH_TOOL_NAME,
+} from "../runtime/tool-exposure.ts";
+import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
+import type { HostedHostToolPolicy } from "./chat-runtime-tool-assembly.ts";
 
 /** Request payload for normalized hosted chat. */
 export type NormalizedHostedChatRequest = {
@@ -70,6 +76,8 @@ export type HostedChatRuntimePreparationRootRunContext = {
   effectiveParentRunId?: string;
   effectiveParentMessageId?: string;
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
+  durableRunMirror?: ConversationRunChunkMirror | null;
+  privateDurableRunMirror?: ConversationRunChunkMirror | null;
 };
 
 /** Public API contract for hosted chat runtime preparation steering. */
@@ -110,6 +118,10 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
   runtimeTargetEnvironmentId?: string | null;
   environmentContext?: string;
   rootRunContext?: HostedChatRuntimePreparationRootRunContext;
+  /** Trusted checkpoint resolved after hosted service authentication. */
+  serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** Service-owned authorization ceiling for Framework host tools. */
+  hostToolPolicy?: HostedHostToolPolicy;
   resolveModelId: (modelId: string | undefined) => string | undefined;
   resolveModelThinking?: (
     modelId: string | undefined,
@@ -136,31 +148,16 @@ export type HostedChatRuntimeCreationPreparationResult<TRuntimeAgentDefinition> 
   runtimeConfig: ResolvedHostedRuntimeRequestConfig;
 };
 
-function getProviderToolNames(agentConfig: { providerTools?: unknown }): string[] {
-  return Array.isArray(agentConfig.providerTools)
-    ? agentConfig.providerTools.filter((toolName): toolName is string =>
-      typeof toolName === "string" && toolName.length > 0
-    )
-    : [];
-}
-
 function getProviderOwnedToolNames(input: {
   agentConfig: { providerTools?: unknown };
   runtimeConfig: ResolvedHostedRuntimeRequestConfig;
 }): string[] {
-  const providerNativeToolNames = new Set(
-    getProviderNativeToolNames({ model: input.runtimeConfig.requestedModel }),
-  );
-  const requestedProviderToolNames = input.runtimeConfig.requestedAllowedProviderTools.filter(
-    (toolName) => providerNativeToolNames.has(toolName),
-  );
-
-  return [
-    ...new Set([
-      ...getProviderToolNames(input.agentConfig),
-      ...requestedProviderToolNames,
-    ]),
-  ];
+  const configured = Array.isArray(input.agentConfig.providerTools)
+    ? input.agentConfig.providerTools.filter((toolName): toolName is string =>
+      typeof toolName === "string" && toolName.length > 0
+    )
+    : [];
+  return [...new Set([...configured, ...input.runtimeConfig.requestedAllowedProviderTools])];
 }
 
 async function flushRequiredContextCompactionEvent(
@@ -181,6 +178,30 @@ async function flushRequiredContextCompactionEvent(
       "Context compaction event was not durably persisted before model execution",
     );
   }
+}
+
+function createDurableToolExposureCheckpointPersister(
+  rootRunContext: HostedChatRuntimePreparationRootRunContext | undefined,
+): ((checkpoint: ToolExposureCheckpoint) => Promise<void>) | undefined {
+  const privateDurableRunMirror = rootRunContext?.privateDurableRunMirror;
+  if (rootRunContext?.durableRootRun && !privateDurableRunMirror) {
+    return async () => {
+      throw new Error(
+        "A trusted run-event append token is required to persist a private tool exposure checkpoint",
+      );
+    };
+  }
+  if (!privateDurableRunMirror) return undefined;
+  return async (checkpoint) => {
+    await privateDurableRunMirror.appendEvents([createToolExposureCheckpointEvent(checkpoint)]);
+    const snapshot = await privateDurableRunMirror.flush();
+    if (snapshot.disabled || snapshot.pendingEventCount > 0 || snapshot.inFlight) {
+      privateDurableRunMirror.dispose();
+      throw new Error(
+        "Tool exposure checkpoint was not durably persisted before model execution",
+      );
+    }
+  };
 }
 
 /** Options accepted by hosted chat execution preparation root run. */
@@ -241,6 +262,10 @@ export type HostedChatExecutionPreparationInput<
     >,
   ) => Promise<TRuntimeResult>;
   contextBudget?: HostedChatContextBudgetOptions;
+  /** Trusted checkpoint resolved by the authenticated hosted service. */
+  serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** Service-owned authorization ceiling for Framework host tools. */
+  hostToolPolicy?: HostedHostToolPolicy;
 };
 
 /** Result returned from hosted chat execution preparation. */
@@ -296,6 +321,38 @@ function buildHostedChatRuntimeProjectSteering<TRuntimeAgentDefinition>(input: {
   };
 }
 
+function resolveInitialModelVisibleToolNames(input: {
+  runtimeConfig: ResolvedHostedRuntimeRequestConfig;
+  selectedSkills: readonly RuntimeSkillDefinition[];
+  hostToolPolicy?: HostedHostToolPolicy;
+}): string[] {
+  const hostAllow = input.hostToolPolicy === undefined
+    ? undefined
+    : new Set(input.hostToolPolicy.allow);
+  const isHostAllowed = (toolName: string): boolean =>
+    hostAllow === undefined || hostAllow.has(toolName);
+
+  if (input.runtimeConfig.requestedAllowedTools === undefined) {
+    return [
+      ...(isHostAllowed("form_input") ? ["form_input"] : []),
+      ...(input.selectedSkills.length > 0 && isHostAllowed("load_skill") ? ["load_skill"] : []),
+      TOOL_SEARCH_TOOL_NAME,
+    ].sort();
+  }
+
+  const visibleToolNames = new Set(
+    input.runtimeConfig.requestedAllowedTools.filter(isHostAllowed),
+  );
+  if (
+    input.selectedSkills.length > 0 &&
+    isHostAllowed("load_skill") &&
+    (visibleToolNames.size > 0 || input.runtimeConfig.includeRuntimeEssentialToolsWhenEmpty)
+  ) {
+    visibleToolNames.add("load_skill");
+  }
+  return [...visibleToolNames].sort();
+}
+
 /** Options accepted by prepare hosted chat runtime creation. */
 export async function prepareHostedChatRuntimeCreationOptions<
   TRuntimeAgentDefinition,
@@ -313,6 +370,17 @@ export async function prepareHostedChatRuntimeCreationOptions<
     selector: input.agentConfig.skills === false ? [] : input.agentConfig.skills,
   });
   const selectedSkills = skillSelectorSnapshot.definitions;
+  const runtimeConfig = resolveHostedRuntimeRequestConfig({
+    request: input.request,
+    agentConfig: input.agentConfig,
+    resolveModelId: input.resolveModelId,
+    resolveModelThinking: input.resolveModelThinking,
+  });
+  const initialModelVisibleToolNames = resolveInitialModelVisibleToolNames({
+    runtimeConfig,
+    selectedSkills,
+    hostToolPolicy: input.hostToolPolicy,
+  });
   const agentInstructions = input.buildInstructions({
     agentConfig: input.agentConfig,
     projectId: input.projectId,
@@ -320,14 +388,8 @@ export async function prepareHostedChatRuntimeCreationOptions<
     environmentContext: input.environmentContext,
     instructions: steering.instructions,
     skills: selectedSkills,
+    availableToolNames: initialModelVisibleToolNames,
   });
-  const runtimeConfig = resolveHostedRuntimeRequestConfig({
-    request: input.request,
-    agentConfig: input.agentConfig,
-    resolveModelId: input.resolveModelId,
-    resolveModelThinking: input.resolveModelThinking,
-  });
-
   return {
     creationOptions: {
       projectId: input.projectId,
@@ -357,6 +419,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
         : {}),
       allowedProviderTools: runtimeConfig.requestedAllowedProviderTools,
       includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
+      ...(input.serverResolvedToolExposureCheckpoint
+        ? { serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint }
+        : {}),
       ...(input.request.allowDelegation !== undefined
         ? { allowDelegation: input.request.allowDelegation }
         : {}),
@@ -380,6 +445,16 @@ export async function prepareHostedChatRuntimeCreationOptions<
         : {}),
       ...(input.rootRunContext?.publishParentRunEvents
         ? { publishParentRunEvents: input.rootRunContext.publishParentRunEvents }
+        : {}),
+      ...(input.rootRunContext?.durableRootRun
+        ? {
+          persistToolExposureCheckpoint: createDurableToolExposureCheckpointPersister(
+            input.rootRunContext,
+          ),
+          ...(input.rootRunContext.privateDurableRunMirror
+            ? { requireToolExposureCheckpointPersistence: true as const }
+            : {}),
+        }
         : {}),
       clientProfile: runtimeConfig.clientProfile,
       liveProjectSteering: buildHostedChatRuntimeProjectSteering({
@@ -423,6 +498,7 @@ export async function prepareHostedChatExecution<
   const rootRunContext = await prepareHostedConversationRootRunContext(
     {
       authToken: input.request.authToken,
+      runEventAppendToken: input.request.runEventAppendToken,
       apiUrl: input.apiUrl.toString(),
       conversationId: input.request.conversationId,
       projectId: input.request.projectId,
@@ -452,10 +528,12 @@ export async function prepareHostedChatExecution<
     resolveModelThinking: input.resolveModelThinking,
     fetchSteering: input.fetchSteering,
     buildInstructions: input.buildInstructions,
+    serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint,
+    hostToolPolicy: input.hostToolPolicy,
   });
   const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages);
   const historicalToolInputCompactions: HistoricalToolInputCompactionDiagnostic[] = [];
-  const finalMessages = await prepareHostedChatRuntimeMessages(
+  const preparedMessages = await prepareHostedChatRuntimeMessages(
     normalized.effectiveMessages,
     {
       authToken: input.request.authToken,
@@ -471,6 +549,7 @@ export async function prepareHostedChatExecution<
       },
     },
   );
+  const finalMessages = preparedMessages;
   if (historicalToolInputCompactions.length > 0) {
     input.contextBudget?.logger?.debug?.("Hosted chat historical tool inputs compacted", {
       toolInputCompactions: historicalToolInputCompactions,

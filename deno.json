@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.1178",
+  "version": "0.1.1179",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -473,7 +473,8 @@
     "lint:ban-test-only": "deno run --allow-read scripts/lint/ban-test-only.ts",
     "lint:sanitizer-baseline": "deno run --allow-read scripts/lint/check-sanitizer-baseline.ts",
     "lint:skipped-tests": "deno run --allow-read scripts/lint/check-skipped-tests-baseline.ts",
-    "test:scripts": "deno test --config=scripts/test.deno.json --no-check --allow-read --allow-write --allow-run scripts/ci/publish-npm-packages.test.ts scripts/build/dnt-polyfill.test.ts scripts/build/generate-sbom.test.ts scripts/build/npm-dependency-sources.test.ts scripts/build/npm-extension-package-metadata.test.ts scripts/build/npm-package-metadata.test.ts scripts/build/npm-react-shims.test.ts scripts/docs/docs-coverage.test.ts scripts/docs/generate-api-reference.test.ts scripts/docs/guide-validation.test.ts scripts/lint/audit-core-deps.test.ts scripts/lint/audit-dependency-boundaries.test.ts scripts/lint/audit-extension-capabilities.test.ts scripts/lint/audit-extension-contracts.test.ts scripts/lint/audit-deps.test.ts scripts/lint/check-module-boundaries.test.ts scripts/lint/ban-test-only.test.ts scripts/lint/check-sanitizer-baseline.test.ts scripts/lint/check-skipped-tests-baseline.test.ts scripts/lint/check-coverage.test.ts scripts/security/audit-npm.test.ts scripts/security/submit-dependency-snapshot.test.ts",
+    "test:scripts": "deno test --config=scripts/test.deno.json --no-check --allow-read --allow-write --allow-run scripts/ci/publish-npm-packages.test.ts scripts/build/dnt-polyfill.test.ts scripts/build/generate-sbom.test.ts scripts/build/npm-dependency-sources.test.ts scripts/build/npm-extension-package-metadata.test.ts scripts/build/npm-package-metadata.test.ts scripts/build/npm-react-shims.test.ts scripts/docs/docs-coverage.test.ts scripts/docs/generate-api-reference.test.ts scripts/docs/guide-validation.test.ts scripts/lint/audit-core-deps.test.ts scripts/lint/audit-dependency-boundaries.test.ts scripts/lint/audit-extension-capabilities.test.ts scripts/lint/audit-extension-contracts.test.ts scripts/lint/audit-deps.test.ts scripts/lint/check-module-boundaries.test.ts scripts/lint/ban-test-only.test.ts scripts/lint/check-sanitizer-baseline.test.ts scripts/lint/check-skipped-tests-baseline.test.ts scripts/lint/check-coverage.test.ts scripts/security/audit-npm.test.ts scripts/security/submit-dependency-snapshot.test.ts && deno task test:tool-search-live",
+    "test:tool-search-live": "VF_DISABLE_LRU_INTERVAL=1 deno test --no-check -A tests/agent/verify-tool-search-live.test.ts",
     "test:cross-runtime": "deno run --allow-all src/platform/compat/cross-runtime.test.ts",
     "test:node": "node ./tests/node/run-tests.mjs 'src/**/*.test.ts'",
     "test:bun": "node ./tests/bun/run-tests.mjs src/",

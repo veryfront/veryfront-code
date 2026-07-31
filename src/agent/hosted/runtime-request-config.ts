@@ -9,6 +9,7 @@ import {
   type RuntimeClientProfile,
 } from "../runtime/client-profile.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
 
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
@@ -54,6 +55,28 @@ export type ResolvedHostedRuntimeRequestConfig = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Read the latest checkpoint overwritten by the authenticated server caller. */
+export function getServerResolvedToolExposureCheckpoint(
+  forwardedProps: Record<string, unknown> | undefined,
+  serverEnvelopeVerified: boolean,
+): ToolExposureCheckpoint | undefined {
+  if (!serverEnvelopeVerified) return undefined;
+  const value = forwardedProps?.serverResolvedToolExposureCheckpoint;
+  if (
+    !isRecord(value) ||
+    value.version !== 1 ||
+    !Array.isArray(value.loadedToolNames) ||
+    !value.loadedToolNames.every((name) => typeof name === "string" && name.length > 0) ||
+    new Set(value.loadedToolNames).size !== value.loadedToolNames.length
+  ) {
+    return undefined;
+  }
+  return {
+    version: 1,
+    loadedToolNames: [...value.loadedToolNames],
+  };
 }
 
 /** Return forwarded hosted model ID. */

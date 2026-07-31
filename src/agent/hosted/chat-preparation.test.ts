@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "#veryfront/chat/message-prep.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
@@ -10,6 +11,7 @@ import {
   prepareHostedChatRuntimeCreationOptions,
   prepareHostedChatRuntimeMessages,
 } from "./chat-preparation.ts";
+import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 
 const userMessage: ChatUiMessage = {
   id: "user-message-1",
@@ -173,6 +175,9 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     branchId?: string | null;
   }> = [];
   const parentEvents: unknown[] = [];
+  const checkpointPersistenceOperations: string[] = [];
+  let publicCheckpointAppends = 0;
+  let checkpointFlushComplete = true;
 
   const result = await prepareHostedChatRuntimeCreationOptions({
     request: createParsedHostedChatRequest({
@@ -211,6 +216,74 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
         parentEvents.push(...events);
         return Promise.resolve();
       },
+      durableRunMirror: {
+        handleChunk: () => Promise.resolve(),
+        appendEvents: () => {
+          publicCheckpointAppends++;
+          return Promise.resolve();
+        },
+        flush: () =>
+          Promise.resolve({
+            latestEventId: 1,
+            latestExternalEventSequence: 1,
+            pendingEventCount: 0,
+            consecutiveFailures: 0,
+            disabled: false,
+            hasFlushTimer: false,
+            hasRetryTimer: false,
+            inFlight: false,
+          }),
+        getSnapshot: () => ({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+        }),
+        dispose: () => {},
+      },
+      privateDurableRunMirror: {
+        handleChunk: () => Promise.resolve(),
+        appendEvents: (events) => {
+          checkpointPersistenceOperations.push(
+            `append:${events.map((event) => event.type).join(",")}`,
+          );
+          return Promise.resolve();
+        },
+        flush: () => {
+          checkpointPersistenceOperations.push("flush");
+          return Promise.resolve({
+            latestEventId: 2,
+            latestExternalEventSequence: 2,
+            pendingEventCount: checkpointFlushComplete ? 0 : 1,
+            consecutiveFailures: 0,
+            disabled: false,
+            hasFlushTimer: false,
+            hasRetryTimer: false,
+            inFlight: false,
+          });
+        },
+        getSnapshot: () => ({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+        }),
+        dispose: () => {
+          checkpointPersistenceOperations.push("dispose");
+        },
+      },
+    },
+    serverResolvedToolExposureCheckpoint: {
+      version: 1,
+      loadedToolNames: ["get_release"],
     },
     resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
     resolveModelThinking: (modelId) => modelId ? { enabled: true, budgetTokens: 1234 } : undefined,
@@ -273,7 +346,13 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
       source: "omitted",
     },
     publishParentRunEvents: result.creationOptions.publishParentRunEvents,
+    persistToolExposureCheckpoint: result.creationOptions.persistToolExposureCheckpoint,
+    requireToolExposureCheckpointPersistence: true,
     clientProfile: null,
+    serverResolvedToolExposureCheckpoint: {
+      version: 1,
+      loadedToolNames: ["get_release"],
+    },
     liveProjectSteering: {
       agent: {
         id: "agent-1",
@@ -294,6 +373,68 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
 
   await result.creationOptions.publishParentRunEvents?.([{ type: "state_delta" }]);
   assertEquals(parentEvents, [{ type: "state_delta" }]);
+
+  await result.creationOptions.persistToolExposureCheckpoint?.({
+    version: 1,
+    loadedToolNames: ["get_release"],
+  });
+  assertEquals(checkpointPersistenceOperations, [
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "flush",
+  ]);
+  assertEquals(publicCheckpointAppends, 0);
+
+  checkpointFlushComplete = false;
+  await assertRejects(
+    () =>
+      result.creationOptions.persistToolExposureCheckpoint?.({
+        version: 1,
+        loadedToolNames: ["get_release"],
+      }) ?? Promise.resolve(),
+    Error,
+    "not durably persisted",
+  );
+  assertEquals(checkpointPersistenceOperations.slice(-3), [
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "flush",
+    "dispose",
+  ]);
+});
+
+Deno.test("prepareHostedChatRuntimeCreationOptions hides deferred skill tools from the first hosted prompt", async () => {
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: {
+      id: "agent-1",
+      name: "Agent",
+      description: "Hosted agent",
+      instructions: "Base instructions",
+      tools: true,
+      skills: true,
+    },
+    projectId: "project-1",
+    authToken: "token-1",
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () =>
+      Promise.resolve({
+        instructions: "Project instructions",
+        skills: [{
+          id: "deploy",
+          name: "Deploy",
+          description: "Deploy the project",
+          instructions: "Use bash to deploy.",
+          allowedTools: ["bash"],
+        }],
+      }),
+    buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+  });
+
+  const instructions = result.creationOptions.instructions;
+  const system = Array.isArray(instructions)
+    ? instructions.map((message) => message.content).join("\n")
+    : instructions;
+  assertEquals(system.includes("Deploy the project"), true);
+  assertEquals(system.includes("bash"), false);
 });
 
 Deno.test("prepareHostedChatRuntimeCreationOptions uses configured agent tools by default", async () => {
@@ -319,6 +460,166 @@ Deno.test("prepareHostedChatRuntimeCreationOptions uses configured agent tools b
   ]);
   assertEquals(result.creationOptions.allowedProviderTools, ["web_search"]);
   assertEquals(result.creationOptions.includeRuntimeEssentialToolsWhenEmpty, true);
+});
+
+it("private checkpoints fail closed without a trusted run-event append token", async () => {
+  let publicMirrorAppends = 0;
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: {
+      id: "agent-1",
+      model: "openai/gpt-5.4",
+      tools: ["get_release"],
+    },
+    projectId: "project-1",
+    authToken: "user-api-token",
+    rootRunContext: {
+      durableRootRun: {
+        runId: "run-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+      durableRunMirror: {
+        handleChunk: () => Promise.resolve(),
+        appendEvents: () => {
+          publicMirrorAppends++;
+          return Promise.resolve();
+        },
+        flush: () =>
+          Promise.resolve({
+            latestEventId: 1,
+            latestExternalEventSequence: 1,
+            pendingEventCount: 0,
+            consecutiveFailures: 0,
+            disabled: false,
+            hasFlushTimer: false,
+            hasRetryTimer: false,
+            inFlight: false,
+          }),
+        getSnapshot: () => ({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+        }),
+        dispose: () => {},
+      },
+      privateDurableRunMirror: null,
+    },
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+  });
+
+  await assertRejects(
+    () =>
+      result.creationOptions.persistToolExposureCheckpoint?.({
+        version: 1,
+        loadedToolNames: ["get_release"],
+      }) ?? Promise.resolve(),
+    Error,
+    "trusted run-event append token",
+  );
+  assertEquals(publicMirrorAppends, 0);
+  assertEquals(
+    (result.creationOptions as unknown as Record<string, unknown>)
+      .requireToolExposureCheckpointPersistence,
+    undefined,
+  );
+});
+
+it("resolves private checkpoint persistence only after the durable flush completes", async () => {
+  const operations: string[] = [];
+  let resolveFlush: (() => void) | undefined;
+  const flushGate = new Promise<void>((resolve) => {
+    resolveFlush = resolve;
+  });
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: {
+      id: "agent-1",
+      model: "openai/gpt-5.4",
+      tools: ["get_release"],
+    },
+    projectId: "project-1",
+    authToken: "user-api-token",
+    rootRunContext: {
+      durableRootRun: {
+        runId: "run-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+      privateDurableRunMirror: {
+        handleChunk: () => Promise.resolve(),
+        appendEvents: (events) => {
+          operations.push(`append:${events.map((event) => event.type).join(",")}`);
+          return Promise.resolve();
+        },
+        flush: async () => {
+          operations.push("flush:start");
+          await flushGate;
+          operations.push("flush:end");
+          return {
+            latestEventId: 2,
+            latestExternalEventSequence: 2,
+            pendingEventCount: 0,
+            consecutiveFailures: 0,
+            disabled: false,
+            hasFlushTimer: false,
+            hasRetryTimer: false,
+            inFlight: false,
+          };
+        },
+        getSnapshot: () => ({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+        }),
+        dispose: () => {},
+      },
+    },
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+  });
+
+  let resolved = false;
+  const persistence = Promise.resolve(
+    result.creationOptions.persistToolExposureCheckpoint?.({
+      version: 1,
+      loadedToolNames: ["get_release"],
+    }),
+  ).then(() => {
+    resolved = true;
+  });
+  await Promise.resolve();
+
+  assertEquals(operations, [
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "flush:start",
+  ]);
+  assertEquals(resolved, false);
+  resolveFlush?.();
+  await persistence;
+  assertEquals(operations, [
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "flush:start",
+    "flush:end",
+  ]);
+  assertEquals(resolved, true);
 });
 
 Deno.test("prepareHostedChatExecution prepares root run, runtime, and final messages", async () => {
@@ -702,6 +1003,7 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
   try {
     const result = await prepareHostedChatExecution({
       request: createParsedHostedChatRequest({
+        runEventAppendToken: "run-event-service-token",
         conversationId: "11111111-1111-4111-a111-111111111111",
         projectId: "project-1",
         validatedContext: {
@@ -815,6 +1117,7 @@ Deno.test("prepareHostedChatExecution rejects compacted context when durable eve
       () =>
         prepareHostedChatExecution({
           request: createParsedHostedChatRequest({
+            runEventAppendToken: "run-event-service-token",
             conversationId: "11111111-1111-4111-a111-111111111111",
             projectId: "project-1",
             validatedContext: {

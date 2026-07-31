@@ -1,11 +1,72 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import {
   getForwardedHostedModelId,
   getForwardedHostedRuntimeOverrides,
+  getServerResolvedToolExposureCheckpoint,
   resolveHostedRuntimeRequestConfig,
   resolveHostedRuntimeThinkingOverride,
 } from "./runtime-request-config.ts";
+
+it("server-resolved tool exposure checkpoint parses strictly and fails closed", () => {
+  const checkpoint = {
+    version: 1 as const,
+    loadedToolNames: ["get_release"],
+  };
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: checkpoint,
+    }, true),
+    checkpoint,
+  );
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: {
+        ...checkpoint,
+        version: 2,
+      },
+    }, true),
+    undefined,
+  );
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: {
+        ...checkpoint,
+        loadedToolNames: ["get_release", "get_release"],
+      },
+    }, true),
+    undefined,
+  );
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: checkpoint,
+    }, false),
+    undefined,
+  );
+});
+
+it("ordinary hosted request resolution ignores forwarded private tool exposure state", () => {
+  const result = resolveHostedRuntimeRequestConfig({
+    agentConfig: {
+      model: "anthropic/claude-opus-4-6",
+    },
+    request: {
+      forwardedProps: {
+        serverResolvedToolExposureCheckpoint: {
+          version: 1,
+          loadedToolNames: ["delete_project"],
+        },
+      },
+    },
+    resolveModelId: (model) => model,
+  });
+
+  assertEquals(
+    (result as unknown as Record<string, unknown>).serverResolvedToolExposureCheckpoint,
+    undefined,
+  );
+});
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 
 function createAgentConfig(
@@ -42,6 +103,10 @@ Deno.test("getForwardedHostedRuntimeOverrides parses non-empty forwarded runtime
   assertEquals(getForwardedHostedRuntimeOverrides({ maxOutputTokens: 1200 }), {
     maxOutputTokens: 1200,
   });
+  assertEquals(
+    getForwardedHostedRuntimeOverrides({ runtimeOverrides: { toolLoading: "eager" } }),
+    undefined,
+  );
 });
 
 Deno.test("resolveHostedRuntimeThinkingOverride applies optional thinking override", () => {

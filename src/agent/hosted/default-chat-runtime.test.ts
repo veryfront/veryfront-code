@@ -15,6 +15,8 @@ import {
   createDefaultHostedChatRuntime,
   type DefaultHostedChatRuntimeTaskContext,
 } from "./default-chat-runtime.ts";
+import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
+import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 
 const unrestrictedSourceIntegrationPolicy = {
   schemaVersion: 1,
@@ -119,6 +121,193 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
     inputRequestId: "input-request-1",
   });
   assertEquals(capturedContext.availableToolNames, ["sleep"]);
+});
+
+Deno.test("hosted first provider call filters skill tools for every tool selector", async () => {
+  try {
+    const providerCappedToolNames = Array.from(
+      { length: 129 },
+      (_, index) => `provider_cap_tool_${String(index).padStart(3, "0")}`,
+    );
+    const cases: Array<{
+      tools: true | string[] | undefined;
+      allowedTools: string[];
+      hostToolAllow?: string[];
+      localToolNames?: string[];
+      model?: string;
+      sourceIntegrationPolicy?: {
+        schemaVersion: 1;
+        mode: "allowlist";
+        integrations: Record<string, { allowedToolIds: string[] }>;
+      };
+      expectedPresent: string[];
+      expectedAbsent: string[];
+    }> = [
+      {
+        tools: true,
+        allowedTools: ["bash"],
+        expectedPresent: ["load_skill"],
+        expectedAbsent: ["bash"],
+      },
+      {
+        tools: undefined,
+        allowedTools: ["bash"],
+        expectedPresent: ["load_skill"],
+        expectedAbsent: ["bash"],
+      },
+      {
+        tools: ["create_release"],
+        allowedTools: ["create_release", "delete_project"],
+        expectedPresent: ["create_release", "load_skill"],
+        expectedAbsent: ["delete_project"],
+      },
+      {
+        tools: ["bash"],
+        allowedTools: ["bash"],
+        hostToolAllow: ["load_skill"],
+        expectedPresent: ["load_skill"],
+        expectedAbsent: ["bash"],
+      },
+      {
+        tools: ["confluence__create_page"],
+        allowedTools: ["confluence__create_page"],
+        sourceIntegrationPolicy: {
+          schemaVersion: 1,
+          mode: "allowlist",
+          integrations: { confluence: { allowedToolIds: ["search_content"] } },
+        },
+        expectedPresent: ["load_skill"],
+        expectedAbsent: ["confluence__create_page"],
+      },
+      {
+        tools: providerCappedToolNames,
+        allowedTools: ["provider_cap_tool_128"],
+        localToolNames: providerCappedToolNames,
+        model: "openai/gpt-4.1",
+        expectedPresent: ["load_skill"],
+        expectedAbsent: ["provider_cap_tool_128"],
+      },
+    ];
+
+    for (const testCase of cases) {
+      let capturedProviderBody: unknown;
+      const prepared = await prepareHostedChatRuntimeCreationOptions({
+        request: {
+          agentId: undefined,
+          userId: "user-1",
+          authToken: "token-1",
+          messages: [],
+          validatedContext: { projectId: "project-1", branchId: null },
+          projectId: "project-1",
+          conversationId: undefined,
+          parentRunId: undefined,
+          upstreamParentConversationId: undefined,
+          upstreamParentRunId: undefined,
+          spawnedFromToolCallId: undefined,
+          model: testCase.model ?? "anthropic/claude-sonnet-4-6",
+          allowDelegation: undefined,
+          forwardedProps: undefined,
+          runtimeOverrides: undefined,
+          durableRootRun: undefined,
+          persistLatestUserMessageBeforeDurableRun: false,
+        },
+        agentConfig: {
+          id: "agent-1",
+          name: "Agent",
+          description: "Hosted agent",
+          instructions: "Base instructions",
+          ...(testCase.tools === undefined ? {} : { tools: testCase.tools }),
+          skills: true,
+        },
+        projectId: "project-1",
+        authToken: "token-1",
+        resolveModelId: (modelId) => modelId,
+        fetchSteering: () =>
+          Promise.resolve({
+            instructions: "Project instructions",
+            skills: [{
+              id: "deploy",
+              name: "Deploy",
+              description: "Deploy the project",
+              instructions: "Deploy the project safely.",
+              allowedTools: testCase.allowedTools,
+            }],
+          }),
+        buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+        ...(testCase.hostToolAllow === undefined
+          ? {}
+          : { hostToolPolicy: { allow: testCase.hostToolAllow } }),
+      });
+      const runtime = await createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: testCase.sourceIntegrationPolicy ??
+          unrestrictedSourceIntegrationPolicy,
+        ...(testCase.hostToolAllow === undefined
+          ? {}
+          : { hostToolPolicy: { allow: testCase.hostToolAllow } }),
+        options: { ...prepared.creationOptions, userId: "user-1" },
+        config: {
+          apiUrl: "https://api.example.com",
+          apiMcpUrl: "https://api.example.com/mcp",
+        },
+        buildLocalTools: () => ({
+          ...Object.fromEntries(
+            (testCase.localToolNames ?? []).map((toolName) => [
+              toolName,
+              localTool(`Run ${toolName}`),
+            ]),
+          ),
+          bash: localTool("Run shell commands"),
+          create_release: localTool("Create a release"),
+          delete_project: localTool("Delete a project"),
+          load_skill: localTool("Load skill"),
+        }),
+        createRemoteToolSource: testCase.sourceIntegrationPolicy === undefined
+          ? emptyRemoteSource
+          : (config) => ({
+            id: config.id ?? "source",
+            listTools: () =>
+              Promise.resolve([{
+                name: "confluence__create_page",
+                description: "Create a Confluence page",
+                parameters: { type: "object", properties: {} },
+              }]),
+            executeTool: () => Promise.resolve({ ok: true }),
+          }),
+        preloadLatestConversationUserText: false,
+      });
+
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          if (new URL(request.url).pathname.includes("/ai/gateway/")) {
+            capturedProviderBody = await request.clone().json();
+          }
+          return Response.json({ content: [], stop_reason: "end_turn", usage: {} });
+        },
+        async () => {
+          const stream = await runtime.agent.stream({
+            messages: [],
+            abortSignal: new AbortController().signal,
+          });
+          for await (const _chunk of stream.toUIMessageStream()) {
+            // Consume the first provider turn.
+          }
+        },
+      );
+
+      const providerBody = JSON.stringify(capturedProviderBody);
+      assertEquals(providerBody.includes("Deploy the project"), true);
+      for (const toolName of testCase.expectedPresent) {
+        assertEquals(providerBody.includes(toolName), true);
+      }
+      for (const toolName of testCase.expectedAbsent) {
+        assertEquals(providerBody.includes(toolName), false);
+      }
+      await runtime.cleanup();
+    }
+  } finally {
+    await toolRegistry.clearAll();
+  }
 });
 
 Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integration discovery", async () => {
@@ -232,42 +421,6 @@ Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the gl
   } finally {
     toolRegistry.clearAll();
   }
-});
-
-Deno.test("createDefaultHostedChatRuntime resolves configured owner tool selectors", async () => {
-  let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
-
-  await createDefaultHostedChatRuntime({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    options: {
-      projectId: "project-1",
-      authToken: "token-1",
-      instructions: "Base instructions",
-      model: "openai/gpt-5.4-nano",
-      agentId: "researcher",
-      allowedTools: ["fetch-paper"],
-    },
-    config: {
-      apiUrl: "https://api.example.com",
-      apiMcpUrl: "https://api.example.com/mcp",
-    },
-    buildLocalTools: (taskContext) => {
-      capturedContext = taskContext;
-      return {
-        "researcher--fetch-paper": {
-          ...localTool("Fetch a paper"),
-          id: "researcher--fetch-paper",
-          ownerAgentId: "researcher",
-          shortName: "fetch-paper",
-        },
-      };
-    },
-    createRemoteToolSource: emptyRemoteSource,
-    preloadLatestConversationUserText: false,
-  });
-
-  assertExists(capturedContext);
-  assertEquals(capturedContext.availableToolNames, ["researcher--fetch-paper"]);
 });
 
 Deno.test("createDefaultHostedChatRuntime awaits per-run tool setup and exposes its cleanup", async () => {

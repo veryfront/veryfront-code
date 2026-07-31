@@ -101,6 +101,58 @@ describe("request-scoped tool replacement for generate()", () => {
     toolRegistry.clearAll();
   });
 
+  it("exposes request replacement tools eagerly", async () => {
+    const observedToolNames: string[][] = [];
+    let step = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/request-tools-deferred",
+      async doGenerate(options: unknown) {
+        observedToolNames.push(toolNamesFromGenerateOptions(options));
+        step++;
+        if (step === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "lookup-deferred",
+              toolName: "lookup",
+              input: '{"query":"current"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+
+    const assistant = agent({
+      model: "hosted/request-tools-deferred",
+      system: "Use lookup.",
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const result = await assistant.generate({
+      input: "lookup",
+      tools: { lookup: makeLookupTool("replacement") },
+    });
+
+    assertEquals(observedToolNames[0], ["lookup"]);
+    assertEquals(result.toolCalls[0]?.status, "completed");
+    assertEquals(result.toolCalls[0]?.result, {
+      source: "replacement",
+      query: "current",
+    });
+  });
+
   it("does not fall through to configured, registry, remote, integration, or provider-native tools", async () => {
     toolRegistry.clearAll();
     const observedToolNames: string[][] = [];

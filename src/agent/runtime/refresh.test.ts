@@ -15,6 +15,11 @@ import type {
 } from "../types.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import type { TextGenerationRuntimeMessage } from "./text-generation-runtime-message-types.ts";
+import { flattenSystemInstructions, withRuntimeToolInventory } from "./tool-inventory.ts";
+
+function eagerAgent(config: Parameters<typeof agent>[0]): ReturnType<typeof agent> {
+  return agent({ ...config, __vfToolLoadingMode: "eager" } as Parameters<typeof agent>[0]);
+}
 
 function createRuntimeStream(parts: unknown[]) {
   return new ReadableStream<unknown>({
@@ -155,7 +160,7 @@ describe("agent runtime refresh hooks", () => {
         },
         rootPath,
       });
-      const assistant = agent({
+      const assistant = eagerAgent({
         id: "universal-skill-policy-agent",
         model: "hosted/universal-skill-policy",
         system: "Use the matching skill.",
@@ -225,7 +230,7 @@ describe("agent runtime refresh hooks", () => {
       },
     };
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/suppressed-tool-recovery",
       system: "Recover from stale tools.",
       maxSteps: 2,
@@ -310,7 +315,7 @@ describe("agent runtime refresh hooks", () => {
       inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
       execute: ({ query }) => ({ integration: "slack", query }),
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/mixed-suppressed-tool-recovery",
       system: "Recover from stale tools after checking integrations.",
       tools: { get_github: getGithub, get_slack: getSlack },
@@ -411,7 +416,7 @@ describe("agent runtime refresh hooks", () => {
       }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/tool-result-generate",
       system: "Generate tool result hook test",
       tools: { write_report: writeReport },
@@ -478,7 +483,7 @@ describe("agent runtime refresh hooks", () => {
       execute: ({ path }) => ({ path, created: true }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/empty-final-text",
       system: "Write the report and summarize the result.",
       tools: { write_report: writeReport },
@@ -549,7 +554,7 @@ describe("agent runtime refresh hooks", () => {
       execute: () => updateError,
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Update agents and recover from failed tool calls.",
       tools: { update_agent: updateAgent },
@@ -573,11 +578,14 @@ describe("agent runtime refresh hooks", () => {
 
   it("forces a final response after create_agent succeeds during generate()", async () => {
     const toolNamesByStep: string[][] = [];
+    const systemPromptsByStep: string[] = [];
     let callCount = 0;
+    let executionCount = 0;
     const model: ModelRuntime = {
       provider: "anthropic",
       modelId: "claude-sonnet-4-6",
       async doGenerate(options) {
+        systemPromptsByStep.push(extractSystemPrompt(options));
         const rawTools = (options as { tools?: unknown }).tools;
         const toolNames = Array.isArray(rawTools)
           ? rawTools.map((entry) =>
@@ -601,6 +609,19 @@ describe("agent runtime refresh hooks", () => {
           };
         }
 
+        if (callCount === 2) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "create-agent-generate-guessed-2",
+              toolName: "create_agent",
+              input: '{"id":"guessed-second-agent"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
         return {
           content: [{ type: "text", text: "Created Gmail Assistant." }],
           finishReason: "stop",
@@ -618,38 +639,105 @@ describe("agent runtime refresh hooks", () => {
       id: "create_agent",
       description: "Create a Studio project agent",
       inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
-      execute: async ({ id }) => ({
-        id,
-        name: "Gmail Assistant",
-        source_path: `agents/${id}.ts`,
-      }),
+      execute: async ({ id }) => {
+        executionCount++;
+        return {
+          id,
+          name: "Gmail Assistant",
+          source_path: `agents/${id}.ts`,
+        };
+      },
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
-      system: "Create agents and summarize successful tool results.",
+      system: flattenSystemInstructions(
+        withRuntimeToolInventory(
+          "Create agents and summarize successful tool results.",
+          ["create_agent", "web_fetch", "web_search"],
+        ),
+      ),
       tools: { create_agent: createAgent },
       providerTools: ["web_search", "web_fetch"],
       maxSteps: 3,
       resolveModelTransport: async () => ({ model }),
     });
 
-    await assistant.generate({ input: "Create a Gmail agent" });
+    const response = await assistant.generate({ input: "Create a Gmail agent" });
 
-    assertEquals(toolNamesByStep.length, 2);
+    assertEquals(toolNamesByStep.length, 3);
     assertEquals(toolNamesByStep[0]?.includes("create_agent"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
     assertEquals(toolNamesByStep[1], ["load_skill"]);
+    assertEquals(systemPromptsByStep[1]?.includes("- create_agent"), false);
+    assertEquals(systemPromptsByStep[1]?.includes("- load_skill"), true);
+    assertEquals(executionCount, 1);
+    assertEquals(response.toolCalls[1]?.status, "error");
+    assertEquals(
+      response.toolCalls[1]?.error,
+      'Tool "create_agent" is not available in the current model step',
+    );
+  });
+
+  it("omits unsupported provider-native tools from runtime inventory", async () => {
+    let capturedSystem = "";
+    const model: ModelRuntime = {
+      provider: "openai",
+      modelId: "gpt-4o-mini",
+      async doGenerate(options) {
+        capturedSystem = extractSystemPrompt(options);
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "openai/gpt-4o-mini",
+      system: flattenSystemInstructions(
+        withRuntimeToolInventory("Use configured tools.", ["web_search"]),
+      ),
+      providerTools: ["web_search"],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({ input: "Search the web" });
+
+    assertEquals(capturedSystem.includes("- web_search"), false);
   });
 
   it("removes provider-native tools from the forced final response after create_agent", async () => {
     const toolNamesByStep: string[][] = [];
     let callCount = 0;
+    let executionCount = 0;
     const model: ModelRuntime = {
       provider: "anthropic",
       modelId: "claude-sonnet-4-6",
       async doGenerate() {
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "create-agent-guessed-2",
+                toolName: "create_agent",
+                input: '{"id":"guessed-second-agent"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
         return {
           content: [{ type: "text", text: "unused" }],
           finishReason: "stop",
@@ -702,14 +790,17 @@ describe("agent runtime refresh hooks", () => {
       id: "create_agent",
       description: "Create a Studio project agent",
       inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
-      execute: async ({ id }) => ({
-        id,
-        name: "Gmail Assistant",
-        source_path: `agents/${id}.ts`,
-      }),
+      execute: async ({ id }) => {
+        executionCount++;
+        return {
+          id,
+          name: "Gmail Assistant",
+          source_path: `agents/${id}.ts`,
+        };
+      },
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Create agents and summarize successful tool results.",
       tools: { create_agent: createAgent },
@@ -728,6 +819,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
     assertEquals(toolNamesByStep[1], ["load_skill"]);
+    assertEquals(executionCount, 1);
   });
 
   for (const agentWriteToolName of ["create_agent", "update_agent"] as const) {
@@ -859,7 +951,7 @@ describe("agent runtime refresh hooks", () => {
         },
       });
 
-      const assistant = agent({
+      const assistant = eagerAgent({
         model: "anthropic/claude-sonnet-4-6",
         system:
           `Create scheduled agents. After ${agentWriteToolName} succeeds, call create_schedule before final output.`,
@@ -951,7 +1043,7 @@ describe("agent runtime refresh hooks", () => {
       },
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Create agents and recover from failed tool calls.",
       tools: { create_agent: createAgent },
@@ -1039,7 +1131,7 @@ describe("agent runtime refresh hooks", () => {
       execute: () => updateError,
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Update agents and recover from failed tool calls.",
       tools: { update_agent: updateAgent },
@@ -1131,7 +1223,7 @@ describe("agent runtime refresh hooks", () => {
         }]),
       executeTool: () => Promise.resolve(authenticationRequired),
     };
-    const assistant = agent(
+    const assistant = eagerAgent(
       {
         model: "anthropic/claude-sonnet-4-6",
         system: "Use Gmail when requested.",
@@ -1229,7 +1321,7 @@ describe("agent runtime refresh hooks", () => {
       execute: () => ({ content: "reference" }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Recover from a missing skill.",
       tools: {
@@ -1318,7 +1410,7 @@ describe("agent runtime refresh hooks", () => {
       }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Update agents and summarize successful tool results.",
       tools: { update_agent: updateAgent },
@@ -1396,7 +1488,7 @@ describe("agent runtime refresh hooks", () => {
       }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/tool-result-stream",
       system: "Stream tool result hook test",
       tools: { write_report: writeReport },
@@ -1468,7 +1560,7 @@ describe("agent runtime refresh hooks", () => {
       },
     };
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/text-placeholder-stream",
       system: "Placeholder recovery regression test",
       maxSteps: 2,
@@ -1553,7 +1645,7 @@ describe("agent runtime refresh hooks", () => {
       )(),
       execute: ({ max_steps }) => ({ ok: true, max_steps }),
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/skill-invoke-generate",
       system: "Skill override generate test",
       tools: { load_skill: loadSkill, invoke_agent: invokeAgent },
@@ -1654,7 +1746,7 @@ describe("agent runtime refresh hooks", () => {
       )(),
       execute: ({ max_steps }) => ({ ok: true, max_steps }),
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/skill-invoke-stream",
       system: "Skill override stream test",
       tools: { load_skill: loadSkill, invoke_agent: invokeAgent },
@@ -1732,7 +1824,7 @@ describe("agent runtime refresh hooks", () => {
       )(),
       execute: ({ max_steps }) => ({ ok: true, max_steps }),
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/skill-resume-stream",
       system: "Skill resumed stream test",
       tools: { invoke_agent: invokeAgent },
@@ -1840,7 +1932,7 @@ describe("agent runtime refresh hooks", () => {
         return { ok: true };
       },
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/invoke-agent-evidence-generate",
       system: "Supplier invoice orchestrator",
       tools: { invoke_agent: invokeAgent },
@@ -1918,7 +2010,7 @@ describe("agent runtime refresh hooks", () => {
         return { ok: true };
       },
     });
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/invoke-agent-evidence-stream",
       system: "Supplier invoice orchestrator",
       tools: { invoke_agent: invokeAgent },
@@ -2011,7 +2103,7 @@ describe("agent runtime refresh hooks", () => {
       },
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/runtime-refresh-generate",
       system: "Base system prompt",
       tools: {
@@ -2126,7 +2218,7 @@ describe("agent runtime refresh hooks", () => {
       execute: async ({ projectId }) => ({ projectId }),
     });
 
-    const assistant = agent({
+    const assistant = eagerAgent({
       model: "hosted/runtime-refresh-stream",
       system: "Base streaming system prompt",
       tools: { switch_project: switchProject },
