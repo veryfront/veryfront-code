@@ -82,6 +82,69 @@ it("tool search ranks exact name, description, and parameter matches", () => {
   assertEquals(parameter.matches[0]?.name, "get_release");
 });
 
+it("tool search orders all four match ranks before name tie-breaking", () => {
+  const rankedCatalog = [
+    definition("a_parameter", "Other capability", "Release value"),
+    definition("z_description", "Release information"),
+    definition("release_notes", "Other capability"),
+    definition("release", "Other capability"),
+  ];
+
+  assertEquals(
+    searchToolExposure({
+      query: "release",
+      authorized: rankedCatalog,
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["release", "release_notes", "z_description", "a_parameter"],
+  );
+});
+
+it("tool search normalizes ASCII case and underscores as spaces", () => {
+  assertEquals(
+    searchToolExposure({
+      query: "GET RELEASE",
+      authorized: [definition("get_release", "Read a deployment")],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["get_release"],
+  );
+});
+
+it("tool search breaks equal-rank ties by raw ASCII name order", () => {
+  const tiedCatalog = [
+    definition("alpha", "Shared capability"),
+    definition("Zeta", "Shared capability"),
+    definition("Beta", "Shared capability"),
+  ];
+
+  assertEquals(
+    searchToolExposure({
+      query: "shared",
+      authorized: tiedCatalog,
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["Beta", "Zeta", "alpha"],
+  );
+});
+
+it("tool search returns a complete miss result for a blank normalized query", () => {
+  assertEquals(
+    searchToolExposure({
+      query: " \t ",
+      authorized: catalog,
+      state: createToolExposureState(),
+    }),
+    {
+      matches: [],
+      resultCount: 0,
+      loadedCount: 0,
+      attachableMetadataCount: 0,
+      miss: true,
+    },
+  );
+});
+
 it("tool search caps stable schema-free results at five", () => {
   const authorized = Array.from(
     { length: 8 },
