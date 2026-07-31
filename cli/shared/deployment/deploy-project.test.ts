@@ -42,7 +42,7 @@ import {
   readyManifest,
   withDeployEnv,
   withFetchStub,
-} from "./_deploy-test-support.ts";
+} from "../../test-utils/deploy-test-support.ts";
 
 async function expectDeployError(
   fn: () => Promise<unknown>,

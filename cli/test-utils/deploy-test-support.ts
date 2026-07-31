@@ -3,12 +3,14 @@
  *
  * Used by deploy-project.test.ts and the MCP deploy-tool tests so both drive
  * the real DeployProject module over the same fake control plane.
+ *
+ * @module cli/test-utils/deploy-test-support
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "veryfront/testing/assert";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import type { ReleaseAssetManifestResponse } from "veryfront/release-assets";
-import { computeSourceDigest, writePushReceipt } from "../deployment-provenance.ts";
+import { computeSourceDigest, writePushReceipt } from "../shared/deployment-provenance.ts";
 import type {
   DeployControlPlane,
   DeployDeployment,
@@ -16,7 +18,7 @@ import type {
   DeployProjectRecord,
   DeployRelease,
   DeployReleaseFile,
-} from "./control-plane.ts";
+} from "../shared/deployment/control-plane.ts";
 
 export const CONTROL_PLANE = "https://control.example.test/api";
 export const PROJECT_ID = "project-1";

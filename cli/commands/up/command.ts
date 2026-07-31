@@ -2,7 +2,6 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { cliLogger, exitProcess } from "#cli/utils";
 import { cwd } from "veryfront/platform";
-import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { brand, createNoopSpinner, dim } from "#cli/ui";
 import { ensureAuthenticated } from "../../auth/index.ts";
@@ -12,12 +11,17 @@ import { isTTY, promptUser } from "#cli/utils";
 import { logSuccess, logWarning } from "#cli/utils";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import {
+  createApiClient,
   resolveConfigWithAuthDetails,
   type ResolvedConfig,
-  type VeryfrontConfig,
 } from "#cli/shared/config";
 import { reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { normalizeProjectSlug } from "#cli/shared/slug";
+import {
+  inferProjectSlugFromDirectory,
+  resolveOrCreateProject,
+} from "#cli/shared/project-resolution";
+import { getProjectTarget } from "../../shared/deployment-provenance.ts";
 import { pushCommand } from "../push/index.ts";
 import { deployCommand } from "../deploy/index.ts";
 import { buildPushUrls } from "../push/command.ts";
@@ -82,25 +86,11 @@ async function analyzeDirectory(
 
   if (!hasCode) return { type: "empty" };
 
-  let suggestedSlug = normalizeProjectSlug(projectDir.split(/[/\\]/).pop() || "my-app");
-  const packagePath = join(projectDir, "package.json");
-  try {
-    if (await fs.exists(packagePath)) {
-      const pkg = JSON.parse(await fs.readTextFile(packagePath)) as { name?: string };
-      if (pkg.name) suggestedSlug = normalizeProjectSlug(pkg.name);
-    }
-  } catch (error) {
-    cliLogger.debug("Failed to read package.json for project slug:", error);
-  }
-  return { type: "has-code", config: resolved.config, suggestedSlug };
-}
-
-async function saveConfig(projectDir: string, config: VeryfrontConfig): Promise<void> {
-  const fs = createFileSystem();
-  await fs.writeTextFile(
-    join(projectDir, "veryfront.json"),
-    `${JSON.stringify(config, null, 2)}\n`,
-  );
+  return {
+    type: "has-code",
+    config: resolved.config,
+    suggestedSlug: await inferProjectSlugFromDirectory(projectDir),
+  };
 }
 
 export async function upCommand(
@@ -171,37 +161,53 @@ export async function upCommand(
       if (trimmed) slug = normalizeProjectSlug(trimmed);
     }
 
-    if (dryRun) {
-      if (!jsonOutput) cliLogger.info(dim(`Would create project: ${slug}`));
-    } else {
-      const projectSpinner = jsonOutput
-        ? createNoopSpinner()
-        : createSpinner(`Creating project "${slug}"...`);
+    const projectSpinner = dryRun || jsonOutput
+      ? createNoopSpinner()
+      : createSpinner(`Creating project "${slug}"...`);
 
-      try {
-        if (!context.config.apiToken) {
-          projectSpinner.stop();
-          throw new Error("Not authenticated");
-        }
-
-        const reserved = await reserveProjectSlug(
-          slug,
-          context.config.apiToken,
-          env,
-          context.config.apiUrl,
-          { allowAlternativeSlug: false },
-        );
-        slug = reserved.slug;
+    try {
+      if (!dryRun && !context.config.apiToken) {
         projectSpinner.stop();
-
-        await saveConfig(projectDir, { projectSlug: slug });
-
-        if (!jsonOutput) logSuccess(`Created project ${slug}`);
-      } catch (error) {
-        projectSpinner.stop();
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Project creation failed: ${message}`, { cause: error });
+        throw new Error("Not authenticated");
       }
+
+      const outcome = await resolveOrCreateProject({
+        projectDir,
+        config: { ...context.config, projectSlug: slug },
+        source: { kind: "inferred", name: "project files" },
+        client: {
+          getProject: (reference) =>
+            getProjectTarget(
+              createApiClient({ ...context.config, projectSlug: slug }),
+              reference,
+            ),
+          reserveSlug: async (reserveSlug, options) => {
+            const reserved = await reserveProjectSlug(
+              reserveSlug,
+              context.config.apiToken,
+              env,
+              context.config.apiUrl,
+              options,
+            );
+            return { slug: reserved.slug, projectId: reserved.projectId };
+          },
+        },
+        allowAlternativeSlug: false,
+        dryRun,
+      });
+      projectSpinner.stop();
+
+      if (outcome.kind === "planned-create") {
+        if (!jsonOutput) cliLogger.info(dim(`Would create project: ${outcome.plannedSlug}`));
+        slug = outcome.plannedSlug;
+      } else {
+        slug = outcome.project.slug;
+        if (!jsonOutput) logSuccess(`Created project ${slug}`);
+      }
+    } catch (error) {
+      projectSpinner.stop();
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Project creation failed: ${message}`, { cause: error });
     }
 
     projectSlug = slug;

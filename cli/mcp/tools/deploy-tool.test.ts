@@ -13,7 +13,7 @@ import {
   PROJECT_SLUG,
   withDeployEnv,
   withFetchStub,
-} from "../../shared/deployment/_deploy-test-support.ts";
+} from "../../test-utils/deploy-test-support.ts";
 
 function toolDeployProject(controlPlane: InMemoryDeployControlPlane): DeployProject {
   return createDeployProject({

@@ -20,9 +20,17 @@ import {
   resolveGitSource,
   validatePushReceipt,
 } from "../deployment-provenance.ts";
-import { writeProjectLink } from "../project-link.ts";
 import { normalizeProjectSlug } from "../slug.ts";
 import { reserveProjectSlug } from "../reserve-slug.ts";
+import {
+  inferProjectSlugFromDirectory,
+  projectApiReference,
+  ProjectReferenceNotFoundError,
+  type ProjectResolutionClient,
+  type ProjectResolutionOutcome,
+  resolveOrCreateProject,
+  shouldPersistProjectLink,
+} from "../project-resolution.ts";
 import {
   type ProjectReferenceSource,
   resolveConfigWithAuth,
@@ -190,50 +198,6 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function getErrorStatus(error: unknown): number | undefined {
-  if (typeof error !== "object" || error === null) return undefined;
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" ? status : undefined;
-}
-
-function projectApiReference(config: ResolvedConfig): string {
-  return config.projectId ?? config.projectSlug;
-}
-
-function shouldPersistProjectLink(source: ProjectReferenceSource): boolean {
-  return source.kind === "inferred" || source.kind === "local-link";
-}
-
-async function inferDeployProjectSlug(projectDir: string): Promise<string> {
-  const fs = createFileSystem();
-  const packagePath = join(projectDir, "package.json");
-
-  try {
-    if (await fs.exists(packagePath)) {
-      const pkg = JSON.parse(await fs.readTextFile(packagePath)) as { name?: string };
-      if (pkg.name) return normalizeProjectSlug(pkg.name);
-    }
-  } catch {
-    // Fall back to the directory name below.
-  }
-
-  const dirName = projectDir.split(/[/\\]/).filter(Boolean).pop() ?? "my-app";
-  return normalizeProjectSlug(dirName);
-}
-
-async function persistProjectLink(
-  projectDir: string,
-  config: ResolvedConfig,
-  project: ProjectTarget,
-): Promise<ResolvedConfig> {
-  await writeProjectLink(projectDir, {
-    controlPlane: config.apiUrl,
-    projectId: project.id,
-    projectSlug: project.slug,
-  });
-  return { ...config, projectId: project.id, projectSlug: project.slug };
-}
-
 async function ensureProjectLinkedForDeploy(
   projectDir: string,
   env: EnvironmentConfig,
@@ -256,77 +220,78 @@ async function ensureProjectLinkedForDeploy(
   const isInferredReference = projectReferenceSource.kind === "inferred";
   const projectReference = requestReference ??
     (isInferredReference
-      ? normalizeProjectSlug(initial.projectSlug || await inferDeployProjectSlug(projectDir))
+      ? normalizeProjectSlug(initial.projectSlug || await inferProjectSlugFromDirectory(projectDir))
       : initial.projectSlug);
   const config = requestReference
     ? { ...initial, projectId: undefined, projectSlug: requestReference }
     : { ...initial, projectSlug: projectReference };
   const controlPlane = controlPlaneFactory(config);
 
-  if (!isInferredReference) {
-    try {
-      const project = await controlPlane.getProject(projectApiReference(config));
-      const resolvedConfig = shouldPersistProjectLink(projectReferenceSource)
-        ? mode === "dry-run"
-          ? { ...config, projectId: project.id, projectSlug: project.slug }
-          : await persistProjectLink(projectDir, config, project)
-        : { ...config, projectSlug: project.slug };
-      return {
-        config: resolvedConfig,
-        controlPlane: controlPlaneFactory(resolvedConfig),
-        project,
-        plannedProjectSlug: project.slug,
-      };
-    } catch (error) {
-      if (error instanceof VeryfrontError) throw error;
-      if (getErrorStatus(error) !== 404) {
-        throw new Error(
-          `Could not check project "${projectReference}": ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    }
-
-    throw new Error(
-      `Project "${projectReference}" was not found. Check the project reference or remove it to let deploy create a project for this directory.`,
-    );
-  }
-
   const suggestedSlug = normalizeProjectSlug(projectReference);
-  if (receipt) {
+  if (isInferredReference && receipt) {
     throw new Error(
       `The local push receipt is orphaned: ${PUSH_RECEIPT_RELATIVE_PATH} targets project "${receipt.projectSlug}", but deploy inferred "${suggestedSlug}" because there is no explicit config or local project link. Remove the receipt and run veryfront push again, or relink this project before deploying.`,
     );
   }
 
-  if (mode === "dry-run") {
-    const dryRunConfig = { ...initial, projectSlug: suggestedSlug };
+  const resolutionClient: ProjectResolutionClient = {
+    getProject: (reference) => controlPlane.getProject(reference),
+    reserveSlug: async (slug, options) => {
+      const reserved = await reserveProjectSlug(
+        slug,
+        initial.apiToken,
+        env,
+        initial.apiUrl,
+        options,
+      );
+      return { slug: reserved.slug, projectId: reserved.projectId };
+    },
+  };
+
+  let outcome: ProjectResolutionOutcome;
+  try {
+    outcome = await resolveOrCreateProject({
+      projectDir,
+      config,
+      source: projectReferenceSource,
+      client: resolutionClient,
+      createMissingReference: false,
+      dryRun: mode === "dry-run",
+    });
+  } catch (error) {
+    if (error instanceof ProjectReferenceNotFoundError) {
+      throw new Error(
+        `Project "${projectReference}" was not found. Check the project reference or remove it to let deploy create a project for this directory.`,
+      );
+    }
+    if (isInferredReference || error instanceof VeryfrontError) throw error;
+    throw new Error(
+      `Could not check project "${projectReference}": ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  if (outcome.kind === "planned-create") {
+    const dryRunConfig = { ...initial, projectSlug: outcome.plannedSlug };
     return {
       config: dryRunConfig,
       controlPlane: controlPlaneFactory(dryRunConfig),
       project: null,
-      plannedProjectSlug: suggestedSlug,
+      plannedProjectSlug: outcome.plannedSlug,
     };
   }
 
-  const created = await reserveProjectSlug(
-    suggestedSlug,
-    initial.apiToken,
-    env,
-    initial.apiUrl,
-  );
-  const createdConfig = { ...initial, projectSlug: created.slug };
-  const createdControlPlane = controlPlaneFactory(createdConfig);
-  const project = created.projectId
-    ? { id: created.projectId, slug: created.slug }
-    : await createdControlPlane.getProject(created.slug);
-  const linkedConfig = await persistProjectLink(projectDir, createdConfig, project);
+  // A source that never owns the local link keeps its own reference: only the
+  // slug is refreshed from the control plane, never the id.
+  const resolvedConfig = shouldPersistProjectLink(projectReferenceSource)
+    ? outcome.config
+    : { ...config, projectSlug: outcome.project.slug };
   return {
-    config: linkedConfig,
-    controlPlane: controlPlaneFactory(linkedConfig),
-    project,
-    plannedProjectSlug: created.slug,
+    config: resolvedConfig,
+    controlPlane: controlPlaneFactory(resolvedConfig),
+    project: outcome.project,
+    plannedProjectSlug: outcome.project.slug,
   };
 }
 

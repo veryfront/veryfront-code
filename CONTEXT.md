@@ -39,6 +39,20 @@ deploy tool are presentation adapters over this module; the control plane
 deployment is verified **and** ready; no adapter skips or re-implements
 verification, polling, or readiness waits.
 
+## Project Resolution
+
+The single owner of "which project does this directory target, and does it
+exist on the control plane?": `cli/shared/project-resolution.ts`
+(`resolveOrCreateProject`). One request carries the project directory, the
+resolved config, the reference source, and whether the run may create or only
+plan; it settles into one typed outcome — existing, created, or
+planned-create. Push, deploy, up, demo, and the TUI are presentation adapters
+over this module: they own their wording, spinners, and typed-error phrasing,
+never the decision. There is exactly one persisted link format
+(`.veryfront/project.json`), written only for references a directory owns
+(inferred or local-link) and never on a dry run. The project client
+(control plane over HTTP, CLI API client, fake in tests) is its one seam.
+
 ## Stream Delivery
 
 The separate agent-loop fan-out boundary that will route lifecycle frames to
