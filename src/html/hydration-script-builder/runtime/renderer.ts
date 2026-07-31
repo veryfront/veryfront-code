@@ -33,7 +33,7 @@ import { HYDRATION_DATA_ELEMENT_ID } from "./hydration-data.ts";
 export function isModuleNotFoundError(error: unknown): boolean {
   if (!error) return false;
   if (error instanceof SyntaxError) return false;
-  const message = String((error && (error as Error).message) || error);
+  const message = String((error as Error).message || error);
   return /(?:dynamically imported module|Importing a module script failed|Failed to load module script)/i
     .test(message);
 }

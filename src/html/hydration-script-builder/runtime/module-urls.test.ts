@@ -126,6 +126,10 @@ describe("hydration-script-builder/runtime/module-urls", () => {
   describe("buildPageDataEndpoint", () => {
     const origin = "https://veryfront.test";
 
+    // Empty, not "index": the endpoint handler turns this URL into slug "",
+    // which is the same value the full-page SSR path derives for "/" and the
+    // form both route resolvers pin for the root page. "index" would resolve
+    // app/index/page on App Router, which is not the root route.
     it("maps the root path to the empty page-data slug", () => {
       assertEquals(buildPageDataEndpoint("/", origin), "/_veryfront/page-data/.json");
     });

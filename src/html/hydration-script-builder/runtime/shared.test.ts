@@ -125,6 +125,33 @@ describe("hydration-script-builder/runtime/shared", () => {
       });
     });
 
+    // performance.now() returning 0 is a legitimate timestamp, not a missing
+    // timer. A falsy check would leak the map entry and skip the measurement.
+    it("measures a span that started at timestamp zero", () => {
+      const originalNow = performance.now;
+      const readings = [0, 5];
+      let call = 0;
+      performance.now = () => readings[Math.min(call++, readings.length - 1)] as number;
+      try {
+        withCapturedConsole((captured) => {
+          const { perfStart, perfEnd } = createLogging(stubWindow({}, true));
+          perfStart("boot");
+          assertEquals(perfEnd("boot"), 5);
+          assertEquals(captured.log.length, 1);
+        });
+      } finally {
+        performance.now = originalNow;
+      }
+    });
+
+    it("returns zero and logs nothing for a label that was never started", () => {
+      withCapturedConsole((captured) => {
+        const { perfEnd } = createLogging(stubWindow({}, true));
+        assertEquals(perfEnd("never-started"), 0);
+        assertEquals(captured.log, []);
+      });
+    });
+
     it("turns DEBUG on for the vf_debug search param", () => {
       withCapturedConsole(() => {
         assertEquals(createLogging(stubWindow({ search: "?vf_debug=1" })).DEBUG, true);

@@ -107,9 +107,29 @@ export function buildPinnedRscModuleUrl(
 /**
  * The page-data endpoint for a route, preserving the route's query string.
  *
+ * The root route deliberately produces `/_veryfront/page-data/.json` — an empty
+ * slug, not `index`. That looks wrong and has been queried in review, so the
+ * reasoning is written down here:
+ *
+ * - The endpoint handler derives `slug` by stripping the prefix and `.json`
+ *   (page-data-endpoint-handler.ts), so this URL yields `""`.
+ * - `""` is the canonical root slug on the server. The full-page SSR path
+ *   derives exactly the same value (`ssr.handler.ts`: `pathname === "/" ? ""`),
+ *   and `normalizeSlug` maps `/` to `""` (types/entities/getEntityInfo.ts).
+ * - Both resolvers accept it. Pages Router special-cases
+ *   `normalizedSlug === "index" || normalizedSlug === ""` to the same
+ *   `pages/index` lookup, and `tests/integration/core/getEntityInfo.test.ts`
+ *   pins both forms resolving the same home page. App Router branches on
+ *   `slug ? app/<slug> : app` and `app-route-resolver.test.ts` pins the empty
+ *   slug resolving `app/page`.
+ *
+ * So `index` is not merely unnecessary here, it would be wrong for App Router:
+ * that slug resolves `app/index/page`, which is not the root route.
+ *
  * TODO(convergence): routing/client/page-loader.ts builds the same endpoint but
- * maps `/` to `index` where this maps it to the empty string, so the two
- * produce different URLs for the root route and cannot be collapsed here.
+ * maps `/` to `index`. Converge onto the empty slug used here rather than the
+ * other way round — and check whether page-loader's mapping already breaks root
+ * SPA navigation on App Router projects.
  */
 export function buildPageDataEndpoint(path: string, origin: string): string {
   const targetUrl = new URL(path, origin);

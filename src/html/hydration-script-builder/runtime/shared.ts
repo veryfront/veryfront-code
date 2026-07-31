@@ -50,7 +50,9 @@ export function createLogging(window: RuntimeWindow): RuntimeLogging {
   const perfEnd = DEBUG
     ? (label: string) => {
       const start = perfTimers.get(label);
-      if (!start) return 0;
+      // A recorded 0 is a real timestamp, so absence has to be the test —
+      // falsiness would leak the entry and silently skip the measurement.
+      if (start === undefined) return 0;
 
       const duration = performance.now() - start;
       perfTimers.delete(label);
