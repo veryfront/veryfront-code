@@ -17,12 +17,12 @@ import { brand, createNoopSpinner, createSpinner, dim, formatDuration } from "#c
 import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import {
   createDeployProject,
-  type DeployEvent,
   type DeployPlan,
   type DeployProject,
   type DeployProjectOutcome,
   type DeployStepName,
 } from "../../shared/deployment/deploy-project.ts";
+import { deployProgressText, initialDeployProgressText } from "../../shared/deployment/progress.ts";
 import type { DeployResult } from "../../shared/deployment/result.ts";
 
 /**
@@ -143,49 +143,6 @@ function commandStepName(stepName: DeployStepName): string {
   return stepName === "create-deployment" ? "deploy" : stepName;
 }
 
-function progressForEvent(
-  event: Extract<DeployEvent, { kind: "step" }>,
-  env: string,
-  verbose: boolean,
-): string | null {
-  if (event.phase !== "started") return null;
-  switch (event.step) {
-    case "resolve-config":
-      return verbose ? "Resolving configuration..." : "Linking project...";
-    case "push-source":
-      return verbose ? "Pushing source..." : "Uploading source...";
-    case "resolve-target":
-    case "verify-source":
-    case "create-release":
-    case "verify-release-source":
-    case "wait-release-assets":
-      return verbose ? progressDetailForBuildStep(event.step, env) : "Building release...";
-    case "create-deployment":
-      return `Deploying to ${env}...`;
-    case "verify-deployment":
-      return verbose ? `Verifying ${env} deployment...` : `Deploying to ${env}...`;
-    case "wait-environment-url":
-      return verbose ? `Waiting for ${env} URL...` : `Verifying ${env} URL...`;
-  }
-}
-
-function progressDetailForBuildStep(stepName: DeployStepName, env: string): string {
-  switch (stepName) {
-    case "resolve-target":
-      return `Looking up environment "${env}"...`;
-    case "verify-source":
-      return "Verifying pushed source...";
-    case "create-release":
-      return "Creating release...";
-    case "verify-release-source":
-      return "Verifying release source...";
-    case "wait-release-assets":
-      return "Waiting for release assets...";
-    default:
-      return "Building release...";
-  }
-}
-
 async function deployCommandHuman(
   options: DeployOptions,
   seams: DeployCommandTestingSeams,
@@ -193,7 +150,7 @@ async function deployCommandHuman(
   const { env, quiet = false } = options;
   const startedAt = Date.now();
   const verbose = isVerbose();
-  let progressText = verbose ? "Resolving configuration..." : "Linking project...";
+  let progressText = initialDeployProgressText(verbose);
   const spinner = quiet ? createNoopSpinner() : createSpinner(progressText);
   const updateProgress = (next: string | null): void => {
     if (!next) return;
@@ -210,7 +167,7 @@ async function deployCommandHuman(
           warning = event.message;
           return;
         }
-        updateProgress(progressForEvent(event, env, verbose));
+        updateProgress(deployProgressText(event, env, verbose));
       },
     });
   } catch (error) {
