@@ -99,7 +99,6 @@ export function getRuntimeToolExposureCheckpoint(
   const value = (config as RuntimeToolFilterConfig).__vfToolExposureCheckpoint;
   if (
     value?.version !== 1 ||
-    typeof value.authorizedCatalogFingerprint !== "string" ||
     !Array.isArray(value.loadedToolNames) ||
     !value.loadedToolNames.every(isValidToolExposureCheckpointName)
   ) {

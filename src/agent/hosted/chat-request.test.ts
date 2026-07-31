@@ -1757,13 +1757,11 @@ describe("agent/hosted-chat-request", () => {
           durableRootRun: { runId: "run_root_1", messageId },
           serverResolvedToolExposureCheckpoint: {
             version: 1,
-            authorizedCatalogFingerprint: "spoofed-root-catalog",
             loadedToolNames: ["delete_project"],
           },
           forwardedProps: {
             serverResolvedToolExposureCheckpoint: {
               version: 1,
-              authorizedCatalogFingerprint: "spoofed-catalog",
               loadedToolNames: ["delete_project"],
             },
             serverResolvedOperationalToolLoadingOverride: "eager",
@@ -1792,7 +1790,6 @@ describe("agent/hosted-chat-request", () => {
         parts: [{
           type: "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
           version: 1,
-          authorizedCatalogFingerprint: "private-catalog",
           loadedToolNames: ["get_release"],
         }],
       }],

@@ -125,33 +125,6 @@ describe("agent/agent-service-runtime", () => {
     assertEquals(typeof tools?.execute_skill_script, "object");
   });
 
-  it("keeps tool loading policy out of the service agent contract", () => {
-    const bundle = createAgentServiceRuntime({
-      serviceName: "test-eager-agent-service",
-      getConfig: () => ({
-        VERYFRONT_API_URL: "https://api.example.test",
-        NODE_ENV: "test",
-        PORT: 3180,
-        ALLOWED_ORIGINS: ["https://studio.example.test"],
-      }),
-      getAgentConfig: () => ({
-        id: "assistant",
-        name: "Assistant",
-        description: "",
-        instructions: "You are a test assistant.",
-      }),
-      logger: createLogger(),
-      prepareExecution: async () => ({ ok: true }),
-      streamExecutionToAgUiResponse: () => new Response("streamed"),
-      startDetachedExecution: async () => {},
-    });
-
-    assertEquals(
-      Object.hasOwn(bundle.runtime.contract.agents.assistant?.config ?? {}, "toolLoading"),
-      false,
-    );
-  });
-
   it("starts the node agent service server from the assembled runtime", async () => {
     const service = await startNodeAgentService({
       serviceName: "node-test-agent-service",

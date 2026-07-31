@@ -255,15 +255,6 @@ it("tool exposure checkpoints are private, sorted, and restore only currently au
     ["get_release"],
   );
   assertEquals(
-    [
-      ...restoreToolExposureState({
-        ...checkpoint,
-        authorizedCatalogFingerprint: "v1-stale",
-      }, authorized).loadedToolNames,
-    ],
-    ["create_release", "get_release"],
-  );
-  assertEquals(
     [...restoreToolExposureState({ ...checkpoint, version: 2 }, authorized).loadedToolNames],
     [],
   );
@@ -283,7 +274,6 @@ it("tool exposure checkpoints canonicalize authorized loaded names", () => {
 
   assertEquals(createToolExposureCheckpoint(authorized, state), {
     version: 1,
-    authorizedCatalogFingerprint: "v1-dec31e38",
     loadedToolNames: ["get_release", "list_projects"],
   });
 });
@@ -309,14 +299,12 @@ it("tool exposure checkpoint restoration fails closed and reauthorizes names", (
   ];
   const restore = (checkpoint: {
     version: number;
-    authorizedCatalogFingerprint?: unknown;
     loadedToolNames?: unknown;
   }) => [...restoreToolExposureState(checkpoint, authorized).loadedToolNames];
 
   assertEquals(
     restore({
       version: 2,
-      authorizedCatalogFingerprint: "v1-old",
       loadedToolNames: ["still_authorized"],
     }),
     [],
@@ -324,7 +312,6 @@ it("tool exposure checkpoint restoration fails closed and reauthorizes names", (
   assertEquals(
     restore({
       version: 1,
-      authorizedCatalogFingerprint: "v1-old",
       loadedToolNames: ["still_authorized", ""],
     }),
     [],
@@ -332,7 +319,6 @@ it("tool exposure checkpoint restoration fails closed and reauthorizes names", (
   assertEquals(
     restore({
       version: 1,
-      authorizedCatalogFingerprint: "v1-old",
       loadedToolNames: ["still_authorized", 42],
     }),
     [],
@@ -340,17 +326,14 @@ it("tool exposure checkpoint restoration fails closed and reauthorizes names", (
   assertEquals(
     restore({
       version: 1,
-      authorizedCatalogFingerprint: "v1-old",
       loadedToolNames: ["revoked", "unknown"],
     }),
     [],
   );
 
-  // Fingerprint is diagnostic. Name-level reauthorization is authoritative.
   assertEquals(
     restore({
       version: 1,
-      authorizedCatalogFingerprint: "v1-old",
       loadedToolNames: ["still_authorized", "revoked"],
     }),
     ["still_authorized"],

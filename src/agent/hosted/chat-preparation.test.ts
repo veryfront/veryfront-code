@@ -283,7 +283,6 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     },
     serverResolvedToolExposureCheckpoint: {
       version: 1,
-      authorizedCatalogFingerprint: "v1-catalog",
       loadedToolNames: ["get_release"],
     },
     resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
@@ -352,7 +351,6 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     clientProfile: null,
     serverResolvedToolExposureCheckpoint: {
       version: 1,
-      authorizedCatalogFingerprint: "v1-catalog",
       loadedToolNames: ["get_release"],
     },
     liveProjectSteering: {
@@ -378,7 +376,6 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
 
   await result.creationOptions.persistToolExposureCheckpoint?.({
     version: 1,
-    authorizedCatalogFingerprint: "v1-catalog",
     loadedToolNames: ["get_release"],
   });
   assertEquals(checkpointPersistenceOperations, [
@@ -392,7 +389,6 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     () =>
       result.creationOptions.persistToolExposureCheckpoint?.({
         version: 1,
-        authorizedCatalogFingerprint: "v1-catalog",
         loadedToolNames: ["get_release"],
       }) ?? Promise.resolve(),
     Error,
@@ -525,7 +521,6 @@ it("private checkpoints fail closed without a trusted run-event append token", a
     () =>
       result.creationOptions.persistToolExposureCheckpoint?.({
         version: 1,
-        authorizedCatalogFingerprint: "v1-catalog",
         loadedToolNames: ["get_release"],
       }) ?? Promise.resolve(),
     Error,
@@ -605,7 +600,6 @@ it("resolves private checkpoint persistence only after the durable flush complet
   const persistence = Promise.resolve(
     result.creationOptions.persistToolExposureCheckpoint?.({
       version: 1,
-      authorizedCatalogFingerprint: "v1-catalog",
       loadedToolNames: ["get_release"],
     }),
   ).then(() => {

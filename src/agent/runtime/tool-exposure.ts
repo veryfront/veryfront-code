@@ -23,7 +23,6 @@ export type ToolExposurePlan = {
 /** Private versioned state persisted by the framework between resumed steps. */
 export type ToolExposureCheckpoint = {
   version: 1;
-  authorizedCatalogFingerprint: string;
   loadedToolNames: string[];
 };
 
@@ -115,34 +114,6 @@ function getTermFallbackScore(input: {
     return rank === null ? [] : [rank];
   });
   return ranks.length > 0 ? { rank: Math.min(...ranks), matchCount: ranks.length } : null;
-}
-
-function stableCatalogValue(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableCatalogValue).join(",")}]`;
-  }
-  if (!value || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-  return `{${
-    Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => compareAscii(left, right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${stableCatalogValue(entry)}`)
-      .join(",")
-  }}`;
-}
-
-/** Compute a deterministic non-secret identity for an authorized schema catalog. */
-export function fingerprintAuthorizedToolCatalog(authorized: readonly ToolDefinition[]): string {
-  const value = stableCatalogValue(
-    [...authorized].sort((left, right) => compareAscii(left.name, right.name)),
-  );
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index++) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return `v1-${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
 /** Create fresh run-local tool exposure state. */
@@ -278,7 +249,6 @@ export function createToolExposureCheckpoint(
   const authorizedNames = new Set(authorized.map((tool) => tool.name));
   return {
     version: 1,
-    authorizedCatalogFingerprint: fingerprintAuthorizedToolCatalog(authorized),
     loadedToolNames: [...state.loadedToolNames]
       .filter((name) => authorizedNames.has(name))
       .sort(),
@@ -300,7 +270,6 @@ export function restoreToolExposureState(
   checkpoint:
     | {
       version: number;
-      authorizedCatalogFingerprint?: unknown;
       loadedToolNames?: unknown;
     }
     | null
@@ -309,7 +278,6 @@ export function restoreToolExposureState(
 ): ToolExposureState {
   if (
     checkpoint?.version !== 1 ||
-    typeof checkpoint.authorizedCatalogFingerprint !== "string" ||
     !Array.isArray(checkpoint.loadedToolNames) ||
     !checkpoint.loadedToolNames.every(isValidToolExposureCheckpointName)
   ) {

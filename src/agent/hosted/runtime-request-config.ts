@@ -67,8 +67,6 @@ export function getServerResolvedToolExposureCheckpoint(
   if (
     !isRecord(value) ||
     value.version !== 1 ||
-    typeof value.authorizedCatalogFingerprint !== "string" ||
-    value.authorizedCatalogFingerprint.length === 0 ||
     !Array.isArray(value.loadedToolNames) ||
     !value.loadedToolNames.every((name) => typeof name === "string" && name.length > 0) ||
     new Set(value.loadedToolNames).size !== value.loadedToolNames.length
@@ -77,7 +75,6 @@ export function getServerResolvedToolExposureCheckpoint(
   }
   return {
     version: 1,
-    authorizedCatalogFingerprint: value.authorizedCatalogFingerprint,
     loadedToolNames: [...value.loadedToolNames],
   };
 }

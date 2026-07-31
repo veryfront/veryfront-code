@@ -1,6 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
-import { it } from "#veryfront/testing/bdd.ts";
 import {
   createRuntimeAgentSystemMessages,
   parseRuntimeAgentMarkdownDefinition,
@@ -38,20 +37,6 @@ Follow the support runbook.
     providerTools: ["web_search", "web_fetch"],
     instructions: "Follow the support runbook.",
   });
-});
-
-it("does not expose tool loading policy through Markdown frontmatter", () => {
-  const result = parseRuntimeAgentMarkdownDefinition({
-    id: "canonical-tools-contract",
-    content: `---
-name: Canonical tools contract
-tool-loading: eager
----
-Use the authored tools selector.
-`,
-  });
-
-  assertEquals(Object.hasOwn(result, "toolLoading"), false);
 });
 
 Deno.test("parseRuntimeAgentMarkdownDefinition falls back to id and handles boolean thinking", () => {

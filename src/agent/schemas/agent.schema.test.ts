@@ -632,25 +632,4 @@ describe("agent/schema", () => {
       }
     });
   });
-
-  describe("private provider replay blocks", () => {
-    it("rejects provider replay blocks from the public message schema", () => {
-      const message = {
-        id: "assistant-provider-replay",
-        role: "assistant",
-        parts: [{
-          type: "provider-block",
-          provider: "openai-responses",
-          block: {
-            type: "tool_search_call",
-            execution: "server",
-            call_id: null,
-            nested: { array: [1, "two", false, null] },
-          },
-        }],
-      } as const;
-
-      assertEquals(getMessageSchema().safeParse(message).success, false);
-    });
-  });
 });

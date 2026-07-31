@@ -17,7 +17,39 @@ export type ToolSearchLiveProof = {
   completed: true;
 };
 
-export type ToolSearchLiveArgs = { model: string; output: string };
+export type HiMeasurement = {
+  schemaVersion: 1;
+  kind: "deferred-tool-discovery-hi";
+  prompt: "hi";
+  agentId: "veryfront-agent";
+  agentConfiguration: "prd-all-scoped-example";
+  catalogProfile: "deterministic-64-tool-verifier-fixture";
+  provider: "anthropic" | "openai";
+  model: string;
+  measuredAt: string;
+  provenance: "direct-provider-framework-fallback";
+  usageSource: "paired-response.usage.promptTokens";
+  baselineInputTokens: number;
+  effectiveInputTokens: number;
+  reductionPercent: number;
+  baselineModelSteps: 1;
+  baselineExposedToolCount: 64;
+  modelSteps: 1;
+  toolCalls: 0;
+  authorizedToolCount: number;
+  initiallyExposedTools: string[];
+  thresholds: {
+    maximumEffectiveInputTokens: 10_000;
+    minimumReductionPercent: 60;
+  };
+  passed: true;
+};
+
+export type ToolSearchLiveArgs = {
+  model: string;
+  output: string;
+  proof: "tool-search" | "hi";
+};
 export type DirectProviderEnvironment = {
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
@@ -37,6 +69,25 @@ type RunToolSearchLiveProofInput = {
   modelRuntime?: ModelRuntime;
   /** Test-only selector used to prove explicit maps remain eager. */
   selector?: "all-scoped" | "explicit";
+};
+
+type RunHiMeasurementInput = {
+  model: string;
+  modelRuntime?: ModelRuntime;
+  measuredAt?: string;
+};
+
+export type ExtractHiMeasurementInput = {
+  model: string;
+  effectiveProvider: string;
+  response: AgentResponse;
+  baselineResponse: AgentResponse;
+  requestCatalogs: string[][];
+  baselineRequestCatalogs: string[][];
+  modelSteps: number;
+  baselineModelSteps: number;
+  authorizedToolCount: number;
+  measuredAt: string;
 };
 
 const TARGET_TOOL = "read_release_marker";
@@ -63,12 +114,39 @@ const PROOF_KEYS = [
   "targetExecutionCount",
   "toolCalls",
 ] as const;
+const HI_MEASUREMENT_KEYS = [
+  "agentConfiguration",
+  "agentId",
+  "authorizedToolCount",
+  "baselineExposedToolCount",
+  "baselineInputTokens",
+  "baselineModelSteps",
+  "catalogProfile",
+  "effectiveInputTokens",
+  "initiallyExposedTools",
+  "kind",
+  "measuredAt",
+  "model",
+  "modelSteps",
+  "passed",
+  "prompt",
+  "provenance",
+  "provider",
+  "reductionPercent",
+  "schemaVersion",
+  "thresholds",
+  "toolCalls",
+  "usageSource",
+] as const;
+const MAXIMUM_EFFECTIVE_INPUT_TOKENS = 10_000;
+const MINIMUM_REDUCTION_PERCENT = 60;
+const HI_MEASUREMENT_CATALOG_SIZE = 64;
 const CREDENTIAL_PATTERN =
   /(?:api[_-]?key|authorization|bearer\s+|sk-[A-Za-z0-9_-]{16,})/i;
 
 function usageError(message: string): Error {
   return new Error(
-    `${message}. Use a direct Anthropic or OpenAI model with --model <provider/model> --output <path>`,
+    `${message}. Use a direct Anthropic or OpenAI model with --model <provider/model> --output <path> [--proof tool-search|hi]`,
   );
 }
 
@@ -93,14 +171,14 @@ function parseDirectModel(model: string): {
 export function parseToolSearchLiveArgs(
   args: readonly string[],
 ): ToolSearchLiveArgs {
-  if (args.length !== 4) {
-    throw usageError("Expected exactly --model and --output");
+  if (args.length !== 4 && args.length !== 6) {
+    throw usageError("Expected --model and --output with optional --proof");
   }
   const values = new Map<string, string>();
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index];
     const value = args[index + 1];
-    if (flag !== "--model" && flag !== "--output") {
+    if (flag !== "--model" && flag !== "--output" && flag !== "--proof") {
       throw usageError(`Unknown argument ${JSON.stringify(flag)}`);
     }
     if (!value || value.startsWith("--") || values.has(flag)) {
@@ -113,7 +191,11 @@ export function parseToolSearchLiveArgs(
   if (!rawModel || !output) {
     throw usageError("Both --model and --output are required");
   }
-  return { model: parseDirectModel(rawModel).model, output };
+  const proof = values.get("--proof") ?? "tool-search";
+  if (proof !== "tool-search" && proof !== "hi") {
+    throw usageError(`Invalid proof ${JSON.stringify(proof)}`);
+  }
+  return { model: parseDirectModel(rawModel).model, output, proof };
 }
 
 function directEnvironment(): DirectProviderEnvironment {
@@ -353,6 +435,223 @@ export async function runToolSearchLiveProof(
   }
 }
 
+function calculateReductionPercent(
+  baselineInputTokens: number,
+  effectiveInputTokens: number,
+): number {
+  return Number(
+    (((baselineInputTokens - effectiveInputTokens) / baselineInputTokens) * 100)
+      .toFixed(3),
+  );
+}
+
+function expectedHiMeasurementCatalog(): string[] {
+  return [
+    TARGET_TOOL,
+    ...Array.from(
+      { length: HI_MEASUREMENT_CATALOG_SIZE - 1 },
+      (_, index) =>
+        `hi_measurement_catalog_${String(index + 1).padStart(2, "0")}`,
+    ),
+  ].sort();
+}
+
+export function extractHiMeasurement(input: ExtractHiMeasurementInput): HiMeasurement {
+  const parsed = parseDirectModel(input.model);
+  if (input.effectiveProvider !== parsed.provider) {
+    throw new Error(`Unexpected effective provider ${input.effectiveProvider}`);
+  }
+  if (input.modelSteps !== 1 || input.requestCatalogs.length !== 1) {
+    throw new Error("The exact hi measurement must complete in one model step");
+  }
+  if (
+    input.baselineModelSteps !== 1 ||
+    input.baselineRequestCatalogs.length !== 1
+  ) {
+    throw new Error(
+      "The eager hi baseline must complete in one model step",
+    );
+  }
+  if (input.response.toolCalls.length !== 0) {
+    throw new Error("The exact hi measurement must make no tool calls");
+  }
+  if (input.baselineResponse.toolCalls.length !== 0) {
+    throw new Error("The eager hi baseline must make no tool calls");
+  }
+  if (input.response.status !== "completed") {
+    throw new Error(`Expected a completed agent response, received ${input.response.status}`);
+  }
+  if (input.baselineResponse.status !== "completed") {
+    throw new Error(
+      `Expected a completed eager baseline response, received ${input.baselineResponse.status}`,
+    );
+  }
+  const initialCatalog = input.requestCatalogs[0] ?? [];
+  if (initialCatalog.length !== 1 || initialCatalog[0] !== "tool_search") {
+    throw new Error("The exact hi measurement must expose only tool_search initially");
+  }
+  const baselineCatalog = input.baselineRequestCatalogs[0] ?? [];
+  const expectedBaselineCatalog = expectedHiMeasurementCatalog();
+  if (
+    baselineCatalog.length !== expectedBaselineCatalog.length ||
+    baselineCatalog.some((name, index) => name !== expectedBaselineCatalog[index])
+  ) {
+    throw new Error(
+      "The eager hi baseline must expose the exact 64-tool fixture",
+    );
+  }
+  const effectiveInputTokens = input.response.usage?.promptTokens;
+  if (effectiveInputTokens === undefined) {
+    throw new Error("The exact hi measurement requires provider input-token usage");
+  }
+  const baselineInputTokens = input.baselineResponse.usage?.promptTokens;
+  if (baselineInputTokens === undefined || baselineInputTokens < 1) {
+    throw new Error("The eager hi baseline requires provider input-token usage");
+  }
+  const reductionPercent = calculateReductionPercent(
+    baselineInputTokens,
+    effectiveInputTokens,
+  );
+  if (
+    effectiveInputTokens > MAXIMUM_EFFECTIVE_INPUT_TOKENS ||
+    reductionPercent < MINIMUM_REDUCTION_PERCENT
+  ) {
+    throw new Error(
+      `The exact hi measurement missed token acceptance thresholds: ${effectiveInputTokens} tokens, ${reductionPercent}% reduction`,
+    );
+  }
+  if (input.authorizedToolCount !== HI_MEASUREMENT_CATALOG_SIZE) {
+    throw new Error("The exact hi measurement requires exactly 64 authorized fixture tools");
+  }
+  if (
+    Number.isNaN(Date.parse(input.measuredAt)) ||
+    new Date(input.measuredAt).toISOString() !== input.measuredAt
+  ) {
+    throw new Error("The exact hi measurement requires an ISO timestamp");
+  }
+
+  return {
+    schemaVersion: 1,
+    kind: "deferred-tool-discovery-hi",
+    prompt: "hi",
+    agentId: "veryfront-agent",
+    agentConfiguration: "prd-all-scoped-example",
+    catalogProfile: "deterministic-64-tool-verifier-fixture",
+    provider: parsed.provider,
+    model: parsed.model,
+    measuredAt: input.measuredAt,
+    provenance: "direct-provider-framework-fallback",
+    usageSource: "paired-response.usage.promptTokens",
+    baselineInputTokens,
+    effectiveInputTokens,
+    reductionPercent,
+    baselineModelSteps: 1,
+    baselineExposedToolCount: HI_MEASUREMENT_CATALOG_SIZE,
+    modelSteps: 1,
+    toolCalls: 0,
+    authorizedToolCount: input.authorizedToolCount,
+    initiallyExposedTools: [...initialCatalog].sort(),
+    thresholds: {
+      maximumEffectiveInputTokens: MAXIMUM_EFFECTIVE_INPUT_TOKENS,
+      minimumReductionPercent: MINIMUM_REDUCTION_PERCENT,
+    },
+    passed: true,
+  };
+}
+
+export async function runHiMeasurement(
+  input: RunHiMeasurementInput,
+): Promise<HiMeasurement> {
+  const parsed = parseDirectModel(input.model);
+  const resolved = input.modelRuntime
+    ? { model: parsed.model, provider: parsed.provider, runtime: input.modelRuntime }
+    : createDirectModelRuntime(parsed.model);
+  if (resolved.runtime.provider !== resolved.provider) {
+    throw new Error(`Unexpected effective provider ${String(resolved.runtime.provider)}`);
+  }
+
+  const requestCatalogs: string[][] = [];
+  const baselineRequestCatalogs: string[][] = [];
+  const measurementTools = Array.from(
+    { length: HI_MEASUREMENT_CATALOG_SIZE },
+    (_, index) => {
+      const id = index === 0
+        ? TARGET_TOOL
+        : `hi_measurement_catalog_${String(index).padStart(2, "0")}`;
+      return dynamicTool({
+        id,
+        description: index === 0
+          ? TARGET_DESCRIPTION
+          : `Representative scoped project tool ${index} for greeting token verification.`,
+        inputSchema: {
+          type: "object",
+          properties: {
+            value: {
+              type: "string",
+              description: `Representative parameter ${index}.`,
+            },
+          },
+          additionalProperties: false,
+        },
+        execute: () => ({ marker: "not-called-during-hi-measurement" }),
+      });
+    },
+  );
+  for (const tool of measurementTools) {
+    toolRegistry.register(tool.id, tool);
+  }
+  try {
+    const explicitTools = Object.fromEntries(
+      measurementTools.map((tool) => [tool.id, tool]),
+    );
+    const baselineRuntime = observeGenerateCatalogs(
+      resolved.runtime,
+      baselineRequestCatalogs,
+    );
+    const baselineVerifier = agent({
+      id: "veryfront-agent-hi-eager-baseline",
+      model: resolved.model,
+      system: "Help build and operate this Veryfront project.",
+      skills: false,
+      tools: explicitTools,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model: baselineRuntime }),
+    });
+    const baselineResponse = await baselineVerifier.generate({ input: "hi" });
+
+    const observedRuntime = observeGenerateCatalogs(
+      resolved.runtime,
+      requestCatalogs,
+    );
+    const deferredVerifier = agent({
+      id: "veryfront-agent",
+      model: resolved.model,
+      system: "Help build and operate this Veryfront project.",
+      skills: false,
+      tools: true,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model: observedRuntime }),
+    });
+    const response = await deferredVerifier.generate({ input: "hi" });
+    return extractHiMeasurement({
+      model: resolved.model,
+      effectiveProvider: String(observedRuntime.provider),
+      response,
+      baselineResponse,
+      requestCatalogs,
+      baselineRequestCatalogs,
+      modelSteps: requestCatalogs.length,
+      baselineModelSteps: baselineRequestCatalogs.length,
+      authorizedToolCount: measurementTools.length,
+      measuredAt: input.measuredAt ?? new Date().toISOString(),
+    });
+  } finally {
+    for (const tool of measurementTools) {
+      toolRegistry.delete(tool.id);
+    }
+  }
+}
+
 function validateSanitizedReport(serialized: string): void {
   if (serialized.toLowerCase().includes("native")) {
     throw new Error(
@@ -390,13 +689,87 @@ export async function writeToolSearchLiveProof(
   await Deno.writeTextFile(output, serialized);
 }
 
+function validateHiMeasurement(serialized: string): void {
+  if (CREDENTIAL_PATTERN.test(serialized) || serialized.includes("inputSchema")) {
+    throw new Error("Hi measurement contains credential-like or schema data");
+  }
+  const parsed = JSON.parse(serialized) as HiMeasurement;
+  if (
+    !hasExactKeys(parsed as unknown as Record<string, unknown>, HI_MEASUREMENT_KEYS) ||
+    !hasExactKeys(parsed.thresholds as unknown as Record<string, unknown>, [
+      "maximumEffectiveInputTokens",
+      "minimumReductionPercent",
+    ]) ||
+    parsed.schemaVersion !== 1 ||
+    parsed.kind !== "deferred-tool-discovery-hi" ||
+    parsed.prompt !== "hi" ||
+    parsed.agentId !== "veryfront-agent" ||
+    parsed.agentConfiguration !== "prd-all-scoped-example" ||
+    parsed.catalogProfile !== "deterministic-64-tool-verifier-fixture" ||
+    parsed.provenance !== "direct-provider-framework-fallback" ||
+    parsed.usageSource !== "paired-response.usage.promptTokens" ||
+    parsed.baselineExposedToolCount !== HI_MEASUREMENT_CATALOG_SIZE ||
+    parsed.baselineModelSteps !== 1 ||
+    parsed.modelSteps !== 1 ||
+    parsed.toolCalls !== 0 ||
+    parsed.thresholds.maximumEffectiveInputTokens !== MAXIMUM_EFFECTIVE_INPUT_TOKENS ||
+    parsed.thresholds.minimumReductionPercent !== MINIMUM_REDUCTION_PERCENT ||
+    parsed.passed !== true
+  ) {
+    throw new Error("Hi measurement must use the exact sanitized shape");
+  }
+  extractHiMeasurement({
+    model: parsed.model,
+    effectiveProvider: parsed.provider,
+    response: {
+      text: "sanitized",
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+      usage: {
+        promptTokens: parsed.effectiveInputTokens,
+        completionTokens: 0,
+        totalTokens: parsed.effectiveInputTokens,
+      },
+    },
+    baselineResponse: {
+      text: "sanitized",
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+      usage: {
+        promptTokens: parsed.baselineInputTokens,
+        completionTokens: 0,
+        totalTokens: parsed.baselineInputTokens,
+      },
+    },
+    requestCatalogs: [parsed.initiallyExposedTools],
+    baselineRequestCatalogs: [expectedHiMeasurementCatalog()],
+    modelSteps: parsed.modelSteps,
+    baselineModelSteps: parsed.baselineModelSteps,
+    authorizedToolCount: parsed.authorizedToolCount,
+    measuredAt: parsed.measuredAt,
+  });
+}
+
+export async function writeHiMeasurement(
+  output: string,
+  measurement: HiMeasurement,
+): Promise<void> {
+  const serialized = `${JSON.stringify(measurement, null, 2)}\n`;
+  validateHiMeasurement(serialized);
+  await Deno.mkdir(dirname(output), { recursive: true });
+  await Deno.writeTextFile(output, serialized);
+}
+
 if (import.meta.main) {
   try {
-    const { model, output } = parseToolSearchLiveArgs(Deno.args);
-    await writeToolSearchLiveProof(
-      output,
-      await runToolSearchLiveProof({ model }),
-    );
+    const { model, output, proof } = parseToolSearchLiveArgs(Deno.args);
+    if (proof === "hi") {
+      await writeHiMeasurement(output, await runHiMeasurement({ model }));
+    } else {
+      await writeToolSearchLiveProof(output, await runToolSearchLiveProof({ model }));
+    }
   } catch (error) {
     console.error(
       error instanceof Error

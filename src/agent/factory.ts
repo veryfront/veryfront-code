@@ -129,12 +129,6 @@ function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStrea
   };
 }
 
-function withoutRemovedToolLoading(config: AgentConfig): AgentConfig {
-  const canonicalConfig = { ...config } as AgentConfig & Record<string, unknown>;
-  delete canonicalConfig.toolLoading;
-  return canonicalConfig;
-}
-
 /** Agent helper. */
 export function agent(config: AgentConfig): Agent {
   if (typeof config.id === "string" && config.id.trim().length === 0) {
@@ -159,7 +153,7 @@ export function agent(config: AgentConfig): Agent {
   }
 
   const publicConfig: ResolvedAgentConfig = {
-    ...withoutRemovedToolLoading(config),
+    ...config,
     ...(delegates === undefined ? {} : { delegates }),
     model: resolveConfiguredAgentModel(config.model),
   };

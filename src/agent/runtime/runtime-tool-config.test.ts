@@ -65,13 +65,11 @@ describe("agent/runtime-tool-config", () => {
       getRuntimeToolExposureCheckpoint(runtimeConfig({
         __vfToolExposureCheckpoint: {
           version: 1,
-          authorizedCatalogFingerprint: "v1-catalog",
           loadedToolNames: ["get_release"],
         },
       })),
       {
         version: 1,
-        authorizedCatalogFingerprint: "v1-catalog",
         loadedToolNames: ["get_release"],
       },
     );

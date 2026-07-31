@@ -286,7 +286,6 @@ it("ordinary durable-chat routes strip spoofed server-resolved tool state", asyn
         unrelated: "preserved",
         serverResolvedToolExposureCheckpoint: {
           version: 1,
-          authorizedCatalogFingerprint: "spoofed",
           loadedToolNames: ["delete_project"],
         },
         serverResolvedFutureCapability: { enabled: true },
@@ -316,7 +315,6 @@ it("a verified writer token does not trust ordinary durable-chat body state", as
   });
   const checkpoint = {
     version: 1,
-    authorizedCatalogFingerprint: "trusted-catalog",
     loadedToolNames: ["get_release"],
   };
   const response = await routeSet.handleDurableChatRunExecuteRequest({
@@ -365,7 +363,6 @@ it("verified control-plane envelopes accept private state without returning it p
   });
   const checkpoint = {
     version: 1,
-    authorizedCatalogFingerprint: "trusted-catalog",
     loadedToolNames: ["get_release"],
   };
   const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({

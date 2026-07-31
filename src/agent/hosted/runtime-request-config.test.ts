@@ -12,7 +12,6 @@ import {
 it("server-resolved tool exposure checkpoint parses strictly and fails closed", () => {
   const checkpoint = {
     version: 1 as const,
-    authorizedCatalogFingerprint: "v1-catalog",
     loadedToolNames: ["get_release"],
   };
   assertEquals(
@@ -56,7 +55,6 @@ it("ordinary hosted request resolution ignores forwarded private tool exposure s
       forwardedProps: {
         serverResolvedToolExposureCheckpoint: {
           version: 1,
-          authorizedCatalogFingerprint: "client-spoof",
           loadedToolNames: ["delete_project"],
         },
       },

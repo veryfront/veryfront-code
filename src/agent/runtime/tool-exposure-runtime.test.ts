@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas";
@@ -8,7 +8,6 @@ import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { agent } from "../index.ts";
 import type { AgentConfig, Message } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
-import type { ToolExposureCheckpoint } from "./tool-exposure.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "./tool-inventory.ts";
 
 function createRuntimeStream(parts: unknown[]) {
@@ -317,100 +316,6 @@ it("deferred generate does not load or execute a descriptive unauthorized tool",
   assertEquals(executionCount, 0);
 });
 
-it("deferred stream searches, exposes on the next step, and executes exact arguments once", async () => {
-  const observedTools: string[][] = [];
-  let step = 0;
-  const model: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/deferred-stream-tools",
-    async doGenerate() {
-      return { content: [{ type: "text", text: "unused" }] };
-    },
-    async doStream(options: unknown) {
-      observedTools.push(toolNames(options));
-      step++;
-      if (step === 1) {
-        return {
-          stream: createRuntimeStream([
-            {
-              type: "tool-call",
-              toolCallId: "search-1",
-              toolName: "tool_search",
-              input: { query: "release marker" },
-            },
-            { type: "finish", finishReason: "tool-calls" },
-          ]),
-        };
-      }
-      if (step === 2) {
-        return {
-          stream: createRuntimeStream([
-            {
-              type: "tool-call",
-              toolCallId: "marker-1",
-              toolName: "read_release_marker",
-              input: {},
-            },
-            { type: "finish", finishReason: "tool-calls" },
-          ]),
-        };
-      }
-      return {
-        stream: createRuntimeStream([
-          { type: "text-delta", text: "Release marker marker-1" },
-          { type: "finish", finishReason: "stop" },
-        ]),
-      };
-    },
-  };
-  let executionCount = 0;
-  const assistant = agent(
-    {
-      id: "deferred-stream-runtime-test",
-      model: "hosted/deferred-stream-tools",
-      system: "Use tools when needed.",
-      tools: {
-        form_input: tool({
-          id: "form_input",
-          description: "Collect input",
-          inputSchema: defineSchema((v) => v.object({}))(),
-          execute: () => ({}),
-        }),
-        load_skill: tool({
-          id: "load_skill",
-          description: "Load a skill",
-          inputSchema: defineSchema((v) => v.object({}))(),
-          execute: () => ({}),
-        }),
-        read_release_marker: tool({
-          id: "read_release_marker",
-          description: "Read the release marker",
-          inputSchema: defineSchema((v) => v.object({}))(),
-          execute: () => {
-            executionCount++;
-            return { marker: "marker-1" };
-          },
-        }),
-      },
-      maxSteps: 4,
-      resolveModelTransport: () => ({ model }),
-      __vfToolLoadingMode: "deferred",
-    } as AgentConfig & RuntimeToolFilterConfig,
-  );
-
-  const body = await (await assistant.stream({ input: "Read the release marker" }))
-    .toDataStreamResponse().text();
-
-  assertEquals(observedTools[0], ["form_input", "load_skill", "tool_search"]);
-  assertEquals(observedTools[1], [
-    "form_input",
-    "load_skill",
-    "read_release_marker",
-  ]);
-  assertEquals(executionCount, 1);
-  assertEquals(body.includes("Release marker marker-1"), true);
-});
-
 it("deferred stream rejects a guessed tool that was not exposed", async () => {
   let step = 0;
   let executionCount = 0;
@@ -599,7 +504,7 @@ it("omitted tools expose no project catalog and no tool_search", async () => {
   assertEquals(observedTools, []);
 });
 
-it("respond exposes an explicit tool map eagerly and ignores a removed loading-policy field", async () => {
+it("respond exposes an explicit tool map eagerly", async () => {
   let observedTools: string[] = [];
   const model: ModelRuntime = {
     provider: "hosted",
@@ -622,7 +527,6 @@ it("respond exposes an explicit tool map eagerly and ignores a removed loading-p
     model: "hosted/respond-explicit-eager",
     system: "Answer directly.",
     skills: false,
-    toolLoading: "deferred",
     tools: { get_release: releaseTool() },
     maxSteps: 1,
     resolveModelTransport: () => ({ model }),
@@ -641,7 +545,6 @@ it("respond exposes an explicit tool map eagerly and ignores a removed loading-p
     }),
   )).text();
 
-  assertEquals(Object.hasOwn(assistant.config, "toolLoading"), false);
   assertEquals(observedTools.includes("get_release"), true);
   assertEquals(observedTools.includes("tool_search"), false);
 });
@@ -819,468 +722,6 @@ it("eager stream executes a custom tool_search", async () => {
 
   assertEquals(executionInputs, ["releases"]);
   toolRegistry.delete("tool_search");
-});
-
-it("generate flushes and restores a deferred tool checkpoint without another search", async () => {
-  let checkpoint: ToolExposureCheckpoint | undefined;
-  let checkpointFlushed = false;
-  let firstRunStep = 0;
-  const firstRunModel: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/generate-checkpoint",
-    async doGenerate() {
-      firstRunStep++;
-      if (firstRunStep === 1) {
-        return {
-          content: [{
-            type: "tool-call",
-            toolCallId: "search-1",
-            toolName: "tool_search",
-            input: JSON.stringify({ query: "get_release" }),
-          }],
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      }
-      assertEquals(checkpointFlushed, true);
-      return {
-        content: [{ type: "text", text: "interrupted" }],
-        finishReason: "stop",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      };
-    },
-    async doStream() {
-      return { stream: new ReadableStream() };
-    },
-  };
-  const firstRunConfig = {
-    id: "generate-checkpoint-first",
-    model: "hosted/generate-checkpoint",
-    system: "Use tools when needed.",
-    skills: false,
-    tools: { get_release: releaseTool() },
-    maxSteps: 2,
-    resolveModelTransport: () => ({ model: firstRunModel }),
-    __vfToolLoadingMode: "deferred",
-    __vfPersistToolExposureCheckpoint: async (nextCheckpoint: ToolExposureCheckpoint) => {
-      await Promise.resolve();
-      checkpoint = nextCheckpoint;
-      checkpointFlushed = true;
-    },
-  } as AgentConfig & RuntimeToolFilterConfig;
-
-  await agent(firstRunConfig).generate({ input: "Find the current release" });
-
-  const resumedTools: string[][] = [];
-  let resumedRequest = "";
-  let resumedCalls = 0;
-  const resumedModel: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/generate-checkpoint",
-    async doGenerate(options: unknown) {
-      resumedCalls++;
-      resumedTools.push(toolNames(options));
-      resumedRequest = JSON.stringify(options);
-      return {
-        content: [{ type: "text", text: "resumed" }],
-        finishReason: "stop",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      };
-    },
-    async doStream() {
-      return { stream: new ReadableStream() };
-    },
-  };
-  const resumedConfig = {
-    ...firstRunConfig,
-    id: "generate-checkpoint-resumed",
-    resolveModelTransport: () => ({ model: resumedModel }),
-    __vfToolExposureCheckpoint: checkpoint,
-    __vfPersistToolExposureCheckpoint: undefined,
-  } as AgentConfig & RuntimeToolFilterConfig;
-
-  await agent(resumedConfig).generate({ input: "Continue" });
-
-  assertEquals(resumedCalls, 1);
-  assertEquals(resumedTools[0]?.includes("get_release"), true);
-  assertEquals(resumedTools[0]?.includes("tool_search"), false);
-  assertEquals(resumedRequest.includes("authorizedCatalogFingerprint"), false);
-  assertEquals(resumedRequest.includes("loadedToolNames"), false);
-});
-
-it("stream flushes and restores a deferred tool checkpoint without another search", async () => {
-  let checkpoint: ToolExposureCheckpoint | undefined;
-  let checkpointFlushed = false;
-  let firstRunStep = 0;
-  const firstRunModel: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/stream-checkpoint",
-    async doGenerate() {
-      return { content: [{ type: "text", text: "unused" }] };
-    },
-    async doStream() {
-      firstRunStep++;
-      if (firstRunStep === 1) {
-        return {
-          stream: createRuntimeStream([
-            {
-              type: "tool-call",
-              toolCallId: "search-1",
-              toolName: "tool_search",
-              input: { query: "get_release" },
-            },
-            {
-              type: "finish",
-              finishReason: "tool-calls",
-              usage: { inputTokens: 1, outputTokens: 1 },
-            },
-          ]),
-        };
-      }
-      assertEquals(checkpointFlushed, true);
-      return {
-        stream: createRuntimeStream([
-          { type: "text-delta", text: "interrupted" },
-          {
-            type: "finish",
-            finishReason: "stop",
-            usage: { inputTokens: 1, outputTokens: 1 },
-          },
-        ]),
-      };
-    },
-  };
-  const firstRunConfig = {
-    id: "stream-checkpoint-first",
-    model: "hosted/stream-checkpoint",
-    system: "Use tools when needed.",
-    skills: false,
-    tools: { get_release: releaseTool() },
-    maxSteps: 2,
-    resolveModelTransport: () => ({ model: firstRunModel }),
-    __vfToolLoadingMode: "deferred",
-    __vfPersistToolExposureCheckpoint: async (nextCheckpoint: ToolExposureCheckpoint) => {
-      await Promise.resolve();
-      checkpoint = nextCheckpoint;
-      checkpointFlushed = true;
-    },
-  } as AgentConfig & RuntimeToolFilterConfig;
-
-  const firstRunBody = await (await agent(firstRunConfig).stream({
-    input: "Find the current release",
-  })).toDataStreamResponse().text();
-
-  const resumedTools: string[][] = [];
-  let resumedCalls = 0;
-  const resumedModel: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/stream-checkpoint",
-    async doGenerate() {
-      return { content: [{ type: "text", text: "unused" }] };
-    },
-    async doStream(options: unknown) {
-      resumedCalls++;
-      resumedTools.push(toolNames(options));
-      return {
-        stream: createRuntimeStream([
-          { type: "text-delta", text: "resumed" },
-          {
-            type: "finish",
-            finishReason: "stop",
-            usage: { inputTokens: 1, outputTokens: 1 },
-          },
-        ]),
-      };
-    },
-  };
-  const resumedConfig = {
-    ...firstRunConfig,
-    id: "stream-checkpoint-resumed",
-    resolveModelTransport: () => ({ model: resumedModel }),
-    __vfToolExposureCheckpoint: checkpoint,
-    __vfPersistToolExposureCheckpoint: undefined,
-  } as AgentConfig & RuntimeToolFilterConfig;
-
-  await (await agent(resumedConfig).stream({ input: "Continue" }))
-    .toDataStreamResponse().text();
-
-  assertEquals(resumedCalls, 1);
-  assertEquals(resumedTools[0]?.includes("get_release"), true);
-  assertEquals(resumedTools[0]?.includes("tool_search"), false);
-  assertEquals(firstRunBody.includes("AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT"), false);
-  assertEquals(firstRunBody.includes("authorizedCatalogFingerprint"), false);
-});
-
-it("generate aborts before the next model step when checkpoint persistence fails", async () => {
-  let modelCalls = 0;
-  const model: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/checkpoint-failure",
-    async doGenerate() {
-      modelCalls++;
-      return modelCalls === 1
-        ? {
-          content: [{
-            type: "tool-call",
-            toolCallId: "search-1",
-            toolName: "tool_search",
-            input: JSON.stringify({ query: "get_release" }),
-          }],
-          finishReason: "tool-calls",
-        }
-        : {
-          content: [{ type: "text", text: "must not run" }],
-          finishReason: "stop",
-        };
-    },
-    async doStream() {
-      return { stream: new ReadableStream() };
-    },
-  };
-  const config = {
-    id: "generate-checkpoint-failure",
-    model: "hosted/checkpoint-failure",
-    system: "Use tools.",
-    skills: false,
-    tools: { get_release: releaseTool() },
-    maxSteps: 2,
-    resolveModelTransport: () => ({ model }),
-    __vfToolLoadingMode: "deferred",
-    __vfPersistToolExposureCheckpoint: () => {
-      throw new Error("checkpoint write failed");
-    },
-  } as AgentConfig & RuntimeToolFilterConfig;
-
-  await assertRejects(
-    () => agent(config).generate({ input: "Find a release" }),
-    Error,
-    "checkpoint write failed",
-  );
-  assertEquals(modelCalls, 1);
-});
-
-it("stream aborts before the next model step when checkpoint persistence fails", async () => {
-  let modelCalls = 0;
-  const model: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/checkpoint-stream-failure",
-    async doGenerate() {
-      return { content: [{ type: "text", text: "unused" }] };
-    },
-    async doStream() {
-      modelCalls++;
-      return {
-        stream: modelCalls === 1
-          ? createRuntimeStream([
-            {
-              type: "tool-call",
-              toolCallId: "search-1",
-              toolName: "tool_search",
-              input: { query: "get_release" },
-            },
-            { type: "finish", finishReason: "tool-calls" },
-          ])
-          : createRuntimeStream([
-            { type: "text-delta", text: "must not run" },
-            { type: "finish", finishReason: "stop" },
-          ]),
-      };
-    },
-  };
-  const config = {
-    id: "stream-checkpoint-failure",
-    model: "hosted/checkpoint-stream-failure",
-    system: "Use tools.",
-    skills: false,
-    tools: { get_release: releaseTool() },
-    maxSteps: 2,
-    resolveModelTransport: () => ({ model }),
-    __vfToolLoadingMode: "deferred",
-    __vfPersistToolExposureCheckpoint: () => {
-      throw new Error("checkpoint stream write failed");
-    },
-  } as AgentConfig & RuntimeToolFilterConfig;
-
-  const body = await (await agent(config).stream({ input: "Find a release" }))
-    .toDataStreamResponse().text();
-
-  assertEquals(modelCalls, 1);
-  assertEquals(body.includes("checkpoint stream write failed"), true);
-});
-
-it("generate drops revoked checkpoint tools after the authorized catalog changes", async () => {
-  let checkpoint: ToolExposureCheckpoint | undefined;
-  let firstRunStep = 0;
-  const firstRunModel: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/revoked-checkpoint",
-    async doGenerate() {
-      firstRunStep++;
-      return firstRunStep === 1
-        ? {
-          content: [{
-            type: "tool-call",
-            toolCallId: "search-1",
-            toolName: "tool_search",
-            input: JSON.stringify({ query: "get_release" }),
-          }],
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        }
-        : {
-          content: [{ type: "text", text: "done" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-    },
-    async doStream() {
-      return { stream: new ReadableStream() };
-    },
-  };
-  await agent(
-    {
-      id: "revoked-checkpoint-first",
-      model: "hosted/revoked-checkpoint",
-      system: "Use tools when needed.",
-      skills: false,
-      tools: { get_release: releaseTool() },
-      maxSteps: 2,
-      resolveModelTransport: () => ({ model: firstRunModel }),
-      __vfToolLoadingMode: "deferred",
-      __vfPersistToolExposureCheckpoint: (nextCheckpoint: ToolExposureCheckpoint) => {
-        checkpoint = nextCheckpoint;
-      },
-    } as AgentConfig & RuntimeToolFilterConfig,
-  ).generate({ input: "Find a release" });
-
-  let resumedTools: string[] = [];
-  const resumedModel: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/revoked-checkpoint",
-    async doGenerate(options: unknown) {
-      resumedTools = toolNames(options);
-      return {
-        content: [{ type: "text", text: "done" }],
-        finishReason: "stop",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      };
-    },
-    async doStream() {
-      return { stream: new ReadableStream() };
-    },
-  };
-  await agent(
-    {
-      id: "revoked-checkpoint-resumed",
-      model: "hosted/revoked-checkpoint",
-      system: "Use tools when needed.",
-      skills: false,
-      tools: {
-        get_status: tool({
-          id: "get_status",
-          description: "Get status",
-          inputSchema: defineSchema((v) => v.object({}))(),
-          execute: () => ({ ok: true }),
-        }),
-      },
-      maxSteps: 1,
-      resolveModelTransport: () => ({ model: resumedModel }),
-      __vfToolLoadingMode: "deferred",
-      __vfToolExposureCheckpoint: checkpoint,
-    } as AgentConfig & RuntimeToolFilterConfig,
-  ).generate({ input: "Continue" });
-
-  assertEquals(resumedTools.includes("get_release"), false);
-  assertEquals(resumedTools.includes("get_status"), false);
-  assertEquals(resumedTools.includes("tool_search"), true);
-});
-
-it("stream resume drops revoked checkpoint tools after the authorized catalog changes", async () => {
-  let checkpoint: ToolExposureCheckpoint | undefined;
-  let firstRunStep = 0;
-  const firstRunModel: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/revoked-stream-checkpoint",
-    async doGenerate() {
-      return { content: [{ type: "text", text: "unused" }] };
-    },
-    async doStream() {
-      firstRunStep++;
-      return {
-        stream: firstRunStep === 1
-          ? createRuntimeStream([
-            {
-              type: "tool-call",
-              toolCallId: "search-1",
-              toolName: "tool_search",
-              input: { query: "get_release" },
-            },
-            { type: "finish", finishReason: "tool-calls" },
-          ])
-          : createRuntimeStream([
-            { type: "text-delta", text: "interrupted" },
-            { type: "finish", finishReason: "stop" },
-          ]),
-      };
-    },
-  };
-  await (await agent(
-    {
-      id: "revoked-stream-checkpoint-first",
-      model: "hosted/revoked-stream-checkpoint",
-      system: "Use tools when needed.",
-      skills: false,
-      tools: { get_release: releaseTool() },
-      maxSteps: 2,
-      resolveModelTransport: () => ({ model: firstRunModel }),
-      __vfToolLoadingMode: "deferred",
-      __vfPersistToolExposureCheckpoint: (nextCheckpoint: ToolExposureCheckpoint) => {
-        checkpoint = nextCheckpoint;
-      },
-    } as AgentConfig & RuntimeToolFilterConfig,
-  ).stream({ input: "Find a release" })).toDataStreamResponse().text();
-
-  let resumedTools: string[] = [];
-  const resumedModel: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/revoked-stream-checkpoint",
-    async doGenerate() {
-      return { content: [{ type: "text", text: "unused" }] };
-    },
-    async doStream(options: unknown) {
-      resumedTools = toolNames(options);
-      return {
-        stream: createRuntimeStream([
-          { type: "text-delta", text: "done" },
-          { type: "finish", finishReason: "stop" },
-        ]),
-      };
-    },
-  };
-  await (await agent(
-    {
-      id: "revoked-stream-checkpoint-resumed",
-      model: "hosted/revoked-stream-checkpoint",
-      system: "Use tools when needed.",
-      skills: false,
-      tools: {
-        get_status: tool({
-          id: "get_status",
-          description: "Get status",
-          inputSchema: defineSchema((v) => v.object({}))(),
-          execute: () => ({ ok: true }),
-        }),
-      },
-      maxSteps: 1,
-      resolveModelTransport: () => ({ model: resumedModel }),
-      __vfToolLoadingMode: "deferred",
-      __vfToolExposureCheckpoint: checkpoint,
-    } as AgentConfig & RuntimeToolFilterConfig,
-  ).stream({ input: "Continue" })).toDataStreamResponse().text();
-
-  assertEquals(resumedTools.includes("get_release"), false);
-  assertEquals(resumedTools.includes("get_status"), false);
-  assertEquals(resumedTools.includes("tool_search"), true);
 });
 
 it("operator eager rollback wins over host binding and request context", async () => {
@@ -1591,4 +1032,97 @@ it("direct Google uses framework fallback to search, expose, and execute once", 
   } finally {
     toolRegistry.delete("get_release");
   }
+});
+it("deferred stream searches, exposes on the next step, and executes exact arguments once", async () => {
+  const observedTools: string[][] = [];
+  let step = 0;
+  const model: ModelRuntime = {
+    provider: "hosted",
+    modelId: "hosted/deferred-stream-tools",
+    async doGenerate() {
+      return { content: [{ type: "text", text: "unused" }] };
+    },
+    async doStream(options: unknown) {
+      observedTools.push(toolNames(options));
+      step++;
+      if (step === 1) {
+        return {
+          stream: createRuntimeStream([
+            {
+              type: "tool-call",
+              toolCallId: "search-1",
+              toolName: "tool_search",
+              input: { query: "release marker" },
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      }
+      if (step === 2) {
+        return {
+          stream: createRuntimeStream([
+            {
+              type: "tool-call",
+              toolCallId: "marker-1",
+              toolName: "read_release_marker",
+              input: {},
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      }
+      return {
+        stream: createRuntimeStream([
+          { type: "text-delta", text: "Release marker marker-1" },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      };
+    },
+  };
+  let executionCount = 0;
+  const assistant = agent(
+    {
+      id: "deferred-stream-runtime-test",
+      model: "hosted/deferred-stream-tools",
+      system: "Use tools when needed.",
+      tools: {
+        form_input: tool({
+          id: "form_input",
+          description: "Collect input",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+        load_skill: tool({
+          id: "load_skill",
+          description: "Load a skill",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+        read_release_marker: tool({
+          id: "read_release_marker",
+          description: "Read the release marker",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executionCount++;
+            return { marker: "marker-1" };
+          },
+        }),
+      },
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model }),
+      __vfToolLoadingMode: "deferred",
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
+
+  const body = await (await assistant.stream({ input: "Read the release marker" }))
+    .toDataStreamResponse().text();
+
+  assertEquals(observedTools[0], ["form_input", "load_skill", "tool_search"]);
+  assertEquals(observedTools[1], [
+    "form_input",
+    "load_skill",
+    "read_release_marker",
+  ]);
+  assertEquals(executionCount, 1);
+  assertEquals(body.includes("Release marker marker-1"), true);
 });
