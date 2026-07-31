@@ -50,7 +50,7 @@ async function listDirNames(
   return entries;
 }
 
-describe("Up Command Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("Up Command Integration", () => {
   let testDir: string;
 
   beforeEach(async () => {
@@ -328,7 +328,7 @@ async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
   }
 }
 
-describe("up end to end", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("up end to end", () => {
   it("creates the project, pushes source, and prints the verified preview URL", async () => {
     const run = await runUp();
 
