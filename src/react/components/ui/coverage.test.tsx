@@ -96,7 +96,7 @@ export const UI_COMPONENTS: UiComponent[] = [
   },
   { name: "Tooltip", kind: "overlay", interactive: true, adapterKey: "tooltip", status: "shipped" },
   { name: "Select", kind: "overlay", interactive: true, adapterKey: "select", status: "shipped" },
-  { name: "Drawer", kind: "overlay", interactive: true, adapterKey: "dialog", status: "shipped" },
+  { name: "Drawer", kind: "overlay", interactive: true, adapterKey: "drawer", status: "shipped" },
   { name: "Command", kind: "overlay", interactive: true, status: "shipped" },
   // structure
   { name: "Tabs", kind: "structure", interactive: true, adapterKey: "tabs", status: "shipped" },
@@ -647,6 +647,49 @@ describe("veryfront/ui: bring-your-own-engine adapters (swappable engines)", () 
       assert(
         /Adapter[^=]*=/.test(src) && /Partial<UIAdapter>/.test(src),
         `${e.name} template must export an \`<engine>Adapter: Partial<UIAdapter>\` map.`,
+      );
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// SPECIALIST adapters — a `PartialUIAdapter` that powers ONE primitive better
+// than any general engine, merged over whatever adapter is active. `drawer` is
+// its own slot (not in the general `ALL_SLOTS` matrix) precisely so a drag
+// specialist can own it: the 4 general engines have no drag-drawer, and the
+// builtin is a static sheet. **Vaul** is the reference drawer specialist. (Toast
+// has the same shape available for a future Sonner specialist.)
+// ---------------------------------------------------------------------------
+interface SpecialistRow {
+  name: string;
+  template: string;
+  /** The single UIAdapter slot this specialist provides. */
+  slot: string;
+  /** The exported adapter const name. */
+  adapterExport: string;
+}
+const UI_SPECIALISTS: SpecialistRow[] = [
+  { name: "Vaul", template: "vaul.tsx", slot: "drawer", adapterExport: "vaulAdapter" },
+];
+
+describe("veryfront/ui: specialist per-primitive adapters", () => {
+  for (const s of UI_SPECIALISTS) {
+    it(`${s.name}: ships a generatable specialist template mapping \`${s.slot}\``, () => {
+      let src = "";
+      try {
+        src = Deno.readTextFileSync(`${ENGINE_TEMPLATES_DIR}${s.template}`);
+      } catch { /* missing → RED until the template lands */ }
+      assert(
+        src.length > 0,
+        `${s.name} has no reference template at cli/templates/ui-adapters/${s.template}.`,
+      );
+      assert(
+        new RegExp(`\\b${s.slot}:`).test(src),
+        `${s.name} template must map the \`${s.slot}\` slot on its adapter.`,
+      );
+      assert(
+        new RegExp(`${s.adapterExport}\\b`).test(src) && /Partial<UIAdapter>/.test(src),
+        `${s.name} template must export \`${s.adapterExport}: Partial<UIAdapter>\`.`,
       );
     });
   }

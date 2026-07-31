@@ -28,6 +28,7 @@ const ENGINE_PACKAGES: Record<string, { pkg: string; adapter: string }> = {
   },
   "react-aria": { pkg: "react-aria-components", adapter: "reactAriaAdapter" },
   ariakit: { pkg: "@ariakit/react", adapter: "ariakitAdapter" },
+  vaul: { pkg: "vaul", adapter: "vaulAdapter" },
 };
 
 /** Scaffold `ui-adapters/<engine>.tsx` into the project (idempotent — never clobbers). */

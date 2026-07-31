@@ -22,11 +22,11 @@ import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { useAdapter } from "./adapter/context.tsx";
 
-// The Drawer is a Dialog with an edge-sliding skin: it shares the `dialog`
-// adapter slot (`useAdapter().dialog`), so a swapped engine drives its modal
-// mechanics (focus trap, dismiss, scroll-lock) while this file supplies only the
-// bottom-sheet layout. A `DrawerClose`/`DialogClose` nested inside closes the
-// nearest modal (React-context nesting), which is the intuitive behaviour.
+// The Drawer's MECHANICS come from the active adapter's `drawer` slot
+// (`useAdapter().drawer`) — a static bottom sheet on the builtin, or real
+// drag-to-dismiss / snap points when you vendor the Vaul specialist adapter
+// (`veryfront generate adapter vaul`) and swap it in via `UIAdapterProvider`.
+// This file supplies only the edge-sliding sheet layout.
 
 /** Props accepted by `<Drawer>`. */
 export interface DrawerProps {
@@ -40,18 +40,18 @@ export interface DrawerProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-/** Drawer root — owns open state (via the adapter's dialog engine). */
+/** Drawer root — owns open state (via the adapter's drawer engine). */
 export function Drawer(props: DrawerProps): React.ReactElement {
-  const { dialog } = useAdapter();
-  return <dialog.Root {...props} />;
+  const { drawer } = useAdapter();
+  return <drawer.Root {...props} />;
 }
 
 /** Trigger — opens the drawer. `asChild` merges onto the child element. */
 export function DrawerTrigger(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  const { dialog } = useAdapter();
-  return <dialog.Trigger {...props} />;
+  const { drawer } = useAdapter();
+  return <drawer.Trigger {...props} />;
 }
 
 /** Bottom sheet — overlay + sliding surface with a drag handle. */
@@ -60,9 +60,9 @@ export function DrawerContent({
   className,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
-  const { dialog } = useAdapter();
+  const { drawer } = useAdapter();
   return (
-    <dialog.Content
+    <drawer.Content
       className={cn(
         "fixed inset-x-0 bottom-0 z-50 flex flex-col max-h-[85vh] w-full rounded-t-xl bg-[var(--drawer)] text-[var(--foreground)] outline-none",
         className,
@@ -76,7 +76,7 @@ export function DrawerContent({
       {...props}
     >
       {children}
-    </dialog.Content>
+    </drawer.Content>
   );
 }
 
@@ -131,6 +131,6 @@ export function DrawerFooter(
 export function DrawerClose(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  const { dialog } = useAdapter();
-  return <dialog.Close {...props} />;
+  const { drawer } = useAdapter();
+  return <drawer.Close {...props} />;
 }

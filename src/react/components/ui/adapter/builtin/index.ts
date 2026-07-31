@@ -17,6 +17,7 @@ import { builtinDisclosure } from "./disclosure.tsx";
 import { builtinToggleGroup } from "./toggle-group.tsx";
 import { builtinToolbar } from "./toolbar.tsx";
 import { builtinTabs } from "./tabs.tsx";
+import { builtinDrawer } from "./drawer.tsx";
 
 export const builtinAdapter: UIAdapter = {
   name: "builtin",
@@ -31,4 +32,5 @@ export const builtinAdapter: UIAdapter = {
   toggleGroup: builtinToggleGroup,
   toolbar: builtinToolbar,
   tabs: builtinTabs,
+  drawer: builtinDrawer,
 };

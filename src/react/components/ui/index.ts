@@ -398,6 +398,7 @@ export type {
   DialogParts,
   DisclosureParts,
   DisclosureProps,
+  DrawerParts,
   MenuParts,
   ModalState,
   PartialUIAdapter,

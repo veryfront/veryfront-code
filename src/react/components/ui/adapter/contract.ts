@@ -150,6 +150,38 @@ export interface TabsParts {
   >;
 }
 
+/**
+ * Role-tagged slots an adapter provides for the Drawer primitive — a modal that
+ * slides from an edge. Its OWN slot (not `dialog`) so a drag-physics specialist
+ * like **Vaul** can power it (drag-to-dismiss, snap points, velocity) behind the
+ * same Root/Trigger/Content/Close, while the builtin is a static bottom sheet.
+ * The 4 general engines have no drag-drawer primitive → they fall back to builtin
+ * (use the `vaul` specialist adapter for the real thing). `direction` lets a
+ * skin/engine pick the edge; `lead` is the drag-handle node before children.
+ */
+export interface DrawerParts {
+  /** Owns open state; renders no public node of its own. */
+  Root: React.FC<
+    & DisclosureProps
+    & { direction?: "top" | "bottom" | "left" | "right"; children: React.ReactNode }
+  >;
+  /** Opens the drawer; `asChild` merges onto the consumer's element. */
+  Trigger: React.FC<
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
+  >;
+  /** Overlay + sliding sheet; `lead` is an optional node before children (drag handle). */
+  Content: React.FC<
+    & React.HTMLAttributes<HTMLDivElement>
+    & { lead?: React.ReactNode; ref?: React.Ref<HTMLDivElement> }
+  >;
+  /** Closes the drawer; `asChild` merges onto the consumer's element. */
+  Close: React.FC<
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
+  >;
+}
+
 /** Open/close state a modal skin part (e.g. a Cancel button) can read. */
 export interface ModalState {
   open: boolean;
@@ -361,6 +393,7 @@ export interface UIAdapter {
   toggleGroup: ToggleGroupParts;
   toolbar: ToolbarParts;
   tabs: TabsParts;
+  drawer: DrawerParts;
 }
 
 /**
