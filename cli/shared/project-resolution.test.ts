@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "veryfront/platform/path";
 import type { ProjectReferenceSource, ResolvedConfig } from "./config.ts";
@@ -219,6 +219,7 @@ describe("resolveOrCreateProject", () => {
           ProjectReferenceNotFoundError,
         );
 
+        assertInstanceOf(error, ProjectReferenceNotFoundError);
         assertEquals(error.reference, "proj_gone");
         assertEquals(error.byId, true);
         assertEquals(error.source, LOCAL_LINK);
@@ -240,6 +241,7 @@ describe("resolveOrCreateProject", () => {
           ProjectReferenceNotFoundError,
         );
 
+        assertInstanceOf(error, ProjectReferenceNotFoundError);
         assertEquals(error.reference, "my-app");
         assertEquals(error.byId, false);
         assertEquals(calls.reserveSlug, []);
@@ -425,6 +427,7 @@ describe("resolveOrCreateProject", () => {
           ProjectSlugConflictError,
         );
 
+        assertInstanceOf(error, ProjectSlugConflictError);
         assertEquals(error.slug, "my-app");
         assertEquals(error.message, 'Project slug "my-app" is already in use.');
       });
