@@ -3,9 +3,10 @@
  * (Collapsible / CollapsibleTrigger / CollapsibleContent). Controlled or
  * uncontrolled open state; content unmounts when closed.
  *
- * TODO(a11y): id-wired `aria-controls`, height transition
- * (`--radix-collapsible-content-height`), `hidden` instead of unmount for
- * find-in-page. Private to the chat module.
+ * The open/close MECHANICS come from the active adapter's `disclosure` slot
+ * (`useAdapter().disclosure`) — zero-dependency builtin by default, swappable to
+ * Base UI / Radix / React Aria / Ariakit via `UIAdapterProvider`. The skin (this
+ * file) owns only the API shape; the parts self-wire through the adapter.
  *
  * @example
  * ```tsx
@@ -20,12 +21,7 @@
  * @module react/components/ui/collapsible
  */
 import * as React from "react";
-import { Slot } from "./slot.tsx";
-import { useDisclosure } from "./disclosure.ts";
-
-const CollapsibleContext = React.createContext<
-  { open: boolean; toggle: () => void; disabled?: boolean } | null
->(null);
+import { useAdapter } from "./adapter/context.tsx";
 
 /** Props accepted by `<Collapsible>`. */
 export interface CollapsibleProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange"> {
@@ -37,25 +33,25 @@ export interface CollapsibleProps extends Omit<React.HTMLAttributes<HTMLDivEleme
   onOpenChange?: (open: boolean) => void;
   /** Disable the trigger. */
   disabled?: boolean;
+  /** React 19: ref is a regular prop; forwarded to the wrapper node. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
-/** Collapsible root — owns open state. */
-export function Collapsible({
-  open,
-  defaultOpen,
-  onOpenChange,
-  disabled,
-  children,
-  ...props
-}: CollapsibleProps): React.ReactElement {
-  const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
-  const toggle = React.useCallback(() => setOpen(!isOpen), [isOpen, setOpen]);
+/** Collapsible root — owns open state (via the adapter's disclosure engine). */
+export function Collapsible(
+  { open, defaultOpen, onOpenChange, disabled, children, ...props }: CollapsibleProps,
+): React.ReactElement {
+  const { disclosure } = useAdapter();
   return (
-    <div data-state={isOpen ? "open" : "closed"} {...props}>
-      <CollapsibleContext.Provider value={{ open: isOpen, toggle, disabled }}>
-        {children}
-      </CollapsibleContext.Provider>
-    </div>
+    <disclosure.Root
+      open={open}
+      defaultOpen={defaultOpen}
+      onOpenChange={onOpenChange}
+      disabled={disabled}
+      {...props}
+    >
+      {children}
+    </disclosure.Root>
   );
 }
 
@@ -63,43 +59,24 @@ export function Collapsible({
 export interface CollapsibleTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   /** Render as a Slot, merging the trigger behaviour onto the child element. */
   asChild?: boolean;
+  /** React 19: ref is a regular prop; forwarded to the trigger node. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** Toggles the collapsible. `asChild` merges onto the child element. */
-export function CollapsibleTrigger({
-  asChild,
-  onClick,
-  children,
-  ...props
-}: CollapsibleTriggerProps): React.ReactElement {
-  const ctx = React.useContext(CollapsibleContext);
-  const Comp = asChild ? Slot : "button";
-  return (
-    <Comp
-      {...(asChild ? {} : { type: "button" as const })}
-      aria-expanded={ctx?.open}
-      data-state={ctx?.open ? "open" : "closed"}
-      disabled={ctx?.disabled}
-      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-        onClick?.(e);
-        ctx?.toggle();
-      }}
-      {...props}
-    >
-      {children}
-    </Comp>
-  );
+export function CollapsibleTrigger(
+  { children, ...props }: CollapsibleTriggerProps,
+): React.ReactElement {
+  const { disclosure } = useAdapter();
+  return <disclosure.Trigger {...props}>{children}</disclosure.Trigger>;
 }
 
 /** Collapsible content — rendered only while open. */
 export function CollapsibleContent(
-  { children, ...props }: React.HTMLAttributes<HTMLDivElement>,
+  { children, ...props }: React.HTMLAttributes<HTMLDivElement> & {
+    ref?: React.Ref<HTMLDivElement>;
+  },
 ): React.ReactElement | null {
-  const ctx = React.useContext(CollapsibleContext);
-  if (!ctx?.open) return null;
-  return (
-    <div data-state="open" {...props}>
-      {children}
-    </div>
-  );
+  const { disclosure } = useAdapter();
+  return <disclosure.Content {...props}>{children}</disclosure.Content>;
 }

@@ -16,9 +16,11 @@
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt React
  * Aria for just some parts and leave the rest zero-dependency. This template is
- * **full coverage — 7/7**: `popover` / `dialog` / `menu` / `tooltip` / `select`
- * / `combobox` / `toast`, all mapped onto `react-aria-components`. No slot falls
- * back to the builtin. `combobox` (and, for the same reason, `select`) is a
+ * **full coverage — 8/8**: `popover` / `dialog` / `menu` / `tooltip` /
+ * `disclosure` / `select` / `combobox` / `toast`, all mapped onto
+ * `react-aria-components`. No slot falls back to the builtin. `disclosure` is
+ * RAC's inline `Disclosure`/`DisclosurePanel` (the overlay disclosure minus the
+ * portal). `combobox` (and, for the same reason, `select`) is a
  * *contract-faithful hand-rolled* mapping — see reconciliation (5) below and the
  * per-slot docstrings for why RAC's collection primitives can't drive it.
  *
@@ -81,6 +83,11 @@ import {
   Button,
   Dialog,
   DialogTrigger,
+  // `Disclosure` / `DisclosurePanel` are a newer RAC addition — verify these
+  // names (and the `isExpanded`/`onExpandedChange` prop shape) vs your installed
+  // react-aria-components version.
+  Disclosure,
+  DisclosurePanel,
   Focusable,
   Menu,
   MenuTrigger,
@@ -103,6 +110,7 @@ import type {
   ComboboxParts,
   ComboboxState,
   DialogParts,
+  DisclosureParts,
   MenuParts,
   ModalState,
   PopoverParts,
@@ -343,6 +351,55 @@ export const reactAriaTooltip: TooltipParts = {
         </Tooltip>
       )}
     </ScopedPortal>
+  ),
+};
+
+// ---------------------------------------------------------------------------
+// Disclosure (collapsible archetype — the overlay disclosure MINUS the portal)
+// ---------------------------------------------------------------------------
+// An inline open/close region (Collapsible; Accordion composes one per item).
+// RAC's `Disclosure` owns the expand state AND provides its own context, so the
+// skin's Trigger (`<Button slot="trigger">`) and Content (`<DisclosurePanel>`)
+// self-wire simply by nesting inside it — no bridge context (unlike dialog/menu,
+// whose engine state we mirror for skin parts) and no ScopedPortal (the panel
+// renders inline, not as an anchored overlay). Prop mapping: `open`→`isExpanded`,
+// `defaultOpen`→`defaultExpanded`, `onOpenChange`→`onExpandedChange` (already
+// single-arg, cf. reconciliation (1)), `disabled`→`isDisabled`. RAC mounts the
+// panel only while expanded, matching the contract's "present only while open".
+export const reactAriaDisclosure: DisclosureParts = {
+  Root: ({ open, defaultOpen, onOpenChange, disabled, children, ref, ...rest }) => (
+    // verify `isExpanded`/`defaultExpanded`/`onExpandedChange` vs your RAC version.
+    <Disclosure
+      isExpanded={open}
+      defaultExpanded={defaultOpen}
+      onExpandedChange={onOpenChange}
+      isDisabled={disabled}
+      ref={ref}
+      {...rest}
+    >
+      {children}
+    </Disclosure>
+  ),
+  // `slot="trigger"` is what binds the Button to the enclosing Disclosure's
+  // expand state (RAC wires `aria-expanded` + toggle from its own context).
+  // `asChild` renders the consumer's element inside RAC's `Pressable` (carrying
+  // the slot), cf. reconciliation (4).
+  Trigger: ({ asChild, children, ...rest }) =>
+    asChild
+      ? (
+        <Pressable slot="trigger">
+          {React.cloneElement(children as React.ReactElement, rest)}
+        </Pressable>
+      )
+      : (
+        <Button slot="trigger" {...rest}>
+          {children}
+        </Button>
+      ),
+  Content: ({ className, children, ref, ...rest }) => (
+    <DisclosurePanel ref={ref} className={className} data-vf-state="open" {...rest}>
+      {children}
+    </DisclosurePanel>
   ),
 };
 
@@ -868,11 +925,13 @@ export const reactAriaToast: ToastParts = {
 };
 
 /**
- * FULL adapter map — React Aria for all 7 primitives: popover + dialog + menu +
- * tooltip + select + combobox + toast. No slot falls back to the builtin.
- * `select` + `combobox` bridge their state locally (RAC's collection primitives
- * don't invert onto the skin-driven registry — reconciliation (5)); `toast` maps
- * straight onto RAC's imperative `ToastQueue` (reconciliation (6)).
+ * FULL adapter map — React Aria for all 8 primitives: popover + dialog + menu +
+ * tooltip + disclosure + select + combobox + toast. No slot falls back to the
+ * builtin. `disclosure` maps onto RAC's inline `Disclosure`/`DisclosurePanel`
+ * (no portal); `select` + `combobox` bridge their state locally (RAC's
+ * collection primitives don't invert onto the skin-driven registry —
+ * reconciliation (5)); `toast` maps straight onto RAC's imperative `ToastQueue`
+ * (reconciliation (6)).
  */
 export const reactAriaAdapter: Partial<UIAdapter> & { name: string } = {
   name: "react-aria",
@@ -880,6 +939,7 @@ export const reactAriaAdapter: Partial<UIAdapter> & { name: string } = {
   dialog: reactAriaDialog,
   menu: reactAriaMenu,
   tooltip: reactAriaTooltip,
+  disclosure: reactAriaDisclosure,
   select: reactAriaSelect,
   combobox: reactAriaCombobox,
   toast: reactAriaToast,

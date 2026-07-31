@@ -15,11 +15,11 @@
  * ```
  *
  * The provider merges a PARTIAL map over the builtin, so this adapter adopts
- * Radix for six slots — the four floating overlays (popover / dialog / menu /
- * tooltip) plus select and toast. Coverage: 6/7 (popover / dialog / menu /
- * tooltip / select / toast; combobox stays builtin — Radix has NO combobox
- * primitive, so there is nothing to map it onto). Extend the map as you vendor
- * more parts.
+ * Radix for seven slots — the four floating overlays (popover / dialog / menu /
+ * tooltip) plus select, toast, and the inline disclosure. Coverage: 7/8
+ * (popover / dialog / menu / tooltip / select / toast / disclosure; combobox
+ * stays builtin — Radix has NO combobox primitive, so there is nothing to map
+ * it onto). Extend the map as you vendor more parts.
  *
  * How Radix maps onto the contract (the fault lines from RFC 0001 §13.2):
  *   1. `onOpenChange` is ALREADY single-arg `(open: boolean) => void` in Radix —
@@ -65,9 +65,11 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as Select from "@radix-ui/react-select";
 import * as Toast from "@radix-ui/react-toast";
+import * as Collapsible from "@radix-ui/react-collapsible";
 import { cx, useTokenScope } from "veryfront/ui";
 import type {
   DialogParts,
+  DisclosureParts,
   MenuParts,
   ModalState,
   PopoverParts,
@@ -274,6 +276,44 @@ export const radixTooltip: TooltipParts = {
         </Tooltip.Portal>
       )}
     </ScopedPortal>
+  ),
+};
+
+// ---------------------------------------------------------------------------
+// Disclosure (collapsible archetype — inline open/close, NO portal)
+// ---------------------------------------------------------------------------
+export const radixDisclosure: DisclosureParts = {
+  // Radix Collapsible already wires Trigger/Content to Root through its OWN
+  // internal context, and `onOpenChange` is single-arg — so Root just forwards
+  // the disclosure props + wrapper `div` attributes; no state bridge is needed
+  // (unlike Dialog/Menu, whose skin parts read a `useDialog()`/`useMenu()` hook).
+  // Inline region, so no `ScopedPortal` — the content renders in the token scope
+  // in place.
+  Root: (
+    { open, defaultOpen, onOpenChange, disabled, children, ...rest },
+  ) => (
+    <Collapsible.Root
+      open={open}
+      defaultOpen={defaultOpen}
+      onOpenChange={onOpenChange}
+      disabled={disabled}
+      {...rest}
+    >
+      {children}
+    </Collapsible.Root>
+  ),
+  // (4) `asChild` is native Radix — merges toggle behaviour + `aria-expanded`
+  // onto the single child element.
+  Trigger: ({ asChild, children, ...rest }) => (
+    <Collapsible.Trigger asChild={asChild} {...rest}>
+      {children}
+    </Collapsible.Trigger>
+  ),
+  // Radix unmounts Content when closed (present only while open) — no forceMount.
+  Content: ({ className, children, ...rest }) => (
+    <Collapsible.Content className={className} data-vf-state="open" {...rest}>
+      {children}
+    </Collapsible.Content>
   ),
 };
 
@@ -557,10 +597,11 @@ function RadixToastItem(
 }
 
 /**
- * Partial adapter map — adopt Radix for six slots (four floating overlays +
- * select + toast). Combobox is deliberately ABSENT: Radix has no combobox
- * primitive, so that key falls through to the zero-dependency builtin via the
- * partial-map merge. Extend as you vendor more parts.
+ * Partial adapter map — adopt Radix for seven slots (four floating overlays +
+ * select + toast + the inline disclosure). Combobox is deliberately ABSENT:
+ * Radix has no combobox primitive, so that key falls through to the
+ * zero-dependency builtin via the partial-map merge. Extend as you vendor more
+ * parts.
  */
 export const radixAdapter: Partial<UIAdapter> & { name: string } = {
   name: "radix",
@@ -570,6 +611,7 @@ export const radixAdapter: Partial<UIAdapter> & { name: string } = {
   tooltip: radixTooltip,
   select: radixSelect,
   toast: radixToast,
+  disclosure: radixDisclosure,
   // combobox: intentionally omitted — Radix ships no combobox primitive; the
   // builtin combobox stays in force through the partial-map merge.
 };

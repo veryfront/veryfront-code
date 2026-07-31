@@ -396,6 +396,7 @@ export type {
   ComboboxParts,
   ComboboxState,
   DialogParts,
+  DisclosureParts,
   DisclosureProps,
   MenuParts,
   ModalState,

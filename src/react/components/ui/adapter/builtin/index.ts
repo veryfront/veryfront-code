@@ -13,6 +13,7 @@ import { builtinTooltip } from "./tooltip.tsx";
 import { builtinSelect } from "./select.tsx";
 import { builtinCombobox } from "./combobox.tsx";
 import { builtinToast } from "./toast.tsx";
+import { builtinDisclosure } from "./disclosure.tsx";
 
 export const builtinAdapter: UIAdapter = {
   name: "builtin",
@@ -23,4 +24,5 @@ export const builtinAdapter: UIAdapter = {
   select: builtinSelect,
   combobox: builtinCombobox,
   toast: builtinToast,
+  disclosure: builtinDisclosure,
 };

@@ -46,6 +46,32 @@ export interface PopoverParts {
   >;
 }
 
+/**
+ * Role-tagged slots an adapter provides for a single open/close **disclosure**
+ * (the Collapsible primitive; Accordion composes one disclosure per item). The
+ * archetype is the overlay disclosure minus the portal/positioning: a trigger
+ * toggles a region that is present only while open. Parts self-wire through the
+ * adapter's own internal context, so the skin just renders `Root` > `Trigger` /
+ * `Content` (no hook needed), exactly like the Popover skin.
+ */
+export interface DisclosureParts {
+  /** Owns open state; renders the wrapper node + provides disclosure context. */
+  Root: React.FC<
+    & DisclosureProps
+    & React.HTMLAttributes<HTMLDivElement>
+    & { disabled?: boolean; children: React.ReactNode; ref?: React.Ref<HTMLDivElement> }
+  >;
+  /** Toggles the region; `asChild` merges onto the consumer's element. */
+  Trigger: React.FC<
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
+  >;
+  /** The collapsible region, present (mounted) only while open. */
+  Content: React.FC<
+    React.HTMLAttributes<HTMLDivElement> & { ref?: React.Ref<HTMLDivElement> }
+  >;
+}
+
 /** Open/close state a modal skin part (e.g. a Cancel button) can read. */
 export interface ModalState {
   open: boolean;
@@ -253,6 +279,7 @@ export interface UIAdapter {
   select: SelectParts;
   combobox: ComboboxParts;
   toast: ToastParts;
+  disclosure: DisclosureParts;
 }
 
 /**

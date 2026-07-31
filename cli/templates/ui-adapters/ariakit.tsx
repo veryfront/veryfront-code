@@ -14,12 +14,12 @@
  * ```
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt Ariakit
- * for just some parts and leave the rest zero-dependency. Slot coverage: 6/7 —
- * `popover` / `dialog` / `menu` / `tooltip` / `select` / `combobox` map to
- * Ariakit; `toast` STAYS builtin because Ariakit ships NO toast primitive (no
- * toast store / region / queue). Don't hand-roll one here — the zero-dependency
- * builtin toast already satisfies `ToastParts`, so leaving `toast` unset lets the
- * provider fall back to it.
+ * for just some parts and leave the rest zero-dependency. Slot coverage: 7/8 —
+ * `popover` / `dialog` / `menu` / `tooltip` / `select` / `combobox` /
+ * `disclosure` map to Ariakit; `toast` STAYS builtin because Ariakit ships NO
+ * toast primitive (no toast store / region / queue). Don't hand-roll one here —
+ * the zero-dependency builtin toast already satisfies `ToastParts`, so leaving
+ * `toast` unset lets the provider fall back to it.
  *
  * Ariakit is STORE-based: each primitive is `useXStore(...)` → an imperative
  * store shared via `<XProvider store={store}>`, with role components (`Popover`,
@@ -62,6 +62,7 @@ import type {
   ComboboxParts,
   ComboboxState,
   DialogParts,
+  DisclosureParts,
   MenuParts,
   ModalState,
   PopoverParts,
@@ -625,11 +626,83 @@ export const ariakitCombobox: ComboboxParts = {
   useCombobox: useAriakitCombobox as () => ComboboxState,
 };
 
+// ---------------------------------------------------------------------------
+// Disclosure (collapsible archetype — Ariakit's disclosure store owns open state)
+// ---------------------------------------------------------------------------
+// The Collapsible archetype is the overlay disclosure MINUS the portal: a trigger
+// toggles an INLINE region present only while open (no `ScopedPortal` here).
+// Ariakit's `useDisclosureStore` owns the open state; `Disclosure` is the toggle
+// button and `DisclosureContent` the region. We share the store (+ Root's
+// `disabled`) via context so Trigger/Content self-wire — mirroring how the menu
+// bridges its store — and so Content can mount only while open, matching the
+// contract (and `builtin/disclosure.tsx`).
+const DisclosureStoreContext = React.createContext<
+  { store: Ariakit.DisclosureStore; disabled?: boolean } | null
+>(null);
+
+const AriakitDisclosureRoot: DisclosureParts["Root"] = (
+  { open, defaultOpen, onOpenChange, disabled, children, ref, ...rest },
+) => {
+  // Ariakit's `setOpen` store option IS our single-arg `onOpenChange` (no
+  // `eventDetails` to drop), plus `open` / `defaultOpen`.
+  const store = Ariakit.useDisclosureStore({
+    open,
+    defaultOpen,
+    setOpen: onOpenChange,
+  });
+  const isOpen = store.useState("open");
+  const ctx = React.useMemo(() => ({ store, disabled }), [store, disabled]);
+  return (
+    <div ref={ref} data-vf-state={isOpen ? "open" : "closed"} {...rest}>
+      <DisclosureStoreContext.Provider value={ctx}>
+        <Ariakit.DisclosureProvider store={store}>{children}</Ariakit.DisclosureProvider>
+      </DisclosureStoreContext.Provider>
+    </div>
+  );
+};
+
+export const ariakitDisclosure: DisclosureParts = {
+  Root: AriakitDisclosureRoot,
+  // Ariakit's `Disclosure` is the toggle button — it reads the store from
+  // `DisclosureProvider` and sets `aria-expanded` itself. Root's `disabled`
+  // rides down through context. `asChild` maps to polymorphic `render={children}`.
+  Trigger: ({ asChild, children, ...rest }) => {
+    const ctx = React.useContext(DisclosureStoreContext);
+    const disabled = rest.disabled ?? ctx?.disabled;
+    return asChild
+      ? (
+        <Ariakit.Disclosure
+          render={children as React.ReactElement}
+          {...rest}
+          disabled={disabled}
+        />
+      )
+      : (
+        <Ariakit.Disclosure {...rest} disabled={disabled}>
+          {children}
+        </Ariakit.Disclosure>
+      );
+  },
+  // Inline (NOT portalled) region. Ariakit's `DisclosureContent` stays
+  // mounted+hidden by default, so gate on store open-state to mount only while
+  // open — matching the contract and the builtin.
+  Content: ({ className, children, ...rest }) => {
+    const ctx = React.useContext(DisclosureStoreContext);
+    const isOpen = ctx?.store.useState("open") ?? false;
+    if (!isOpen) return null;
+    return (
+      <Ariakit.DisclosureContent className={className} data-vf-state="open" {...rest}>
+        {children}
+      </Ariakit.DisclosureContent>
+    );
+  },
+};
+
 /**
  * Partial adapter map — adopt Ariakit for popover + dialog + menu + tooltip +
- * select + combobox (6/7). `toast` is intentionally ABSENT: Ariakit ships no
- * toast primitive, so it falls back to the zero-dependency builtin toast. Extend
- * as you vendor more parts.
+ * select + combobox + disclosure (7/8). `toast` is intentionally ABSENT: Ariakit
+ * ships no toast primitive, so it falls back to the zero-dependency builtin
+ * toast. Extend as you vendor more parts.
  */
 export const ariakitAdapter: Partial<UIAdapter> & { name: string } = {
   name: "ariakit",
@@ -639,6 +712,7 @@ export const ariakitAdapter: Partial<UIAdapter> & { name: string } = {
   tooltip: ariakitTooltip,
   select: ariakitSelect,
   combobox: ariakitCombobox,
+  disclosure: ariakitDisclosure,
   // toast: intentionally omitted — Ariakit has no toast primitive; provider
   // falls back to builtin toast.
 };

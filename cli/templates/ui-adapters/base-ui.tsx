@@ -15,8 +15,8 @@
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt Base UI
  * for just some parts and leave the rest zero-dependency. This template maps ALL
- * 7/7 parts: `popover` / `dialog` / `menu` / `tooltip` / `select` / `combobox` /
- * `toast`. Six wrap real Base UI primitives; `combobox` is a contract-faithful,
+ * 8/8 parts: `popover` / `dialog` / `menu` / `tooltip` / `select` / `combobox` /
+ * `toast` / `disclosure`. Seven wrap real Base UI primitives; `combobox` is a contract-faithful,
  * React-only hand-roll — Base UI's `Autocomplete` is data-driven (owns its own
  * `items` + filtering) and does NOT invert onto our `register`/`matches`/
  * `activeId` option registry, so that one slot owns query + filter + active-
@@ -41,11 +41,13 @@ import { Menu as BaseMenu } from "@base-ui/react/menu";
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import { Select as BaseSelect } from "@base-ui/react/select";
 import { Toast as BaseToast } from "@base-ui/react/toast";
+import { Collapsible as BaseCollapsible } from "@base-ui/react/collapsible";
 import { useTokenScope } from "veryfront/ui";
 import type {
   ComboboxParts,
   ComboboxState,
   DialogParts,
+  DisclosureParts,
   MenuParts,
   ModalState,
   PopoverParts,
@@ -694,8 +696,7 @@ function BaseUiToastBridge({ children }: { children: React.ReactNode }): React.R
       )) as ToastFn;
     toast.custom = (render: (id: string) => React.ReactNode) =>
       String(manager.add({ data: { render } as BaseUiToastRecord }));
-    const dismiss = (id: string) =>
-      manager.close(id);
+    const dismiss = (id: string) => manager.close(id);
     return { toast, dismiss };
   }, [manager]);
   return <ToastStateContext.Provider value={value}>{children}</ToastStateContext.Provider>;
@@ -822,12 +823,47 @@ export const baseUiToast: ToastParts = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Disclosure (collapsible archetype — the overlay disclosure MINUS the portal)
+// ---------------------------------------------------------------------------
+// Base UI's Collapsible owns open state and shares it with its own Trigger/Panel
+// through its internal context, so — exactly like the Popover parts — our slots
+// just wrap the Base UI parts directly; no separate state bridge is needed. The
+// only normalization is (1): drop Base UI's 2nd `onOpenChange(open, eventDetails)`
+// arg down to our single-arg `(open) => void`. A disclosure is inline (no portal
+// / positioning), so there is NO `ScopedPortal` here — `Root` renders the wrapper
+// node, `Panel` is the collapsible region mounted only while open.
+export const baseUiDisclosure: DisclosureParts = {
+  Root: ({ open, defaultOpen, onOpenChange, disabled, children, ...rest }) => (
+    <BaseCollapsible.Root
+      open={open}
+      defaultOpen={defaultOpen}
+      disabled={disabled}
+      // (1) drop the 2nd `eventDetails` arg.
+      onOpenChange={(next: boolean) => onOpenChange?.(next)}
+      {...rest}
+    >
+      {children}
+    </BaseCollapsible.Root>
+  ),
+  Trigger: ({ asChild, children, ...rest }) =>
+    asChild
+      ? <BaseCollapsible.Trigger render={children as React.ReactElement} {...rest} />
+      : <BaseCollapsible.Trigger {...rest}>{children}</BaseCollapsible.Trigger>,
+  Content: ({ className, children, ...rest }) => (
+    <BaseCollapsible.Panel className={className} data-vf-state="open" {...rest}>
+      {children}
+    </BaseCollapsible.Panel>
+  ),
+};
+
 /**
- * Partial adapter map — Base UI covers ALL 7/7 parts: popover + dialog + menu +
- * tooltip + select + combobox + toast. `combobox` is a contract-faithful,
- * React-only hand-roll (Base UI's data-driven `Autocomplete` doesn't invert onto
- * our `register`/`matches`/`activeId` registry — see the Combobox section); the
- * rest wrap real Base UI primitives. Drop any key to fall back to the builtin.
+ * Partial adapter map — Base UI covers ALL 8/8 parts: popover + dialog + menu +
+ * tooltip + select + combobox + toast + disclosure. `combobox` is a contract-
+ * faithful, React-only hand-roll (Base UI's data-driven `Autocomplete` doesn't
+ * invert onto our `register`/`matches`/`activeId` registry — see the Combobox
+ * section); the rest wrap real Base UI primitives. Drop any key to fall back to
+ * the builtin.
  */
 export const baseUiAdapter: Partial<UIAdapter> & { name: string } = {
   name: "base-ui",
@@ -838,4 +874,5 @@ export const baseUiAdapter: Partial<UIAdapter> & { name: string } = {
   select: baseUiSelect,
   combobox: baseUiCombobox,
   toast: baseUiToast,
+  disclosure: baseUiDisclosure,
 };

@@ -100,7 +100,13 @@ export const UI_COMPONENTS: UiComponent[] = [
   { name: "Command", kind: "overlay", interactive: true, status: "shipped" },
   // structure
   { name: "Tabs", kind: "structure", interactive: true, status: "shipped" },
-  { name: "Collapsible", kind: "structure", interactive: true, status: "shipped" },
+  {
+    name: "Collapsible",
+    kind: "structure",
+    interactive: true,
+    adapterKey: "disclosure",
+    status: "shipped",
+  },
   { name: "AppShell", kind: "structure", interactive: false, status: "shipped" },
   // theming
   { name: "ColorModeToggle", kind: "visual", interactive: false, status: "shipped" },
@@ -503,7 +509,16 @@ describe("veryfront/ui: leaf composition (one node · ref · {...props})", () =>
 // ---------------------------------------------------------------------------
 const ENGINE_TEMPLATES_DIR =
   new URL("../../../../cli/templates/ui-adapters/", import.meta.url).pathname;
-const ALL_SLOTS = ["popover", "dialog", "menu", "tooltip", "select", "combobox", "toast"] as const;
+const ALL_SLOTS = [
+  "popover",
+  "dialog",
+  "menu",
+  "tooltip",
+  "select",
+  "combobox",
+  "toast",
+  "disclosure",
+] as const;
 type Slot = typeof ALL_SLOTS[number];
 
 interface EngineRow {
@@ -528,7 +543,7 @@ const UI_ENGINES: EngineRow[] = [
   {
     name: "Radix",
     template: "radix.tsx",
-    slots: ["popover", "dialog", "menu", "tooltip", "select", "toast"],
+    slots: ["popover", "dialog", "menu", "tooltip", "select", "toast", "disclosure"],
     builtinFallback: ["combobox"], // Radix has no combobox primitive
     status: "shipped",
   },
@@ -542,7 +557,7 @@ const UI_ENGINES: EngineRow[] = [
   {
     name: "Ariakit",
     template: "ariakit.tsx",
-    slots: ["popover", "dialog", "menu", "tooltip", "select", "combobox"],
+    slots: ["popover", "dialog", "menu", "tooltip", "select", "combobox", "disclosure"],
     builtinFallback: ["toast"], // Ariakit has no toast primitive
     status: "shipped",
   },
