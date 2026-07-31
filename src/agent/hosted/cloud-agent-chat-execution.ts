@@ -320,6 +320,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
     finalMessages,
   } = await prepareVeryfrontCloudHostedChatExecution({
     request: req,
+    hostToolPolicy: context.options.hostToolPolicy,
     serverResolvedToolExposureCheckpoint: getServerResolvedToolExposureCheckpoint(
       req.forwardedProps,
       req.serverEnvelopeVerified === true,

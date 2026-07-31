@@ -123,92 +123,140 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
   assertEquals(capturedContext.availableToolNames, ["sleep"]);
 });
 
-Deno.test("hosted first provider call keeps deferred skill tools private and load_skill usable", async () => {
-  let capturedProviderBody: unknown;
-
+Deno.test("hosted first provider call filters skill tools for every tool selector", async () => {
   try {
-    const prepared = await prepareHostedChatRuntimeCreationOptions({
-      request: {
-        agentId: undefined,
-        userId: "user-1",
-        authToken: "token-1",
-        messages: [],
-        validatedContext: { projectId: "project-1", branchId: null },
-        projectId: "project-1",
-        conversationId: undefined,
-        parentRunId: undefined,
-        upstreamParentConversationId: undefined,
-        upstreamParentRunId: undefined,
-        spawnedFromToolCallId: undefined,
-        model: "anthropic/claude-sonnet-4-6",
-        allowDelegation: undefined,
-        forwardedProps: undefined,
-        runtimeOverrides: undefined,
-        durableRootRun: undefined,
-        persistLatestUserMessageBeforeDurableRun: false,
-      },
-      agentConfig: {
-        id: "agent-1",
-        name: "Agent",
-        description: "Hosted agent",
-        instructions: "Base instructions",
+    const cases: Array<{
+      tools: true | string[] | undefined;
+      allowedTools: string[];
+      hostToolAllow?: string[];
+      expectedPresent: string[];
+      expectedAbsent: string[];
+    }> = [
+      {
         tools: true,
-        skills: true,
+        allowedTools: ["bash"],
+        expectedPresent: ["load_skill"],
+        expectedAbsent: ["bash"],
       },
-      projectId: "project-1",
-      authToken: "token-1",
-      resolveModelId: (modelId) => modelId,
-      fetchSteering: () =>
-        Promise.resolve({
-          instructions: "Project instructions",
-          skills: [{
-            id: "deploy",
-            name: "Deploy",
-            description: "Deploy the project",
-            instructions: "Use bash to deploy.",
-            allowedTools: ["bash"],
-          }],
-        }),
-      buildInstructions: buildVeryfrontCloudRuntimeInstructions,
-    });
-    const runtime = await createDefaultHostedChatRuntime({
-      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-      options: { ...prepared.creationOptions, userId: "user-1" },
-      config: {
-        apiUrl: "https://api.example.com",
-        apiMcpUrl: "https://api.example.com/mcp",
+      {
+        tools: undefined,
+        allowedTools: ["bash"],
+        expectedPresent: ["load_skill"],
+        expectedAbsent: ["bash"],
       },
-      buildLocalTools: () => ({
-        bash: localTool("Run shell commands"),
-        load_skill: localTool("Load skill"),
-      }),
-      createRemoteToolSource: emptyRemoteSource,
-      preloadLatestConversationUserText: false,
-    });
+      {
+        tools: ["create_release"],
+        allowedTools: ["create_release", "delete_project"],
+        expectedPresent: ["create_release", "load_skill"],
+        expectedAbsent: ["delete_project"],
+      },
+      {
+        tools: ["bash"],
+        allowedTools: ["bash"],
+        hostToolAllow: ["load_skill"],
+        expectedPresent: ["load_skill"],
+        expectedAbsent: ["bash"],
+      },
+    ];
 
-    await withMockFetch(
-      async (input: string | URL | Request, init?: RequestInit) => {
-        const request = input instanceof Request ? input : new Request(input, init);
-        if (new URL(request.url).pathname.endsWith("/messages")) {
-          capturedProviderBody = await request.clone().json();
-        }
-        return Response.json({ content: [], stop_reason: "end_turn", usage: {} });
-      },
-      async () => {
-        const stream = await runtime.agent.stream({
+    for (const testCase of cases) {
+      let capturedProviderBody: unknown;
+      const prepared = await prepareHostedChatRuntimeCreationOptions({
+        request: {
+          agentId: undefined,
+          userId: "user-1",
+          authToken: "token-1",
           messages: [],
-          abortSignal: new AbortController().signal,
-        });
-        for await (const _chunk of stream.toUIMessageStream()) {
-          // Consume the first provider turn.
-        }
-      },
-    );
+          validatedContext: { projectId: "project-1", branchId: null },
+          projectId: "project-1",
+          conversationId: undefined,
+          parentRunId: undefined,
+          upstreamParentConversationId: undefined,
+          upstreamParentRunId: undefined,
+          spawnedFromToolCallId: undefined,
+          model: "anthropic/claude-sonnet-4-6",
+          allowDelegation: undefined,
+          forwardedProps: undefined,
+          runtimeOverrides: undefined,
+          durableRootRun: undefined,
+          persistLatestUserMessageBeforeDurableRun: false,
+        },
+        agentConfig: {
+          id: "agent-1",
+          name: "Agent",
+          description: "Hosted agent",
+          instructions: "Base instructions",
+          ...(testCase.tools === undefined ? {} : { tools: testCase.tools }),
+          skills: true,
+        },
+        projectId: "project-1",
+        authToken: "token-1",
+        resolveModelId: (modelId) => modelId,
+        fetchSteering: () =>
+          Promise.resolve({
+            instructions: "Project instructions",
+            skills: [{
+              id: "deploy",
+              name: "Deploy",
+              description: "Deploy the project",
+              instructions: "Deploy the project safely.",
+              allowedTools: testCase.allowedTools,
+            }],
+          }),
+        buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+        ...(testCase.hostToolAllow === undefined
+          ? {}
+          : { hostToolPolicy: { allow: testCase.hostToolAllow } }),
+      });
+      const runtime = await createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        ...(testCase.hostToolAllow === undefined
+          ? {}
+          : { hostToolPolicy: { allow: testCase.hostToolAllow } }),
+        options: { ...prepared.creationOptions, userId: "user-1" },
+        config: {
+          apiUrl: "https://api.example.com",
+          apiMcpUrl: "https://api.example.com/mcp",
+        },
+        buildLocalTools: () => ({
+          bash: localTool("Run shell commands"),
+          create_release: localTool("Create a release"),
+          delete_project: localTool("Delete a project"),
+          load_skill: localTool("Load skill"),
+        }),
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      });
 
-    const providerBody = JSON.stringify(capturedProviderBody);
-    assertEquals(providerBody.includes("Deploy the project"), true);
-    assertEquals(providerBody.includes("bash"), false);
-    assertEquals(providerBody.includes("load_skill"), true);
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          if (new URL(request.url).pathname.endsWith("/messages")) {
+            capturedProviderBody = await request.clone().json();
+          }
+          return Response.json({ content: [], stop_reason: "end_turn", usage: {} });
+        },
+        async () => {
+          const stream = await runtime.agent.stream({
+            messages: [],
+            abortSignal: new AbortController().signal,
+          });
+          for await (const _chunk of stream.toUIMessageStream()) {
+            // Consume the first provider turn.
+          }
+        },
+      );
+
+      const providerBody = JSON.stringify(capturedProviderBody);
+      assertEquals(providerBody.includes("Deploy the project"), true);
+      for (const toolName of testCase.expectedPresent) {
+        assertEquals(providerBody.includes(toolName), true);
+      }
+      for (const toolName of testCase.expectedAbsent) {
+        assertEquals(providerBody.includes(toolName), false);
+      }
+      await runtime.cleanup();
+    }
   } finally {
     await toolRegistry.clearAll();
   }
