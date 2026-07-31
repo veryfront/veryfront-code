@@ -1,11 +1,18 @@
 import * as Sentry from "@sentry/node";
-import type { ApplicationErrorReporter, SentryConfig } from "veryfront/observability/sentry";
+import type { ApplicationErrorReporter } from "#veryfront/observability/application-error-contract.ts";
+import type { SentryConfig } from "./config.ts";
 import {
   captureWithSentryPolicy,
   flushWithSentryPolicy,
   prepareSentryEvent,
   type SentryPolicySdk,
 } from "./policy.ts";
+
+export type {
+  ApplicationErrorContext,
+  ApplicationErrorReporter,
+} from "#veryfront/observability/application-error-contract.ts";
+export type { SentryConfig } from "./config.ts";
 
 type NodeSentrySdk = SentryPolicySdk & {
   init(options: Parameters<typeof Sentry.init>[0]): unknown;

@@ -4,6 +4,11 @@ export {
   createDenoSentryApplicationErrorReporter,
   createDenoSentryApplicationErrorReporter as createSentryApplicationErrorReporter,
 } from "./deno.ts";
+export type {
+  ApplicationErrorContext,
+  ApplicationErrorReporter,
+} from "#veryfront/observability/application-error-contract.ts";
+export type { SentryConfig } from "./config.ts";
 
 const extSentry: ExtensionFactory = () => ({
   name: "ext-observability-sentry",

@@ -223,8 +223,8 @@ import { captureApplicationError, flushApplicationErrors, initializeSentry } fro
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `captureApplicationError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L23) |
-| `flushApplicationErrors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L35) |
+| `captureApplicationError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L20) |
+| `flushApplicationErrors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L32) |
 | `initializeSentry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L54) |
 | `initializeSentryFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L47) |
 | `resetSentryForTests` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L75) |
@@ -234,6 +234,6 @@ import { captureApplicationError, flushApplicationErrors, initializeSentry } fro
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ApplicationErrorContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L1) |
-| `ApplicationErrorReporter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L10) |
+| `ApplicationErrorContext` | Sanitized context attached when a runtime reports an application error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-error-contract.ts#L5) |
+| `ApplicationErrorReporter` | Provider-neutral application error capture and flush interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-error-contract.ts#L23) |
 | `SentryConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L16) |

@@ -34,13 +34,16 @@ the task against an application checkout.
 | `prepare-framework-sources.ts`   | `build`     | Prepares framework `.src` files for SSR transforms  |
 | `build-all.js`                   | n/a         | Cross-compiles CLI binary for all platforms         |
 | `build-npm-dnt.ts`               | `build:npm` | Builds the root npm package via dnt and emits generated extension packages |
-| `build-npm-extension-packages.ts` | `build:npm` | Builds one publishable npm package for each first-party extension manifest |
+| `build-npm-extension-packages.ts` | `build:npm` | Builds publishable npm packages declared by first-party extension manifests |
 
 `deno task build:npm` writes the root package to `npm/` and first-party
 extension packages to `npm/extensions/<extension-name>/`. The root `veryfront`
 package must stay free of feature-specific implementation dependencies. Each
 generated `@veryfront/ext-*` package owns the dependencies declared by its
-extension manifest and peers on the matching `veryfront` version.
+extension manifest. An extension manifest can also declare runtime-specific
+leaf packages with narrower dependency sets and without a `veryfront` peer.
+Use `veryfront.npm.stagedSources` when a leaf package must bundle a canonical
+repository source file without adding the root framework as a dependency.
 
 ## lint/
 

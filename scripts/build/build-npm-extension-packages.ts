@@ -1,9 +1,9 @@
 import { build, emptyDir } from "#dnt";
-import { dirname } from "#std/path";
+import { basename, dirname, join, relative, toFileUrl } from "#std/path";
 import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
 import {
   bareImportPackageNames,
-  createExtensionPackageSpec,
+  createExtensionPackageSpecs,
   createVeryfrontPeerTypeImportReplacements,
   type ExtensionManifest,
   type ExtensionPackageSpec,
@@ -30,7 +30,7 @@ export async function buildExtensionPackages(
     const manifest = JSON.parse(
       await Deno.readTextFile(`${options.rootDir}/${manifestPath}`),
     ) as ExtensionManifest;
-    const spec = createExtensionPackageSpec({
+    const specs = createExtensionPackageSpecs({
       manifestPath,
       manifest,
       rootConfig: options.rootConfig,
@@ -38,14 +38,26 @@ export async function buildExtensionPackages(
       version: options.version,
       license: options.license,
     });
-    const outDir = `${options.outDir}/${spec.packageDirectoryName}`;
+    for (const spec of specs) {
+      await buildExtensionPackage(options, spec);
+    }
+  }
+}
 
-    console.log(`📦 Building ${spec.packageName}...`);
+async function buildExtensionPackage(
+  options: BuildExtensionPackagesOptions,
+  spec: ExtensionPackageSpec,
+): Promise<void> {
+  const outDir = `${options.outDir}/${spec.packageDirectoryName}`;
+
+  console.log(`📦 Building ${spec.packageName}...`);
+  const preparedInput = await prepareDntExtensionBuildInput({
+    rootDir: options.rootDir,
+    spec,
+  });
+  try {
     await build({
-      entryPoints: createDntExtensionEntryPoints({
-        rootDir: options.rootDir,
-        spec,
-      }),
+      entryPoints: preparedInput.entryPoints,
       outDir,
       test: false,
       scriptModule: false,
@@ -101,6 +113,8 @@ export async function buildExtensionPackages(
         });
       },
     });
+  } finally {
+    await preparedInput.cleanup();
   }
 }
 
@@ -112,6 +126,98 @@ export function createDntExtensionEntryPoints(input: {
     name: entryPoint.name,
     path: `${input.rootDir}/${entryPoint.path}`,
   }));
+}
+
+async function prepareDntExtensionBuildInput(input: {
+  rootDir: string;
+  spec: Pick<ExtensionPackageSpec, "entryPoints" | "manifestDir" | "stagedSources">;
+}): Promise<
+  { entryPoints: { name: string; path: string }[]; cleanup(): Promise<void> }
+> {
+  if (input.spec.stagedSources.length === 0) {
+    return {
+      entryPoints: createDntExtensionEntryPoints({
+        rootDir: input.rootDir,
+        spec: input.spec,
+      }),
+      cleanup: () => Promise.resolve(),
+    };
+  }
+
+  const tempDir = await Deno.makeTempDir({
+    prefix: "veryfront-extension-dnt-",
+  });
+  const stagedExtensionDir = join(tempDir, basename(input.spec.manifestDir));
+  const sourceExtensionDir = join(input.rootDir, input.spec.manifestDir);
+  await copyDirectory(sourceExtensionDir, stagedExtensionDir);
+
+  const stagedSourceTargets = new Map<string, string>();
+  for (const stagedSource of input.spec.stagedSources) {
+    const targetPath = join(stagedExtensionDir, stagedSource.target);
+    await Deno.mkdir(dirname(targetPath), { recursive: true });
+    await Deno.copyFile(join(input.rootDir, stagedSource.source), targetPath);
+    stagedSourceTargets.set(stagedSource.specifier, targetPath);
+  }
+
+  const usedSpecifiers = new Set<string>();
+
+  for await (const filePath of walkFiles(stagedExtensionDir)) {
+    if (!filePath.endsWith(".ts")) continue;
+    const original = await Deno.readTextFile(filePath);
+    let next = original;
+    for (const [specifier, targetPath] of stagedSourceTargets) {
+      if (!next.includes(specifier)) continue;
+      let targetSpecifier = relative(dirname(filePath), targetPath).replaceAll("\\", "/");
+      if (!targetSpecifier.startsWith(".")) targetSpecifier = `./${targetSpecifier}`;
+      next = next.replaceAll(specifier, targetSpecifier);
+      usedSpecifiers.add(specifier);
+    }
+    next = next.replaceAll(
+      '"veryfront/extensions"',
+      `"${toFileUrl(join(input.rootDir, "src/extensions/index.ts")).href}"`,
+    );
+    if (next !== original) {
+      await Deno.writeTextFile(filePath, next);
+    }
+  }
+
+  for (const stagedSource of input.spec.stagedSources) {
+    if (!usedSpecifiers.has(stagedSource.specifier)) {
+      await Deno.remove(tempDir, { recursive: true });
+      throw new Error(
+        `${input.spec.manifestDir} staged source specifier "${stagedSource.specifier}" is not imported by extension source`,
+      );
+    }
+  }
+
+  return {
+    entryPoints: input.spec.entryPoints.map((entryPoint) => ({
+      name: entryPoint.name,
+      path: join(
+        stagedExtensionDir,
+        relative(input.spec.manifestDir, entryPoint.path),
+      ),
+    })),
+    cleanup: () => Deno.remove(tempDir, { recursive: true }),
+  };
+}
+
+async function copyDirectory(
+  sourceDir: string,
+  targetDir: string,
+): Promise<void> {
+  await Deno.mkdir(targetDir, { recursive: true });
+  for await (const entry of Deno.readDir(sourceDir)) {
+    const sourcePath = join(sourceDir, entry.name);
+    const targetPath = join(targetDir, entry.name);
+    if (entry.isDirectory) {
+      await copyDirectory(sourcePath, targetPath);
+      continue;
+    }
+    if (entry.isFile) {
+      await Deno.copyFile(sourcePath, targetPath);
+    }
+  }
 }
 
 async function rewriteVeryfrontPeerTypeImports(input: {
@@ -153,7 +259,11 @@ async function removeDntImportMapArtifacts(
   spec: Pick<ExtensionPackageSpec, "entryPoints">,
 ): Promise<void> {
   if (await hasGeneratedDntImportMapReferences(outDir)) return;
-  if (spec.entryPoints.some((entryPoint) => entryPoint.name === "./deno")) {
+  if (
+    spec.entryPoints.some((entryPoint) =>
+      entryPoint.name === "./deno" || entryPoint.path.endsWith("/deno.ts")
+    )
+  ) {
     return;
   }
 

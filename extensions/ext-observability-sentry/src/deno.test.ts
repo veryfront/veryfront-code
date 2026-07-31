@@ -1,4 +1,5 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { createDenoSentryApplicationErrorReporter } from "./deno.ts";
 
 function createDenoSentrySdk(options: {
@@ -39,7 +40,7 @@ function createDenoSentrySdk(options: {
   return { sdk, state };
 }
 
-Deno.test("Deno adapter uses V1 error-only privacy-preserving configuration", async () => {
+it("Deno adapter uses V1 error-only privacy-preserving configuration", async () => {
   const { sdk, state } = createDenoSentrySdk();
   createDenoSentryApplicationErrorReporter(
     {
@@ -78,7 +79,7 @@ Deno.test("Deno adapter uses V1 error-only privacy-preserving configuration", as
   assertEquals(event.tags, { "service.name": "veryfront-server" });
 });
 
-Deno.test("Deno adapter captures with policy tags and bounded flush", async () => {
+it("Deno adapter captures with policy tags and bounded flush", async () => {
   const { sdk, state } = createDenoSentrySdk();
   const reporter = createDenoSentryApplicationErrorReporter(
     {
@@ -105,7 +106,30 @@ Deno.test("Deno adapter captures with policy tags and bounded flush", async () =
   assertEquals(state.flushTimeouts, [1_500]);
 });
 
-Deno.test("Deno adapter isolates SDK capture and flush failures", async () => {
+it("Deno adapter propagates process role to native Sentry tag", () => {
+  const { sdk, state } = createDenoSentrySdk();
+  const reporter = createDenoSentryApplicationErrorReporter(
+    {
+      dsn: "https://public@example.ingest.sentry.io/1",
+      environment: "",
+      release: "",
+      serviceName: "veryfront-server",
+    },
+    sdk,
+  );
+
+  reporter.capture(new Error("request failed"), {
+    boundary: "server.request",
+    processRole: "server",
+  });
+
+  assertEquals(
+    state.tags.some(([key, value]) => key === "process_role" && value === "server"),
+    true,
+  );
+});
+
+it("Deno adapter isolates SDK capture and flush failures", async () => {
   const captureReporter = createDenoSentryApplicationErrorReporter(
     {
       dsn: "https://public@example.ingest.sentry.io/1",

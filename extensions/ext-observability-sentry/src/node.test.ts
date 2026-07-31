@@ -1,4 +1,5 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { createNodeSentryApplicationErrorReporter } from "./node.ts";
 
 function createNodeSentrySdk(options: {
@@ -39,7 +40,7 @@ function createNodeSentrySdk(options: {
   return { sdk, state };
 }
 
-Deno.test("Node adapter uses error-only configuration without tracing or log capture", async () => {
+it("Node adapter uses error-only configuration without tracing or log capture", async () => {
   const { sdk, state } = createNodeSentrySdk();
   createNodeSentryApplicationErrorReporter(
     {
@@ -80,7 +81,7 @@ Deno.test("Node adapter uses error-only configuration without tracing or log cap
   assertEquals(event.tags, { "service.name": "veryfront-agent" });
 });
 
-Deno.test("Node adapter captures with policy tags and bounded flush", async () => {
+it("Node adapter captures with policy tags and bounded flush", async () => {
   const { sdk, state } = createNodeSentrySdk();
   const reporter = createNodeSentryApplicationErrorReporter(
     {
@@ -107,7 +108,30 @@ Deno.test("Node adapter captures with policy tags and bounded flush", async () =
   assertEquals(state.flushTimeouts, [1_500]);
 });
 
-Deno.test("Node adapter isolates SDK capture and flush failures", async () => {
+it("Node adapter propagates process role to native Sentry tag", () => {
+  const { sdk, state } = createNodeSentrySdk();
+  const reporter = createNodeSentryApplicationErrorReporter(
+    {
+      dsn: "https://public@example.ingest.sentry.io/1",
+      environment: "",
+      release: "",
+      serviceName: "veryfront-api",
+    },
+    sdk,
+  );
+
+  reporter.capture(new Error("request failed"), {
+    boundary: "api.request",
+    processRole: "api",
+  });
+
+  assertEquals(
+    state.tags.some(([key, value]) => key === "process_role" && value === "api"),
+    true,
+  );
+});
+
+it("Node adapter isolates SDK capture and flush failures", async () => {
   const captureReporter = createNodeSentryApplicationErrorReporter(
     {
       dsn: "https://public@example.ingest.sentry.io/1",
@@ -136,7 +160,7 @@ Deno.test("Node adapter isolates SDK capture and flush failures", async () => {
   assertEquals(await flushReporter.flush(1_500), false);
 });
 
-Deno.test("Node adapter source does not import the Deno SDK", async () => {
+it("Node adapter source does not import the Deno SDK", async () => {
   const source = await Deno.readTextFile(
     new URL("./node.ts", import.meta.url),
   );
