@@ -235,7 +235,7 @@ describe("Up Command", () => {
           }
 
           if (
-            url.endsWith(`/projects/${expectedSlug}`) &&
+            (url.endsWith(`/projects/${expectedSlug}`) || url.endsWith("/projects/project-1")) &&
             method === "GET"
           ) {
             return Promise.resolve(
@@ -244,7 +244,8 @@ describe("Up Command", () => {
           }
 
           if (
-            url.includes(`/projects/${expectedSlug}/files/`) &&
+            (url.includes(`/projects/${expectedSlug}/files/`) ||
+              url.includes("/projects/project-1/files/")) &&
             method === "PUT"
           ) {
             const path = decodeURIComponent(new URL(url).pathname.split("/files/")[1] ?? "");
@@ -395,6 +396,24 @@ describe("Up Command", () => {
         );
         const expectedName = capitalizeSeparatedWords(expectedSlug, "-", " ");
         assertEquals(projectCreateBody, { slug: expectedSlug, name: expectedName });
+
+        assertEquals(
+          JSON.parse(await Deno.readTextFile(join(tempDir, ".veryfront", "project.json"))),
+          {
+            version: 1,
+            controlPlane: "https://api.from-env.test",
+            projectId: "project-1",
+            projectSlug: expectedSlug,
+          },
+        );
+        let veryfrontJsonExists = true;
+        try {
+          await Deno.stat(join(tempDir, "veryfront.json"));
+        } catch {
+          veryfrontJsonExists = false;
+        }
+        assertEquals(veryfrontJsonExists, false);
+
         const humanOutput = output.join("\n");
         assertEquals(humanOutput.includes("Studio:"), true);
         assertEquals(humanOutput.includes("Preview:"), true);
@@ -441,6 +460,9 @@ describe("Up Command", () => {
 
           if (request.method === "GET" && url.pathname === "/me") {
             return Response.json({ id: "user-1", email: "dev@example.com" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/json-up") {
+            return Response.json({ id: "project-1", slug: "json-up" });
           }
           if (request.method === "GET" && url.pathname === "/projects/json-up/files") {
             return Response.json({ data: [], page_info: {} });

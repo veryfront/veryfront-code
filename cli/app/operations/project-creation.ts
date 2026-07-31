@@ -11,8 +11,11 @@ import type { AppState } from "../state.ts";
 import { addLog, setProjects, updateRemote } from "../state.ts";
 import { readToken } from "../../auth/token-store.ts";
 import { fetchRemoteProjects } from "../../sync/index.ts";
-import { getLocalProjectsFromState, normalizeSlug } from "../utils.ts";
+import { getLocalProjectsFromState } from "../utils.ts";
 import { reserveProjectSlug } from "../../shared/reserve-slug.ts";
+import { normalizeProjectSlug } from "../../shared/slug.ts";
+import { persistProjectLink } from "../../shared/project-resolution.ts";
+import { resolveCliApiUrl } from "../../shared/constants.ts";
 import { createProject as createSharedProject } from "../../shared/project-creation.ts";
 import type { InitTemplate } from "../../commands/init/types.ts";
 
@@ -40,8 +43,9 @@ export async function createProject(
       return addLog("error", "Not authenticated. Press 'a' to login.")(state);
     }
 
-    const normalizedSlug = normalizeSlug(projectName);
-    const { slug } = await reserveProjectSlug(normalizedSlug, token);
+    const normalizedSlug = normalizeProjectSlug(projectName);
+    const reserved = await reserveProjectSlug(normalizedSlug, token);
+    const slug = reserved.slug;
 
     const creation = await createSharedProject({
       name: slug,
@@ -56,6 +60,16 @@ export async function createProject(
       initializeGit: false,
       includePackageMetadata: false,
     });
+
+    // A project the TUI just reserved is this directory's project: record the
+    // canonical link so every later command resolves it without inference.
+    if (reserved.projectId) {
+      await persistProjectLink(
+        creation.projectDir,
+        { apiUrl: resolveCliApiUrl(), apiToken: token, projectSlug: slug },
+        { id: reserved.projectId, slug },
+      );
+    }
 
     const currentProjects = getLocalProjectsFromState(state);
     currentProjects.push({ slug, path: creation.projectDir });
