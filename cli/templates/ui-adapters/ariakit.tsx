@@ -700,9 +700,10 @@ export const ariakitDisclosure: DisclosureParts = {
 
 /**
  * Partial adapter map — adopt Ariakit for popover + dialog + menu + tooltip +
- * select + combobox + disclosure (7/8). `toast` is intentionally ABSENT: Ariakit
- * ships no toast primitive, so it falls back to the zero-dependency builtin
- * toast. Extend as you vendor more parts.
+ * select + combobox + disclosure (7/9). `toast` and `toggleGroup` are
+ * intentionally ABSENT: Ariakit ships no toast primitive and no dedicated
+ * toggle-group primitive, so both fall back to the zero-dependency builtin.
+ * Extend as you vendor more parts.
  */
 export const ariakitAdapter: Partial<UIAdapter> & { name: string } = {
   name: "ariakit",
@@ -713,6 +714,8 @@ export const ariakitAdapter: Partial<UIAdapter> & { name: string } = {
   select: ariakitSelect,
   combobox: ariakitCombobox,
   disclosure: ariakitDisclosure,
-  // toast: intentionally omitted — Ariakit has no toast primitive; provider
-  // falls back to builtin toast.
+  // toast: intentionally omitted — Ariakit has no toast primitive; falls back
+  // to builtin toast.
+  // toggleGroup: intentionally omitted — Ariakit has no dedicated toggle-group
+  // primitive; falls back to builtin toggleGroup.
 };

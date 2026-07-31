@@ -16,9 +16,12 @@
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt React
  * Aria for just some parts and leave the rest zero-dependency. This template is
- * **full coverage — 8/8**: `popover` / `dialog` / `menu` / `tooltip` /
- * `disclosure` / `select` / `combobox` / `toast`, all mapped onto
- * `react-aria-components`. No slot falls back to the builtin. `disclosure` is
+ * **full coverage — 9/9**: `popover` / `dialog` / `menu` / `tooltip` /
+ * `disclosure` / `toggleGroup` / `select` / `combobox` / `toast`, all mapped onto
+ * `react-aria-components`. No slot falls back to the builtin. `toggleGroup` maps
+ * onto RAC's `ToggleButtonGroup` / `ToggleButton` (bridging the contract's
+ * `type`/string `value` onto RAC's `selectionMode`/`Set` selection). `disclosure`
+ * is
  * RAC's inline `Disclosure`/`DisclosurePanel` (the overlay disclosure minus the
  * portal). `combobox` (and, for the same reason, `select`) is a
  * *contract-faithful hand-rolled* mapping — see reconciliation (5) below and the
@@ -95,6 +98,11 @@ import {
   Popover,
   Pressable,
   Text,
+  // `ToggleButtonGroup` / `ToggleButton` are a newer RAC addition — verify these
+  // names (and `selectionMode`/`selectedKeys`/`onSelectionChange`) vs your
+  // installed react-aria-components version.
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   TooltipTrigger,
   // RAC's toast primitives are newer/unstable and ship `UNSTABLE_`-prefixed —
@@ -105,6 +113,9 @@ import {
   UNSTABLE_ToastQueue as ToastQueue,
   UNSTABLE_ToastRegion as ToastRegion,
 } from "react-aria-components";
+// `Key` / `Selection` are RAC's collection key + selection types
+// (`Selection = Set<Key> | "all"`) — verify vs your react-aria-components version.
+import type { Key, Selection } from "react-aria-components";
 import { useTokenScope } from "veryfront/ui";
 import type {
   ComboboxParts,
@@ -120,6 +131,7 @@ import type {
   ToastOptions,
   ToastParts,
   ToastState,
+  ToggleGroupParts,
   TooltipParts,
   UIAdapter,
 } from "veryfront/ui";
@@ -401,6 +413,93 @@ export const reactAriaDisclosure: DisclosureParts = {
       {children}
     </DisclosurePanel>
   ),
+};
+
+// ---------------------------------------------------------------------------
+// ToggleGroup (shared single/multiple selection — RAC ToggleButtonGroup)
+// ---------------------------------------------------------------------------
+// RAC's `ToggleButtonGroup` owns the shared-selection state machine (roving
+// focus, arrow-key nav, `role`), and each `ToggleButton` is a member keyed by
+// `id`. It speaks RAC's `Selection` vocabulary — `selectionMode`
+// ("single"|"multiple"), a `selectedKeys: Set<Key>`, and `onSelectionChange(Set)`
+// — which we BRIDGE onto the contract's `type` + string(|[]) `value`:
+//   • `type`            → `selectionMode`
+//   • `value`/`default` → a `selectedKeys` Set (single `""` → empty set)
+//   • `onValueChange`   ← the emitted Set, collapsed back to a string (single)
+//                         or string[] (multiple)
+//   • `disabled`        → `isDisabled`
+// We own the selection (controlled/uncontrolled) here so the value we feed RAC is
+// authoritative, then publish the selected Set through a context the `Item` reads
+// to set `data-state="on"|"off"` explicitly (RAC's own `isSelected` surfaces as
+// `data-selected`, but the skin styles off `data-state`). RAC's `ToggleButton`
+// already emits `aria-pressed`; we add `data-state`. This is an inline primitive,
+// so there is no ScopedPortal (nothing is portalled).
+const ToggleGroupSelectionContext = React.createContext<Set<string>>(new Set());
+
+/** contract `value` (string | string[] | undefined) → RAC `selectedKeys` Set. */
+function toKeySet(value: string | string[] | undefined): Set<string> {
+  if (value == null) return new Set();
+  if (Array.isArray(value)) return new Set(value);
+  return value ? new Set([value]) : new Set(); // single `""` → no selection
+}
+
+export const reactAriaToggleGroup: ToggleGroupParts = {
+  Root: (
+    { type = "single", value, defaultValue, onValueChange, disabled, children, ref, ...rest },
+  ) => {
+    const isControlled = value !== undefined;
+    const [internal, setInternal] = React.useState<Set<string>>(() => toKeySet(defaultValue));
+    const selected = isControlled ? toKeySet(value) : internal;
+
+    const onSelectionChange = React.useCallback((keys: Selection) => {
+      // A ToggleButtonGroup never emits the `"all"` sentinel; normalize to strings.
+      const next = keys === "all" ? new Set<string>() : new Set(Array.from(keys, String));
+      if (!isControlled) setInternal(next);
+      const arr = Array.from(next);
+      // Collapse the Set back to the contract shape: single → one value or `""`.
+      onValueChange?.(type === "single" ? (arr[0] ?? "") : arr);
+    }, [isControlled, onValueChange, type]);
+
+    return (
+      <ToggleGroupSelectionContext.Provider value={selected}>
+        {
+          /* verify `selectionMode`/`selectedKeys`/`onSelectionChange`/`isDisabled`
+            vs your react-aria-components version. */
+        }
+        <ToggleButtonGroup
+          ref={ref}
+          selectionMode={type}
+          selectedKeys={selected}
+          onSelectionChange={onSelectionChange}
+          isDisabled={disabled}
+          {...rest}
+        >
+          {children}
+        </ToggleButtonGroup>
+      </ToggleGroupSelectionContext.Provider>
+    );
+  },
+  // `asChild` has no RAC analogue here — the ToggleButton must itself be the keyed
+  // group member — so it is dropped (not spread onto the DOM). The skin's
+  // `className` + rest props flow straight onto the ToggleButton.
+  Item: ({ value, asChild: _asChild, disabled, children, className, ref, ...rest }) => {
+    const selected = React.useContext(ToggleGroupSelectionContext);
+    const isOn = selected.has(value);
+    return (
+      // `id={value}` keys the member; RAC emits `aria-pressed`, we add `data-state`
+      // (the skin's styling hook) from our authoritative selection.
+      <ToggleButton
+        ref={ref}
+        id={value as Key}
+        isDisabled={disabled}
+        data-state={isOn ? "on" : "off"}
+        className={className}
+        {...rest}
+      >
+        {children}
+      </ToggleButton>
+    );
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -925,13 +1024,14 @@ export const reactAriaToast: ToastParts = {
 };
 
 /**
- * FULL adapter map — React Aria for all 8 primitives: popover + dialog + menu +
- * tooltip + disclosure + select + combobox + toast. No slot falls back to the
- * builtin. `disclosure` maps onto RAC's inline `Disclosure`/`DisclosurePanel`
- * (no portal); `select` + `combobox` bridge their state locally (RAC's
- * collection primitives don't invert onto the skin-driven registry —
- * reconciliation (5)); `toast` maps straight onto RAC's imperative `ToastQueue`
- * (reconciliation (6)).
+ * FULL adapter map — React Aria for all 9 primitives: popover + dialog + menu +
+ * tooltip + disclosure + toggleGroup + select + combobox + toast. No slot falls
+ * back to the builtin. `disclosure` maps onto RAC's inline
+ * `Disclosure`/`DisclosurePanel` (no portal); `toggleGroup` bridges the contract's
+ * `type`/string `value` onto RAC's `ToggleButtonGroup` `selectionMode`/`Set`
+ * selection; `select` + `combobox` bridge their state locally (RAC's collection
+ * primitives don't invert onto the skin-driven registry — reconciliation (5));
+ * `toast` maps straight onto RAC's imperative `ToastQueue` (reconciliation (6)).
  */
 export const reactAriaAdapter: Partial<UIAdapter> & { name: string } = {
   name: "react-aria",
@@ -940,6 +1040,7 @@ export const reactAriaAdapter: Partial<UIAdapter> & { name: string } = {
   menu: reactAriaMenu,
   tooltip: reactAriaTooltip,
   disclosure: reactAriaDisclosure,
+  toggleGroup: reactAriaToggleGroup,
   select: reactAriaSelect,
   combobox: reactAriaCombobox,
   toast: reactAriaToast,

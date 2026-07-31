@@ -72,6 +72,34 @@ export interface DisclosureParts {
   >;
 }
 
+/**
+ * Role-tagged slots an adapter provides for the ToggleGroup primitive — a set of
+ * pressable items with shared `single` / `multiple` selection. The Root owns the
+ * selection state machine; the Item self-wires through the adapter's internal
+ * context (reads its pressed state, toggles on click). The skin keeps only the
+ * visual classes; `data-state="on"|"off"` on each Item is the styling hook.
+ */
+export interface ToggleGroupParts {
+  /** Owns the selection state machine + provides context. */
+  Root: React.FC<
+    & React.HTMLAttributes<HTMLDivElement>
+    & {
+      type?: "single" | "multiple";
+      value?: string | string[];
+      defaultValue?: string | string[];
+      onValueChange?: (value: string | string[]) => void;
+      disabled?: boolean;
+      children: React.ReactNode;
+      ref?: React.Ref<HTMLDivElement>;
+    }
+  >;
+  /** A pressable item; sets `aria-pressed` / `data-state`, toggles on click. */
+  Item: React.FC<
+    & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "value">
+    & { value: string; asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
+  >;
+}
+
 /** Open/close state a modal skin part (e.g. a Cancel button) can read. */
 export interface ModalState {
   open: boolean;
@@ -280,6 +308,7 @@ export interface UIAdapter {
   combobox: ComboboxParts;
   toast: ToastParts;
   disclosure: DisclosureParts;
+  toggleGroup: ToggleGroupParts;
 }
 
 /**

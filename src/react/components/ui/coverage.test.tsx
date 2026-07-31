@@ -114,7 +114,13 @@ export const UI_COMPONENTS: UiComponent[] = [
   // ---- PLANNED (gaps vs Base UI / Radix / shadcn) — RED until built ----
   { name: "Separator", kind: "visual", interactive: false, status: "shipped" },
   { name: "Toggle", kind: "form", interactive: false, status: "shipped" },
-  { name: "ToggleGroup", kind: "form", interactive: true, status: "shipped" },
+  {
+    name: "ToggleGroup",
+    kind: "form",
+    interactive: true,
+    adapterKey: "toggleGroup",
+    status: "shipped",
+  },
   { name: "Slider", kind: "form", interactive: true, status: "shipped" },
   { name: "Accordion", kind: "structure", interactive: true, status: "shipped" },
   {
@@ -518,6 +524,7 @@ const ALL_SLOTS = [
   "combobox",
   "toast",
   "disclosure",
+  "toggleGroup",
 ] as const;
 type Slot = typeof ALL_SLOTS[number];
 
@@ -543,7 +550,7 @@ const UI_ENGINES: EngineRow[] = [
   {
     name: "Radix",
     template: "radix.tsx",
-    slots: ["popover", "dialog", "menu", "tooltip", "select", "toast", "disclosure"],
+    slots: ["popover", "dialog", "menu", "tooltip", "select", "toast", "disclosure", "toggleGroup"],
     builtinFallback: ["combobox"], // Radix has no combobox primitive
     status: "shipped",
   },
@@ -558,7 +565,8 @@ const UI_ENGINES: EngineRow[] = [
     name: "Ariakit",
     template: "ariakit.tsx",
     slots: ["popover", "dialog", "menu", "tooltip", "select", "combobox", "disclosure"],
-    builtinFallback: ["toast"], // Ariakit has no toast primitive
+    // Ariakit ships no toast and no dedicated toggle-group primitive.
+    builtinFallback: ["toast", "toggleGroup"],
     status: "shipped",
   },
 ];

@@ -15,8 +15,8 @@
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt Base UI
  * for just some parts and leave the rest zero-dependency. This template maps ALL
- * 8/8 parts: `popover` / `dialog` / `menu` / `tooltip` / `select` / `combobox` /
- * `toast` / `disclosure`. Seven wrap real Base UI primitives; `combobox` is a contract-faithful,
+ * 9/9 parts: `popover` / `dialog` / `menu` / `tooltip` / `select` / `combobox` /
+ * `toast` / `disclosure` / `toggleGroup`. Eight wrap real Base UI primitives; `combobox` is a contract-faithful,
  * React-only hand-roll — Base UI's `Autocomplete` is data-driven (owns its own
  * `items` + filtering) and does NOT invert onto our `register`/`matches`/
  * `activeId` option registry, so that one slot owns query + filter + active-
@@ -42,6 +42,7 @@ import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import { Select as BaseSelect } from "@base-ui/react/select";
 import { Toast as BaseToast } from "@base-ui/react/toast";
 import { Collapsible as BaseCollapsible } from "@base-ui/react/collapsible";
+import { Toggle as BaseToggle, ToggleGroup as BaseToggleGroup } from "@base-ui/react/toggle-group";
 import { useTokenScope } from "veryfront/ui";
 import type {
   ComboboxParts,
@@ -57,6 +58,7 @@ import type {
   ToastOptions,
   ToastParts,
   ToastState,
+  ToggleGroupParts,
   TooltipParts,
   UIAdapter,
 } from "veryfront/ui";
@@ -857,13 +859,101 @@ export const baseUiDisclosure: DisclosureParts = {
   ),
 };
 
+// ---------------------------------------------------------------------------
+// ToggleGroup (shared selection — single / multiple pressable items)
+// ---------------------------------------------------------------------------
+// Base UI's ToggleGroup owns an ARRAY `value` + a `toggleMultiple` boolean
+// (false = single, true = multiple) and calls `onValueChange(groupValue,
+// eventDetails)`. Our contract is `type="single"|"multiple"` with a
+// string|string[] value and a single-arg `onValueChange`. Two normalizations:
+//   (a) map `type` → `toggleMultiple`, and adapt single ↔ array on the way in
+//       (value/defaultValue) and back out (`onValueChange`); `""` = no selection.
+//   (b) drop Base UI's 2nd `eventDetails` arg (same as the overlay parts).
+// Base UI's Toggle emits `data-pressed`, but the skin styles off `data-state`.
+// So we mirror the selected array into a context and each Item sets
+// `data-state="on"|"off"` explicitly from whether its `value` is selected.
+// `aria-pressed` is native to Base UI's Toggle.
+interface ToggleGroupInternalState {
+  selected: string[];
+  disabled?: boolean;
+}
+const ToggleGroupStateContext = React.createContext<ToggleGroupInternalState | null>(null);
+
+/** Contract single|string[] → Base UI's array `value` (`""` = empty selection). */
+function toGroupArray(value: string | string[] | undefined): string[] {
+  if (value == null || value === "") return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+export const baseUiToggleGroup: ToggleGroupParts = {
+  Root: ({ type = "single", value, defaultValue, onValueChange, disabled, children, ...rest }) => {
+    const multiple = type === "multiple";
+    const isControlled = value !== undefined;
+    const [internal, setInternal] = React.useState<string[]>(() => toGroupArray(defaultValue));
+    const selected = isControlled ? toGroupArray(value) : internal;
+
+    const emit = React.useCallback((next: string[]) => {
+      if (!isControlled) setInternal(next);
+      // (b) drop the 2nd arg; (a) array → contract shape (single = value or "").
+      onValueChange?.(multiple ? next : (next[0] ?? ""));
+    }, [isControlled, multiple, onValueChange]);
+
+    const state = React.useMemo<ToggleGroupInternalState>(
+      () => ({ selected, disabled }),
+      [selected, disabled],
+    );
+
+    return (
+      <ToggleGroupStateContext.Provider value={state}>
+        <BaseToggleGroup
+          value={selected}
+          toggleMultiple={multiple}
+          disabled={disabled}
+          onValueChange={(groupValue: string[]) => emit(groupValue)}
+          {...rest}
+        >
+          {children}
+        </BaseToggleGroup>
+      </ToggleGroupStateContext.Provider>
+    );
+  },
+  Item: ({ value, asChild, disabled, className, children, ...rest }) => {
+    const ctx = React.useContext(ToggleGroupStateContext);
+    const isOn = ctx?.selected.includes(value) ?? false;
+    const isDisabled = disabled || ctx?.disabled;
+    // Skin styles off `data-state`; Base UI's Toggle carries `aria-pressed` itself.
+    return asChild
+      ? (
+        <BaseToggle
+          value={value}
+          render={children as React.ReactElement}
+          data-state={isOn ? "on" : "off"}
+          disabled={isDisabled}
+          className={className}
+          {...rest}
+        />
+      )
+      : (
+        <BaseToggle
+          value={value}
+          data-state={isOn ? "on" : "off"}
+          disabled={isDisabled}
+          className={className}
+          {...rest}
+        >
+          {children}
+        </BaseToggle>
+      );
+  },
+};
+
 /**
- * Partial adapter map — Base UI covers ALL 8/8 parts: popover + dialog + menu +
- * tooltip + select + combobox + toast + disclosure. `combobox` is a contract-
- * faithful, React-only hand-roll (Base UI's data-driven `Autocomplete` doesn't
- * invert onto our `register`/`matches`/`activeId` registry — see the Combobox
- * section); the rest wrap real Base UI primitives. Drop any key to fall back to
- * the builtin.
+ * Partial adapter map — Base UI covers ALL 9/9 parts: popover + dialog + menu +
+ * tooltip + select + combobox + toast + disclosure + toggleGroup. `combobox` is
+ * a contract-faithful, React-only hand-roll (Base UI's data-driven `Autocomplete`
+ * doesn't invert onto our `register`/`matches`/`activeId` registry — see the
+ * Combobox section); the rest wrap real Base UI primitives. Drop any key to fall
+ * back to the builtin.
  */
 export const baseUiAdapter: Partial<UIAdapter> & { name: string } = {
   name: "base-ui",
@@ -875,4 +965,5 @@ export const baseUiAdapter: Partial<UIAdapter> & { name: string } = {
   combobox: baseUiCombobox,
   toast: baseUiToast,
   disclosure: baseUiDisclosure,
+  toggleGroup: baseUiToggleGroup,
 };

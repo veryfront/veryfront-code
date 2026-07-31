@@ -15,11 +15,12 @@
  * ```
  *
  * The provider merges a PARTIAL map over the builtin, so this adapter adopts
- * Radix for seven slots — the four floating overlays (popover / dialog / menu /
- * tooltip) plus select, toast, and the inline disclosure. Coverage: 7/8
- * (popover / dialog / menu / tooltip / select / toast / disclosure; combobox
- * stays builtin — Radix has NO combobox primitive, so there is nothing to map
- * it onto). Extend the map as you vendor more parts.
+ * Radix for eight slots — the four floating overlays (popover / dialog / menu /
+ * tooltip) plus select, toast, the inline disclosure, and the toggle group.
+ * Coverage: 8/9 (popover / dialog / menu / tooltip / select / toast /
+ * disclosure / toggleGroup; combobox stays builtin — Radix has NO combobox
+ * primitive, so there is nothing to map it onto). Extend the map as you vendor
+ * more parts.
  *
  * How Radix maps onto the contract (the fault lines from RFC 0001 §13.2):
  *   1. `onOpenChange` is ALREADY single-arg `(open: boolean) => void` in Radix —
@@ -66,6 +67,7 @@ import * as Tooltip from "@radix-ui/react-tooltip";
 import * as Select from "@radix-ui/react-select";
 import * as Toast from "@radix-ui/react-toast";
 import * as Collapsible from "@radix-ui/react-collapsible";
+import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import { cx, useTokenScope } from "veryfront/ui";
 import type {
   DialogParts,
@@ -79,6 +81,7 @@ import type {
   ToastOptions,
   ToastParts,
   ToastState,
+  ToggleGroupParts,
   TooltipParts,
   TooltipSide,
   UIAdapter,
@@ -314,6 +317,44 @@ export const radixDisclosure: DisclosureParts = {
     <Collapsible.Content className={className} data-vf-state="open" {...rest}>
       {children}
     </Collapsible.Content>
+  ),
+};
+
+// ---------------------------------------------------------------------------
+// ToggleGroup (shared single/multiple selection over pressable items)
+// ---------------------------------------------------------------------------
+export const radixToggleGroup: ToggleGroupParts = {
+  // Radix's ToggleGroup.Root owns the shared-selection state machine and wires
+  // its Items through its OWN internal context — so, like Collapsible, Root
+  // just forwards the contract props; no state bridge is needed. Radix REQUIRES
+  // `type`, and the contract defaults it to "single". `value` / `defaultValue`
+  // / `onValueChange` already line up with the contract: single ⇒ `string`,
+  // multiple ⇒ `string[]`, and Radix's `onValueChange` is ALREADY the single-arg
+  // shape the contract wants (no eventDetails to drop). Wrapper `div` attrs +
+  // `className` flow through via `...rest`.
+  Root: (
+    { type = "single", value, defaultValue, onValueChange, disabled, children, ...rest },
+  ) => (
+    <ToggleGroup.Root
+      type={type}
+      value={value}
+      defaultValue={defaultValue}
+      onValueChange={onValueChange}
+      disabled={disabled}
+      {...rest}
+    >
+      {children}
+    </ToggleGroup.Root>
+  ),
+  // Radix's Item NATIVELY emits `data-state="on"|"off"` AND `aria-pressed` and
+  // toggles the group on click, so it maps directly — the skin's
+  // `data-[state=on]:…` classes read that state hook. (4) `asChild` is native
+  // Radix. The Item carries no visual classes of its own — `className` (and the
+  // rest of the button attrs) arrive via `...rest` from the skin.
+  Item: ({ value, asChild, children, ...rest }) => (
+    <ToggleGroup.Item value={value} asChild={asChild} {...rest}>
+      {children}
+    </ToggleGroup.Item>
   ),
 };
 
@@ -597,11 +638,11 @@ function RadixToastItem(
 }
 
 /**
- * Partial adapter map — adopt Radix for seven slots (four floating overlays +
- * select + toast + the inline disclosure). Combobox is deliberately ABSENT:
- * Radix has no combobox primitive, so that key falls through to the
- * zero-dependency builtin via the partial-map merge. Extend as you vendor more
- * parts.
+ * Partial adapter map — adopt Radix for eight slots (four floating overlays +
+ * select + toast + the inline disclosure + the toggle group). Combobox is
+ * deliberately ABSENT: Radix has no combobox primitive, so that key falls
+ * through to the zero-dependency builtin via the partial-map merge. Extend as
+ * you vendor more parts.
  */
 export const radixAdapter: Partial<UIAdapter> & { name: string } = {
   name: "radix",
@@ -612,6 +653,7 @@ export const radixAdapter: Partial<UIAdapter> & { name: string } = {
   select: radixSelect,
   toast: radixToast,
   disclosure: radixDisclosure,
+  toggleGroup: radixToggleGroup,
   // combobox: intentionally omitted — Radix ships no combobox primitive; the
   // builtin combobox stays in force through the partial-map merge.
 };

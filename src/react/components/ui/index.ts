@@ -406,6 +406,7 @@ export type {
   SelectState,
   ToastParts,
   ToastState,
+  ToggleGroupParts,
   TooltipParts,
   TooltipSide,
   UIAdapter,
