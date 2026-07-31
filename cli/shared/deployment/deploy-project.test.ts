@@ -18,6 +18,18 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { computeSourceDigest, writePushReceipt } from "../deployment-provenance.ts";
 import type { DeployControlPlane } from "./control-plane.ts";
 import {
+  assertProjectOwnership,
+  createDeployProject,
+  type DeployEvent,
+  type DeployProjectRequest,
+  type DeployStepName,
+  resolvePushedSource,
+  verifyDeployment,
+  verifyReleaseSource,
+  waitForEnvironmentReady,
+  waitForReleaseAssetManifest,
+} from "./deploy-project.ts";
+import {
   commitProject,
   CONTROL_PLANE,
   createPushedProject,
@@ -66,19 +78,6 @@ function helperControlPlane(overrides: Partial<DeployControlPlane>): DeployContr
     ...overrides,
   };
 }
-import {
-  assertProjectOwnership,
-  createDeployProject,
-  type DeployEvent,
-  type DeployProjectRequest,
-  type DeployStepName,
-  resolvePushedSource,
-  verifyDeployment,
-  verifyReleaseSource,
-  waitForEnvironmentReady,
-  waitForReleaseAssetManifest,
-} from "./deploy-project.ts";
-
 function createDeployment(controlPlane: InMemoryDeployControlPlane) {
   return createDeployProject({
     polling: {
@@ -126,6 +125,31 @@ describe("DeployProject", () => {
           "other-project",
           "project lookup should use the request projectSlug, not the configured reference",
         );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("rejects a request projectSlug combined with ensure-pushed source", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const error = await expectDeployError(() =>
+          executeApply(projectDir, controlPlane, undefined, {
+            projectSlug: "other-project",
+            source: { kind: "ensure-pushed" },
+          })
+        );
+
+        assertMatch(
+          (error as Error).message,
+          /already-pushed/,
+          "request-scoped deploys must require an already-pushed source",
+        );
+        assertEquals(controlPlane.createdReleases, [], "no release before the rejection");
+        assertEquals(controlPlane.createdDeployments, [], "no deployment before the rejection");
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }

@@ -45,7 +45,9 @@ export interface DeployProjectRequest {
   /**
    * Explicit project reference for callers that target a project by slug
    * (for example MCP tools). Takes precedence over receipt, link, and
-   * inference, and never persists a local project link.
+   * inference, and never persists a local project link. Requires
+   * `source: { kind: "already-pushed" }` — a request-scoped deploy never
+   * pushes local sources on the caller's behalf.
    */
   projectSlug?: string;
   branch?: string;
@@ -979,6 +981,12 @@ export function createDeployProject(options: {
 
   return {
     async execute(request, observer) {
+      if (request.projectSlug && request.source.kind === "ensure-pushed") {
+        throw DEPLOYMENT_ERROR.create({
+          detail:
+            `An explicit projectSlug requires source { kind: "already-pushed" }: request-scoped deploys never push local sources. Run veryfront push first, or omit projectSlug to deploy the locally configured project.`,
+        });
+      }
       const environmentConfig = await step(
         observer,
         "resolve-config",
