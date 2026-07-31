@@ -176,7 +176,8 @@ flowchart TD
   active --> script[execute_skill_script]
   active --> filter[Allowed tool filtering]
   reference --> safety[Path safety checks]
-  script --> executor[Local or cloud script executor]
+  script --> authority[Explicit executor or extension provider]
+  authority --> runtime[Application-owned local or remote runtime]
 ```
 
 1. Skill discovery reads `SKILL.md`, parses frontmatter, and validates metadata.
@@ -187,8 +188,10 @@ flowchart TD
 5. Allowed-tool policy filters callable tools while a skill is active.
 6. Path-safety helpers reject traversal and symlink escapes before reading
    skill files.
-7. Script execution selects local subprocess execution or cloud sandbox
-   execution based on runtime credentials.
+7. Script execution requires an executor supplied by application composition:
+   either a tool-local `SkillScriptExecutor` or the active
+   `SkillScriptExecutorProvider` extension. Missing authority fails closed;
+   core does not infer a local runtime from credentials.
 
 Skills provide instruction packs and tool policy. They are not workflows,
 runs, or local tool definitions. Skills are configured through project

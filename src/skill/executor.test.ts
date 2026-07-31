@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   exists,
@@ -11,6 +16,7 @@ import {
 } from "#veryfront/platform/compat/fs.ts";
 import { deleteEnv, getOsType, setEnv } from "#veryfront/platform/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
 import {
   type FetchCall,
   installMockFetch,
@@ -168,8 +174,42 @@ describe("src/skill/executor", () => {
 
     it("should detect TypeScript files", () => {
       const result = detectRuntime("scripts/run.ts");
-      // Either deno or npx tsx depending on runtime
-      assertEquals(result.args.includes("scripts/run.ts"), true);
+      assertEquals(result, {
+        command: "deno",
+        args: [
+          "run",
+          "--allow-read",
+          "--allow-env",
+          "--allow-net",
+          "--allow-write",
+          "scripts/run.ts",
+        ],
+      });
+    });
+
+    it("requires an explicit executor for TypeScript outside Deno", () => {
+      assertThrows(
+        () => detectRuntime("scripts/run.ts", "local", "node"),
+        TypeError,
+        "explicit SkillScriptExecutor or SkillScriptExecutorProvider",
+      );
+    });
+
+    it("uses the owned sandbox runtime for cloud TypeScript on a Node host", () => {
+      assertEquals(
+        detectRuntime("scripts/run.ts", "veryfront-sandbox", "node"),
+        {
+          command: "deno",
+          args: [
+            "run",
+            "--allow-read",
+            "--allow-env",
+            "--allow-net",
+            "--allow-write",
+            "scripts/run.ts",
+          ],
+        },
+      );
     });
 
     it("should use direct execution for unknown extensions", () => {
@@ -1394,18 +1434,23 @@ describe("src/skill/executor", () => {
       assertStringIncludes(errors[2]!.message, "Close sandbox failed");
     });
 
-    it("falls back to local execution for an explicitly unauthenticated request", async () => {
+    it("fails closed for an explicitly unauthenticated request", async () => {
       // Mask both ambient credential sources so this assertion remains valid
       // when the repository suite initializes a process-wide cloud bootstrap.
       setEnv("SANDBOX_AUTH_TOKEN", "");
-      const executor = await runWithRequestContext(
-        {
-          projectSlug: "skill-test",
-          token: "",
-        },
-        async () => getSkillScriptExecutor(),
+      const error = await assertRejects(
+        () =>
+          runWithRequestContext(
+            {
+              projectSlug: "skill-test",
+              token: "",
+            },
+            async () => getSkillScriptExecutor(),
+          ),
+        Error,
+        "requires cloud authentication",
       );
-      assertEquals(executor instanceof LocalScriptExecutor, true);
+      assertEquals((error as { slug?: string }).slug, CONFIG_INVALID.slug);
     });
   });
 });

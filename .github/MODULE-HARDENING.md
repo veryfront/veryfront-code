@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    54 |      93.1% | Current formal closure evidence remains valid       |
+| Closed                         |    55 |      94.8% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     0 |       0.0% | No reviewed remediation or design work remains open |
-| Touched, revalidation required |     4 |       6.9% | Substantive recovered or current work exists        |
+| Touched, revalidation required |     3 |       5.2% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -82,6 +82,7 @@ stricter closure count.
 - `schedule`
 - `schemas`
 - `security`
+- `skill`
 - `studio`
 - `task`
 - `testing`
@@ -101,7 +102,6 @@ None.
 
 - `react`
 - `server`
-- `skill`
 - `workflow`
 
 ### Pending current review
@@ -127,7 +127,7 @@ The current closed review chain covers `agent`, `build`, `cache`, `channels`, `c
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
 `internal-agents`, `mcp`, `middleware`, `modules`, `observability`, `oauth`, `platform`, `provider`,
 `prompt`, `proxy`, `registry`, `release-assets`, `rendering`, `repositories`, `routing`, `runs`, `runtime`, `sandbox`, `schedule`,
-`schemas`, `security`, `studio`, `task`, `tool`, `transforms`, `trigger`, `types`, `webhook`, `resource`, `index.ts`, and
+`schemas`, `security`, `skill`, `studio`, `task`, `tool`, `transforms`, `trigger`, `types`, `webhook`, `resource`, `index.ts`, and
 `version.ts`.
 The chain also covers `testing` after its portable assertions, BDD adapters,
 process-global test helpers, timing, documentation, and direct consumers were
@@ -243,6 +243,13 @@ consumers were remediated and revalidated. The narrow Platform, Routing,
 Repositories, Release Assets, and Server consumer changes passed their complete
 affected portfolios, so those previously closed units remain closed except for
 the already-open top-level Server revalidation.
+`skill` is closed after its document-parser and script-executor extension
+contracts, untrusted document and filesystem boundaries, authorization policy,
+execution budgets, local and cloud lifecycle, explicit runtime composition,
+public surface, documentation, and direct consumers were remediated and
+revalidated. Script tools now require explicit executor or provider authority;
+core no longer names a third-party TypeScript runner or silently falls back to
+local execution.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
 unit. No unit now lacks a current authoritative-branch review delta; the next
@@ -6054,7 +6061,7 @@ No known unresolved critical or high-confidence Security production risk
 remains. The `security` unit is closed at 53 of 58 formal units; five units
 remain open or awaiting top-level revalidation.
 
-### Skill dependency-free parsing checkpoint (execution cleanup pending)
+### Skill dependency-free parsing and execution closure
 
 The current `skill` review now owns the complete untrusted document envelope,
 resource budgets, metadata policy, and data-only snapshot. YAML decoding moved
@@ -6105,12 +6112,48 @@ invoking hostile constructor/species hooks. Core rejects it synchronously and
 never invokes those hooks; extension providers are required not to create or
 return Promises.
 
-Formal closure remains pending only on the script-execution decision already
-recorded by the earlier audit: Node/Bun TypeScript execution still names an
-application-supplied `tsx` binary from core, and the public automatic executor
-still chooses local execution when no cloud credential exists. Those behaviors
-require either an extension boundary or an explicitly accepted compatibility
-residual before `skill` can be counted closed.
+The remaining script-execution findings are now remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** script tools selected a
+  concrete built-in executor when neither the caller nor an extension supplied
+  execution authority. Credential state could therefore change a tool from
+  cloud to local process execution. Backend selection now accepts only an
+  explicit `SkillScriptExecutor` or the active
+  `SkillScriptExecutorProvider`; absence and malformed or transition-
+  unavailable registrations fail closed with `CONFIG_INVALID`.
+- **Symptom -> Source -> Consequence -> Remedy:** non-Deno TypeScript execution
+  named `npx --no-install tsx` from core. That undeclared application toolchain
+  dependency was brittle and violated extension ownership. Local TypeScript is
+  now admitted only when Deno owns the process; Node.js, Bun, and other hosts
+  must supply an executor or provider, and core contains no `npx` or `tsx`
+  execution path.
+- **Symptom -> Source -> Consequence -> Remedy:** removing that host fallback
+  initially exposed that cloud command selection reused the application host
+  even though the script runs remotely. A Node.js host could provision and
+  upload a cloud TypeScript script, then reject before execution. Local and
+  Veryfront-sandbox targets now have separate ownership: the first-party
+  sandbox selects its known Deno runtime independently of the host.
+- The public `getSkillScriptExecutor()` signature remains available as a
+  compatibility cloud factory. It requires cloud authentication and never
+  falls back locally; applications choose other runtimes explicitly.
+
+Current closure evidence:
+
+- the complete `src/skill` portfolio passes 118 tests and 286 nested steps,
+  and the extension-owned script-provider portfolio passes 33 tests;
+- focused production and test entrypoints typecheck, format, and lint; extension
+  contract, capability, sanitizer, dependency, and module-boundary gates pass;
+- guide and public-document validators pass 67 guides and 114 public files,
+  guide contracts pass 88 nested steps, all 1,234 documentation links resolve,
+  and the generated Skill API reference matches the current source; and
+- an independent adversarial review reproduced the previous Node-host cloud
+  failure, verified the remote `deno run` repair, reran the focused executor,
+  provider, tool, and generation portfolios, and returned GO with no Critical
+  or Important finding.
+
+No known unresolved critical or high-confidence Skill production risk remains.
+The `skill` unit is closed at 55 of 58 formal units; `react`, `server`, and
+`workflow` remain open for their current remediation and top-level gates.
 
 ### CSS extension-boundary follow-up checkpoint
 

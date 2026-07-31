@@ -7,6 +7,7 @@ import {
 } from "#veryfront/extensions/skill/script-executor-provider.ts";
 import { createIntrinsicPromiseContinuation } from "../extensions/promise-intrinsics-internal.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
 import { createSkillOperationBudget, SkillOperationTimeoutError } from "./operation-budget.ts";
 import {
   executeSkillScriptWithProvider,
@@ -87,12 +88,16 @@ Deno.test("skill provider backend gives an explicit executor absolute precedence
   });
 });
 
-Deno.test("skill provider backend preserves built-ins only when no provider is registered", () => {
+Deno.test("skill provider backend requires explicit execution authority", () => {
   const previous = tryResolve<unknown>(SkillScriptExecutorProviderName);
   unregister(SkillScriptExecutorProviderName);
   try {
-    const backend = resolveSkillScriptExecutionBackend();
-    assertEquals(backend.kind, "executor");
+    const error = assertThrows(
+      () => resolveSkillScriptExecutionBackend(),
+      Error,
+      "requires an explicit SkillScriptExecutor or an active SkillScriptExecutorProvider",
+    );
+    assertEquals((error as { slug?: string }).slug, CONFIG_INVALID.slug);
   } finally {
     if (previous !== undefined) register(SkillScriptExecutorProviderName, previous);
   }

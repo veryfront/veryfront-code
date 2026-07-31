@@ -350,13 +350,23 @@ Backend selection follows this precedence for each execution:
 1. A `SkillScriptExecutor` passed as
    `createExecuteSkillScriptTool({ executor })`.
 2. The active `SkillScriptExecutorProvider` registration.
-3. The built-in executor, which selects cloud execution when cloud
-   authentication is available and local execution otherwise.
+
+If neither execution authority exists, `execute_skill_script` fails closed.
+Core does not inspect credentials to select a local runtime and does not invoke
+an application-owned TypeScript runner. Register an extension provider for a
+shared runtime, or pass an executor when constructing the tool.
 
 An explicit executor prevents provider-registry inspection. A registered
 provider is snapshotted for that execution. A malformed or transition-
-unavailable registration fails closed instead of falling back to the built-in
-executor.
+unavailable registration fails closed instead of falling back to another
+runtime.
+
+The compatibility `getSkillScriptExecutor()` factory constructs only the
+first-party Veryfront Cloud sandbox executor. It requires cloud authentication
+and fails closed when authentication is absent; it never falls back to local
+process execution. Local TypeScript execution is built into Deno. Node.js and
+Bun applications must supply an explicit executor or provider instead of
+relying on an undeclared `tsx` installation.
 
 Loader-owned providers also participate in extension generation retirement.
 When retirement begins, the loader seals the current generation synchronously,
@@ -379,7 +389,7 @@ settlements, retry teardown before activating a replacement.
 Provider resolution fails closed while a generation is retiring or a
 replacement is staging. If replacement setup fails, contracts remain
 unavailable until a later generation commits successfully; Veryfront does not
-silently select the built-in executor. An execution already admitted to a
+silently select another executor. An execution already admitted to a
 generation keeps its provider snapshot until terminal cleanup, while a
 captured provider that did not start before retirement cannot start afterward.
 
@@ -501,7 +511,9 @@ sandbox options rather than embedded in the command string. Combined captured
 output and uploaded script content are capped at 1 MiB, and arguments and
 environment entries are limited to 64 each.
 
-Python, shell, and JavaScript files use `python3`, `bash`, and `node`
-respectively. Deno runs TypeScript directly. Node and Bun projects must already
-provide `tsx`; script execution uses `npx --no-install tsx` and never installs a
-package from the network.
+The explicit local executor uses `python3`, `bash`, and `node` for Python,
+shell, and JavaScript files, respectively. Deno runs TypeScript directly.
+The first-party Veryfront Cloud sandbox also uses its owned Deno runtime for
+TypeScript, independently of the application host.
+Node.js and Bun TypeScript execution requires an application-supplied executor
+or extension provider; core does not name, install, or invoke a transpiler.

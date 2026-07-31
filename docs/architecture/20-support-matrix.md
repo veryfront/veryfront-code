@@ -51,10 +51,11 @@ on a backing API or cloud bootstrap.
 
 ## Extension contract matrix
 
-These contracts are backed by first-party extension packages. A contract is
-required only when a feature resolves it. Built-in packages are auto-enabled by
-core bootstrap; optional and explicit packages must be configured by the
-project. The three CSS packages and Node WebSocket package below are explicit:
+Most contracts are backed by first-party extension packages; application-owned
+providers are identified explicitly below. A contract is required only when a
+feature resolves it. Built-in packages are auto-enabled by core bootstrap;
+optional and explicit packages must be configured by the project. The three CSS
+packages, Node WebSocket package, and Skill script provider below are explicit:
 core owns their contracts and orchestration, not their implementations or
 third-party dependencies.
 
@@ -81,6 +82,7 @@ third-party dependencies.
 | `TracingExporter`             | `@veryfront/ext-observability-opentelemetry`              | Optional                              | OTLP tracing export                                                                      | Network (OTLP endpoint)           |
 | `NodeTelemetryProvider`       | `@veryfront/ext-observability-opentelemetry`              | Built-in                              | Node OpenTelemetry SDK bootstrap                                                         | Network (OTLP endpoint)           |
 | `EvalReportExporterRegistry`  | Core registry and future `@veryfront/ext-eval-*` packages | Built-in registry, optional exporters | Eval report export                                                                       | Vendor-specific                   |
+| `SkillScriptExecutorProvider` | Application-composed extension                            | Explicit                              | Skill script execution                                                                   | Declared by the selected provider |
 | `TokenCacheStore`             | `@veryfront/ext-cache-redis`                              | Optional                              | Redis-backed token cache                                                                 | Network (Redis)                   |
 | `DistributedRuntimeProvider`  | `@veryfront/ext-redis`                                    | Optional, explicit activation         | Distributed cache, workflow, memory, rate-limit, event, and invalidation implementations | Network (Redis)                   |
 

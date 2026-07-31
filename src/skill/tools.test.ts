@@ -864,6 +864,28 @@ Do work.`,
     }
   });
 
+  it("execute_skill_script fails closed without execution authority", async () => {
+    const scriptPath = "/project/skills/my-skill/scripts/run.sh";
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo unreachable" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    const previous = tryResolve<unknown>(SkillScriptExecutorProviderName);
+    unregister(SkillScriptExecutorProviderName);
+
+    try {
+      await assertRejects(
+        () =>
+          createExecuteSkillScriptTool().execute({
+            skillId: "my-skill",
+            script: "scripts/run.sh",
+          }),
+        Error,
+        "requires an explicit SkillScriptExecutor or an active SkillScriptExecutorProvider",
+      );
+    } finally {
+      if (previous !== undefined) register(SkillScriptExecutorProviderName, previous);
+    }
+  });
+
   it("execute_skill_script late-resolves a provider and delivers validated input", async () => {
     const scriptPath = "/project/skills/my-skill/scripts/run.sh";
     const adapter = createSkillTestAdapter({ [scriptPath]: "echo provider" });

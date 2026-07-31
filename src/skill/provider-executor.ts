@@ -23,7 +23,7 @@ import {
   removeAbortSignalListener,
 } from "#veryfront/platform/compat/abort-signal.ts";
 import { createIntrinsicPromiseContinuation } from "../extensions/promise-intrinsics-internal.ts";
-import { getSkillScriptExecutor } from "./executor.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
 import { SKILL_SCRIPT_PROVIDER_TERMINATION_GRACE_MS } from "./limits.ts";
 import { type SkillOperationBudget, SkillOperationTimeoutError } from "./operation-budget.ts";
 import type { SkillScriptExecutor, SkillScriptExecutorInput, SkillScriptResult } from "./types.ts";
@@ -202,8 +202,8 @@ function throwExecutionFailures(failures: unknown[]): never {
  * Select a backend for one execution.
  *
  * Explicit executors are never inspected through the extension registry. A
- * present but malformed registration fails closed instead of falling back to a
- * built-in executor.
+ * missing, unavailable, or malformed provider fails closed; core never guesses
+ * an execution environment or invokes an application-owned runtime.
  */
 export function resolveSkillScriptExecutionBackend(
   explicitExecutor?: SkillScriptExecutor,
@@ -223,7 +223,10 @@ export function resolveSkillScriptExecutionBackend(
     });
   }
 
-  return freeze({ kind: "executor", executor: getSkillScriptExecutor() });
+  throw CONFIG_INVALID.create({
+    detail:
+      "Skill script execution requires an explicit SkillScriptExecutor or an active SkillScriptExecutorProvider extension",
+  });
 }
 
 async function executeSkillScriptWithProviderInternal(

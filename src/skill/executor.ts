@@ -7,7 +7,7 @@
  */
 
 import { getEnv, runCommand } from "#veryfront/platform/compat/process.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { type RuntimeKind, runtimeKind } from "#veryfront/platform/compat/runtime.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import {
   addAbortSignalListenerOnce,
@@ -29,6 +29,7 @@ import {
   type NormalizedSkillScriptExecutorInput,
   snapshotSkillScriptExecutorInput,
 } from "./script-executor-input.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
 const defineOwnProperty = Object.defineProperty;
 const freeze = Object.freeze;
 const TIMEOUT_EXIT_CODE = 124;
@@ -258,9 +259,14 @@ async function runSandboxPreparationCommand(
 }
 
 /**
- * Detect the runtime command for a script based on file extension.
+ * Detect the runtime command for a script based on file extension and the
+ * execution environment that owns the process.
  */
-export function detectRuntime(scriptPath: string): { command: string; args: string[] } {
+export function detectRuntime(
+  scriptPath: string,
+  target: "local" | "veryfront-sandbox" = "local",
+  hostRuntime: RuntimeKind = runtimeKind,
+): { command: string; args: string[] } {
   const ext = extname(scriptPath).toLowerCase();
 
   switch (ext) {
@@ -271,15 +277,15 @@ export function detectRuntime(scriptPath: string): { command: string; args: stri
     case ".js":
       return { command: "node", args: [scriptPath] };
     case ".ts":
-      if (isDeno) {
+      if (target === "veryfront-sandbox" || hostRuntime === "deno") {
         return {
           command: "deno",
           args: ["run", "--allow-read", "--allow-env", "--allow-net", "--allow-write", scriptPath],
         };
       }
-      // Never let local skill execution install an unpinned package from the
-      // network. Node/Bun callers must provide tsx in their existing toolchain.
-      return { command: "npx", args: ["--no-install", "tsx", scriptPath] };
+      throw new TypeError(
+        "Local TypeScript skill execution outside Deno requires an explicit SkillScriptExecutor or SkillScriptExecutorProvider",
+      );
     default:
       return { command: scriptPath, args: [] };
   }
@@ -596,7 +602,10 @@ async function executeCloudScriptInSandbox(
   );
   if (permissionSettlement) return terminationResult(permissionSettlement, budget.timeoutMs);
 
-  const { command, args: runtimeArgs } = detectRuntime(sandboxLocation.scriptPath);
+  const { command, args: runtimeArgs } = detectRuntime(
+    sandboxLocation.scriptPath,
+    "veryfront-sandbox",
+  );
   const allArgs = [...runtimeArgs, ...normalized.args];
   const finalArgs = command === sandboxLocation.scriptPath ? normalized.args : allArgs;
 
@@ -750,10 +759,19 @@ class CloudScriptExecutor implements SkillScriptExecutor {
 }
 
 /**
- * Get the appropriate script executor.
- * Checks cloud auth availability on every call so request-scoped credentials
- * and environment overrides are respected.
+ * Create the first-party cloud script executor.
+ *
+ * This compatibility factory re-reads request-scoped credentials on each call,
+ * but it never selects local execution implicitly. Applications that need a
+ * local or third-party runtime must pass an explicit executor to the tool or
+ * compose a `SkillScriptExecutorProvider` extension.
  */
 export function getSkillScriptExecutor(): SkillScriptExecutor {
-  return hasCloudScriptExecutionAuth() ? new CloudScriptExecutor() : new LocalScriptExecutor();
+  if (!hasCloudScriptExecutionAuth()) {
+    throw CONFIG_INVALID.create({
+      detail:
+        "The first-party cloud Skill script executor requires cloud authentication; configure an explicit SkillScriptExecutor or SkillScriptExecutorProvider for other runtimes",
+    });
+  }
+  return new CloudScriptExecutor();
 }

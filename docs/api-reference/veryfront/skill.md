@@ -45,7 +45,7 @@ validateSkillFileMetadata(parsed.frontmatter, "review");
 | `filterToolsForSkill` | Layer 1: Filter tool definitions before sending to model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L118) |
 | `getAllSkills` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L283) |
 | `getSkill` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L279) |
-| `getSkillScriptExecutor` | Get the appropriate script executor. Checks cloud auth availability on every call so request-scoped credentials and environment overrides are respected. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/executor.ts#L757) |
+| `getSkillScriptExecutor` | Create the first-party cloud script executor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/executor.ts#L769) |
 | `isSkillVisibleTo` | Whether a skill is visible to the caller identified by the scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L64) |
 | `isToolAllowedBySkill` | Layer 2: Check if a specific tool call is allowed at execution time. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L153) |
 | `isValidProviderSafeSkillId` | Framework-owned provider-safe owned skill-id grammar check. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L66) |
