@@ -1,8 +1,7 @@
 /****
- * Central package version and URL registry.
+ * Central package version registry and dependency-pinning snapshot accessors.
  *
- * Re-exports from the unified import-rewriter module.
- * This file is kept for backward compatibility with existing imports.
+ * React CDN URL building lives in ./react-cdn.ts.
  */
 
 import { rendererLogger } from "#veryfront/utils";
