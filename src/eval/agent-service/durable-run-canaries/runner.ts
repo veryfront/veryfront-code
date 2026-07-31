@@ -240,6 +240,15 @@ function buildStartRunBody(
           run_id: input.runId,
           message_id: input.messageId,
         },
+        forwarded_props: {
+          veryfront: {
+            client: {
+              id: "veryfront-studio",
+              type: "web",
+              platform: "durable-canary",
+            },
+          },
+        },
       },
     },
   };

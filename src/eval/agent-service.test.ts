@@ -8,6 +8,7 @@ import { type Tool, tool } from "veryfront/tool";
 import {
   buildAgentServiceEvalRequestBody,
   createAgentServiceEvalAdapter,
+  createDurableRunCanaryApiClient,
   createDurableRunCanaryRunner,
   createDurableRunTokenGrowthCanaryCase,
   createLiveEvalCaseSupport,
@@ -660,6 +661,69 @@ describe("eval/agent-service", () => {
     assertEquals(result.runIds, createdRunIds);
     assertEquals(validationExecutions.map(({ runId }) => runId), createdRunIds);
     assertEquals(result.runId, createdRunIds[1]);
+  });
+
+  it("identifies durable canary runs as the trusted Studio client", async () => {
+    let requestBody: unknown;
+    const client = createDurableRunCanaryApiClient({
+      agentId: "veryfront",
+      apiUrl: "https://api.example.test",
+      authToken: "token",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      requestTimeoutMs: 1_000,
+      fetch: async (_input, init) => {
+        requestBody = JSON.parse(String(init?.body));
+        return Response.json({});
+      },
+    });
+
+    await client.startDurableRun({
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      runId: "run_studio_client",
+      messageId: "22222222-2222-4222-8222-222222222222",
+      prompt: "Exercise Studio-capable durable tools",
+      userMessageId: "33333333-3333-4333-8333-333333333333",
+    });
+
+    assertEquals(requestBody, {
+      kind: "agent",
+      owner: {
+        kind: "conversation",
+        id: "11111111-1111-4111-8111-111111111111",
+      },
+      public_id: "run_studio_client",
+      request: {
+        mode: "agent",
+        agent_id: "veryfront",
+        input: {
+          messages: [
+            {
+              id: "33333333-3333-4333-8333-333333333333",
+              role: "user",
+              parts: [{ type: "text", text: "Exercise Studio-capable durable tools" }],
+            },
+          ],
+          context: {
+            conversation_id: "11111111-1111-4111-8111-111111111111",
+            project_id: "11111111-1111-4111-8111-111111111111",
+            branch_id: null,
+          },
+          durable_root_run: {
+            run_id: "run_studio_client",
+            message_id: "22222222-2222-4222-8222-222222222222",
+          },
+          forwarded_props: {
+            veryfront: {
+              client: {
+                id: "veryfront-studio",
+                type: "web",
+                platform: "durable-canary",
+              },
+            },
+          },
+        },
+      },
+    });
   });
 
   it("reports exactly one run identity for a one-prompt durable canary", async () => {
